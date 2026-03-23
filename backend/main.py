@@ -99,6 +99,26 @@ def on_startup() -> None:
     except Exception as e:
         log.warning(f"Stale job cleanup failed: {e}")
 
+    # Auto-create admin account if it doesn't exist
+    try:
+        from database import SessionLocal
+        db2 = SessionLocal()
+        admin_email = os.environ.get("ADMIN_EMAIL", "haomingkoo@gmail.com")
+        if not db2.query(User).filter(User.email == admin_email).first():
+            admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123!")
+            admin = User(
+                email=admin_email,
+                password_hash=hash_password(admin_pw),
+                name="Haoming",
+                tier="admin",
+            )
+            db2.add(admin)
+            db2.commit()
+            log.info(f"Admin account created: {admin_email}")
+        db2.close()
+    except Exception as e:
+        log.warning(f"Admin account creation failed: {e}")
+
 
 # ── Health ───────────────────────────────────────────────────────────────────
 
