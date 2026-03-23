@@ -1047,6 +1047,55 @@ def get_templates() -> list[dict]:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# ENCOURAGEMENT — small touches that keep job seekers going
+# ═════════════════════════════════════════════════════════════════════════════
+
+import random
+
+_ENCOURAGEMENTS = {
+    "search": [
+        "Every search brings you closer to the right opportunity.",
+        "Keep exploring — the perfect role is out there.",
+        "You're putting in the work, and it shows.",
+    ],
+    "track": [
+        "Another one tracked! Staying organised is half the battle.",
+        "You're building real momentum. Keep it going.",
+        "That's a solid pick. Fingers crossed for this one!",
+    ],
+    "resume_score": [
+        "Taking the time to improve your resume is already a step ahead of most candidates.",
+        "Every small improvement adds up. You've got this.",
+        "Smart move getting your resume checked — preparation pays off.",
+    ],
+    "ai_coach": [
+        "You're investing in yourself, and that's never wasted.",
+        "The fact that you're refining your resume shows real dedication.",
+        "Great resumes get interviews. You're on the right track.",
+    ],
+    "download": [
+        "Looking sharp! Go get that role.",
+        "Your resume is ready. Now go make them an offer they can't refuse.",
+        "All the best with your applications — you've done the hard work!",
+    ],
+    "general": [
+        "Job hunting is tough, but so are you.",
+        "Remember: every 'no' gets you closer to the right 'yes'.",
+        "Take it one application at a time. You're doing great.",
+        "It only takes one yes. Keep going.",
+        "The right company is looking for someone exactly like you.",
+    ],
+}
+
+
+@app.get("/api/encouragement")
+def get_encouragement(context: str = Query("general", description="Context: search, track, resume_score, ai_coach, download, general")) -> dict:
+    """Return a contextual word of encouragement."""
+    messages = _ENCOURAGEMENTS.get(context, _ENCOURAGEMENTS["general"])
+    return {"message": random.choice(messages), "context": context}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # UTILITY
 # ═════════════════════════════════════════════════════════════════════════════
 
