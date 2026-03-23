@@ -94,6 +94,73 @@ def health() -> dict:
     return {"status": "ok", "service": "Job Hunter SG API"}
 
 
+@app.get("/api/privacy")
+def privacy() -> dict:
+    """Privacy notice — displayed to users before they upload resumes or sign up."""
+    return {
+        "title": "How We Handle Your Data",
+        "last_updated": "2026-03-24",
+        "sections": [
+            {
+                "heading": "What We Store",
+                "content": (
+                    "When you create an account, we store your email, name, and "
+                    "encrypted password. When you use our AI resume features, we "
+                    "store your resume text to personalise your coaching experience "
+                    "across sessions (our 'Memory' feature). Your tracked job "
+                    "applications and notes are also stored."
+                ),
+            },
+            {
+                "heading": "Why We Store Your Resume",
+                "content": (
+                    "Your resume is stored solely to power the Memory feature — "
+                    "so our AI coach can remember your background, strengths, and "
+                    "goals across sessions, giving you better and more personalised "
+                    "advice each time. Your resume data will NOT be used for any "
+                    "other purpose."
+                ),
+            },
+            {
+                "heading": "What We Don't Do",
+                "content": (
+                    "We do NOT sell, share, or disclose your personal data to any "
+                    "third party. We do NOT use your resume to train AI models. "
+                    "We do NOT show your data to other users. Your data is never "
+                    "used for advertising or marketing purposes."
+                ),
+            },
+            {
+                "heading": "AI Processing",
+                "content": (
+                    "When you use AI features (resume review, bullet rewriting, "
+                    "formatting), your resume text is sent to an AI model for "
+                    "processing. The AI does not retain your data after generating "
+                    "a response."
+                ),
+            },
+            {
+                "heading": "Your Control",
+                "content": (
+                    "You can view everything we know about you via the Memory page. "
+                    "You can edit or delete any stored information at any time. "
+                    "You can delete your entire memory with one click. "
+                    "If you want your account and all data permanently removed, "
+                    "contact us and we will delete everything."
+                ),
+            },
+            {
+                "heading": "Contact",
+                "content": (
+                    "This project is built by Haoming Koo as a tool to help job "
+                    "seekers in Singapore. If you have any questions or concerns "
+                    "about your data, reach out at haomingkoo@gmail.com."
+                ),
+            },
+        ],
+    }
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # AUTH
 # ═════════════════════════════════════════════════════════════════════════════

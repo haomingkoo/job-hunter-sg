@@ -184,7 +184,14 @@ function AuthModal({ onAuth }) {
           </button>
         </form>
 
-        <div className="text-center mt-5">
+        {mode === "signup" && (
+          <p className="text-xs text-gray-400 text-center mt-3">
+            By signing up, you agree that we store your resume data solely to personalise your coaching experience. We never sell, share, or use your data for any other purpose.{" "}
+            <button onClick={() => window.open(`${API_BASE}/api/privacy`, "_blank")} className="text-indigo-500 hover:underline">Privacy Notice</button>
+          </p>
+        )}
+
+        <div className="text-center mt-4">
           <button onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); }}
             className="text-sm text-indigo-600 hover:underline">
             {mode === "login" ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
