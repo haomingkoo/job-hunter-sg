@@ -19,4 +19,4 @@ EXPOSE ${PORT}
 # nginx:alpine supports /etc/nginx/templates/*.template — envsubst runs
 # automatically via docker-entrypoint.d. But we only want to substitute
 # our vars, not nginx's own $uri/$host etc.
-CMD ["/bin/sh", "-c", "envsubst '${PORT} ${BACKEND_URL}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+CMD ["/bin/sh", "-c", "envsubst '$PORT $BACKEND_URL' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]

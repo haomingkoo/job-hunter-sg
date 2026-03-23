@@ -8,15 +8,17 @@ import csv
 import io
 import logging
 import os
+import random
 import re
+import secrets
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from auth import (
@@ -48,7 +50,10 @@ from schemas import (
     TrackedJobUpdate,
     UserOut,
 )
+from ai_service import SEALION_MODEL, _call_sealion, coach_resume, get_ai_status, rewrite_bullet
+from resume_parser import parse_resume
 from resume_scorer import ResumeScorer
+from resume_templates import generate_docx, list_templates
 from scraper import JobAggregator, SSGSkillsFrameworkAPI
 
 log = logging.getLogger("jobhunter")
@@ -227,9 +232,10 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)) -> dict:
             status_code=status.HTTP_409_CONFLICT,
             detail="Email already registered",
         )
-    # AISG emails get pro tier automatically
+    # Pro-tier email domains get upgraded automatically
+    from auth import _PRO_DOMAINS
     domain = body.email.split("@")[-1].lower()
-    tier = "pro" if domain == "aisg.sg" else "free"
+    tier = "pro" if domain in _PRO_DOMAINS else "free"
 
     user = User(
         email=body.email,
@@ -388,7 +394,6 @@ def get_similar_jobs(
 
     # Build query: match any title keyword, exclude the same job
     conditions = [ScrapedJob.title.ilike(f"%{w}%") for w in title_words[:3]]
-    from sqlalchemy import or_
     similar = (
         db.query(ScrapedJob)
         .filter(ScrapedJob.id != job_id, or_(*conditions))
@@ -429,7 +434,6 @@ def get_recommended_jobs(
         return db.query(ScrapedJob).order_by(ScrapedJob.id.desc()).limit(limit).all()
 
     # Search for jobs matching these keywords
-    from sqlalchemy import or_
     conditions = []
     for word in list(words)[:10]:  # Top 10 keywords
         conditions.append(ScrapedJob.title.ilike(f"%{word}%"))
@@ -742,8 +746,6 @@ def _get_memory_context(user: Optional[User], db: Session) -> str:
 # AI — powered resume features
 # ═════════════════════════════════════════════════════════════════════════════
 
-from ai_service import coach_resume, rewrite_bullet, get_ai_status
-
 
 @app.get("/api/ai/status")
 def ai_status() -> dict:
@@ -773,8 +775,6 @@ def ai_coach_resume(
     Free: 3 sessions/day. AISG: 50/day.
     Returns a session_id — all rewrites using that session are free.
     """
-    import secrets
-    from auth import TIER_LIMITS
 
     free_limit = TIER_LIMITS["free"]["ai_per_day"]
 
@@ -932,9 +932,6 @@ def ai_rewrite_bullet(
 # RESUME UPLOAD + FORMAT
 # ═════════════════════════════════════════════════════════════════════════════
 
-from fastapi import File, UploadFile
-from resume_parser import parse_resume
-
 
 @app.post("/api/resume/upload")
 async def upload_resume(
@@ -976,8 +973,6 @@ def format_resume(
     AI-powered resume formatting — takes raw resume text and returns
     a clean, ATS-friendly formatted version. Counts as 1 AI credit.
     """
-    from ai_service import _call_sealion, SEALION_MODEL
-
     check_rate_limit(user, "ai", db)
     db.add(UsageLog(
         user_id=user.id if user else None,
@@ -1042,8 +1037,6 @@ def download_resume(
     Body: {resume_text, template, name, email, phone, location}
     Templates: classic, modern, singapore, compact
     """
-    from resume_templates import generate_docx, list_templates
-
     resume_text = body.get("resume_text", "")
     if not resume_text or len(resume_text) < 50:
         raise HTTPException(status_code=400, detail="Resume text too short")
@@ -1087,15 +1080,12 @@ def download_resume(
 @app.get("/api/resume/templates")
 def get_templates() -> list[dict]:
     """List available resume templates."""
-    from resume_templates import list_templates
     return list_templates()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 # ENCOURAGEMENT — small touches that keep job seekers going
 # ═════════════════════════════════════════════════════════════════════════════
-
-import random
 
 _ENCOURAGEMENTS = {
     "search": [

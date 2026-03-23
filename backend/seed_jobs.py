@@ -105,6 +105,7 @@ def seed_jobs(
             # Cache each job in the database
             for job in results["jobs"]:
                 raw = asdict(job)
+                raw["dedup_key"] = job.dedup_key  # Property not included by asdict()
                 clean = sanitize_job(raw)
                 clean["search_keyword"] = keyword
 

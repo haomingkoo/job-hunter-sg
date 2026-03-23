@@ -40,6 +40,11 @@ if not SECRET_KEY:
 # Configurable via env vars — tune from Railway dashboard, no redeploy needed
 _FREE_AI = int(os.environ.get("FREE_AI_PER_DAY", "3"))
 _PRO_AI = int(os.environ.get("PRO_AI_PER_DAY", "50"))
+_PRO_DOMAINS = [
+    d.strip().lower()
+    for d in os.environ.get("PRO_EMAIL_DOMAINS", "").split(",")
+    if d.strip()
+]
 
 TIER_LIMITS: dict[str, dict] = {
     # Anonymous / no login — unlimited search, limited AI
@@ -138,7 +143,7 @@ def _get_or_create_cf_user(email: str, db) -> User:
 
     # Auto-create new user
     domain = email.split("@")[-1].lower()
-    tier = "pro" if domain == "aisg.sg" else "free"
+    tier = "pro" if domain in _PRO_DOMAINS else "free"
     name = email.split("@")[0].replace(".", " ").replace("_", " ").title()
 
     user = User(

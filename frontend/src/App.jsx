@@ -233,6 +233,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
   const [sortBy, setSortBy] = useState("relevance");
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState("");
+  const [trackError, setTrackError] = useState("");
 
   const togglePortal = (key) => {
     setSelectedPortals((prev) => prev.includes(key) ? prev.filter((p) => p !== key) : [...prev, key]);
@@ -286,8 +287,6 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     return r;
   }, [results, levelFilter, sortBy]);
 
-  const [trackError, setTrackError] = useState("");
-
   const trackJob = async (scrapedJob) => {
     if (!user) {
       onSignIn();
@@ -315,7 +314,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     setActiveTab("resume");
   };
 
-  const isFree = user?.tier === "free";
+  const isFree = !user || user?.tier === "free";
 
   return (
     <div className="space-y-6">
@@ -327,7 +326,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       {isFree && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center gap-2 text-sm text-amber-800">
           <AlertCircle size={14} className="flex-shrink-0" />
-          Free tier: 5 searches/day. Upgrade to Pro for 50 searches/day.
+          Free tier: 5 searches/day. Sign in with @aisg.sg for 50 searches/day.
         </div>
       )}
 
@@ -348,11 +347,11 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       </div>
 
       {/* Search */}
-      <div className="flex gap-3">
+      <div className="flex flex-col sm:flex-row gap-3">
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by role, skill, or company..." onKeyDown={(e) => e.key === "Enter" && scrapeJobs()}
           className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
         <button onClick={scrapeJobs} disabled={loading || !query.trim()}
-          className="flex items-center gap-2 bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition">
+          className="flex items-center justify-center gap-2 bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition sm:w-auto w-full">
           {loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
           {loading ? "Searching..." : "Search All"}
         </button>
@@ -360,7 +359,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
 
       {/* Filters */}
       {results.length > 0 && (
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4">
           <div className="flex items-center gap-2">
             <Filter size={14} className="text-gray-400" />
             <select value={levelFilter} onChange={(e) => setLevelFilter(e.target.value)} className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white">
@@ -435,13 +434,13 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               )}
             </div>
           </div>
-          <div className="flex items-center justify-between border-t border-gray-100 pt-3 mt-1">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between border-t border-gray-100 pt-3 mt-1 gap-2">
             <div className="flex items-center gap-3 text-xs text-gray-400">
               <span>{job.source}</span>
               {job.posted && <span>{job.posted}</span>}
               {job.type && <span>{job.type}</span>}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button onClick={() => generateResume(job)} className="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-emerald-700 transition">
                 <FileText size={12} /> Generate Resume
               </button>
@@ -605,7 +604,7 @@ function TrackerTab({ user, jobs, refreshJobs }) {
       {atLimit && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
           <div className="font-medium mb-1">Free tier limit reached (20 tracked jobs)</div>
-          <p>Upgrade to Pro for unlimited tracked jobs, CSV export, and more.</p>
+          <p>Sign in with @aisg.sg for unlimited tracked jobs, CSV export, and more.</p>
         </div>
       )}
 
@@ -1381,12 +1380,16 @@ function ATSTab() {
             <div className="space-y-3">
               <h4 className="text-sm font-semibold text-gray-800">Actionable Suggestions</h4>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {analysis.top_suggestions.map((s, i) => (
-                  <div key={i} className="bg-white border border-gray-200 rounded-xl p-4 flex items-start gap-3 hover:shadow-sm transition">
-                    <div className="bg-amber-100 text-amber-700 rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 text-xs font-bold">{i + 1}</div>
-                    <p className="text-sm text-gray-700">{s}</p>
-                  </div>
-                ))}
+                {analysis.top_suggestions.map((s, i) => {
+                  const suggText = typeof s === "string" ? s : (s.detail || s.action || "");
+                  const suggPts = typeof s === "object" && s.points ? s.points : null;
+                  return (
+                    <div key={i} className="bg-white border border-gray-200 rounded-xl p-4 flex items-start gap-3 hover:shadow-sm transition">
+                      <div className="bg-amber-100 text-amber-700 rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 text-xs font-bold">{suggPts ? `+${suggPts}` : i + 1}</div>
+                      <p className="text-sm text-gray-700">{suggText}</p>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1523,7 +1526,7 @@ function AccountTab({ user, onLogout }) {
         {usageLoading ? (
           <div className="flex items-center gap-2 text-sm text-gray-500"><Loader2 size={14} className="animate-spin" /> Loading usage...</div>
         ) : usage ? (
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-blue-50 rounded-xl p-4 text-center">
               <div className="text-2xl font-bold text-gray-800">{usage.searches_today ?? 0}</div>
               <div className="text-xs text-gray-500 mt-1">Searches Today</div>
@@ -1605,7 +1608,7 @@ function AccountTab({ user, onLogout }) {
       <div className="bg-white border border-gray-200 rounded-xl p-5">
         <h3 className="font-semibold text-gray-800 mb-4">Get in Touch</h3>
 
-        <div className="flex gap-3 mb-5">
+        <div className="flex flex-wrap gap-3 mb-5">
           <a href="https://wa.me/" target="_blank" rel="noreferrer"
             className="flex items-center gap-2 border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 transition">
             <MessageSquare size={14} /> WhatsApp

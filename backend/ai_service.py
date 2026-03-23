@@ -7,6 +7,7 @@ Free tier: 10 requests per minute.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -132,7 +133,7 @@ def _track_failure(error_type: str, detail: str) -> None:
             log.critical(
                 f"[AI ALERT] {_failure_count} consecutive failures! "
                 f"Last error: {error_type} ({detail}). "
-                f"Admin: {_ADMIN_EMAIL}"
+                f"Admin notification pending."
             )
             # TODO: Send actual email/Telegram alert here
             # For now this logs as CRITICAL which Railway/monitoring will catch
@@ -417,7 +418,6 @@ def match_resume_to_jobs(resume_text: str, jobs: list[dict], top_n: int = 5) -> 
         return None
 
     # Try to parse JSON from response
-    import json
     try:
         # Find JSON array in response
         start = content.find("[")
