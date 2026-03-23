@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Search, Briefcase, Bell, FileText, Plus, X, ChevronRight, Clock,
   CheckCircle, AlertCircle, ExternalLink, Trash2, Edit3, Save, Filter,
   RefreshCw, Zap, Download, Copy, Star, MapPin, DollarSign, Building2,
   Loader2, User, LogOut, Mail,
-  RotateCcw, Sparkles,
+  RotateCcw, Sparkles, UploadCloud,
 } from "lucide-react";
 
 // ─── API Config ────────────────────────────────────────────────────────────────
@@ -99,8 +99,7 @@ function Nav({ active, setActive }) {
     { id: "scraper", label: "Jobs", icon: Search },
     { id: "tracker", label: "Tracker", icon: Briefcase },
     { id: "reminders", label: "Reminders", icon: Bell },
-    { id: "resume", label: "Resume Builder", icon: FileText },
-    { id: "ats", label: "ATS Check", icon: Zap },
+    { id: "resume", label: "Resume", icon: FileText },
     { id: "account", label: "Account", icon: User },
   ];
   return (
@@ -813,32 +812,71 @@ function RemindersTab({ jobs, onUpdateJob }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// TAB 4: RESUME BUILDER
+// TAB 4: UNIFIED RESUME WORKSPACE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function ResumeBuilderTab({ selectedJob, user }) {
+function ResumeTab({ selectedJob, user }) {
+  // Profile fields (persisted in localStorage)
   const [profile, setProfile] = useState(() => {
     try {
       const saved = localStorage.getItem("jh_resume_profile");
       if (saved) return JSON.parse(saved);
     } catch { /* ignore */ }
-    return { name: "", email: "", phone: "", location: "Singapore", summary: "", experience: "", education: "", skills: "", certifications: "" };
+    return { name: "", email: "", phone: "", location: "Singapore" };
   });
-  const [generatedResume, setGeneratedResume] = useState(null);
-  const [generating, setGenerating] = useState(false);
+
+  // Resume text (persisted in localStorage)
+  const [resumeText, setResumeText] = useState(() => {
+    try { return localStorage.getItem("jh_resume_text") || ""; } catch { return ""; }
+  });
+
+  // Upload state
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef(null);
+
+  // Score state
+  const [scoreData, setScoreData] = useState(null);
+  const [scoring, setScoring] = useState(false);
+  const [scoreError, setScoreError] = useState("");
 
   // AI Coach state
   const [coachResponse, setCoachResponse] = useState(null);
   const [coachLoading, setCoachLoading] = useState(false);
   const [coachError, setCoachError] = useState("");
-  const [aiStatus, setAiStatus] = useState(null);
   const [sessionId, setSessionId] = useState("");
 
-  // AI Rewrite state (keyed by bullet index)
-  const [rewriteResults, setRewriteResults] = useState({});
-  const [rewriteLoading, setRewriteLoading] = useState({});
+  // AI Format state
+  const [formatting, setFormatting] = useState(false);
+  const [formatError, setFormatError] = useState("");
 
-  // Poll AI status when tab is active
+  // AI status
+  const [aiStatus, setAiStatus] = useState(null);
+
+  // Templates + Download
+  const [templates, setTemplates] = useState([]);
+  const [selectedTemplate, setSelectedTemplate] = useState("classic");
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
+
+  // General error display
+  const [error, setError] = useState("");
+
+  // Debounce timer ref for auto-scoring
+  const scoreTimerRef = useRef(null);
+
+  // Persist profile
+  useEffect(() => {
+    try { localStorage.setItem("jh_resume_profile", JSON.stringify(profile)); } catch { /* quota */ }
+  }, [profile]);
+
+  // Persist resume text
+  useEffect(() => {
+    try { localStorage.setItem("jh_resume_text", resumeText); } catch { /* quota */ }
+  }, [resumeText]);
+
+  // Poll AI status
   useEffect(() => {
     const fetchStatus = () => fetch(`${API_BASE}/api/ai/status`).then(r => r.json()).then(setAiStatus).catch(() => {});
     fetchStatus();
@@ -846,368 +884,116 @@ function ResumeBuilderTab({ selectedJob, user }) {
     return () => clearInterval(interval);
   }, []);
 
-  // Persist profile to localStorage on every change (item 6)
+  // Fetch templates on mount
   useEffect(() => {
-    try { localStorage.setItem("jh_resume_profile", JSON.stringify(profile)); } catch { /* quota */ }
-  }, [profile]);
+    fetch(`${API_BASE}/api/resume/templates`)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setTemplates(data);
+          setSelectedTemplate(data[0].id);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
-  // AI Coach handler — starts a session, all rewrites within it are free
-  const handleAICoach = async () => {
-    if (!profile.experience.trim()) return;
-    setCoachLoading(true);
-    setCoachError("");
-    setCoachResponse(null);
-    setSessionId("");
-    setRewriteResults({});
+  // Build job description string from selectedJob
+  const jobDescription = useMemo(() => {
+    if (!selectedJob) return "";
+    const parts = [`${selectedJob.title} at ${selectedJob.company}`];
+    if (selectedJob.skills?.length) parts.push(`Required skills: ${selectedJob.skills.join(", ")}`);
+    if (selectedJob.description) parts.push(selectedJob.description);
+    return parts.join(". ");
+  }, [selectedJob]);
+
+  // Auto-score on resume text change (debounced 1s)
+  useEffect(() => {
+    if (scoreTimerRef.current) clearTimeout(scoreTimerRef.current);
+    if (!resumeText.trim() || resumeText.trim().length < 50) {
+      setScoreData(null);
+      return;
+    }
+    scoreTimerRef.current = setTimeout(() => {
+      runScore(resumeText, jobDescription);
+    }, 1000);
+    return () => { if (scoreTimerRef.current) clearTimeout(scoreTimerRef.current); };
+  }, [resumeText, jobDescription]);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
+  const handleFileUpload = async (file) => {
+    if (!file) return;
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    if (!["pdf", "docx"].includes(ext)) {
+      setUploadError("Please upload a PDF or DOCX file.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError("File too large. Maximum size is 10 MB.");
+      return;
+    }
+    setUploading(true);
+    setUploadError("");
     try {
-      const jd = selectedJob ? `${selectedJob.title} at ${selectedJob.company}. Skills: ${selectedJob.skills.join(", ")}. ${selectedJob.description || ""}` : "";
-      const resumeText = [profile.summary, profile.experience, profile.education, profile.skills, profile.certifications].filter(Boolean).join("\n\n");
-      const resp = await apiFetch("/api/ai/coach", {
+      const formData = new FormData();
+      formData.append("file", file);
+      const token = localStorage.getItem("token");
+      const headers = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const resp = await fetch(`${API_BASE}/api/resume/upload`, {
         method: "POST",
-        body: JSON.stringify({ resume_text: resumeText, job_description: jd }),
+        headers,
+        body: formData,
+      });
+      if (!resp.ok) throw new Error(`Upload failed (${resp.status})`);
+      const data = await resp.json();
+      if (data.text) setResumeText(data.text);
+      setProfile(prev => ({
+        ...prev,
+        ...(data.email ? { email: data.email } : {}),
+        ...(data.phone ? { phone: data.phone } : {}),
+      }));
+    } catch (err) {
+      setUploadError(err.message || "Failed to upload file. Please try again.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) handleFileUpload(file);
+  };
+
+  const handleDragOver = (e) => { e.preventDefault(); setDragOver(true); };
+  const handleDragLeave = () => setDragOver(false);
+
+  const runScore = async (text, jd) => {
+    setScoring(true);
+    setScoreError("");
+    try {
+      const resp = await apiFetch("/api/resume/score", {
+        method: "POST",
+        body: JSON.stringify({ resume_text: text, job_description: jd }),
       });
       const data = await resp.json();
-      setCoachResponse(data);
-      if (data.session_id) setSessionId(data.session_id);
-    } catch (err) {
-      const msg = err.message?.includes("429") ? "You've used all your AI reviews for today. Sign in with @aisg.sg for more!" : "AI is busy, try again in a moment.";
-      setCoachError(msg);
+      setScoreData(data);
+    } catch {
+      // Client-side fallback
+      setScoreData(scoreFallback(text, jd));
+      setScoreError("Full scorer unavailable — showing basic analysis.");
     } finally {
-      setCoachLoading(false);
+      setScoring(false);
     }
   };
 
-  // AI Rewrite handler — uses session_id so rewrites within a session are free
-  const handleRewriteBullet = async (bulletText, index) => {
-    setRewriteLoading((prev) => ({ ...prev, [index]: true }));
-    try {
-      const jobTitle = selectedJob ? selectedJob.title : "";
-      const resp = await apiFetch("/api/ai/rewrite", {
-        method: "POST",
-        body: JSON.stringify({ bullet: bulletText, job_title: jobTitle, session_id: sessionId }),
-      });
-      const data = await resp.json();
-      setRewriteResults((prev) => ({ ...prev, [index]: data }));
-    } catch (err) {
-      const msg = err.message?.includes("429") ? "AI limit reached" : "AI busy";
-      setRewriteResults((prev) => ({ ...prev, [index]: { error: true, message: msg } }));
-    } finally {
-      setRewriteLoading((prev) => ({ ...prev, [index]: false }));
-    }
-  };
-
-  const acceptRewrite = (index) => {
-    const rw = rewriteResults[index];
-    if (!rw || !rw.rewritten) return;
-    const lines = profile.experience.split("\n");
-    // Find the bullet line and replace
-    let bulletIdx = -1;
-    for (let i = 0; i < lines.length; i++) {
-      const trimmed = lines[i].replace(/^[\s\-\u2022*]+/, "").trim();
-      if (trimmed === rw.original.replace(/^[\s\-\u2022*]+/, "").trim()) { bulletIdx = i; break; }
-    }
-    if (bulletIdx >= 0) {
-      const prefix = lines[bulletIdx].match(/^[\s\-\u2022*]*/)?.[0] || "- ";
-      lines[bulletIdx] = prefix + rw.rewritten;
-      setProfile({ ...profile, experience: lines.join("\n") });
-    }
-    setRewriteResults((prev) => { const n = { ...prev }; delete n[index]; return n; });
-  };
-
-  const rejectRewrite = (index) => {
-    setRewriteResults((prev) => { const n = { ...prev }; delete n[index]; return n; });
-  };
-
-  const generateResume = () => {
-    if (!profile.name || !profile.experience) return;
-    setGenerating(true);
-
-    setTimeout(() => {
-      const jobSkills = selectedJob ? selectedJob.skills : [];
-      const jobTitle = selectedJob ? selectedJob.title : "Software Engineer";
-      const jobCompany = selectedJob ? selectedJob.company : "Target Company";
-
-      const expText = profile.experience.toLowerCase();
-      const hasMetrics = /\d+%|\d+ (users|clients|projects|team|members|systems)/.test(expText);
-
-      const matchedSkills = jobSkills.filter((s) =>
-        profile.skills.toLowerCase().includes(s.toLowerCase()) ||
-        profile.experience.toLowerCase().includes(s.toLowerCase())
-      );
-      const missingSkills = jobSkills.filter((s) => !matchedSkills.includes(s));
-
-      let tailoredSummary = profile.summary || `Results-driven professional with demonstrated expertise in ${matchedSkills.slice(0, 4).join(", ")}. `;
-      if (matchedSkills.length > 0 && !profile.summary) {
-        tailoredSummary += `Proven track record in ${matchedSkills.slice(0, 3).join(", ")}, with hands-on experience delivering impactful solutions. `;
-        tailoredSummary += `Seeking to leverage my skills at ${jobCompany} as a ${jobTitle}.`;
-      }
-
-      const allSkills = [...new Set([...matchedSkills, ...profile.skills.split(",").map((s) => s.trim()).filter(Boolean)])];
-
-      const resume = {
-        name: profile.name,
-        email: profile.email,
-        phone: profile.phone,
-        location: profile.location,
-        targetRole: jobTitle,
-        targetCompany: jobCompany,
-        summary: tailoredSummary,
-        experience: profile.experience,
-        education: profile.education,
-        skills: allSkills,
-        certifications: profile.certifications,
-        matchedSkills,
-        missingSkills,
-        score: Math.round((matchedSkills.length / Math.max(jobSkills.length, 1)) * 100),
-        suggestions: [],
-      };
-
-      if (!hasMetrics) resume.suggestions.push("Add quantifiable achievements (e.g., 'Reduced load time by 40%', 'Managed team of 5').");
-      if (missingSkills.length > 0) resume.suggestions.push(`Consider adding experience with: ${missingSkills.slice(0, 5).join(", ")}.`);
-      if (!profile.certifications) resume.suggestions.push("Adding certifications (AWS, SkillsFuture, WSQ) boosts ATS scores for SG roles.");
-      if (profile.experience.split("\n").length < 5) resume.suggestions.push("Expand each role with 3-5 bullet points describing achievements and responsibilities.");
-      if (!/(singapore|sg|citizen|pr|permanent resident)/i.test(profile.experience + profile.summary)) {
-        resume.suggestions.push("Mention residency status (SG Citizen/PR) — many local employers filter for this.");
-      }
-
-      setGeneratedResume(resume);
-      setGenerating(false);
-    }, 800);
-  };
-
-  const copyResume = () => {
-    if (!generatedResume) return;
-    const text = `${generatedResume.name}\n${generatedResume.email} | ${generatedResume.phone} | ${generatedResume.location}\n\n` +
-      `PROFESSIONAL SUMMARY\n${generatedResume.summary}\n\n` +
-      `SKILLS\n${generatedResume.skills.join(" | ")}\n\n` +
-      `EXPERIENCE\n${generatedResume.experience}\n\n` +
-      `EDUCATION\n${generatedResume.education}\n` +
-      (generatedResume.certifications ? `\nCERTIFICATIONS\n${generatedResume.certifications}` : "");
-    navigator.clipboard.writeText(text);
-  };
-
-  return (
-    <div className="space-y-6">
-      <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-5">
-        <h2 className="font-semibold text-gray-800 flex items-center gap-2"><FileText size={18} /> Tailored Resume Builder</h2>
-        <p className="text-sm text-gray-500 mt-1">
-          {selectedJob
-            ? `Generating a resume tailored for "${selectedJob.title}" at ${selectedJob.company}. Fill in your details below.`
-            : "Fill in your profile, then we'll generate an ATS-optimized resume. Select a job from the Jobs tab for best results."
-          }
-        </p>
-      </div>
-
-      {selectedJob && (
-        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
-          <div className="text-xs font-medium text-indigo-600 uppercase tracking-wide mb-1">Target Job</div>
-          <div className="font-semibold text-gray-800">{selectedJob.title} — {selectedJob.company}</div>
-          <div className="text-sm text-gray-500">{selectedJob.location} | {selectedJob.salary}</div>
-          <div className="flex flex-wrap gap-1 mt-2">
-            {selectedJob.skills.map((s) => <span key={s} className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full text-xs">{s}</span>)}
-          </div>
-        </div>
-      )}
-
-      {/* Profile Form */}
-      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-        <h3 className="font-semibold text-gray-800">Your Profile</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <input placeholder="Full Name *" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })} className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-          <input placeholder="Email" value={profile.email} onChange={(e) => setProfile({ ...profile, email: e.target.value })} className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-          <input placeholder="Phone" value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-          <input placeholder="Location" value={profile.location} onChange={(e) => setProfile({ ...profile, location: e.target.value })} className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-        </div>
-        <textarea placeholder="Professional Summary (optional — we'll generate one if blank)" value={profile.summary} onChange={(e) => setProfile({ ...profile, summary: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" rows={2} />
-        <textarea placeholder="Work Experience * (include company, role, dates, and bullet points)" value={profile.experience} onChange={(e) => setProfile({ ...profile, experience: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" rows={6} />
-        <textarea placeholder="Education (degree, school, year)" value={profile.education} onChange={(e) => setProfile({ ...profile, education: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" rows={2} />
-        <input placeholder="Skills (comma-separated: React, TypeScript, AWS...)" value={profile.skills} onChange={(e) => setProfile({ ...profile, skills: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-        <input placeholder="Certifications (optional: AWS Solutions Architect, SkillsFuture...)" value={profile.certifications} onChange={(e) => setProfile({ ...profile, certifications: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-        <div className="flex items-center gap-3 flex-wrap">
-          <button onClick={generateResume} disabled={!profile.name || !profile.experience || generating}
-            className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-40 transition">
-            {generating ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-            {generating ? "Generating..." : "Generate Tailored Resume"}
-          </button>
-          <button onClick={handleAICoach} disabled={coachLoading || !profile.experience.trim()}
-            className="flex items-center gap-2 bg-purple-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-40 transition">
-            {coachLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-            {coachLoading ? "Analyzing..." : "AI Resume Review"}
-          </button>
-          {aiStatus && (
-            <span className={`text-xs px-2 py-1 rounded-full ${aiStatus.status === "ready" ? "bg-green-100 text-green-700" : aiStatus.status === "busy" ? "bg-yellow-100 text-yellow-700" : "bg-orange-100 text-orange-700"}`}>
-              {aiStatus.status === "ready" ? "AI Ready" : aiStatus.status === "busy" ? "AI Busy" : `~${Math.round(aiStatus.wait_seconds)}s wait`}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* AI Coach Response */}
-      {coachError && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center gap-2">
-          <AlertCircle size={14} className="flex-shrink-0" />{coachError}
-        </div>
-      )}
-      {coachLoading && (
-        <div className="bg-purple-50 border border-purple-200 rounded-xl p-5 text-center">
-          <Loader2 size={24} className="animate-spin text-purple-500 mx-auto" />
-          <p className="text-sm text-purple-700 mt-2">Analyzing your resume... this usually takes 15-30 seconds</p>
-          <p className="text-xs text-purple-400 mt-1">Powered by AI</p>
-        </div>
-      )}
-      {coachResponse && !coachLoading && (
-        <div className="bg-purple-50 border border-purple-200 rounded-xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Sparkles size={16} className="text-purple-600" />
-              <h4 className="text-sm font-semibold text-purple-800">AI Resume Review</h4>
-            </div>
-            <span className="text-[10px] bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full">Powered by AI</span>
-          </div>
-          <div className="bg-white rounded-lg p-4 text-sm text-gray-700 leading-relaxed whitespace-pre-line shadow-sm">
-            {coachResponse.coaching}
-          </div>
-          {sessionId && <p className="text-xs text-purple-400 mt-2">You can now rewrite individual bullets below for free within this session.</p>}
-        </div>
-      )}
-
-      {/* Generated Resume */}
-      {generatedResume && (
-        <div className="space-y-4">
-          <div className="bg-white border border-gray-200 rounded-xl p-5 flex items-center justify-between">
-            <div>
-              <div className="text-sm text-gray-500">ATS Match Score for {generatedResume.targetRole}</div>
-              <div className={`text-3xl font-bold ${generatedResume.score >= 70 ? "text-green-600" : generatedResume.score >= 40 ? "text-yellow-600" : "text-red-600"}`}>
-                {generatedResume.score}%
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={copyResume} className="flex items-center gap-1.5 border border-gray-200 px-3 py-2 rounded-lg text-sm hover:bg-gray-50"><Copy size={14} /> Copy</button>
-            </div>
-          </div>
-
-          {generatedResume.suggestions.length > 0 && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-              <h4 className="text-sm font-semibold text-yellow-800 mb-2">Improvement Suggestions</h4>
-              <ul className="space-y-1.5">
-                {generatedResume.suggestions.map((s, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm text-yellow-900">
-                    <AlertCircle size={13} className="mt-0.5 flex-shrink-0 text-yellow-600" />{s}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-              <h4 className="text-sm font-semibold text-green-800 mb-2">Matched Keywords ({generatedResume.matchedSkills.length})</h4>
-              <div className="flex flex-wrap gap-1.5">
-                {generatedResume.matchedSkills.map((kw) => <span key={kw} className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs">{kw}</span>)}
-              </div>
-            </div>
-            <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-              <h4 className="text-sm font-semibold text-red-800 mb-2">Missing Keywords ({generatedResume.missingSkills.length})</h4>
-              <div className="flex flex-wrap gap-1.5">
-                {generatedResume.missingSkills.map((kw) => <span key={kw} className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs">{kw}</span>)}
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
-            <div className="border-b border-gray-200 pb-4 mb-4">
-              <h2 className="text-xl font-bold text-gray-900">{generatedResume.name}</h2>
-              <p className="text-sm text-gray-500 mt-1">
-                {[generatedResume.email, generatedResume.phone, generatedResume.location].filter(Boolean).join(" | ")}
-              </p>
-            </div>
-            <div className="space-y-4">
-              <div>
-                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Professional Summary</h3>
-                <p className="text-sm text-gray-700 leading-relaxed">{generatedResume.summary}</p>
-              </div>
-              <div>
-                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Technical Skills</h3>
-                <div className="flex flex-wrap gap-1.5">
-                  {generatedResume.skills.map((s) => (
-                    <span key={s} className={`px-2 py-0.5 rounded-full text-xs ${generatedResume.matchedSkills.includes(s) ? "bg-green-100 text-green-800 font-medium" : "bg-gray-100 text-gray-600"}`}>{s}</span>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Experience</h3>
-                <div className="space-y-1">
-                  {generatedResume.experience.split("\n").map((line, idx) => {
-                    const trimmed = line.replace(/^[\s\-\u2022*]+/, "").trim();
-                    const isBullet = trimmed.length > 10 && /^[\-\u2022*]/.test(line.trim());
-                    return (
-                      <div key={idx} className="group">
-                        <div className="flex items-start gap-1">
-                          <p className="text-sm text-gray-700 leading-relaxed flex-1">{line}</p>
-                          {isBullet && user && (
-                            <button
-                              onClick={() => handleRewriteBullet(trimmed, idx)}
-                              disabled={rewriteLoading[idx]}
-                              className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-purple-500 hover:text-purple-700 p-0.5"
-                              title="AI Rewrite">
-                              {rewriteLoading[idx] ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
-                            </button>
-                          )}
-                        </div>
-                        {rewriteResults[idx] && !rewriteResults[idx].error && (
-                          <div className="ml-4 mt-1 bg-purple-50 border border-purple-200 rounded-lg p-3 text-xs space-y-1.5">
-                            <div className="text-gray-500 line-through">{rewriteResults[idx].original}</div>
-                            <div className="text-purple-800 font-medium">{rewriteResults[idx].rewritten}</div>
-                            <div className="flex gap-2 mt-1">
-                              <button onClick={() => acceptRewrite(idx)} className="bg-green-600 text-white px-2 py-0.5 rounded text-[10px] font-medium hover:bg-green-700">Accept</button>
-                              <button onClick={() => rejectRewrite(idx)} className="bg-gray-200 text-gray-600 px-2 py-0.5 rounded text-[10px] font-medium hover:bg-gray-300">Reject</button>
-                            </div>
-                          </div>
-                        )}
-                        {rewriteResults[idx]?.error && (
-                          <div className="ml-4 mt-1 text-xs text-red-500">Rewrite failed. Try again.</div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-              {generatedResume.education && (
-                <div>
-                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Education</h3>
-                  <p className="text-sm text-gray-700 whitespace-pre-line">{generatedResume.education}</p>
-                </div>
-              )}
-              {generatedResume.certifications && (
-                <div>
-                  <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Certifications</h3>
-                  <p className="text-sm text-gray-700">{generatedResume.certifications}</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// TAB 5: ATS CHECKER
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function ATSTab() {
-  const [resume, setResume] = useState("");
-  const [jobDesc, setJobDesc] = useState("");
-  const [analysis, setAnalysis] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-
-  // Client-side fallback when API fails
-  const analyzeFallback = () => {
-    const rText = resume.toLowerCase();
+  // Client-side fallback scorer
+  const scoreFallback = (text, jd) => {
+    const rText = text.toLowerCase();
     let keywords;
-    if (jobDesc.trim()) {
+    if (jd.trim()) {
       const techTerms = [
         "react", "typescript", "javascript", "python", "java", "sql", "nosql", "aws", "docker",
         "kubernetes", "ci/cd", "agile", "scrum", "rest api", "graphql", "node.js", "git", "linux",
@@ -1215,9 +1001,9 @@ function ATSTab() {
         "power bi", "excel", "figma", "css", "html", "webpack", "testing", "unit testing",
         "system design", "scalable", "performance optimization", "responsive design", "accessibility",
       ];
-      const jdLower = jobDesc.toLowerCase();
+      const jdLower = jd.toLowerCase();
       keywords = techTerms.filter((t) => jdLower.includes(t));
-      const customTerms = jobDesc.match(/[A-Z][a-zA-Z.+#]+/g) || [];
+      const customTerms = jd.match(/[A-Z][a-zA-Z.+#]+/g) || [];
       customTerms.forEach((t) => { if (t.length > 2 && !keywords.includes(t.toLowerCase())) keywords.push(t); });
       if (keywords.length < 5) keywords = [...keywords, ...ATS_KEYWORDS_BY_ROLE["Software Engineer"]];
       keywords = [...new Set(keywords)];
@@ -1234,168 +1020,415 @@ function ATSTab() {
     if (!/(bachelor|master|diploma|degree|certification|certified)/.test(rText)) tips.push("Clearly list education and certifications.");
     if (!/(singapore|sg|citizen|pr|permanent resident)/.test(rText)) tips.push("For SG jobs, mention residency status if applicable.");
     if (missing.length > 3) tips.push(`Missing ${missing.length} key terms — weave them into your experience.`);
-    return { fallback: true, overall_score: score, dimensions: [], top_suggestions: tips, sg_tips: [], found, missing, totalKeywords: keywords.length };
+    return { fallback: true, overall_score: score, dimensions: [], top_suggestions: tips, sg_tips: [], keyword_match: { found, missing, total: keywords.length } };
   };
 
-  const analyze = async () => {
-    if (!resume.trim()) return;
-    setLoading(true);
-    setError("");
+  const handleAIReview = async () => {
+    if (!resumeText.trim()) return;
+    setCoachLoading(true);
+    setCoachError("");
+    setCoachResponse(null);
+    setSessionId("");
     try {
-      const resp = await apiFetch("/api/resume/score", {
+      const resp = await apiFetch("/api/ai/coach", {
         method: "POST",
-        body: JSON.stringify({ resume_text: resume, job_description: jobDesc }),
+        body: JSON.stringify({ resume_text: resumeText, job_description: jobDescription }),
       });
       const data = await resp.json();
-      setAnalysis(data);
-    } catch {
-      setAnalysis(analyzeFallback());
-      setError("Full scorer unavailable — showing basic keyword analysis instead.");
+      setCoachResponse(data);
+      if (data.session_id) setSessionId(data.session_id);
+    } catch (err) {
+      const msg = err.message?.includes("429")
+        ? "You've used all your AI reviews for today. Sign in with @aisg.sg for more!"
+        : "AI is busy, try again in a moment.";
+      setCoachError(msg);
     } finally {
-      setLoading(false);
+      setCoachLoading(false);
     }
   };
 
-  const scoreBadge = (score) => {
-    if (score >= 70) return { label: "Good Job", cls: "bg-green-100 text-green-800" };
-    if (score >= 40) return { label: "On Track", cls: "bg-yellow-100 text-yellow-800" };
-    return { label: "Needs Work", cls: "bg-red-100 text-red-800" };
+  const handleAIFormat = async () => {
+    if (!resumeText.trim()) return;
+    setFormatting(true);
+    setFormatError("");
+    try {
+      const resp = await apiFetch("/api/resume/format", {
+        method: "POST",
+        body: JSON.stringify({ resume_text: resumeText, job_description: jobDescription }),
+      });
+      const data = await resp.json();
+      if (data.formatted_resume) {
+        setResumeText(data.formatted_resume);
+      }
+    } catch (err) {
+      setFormatError(err.message?.includes("429")
+        ? "AI limit reached for today."
+        : "Formatting failed. Please try again.");
+    } finally {
+      setFormatting(false);
+    }
   };
+
+  const handleDownload = async () => {
+    if (!resumeText.trim()) return;
+    setDownloading(true);
+    setDownloadError("");
+    try {
+      const token = localStorage.getItem("token");
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const resp = await fetch(`${API_BASE}/api/resume/download`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          resume_text: resumeText,
+          template: selectedTemplate,
+          name: profile.name,
+          email: profile.email,
+          phone: profile.phone,
+          location: profile.location,
+        }),
+      });
+      if (!resp.ok) throw new Error(`Download failed (${resp.status})`);
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "resume.docx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setDownloadError(err.message || "Download failed. Please try again.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  // ── Score helpers ─────────────────────────────────────────────────────────
+
   const scoreBarColor = (score) => score >= 70 ? "bg-green-500" : score >= 40 ? "bg-yellow-500" : "bg-red-500";
   const scoreTextColor = (score) => score >= 70 ? "text-green-600" : score >= 40 ? "text-yellow-600" : "text-red-600";
+  const scoreBadge = (score) => {
+    if (score >= 70) return { label: "Good", cls: "bg-green-100 text-green-800" };
+    if (score >= 40) return { label: "Fair", cls: "bg-yellow-100 text-yellow-800" };
+    return { label: "Needs Work", cls: "bg-red-100 text-red-800" };
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-6">
-      <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl p-5">
-        <h2 className="font-semibold text-gray-800 flex items-center gap-2"><Zap size={18} /> AI Resume Scorer</h2>
-        <p className="text-sm text-gray-500 mt-1">Paste a job description and your resume for a multi-dimensional ATS analysis with actionable improvement suggestions.</p>
+      {/* Header */}
+      <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl p-5">
+        <h2 className="font-semibold text-gray-800 flex items-center gap-2"><FileText size={18} /> Resume Workspace</h2>
+        <p className="text-sm text-gray-500 mt-1">Upload your resume, get scored, improve with AI, and download a polished version.</p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div>
-          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 block">Job Description (optional but recommended)</label>
-          <textarea value={jobDesc} onChange={(e) => setJobDesc(e.target.value)} placeholder="Paste the full job description here..."
-            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm h-48 focus:outline-none focus:ring-2 focus:ring-amber-200 resize-y" />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2 block">Your Resume *</label>
-          <textarea value={resume} onChange={(e) => setResume(e.target.value)} placeholder="Paste your resume text here..."
-            className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm h-48 focus:outline-none focus:ring-2 focus:ring-amber-200 resize-y" />
-        </div>
-      </div>
-
-      <button onClick={analyze} disabled={!resume.trim() || loading}
-        className="flex items-center gap-2 bg-amber-600 text-white px-5 py-2 rounded-lg text-sm font-medium hover:bg-amber-700 disabled:opacity-40 transition">
-        {loading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
-        {loading ? "Analyzing..." : "Analyze Match"}
-      </button>
-
-      {error && (
-        <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 text-sm rounded-lg p-3 flex items-center gap-2">
-          <AlertCircle size={14} className="flex-shrink-0" />{error}
+      {/* Job Targeting Banner */}
+      {selectedJob && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-xs font-medium text-indigo-600 uppercase tracking-wide">Targeting</span>
+          </div>
+          <div className="font-semibold text-gray-800">{selectedJob.title} @ {selectedJob.company}</div>
+          {selectedJob.skills?.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {selectedJob.skills.map((s) => <span key={s} className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full text-xs">{s}</span>)}
+            </div>
+          )}
         </div>
       )}
 
-      {analysis && (
-        <div className="space-y-5">
-          {/* Overall Score */}
-          <div className="bg-white border border-gray-200 rounded-xl p-5 text-center">
-            <div className={`text-5xl font-bold ${scoreTextColor(analysis.overall_score)}`}>
-              {analysis.overall_score}%
-            </div>
-            <div className="text-sm text-gray-500 mt-1">
-              {analysis.fallback ? "Keyword Match Score" : "Overall Resume Score"}
-            </div>
-            <div className="mt-3 w-full bg-gray-100 rounded-full h-3">
-              <div className={`h-3 rounded-full transition-all ${scoreBarColor(analysis.overall_score)}`} style={{ width: `${analysis.overall_score}%` }} />
-            </div>
+      {/* Upload Zone */}
+      <div
+        className={`border-2 border-dashed rounded-xl p-6 text-center transition cursor-pointer ${dragOver ? "border-indigo-400 bg-indigo-50" : "border-gray-300 bg-white hover:border-gray-400"}`}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onClick={() => fileInputRef.current?.click()}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf,.docx"
+          className="hidden"
+          onChange={(e) => { handleFileUpload(e.target.files?.[0]); e.target.value = ""; }}
+        />
+        {uploading ? (
+          <div className="flex items-center justify-center gap-2 text-indigo-600">
+            <Loader2 size={20} className="animate-spin" />
+            <span className="text-sm font-medium">Uploading and parsing...</span>
           </div>
+        ) : (
+          <>
+            <UploadCloud size={28} className="mx-auto text-gray-400 mb-2" />
+            <p className="text-sm font-medium text-gray-700">Upload PDF or DOCX</p>
+            <p className="text-xs text-gray-400 mt-1">Drag and drop or click to browse</p>
+          </>
+        )}
+      </div>
+      {uploadError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center gap-2">
+          <AlertCircle size={14} className="flex-shrink-0" />{uploadError}
+        </div>
+      )}
 
-          {/* Multi-dimensional scores (backend only) */}
-          {analysis.dimensions && typeof analysis.dimensions === "object" && !Array.isArray(analysis.dimensions) && Object.keys(analysis.dimensions).length > 0 && (
-            <div className="bg-white border border-gray-200 rounded-xl p-5">
-              <h4 className="text-sm font-semibold text-gray-800 mb-4">Score Breakdown</h4>
-              <div className="space-y-4">
-                {Object.entries(analysis.dimensions).map(([name, dim]) => {
-                  const pct = dim.max > 0 ? Math.round((dim.score / dim.max) * 100) : 0;
-                  const badge = scoreBadge(pct);
-                  return (
-                    <div key={name}>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-gray-700 capitalize">{name}</span>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${badge.cls}`}>{badge.label}</span>
+      {/* Profile Fields */}
+      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+        <h3 className="text-sm font-semibold text-gray-700">Profile Details</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <input placeholder="Full Name" value={profile.name} onChange={(e) => setProfile({ ...profile, name: e.target.value })}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+          <input placeholder="Email" value={profile.email} onChange={(e) => setProfile({ ...profile, email: e.target.value })}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+          <input placeholder="Phone" value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+          <input placeholder="Location" value={profile.location} onChange={(e) => setProfile({ ...profile, location: e.target.value })}
+            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
+        </div>
+      </div>
+
+      {/* Two-panel layout: Score (left) + Editor (right) */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+
+        {/* Score Panel (left, 2 cols) */}
+        <div className="lg:col-span-2 space-y-4 order-1 lg:order-1">
+          {/* Overall Score */}
+          {scoring && (
+            <div className="bg-white border border-gray-200 rounded-xl p-5 text-center">
+              <Loader2 size={24} className="animate-spin text-indigo-400 mx-auto" />
+              <p className="text-xs text-gray-400 mt-2">Scoring...</p>
+            </div>
+          )}
+          {scoreData && !scoring && (
+            <>
+              <div className="bg-white border border-gray-200 rounded-xl p-5">
+                <div className="text-center mb-3">
+                  <div className={`text-4xl font-bold ${scoreTextColor(scoreData.overall_score)}`}>
+                    {scoreData.overall_score}<span className="text-lg text-gray-400">/100</span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">{scoreData.fallback ? "Keyword Match" : "Overall Score"}</div>
+                </div>
+                <div className="w-full bg-gray-100 rounded-full h-2.5 mb-4">
+                  <div className={`h-2.5 rounded-full transition-all ${scoreBarColor(scoreData.overall_score)}`} style={{ width: `${scoreData.overall_score}%` }} />
+                </div>
+
+                {/* Dimension scores */}
+                {scoreData.dimensions && typeof scoreData.dimensions === "object" && !Array.isArray(scoreData.dimensions) && Object.keys(scoreData.dimensions).length > 0 && (
+                  <div className="space-y-3">
+                    {Object.entries(scoreData.dimensions).map(([name, dim]) => {
+                      const pct = dim.max > 0 ? Math.round((dim.score / dim.max) * 100) : 0;
+                      return (
+                        <div key={name}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-xs font-medium text-gray-600 capitalize">{name}</span>
+                            <span className={`text-xs font-bold ${scoreTextColor(pct)}`}>{dim.score}/{dim.max}</span>
+                          </div>
+                          <div className="w-full bg-gray-100 rounded-full h-1.5">
+                            <div className={`h-1.5 rounded-full transition-all ${scoreBarColor(pct)}`} style={{ width: `${pct}%` }} />
+                          </div>
                         </div>
-                        <span className={`text-sm font-bold ${scoreTextColor(pct)}`}>{dim.score}/{dim.max}</span>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Keyword match */}
+                {scoreData.keyword_match && (
+                  <div className="mt-4 pt-3 border-t border-gray-100">
+                    <div className="text-xs font-medium text-gray-600 mb-2">Keywords Matched</div>
+                    {scoreData.keyword_match.found && (
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {(Array.isArray(scoreData.keyword_match.found) ? scoreData.keyword_match.found : []).map((kw) => (
+                          <span key={kw} className="bg-green-100 text-green-700 px-1.5 py-0.5 rounded text-[10px]">{kw}</span>
+                        ))}
                       </div>
-                      <div className="w-full bg-gray-100 rounded-full h-2">
-                        <div className={`h-2 rounded-full transition-all ${scoreBarColor(pct)}`} style={{ width: `${pct}%` }} />
-                      </div>
-                      {dim.status && <p className="text-xs text-gray-500 mt-1 capitalize">{dim.status.replace(/_/g, " ")}</p>}
-                    </div>
-                  );
-                })}
+                    )}
+                    {scoreData.keyword_match.missing && (
+                      <>
+                        <div className="text-xs font-medium text-gray-600 mb-1 mt-2">Missing</div>
+                        <div className="flex flex-wrap gap-1">
+                          {(Array.isArray(scoreData.keyword_match.missing) ? scoreData.keyword_match.missing : []).map((kw) => (
+                            <span key={kw} className="bg-red-100 text-red-700 px-1.5 py-0.5 rounded text-[10px]">{kw}</span>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
+
+              {/* Suggestions */}
+              {scoreData.top_suggestions && scoreData.top_suggestions.length > 0 && (
+                <div className="bg-white border border-gray-200 rounded-xl p-4">
+                  <h4 className="text-xs font-semibold text-gray-700 mb-3 uppercase tracking-wide">Suggestions</h4>
+                  <div className="space-y-2">
+                    {scoreData.top_suggestions.map((s, i) => {
+                      const suggText = typeof s === "string" ? s : (s.detail || s.action || "");
+                      const suggPts = typeof s === "object" && s.points ? s.points : null;
+                      return (
+                        <div key={i} className="flex items-start gap-2">
+                          <div className="bg-amber-100 text-amber-700 rounded-full w-5 h-5 flex items-center justify-center flex-shrink-0 text-[10px] font-bold mt-0.5">
+                            {suggPts ? `+${suggPts}` : i + 1}
+                          </div>
+                          <p className="text-xs text-gray-700 leading-relaxed">{suggText}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* SG Tips */}
+              {scoreData.sg_tips && scoreData.sg_tips.length > 0 && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+                  <h4 className="text-xs font-semibold text-indigo-800 mb-2 uppercase tracking-wide">SG Tips</h4>
+                  <ul className="space-y-1.5">
+                    {scoreData.sg_tips.map((tip, i) => (
+                      <li key={i} className="flex items-start gap-1.5 text-xs text-indigo-900">
+                        <ChevronRight size={12} className="mt-0.5 flex-shrink-0" />{tip}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {(!scoreData.sg_tips || scoreData.sg_tips.length === 0) && (
+                <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4">
+                  <h4 className="text-xs font-semibold text-indigo-800 mb-2 uppercase tracking-wide">SG Tips</h4>
+                  <ul className="space-y-1.5 text-xs text-indigo-900">
+                    <li className="flex items-start gap-1.5"><ChevronRight size={12} className="mt-0.5 flex-shrink-0" />MyCareersFuture uses skills-based matching — list specific skills.</li>
+                    <li className="flex items-start gap-1.5"><ChevronRight size={12} className="mt-0.5 flex-shrink-0" />Keep formatting simple for ATS systems like Workday and Greenhouse.</li>
+                    <li className="flex items-start gap-1.5"><ChevronRight size={12} className="mt-0.5 flex-shrink-0" />SkillsFuture or WSQ certs resonate with SG employers.</li>
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Placeholder when no score yet */}
+          {!scoreData && !scoring && (
+            <div className="bg-white border border-gray-200 rounded-xl p-5 text-center">
+              <Zap size={24} className="mx-auto text-gray-300 mb-2" />
+              <p className="text-sm text-gray-400">Paste or upload your resume to see your score</p>
             </div>
           )}
 
-          {/* Fallback keyword view */}
-          {analysis.fallback && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-                <h4 className="text-sm font-semibold text-green-800 mb-2">Found ({analysis.found.length})</h4>
-                <div className="flex flex-wrap gap-1.5">{analysis.found.map((kw) => <span key={kw} className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs">{kw}</span>)}</div>
-              </div>
-              <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-                <h4 className="text-sm font-semibold text-red-800 mb-2">Missing ({analysis.missing.length})</h4>
-                <div className="flex flex-wrap gap-1.5">{analysis.missing.map((kw) => <span key={kw} className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs">{kw}</span>)}</div>
-              </div>
+          {scoreError && (
+            <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 text-xs rounded-lg p-2.5 flex items-center gap-1.5">
+              <AlertCircle size={12} className="flex-shrink-0" />{scoreError}
             </div>
           )}
 
-          {/* Top Suggestions */}
-          {analysis.top_suggestions && analysis.top_suggestions.length > 0 && (
-            <div className="space-y-3">
-              <h4 className="text-sm font-semibold text-gray-800">Actionable Suggestions</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {analysis.top_suggestions.map((s, i) => {
-                  const suggText = typeof s === "string" ? s : (s.detail || s.action || "");
-                  const suggPts = typeof s === "object" && s.points ? s.points : null;
-                  return (
-                    <div key={i} className="bg-white border border-gray-200 rounded-xl p-4 flex items-start gap-3 hover:shadow-sm transition">
-                      <div className="bg-amber-100 text-amber-700 rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0 text-xs font-bold">{suggPts ? `+${suggPts}` : i + 1}</div>
-                      <p className="text-sm text-gray-700">{suggText}</p>
-                    </div>
-                  );
-                })}
+          {/* AI Action Buttons */}
+          <div className="space-y-2">
+            <button onClick={handleAIReview} disabled={coachLoading || !resumeText.trim()}
+              className="w-full flex items-center justify-center gap-2 bg-purple-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-40 transition">
+              {coachLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              {coachLoading ? "Analyzing..." : "AI Review"}
+            </button>
+            <button onClick={handleAIFormat} disabled={formatting || !resumeText.trim()}
+              className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition">
+              {formatting ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              {formatting ? "Formatting..." : "AI Format"}
+            </button>
+            {aiStatus && (
+              <div className="text-center">
+                <span className={`text-xs px-2 py-1 rounded-full ${aiStatus.status === "ready" ? "bg-green-100 text-green-700" : aiStatus.status === "busy" ? "bg-yellow-100 text-yellow-700" : "bg-orange-100 text-orange-700"}`}>
+                  {aiStatus.status === "ready" ? "AI Ready" : aiStatus.status === "busy" ? "AI Busy" : `~${Math.round(aiStatus.wait_seconds || 0)}s wait`}
+                </span>
               </div>
-            </div>
-          )}
+            )}
+          </div>
+        </div>
 
-          {/* SG Tips from backend */}
-          {analysis.sg_tips && analysis.sg_tips.length > 0 && (
-            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-5">
-              <h4 className="text-sm font-semibold text-indigo-800 mb-2">Singapore-Specific Tips</h4>
-              <ul className="space-y-2 text-sm text-indigo-900">
-                {analysis.sg_tips.map((tip, i) => (
-                  <li key={i} className="flex items-start gap-2"><ChevronRight size={14} className="mt-0.5 flex-shrink-0" />{tip}</li>
-                ))}
-              </ul>
+        {/* Resume Editor (right, 3 cols) */}
+        <div className="lg:col-span-3 order-2 lg:order-2">
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+            <div className="bg-gray-50 px-4 py-2.5 border-b border-gray-200 flex items-center justify-between">
+              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Resume Editor</span>
+              <span className="text-xs text-gray-400">{resumeText.split(/\s+/).filter(Boolean).length} words</span>
             </div>
-          )}
+            <textarea
+              value={resumeText}
+              onChange={(e) => setResumeText(e.target.value)}
+              placeholder="Paste your resume text here, or upload a file above..."
+              className="w-full px-4 py-3 text-sm text-gray-800 leading-relaxed focus:outline-none resize-y font-mono"
+              style={{ minHeight: "400px" }}
+            />
+          </div>
+        </div>
+      </div>
 
-          {/* Static SG tips fallback */}
-          {(!analysis.sg_tips || analysis.sg_tips.length === 0) && (
-            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-5">
-              <h4 className="text-sm font-semibold text-indigo-800 mb-2">Singapore ATS Tips</h4>
-              <ul className="space-y-2 text-sm text-indigo-900">
-                <li className="flex items-start gap-2"><ChevronRight size={14} className="mt-0.5 flex-shrink-0" />MyCareersFuture uses skills-based matching — list specific skills, not just titles.</li>
-                <li className="flex items-start gap-2"><ChevronRight size={14} className="mt-0.5 flex-shrink-0" />SG employers often use Workday, SuccessFactors, or Greenhouse — keep formatting simple.</li>
-                <li className="flex items-start gap-2"><ChevronRight size={14} className="mt-0.5 flex-shrink-0" />Submit .docx or .pdf — avoid .pages or image-based PDFs.</li>
-                <li className="flex items-start gap-2"><ChevronRight size={14} className="mt-0.5 flex-shrink-0" />SkillsFuture or WSQ certs resonate with SG employers.</li>
-              </ul>
+      {/* AI Coach Error */}
+      {coachError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center gap-2">
+          <AlertCircle size={14} className="flex-shrink-0" />{coachError}
+        </div>
+      )}
+      {formatError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center gap-2">
+          <AlertCircle size={14} className="flex-shrink-0" />{formatError}
+        </div>
+      )}
+
+      {/* AI Coach Response */}
+      {coachLoading && (
+        <div className="bg-purple-50 border border-purple-200 rounded-xl p-5 text-center">
+          <Loader2 size={24} className="animate-spin text-purple-500 mx-auto" />
+          <p className="text-sm text-purple-700 mt-2">Analyzing your resume... this usually takes 15-30 seconds</p>
+        </div>
+      )}
+      {coachResponse && !coachLoading && (
+        <div className="bg-purple-50 border border-purple-200 rounded-xl p-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Sparkles size={16} className="text-purple-600" />
+              <h4 className="text-sm font-semibold text-purple-800">AI Coach Response</h4>
             </div>
+            <span className="text-[10px] bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full">Powered by AI</span>
+          </div>
+          <div className="bg-white rounded-lg p-4 text-sm text-gray-700 leading-relaxed whitespace-pre-line shadow-sm">
+            {coachResponse.coaching}
+          </div>
+          {sessionId && <p className="text-xs text-purple-400 mt-2">Session active — subsequent AI actions in this session use the same credit.</p>}
+        </div>
+      )}
+
+      {/* Template Selector + Download */}
+      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-gray-700">Download Resume</h3>
+
+        {/* Templates */}
+        {templates.length > 0 && (
+          <div className="flex gap-3 overflow-x-auto pb-1" style={{ scrollbarWidth: "thin" }}>
+            {templates.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setSelectedTemplate(t.id)}
+                className={`flex-shrink-0 border rounded-xl px-4 py-3 text-left transition min-w-[140px] ${selectedTemplate === t.id ? "border-indigo-400 bg-indigo-50 ring-2 ring-indigo-200" : "border-gray-200 hover:border-gray-300 bg-white"}`}
+              >
+                <div className="text-sm font-medium text-gray-800">{t.name}</div>
+                <div className="text-xs text-gray-500 mt-0.5">{t.description}</div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <button onClick={handleDownload} disabled={downloading || !resumeText.trim()}
+            className="flex items-center gap-2 bg-emerald-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-40 transition">
+            {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            {downloading ? "Preparing..." : "Download DOCX"}
+          </button>
+          {downloadError && (
+            <span className="text-xs text-red-600 flex items-center gap-1"><AlertCircle size={12} />{downloadError}</span>
           )}
+        </div>
+      </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center gap-2">
+          <AlertCircle size={14} className="flex-shrink-0" />{error}
         </div>
       )}
     </div>
@@ -1801,8 +1834,7 @@ export default function JobHunterSG() {
               <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Follow-up Reminders" />
             )
           )}
-          {activeTab === "resume" && <ResumeBuilderTab selectedJob={selectedJob} user={user} />}
-          {activeTab === "ats" && <ATSTab />}
+          {activeTab === "resume" && <ResumeTab selectedJob={selectedJob} user={user} />}
           {activeTab === "account" && (
             user ? (
               <AccountTab user={user} onLogout={handleLogout} />
