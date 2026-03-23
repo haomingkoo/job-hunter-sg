@@ -155,6 +155,145 @@ def seed_jobs(
     return stats
 
 
+def crawl_all_jobs() -> dict:
+    """
+    FULL CRAWL — paginate through ALL jobs from MCF and CareersGov.
+    MCF: ~12,000 jobs (pages of 100)
+    CareersGov: ~3,000 jobs (pages of 20)
+    Takes ~15-20 minutes total.
+    """
+    init_db()
+    db = SessionLocal()
+
+    stats = {"new": 0, "updated": 0, "errors": 0, "pages": 0}
+    start = time.time()
+
+    # ── MCF: paginate through all jobs ──────────────────────────────
+    from scraper import MyCareersFutureScraper
+    mcf = MyCareersFutureScraper()
+
+    log.info("=" * 60)
+    log.info("FULL CRAWL: MyCareersFuture")
+    log.info("=" * 60)
+
+    page = 0
+    total_mcf = None
+    while True:
+        try:
+            jobs = mcf.search("", limit=100, page=page)  # Empty string = all jobs
+            if not jobs:
+                log.info(f"[MCF] Page {page}: no results, stopping")
+                break
+
+            for job in jobs:
+                raw = asdict(job)
+                raw["dedup_key"] = job.dedup_key
+                clean = sanitize_job(raw)
+                clean["search_keyword"] = "all"
+
+                existing = db.query(ScrapedJob).filter(
+                    ScrapedJob.dedup_key == clean["dedup_key"]
+                ).first()
+                if existing:
+                    for key, val in clean.items():
+                        if key != "id":
+                            setattr(existing, key, val)
+                    stats["updated"] += 1
+                else:
+                    db.add(ScrapedJob(**clean))
+                    stats["new"] += 1
+
+            db.commit()
+            stats["pages"] += 1
+            log.info(f"[MCF] Page {page}: {len(jobs)} jobs (total new: {stats['new']}, updated: {stats['updated']})")
+
+            page += 1
+            time.sleep(0.5)  # Be polite
+
+            # Safety: stop after 200 pages (20,000 jobs max)
+            if page >= 200:
+                log.info("[MCF] Hit 200 page limit, stopping")
+                break
+
+        except Exception as e:
+            log.error(f"[MCF] Page {page} failed: {e}")
+            stats["errors"] += 1
+            db.rollback()
+            page += 1
+            time.sleep(2)  # Back off on error
+
+    # ── CareersGov: paginate through all jobs ───────────────────────
+    from scraper import CareersGovScraper
+    cgov = CareersGovScraper()
+
+    log.info("")
+    log.info("=" * 60)
+    log.info("FULL CRAWL: Careers@Gov")
+    log.info("=" * 60)
+
+    offset = 0
+    while True:
+        try:
+            jobs = cgov.search("", limit=20, offset=offset)
+            if not jobs:
+                log.info(f"[CareersGov] Offset {offset}: no results, stopping")
+                break
+
+            for job in jobs:
+                raw = asdict(job)
+                raw["dedup_key"] = job.dedup_key
+                clean = sanitize_job(raw)
+                clean["search_keyword"] = "all"
+
+                existing = db.query(ScrapedJob).filter(
+                    ScrapedJob.dedup_key == clean["dedup_key"]
+                ).first()
+                if existing:
+                    for key, val in clean.items():
+                        if key != "id":
+                            setattr(existing, key, val)
+                    stats["updated"] += 1
+                else:
+                    db.add(ScrapedJob(**clean))
+                    stats["new"] += 1
+
+            db.commit()
+            stats["pages"] += 1
+            log.info(f"[CareersGov] Offset {offset}: {len(jobs)} jobs (total new: {stats['new']}, updated: {stats['updated']})")
+
+            offset += 20
+            time.sleep(0.5)
+
+            # Safety: stop after 500 pages (10,000 jobs max)
+            if offset >= 10000:
+                log.info("[CareersGov] Hit 10,000 offset limit, stopping")
+                break
+
+        except Exception as e:
+            log.error(f"[CareersGov] Offset {offset} failed: {e}")
+            stats["errors"] += 1
+            db.rollback()
+            offset += 20
+            time.sleep(2)
+
+    duration = round(time.time() - start, 1)
+    total_in_db = db.query(ScrapedJob).count()
+    db.close()
+
+    log.info("")
+    log.info("=" * 60)
+    log.info("FULL CRAWL COMPLETE")
+    log.info(f"  Pages fetched:    {stats['pages']}")
+    log.info(f"  New jobs added:   {stats['new']}")
+    log.info(f"  Jobs updated:     {stats['updated']}")
+    log.info(f"  Errors:           {stats['errors']}")
+    log.info(f"  Duration:         {duration}s ({round(duration/60, 1)} min)")
+    log.info(f"  Total jobs in DB: {total_in_db}")
+    log.info("=" * 60)
+
+    return stats
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pre-populate job database")
     parser.add_argument(
@@ -174,10 +313,20 @@ def main():
     )
     parser.add_argument(
         "--quick", action="store_true",
-        help="Quick mode — only top 5 keywords",
+        help="Quick test — 5 keywords, 5 jobs each (~15 sec)",
+    )
+    parser.add_argument(
+        "--full", action="store_true",
+        help="FULL CRAWL — paginate ALL jobs from MCF + CareersGov (~15-20 min, ~15,000 jobs)",
     )
 
     args = parser.parse_args()
+
+    # Full crawl mode — get EVERYTHING
+    if args.full:
+        log.info("Starting FULL CRAWL of all SG job portals...")
+        crawl_all_jobs()
+        return
 
     keywords = DEFAULT_KEYWORDS
     if args.keywords:
