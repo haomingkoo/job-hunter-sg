@@ -28,6 +28,7 @@ frontend/dist/
 *.csv
 *.json
 !package.json
+!package-lock.json
 !manifest.json
 !tsconfig.json
 !.env.example

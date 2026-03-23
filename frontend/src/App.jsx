@@ -60,6 +60,22 @@ async function apiFetch(path, options = {}) {
 
 // ─── Shared Components ─────────────────────────────────────────────────────────
 
+function AuthPrompt({ onSignIn, featureName }) {
+  return (
+    <div className="text-center py-16">
+      <User size={40} className="mx-auto mb-4 text-gray-300" />
+      <h3 className="text-lg font-semibold text-gray-700 mb-2">Sign in to access {featureName}</h3>
+      <p className="text-sm text-gray-500 mb-6 max-w-md mx-auto">
+        Create a free account or sign in with your @aisg.sg email to unlock this feature.
+      </p>
+      <button onClick={onSignIn}
+        className="bg-indigo-600 text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-indigo-700 transition">
+        Sign In
+      </button>
+    </div>
+  );
+}
+
 function StatusBadge({ status }) {
   const c = STATUS_CONFIG[status] || STATUS_CONFIG.applied;
   const Icon = c.icon;
@@ -208,7 +224,7 @@ function AuthModal({ onAuth, onClose }) {
 // TAB 1: JOB SCRAPER
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob }) {
+function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, onSignIn }) {
   const [query, setQuery] = useState("");
   const [selectedPortals, setSelectedPortals] = useState(SG_JOB_PORTALS.map((p) => p.key));
   const [results, setResults] = useState([]);
@@ -270,17 +286,28 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob }
     return r;
   }, [results, levelFilter, sortBy]);
 
+  const [trackError, setTrackError] = useState("");
+
   const trackJob = async (scrapedJob) => {
-    const payload = {
-      company: scrapedJob.company,
-      role: scrapedJob.title,
-      date_applied: todayStr(),
-      status: "applied",
-      source: scrapedJob.source,
-      follow_up_date: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
-      notes: `Salary: ${scrapedJob.salary} | ${scrapedJob.location}`,
-    };
-    await onTrack(payload);
+    if (!user) {
+      onSignIn();
+      return;
+    }
+    setTrackError("");
+    try {
+      const payload = {
+        company: scrapedJob.company,
+        role: scrapedJob.title,
+        date_applied: todayStr(),
+        status: "applied",
+        source: scrapedJob.source,
+        follow_up_date: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
+        notes: `Salary: ${scrapedJob.salary} | ${scrapedJob.location}`,
+      };
+      await onTrack(payload);
+    } catch (err) {
+      setTrackError(err.message || "Failed to track job. Please try again.");
+    }
   };
 
   const generateResume = (scrapedJob) => {
@@ -365,6 +392,13 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob }
         <div className="text-center py-8">
           <AlertCircle size={32} className="mx-auto mb-2 text-red-400" />
           <p className="text-sm text-red-600">{error}</p>
+        </div>
+      )}
+
+      {/* Track error */}
+      {trackError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center gap-2">
+          <AlertCircle size={14} className="flex-shrink-0" />{trackError}
         </div>
       )}
 
@@ -511,7 +545,7 @@ function TrackerTab({ user, jobs, refreshJobs }) {
       await apiFetch(`/api/tracked/${id}`, { method: "DELETE" });
       await refreshJobs();
     } catch (err) {
-      console.error("Delete failed:", err);
+      setError(err.message || "Failed to delete job.");
     }
   };
 
@@ -530,7 +564,7 @@ function TrackerTab({ user, jobs, refreshJobs }) {
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
-      console.error("Export failed:", err);
+      setError(err.message || "Export failed. Please try again.");
     }
   };
 
@@ -548,6 +582,12 @@ function TrackerTab({ user, jobs, refreshJobs }) {
 
   return (
     <div className="space-y-6">
+      {error && !showForm && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center justify-between">
+          <div className="flex items-center gap-2"><AlertCircle size={14} className="flex-shrink-0" />{error}</div>
+          <button onClick={() => setError("")} className="text-red-400 hover:text-red-600"><X size={14} /></button>
+        </div>
+      )}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { label: "Total", value: stats.total, bg: "bg-gray-50" },
@@ -701,6 +741,7 @@ function TrackerTab({ user, jobs, refreshJobs }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function RemindersTab({ jobs, onUpdateJob }) {
+  const [error, setError] = useState("");
   const td = todayStr();
   const pending = jobs
     .filter((j) => j.follow_up_date && (j.status === "applied" || j.status === "interview"))
@@ -712,12 +753,22 @@ function RemindersTab({ jobs, onUpdateJob }) {
   const later = pending.filter((j) => j.daysUntil > 7);
 
   const snooze = async (job) => {
-    const newDate = new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
-    await onUpdateJob(job.id, { follow_up_date: newDate });
+    setError("");
+    try {
+      const newDate = new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0];
+      await onUpdateJob(job.id, { follow_up_date: newDate });
+    } catch (err) {
+      setError(err.message || "Failed to snooze reminder.");
+    }
   };
 
   const markDone = async (job) => {
-    await onUpdateJob(job.id, { follow_up_date: null });
+    setError("");
+    try {
+      await onUpdateJob(job.id, { follow_up_date: null });
+    } catch (err) {
+      setError(err.message || "Failed to update reminder.");
+    }
   };
 
   const Card = ({ job, urgency }) => {
@@ -763,6 +814,12 @@ function RemindersTab({ jobs, onUpdateJob }) {
         <h2 className="font-semibold text-gray-800 flex items-center gap-2"><Bell size={18} /> Follow-up Reminders</h2>
         <p className="text-sm text-gray-500 mt-1">Never let an application go cold. Follow up within 14 days of applying.</p>
       </div>
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center justify-between">
+          <div className="flex items-center gap-2"><AlertCircle size={14} className="flex-shrink-0" />{error}</div>
+          <button onClick={() => setError("")} className="text-red-400 hover:text-red-600"><X size={14} /></button>
+        </div>
+      )}
       {pending.length === 0 ? (
         <div className="text-center py-12 text-gray-400">No follow-ups scheduled. Add follow-up dates in Tracker.</div>
       ) : (
@@ -1278,25 +1335,26 @@ function ATSTab() {
           </div>
 
           {/* Multi-dimensional scores (backend only) */}
-          {analysis.dimensions && analysis.dimensions.length > 0 && (
+          {analysis.dimensions && typeof analysis.dimensions === "object" && !Array.isArray(analysis.dimensions) && Object.keys(analysis.dimensions).length > 0 && (
             <div className="bg-white border border-gray-200 rounded-xl p-5">
               <h4 className="text-sm font-semibold text-gray-800 mb-4">Score Breakdown</h4>
               <div className="space-y-4">
-                {analysis.dimensions.map((dim) => {
-                  const badge = scoreBadge(dim.score);
+                {Object.entries(analysis.dimensions).map(([name, dim]) => {
+                  const pct = dim.max > 0 ? Math.round((dim.score / dim.max) * 100) : 0;
+                  const badge = scoreBadge(pct);
                   return (
-                    <div key={dim.name}>
+                    <div key={name}>
                       <div className="flex items-center justify-between mb-1.5">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-gray-700">{dim.name}</span>
+                          <span className="text-sm font-medium text-gray-700 capitalize">{name}</span>
                           <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${badge.cls}`}>{badge.label}</span>
                         </div>
-                        <span className={`text-sm font-bold ${scoreTextColor(dim.score)}`}>{dim.score}%</span>
+                        <span className={`text-sm font-bold ${scoreTextColor(pct)}`}>{dim.score}/{dim.max}</span>
                       </div>
                       <div className="w-full bg-gray-100 rounded-full h-2">
-                        <div className={`h-2 rounded-full transition-all ${scoreBarColor(dim.score)}`} style={{ width: `${dim.score}%` }} />
+                        <div className={`h-2 rounded-full transition-all ${scoreBarColor(pct)}`} style={{ width: `${pct}%` }} />
                       </div>
-                      {dim.details && <p className="text-xs text-gray-500 mt-1">{dim.details}</p>}
+                      {dim.status && <p className="text-xs text-gray-500 mt-1 capitalize">{dim.status.replace(/_/g, " ")}</p>}
                     </div>
                   );
                 })}
@@ -1499,7 +1557,7 @@ function AccountTab({ user, onLogout }) {
               <tr>
                 <th className="text-left px-4 py-3 text-gray-500 text-xs uppercase">Feature</th>
                 <th className="text-center px-4 py-3 text-gray-500 text-xs uppercase">Free</th>
-                <th className="text-center px-4 py-3 text-xs uppercase text-indigo-600">Pro ($5/mo)</th>
+                <th className="text-center px-4 py-3 text-xs uppercase text-indigo-600">AISG (Free)</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -1531,13 +1589,13 @@ function AccountTab({ user, onLogout }) {
           <div className="mt-4 bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-xl p-5">
             <div className="flex items-center gap-3 mb-2">
               <Star size={20} className="text-indigo-600" />
-              <h4 className="font-semibold text-gray-800">Upgrade to Pro</h4>
+              <h4 className="font-semibold text-gray-800">Upgrade to AISG Tier</h4>
             </div>
             <p className="text-sm text-gray-600 mb-3">
-              Get 50 searches/day, unlimited tracked jobs, CSV export, and full ATS analysis for just $5/month.
+              Sign up with your @aisg.sg email to get 50 searches/day, unlimited tracked jobs, CSV export, and full ATS analysis — completely free.
             </p>
             <p className="text-sm text-gray-500">
-              Send us a message below or reach out directly to upgrade.
+              Have questions? Send us a message below or reach out directly.
             </p>
           </div>
         )}
@@ -1680,27 +1738,19 @@ export default function JobHunterSG() {
   };
 
   const handleTrackJob = async (payload) => {
-    try {
-      await apiFetch("/api/tracked", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      await refreshJobs();
-    } catch (err) {
-      console.error("Track failed:", err);
-    }
+    await apiFetch("/api/tracked", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    await refreshJobs();
   };
 
   const handleUpdateJob = async (id, updates) => {
-    try {
-      await apiFetch(`/api/tracked/${id}`, {
-        method: "PUT",
-        body: JSON.stringify(updates),
-      });
-      await refreshJobs();
-    } catch (err) {
-      console.error("Update failed:", err);
-    }
+    await apiFetch(`/api/tracked/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(updates),
+    });
+    await refreshJobs();
   };
 
   // Loading state
@@ -1755,7 +1805,7 @@ export default function JobHunterSG() {
         </div>
 
         {showAuthModal && (
-          <AuthModal onAuth={(data) => { handleAuth(data); setShowAuthModal(false); }} onClose={() => setShowAuthModal(false)} />
+          <AuthModal onAuth={(authUser, authToken) => { handleAuth(authUser, authToken); setShowAuthModal(false); }} onClose={() => setShowAuthModal(false)} />
         )}
 
         <Nav active={activeTab} setActive={setActiveTab} />
@@ -1768,25 +1818,38 @@ export default function JobHunterSG() {
               onTrack={handleTrackJob}
               setActiveTab={setActiveTab}
               setSelectedJob={setSelectedJob}
+              onSignIn={() => setShowAuthModal(true)}
             />
           )}
           {activeTab === "tracker" && (
-            <TrackerTab
-              user={user}
-              jobs={trackedJobs}
-              refreshJobs={refreshJobs}
-            />
+            user ? (
+              <TrackerTab
+                user={user}
+                jobs={trackedJobs}
+                refreshJobs={refreshJobs}
+              />
+            ) : (
+              <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Application Tracker" />
+            )
           )}
           {activeTab === "reminders" && (
-            <RemindersTab
-              jobs={trackedJobs}
-              onUpdateJob={handleUpdateJob}
-            />
+            user ? (
+              <RemindersTab
+                jobs={trackedJobs}
+                onUpdateJob={handleUpdateJob}
+              />
+            ) : (
+              <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Follow-up Reminders" />
+            )
           )}
           {activeTab === "resume" && <ResumeBuilderTab selectedJob={selectedJob} user={user} />}
           {activeTab === "ats" && <ATSTab />}
           {activeTab === "account" && (
-            <AccountTab user={user} onLogout={handleLogout} />
+            user ? (
+              <AccountTab user={user} onLogout={handleLogout} />
+            ) : (
+              <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Account Settings" />
+            )
           )}
         </div>
       </div>

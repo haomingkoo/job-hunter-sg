@@ -8,6 +8,7 @@ import csv
 import io
 import logging
 import os
+import re
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -64,7 +65,17 @@ app = FastAPI(
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
 
-allowed_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+allowed_origins = [
+    o.strip() for o in os.environ.get(
+        "ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"
+    ).split(",") if o.strip()
+]
+# SECURITY: Block wildcard CORS in production
+if _is_production and "*" in allowed_origins:
+    raise RuntimeError(
+        "ALLOWED_ORIGINS must not be '*' in production. "
+        "Set it to your frontend URL (e.g. https://jobhuntersg.com)."
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -123,8 +134,14 @@ def on_startup() -> None:
 # ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/")
-def health() -> dict:
-    return {"status": "ok", "service": "Job Hunter SG API"}
+def health(db: Session = Depends(get_db)) -> dict:
+    from sqlalchemy import text
+    try:
+        db.execute(text("SELECT 1"))
+        db_status = "connected"
+    except Exception:
+        db_status = "error"
+    return {"status": "ok", "service": "Job Hunter SG API", "db": db_status}
 
 
 @app.get("/api/privacy")
@@ -188,7 +205,7 @@ def privacy() -> dict:
                 "content": (
                     "This project is built by Haoming Koo as a tool to help job "
                     "seekers in Singapore. If you have any questions or concerns "
-                    f"about your data, reach out at {os.environ.get('CONTACT_EMAIL', 'support@jobhuntersg.com')}."
+                    f"about your data, reach out at {os.environ.get('CONTACT_EMAIL', '')}."
                 ),
             },
         ],
@@ -201,6 +218,8 @@ def privacy() -> dict:
 
 @app.post("/api/auth/signup", response_model=AuthResponse)
 def signup(body: SignupRequest, db: Session = Depends(get_db)) -> dict:
+    # Rate limit signup attempts (abuse prevention)
+    check_rate_limit(None, "search", db)
     validate_password(body.password)
     existing = db.query(User).filter(User.email == body.email).first()
     if existing:
@@ -227,10 +246,12 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)) -> dict:
 
 @app.post("/api/auth/login", response_model=AuthResponse)
 def login(body: LoginRequest, db: Session = Depends(get_db)) -> dict:
-    check_login_rate_limit(body.email, db)
+    import hashlib as _hl
+    _email_hash = _hl.sha256(body.email.lower().encode()).hexdigest()[:16]
+    check_login_rate_limit(_email_hash, db)
     user = db.query(User).filter(User.email == body.email).first()
     if not user or not verify_password(body.password, user.password_hash):
-        db.add(UsageLog(user_id=None, action="login_failed", detail=body.email))
+        db.add(UsageLog(user_id=None, action="login_failed", detail=_email_hash))
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -289,6 +310,7 @@ def search_jobs(
     sanitized_jobs: list[dict] = []
     for job in results["jobs"]:
         raw = asdict(job)
+        raw["dedup_key"] = job.dedup_key  # Property not included by asdict()
         clean = sanitize_job(raw)
         clean["search_keyword"] = sanitize_user_input(q)
 
@@ -392,9 +414,8 @@ def get_recommended_jobs(
         return db.query(ScrapedJob).order_by(ScrapedJob.id.desc()).limit(limit).all()
 
     # Extract likely skill keywords from the resume (capitalized words, tech terms)
-    import re as _re
     # Find capitalized multi-letter words and common tech terms
-    words = set(_re.findall(r'\b[A-Z][a-zA-Z+#.]{2,}\b', resume_text))
+    words = set(re.findall(r'\b[A-Z][a-zA-Z+#.]{2,}\b', resume_text))
     # Also grab common tech keywords
     tech_terms = {"python", "java", "react", "node", "sql", "aws", "docker", "kubernetes",
                   "typescript", "javascript", "golang", "rust", "pytorch", "tensorflow",
@@ -571,9 +592,12 @@ def export_tracked(
         .all()
     )
 
-    # LOW: CSV injection risk if values start with =, +, -, @ — input sanitization
-    # strips HTML but not formula prefixes. csv.writer quotes fields but Excel may
-    # still interpret formulas. Consider prefixing cell values with ' if needed.
+    def _csv_safe(val: str) -> str:
+        """Prefix formula-triggering characters to prevent CSV injection in Excel."""
+        if val and val[0] in ("=", "+", "-", "@", "\t", "\r"):
+            return f"'{val}"
+        return val
+
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerow([
@@ -582,8 +606,9 @@ def export_tracked(
     ])
     for j in jobs:
         writer.writerow([
-            j.company, j.role, j.date_applied or "",
-            j.status, j.source, j.follow_up_date or "", j.notes,
+            _csv_safe(j.company), _csv_safe(j.role), j.date_applied or "",
+            j.status, _csv_safe(j.source), j.follow_up_date or "",
+            _csv_safe(j.notes),
         ])
 
     buf.seek(0)
@@ -717,7 +742,7 @@ def _get_memory_context(user: Optional[User], db: Session) -> str:
 # AI — powered resume features
 # ═════════════════════════════════════════════════════════════════════════════
 
-from ai_service import coach_resume, prep_interview, rewrite_bullet, get_ai_status
+from ai_service import coach_resume, rewrite_bullet, get_ai_status
 
 
 @app.get("/api/ai/status")
@@ -1171,8 +1196,7 @@ def contact(body: ContactRequest, db: Session = Depends(get_db)) -> dict:
     usage = UsageLog(
         user_id=None,
         action="contact",
-        detail=f"{sanitize_user_input(body.name)} <{body.email}>: "
-               f"{sanitize_user_input(body.message)}",
+        detail="contact_form_submission",
     )
     db.add(usage)
     db.commit()

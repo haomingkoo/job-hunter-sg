@@ -17,17 +17,25 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import UsageLog, User
 
-SECRET_KEY = os.environ.get("JWT_SECRET", "dev-secret-change-in-prod")
+SECRET_KEY = os.environ.get("JWT_SECRET", "")
 ALGORITHM = "HS256"
 TOKEN_EXPIRY_DAYS = 7
 
 # Crash in production if JWT_SECRET is not set
 _db_url = os.environ.get("DATABASE_URL", "")
-if "postgresql" in _db_url and SECRET_KEY == "dev-secret-change-in-prod":
+if "postgresql" in _db_url and not SECRET_KEY:
     raise RuntimeError(
         "JWT_SECRET must be set in production! "
         'Generate one: python -c "import secrets; print(secrets.token_hex(32))"'
     )
+if not SECRET_KEY:
+    import warnings
+    warnings.warn(
+        "JWT_SECRET not set — using insecure default for local dev only. "
+        "Set JWT_SECRET env var before deploying.",
+        stacklevel=1,
+    )
+    SECRET_KEY = "insecure-local-dev-only"
 
 # Configurable via env vars — tune from Railway dashboard, no redeploy needed
 _FREE_AI = int(os.environ.get("FREE_AI_PER_DAY", "3"))
