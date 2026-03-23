@@ -85,6 +85,19 @@ _scorer = ResumeScorer()
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    # Auto-cleanup jobs older than 30 days on startup
+    try:
+        from database import SessionLocal
+        db = SessionLocal()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        stale = db.query(ScrapedJob).filter(ScrapedJob.scraped_at < cutoff.isoformat()).count()
+        if stale > 0:
+            db.query(ScrapedJob).filter(ScrapedJob.scraped_at < cutoff.isoformat()).delete()
+            db.commit()
+            log.info(f"Cleaned up {stale} stale jobs (older than 30 days)")
+        db.close()
+    except Exception as e:
+        log.warning(f"Stale job cleanup failed: {e}")
 
 
 # ── Health ───────────────────────────────────────────────────────────────────
@@ -311,6 +324,93 @@ def list_cached_jobs(
     query = query.order_by(ScrapedJob.id.desc())
     offset = (page - 1) * per_page
     return query.offset(offset).limit(per_page).all()
+
+
+@app.get("/api/jobs/{job_id}/similar", response_model=list[JobOut])
+def get_similar_jobs(
+    job_id: int,
+    limit: int = Query(5, ge=1, le=20),
+    db: Session = Depends(get_db),
+) -> list[ScrapedJob]:
+    """Find similar jobs based on title keywords and skills overlap."""
+    job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Extract key words from title (remove common filler)
+    filler = {"senior", "junior", "lead", "staff", "principal", "intern", "contract", "the", "a", "an", "at", "in", "for", "and", "or"}
+    title_words = [w.lower() for w in re.sub(r"[^a-zA-Z\s]", "", job.title).split() if w.lower() not in filler and len(w) > 2]
+
+    if not title_words:
+        return []
+
+    # Build query: match any title keyword, exclude the same job
+    conditions = [ScrapedJob.title.ilike(f"%{w}%") for w in title_words[:3]]
+    from sqlalchemy import or_
+    similar = (
+        db.query(ScrapedJob)
+        .filter(ScrapedJob.id != job_id, or_(*conditions))
+        .order_by(ScrapedJob.id.desc())
+        .limit(limit)
+        .all()
+    )
+    return similar
+
+
+@app.get("/api/jobs/recommended", response_model=list[JobOut])
+def get_recommended_jobs(
+    resume_text: str = Query("", max_length=5000, description="Resume text or skills to match against"),
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+) -> list[ScrapedJob]:
+    """
+    Recommend jobs based on resume text or skills.
+    Searches cached jobs for keyword matches from the resume.
+    """
+    if not resume_text or len(resume_text) < 20:
+        # Return most recent jobs as fallback
+        return db.query(ScrapedJob).order_by(ScrapedJob.id.desc()).limit(limit).all()
+
+    # Extract likely skill keywords from the resume (capitalized words, tech terms)
+    import re as _re
+    # Find capitalized multi-letter words and common tech terms
+    words = set(_re.findall(r'\b[A-Z][a-zA-Z+#.]{2,}\b', resume_text))
+    # Also grab common tech keywords
+    tech_terms = {"python", "java", "react", "node", "sql", "aws", "docker", "kubernetes",
+                  "typescript", "javascript", "golang", "rust", "pytorch", "tensorflow",
+                  "data", "machine learning", "devops", "cloud", "agile", "scrum"}
+    lower_text = resume_text.lower()
+    for term in tech_terms:
+        if term in lower_text:
+            words.add(term)
+
+    if not words:
+        return db.query(ScrapedJob).order_by(ScrapedJob.id.desc()).limit(limit).all()
+
+    # Search for jobs matching these keywords
+    from sqlalchemy import or_
+    conditions = []
+    for word in list(words)[:10]:  # Top 10 keywords
+        conditions.append(ScrapedJob.title.ilike(f"%{word}%"))
+        conditions.append(ScrapedJob.description.ilike(f"%{word}%"))
+
+    results = (
+        db.query(ScrapedJob)
+        .filter(or_(*conditions))
+        .order_by(ScrapedJob.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+    # Deduplicate by dedup_key (in case the same job matched multiple keywords)
+    seen = set()
+    deduped = []
+    for job in results:
+        if job.dedup_key not in seen:
+            seen.add(job.dedup_key)
+            deduped.append(job)
+
+    return deduped[:limit]
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobOut)
