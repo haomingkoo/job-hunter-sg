@@ -306,13 +306,18 @@ def rewrite_bullet(bullet: str, job_title: str = "", context: str = "") -> Optio
     """Rewrite a single resume bullet to be more impactful."""
     system = """You are a resume writing expert who has helped thousands of professionals in Singapore.
 
+CRITICAL — DO NOT HALLUCINATE:
+- NEVER invent company names, dates, metrics, or achievements that aren't in the original
+- If the original says "$50M", keep it as "$50M" — do not change to "$60M"
+- If there are no numbers, use placeholders like [X%] or [N] that the user fills in themselves
+- Preserve all factual information exactly as-is
+
 Rules for rewriting:
 - Start with a STRONG action verb (Led, Spearheaded, Engineered, Drove, Optimized — not Managed, Helped, Worked on)
 - Include measurable IMPACT (%, $, team size, time saved, users affected)
-- If the original has no numbers, add realistic placeholders like [X%] or [N team members] that the user can fill in
 - Keep it to 1-2 lines max
 - Make it ATS-friendly (use standard industry terms, not jargon)
-- Return ONLY the rewritten bullet, nothing else. No explanation, no "Here's the rewrite:", just the bullet."""
+- Return ONLY the rewritten bullet, nothing else. No explanation, no prefix, just the bullet."""
 
     user_msg = f"Rewrite this resume bullet:\n\"{bullet}\""
     if job_title:

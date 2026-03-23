@@ -843,7 +843,13 @@ def format_resume(
 
     system = """You are an expert resume formatter. Take the raw resume text and return a perfectly formatted, ATS-friendly resume.
 
-Rules:
+CRITICAL — DO NOT HALLUCINATE:
+- NEVER change, invent, or alter: names, email addresses, phone numbers, dates, company names, job titles, degree names, university names, certifications, or any factual information
+- ONLY improve: formatting, structure, bullet point wording, action verbs, and section organization
+- If you're unsure about a detail, keep the original text exactly as-is
+- Do NOT add achievements, metrics, or skills that are not in the original resume
+
+Formatting rules:
 - Use clear section headers: PROFESSIONAL SUMMARY, EXPERIENCE, EDUCATION, SKILLS, CERTIFICATIONS
 - Each job entry: Company Name | Location, Job Title, Date Range (MMM YYYY - MMM YYYY)
 - Bullet points start with strong action verbs
@@ -878,6 +884,66 @@ Rules:
         )
 
     return {"formatted_resume": content, "original_word_count": len(resume_text.split())}
+
+
+@app.post("/api/resume/download")
+def download_resume(
+    body: dict,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """
+    Generate and download a formatted DOCX resume.
+    Body: {resume_text, template, name, email, phone, location}
+    Templates: classic, modern, singapore, compact
+    """
+    from resume_templates import generate_docx, list_templates
+
+    resume_text = body.get("resume_text", "")
+    if not resume_text or len(resume_text) < 50:
+        raise HTTPException(status_code=400, detail="Resume text too short")
+
+    template_id = body.get("template", "modern")
+    name = sanitize_user_input(body.get("name", ""))
+    email_addr = sanitize_user_input(body.get("email", ""))
+    phone = sanitize_user_input(body.get("phone", ""))
+    location = sanitize_user_input(body.get("location", ""))
+
+    try:
+        docx_bytes = generate_docx(
+            resume_text=sanitize_resume_text(resume_text),
+            template_id=template_id,
+            name=name,
+            email=email_addr,
+            phone=phone,
+            location=location,
+        )
+    except Exception as e:
+        log.warning(f"DOCX generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate resume document")
+
+    db.add(UsageLog(
+        user_id=user.id if user else None,
+        action="resume_download",
+        detail=f"template:{template_id}",
+    ))
+    db.commit()
+
+    safe_name = re.sub(r"[^a-zA-Z0-9]", "_", name)[:30] if name else "resume"
+    filename = f"{safe_name}_resume.docx"
+
+    return StreamingResponse(
+        io.BytesIO(docx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/resume/templates")
+def get_templates() -> list[dict]:
+    """List available resume templates."""
+    from resume_templates import list_templates
+    return list_templates()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
