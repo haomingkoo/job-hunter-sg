@@ -320,13 +320,13 @@ def search_jobs(
     }
 
 
-@app.get("/api/jobs", response_model=list[JobOut])
+@app.get("/api/jobs")
 def list_cached_jobs(
     q: Optional[str] = Query(None, max_length=200, description="Filter by keyword"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-) -> list[ScrapedJob]:
+) -> dict:
     query = db.query(ScrapedJob)
     if q:
         pattern = f"%{q}%"
@@ -335,9 +335,26 @@ def list_cached_jobs(
             | (ScrapedJob.company.ilike(pattern))
             | (ScrapedJob.search_keyword.ilike(pattern))
         )
+    total = query.count()
     query = query.order_by(ScrapedJob.id.desc())
     offset = (page - 1) * per_page
-    return query.offset(offset).limit(per_page).all()
+    jobs = query.offset(offset).limit(per_page).all()
+    return {
+        "jobs": [
+            {
+                "id": j.id, "title": j.title, "company": j.company,
+                "location": j.location, "salary": j.salary, "source": j.source,
+                "url": j.url, "posted_date": j.posted_date,
+                "employment_type": j.employment_type, "seniority": j.seniority,
+                "description": j.description, "skills": j.skills or [],
+                "agency": j.agency, "scraped_at": j.scraped_at,
+            }
+            for j in jobs
+        ],
+        "total": total,
+        "page": page,
+        "pages": max(1, (total + per_page - 1) // per_page),
+    }
 
 
 @app.get("/api/jobs/{job_id}/similar", response_model=list[JobOut])

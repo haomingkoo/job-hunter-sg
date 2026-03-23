@@ -166,9 +166,9 @@ function AuthModal({ onAuth, onClose }) {
             <h1 className="text-xl font-bold text-gray-800">Job Hunter SG</h1>
           </div>
           <p className="text-sm text-gray-500">
-            {mode === "login" ? "Sign in with your @aisg.sg email" : "Create account with @aisg.sg email"}
+            {mode === "login" ? "Welcome back" : "Join with your @aisg.sg email"}
           </p>
-          <p className="text-xs text-gray-400 mt-1">Sign in to save your applications and get unlimited AI reviews</p>
+          <p className="text-xs text-gray-400 mt-1">Save your applications, get unlimited AI reviews, and track your progress</p>
         </div>
 
         {error && (
@@ -268,7 +268,8 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       }));
       setResults(mapped);
       setPage(pageNum);
-      setTotalLabel(mapped.length === 20 ? "20+ jobs" : `${mapped.length} jobs`);
+      const total = data.total || mapped.length;
+      setTotalLabel(`${total.toLocaleString()} jobs`);
     } catch (err) {
       setError(err.message || "Failed to load jobs. Please try again.");
       setResults([]);
@@ -322,7 +323,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     <div className="space-y-6">
       <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl p-5">
         <h2 className="font-semibold text-gray-800 flex items-center gap-2"><Search size={18} /> Singapore Jobs</h2>
-        <p className="text-sm text-gray-500 mt-1">Browse jobs from MyCareersFuture, Careers@Gov, and more. Updated daily.</p>
+        <p className="text-sm text-gray-500 mt-1">Browse jobs from MyCareersFuture, Careers@Gov, and more across Singapore.</p>
       </div>
 
       {/* Search */}
@@ -336,7 +337,13 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
         </button>
       </div>
 
-      {totalLabel && <p className="text-sm text-gray-500">{totalLabel}{query ? ` for "${query}"` : ""}</p>}
+      {totalLabel && (
+        <p className="text-sm text-gray-500">
+          <span className="font-medium text-gray-700">{totalLabel}</span>
+          {query ? ` matching "${query}"` : " across Singapore"}
+          {results.length > 0 && ` — showing ${(page - 1) * 20 + 1}-${(page - 1) * 20 + results.length}`}
+        </p>
+      )}
 
       {/* Filters */}
       {results.length > 0 && (
@@ -355,7 +362,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
             <option value="relevance">Sort: Relevance</option>
             <option value="salary">Sort: Salary (High to Low)</option>
           </select>
-          <span className="text-sm text-gray-500 ml-auto">{filtered.length} jobs found</span>
+          <span className="text-sm text-gray-400 ml-auto">Page {page}</span>
         </div>
       )}
 
