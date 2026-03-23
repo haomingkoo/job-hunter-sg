@@ -94,6 +94,36 @@ class TrackedJob(Base):
     user: Mapped[User] = relationship("User", back_populates="tracked_jobs")
 
 
+class UserMemory(Base):
+    """
+    Persistent memory for each user — injected into AI prompts so the
+    coach "remembers" their background, goals, and past feedback.
+    Users can view and edit their memory.
+    """
+    __tablename__ = "user_memories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
+
+    # Profile — extracted from resume or entered manually
+    resume_text: Mapped[str] = mapped_column(Text, default="")
+    target_roles: Mapped[str] = mapped_column(Text, default="")        # e.g. "PM, Data Engineer, SWE"
+    target_companies: Mapped[str] = mapped_column(Text, default="")    # e.g. "GovTech, Grab, DBS"
+    career_goals: Mapped[str] = mapped_column(Text, default="")        # free text
+    strengths: Mapped[str] = mapped_column(Text, default="")           # AI-identified or user-edited
+    areas_to_improve: Mapped[str] = mapped_column(Text, default="")    # AI-identified or user-edited
+    preferred_industry: Mapped[str] = mapped_column(String(500), default="")
+    years_experience: Mapped[str] = mapped_column(String(50), default="")
+    education_level: Mapped[str] = mapped_column(String(200), default="")
+
+    # AI coaching memory — accumulated across sessions
+    coaching_notes: Mapped[str] = mapped_column(Text, default="")      # AI summary of past sessions
+    session_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
 class UsageLog(Base):
     __tablename__ = "usage_logs"
 

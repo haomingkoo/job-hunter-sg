@@ -30,7 +30,7 @@ from auth import (
     verify_password,
 )
 from database import get_db, init_db
-from models import ScrapedJob, TrackedJob, UsageLog, User
+from models import ScrapedJob, TrackedJob, UsageLog, User, UserMemory
 from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
 from schemas import (
     AuthResponse,
@@ -426,6 +426,106 @@ def score_resume(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# USER MEMORY — persistent context for AI coaching
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/api/memory")
+def get_memory(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Get the user's memory. Users can see everything the AI knows about them."""
+    mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
+    if not mem:
+        return {"has_memory": False}
+    return {
+        "has_memory": True,
+        "target_roles": mem.target_roles,
+        "target_companies": mem.target_companies,
+        "career_goals": mem.career_goals,
+        "strengths": mem.strengths,
+        "areas_to_improve": mem.areas_to_improve,
+        "preferred_industry": mem.preferred_industry,
+        "years_experience": mem.years_experience,
+        "education_level": mem.education_level,
+        "coaching_notes": mem.coaching_notes,
+        "session_count": mem.session_count,
+        "updated_at": mem.updated_at.isoformat() if mem.updated_at else None,
+    }
+
+
+@app.put("/api/memory")
+def update_memory(
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Update the user's memory. Users can edit/delete anything."""
+    mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
+    if not mem:
+        mem = UserMemory(user_id=user.id)
+        db.add(mem)
+
+    editable = (
+        "target_roles", "target_companies", "career_goals", "strengths",
+        "areas_to_improve", "preferred_industry", "years_experience",
+        "education_level", "coaching_notes",
+    )
+    for field in editable:
+        if field in body:
+            setattr(mem, field, sanitize_user_input(str(body[field])))
+
+    db.commit()
+    db.refresh(mem)
+    return {"ok": True, "message": "Memory updated"}
+
+
+@app.delete("/api/memory")
+def clear_memory(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Clear all memory. Fresh start."""
+    mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
+    if mem:
+        db.delete(mem)
+        db.commit()
+    return {"ok": True, "message": "Memory cleared"}
+
+
+def _get_memory_context(user: Optional[User], db: Session) -> str:
+    """Build memory context string for AI prompts. Returns empty for anonymous users."""
+    if not user:
+        return ""
+    mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
+    if not mem:
+        return ""
+
+    parts = []
+    if mem.target_roles:
+        parts.append(f"Target roles: {mem.target_roles}")
+    if mem.target_companies:
+        parts.append(f"Target companies: {mem.target_companies}")
+    if mem.career_goals:
+        parts.append(f"Career goals: {mem.career_goals}")
+    if mem.strengths:
+        parts.append(f"Known strengths: {mem.strengths}")
+    if mem.areas_to_improve:
+        parts.append(f"Areas to improve: {mem.areas_to_improve}")
+    if mem.years_experience:
+        parts.append(f"Experience: {mem.years_experience}")
+    if mem.coaching_notes:
+        parts.append(f"Notes from previous sessions: {mem.coaching_notes}")
+    if mem.session_count:
+        parts.append(f"This is session #{mem.session_count + 1}")
+
+    if not parts:
+        return ""
+    return "\n\nContext about this user (from previous sessions):\n" + "\n".join(parts)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # AI — powered resume features
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -519,15 +619,31 @@ def ai_coach_resume(
     ))
     db.commit()
 
+    # Inject memory context for logged-in users
+    memory_context = _get_memory_context(user, db)
+    resume_text = sanitize_resume_text(body.resume_text)
+    jd = sanitize_user_input(body.job_description)
+
     result = coach_resume(
-        resume_text=sanitize_resume_text(body.resume_text),
-        job_description=sanitize_user_input(body.job_description),
+        resume_text=resume_text + memory_context,
+        job_description=jd,
     )
     if not result:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI service unavailable — rate limit or API error. Try again shortly.",
         )
+
+    # Update memory for logged-in users (increment session count, store resume)
+    if user:
+        mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
+        if not mem:
+            mem = UserMemory(user_id=user.id)
+            db.add(mem)
+        mem.resume_text = resume_text[:10000]
+        mem.session_count = (mem.session_count or 0) + 1
+        db.commit()
+
     result["session_id"] = session_id
     return result
 
