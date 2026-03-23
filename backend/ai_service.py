@@ -276,6 +276,8 @@ Structure your review in this exact order:
 6. **Quick Wins** (2-3 easy fixes)
    Things they can fix in 5 minutes that will immediately improve their score.
 
+PAGE LENGTH: The ideal resume is 1-2 pages. 3 pages is acceptable for senior professionals with 15+ years of experience. If the resume is over 3 pages, recommend what to trim. Don't be rigid about 1 page — 2 pages is perfectly fine for most candidates in Singapore.
+
 IMPORTANT: Never alter factual information (names, emails, phone numbers, dates, company names, degrees, certifications). Only suggest improvements to wording, structure, and presentation. If something seems wrong, flag it for the user to fix — don't change it yourself.
 
 Keep it conversational — like you're sitting across from them at a coffee shop in Singapore, not writing a formal report. Use "you" and "your". Be encouraging but honest."""
@@ -293,7 +295,7 @@ Keep it conversational — like you're sitting across from them at a coffee shop
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ],
-        max_tokens=800,
+        max_tokens=1500,  # Enough for detailed coaching on a 2-page resume
         temperature=0.7,
     )
 
