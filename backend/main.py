@@ -873,7 +873,7 @@ Formatting rules:
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ],
-        max_tokens=2000,
+        max_tokens=4000,  # Enough for a full 2-3 page resume output
         temperature=0.3,
     )
 
