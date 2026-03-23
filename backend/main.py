@@ -31,7 +31,7 @@ from auth import (
 )
 from database import get_db, init_db
 from models import ScrapedJob, TrackedJob, UsageLog, User
-from sanitizer import sanitize_job, sanitize_user_input
+from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
 from schemas import (
     AuthResponse,
     ContactRequest,
@@ -420,7 +420,7 @@ def score_resume(
     db.add(UsageLog(user_id=user.id if user else None, action="resume_score"))
     db.commit()
     return _scorer.analyze(
-        resume_text=sanitize_user_input(body.resume_text),
+        resume_text=sanitize_resume_text(body.resume_text),
         job_description=sanitize_user_input(body.job_description),
     )
 
@@ -429,7 +429,7 @@ def score_resume(
 # AI — powered resume features
 # ═════════════════════════════════════════════════════════════════════════════
 
-from ai_service import coach_resume, rewrite_bullet, get_ai_status
+from ai_service import coach_resume, prep_interview, rewrite_bullet, get_ai_status
 
 
 @app.get("/api/ai/status")
@@ -520,7 +520,7 @@ def ai_coach_resume(
     db.commit()
 
     result = coach_resume(
-        resume_text=sanitize_user_input(body.resume_text),
+        resume_text=sanitize_resume_text(body.resume_text),
         job_description=sanitize_user_input(body.job_description),
     )
     if not result:
@@ -597,6 +597,103 @@ def ai_rewrite_bullet(
             detail="AI service unavailable. Try again shortly.",
         )
     return {"original": bullet, "rewritten": result, "model": "AI"}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# RESUME UPLOAD + FORMAT
+# ═════════════════════════════════════════════════════════════════════════════
+
+from fastapi import File, UploadFile
+from resume_parser import parse_resume
+
+
+@app.post("/api/resume/upload")
+async def upload_resume(
+    file: UploadFile = File(...),
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Upload a PDF or DOCX resume. Returns full extracted text + metadata.
+    No truncation — everything is returned.
+    """
+    file_bytes = await file.read()
+    try:
+        result = parse_resume(
+            filename=file.filename or "resume",
+            content_type=file.content_type or "",
+            file_bytes=file_bytes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    db.add(UsageLog(
+        user_id=user.id if user else None,
+        action="resume_upload",
+        detail=f"{result['file_type']}:{result['word_count']}words",
+    ))
+    db.commit()
+
+    return result
+
+
+@app.post("/api/resume/format")
+def format_resume(
+    body: ResumeScoreRequest,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    AI-powered resume formatting — takes raw resume text and returns
+    a clean, ATS-friendly formatted version. Counts as 1 AI credit.
+    """
+    from ai_service import _call_sealion, SEALION_MODEL
+
+    check_rate_limit(user, "ai", db)
+    db.add(UsageLog(
+        user_id=user.id if user else None,
+        action="ai",
+        detail="format",
+    ))
+    db.commit()
+
+    system = """You are an expert resume formatter. Take the raw resume text and return a perfectly formatted, ATS-friendly resume.
+
+Rules:
+- Use clear section headers: PROFESSIONAL SUMMARY, EXPERIENCE, EDUCATION, SKILLS, CERTIFICATIONS
+- Each job entry: Company Name | Location, Job Title, Date Range (MMM YYYY - MMM YYYY)
+- Bullet points start with strong action verbs
+- Remove filler words and weak phrases
+- Keep ALL content — do not remove or summarize anything. Reorganize and clean up formatting only.
+- Use consistent date formats throughout
+- Put skills in a comma-separated list, grouped by category
+- If residency status is mentioned, keep it prominent
+- Output as clean plain text that can be copied directly into a .docx template
+- Do NOT add any commentary — return ONLY the formatted resume"""
+
+    resume_text = sanitize_resume_text(body.resume_text)
+    jd = sanitize_user_input(body.job_description)
+
+    user_msg = f"Format this resume into a clean, ATS-friendly structure:\n\n{resume_text}"
+    if jd:
+        user_msg += f"\n\n---\nOptimize the ordering and keywords for this job:\n{jd}"
+
+    content = _call_sealion(
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        max_tokens=2000,
+        temperature=0.3,
+    )
+
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service unavailable. Try again shortly.",
+        )
+
+    return {"formatted_resume": content, "original_word_count": len(resume_text.split())}
 
 
 # ═════════════════════════════════════════════════════════════════════════════

@@ -243,22 +243,45 @@ def get_ai_status() -> dict:
 
 def coach_resume(resume_text: str, job_description: str = "") -> Optional[dict]:
     """
-    AI-powered resume coaching using SEA-LION.
-    Returns conversational feedback with per-bullet suggestions.
+    AI-powered resume coaching.
+    Returns structured, conversational coaching like a real career advisor.
     """
-    system = (
-        "You are an expert Singapore career coach with 10+ years experience "
-        "reviewing resumes for tech, PM, and engineering roles in Singapore. "
-        "You understand the SG job market (MCF, SkillsFuture, EP/SP visas, "
-        "statutory boards, GovTech, FAANG-SEA). "
-        "Give specific, actionable feedback. Reference exact text from the resume. "
-        "Be encouraging but honest. Use a conversational tone — not bullet points."
-    )
+    system = """You are an expert career coach with 10+ years of experience helping job seekers in Singapore land roles at top companies and government agencies. You've reviewed thousands of resumes and know exactly what hiring managers and ATS systems look for.
 
-    user_msg = f"Review this resume and give coaching feedback:\n\n{resume_text[:3000]}"
+Your coaching style:
+- Warm but direct — like a mentor who genuinely wants them to succeed
+- Reference SPECIFIC lines from their resume (quote them)
+- Explain WHY something works or doesn't (not just what to change)
+- Give concrete before/after examples for weak bullets
+- Understand the Singapore job market (MCF, SkillsFuture credits, EP/SP considerations, statutory boards, GovTech, MNCs in SG)
+
+Structure your review in this exact order:
+
+1. **First Impression** (2-3 sentences)
+   What a recruiter sees in the first 6 seconds. Is the headline/summary compelling? Does it pass the "so what" test?
+
+2. **What's Working Well** (2-3 specific things)
+   Call out their strongest bullets with exact quotes. Explain why these work. Build their confidence before the critique.
+
+3. **Critical Improvements** (3-5 specific fixes)
+   For each: quote the weak text → explain the problem → give a rewritten version.
+   Focus on: weak action verbs, missing metrics, vague impact, buried results, filler words.
+
+4. **Missing Elements** (1-3 things)
+   What's not on the resume but should be? Skills gaps, missing sections, SG-specific items (residency status, SkillsFuture certs, language skills).
+
+5. **Quick Wins** (2-3 easy fixes)
+   Things they can fix in 5 minutes that will immediately improve their score.
+
+Keep it conversational — like you're sitting across from them at a coffee shop in Singapore, not writing a formal report. Use "you" and "your". Be encouraging but honest."""
+
+    # Send full resume — SEA-LION supports up to 128K context
+    user_msg = f"Please review my resume:\n\n{resume_text}"
     if job_description:
-        user_msg += f"\n\n---\nTarget job description:\n{job_description[:2000]}"
-        user_msg += "\n\nFocus on how to tailor this resume for this specific role."
+        user_msg += f"\n\n---\nI'm applying for this role:\n{job_description[:2000]}"
+        user_msg += "\n\nPlease focus on how I can tailor my resume for this specific job. What keywords am I missing? How should I reframe my experience?"
+    else:
+        user_msg += "\n\nI'm looking for roles in Singapore. Please give me a general review and help me make this stronger."
 
     content = _call_sealion(
         messages=[
@@ -281,15 +304,19 @@ def coach_resume(resume_text: str, job_description: str = "") -> Optional[dict]:
 
 def rewrite_bullet(bullet: str, job_title: str = "", context: str = "") -> Optional[str]:
     """Rewrite a single resume bullet to be more impactful."""
-    system = (
-        "You are a resume writing expert. Rewrite the given resume bullet to be "
-        "more impactful. Use strong action verbs, add quantification where possible, "
-        "and make the result-oriented. Return ONLY the rewritten bullet, nothing else."
-    )
+    system = """You are a resume writing expert who has helped thousands of professionals in Singapore.
+
+Rules for rewriting:
+- Start with a STRONG action verb (Led, Spearheaded, Engineered, Drove, Optimized — not Managed, Helped, Worked on)
+- Include measurable IMPACT (%, $, team size, time saved, users affected)
+- If the original has no numbers, add realistic placeholders like [X%] or [N team members] that the user can fill in
+- Keep it to 1-2 lines max
+- Make it ATS-friendly (use standard industry terms, not jargon)
+- Return ONLY the rewritten bullet, nothing else. No explanation, no "Here's the rewrite:", just the bullet."""
 
     user_msg = f"Rewrite this resume bullet:\n\"{bullet}\""
     if job_title:
-        user_msg += f"\n\nTarget role: {job_title}"
+        user_msg += f"\n\nThis is for a {job_title} role."
     if context:
         user_msg += f"\nContext: {context}"
 
@@ -301,6 +328,44 @@ def rewrite_bullet(bullet: str, job_title: str = "", context: str = "") -> Optio
         max_tokens=200,
         temperature=0.7,
     )
+
+
+def prep_interview(resume_text: str, job_description: str) -> Optional[str]:
+    """Generate interview prep based on resume + job description."""
+    system = """You are an interview coach who has conducted 5,000+ interviews at Singapore companies.
+
+Based on the candidate's resume and the job description, generate:
+
+1. **Likely Interview Questions** (5-7 questions)
+   Mix of behavioral (STAR format) and technical/role-specific.
+   For each question, give a brief coaching tip on how to answer.
+
+2. **Your STAR Stories** (3 stories)
+   Pull from THEIR resume — identify their best achievements and frame them as STAR stories:
+   - Situation: [context from their experience]
+   - Task: [what they needed to do]
+   - Action: [what they did — use their own bullet points]
+   - Result: [the outcome/impact]
+
+3. **Questions to Ask the Interviewer** (3 smart questions)
+   Based on the job description, suggest questions that show genuine interest and research.
+
+4. **Singapore-Specific Tips**
+   Dress code norms for SG companies, common interview formats (panel vs 1:1), cultural expectations.
+
+Be conversational and encouraging. Use "you" and "your"."""
+
+    user_msg = f"My resume:\n{resume_text[:2000]}\n\n---\nJob I'm interviewing for:\n{job_description[:2000]}"
+
+    content = _call_sealion(
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        max_tokens=1000,
+        temperature=0.7,
+    )
+    return content
 
 
 def match_resume_to_jobs(resume_text: str, jobs: list[dict], top_n: int = 5) -> Optional[list[dict]]:

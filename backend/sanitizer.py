@@ -71,6 +71,13 @@ def sanitize_job(job_dict: dict) -> dict:
     return sanitized
 
 
+def sanitize_resume_text(text: str) -> str:
+    """Strip HTML from resume text. No length truncation — resumes need full text."""
+    if not text:
+        return ""
+    return sanitize_html(text)
+
+
 def sanitize_user_input(text: str) -> str:
     """Strip HTML, trim whitespace, limit length for user-supplied text."""
     if not text:
