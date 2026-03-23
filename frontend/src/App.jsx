@@ -1741,19 +1741,27 @@ export default function JobHunterSG() {
   };
 
   const handleTrackJob = async (payload) => {
-    await apiFetch("/api/tracked", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    await refreshJobs();
+    try {
+      await apiFetch("/api/tracked", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      await refreshJobs();
+    } catch (err) {
+      console.error("Track job failed:", err);
+    }
   };
 
   const handleUpdateJob = async (id, updates) => {
-    await apiFetch(`/api/tracked/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(updates),
-    });
-    await refreshJobs();
+    try {
+      await apiFetch(`/api/tracked/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(updates),
+      });
+      await refreshJobs();
+    } catch (err) {
+      console.error("Update job failed:", err);
+    }
   };
 
   // Loading state

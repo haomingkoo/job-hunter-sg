@@ -5,6 +5,7 @@ FastAPI backend for Job Hunter SG.
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import logging
 import os
@@ -18,11 +19,12 @@ from typing import Optional
 from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from auth import (
     TIER_LIMITS,
+    _PRO_DOMAINS,
     check_login_rate_limit,
     check_rate_limit,
     create_token,
@@ -140,7 +142,6 @@ def on_startup() -> None:
 
 @app.get("/")
 def health(db: Session = Depends(get_db)) -> dict:
-    from sqlalchemy import text
     try:
         db.execute(text("SELECT 1"))
         db_status = "connected"
@@ -233,7 +234,6 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)) -> dict:
             detail="Email already registered",
         )
     # Pro-tier email domains get upgraded automatically
-    from auth import _PRO_DOMAINS
     domain = body.email.split("@")[-1].lower()
     tier = "pro" if domain in _PRO_DOMAINS else "free"
 
@@ -252,8 +252,7 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)) -> dict:
 
 @app.post("/api/auth/login", response_model=AuthResponse)
 def login(body: LoginRequest, db: Session = Depends(get_db)) -> dict:
-    import hashlib as _hl
-    _email_hash = _hl.sha256(body.email.lower().encode()).hexdigest()[:16]
+    _email_hash = hashlib.sha256(body.email.lower().encode()).hexdigest()[:16]
     check_login_rate_limit(_email_hash, db)
     user = db.query(User).filter(User.email == body.email).first()
     if not user or not verify_password(body.password, user.password_hash):
