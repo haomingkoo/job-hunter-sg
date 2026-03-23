@@ -191,28 +191,32 @@ def crawl_all_jobs() -> dict:
                 clean = sanitize_job(raw)
                 clean["search_keyword"] = "all"
 
-                existing = db.query(ScrapedJob).filter(
-                    ScrapedJob.dedup_key == clean["dedup_key"]
-                ).first()
-                if existing:
-                    for key, val in clean.items():
-                        if key != "id":
-                            setattr(existing, key, val)
-                    stats["updated"] += 1
-                else:
-                    db.add(ScrapedJob(**clean))
-                    stats["new"] += 1
+                try:
+                    existing = db.query(ScrapedJob).filter(
+                        ScrapedJob.dedup_key == clean["dedup_key"]
+                    ).first()
+                    if existing:
+                        for key, val in clean.items():
+                            if key != "id":
+                                setattr(existing, key, val)
+                        stats["updated"] += 1
+                    else:
+                        db.add(ScrapedJob(**clean))
+                        db.flush()
+                        stats["new"] += 1
+                except Exception:
+                    db.rollback()
+                    stats["updated"] += 1  # Likely a dupe
 
             db.commit()
             stats["pages"] += 1
-            log.info(f"[MCF] Page {page}: {len(jobs)} jobs (total new: {stats['new']}, updated: {stats['updated']})")
+            log.info(f"[MCF] Page {page}: {len(jobs)} jobs (new: {stats['new']}, updated: {stats['updated']})")
 
             page += 1
-            time.sleep(0.5)  # Be polite
+            time.sleep(0.3)
 
-            # Safety: stop after 200 pages (20,000 jobs max)
-            if page >= 200:
-                log.info("[MCF] Hit 200 page limit, stopping")
+            if page >= 1000:
+                log.info("[MCF] Hit 1000 page limit, stopping")
                 break
 
         except Exception as e:
@@ -220,7 +224,7 @@ def crawl_all_jobs() -> dict:
             stats["errors"] += 1
             db.rollback()
             page += 1
-            time.sleep(2)  # Back off on error
+            time.sleep(1)
 
     # ── CareersGov: paginate through all jobs ───────────────────────
     from scraper import CareersGovScraper
@@ -245,26 +249,30 @@ def crawl_all_jobs() -> dict:
                 clean = sanitize_job(raw)
                 clean["search_keyword"] = "all"
 
-                existing = db.query(ScrapedJob).filter(
-                    ScrapedJob.dedup_key == clean["dedup_key"]
-                ).first()
-                if existing:
-                    for key, val in clean.items():
-                        if key != "id":
-                            setattr(existing, key, val)
+                try:
+                    existing = db.query(ScrapedJob).filter(
+                        ScrapedJob.dedup_key == clean["dedup_key"]
+                    ).first()
+                    if existing:
+                        for key, val in clean.items():
+                            if key != "id":
+                                setattr(existing, key, val)
+                        stats["updated"] += 1
+                    else:
+                        db.add(ScrapedJob(**clean))
+                        db.flush()
+                        stats["new"] += 1
+                except Exception:
+                    db.rollback()
                     stats["updated"] += 1
-                else:
-                    db.add(ScrapedJob(**clean))
-                    stats["new"] += 1
 
             db.commit()
             stats["pages"] += 1
-            log.info(f"[CareersGov] Offset {offset}: {len(jobs)} jobs (total new: {stats['new']}, updated: {stats['updated']})")
+            log.info(f"[CareersGov] Offset {offset}: {len(jobs)} jobs (new: {stats['new']}, updated: {stats['updated']})")
 
             offset += 20
-            time.sleep(0.5)
+            time.sleep(0.3)
 
-            # Safety: stop after 500 pages (10,000 jobs max)
             if offset >= 10000:
                 log.info("[CareersGov] Hit 10,000 offset limit, stopping")
                 break

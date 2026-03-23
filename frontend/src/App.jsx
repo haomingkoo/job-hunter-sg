@@ -95,7 +95,7 @@ function TierBadge({ tier }) {
 
 function Nav({ active, setActive }) {
   const tabs = [
-    { id: "scraper", label: "Job Scraper", icon: Search },
+    { id: "scraper", label: "Jobs", icon: Search },
     { id: "tracker", label: "Tracker", icon: Briefcase },
     { id: "reminders", label: "Reminders", icon: Bell },
     { id: "resume", label: "Resume Builder", icon: FileText },
@@ -226,35 +226,34 @@ function AuthModal({ onAuth, onClose }) {
 
 function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, onSignIn }) {
   const [query, setQuery] = useState("");
-  const [selectedPortals, setSelectedPortals] = useState(SG_JOB_PORTALS.map((p) => p.key));
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [levelFilter, setLevelFilter] = useState("all");
   const [sortBy, setSortBy] = useState("relevance");
-  const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState("");
   const [trackError, setTrackError] = useState("");
+  const [page, setPage] = useState(1);
+  const [totalLabel, setTotalLabel] = useState("");
 
-  const togglePortal = (key) => {
-    setSelectedPortals((prev) => prev.includes(key) ? prev.filter((p) => p !== key) : [...prev, key]);
-  };
+  // Load cached jobs on mount (browse mode)
+  useEffect(() => {
+    loadJobs("");
+  }, []);
 
-  const scrapeJobs = async () => {
-    if (!query.trim()) return;
+  const loadJobs = async (searchQuery, pageNum = 1) => {
     setLoading(true);
-    setHasSearched(true);
     setError("");
     try {
-      const params = new URLSearchParams({ q: query, limit: "20", skills: "true" });
-      if (selectedPortals.length > 0 && selectedPortals.length < SG_JOB_PORTALS.length) {
-        params.set("sources", selectedPortals.join(","));
-      }
+      const params = new URLSearchParams({ page: String(pageNum), per_page: "20" });
+      if (searchQuery.trim()) params.set("q", searchQuery.trim());
 
-      const resp = await apiFetch(`/api/search?${params}`, { method: "GET" });
+      const resp = await apiFetch(`/api/jobs?${params}`, { method: "GET" });
       const data = await resp.json();
 
-      const mapped = (data.jobs || []).map((j, i) => ({
-        id: `api-${i}-${Date.now()}`,
+      // /api/jobs returns a flat array of JobOut objects
+      const jobs = Array.isArray(data) ? data : (data.jobs || data);
+      const mapped = jobs.map((j) => ({
+        id: j.id,
         title: j.title,
         company: j.company,
         location: j.location || "Singapore",
@@ -268,13 +267,19 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
         url: j.url || "",
       }));
       setResults(mapped);
+      setPage(pageNum);
+      setTotalLabel(mapped.length === 20 ? "20+ jobs" : `${mapped.length} jobs`);
     } catch (err) {
-      console.error("Scrape failed:", err);
-      setError(err.message || "Failed to search jobs. Please try again.");
+      console.error("Search failed:", err);
+      setError(err.message || "Failed to load jobs.");
       setResults([]);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSearch = () => {
+    loadJobs(query, 1);
   };
 
   const filtered = useMemo(() => {
@@ -319,43 +324,22 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
   return (
     <div className="space-y-6">
       <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl p-5">
-        <h2 className="font-semibold text-gray-800 flex items-center gap-2"><Search size={18} /> Multi-Portal Job Scraper</h2>
-        <p className="text-sm text-gray-500 mt-1">Search across all major Singapore job portals simultaneously. Find jobs, track them, and generate tailored resumes.</p>
-      </div>
-
-      {isFree && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center gap-2 text-sm text-amber-800">
-          <AlertCircle size={14} className="flex-shrink-0" />
-          Free tier: 5 searches/day. Sign in with @aisg.sg for 50 searches/day.
-        </div>
-      )}
-
-      {/* Portal Selection */}
-      <div>
-        <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Portals to search</div>
-        <div className="flex flex-wrap gap-2">
-          {SG_JOB_PORTALS.map((p) => (
-            <button key={p.key} onClick={() => togglePortal(p.key)}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium transition inline-flex items-center gap-1 ${selectedPortals.includes(p.key) ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>
-              {p.name}
-              <span className={`text-[9px] px-1 py-px rounded ${selectedPortals.includes(p.key) ? "bg-indigo-500" : "bg-gray-200 text-gray-400"}`}>
-                {p.type === "api" ? "API" : "Web"}
-              </span>
-            </button>
-          ))}
-        </div>
+        <h2 className="font-semibold text-gray-800 flex items-center gap-2"><Search size={18} /> Singapore Jobs</h2>
+        <p className="text-sm text-gray-500 mt-1">Browse jobs from MyCareersFuture, Careers@Gov, and more. Updated daily.</p>
       </div>
 
       {/* Search */}
       <div className="flex flex-col sm:flex-row gap-3">
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by role, skill, or company..." onKeyDown={(e) => e.key === "Enter" && scrapeJobs()}
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by role, skill, or company..." onKeyDown={(e) => e.key === "Enter" && handleSearch()}
           className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400" />
-        <button onClick={scrapeJobs} disabled={loading || !query.trim()}
+        <button onClick={handleSearch} disabled={loading}
           className="flex items-center justify-center gap-2 bg-indigo-600 text-white px-5 py-3 rounded-xl text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition sm:w-auto w-full">
           {loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-          {loading ? "Searching..." : "Search All"}
+          {loading ? "Searching..." : "Search"}
         </button>
       </div>
+
+      {totalLabel && <p className="text-sm text-gray-500">{totalLabel}{query ? ` for "${query}"` : ""}</p>}
 
       {/* Filters */}
       {results.length > 0 && (
@@ -402,10 +386,10 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       )}
 
       {/* No results */}
-      {!loading && !error && hasSearched && filtered.length === 0 && (
+      {!loading && !error && results.length === 0 && (
         <div className="text-center py-12 text-gray-400">
           <Search size={32} className="mx-auto mb-2 opacity-40" />
-          <p>No jobs matched your search. Try broader keywords or select more portals.</p>
+          <p>{query ? "No jobs matched your search. Try broader keywords." : "No jobs cached yet. Run the seed script to populate."}</p>
         </div>
       )}
 
@@ -458,17 +442,14 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
         </div>
       ))}
 
-      {/* Info when no search yet */}
-      {!hasSearched && (
-        <div className="bg-gray-50 border border-gray-200 rounded-xl p-5">
-          <h3 className="font-semibold text-gray-700 text-sm mb-3">Singapore Job APIs & Data Sources</h3>
-          <div className="space-y-2 text-sm text-gray-600">
-            <div className="flex items-start gap-2"><ChevronRight size={14} className="mt-1 text-indigo-400 flex-shrink-0" /><div><a href="https://data.gov.sg" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline font-medium">data.gov.sg</a> — SG open data with free developer APIs</div></div>
-            <div className="flex items-start gap-2"><ChevronRight size={14} className="mt-1 text-indigo-400 flex-shrink-0" /><div><a href="https://www.developer.tech.gov.sg/products/categories/data-and-apis/index" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline font-medium">GovTech Developer Portal</a> — Full SG government API catalog</div></div>
-            <div className="flex items-start gap-2"><ChevronRight size={14} className="mt-1 text-indigo-400 flex-shrink-0" /><div><a href="https://docs.unified.to/ats/overview" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline font-medium">Unified.to ATS API</a> — One API for Greenhouse, Lever, Workable, etc.</div></div>
-            <div className="flex items-start gap-2"><ChevronRight size={14} className="mt-1 text-indigo-400 flex-shrink-0" /><div><a href="https://www.kombo.dev/use-cases/ats-api" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline font-medium">Kombo.dev</a> — Unified ATS integration API</div></div>
-            <div className="flex items-start gap-2"><ChevronRight size={14} className="mt-1 text-indigo-400 flex-shrink-0" /><div><a href="https://github.com/datagovsg" target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline font-medium">GitHub: datagovsg</a> — Open source repos from data.gov.sg</div></div>
-          </div>
+      {/* Pagination */}
+      {results.length === 20 && (
+        <div className="flex justify-center gap-3">
+          {page > 1 && (
+            <button onClick={() => loadJobs(query, page - 1)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Previous</button>
+          )}
+          <span className="px-4 py-2 text-sm text-gray-500">Page {page}</span>
+          <button onClick={() => loadJobs(query, page + 1)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Next</button>
         </div>
       )}
     </div>
