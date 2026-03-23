@@ -104,8 +104,9 @@ def privacy() -> dict:
             {
                 "heading": "What We Store",
                 "content": (
-                    "When you create an account, we store your email, name, and "
-                    "encrypted password. When you use our AI resume features, we "
+                    "When you create an account, we store your email and name. "
+                    "Your password is hashed (one-way encryption) — we never "
+                    "store or see your actual password. When you use our AI resume features, we "
                     "store your resume text to personalise your coaching experience "
                     "across sessions (our 'Memory' feature). Your tracked job "
                     "applications and notes are also stored."
