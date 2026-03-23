@@ -106,7 +106,7 @@ function Nav({ active, setActive }) {
   );
 }
 
-function AuthModal({ onAuth }) {
+function AuthModal({ onAuth, onClose }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -141,16 +141,18 @@ function AuthModal({ onAuth }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}>
+      <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 relative">
+        {onClose && <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20} /></button>}
         <div className="text-center mb-6">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Briefcase size={24} className="text-indigo-600" />
             <h1 className="text-xl font-bold text-gray-800">Job Hunter SG</h1>
           </div>
           <p className="text-sm text-gray-500">
-            {mode === "login" ? "Welcome back! Sign in to continue." : "Create your account to get started."}
+            {mode === "login" ? "Sign in with your @aisg.sg email" : "Create account with @aisg.sg email"}
           </p>
+          <p className="text-xs text-gray-400 mt-1">Sign in to save your applications and get unlimited AI reviews</p>
         </div>
 
         {error && (
@@ -1712,20 +1714,7 @@ export default function JobHunterSG() {
     );
   }
 
-  // Show auth modal if not logged in
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="max-w-5xl mx-auto">
-          <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-6 py-5">
-            <h1 className="text-xl font-bold flex items-center gap-2"><Briefcase size={22} /> Job Hunter SG</h1>
-            <p className="text-indigo-100 text-sm mt-1">Scrape jobs across SG portals, track applications, get reminders, and generate ATS-optimized resumes.</p>
-          </div>
-        </div>
-        <AuthModal onAuth={handleAuth} />
-      </div>
-    );
-  }
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1738,24 +1727,37 @@ export default function JobHunterSG() {
               <p className="text-indigo-100 text-sm mt-1">Scrape jobs across SG portals, track applications, get reminders, and generate ATS-optimized resumes.</p>
             </div>
             <div className="flex items-center gap-3">
-              {usageData && (
-                <div className="bg-white/15 rounded-lg px-3 py-1.5 text-xs text-indigo-100 hidden sm:block">
-                  {usageData.searches_today}/{usageData.searches_limit} searches today
-                </div>
+              {user ? (
+                <>
+                  {usageData && (
+                    <div className="bg-white/15 rounded-lg px-3 py-1.5 text-xs text-indigo-100 hidden sm:block">
+                      {usageData.searches_today}/{usageData.searches_limit} searches
+                    </div>
+                  )}
+                  <div className="text-right">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{user.name}</span>
+                      <TierBadge tier={user.tier} />
+                    </div>
+                    <div className="text-indigo-200 text-xs">{user.email}</div>
+                  </div>
+                  <button onClick={handleLogout} className="text-indigo-200 hover:text-white transition" title="Sign out">
+                    <LogOut size={18} />
+                  </button>
+                </>
+              ) : (
+                <button onClick={() => setShowAuthModal(true)}
+                  className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg text-sm font-medium transition">
+                  Sign In
+                </button>
               )}
-              <div className="text-right">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium">{user.name}</span>
-                  <TierBadge tier={user.tier} />
-                </div>
-                <div className="text-indigo-200 text-xs">{user.email}</div>
-              </div>
-              <button onClick={handleLogout} className="text-indigo-200 hover:text-white transition" title="Sign out">
-                <LogOut size={18} />
-              </button>
             </div>
           </div>
         </div>
+
+        {showAuthModal && (
+          <AuthModal onAuth={(data) => { handleAuth(data); setShowAuthModal(false); }} onClose={() => setShowAuthModal(false)} />
+        )}
 
         <Nav active={activeTab} setActive={setActiveTab} />
 
