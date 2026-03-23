@@ -1612,6 +1612,7 @@ export default function JobHunterSG() {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(() => localStorage.getItem("token"));
   const [authLoading, setAuthLoading] = useState(true);
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
   // Validate token on mount
   useEffect(() => {
@@ -1713,8 +1714,6 @@ export default function JobHunterSG() {
       </div>
     );
   }
-
-  const [showAuthModal, setShowAuthModal] = useState(false);
 
   return (
     <div className="min-h-screen bg-gray-50">
