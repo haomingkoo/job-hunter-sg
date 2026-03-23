@@ -366,7 +366,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       {loading && (
         <div className="text-center py-12">
           <Loader2 size={32} className="animate-spin text-indigo-400 mx-auto" />
-          <p className="text-sm text-gray-500 mt-3">Searching {selectedPortals.length} portals for "{query}"...</p>
+          <p className="text-sm text-gray-500 mt-3">Loading jobs{query ? ` for "${query}"` : ""}...</p>
         </div>
       )}
 
@@ -995,7 +995,7 @@ function ResumeBuilderTab({ selectedJob, user }) {
         <p className="text-sm text-gray-500 mt-1">
           {selectedJob
             ? `Generating a resume tailored for "${selectedJob.title}" at ${selectedJob.company}. Fill in your details below.`
-            : "Fill in your profile, then we'll generate an ATS-optimized resume. Select a job from the Scraper tab for best results."
+            : "Fill in your profile, then we'll generate an ATS-optimized resume. Select a job from the Jobs tab for best results."
           }
         </p>
       </div>
@@ -1765,7 +1765,7 @@ export default function JobHunterSG() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-xl font-bold flex items-center gap-2"><Briefcase size={22} /> Job Hunter SG</h1>
-              <p className="text-indigo-100 text-sm mt-1">Scrape jobs across SG portals, track applications, get reminders, and generate ATS-optimized resumes.</p>
+              <p className="text-indigo-100 text-sm mt-1">Search SG jobs, track applications, and get AI-powered resume coaching.</p>
             </div>
             <div className="flex items-center gap-3">
               {user ? (
