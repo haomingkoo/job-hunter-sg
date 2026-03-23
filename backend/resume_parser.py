@@ -115,9 +115,32 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
     word_count = len(text.split())
     line_count = len([l for l in lines if l.strip()])
 
-    # Try to find email and phone
+    # Try to find email, phone, and name
     email_match = re.search(r'[\w.+-]+@[\w-]+\.[\w.]+', text)
     phone_match = re.search(r'[\+]?[\d\s\-\(\)]{8,15}', text)
+
+    # Name detection — first non-empty line that looks like a name
+    # (2-4 words, no special chars, not an email/phone/url, not a section header)
+    name = None
+    section_headers = {"experience", "education", "skills", "summary", "objective",
+                       "certifications", "professional", "work", "projects", "contact"}
+    for line in lines:
+        cleaned = line.strip()
+        if not cleaned or len(cleaned) < 3:
+            continue
+        lower = cleaned.lower()
+        # Skip emails, phones, URLs, section headers
+        if "@" in cleaned or "http" in lower or "linkedin" in lower:
+            continue
+        if any(h in lower for h in section_headers):
+            continue
+        if re.match(r'^[\+\d\s\-\(\)]+$', cleaned):  # Skip phone-only lines
+            continue
+        # Looks like a name: 2-5 words, mostly letters
+        words = cleaned.split()
+        if 1 <= len(words) <= 5 and all(re.match(r'^[A-Za-z\.\-\']+$', w) for w in words):
+            name = cleaned
+            break
 
     return {
         "text": text,  # FULL text, no truncation
@@ -125,6 +148,7 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
         "file_type": file_type,
         "word_count": word_count,
         "line_count": line_count,
+        "name": name,
         "email": email_match.group() if email_match else None,
         "phone": phone_match.group().strip() if phone_match else None,
         "page_estimate": max(1, word_count // 500),
