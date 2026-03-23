@@ -177,7 +177,6 @@ def crawl_all_jobs() -> dict:
     log.info("=" * 60)
 
     page = 0
-    total_mcf = None
     while True:
         try:
             jobs = mcf.search("", limit=100, page=page)  # Empty string = all jobs

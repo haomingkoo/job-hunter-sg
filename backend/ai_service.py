@@ -305,8 +305,8 @@ Keep it conversational — like you're sitting across from them at a coffee shop
 
     return {
         "coaching": content,
-        "model": SEALION_MODEL,
-        "provider": "AI",
+        "model": "AI",
+        "provider": "AI Singapore",
     }
 
 

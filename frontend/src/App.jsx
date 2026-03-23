@@ -3,7 +3,7 @@ import {
   Search, Briefcase, Bell, FileText, Plus, X, ChevronRight, Clock,
   CheckCircle, AlertCircle, ExternalLink, Trash2, Edit3, Save, Filter,
   RefreshCw, Zap, Download, Copy, Star, MapPin, DollarSign, Building2,
-  Loader2, User, LogOut, Eye, EyeOff, Mail, MessageSquare, Shield,
+  Loader2, User, LogOut, Mail,
   RotateCcw, Sparkles,
 } from "lucide-react";
 
@@ -43,7 +43,7 @@ const ATS_KEYWORDS_BY_ROLE = {
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 const todayStr = () => new Date().toISOString().split("T")[0];
-const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 86400000);
+const daysBetween = (a, b) => (a && b) ? Math.round((new Date(b) - new Date(a)) / 86400000) : 0;
 
 async function apiFetch(path, options = {}) {
   const token = localStorage.getItem("token");
@@ -53,6 +53,7 @@ async function apiFetch(path, options = {}) {
   if (resp.status === 401) {
     localStorage.removeItem("token");
     window.location.reload();
+    throw new Error("Session expired. Please sign in again.");
   }
   if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
   return resp;
@@ -270,8 +271,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       setPage(pageNum);
       setTotalLabel(mapped.length === 20 ? "20+ jobs" : `${mapped.length} jobs`);
     } catch (err) {
-      console.error("Search failed:", err);
-      setError(err.message || "Failed to load jobs.");
+      setError(err.message || "Failed to load jobs. Please try again.");
       setResults([]);
     } finally {
       setLoading(false);
@@ -318,8 +318,6 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     setSelectedJob(scrapedJob);
     setActiveTab("resume");
   };
-
-  const isFree = !user || user?.tier === "free";
 
   return (
     <div className="space-y-6">
@@ -389,7 +387,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       {!loading && !error && results.length === 0 && (
         <div className="text-center py-12 text-gray-400">
           <Search size={32} className="mx-auto mb-2 opacity-40" />
-          <p>{query ? "No jobs matched your search. Try broader keywords." : "No jobs cached yet. Run the seed script to populate."}</p>
+          <p>{query ? "No jobs matched your search. Try broader keywords." : "No jobs available yet. Please check back later."}</p>
         </div>
       )}
 
@@ -556,9 +554,9 @@ function TrackerTab({ user, jobs, refreshJobs }) {
     offer: jobs.filter((j) => j.status === "offer").length,
   };
 
-  const isFree = user?.tier === "free";
-  const atLimit = isFree && jobs.length >= 20;
   const isPro = user?.tier === "pro" || user?.tier === "admin";
+  const isFree = user?.tier === "free";
+  const atLimit = isFree;
 
   return (
     <div className="space-y-6">
@@ -584,8 +582,8 @@ function TrackerTab({ user, jobs, refreshJobs }) {
 
       {atLimit && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-          <div className="font-medium mb-1">Free tier limit reached (20 tracked jobs)</div>
-          <p>Sign in with @aisg.sg for unlimited tracked jobs, CSV export, and more.</p>
+          <div className="font-medium mb-1">Application tracking requires an @aisg.sg account</div>
+          <p>Sign up with your @aisg.sg email for unlimited tracked jobs, CSV export, and follow-up reminders.</p>
         </div>
       )}
 
@@ -1250,10 +1248,9 @@ function ATSTab() {
       });
       const data = await resp.json();
       setAnalysis(data);
-    } catch (err) {
-      console.error("ATS API failed, using fallback:", err);
+    } catch {
       setAnalysis(analyzeFallback());
-      setError("Backend scorer unavailable — showing basic keyword analysis instead.");
+      setError("Full scorer unavailable — showing basic keyword analysis instead.");
     } finally {
       setLoading(false);
     }
@@ -1271,7 +1268,7 @@ function ATSTab() {
     <div className="space-y-6">
       <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl p-5">
         <h2 className="font-semibold text-gray-800 flex items-center gap-2"><Zap size={18} /> AI Resume Scorer</h2>
-        <p className="text-sm text-gray-500 mt-1">Paste a job description and your resume for a multi-dimensional ATS analysis powered by our backend scorer.</p>
+        <p className="text-sm text-gray-500 mt-1">Paste a job description and your resume for a multi-dimensional ATS analysis with actionable improvement suggestions.</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1410,7 +1407,6 @@ function ATSTab() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function AccountTab({ user, onLogout }) {
-  const [showApiKey, setShowApiKey] = useState(false);
   const [usage, setUsage] = useState(null);
   const [usageLoading, setUsageLoading] = useState(true);
   const [contactForm, setContactForm] = useState({ name: user?.name || "", email: user?.email || "", message: "" });
@@ -1425,20 +1421,14 @@ function AccountTab({ user, onLogout }) {
         const resp = await apiFetch("/api/usage");
         const data = await resp.json();
         if (!cancelled) setUsage(data);
-      } catch (err) {
-        console.error("Failed to load usage:", err);
+      } catch {
+        // Non-critical: usage display will show fallback
       } finally {
         if (!cancelled) setUsageLoading(false);
       }
     })();
     return () => { cancelled = true; };
   }, []);
-
-  const copyApiKey = () => {
-    if (user?.api_key) {
-      navigator.clipboard.writeText(user.api_key);
-    }
-  };
 
   const sendContact = async (e) => {
     e.preventDefault();
@@ -1485,18 +1475,8 @@ function AccountTab({ user, onLogout }) {
             <TierBadge tier={user?.tier} />
           </div>
           <div>
-            <div className="text-gray-500 text-xs uppercase tracking-wide mb-1">API Key</div>
-            <div className="flex items-center gap-2">
-              <code className="text-xs bg-gray-100 px-2 py-1 rounded font-mono">
-                {showApiKey ? (user?.api_key || "—") : "••••••••••••••••"}
-              </code>
-              <button onClick={() => setShowApiKey(!showApiKey)} className="text-gray-400 hover:text-gray-600">
-                {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-              </button>
-              <button onClick={copyApiKey} className="text-gray-400 hover:text-gray-600" title="Copy API key">
-                <Copy size={14} />
-              </button>
-            </div>
+            <div className="text-gray-500 text-xs uppercase tracking-wide mb-1">Member Since</div>
+            <div className="text-gray-800">{user?.created_at ? new Date(user.created_at).toLocaleDateString() : "—"}</div>
           </div>
         </div>
       </div>
@@ -1546,13 +1526,18 @@ function AccountTab({ user, onLogout }) {
             </thead>
             <tbody className="divide-y divide-gray-100">
               <tr>
-                <td className="px-4 py-3 text-gray-700">Searches / day</td>
-                <td className="px-4 py-3 text-center text-gray-600">5</td>
+                <td className="px-4 py-3 text-gray-700">Job Searching</td>
+                <td className="px-4 py-3 text-center text-gray-600">Unlimited</td>
+                <td className="px-4 py-3 text-center text-indigo-700 font-medium">Unlimited</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3 text-gray-700">AI Reviews / day</td>
+                <td className="px-4 py-3 text-center text-gray-600">3</td>
                 <td className="px-4 py-3 text-center text-indigo-700 font-medium">50</td>
               </tr>
               <tr>
                 <td className="px-4 py-3 text-gray-700">Tracked jobs</td>
-                <td className="px-4 py-3 text-center text-gray-600">20</td>
+                <td className="px-4 py-3 text-center text-gray-600">Sign in required</td>
                 <td className="px-4 py-3 text-center text-indigo-700 font-medium">Unlimited</td>
               </tr>
               <tr>
@@ -1576,7 +1561,7 @@ function AccountTab({ user, onLogout }) {
               <h4 className="font-semibold text-gray-800">Upgrade to AISG Tier</h4>
             </div>
             <p className="text-sm text-gray-600 mb-3">
-              Sign up with your @aisg.sg email to get 50 searches/day, unlimited tracked jobs, CSV export, and full ATS analysis — completely free.
+              Sign up with your @aisg.sg email to get 50 AI reviews/day, unlimited tracked jobs, CSV export, and full ATS analysis — completely free.
             </p>
             <p className="text-sm text-gray-500">
               Have questions? Send us a message below or reach out directly.
@@ -1590,18 +1575,7 @@ function AccountTab({ user, onLogout }) {
         <h3 className="font-semibold text-gray-800 mb-4">Get in Touch</h3>
 
         <div className="flex flex-wrap gap-3 mb-5">
-          <a href="https://wa.me/" target="_blank" rel="noreferrer"
-            className="flex items-center gap-2 border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 transition">
-            <MessageSquare size={14} /> WhatsApp
-          </a>
-          <a href="https://t.me/" target="_blank" rel="noreferrer"
-            className="flex items-center gap-2 border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 transition">
-            <MessageSquare size={14} /> Telegram
-          </a>
-          <a href="mailto:hello@jobhuntersg.com"
-            className="flex items-center gap-2 border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 transition">
-            <Mail size={14} /> Email
-          </a>
+          <span className="text-sm text-gray-500">Send us a message below or email us through the contact form.</span>
         </div>
 
         {contactSent && (
@@ -1684,8 +1658,9 @@ export default function JobHunterSG() {
       const resp = await apiFetch("/api/tracked");
       const data = await resp.json();
       setTrackedJobs(Array.isArray(data) ? data : data.jobs || []);
-    } catch (err) {
-      console.error("Failed to load tracked jobs:", err);
+    } catch {
+      // Non-critical: tracked jobs will be empty for unauthenticated users
+      setTrackedJobs([]);
     }
   }, []);
 
@@ -1722,27 +1697,19 @@ export default function JobHunterSG() {
   };
 
   const handleTrackJob = async (payload) => {
-    try {
-      await apiFetch("/api/tracked", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
-      await refreshJobs();
-    } catch (err) {
-      console.error("Track job failed:", err);
-    }
+    await apiFetch("/api/tracked", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    await refreshJobs();
   };
 
   const handleUpdateJob = async (id, updates) => {
-    try {
-      await apiFetch(`/api/tracked/${id}`, {
-        method: "PUT",
-        body: JSON.stringify(updates),
-      });
-      await refreshJobs();
-    } catch (err) {
-      console.error("Update job failed:", err);
-    }
+    await apiFetch(`/api/tracked/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(updates),
+    });
+    await refreshJobs();
   };
 
   // Loading state
@@ -1772,7 +1739,7 @@ export default function JobHunterSG() {
                 <>
                   {usageData && (
                     <div className="bg-white/15 rounded-lg px-3 py-1.5 text-xs text-indigo-100 hidden sm:block">
-                      {usageData.searches_today}/{usageData.searches_limit} searches
+                      {usageData.tracked_jobs} tracked{usageData.can_export ? " | Pro" : ""}
                     </div>
                   )}
                   <div className="text-right">
