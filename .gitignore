@@ -1,0 +1,34 @@
+# Environment & secrets
+.env
+.env.local
+.env.production
+backend/.env
+session.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.db
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Data
+*.csv
+*.json
+!package.json
+!manifest.json
+!tsconfig.json
+!.env.example
+!backend/.env.example

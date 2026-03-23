@@ -1,0 +1,684 @@
+"""
+Multi-dimensional resume scoring engine.
+
+Scores a resume on three dimensions (Impact, Presentation, Competencies)
+totalling 100 points. Optionally matches keywords against a job description.
+Pure stdlib + re — no external dependencies.
+"""
+
+from __future__ import annotations
+
+import re
+from collections import Counter
+
+# ── Constants ────────────────────────────────────────────────────────────────
+
+ACTION_VERBS = {
+    "achieved", "administered", "advanced", "analyzed", "architected",
+    "assembled", "assessed", "automated", "built", "calculated",
+    "championed", "coached", "collaborated", "communicated", "completed",
+    "conceptualized", "conducted", "consolidated", "constructed",
+    "consulted", "contributed", "controlled", "converted", "coordinated",
+    "created", "cultivated", "customized", "decreased", "defined",
+    "delivered", "demonstrated", "deployed", "designed", "developed",
+    "devised", "diagnosed", "directed", "discovered", "documented",
+    "drove", "earned", "edited", "educated", "eliminated", "enabled",
+    "encouraged", "engineered", "enhanced", "established", "evaluated",
+    "examined", "exceeded", "executed", "expanded", "expedited",
+    "facilitated", "finalized", "forecasted", "formulated", "founded",
+    "generated", "governed", "guided", "headed", "identified",
+    "illustrated", "implemented", "improved", "increased", "influenced",
+    "initiated", "innovated", "inspected", "installed", "instituted",
+    "integrated", "interpreted", "introduced", "invented", "investigated",
+    "launched", "led", "leveraged", "maintained", "managed", "mapped",
+    "maximized", "mentored", "merged", "migrated", "minimized",
+    "modernized", "monitored", "motivated", "navigated", "negotiated",
+    "operated", "optimized", "orchestrated", "organized", "originated",
+    "outperformed", "overhauled", "oversaw", "partnered", "performed",
+    "piloted", "pioneered", "planned", "prepared", "presented",
+    "prioritized", "produced", "programmed", "promoted", "proposed",
+    "provided", "published", "pursued", "reached", "realized",
+    "recommended", "reconciled", "recruited", "redesigned", "reduced",
+    "refined", "reformed", "regulated", "rehabilitated", "remodeled",
+    "reorganized", "represented", "researched", "resolved", "restored",
+    "restructured", "revamped", "reviewed", "revitalized", "scaled",
+    "secured", "simplified", "solved", "spearheaded", "standardized",
+    "streamlined", "strengthened", "structured", "supervised",
+    "surpassed", "sustained", "synchronized", "targeted", "tested",
+    "trained", "transformed", "translated", "troubleshot", "unified",
+    "upgraded", "validated", "verified", "visualized",
+}
+
+AVOIDED_PHRASES = [
+    "responsible for",
+    "helped",
+    "assisted",
+    "duties included",
+    "various",
+    "utilized",
+    "proactively",
+]
+
+COMMON_MISSPELLINGS = {
+    "accomodation", "acheive", "accross", "agressive", "apparant",
+    "begining", "beleive", "buisness", "calender", "catagory",
+    "commitee", "concensus", "definately", "developement", "dillema",
+    "dissapear", "embarass", "enviroment", "excercise", "existance",
+    "fourty", "fulfil", "goverment", "harrass", "hygeine",
+    "imediately", "independant", "judgement", "knowlege", "liason",
+    "maintenence", "millenium", "neccessary", "noticable", "occurence",
+    "oppurtunity", "parliment", "posession", "preceed", "privelege",
+    "proffesional", "publically", "questionaire", "recieve", "recomend",
+    "refered", "relevent", "religous", "repetition", "seperate",
+    "succesful", "supercede", "surprize", "tommorow", "untill",
+    "wierd", "writting", "wich", "aknowledge", "adress",
+}
+
+STANDARD_SECTIONS = [
+    "summary", "objective", "experience", "work experience",
+    "education", "skills", "certifications", "certification",
+    "projects", "awards", "honors", "publications",
+]
+
+EXTRACURRICULAR_KEYWORDS = [
+    "volunteer", "volunteering", "activities", "leadership",
+    "extracurricular", "community", "pro bono", "charity",
+    "club", "society", "organization",
+]
+
+COMPETENCY_KEYWORDS: dict[str, list[str]] = {
+    "analytical": [
+        "data", "analysis", "research", "metrics", "statistical",
+        "evaluate", "optimize", "quantitative", "forecast", "insights",
+        "modeled", "assessed", "benchmarked",
+    ],
+    "communication": [
+        "presented", "communicated", "collaborated", "stakeholder",
+        "facilitated", "negotiated", "articulated", "liaised",
+        "reported", "briefed", "authored", "published",
+    ],
+    "leadership": [
+        "led", "managed", "supervised", "mentored", "directed",
+        "spearheaded", "oversaw", "headed", "governed", "guided",
+        "delegated", "inspired",
+    ],
+    "teamwork": [
+        "cross-functional", "collaborated", "partnered", "team",
+        "contributed", "coordinated", "cooperated", "supported",
+        "aligned", "joint",
+    ],
+    "initiative": [
+        "initiated", "launched", "created", "established", "pioneered",
+        "proposed", "founded", "introduced", "innovated", "championed",
+        "conceptualized", "originated",
+    ],
+}
+
+_METRIC_RE = re.compile(
+    r"\d+%"
+    r"|\$[\d,]+"
+    r"|\d+\s*(?:team|users|people|projects|systems|clients)"
+    r"|\d+[kKmMbB]\b"
+    r"|\d{1,3}(?:,\d{3})+"
+)
+
+_BULLET_RE = re.compile(
+    r"^[\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)]\s)",
+    re.MULTILINE,
+)
+
+_DATE_FORMATS = [
+    re.compile(
+        r"\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+        r"[a-z]*\s+\d{4}\b",
+        re.I,
+    ),
+    re.compile(r"\b\d{1,2}/\d{4}\b"),
+    re.compile(
+        r"\b\d{4}\s*[-\u2013]\s*(?:\d{4}|present|current)\b", re.I
+    ),
+]
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _status(score: int, max_score: int) -> str:
+    """Return status label based on score ratio."""
+    if max_score == 0:
+        return "good_job"
+    ratio = score / max_score
+    if ratio >= 0.8:
+        return "good_job"
+    if ratio >= 0.5:
+        return "on_track"
+    return "needs_work"
+
+
+class ResumeScorer:
+    """Analyses resume text and returns a structured score report."""
+
+    # ── Text extraction helpers ──────────────────────────────────────────
+
+    @staticmethod
+    def _extract_bullets(text: str) -> list[str]:
+        """Extract bullet-point lines from resume text."""
+        bullets: list[str] = []
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if _BULLET_RE.match(line):
+                cleaned = re.sub(
+                    r"^[\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]"
+                    r"|\d+[.)]\s)\s*",
+                    "",
+                    line,
+                ).strip()
+                if cleaned:
+                    bullets.append(cleaned)
+        return bullets
+
+    @staticmethod
+    def _extract_sections(text: str) -> list[str]:
+        """Identify section headers in the resume."""
+        found: list[str] = []
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            lower = stripped.lower().rstrip(":")
+            # Exact match against known sections
+            if lower in STANDARD_SECTIONS:
+                found.append(lower)
+                continue
+            # ALL-CAPS line with 2+ chars and no lowercase
+            if (
+                len(stripped) >= 2
+                and stripped == stripped.upper()
+                and re.search(r"[A-Z]", stripped)
+                and len(stripped.split()) <= 5
+            ):
+                found.append(stripped.lower())
+                continue
+            # Line ending with colon, short enough to be a header
+            if stripped.endswith(":") and len(stripped.split()) <= 5:
+                found.append(lower)
+        return list(dict.fromkeys(found))  # dedupe, preserve order
+
+    @staticmethod
+    def _find_action_verbs(bullet: str) -> bool:
+        """Check whether the first word of a bullet is an action verb."""
+        words = bullet.split()
+        if not words:
+            return False
+        return words[0].lower().rstrip(",;:") in ACTION_VERBS
+
+    # ── Dimension scorers ────────────────────────────────────────────────
+
+    def _score_impact(self, text: str, bullets: list[str]) -> dict:
+        """Score the Impact dimension (40 pts)."""
+        items: dict[str, dict] = {}
+
+        # action_oriented (10)
+        action_count = sum(
+            1 for b in bullets if self._find_action_verbs(b)
+        )
+        total_bullets = len(bullets) or 1
+        action_pct = action_count / total_bullets
+        action_score = min(10, round(action_pct * 10))
+        action_suggestions: list[str] = []
+        if action_pct < 0.8:
+            action_suggestions.append(
+                "Start more bullets with strong action verbs "
+                "(e.g., Developed, Led, Implemented)"
+            )
+        items["action_oriented"] = {
+            "score": action_score,
+            "max": 10,
+            "status": _status(action_score, 10),
+            "detail": (
+                f"{action_count}/{len(bullets)} bullets start "
+                f"with action verbs"
+            ),
+            "suggestions": action_suggestions,
+        }
+
+        # specifics (10)
+        metric_count = sum(
+            1 for b in bullets if _METRIC_RE.search(b)
+        )
+        metric_pct = metric_count / total_bullets
+        specifics_score = min(10, round(metric_pct * 10))
+        specifics_suggestions: list[str] = []
+        if metric_pct < 0.5:
+            specifics_suggestions.append(
+                "Quantify achievements with numbers, "
+                "percentages, or dollar amounts"
+            )
+        items["specifics"] = {
+            "score": specifics_score,
+            "max": 10,
+            "status": _status(specifics_score, 10),
+            "detail": (
+                f"{metric_count}/{len(bullets)} bullets "
+                f"contain metrics/numbers"
+            ),
+            "suggestions": specifics_suggestions,
+        }
+
+        # overusage (10)
+        words_lower = re.findall(r"[a-z]+", text.lower())
+        word_counts = Counter(words_lower)
+        stopwords = {
+            "the", "a", "an", "and", "or", "of", "to", "in", "for",
+            "with", "on", "at", "by", "is", "was", "are", "were", "be",
+            "been", "has", "had", "have", "that", "this", "it", "as",
+            "from", "not", "but", "i", "my", "me",
+        }
+        overused = [
+            w for w, c in word_counts.items()
+            if c >= 3 and w not in stopwords and len(w) > 3
+        ]
+        penalty = len(overused) * 2
+        overusage_score = max(0, 10 - penalty)
+        overusage_suggestions: list[str] = []
+        if overused:
+            top = sorted(overused, key=lambda w: -word_counts[w])[:5]
+            overusage_suggestions.append(
+                f"Reduce repetition of: {', '.join(top)}"
+            )
+        items["overusage"] = {
+            "score": overusage_score,
+            "max": 10,
+            "status": _status(overusage_score, 10),
+            "detail": f"{len(overused)} words used 3+ times",
+            "suggestions": overusage_suggestions,
+        }
+
+        # avoided_words (5)
+        text_lower = text.lower()
+        filler_hits = sum(
+            1 for phrase in AVOIDED_PHRASES if phrase in text_lower
+        )
+        avoided_score = max(0, 5 - filler_hits)
+        avoided_suggestions: list[str] = []
+        found_fillers = [
+            p for p in AVOIDED_PHRASES if p in text_lower
+        ]
+        if found_fillers:
+            avoided_suggestions.append(
+                "Remove filler phrases: "
+                + ", ".join(f'"{f}"' for f in found_fillers)
+            )
+        items["avoided_words"] = {
+            "score": avoided_score,
+            "max": 5,
+            "status": _status(avoided_score, 5),
+            "detail": f"{filler_hits} filler phrases found",
+            "suggestions": avoided_suggestions,
+        }
+
+        # extracurricular (5)
+        extra_found = any(
+            kw in text_lower for kw in EXTRACURRICULAR_KEYWORDS
+        )
+        extra_score = 5 if extra_found else 0
+        extra_suggestions: list[str] = []
+        if not extra_found:
+            extra_suggestions.append(
+                "Add volunteer work, activities, or leadership sections"
+            )
+        items["extracurricular"] = {
+            "score": extra_score,
+            "max": 5,
+            "status": _status(extra_score, 5),
+            "detail": (
+                "Extracurricular/volunteer content detected"
+                if extra_found
+                else "No extracurricular content found"
+            ),
+            "suggestions": extra_suggestions,
+        }
+
+        total = sum(item["score"] for item in items.values())
+        return {
+            "score": total,
+            "max": 40,
+            "status": _status(total, 40),
+            "items": items,
+        }
+
+    def _score_presentation(
+        self,
+        text: str,
+        bullets: list[str],
+        sections: list[str],
+    ) -> dict:
+        """Score the Presentation dimension (30 pts)."""
+        items: dict[str, dict] = {}
+        words = text.split()
+        word_count = len(words)
+
+        # word_count (5)
+        if 400 <= word_count <= 700:
+            wc_score = 5
+        elif 300 <= word_count <= 900:
+            wc_score = 3
+        else:
+            wc_score = 1
+        wc_suggestions: list[str] = []
+        if word_count < 400:
+            wc_suggestions.append(
+                f"Resume is short ({word_count} words). "
+                f"Aim for 400-700 words."
+            )
+        elif word_count > 700:
+            wc_suggestions.append(
+                f"Resume is long ({word_count} words). "
+                f"Aim for 400-700 words."
+            )
+        items["word_count"] = {
+            "score": wc_score,
+            "max": 5,
+            "status": _status(wc_score, 5),
+            "detail": f"{word_count} words",
+            "suggestions": wc_suggestions,
+        }
+
+        # bullet_count (5)
+        bc = len(bullets)
+        if 15 <= bc <= 25:
+            bc_score = 5
+        elif 10 <= bc <= 35:
+            bc_score = 3
+        else:
+            bc_score = 1
+        bc_suggestions: list[str] = []
+        if bc < 15:
+            bc_suggestions.append(
+                f"Only {bc} bullets found. "
+                f"Aim for 15-25 to demonstrate depth."
+            )
+        elif bc > 25:
+            bc_suggestions.append(
+                f"{bc} bullets found. Trim to 15-25 for conciseness."
+            )
+        items["bullet_count"] = {
+            "score": bc_score,
+            "max": 5,
+            "status": _status(bc_score, 5),
+            "detail": f"{bc} bullet points",
+            "suggestions": bc_suggestions,
+        }
+
+        # section_count (5)
+        core = {
+            "summary", "objective", "experience", "work experience",
+            "education", "skills", "certifications", "certification",
+        }
+        matched_sections = [s for s in sections if s in core]
+        sc_count = len(matched_sections)
+        if sc_count >= 4:
+            sc_score = 5
+        elif sc_count >= 3:
+            sc_score = 3
+        elif sc_count >= 2:
+            sc_score = 2
+        else:
+            sc_score = 1
+        missing = core - set(matched_sections)
+        sc_suggestions: list[str] = []
+        if missing:
+            examples = sorted(missing)[:3]
+            sc_suggestions.append(
+                f"Consider adding sections: {', '.join(examples)}"
+            )
+        items["section_count"] = {
+            "score": sc_score,
+            "max": 5,
+            "status": _status(sc_score, 5),
+            "detail": (
+                f"{sc_count} standard sections found: "
+                f"{', '.join(matched_sections) or 'none'}"
+            ),
+            "suggestions": sc_suggestions,
+        }
+
+        # format_consistency (5)
+        fmt_score = 5
+        fmt_suggestions: list[str] = []
+        date_matches: list[str] = []
+        for pattern in _DATE_FORMATS:
+            date_matches.extend(pattern.findall(text))
+        if len(date_matches) >= 2:
+            has_slash = any("/" in d for d in date_matches)
+            has_month = any(
+                re.search(r"[A-Za-z]", d) for d in date_matches
+            )
+            if has_slash and has_month:
+                fmt_score -= 2
+                fmt_suggestions.append(
+                    "Use a consistent date format throughout "
+                    "(e.g., Jan 2024)"
+                )
+        caps_blocks = re.findall(r"(?:[A-Z]{2,}\s+){4,}", text)
+        if caps_blocks:
+            fmt_score -= 2
+            fmt_suggestions.append(
+                "Avoid large ALL CAPS blocks "
+                "-- use Title Case for headers"
+            )
+        fmt_score = max(0, fmt_score)
+        items["format_consistency"] = {
+            "score": fmt_score,
+            "max": 5,
+            "status": _status(fmt_score, 5),
+            "detail": (
+                "Formatting looks consistent"
+                if fmt_score >= 4
+                else "Some formatting inconsistencies detected"
+            ),
+            "suggestions": fmt_suggestions,
+        }
+
+        # spell_check (5)
+        text_words = set(re.findall(r"[a-z]+", text.lower()))
+        misspelled = text_words & COMMON_MISSPELLINGS
+        sp_penalty = len(misspelled) * 2
+        sp_score = max(0, 5 - sp_penalty)
+        sp_suggestions: list[str] = []
+        if misspelled:
+            sp_suggestions.append(
+                f"Check spelling: "
+                f"{', '.join(sorted(misspelled)[:5])}"
+            )
+        items["spell_check"] = {
+            "score": sp_score,
+            "max": 5,
+            "status": _status(sp_score, 5),
+            "detail": (
+                f"{len(misspelled)} potential misspellings found"
+            ),
+            "suggestions": sp_suggestions,
+        }
+
+        # page_estimate (5)
+        pages = max(1, round(word_count / 500))
+        if 1 <= pages <= 2:
+            pg_score = 5
+        elif pages == 3:
+            pg_score = 3
+        else:
+            pg_score = 1
+        pg_suggestions: list[str] = []
+        if pages > 2:
+            pg_suggestions.append(
+                f"Estimated {pages} pages. Aim for 1-2 pages."
+            )
+        elif word_count < 250:
+            pg_suggestions.append(
+                "Resume appears very short. "
+                "Consider adding more detail."
+            )
+        items["page_estimate"] = {
+            "score": pg_score,
+            "max": 5,
+            "status": _status(pg_score, 5),
+            "detail": (
+                f"~{pages} page(s) estimated ({word_count} words)"
+            ),
+            "suggestions": pg_suggestions,
+        }
+
+        total = sum(item["score"] for item in items.values())
+        return {
+            "score": total,
+            "max": 30,
+            "status": _status(total, 30),
+            "items": items,
+        }
+
+    def _score_competencies(self, text: str) -> dict:
+        """Score the Competencies dimension (30 pts)."""
+        text_lower = text.lower()
+        items: dict[str, dict] = {}
+
+        for comp_name, keywords in COMPETENCY_KEYWORDS.items():
+            matched = [kw for kw in keywords if kw in text_lower]
+            ratio = len(matched) / len(keywords) if keywords else 0
+            score = min(6, round(ratio * 6))
+            suggestions: list[str] = []
+            if score < 4:
+                missing_kw = [
+                    kw for kw in keywords if kw not in text_lower
+                ][:3]
+                suggestions.append(
+                    f"Strengthen {comp_name} with keywords: "
+                    f"{', '.join(missing_kw)}"
+                )
+            items[comp_name] = {
+                "score": score,
+                "max": 6,
+                "status": _status(score, 6),
+                "detail": (
+                    f"{len(matched)}/{len(keywords)} keywords matched"
+                ),
+                "matched_keywords": matched,
+                "suggestions": suggestions,
+            }
+
+        total = sum(item["score"] for item in items.values())
+        return {
+            "score": total,
+            "max": 30,
+            "status": _status(total, 30),
+            "items": items,
+        }
+
+    # ── Keyword matching ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _keyword_match(text: str, job_description: str) -> dict:
+        """Compare resume words against job description keywords."""
+        if not job_description.strip():
+            return {"matched": [], "missing": [], "score_percent": 0}
+
+        stopwords = {
+            "the", "a", "an", "and", "or", "of", "to", "in", "for",
+            "with", "on", "at", "by", "is", "was", "are", "were", "be",
+            "been", "has", "had", "have", "that", "this", "it", "as",
+            "from", "not", "but", "you", "your", "will", "can", "our",
+            "their", "they", "we", "who", "all", "may", "should",
+            "must", "also", "such", "than", "more", "about", "into",
+            "able", "etc", "per",
+        }
+        jd_words = set(
+            re.findall(r"[a-z]+", job_description.lower())
+        )
+        jd_keywords = {
+            w for w in jd_words
+            if len(w) > 3 and w not in stopwords
+        }
+
+        resume_words = set(re.findall(r"[a-z]+", text.lower()))
+        matched = sorted(jd_keywords & resume_words)
+        missing = sorted(jd_keywords - resume_words)
+
+        pct = (
+            round(len(matched) / len(jd_keywords) * 100)
+            if jd_keywords
+            else 0
+        )
+        return {
+            "matched": matched,
+            "missing": missing[:20],
+            "score_percent": pct,
+        }
+
+    # ── Suggestions builder ──────────────────────────────────────────────
+
+    @staticmethod
+    def _build_suggestions(dimensions: dict) -> list[dict]:
+        """Collect top suggestions sorted by potential point gain."""
+        suggestions: list[dict] = []
+        for _dim_name, dim in dimensions.items():
+            for item_name, item in dim["items"].items():
+                gap = item["max"] - item["score"]
+                if gap > 0 and item["suggestions"]:
+                    suggestions.append({
+                        "action": (
+                            f"Improve "
+                            f"{item_name.replace('_', ' ')}"
+                        ),
+                        "points": gap,
+                        "detail": item["suggestions"][0],
+                    })
+        suggestions.sort(key=lambda s: -s["points"])
+        return suggestions[:5]
+
+    # ── Main entry point ─────────────────────────────────────────────────
+
+    def analyze(
+        self, resume_text: str, job_description: str = "",
+    ) -> dict:
+        """Score a resume and return a structured report."""
+        text = resume_text.strip()
+        bullets = self._extract_bullets(text)
+        sections = self._extract_sections(text)
+
+        impact = self._score_impact(text, bullets)
+        presentation = self._score_presentation(
+            text, bullets, sections,
+        )
+        competencies = self._score_competencies(text)
+
+        dimensions = {
+            "impact": impact,
+            "presentation": presentation,
+            "competencies": competencies,
+        }
+
+        overall = (
+            impact["score"]
+            + presentation["score"]
+            + competencies["score"]
+        )
+        keyword_match = self._keyword_match(text, job_description)
+        top_suggestions = self._build_suggestions(dimensions)
+
+        sg_tips = [
+            "Mention residency status (SG Citizen/PR)"
+            " -- many roles require it",
+            "SkillsFuture/WSQ certifications resonate"
+            " with SG employers",
+            "MyCareersFuture uses skills-based matching"
+            " -- list specific skills",
+        ]
+
+        return {
+            "overall_score": overall,
+            "dimensions": dimensions,
+            "keyword_match": keyword_match,
+            "top_suggestions": top_suggestions,
+            "sg_tips": sg_tips,
+        }

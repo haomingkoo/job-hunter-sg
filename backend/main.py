@@ -1,0 +1,707 @@
+"""
+FastAPI backend for Job Hunter SG.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+import logging
+import os
+from dataclasses import asdict
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from auth import (
+    TIER_LIMITS,
+    check_login_rate_limit,
+    check_rate_limit,
+    create_token,
+    get_current_user,
+    get_optional_user,
+    hash_password,
+    validate_password,
+    verify_password,
+)
+from database import get_db, init_db
+from models import ScrapedJob, TrackedJob, UsageLog, User
+from sanitizer import sanitize_job, sanitize_user_input
+from schemas import (
+    AuthResponse,
+    ContactRequest,
+    JobOut,
+    LoginRequest,
+    ResumeScoreRequest,
+    RewriteBulletRequest,
+    SearchResponse,
+    SignupRequest,
+    TierInfo,
+    TrackedJobCreate,
+    TrackedJobOut,
+    TrackedJobUpdate,
+    UserOut,
+)
+from resume_scorer import ResumeScorer
+from scraper import JobAggregator, SSGSkillsFrameworkAPI
+
+log = logging.getLogger("jobhunter")
+
+# Disable OpenAPI docs in production to reduce attack surface
+_is_production = "postgresql" in os.environ.get("DATABASE_URL", "")
+app = FastAPI(
+    title="Job Hunter SG API",
+    version="2.0.0",
+    docs_url=None if _is_production else "/docs",
+    redoc_url=None if _is_production else "/redoc",
+    openapi_url=None if _is_production else "/openapi.json",
+)
+
+# ── CORS ─────────────────────────────────────────────────────────────────────
+
+allowed_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
+# ── Singletons ───────────────────────────────────────────────────────────────
+
+aggregator = JobAggregator()
+ssg_api = SSGSkillsFrameworkAPI()
+_scorer = ResumeScorer()
+
+
+# ── Startup ──────────────────────────────────────────────────────────────────
+
+@app.on_event("startup")
+def on_startup() -> None:
+    init_db()
+
+
+# ── Health ───────────────────────────────────────────────────────────────────
+
+@app.get("/")
+def health() -> dict:
+    return {"status": "ok", "service": "Job Hunter SG API"}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# AUTH
+# ═════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/auth/signup", response_model=AuthResponse)
+def signup(body: SignupRequest, db: Session = Depends(get_db)) -> dict:
+    validate_password(body.password)
+    existing = db.query(User).filter(User.email == body.email).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        )
+    # AISG emails get pro tier automatically
+    domain = body.email.split("@")[-1].lower()
+    tier = "pro" if domain == "aisg.sg" else "free"
+
+    user = User(
+        email=body.email,
+        password_hash=hash_password(body.password),
+        name=sanitize_user_input(body.name),
+        tier=tier,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    token = create_token(user.id)
+    return {"token": token, "user": user}
+
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+def login(body: LoginRequest, db: Session = Depends(get_db)) -> dict:
+    check_login_rate_limit(body.email, db)
+    user = db.query(User).filter(User.email == body.email).first()
+    if not user or not verify_password(body.password, user.password_hash):
+        db.add(UsageLog(user_id=None, action="login_failed", detail=body.email))
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+    user.last_login = datetime.now(timezone.utc)
+    db.commit()
+    token = create_token(user.id)
+    return {"token": token, "user": user}
+
+
+@app.get("/api/auth/me", response_model=UserOut)
+def me(user: User = Depends(get_current_user)) -> User:
+    return user
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# JOB SEARCH
+# ═════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/search", response_model=SearchResponse)
+def search_jobs(
+    q: str = Query(..., min_length=1, max_length=200, description="Search keyword"),
+    sources: Optional[str] = Query(
+        None,
+        max_length=200,
+        description="Comma-separated: mcf,careersgov,nodeflair,indeed,jobstreet",
+    ),
+    limit: int = Query(20, ge=1, le=100),
+    skills: bool = Query(True, description="Enrich with SSG skills"),
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    # Rate limit
+    check_rate_limit(user, "search", db)
+
+    # Log usage (sanitize search query before storing)
+    usage = UsageLog(
+        user_id=user.id if user else None,
+        action="search",
+        detail=sanitize_user_input(q),
+    )
+    db.add(usage)
+    db.commit()
+
+    source_list = [s.strip() for s in sources.split(",") if s.strip()] if sources else None
+
+    results = aggregator.search_all(
+        keyword=q,
+        sources=source_list,
+        limit_per_source=limit,
+        enrich_skills=skills,
+    )
+
+    # Sanitize and cache jobs
+    sanitized_jobs: list[dict] = []
+    for job in results["jobs"]:
+        raw = asdict(job)
+        clean = sanitize_job(raw)
+        clean["search_keyword"] = sanitize_user_input(q)
+
+        # Upsert into scraped_jobs by dedup_key
+        existing = (
+            db.query(ScrapedJob)
+            .filter(ScrapedJob.dedup_key == clean["dedup_key"])
+            .first()
+        )
+        if existing:
+            for key, val in clean.items():
+                if key not in ("id",):
+                    setattr(existing, key, val)
+            db.flush()
+            clean["id"] = existing.id
+        else:
+            new_job = ScrapedJob(**clean)
+            db.add(new_job)
+            db.flush()
+            clean["id"] = new_job.id
+
+        sanitized_jobs.append(clean)
+
+    db.commit()
+
+    return {
+        "keyword": results["keyword"],
+        "searched_at": results["searched_at"],
+        "total_raw": results["total_raw"],
+        "total_deduped": results["total_deduped"],
+        "duplicates_removed": results["duplicates_removed"],
+        "ssg_recommended_skills": results["ssg_recommended_skills"],
+        "by_source": results["by_source"],
+        "jobs": sanitized_jobs,
+    }
+
+
+@app.get("/api/jobs", response_model=list[JobOut])
+def list_cached_jobs(
+    q: Optional[str] = Query(None, max_length=200, description="Filter by keyword"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[ScrapedJob]:
+    query = db.query(ScrapedJob)
+    if q:
+        pattern = f"%{q}%"
+        query = query.filter(
+            (ScrapedJob.title.ilike(pattern))
+            | (ScrapedJob.company.ilike(pattern))
+            | (ScrapedJob.search_keyword.ilike(pattern))
+        )
+    query = query.order_by(ScrapedJob.id.desc())
+    offset = (page - 1) * per_page
+    return query.offset(offset).limit(per_page).all()
+
+
+@app.get("/api/jobs/{job_id}", response_model=JobOut)
+def get_cached_job(job_id: int, db: Session = Depends(get_db)) -> ScrapedJob:
+    job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
+@app.get("/api/skills")
+def get_skills(q: str = Query(..., min_length=1, max_length=200, description="Role keyword")) -> dict:
+    skills_list = ssg_api.get_skills_for_role(q)
+    return {"keyword": q, "skills": skills_list}
+
+
+@app.get("/api/sources")
+def list_sources() -> dict:
+    return {
+        "sources": [
+            {"key": k, "name": v[0]}
+            for k, v in aggregator.SOURCE_MAP.items()
+        ]
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TRACKED JOBS
+# ═════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/tracked", response_model=list[TrackedJobOut])
+def list_tracked(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[TrackedJob]:
+    return (
+        db.query(TrackedJob)
+        .filter(TrackedJob.user_id == user.id)
+        .order_by(TrackedJob.created_at.desc())
+        .all()
+    )
+
+
+@app.post("/api/tracked", response_model=TrackedJobOut, status_code=201)
+def create_tracked(
+    body: TrackedJobCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TrackedJob:
+    # Check tier limit
+    limits = TIER_LIMITS.get(user.tier, TIER_LIMITS["free"])
+    current_count = (
+        db.query(func.count(TrackedJob.id))
+        .filter(TrackedJob.user_id == user.id)
+        .scalar()
+        or 0
+    )
+    if current_count >= limits["max_tracked_jobs"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Tracked job limit reached ({limits['max_tracked_jobs']}) for {user.tier} tier",
+        )
+
+    tracked = TrackedJob(
+        user_id=user.id,
+        company=sanitize_user_input(body.company),
+        role=sanitize_user_input(body.role),
+        date_applied=body.date_applied,
+        status=body.status,
+        source=sanitize_user_input(body.source),
+        follow_up_date=body.follow_up_date,
+        notes=sanitize_user_input(body.notes),
+        scraped_job_id=body.scraped_job_id,
+    )
+    db.add(tracked)
+    db.commit()
+    db.refresh(tracked)
+    return tracked
+
+
+@app.put("/api/tracked/{job_id}", response_model=TrackedJobOut)
+def update_tracked(
+    job_id: int,
+    body: TrackedJobUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TrackedJob:
+    tracked = db.query(TrackedJob).filter(TrackedJob.id == job_id).first()
+    if not tracked:
+        raise HTTPException(status_code=404, detail="Tracked job not found")
+    if tracked.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your tracked job")
+
+    updates = body.model_dump(exclude_unset=True)
+    sanitize_fields = ("company", "role", "source", "notes")
+    for key, val in updates.items():
+        if key in sanitize_fields and isinstance(val, str):
+            val = sanitize_user_input(val)
+        setattr(tracked, key, val)
+
+    db.commit()
+    db.refresh(tracked)
+    return tracked
+
+
+@app.delete("/api/tracked/{job_id}")
+def delete_tracked(
+    job_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    tracked = db.query(TrackedJob).filter(TrackedJob.id == job_id).first()
+    if not tracked:
+        raise HTTPException(status_code=404, detail="Tracked job not found")
+    if tracked.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your tracked job")
+    db.delete(tracked)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/tracked/export")
+def export_tracked(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    limits = TIER_LIMITS.get(user.tier, TIER_LIMITS["free"])
+    if not limits["can_export"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CSV export requires Pro or Admin tier",
+        )
+
+    jobs = (
+        db.query(TrackedJob)
+        .filter(TrackedJob.user_id == user.id)
+        .order_by(TrackedJob.created_at.desc())
+        .all()
+    )
+
+    # LOW: CSV injection risk if values start with =, +, -, @ — input sanitization
+    # strips HTML but not formula prefixes. csv.writer quotes fields but Excel may
+    # still interpret formulas. Consider prefixing cell values with ' if needed.
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "Company", "Role", "Date Applied", "Status",
+        "Source", "Follow Up Date", "Notes",
+    ])
+    for j in jobs:
+        writer.writerow([
+            j.company, j.role, j.date_applied or "",
+            j.status, j.source, j.follow_up_date or "", j.notes,
+        ])
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=tracked_jobs.csv"},
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# RESUME SCORING
+# ═════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/resume/score")
+def score_resume(
+    body: ResumeScoreRequest,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    check_rate_limit(user, "search", db)
+    db.add(UsageLog(user_id=user.id if user else None, action="resume_score"))
+    db.commit()
+    return _scorer.analyze(
+        resume_text=sanitize_user_input(body.resume_text),
+        job_description=sanitize_user_input(body.job_description),
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# AI — powered resume features
+# ═════════════════════════════════════════════════════════════════════════════
+
+from ai_service import coach_resume, rewrite_bullet, get_ai_status
+
+
+@app.get("/api/ai/status")
+def ai_status() -> dict:
+    """Check AI service availability and queue status."""
+    return get_ai_status()
+
+
+def _get_client_ip(request: Request) -> str:
+    """Get client IP, respecting proxy headers."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+@app.post("/api/ai/coach")
+def ai_coach_resume(
+    request: Request,
+    response: Response,
+    body: ResumeScoreRequest,
+    user: Optional[User] = Depends(get_optional_user),
+    jh_anon: str = Cookie(None),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Start an AI resume review session. This counts as 1 credit.
+    Free: 3 sessions/day. AISG: 50/day.
+    Returns a session_id — all rewrites using that session are free.
+    """
+    import secrets
+    from auth import TIER_LIMITS
+
+    free_limit = TIER_LIMITS["free"]["ai_per_day"]
+
+    # For anonymous users, track by BOTH cookie and IP
+    if not user:
+        anon_id = jh_anon or ""
+        client_ip = _get_client_ip(request)
+
+        if not anon_id:
+            anon_id = secrets.token_hex(16)
+            response.set_cookie(
+                "jh_anon", anon_id, max_age=86400, httponly=True, samesite="lax",
+            )
+
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Check by cookie
+        cookie_count = (
+            db.query(func.count(UsageLog.id))
+            .filter(
+                UsageLog.action == "ai",
+                UsageLog.detail.contains(f"anon:{anon_id}"),
+                UsageLog.created_at >= today_start,
+            )
+            .scalar() or 0
+        )
+
+        # Check by IP (catches incognito / cleared cookies)
+        ip_count = (
+            db.query(func.count(UsageLog.id))
+            .filter(
+                UsageLog.action == "ai",
+                UsageLog.detail.contains(f"ip:{client_ip}"),
+                UsageLog.created_at >= today_start,
+            )
+            .scalar() or 0
+        )
+
+        if cookie_count >= free_limit or ip_count >= free_limit:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"You've used your {free_limit} free AI reviews today. Sign up with @aisg.sg for more!",
+            )
+        detail_prefix = f"anon:{anon_id}|ip:{client_ip}|session"
+    else:
+        check_rate_limit(user, "ai", db)
+        detail_prefix = "session"
+
+    session_id = secrets.token_hex(16)
+
+    db.add(UsageLog(
+        user_id=user.id if user else None,
+        action="ai",
+        detail=f"{detail_prefix}:{session_id}",
+    ))
+    db.commit()
+
+    result = coach_resume(
+        resume_text=sanitize_user_input(body.resume_text),
+        job_description=sanitize_user_input(body.job_description),
+    )
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service unavailable — rate limit or API error. Try again shortly.",
+        )
+    result["session_id"] = session_id
+    return result
+
+
+@app.post("/api/ai/rewrite")
+def ai_rewrite_bullet(
+    body: RewriteBulletRequest,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Rewrite a single resume bullet. Free if a valid session_id is provided
+    (from /api/ai/coach). Otherwise counts as a new AI credit.
+    """
+    # Check if this rewrite belongs to an active session
+    session_id = body.session_id or ""
+    session_valid = False
+    MAX_REWRITES_PER_SESSION = 999  # Essentially unlimited within a session — real protection is global rate limiter
+
+    if session_id:
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        # Verify the session exists and was created today
+        session_log = db.query(UsageLog).filter(
+            UsageLog.action == "ai",
+            UsageLog.detail.contains(f"session:{session_id}"),
+            UsageLog.created_at >= today_start,
+        ).first()
+        if session_log:
+            # Count how many rewrites already used this session
+            rewrite_count = (
+                db.query(func.count(UsageLog.id))
+                .filter(
+                    UsageLog.action == "ai_rewrite",
+                    UsageLog.detail == f"session:{session_id}",
+                    UsageLog.created_at >= today_start,
+                )
+                .scalar() or 0
+            )
+            if rewrite_count < MAX_REWRITES_PER_SESSION:
+                session_valid = True
+
+    if session_valid:
+        # Log the rewrite against the session (free, doesn't count as AI credit)
+        db.add(UsageLog(
+            user_id=user.id if user else None,
+            action="ai_rewrite",
+            detail=f"session:{session_id}",
+        ))
+        db.commit()
+    else:
+        # No valid session or session exhausted — counts as a new AI credit
+        check_rate_limit(user, "ai", db)
+        db.add(UsageLog(
+            user_id=user.id if user else None,
+            action="ai",
+            detail="rewrite:standalone",
+        ))
+        db.commit()
+
+    bullet = sanitize_user_input(body.bullet)
+    job_title = sanitize_user_input(body.job_title)
+
+    result = rewrite_bullet(bullet, job_title=job_title)
+    if not result:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service unavailable. Try again shortly.",
+        )
+    return {"original": bullet, "rewritten": result, "model": "AI"}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# UTILITY
+# ═════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/tiers", response_model=list[TierInfo])
+def get_tiers() -> list[dict]:
+    return [
+        {
+            "name": "Free",
+            "price": "Free",
+            "limits": TIER_LIMITS["free"],
+            "features": [
+                "Search all SG job portals",
+                "AI resume scoring",
+                "AI resume coaching",
+                "AI bullet rewriting",
+                "ATS keyword matching",
+                "5 searches per day",
+                "No login required",
+            ],
+        },
+        {
+            "name": "AISG",
+            "price": "Free (@aisg.sg)",
+            "limits": TIER_LIMITS["pro"],
+            "features": [
+                "Everything in Free",
+                "Save & track job applications",
+                "Resume profile persistence",
+                "Follow-up reminders",
+                "CSV export of tracked jobs",
+                "50 searches per day",
+            ],
+        },
+        {
+            "name": "Admin",
+            "price": "Internal",
+            "limits": TIER_LIMITS["admin"],
+            "features": [
+                "Unlimited searches",
+                "Unlimited tracked jobs",
+                "CSV export",
+                "Full access",
+            ],
+        },
+    ]
+
+
+@app.post("/api/contact", status_code=201)
+def contact(body: ContactRequest, db: Session = Depends(get_db)) -> dict:
+    # Rate limit contact form submissions (abuse prevention)
+    check_rate_limit(None, "search", db)
+    log.info("Contact form submission received")
+    usage = UsageLog(
+        user_id=None,
+        action="contact",
+        detail=f"{sanitize_user_input(body.name)} <{body.email}>: "
+               f"{sanitize_user_input(body.message)}",
+    )
+    db.add(usage)
+    db.commit()
+    return {"message": "Thanks! We'll get back to you soon."}
+
+
+@app.get("/api/usage")
+def get_usage(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    today_start = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    searches_today = (
+        db.query(func.count(UsageLog.id))
+        .filter(
+            UsageLog.user_id == user.id,
+            UsageLog.action == "search",
+            UsageLog.created_at >= today_start,
+        )
+        .scalar()
+        or 0
+    )
+    tracked_count = (
+        db.query(func.count(TrackedJob.id))
+        .filter(TrackedJob.user_id == user.id)
+        .scalar()
+        or 0
+    )
+    limits = TIER_LIMITS.get(user.tier, TIER_LIMITS["free"])
+    return {
+        "tier": user.tier,
+        "searches_today": searches_today,
+        "searches_limit": limits["searches_per_day"],
+        "tracked_jobs": tracked_count,
+        "tracked_limit": limits["max_tracked_jobs"],
+        "can_export": limits["can_export"],
+    }
+
+
+# ── Run ──────────────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import uvicorn
+
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
