@@ -119,7 +119,7 @@ _failure_lock = threading.Lock()
 _last_alert_time = 0
 _ALERT_THRESHOLD = 5          # Alert after 5 consecutive failures
 _ALERT_COOLDOWN = 300         # Don't spam alerts — max once per 5 min
-_ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "haomingkoo@gmail.com")
+_ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
 
 
 def _track_failure(error_type: str, detail: str) -> None:

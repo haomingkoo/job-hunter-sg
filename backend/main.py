@@ -103,18 +103,18 @@ def on_startup() -> None:
     try:
         from database import SessionLocal
         db2 = SessionLocal()
-        admin_email = os.environ.get("ADMIN_EMAIL", "haomingkoo@gmail.com")
-        if not db2.query(User).filter(User.email == admin_email).first():
-            admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123!")
+        admin_email = os.environ.get("ADMIN_EMAIL", "")
+        admin_pw = os.environ.get("ADMIN_PASSWORD", "")
+        if admin_email and admin_pw and not db2.query(User).filter(User.email == admin_email).first():
             admin = User(
                 email=admin_email,
                 password_hash=hash_password(admin_pw),
-                name="Haoming",
+                name="Admin",
                 tier="admin",
             )
             db2.add(admin)
             db2.commit()
-            log.info(f"Admin account created: {admin_email}")
+            log.info("Admin account created")
         db2.close()
     except Exception as e:
         log.warning(f"Admin account creation failed: {e}")
@@ -188,7 +188,7 @@ def privacy() -> dict:
                 "content": (
                     "This project is built by Haoming Koo as a tool to help job "
                     "seekers in Singapore. If you have any questions or concerns "
-                    "about your data, reach out at haomingkoo@gmail.com."
+                    f"about your data, reach out at {os.environ.get('CONTACT_EMAIL', 'support@jobhuntersg.com')}."
                 ),
             },
         ],
