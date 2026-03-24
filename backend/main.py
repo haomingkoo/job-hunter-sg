@@ -916,11 +916,12 @@ def update_tracked(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TrackedJob:
-    tracked = db.query(TrackedJob).filter(TrackedJob.id == job_id).first()
+    # Filter by BOTH id AND user_id to prevent IDOR enumeration
+    tracked = db.query(TrackedJob).filter(
+        TrackedJob.id == job_id, TrackedJob.user_id == user.id
+    ).first()
     if not tracked:
         raise HTTPException(status_code=404, detail="Tracked job not found")
-    if tracked.user_id != user.id:
-        raise HTTPException(status_code=403, detail="Not your tracked job")
 
     updates = body.model_dump(exclude_unset=True)
     sanitize_fields = ("company", "role", "source", "notes")
@@ -940,11 +941,12 @@ def delete_tracked(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    tracked = db.query(TrackedJob).filter(TrackedJob.id == job_id).first()
+    # Filter by BOTH id AND user_id to prevent IDOR enumeration
+    tracked = db.query(TrackedJob).filter(
+        TrackedJob.id == job_id, TrackedJob.user_id == user.id
+    ).first()
     if not tracked:
         raise HTTPException(status_code=404, detail="Tracked job not found")
-    if tracked.user_id != user.id:
-        raise HTTPException(status_code=403, detail="Not your tracked job")
     db.delete(tracked)
     db.commit()
     return {"ok": True}

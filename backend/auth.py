@@ -29,13 +29,14 @@ if "postgresql" in _db_url and not SECRET_KEY:
         'Generate one: python -c "import secrets; print(secrets.token_hex(32))"'
     )
 if not SECRET_KEY:
+    import secrets as _secrets
+    SECRET_KEY = _secrets.token_hex(32)
     import warnings
     warnings.warn(
-        "JWT_SECRET not set — using insecure default for local dev only. "
-        "Set JWT_SECRET env var before deploying.",
+        f"JWT_SECRET not set — generated random secret for this session. "
+        f"Tokens will NOT survive server restart. Set JWT_SECRET env var.",
         stacklevel=1,
     )
-    SECRET_KEY = "insecure-local-dev-only"
 
 # Configurable via env vars — tune from Railway dashboard, no redeploy needed
 _FREE_AI = int(os.environ.get("FREE_AI_PER_DAY", "999999"))
@@ -168,11 +169,12 @@ def get_current_user(
     1. Cloudflare Access (production): reads Cf-Access-Authenticated-User-Email header
     2. JWT Bearer token (local dev / API access)
     """
-    # Mode 1: Cloudflare Access header (production only)
-    # SECURITY: Only trust this header when behind Cloudflare (production).
-    # In dev (SQLite), ignore it to prevent header spoofing.
-    _is_prod = "postgresql" in os.environ.get("DATABASE_URL", "")
-    if cf_access_email and _is_prod:
+    # Mode 1: Cloudflare Access header
+    # SECURITY: Only trust when CF_ACCESS_ENABLED=true AND header is present.
+    # This must be explicitly enabled — not auto-detected from DATABASE_URL.
+    # The backend MUST be behind Cloudflare Access (not directly reachable).
+    _cf_enabled = os.environ.get("CF_ACCESS_ENABLED", "").lower() == "true"
+    if cf_access_email and _cf_enabled:
         return _get_or_create_cf_user(cf_access_email, db)
 
     # Mode 2: JWT Bearer token (local dev / API)
@@ -199,9 +201,9 @@ def get_optional_user(
     db: Session = Depends(get_db),
 ) -> Optional[User]:
     """Return user if authenticated (via CF Access or JWT), else None."""
-    # Mode 1: Cloudflare Access (production only)
-    _is_prod = "postgresql" in os.environ.get("DATABASE_URL", "")
-    if cf_access_email and _is_prod:
+    # Mode 1: Cloudflare Access (must be explicitly enabled)
+    _cf_enabled = os.environ.get("CF_ACCESS_ENABLED", "").lower() == "true"
+    if cf_access_email and _cf_enabled:
         return _get_or_create_cf_user(cf_access_email, db)
 
     # Mode 2: JWT

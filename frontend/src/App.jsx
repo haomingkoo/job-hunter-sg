@@ -1345,29 +1345,55 @@ const DEFAULT_RESUME_TEMPLATES = [
     id: "classic",
     name: "Classic",
     description: "Traditional serif layout with crisp section dividers.",
+    section_order: ["summary", "education", "experience", "skills", "certifications"],
+    font: "Times New Roman",
+    body_size: 11,
+    name_size: 16,
+    margins: 1.0,
   },
   {
     id: "modern",
     name: "Modern",
     description: "Sharper hierarchy for technical and startup roles.",
+    section_order: ["summary", "experience", "projects", "skills", "education"],
+    font: "Calibri",
+    body_size: 10,
+    name_size: 14,
+    margins: 0.6,
   },
   {
     id: "singapore",
-    name: "SG Pro",
+    name: "Singapore Professional",
     description: "Polished local-market style with balanced spacing.",
+    section_order: ["personal", "summary", "education", "experience", "activities", "skills"],
+    font: "Calibri",
+    body_size: 11,
+    name_size: 15,
+    margins: 0.8,
   },
   {
     id: "compact",
     name: "Compact",
     description: "Tighter layout for experienced candidates.",
+    section_order: ["summary", "experience", "skills", "education", "certifications"],
+    font: "Arial",
+    body_size: 10,
+    name_size: 14,
+    margins: 0.5,
   },
 ];
 
 const RESUME_TEMPLATE_STYLES = {
   classic: {
     pageClass: "text-stone-800",
+    fontFamily: '"Times New Roman", Times, serif',
+    bodySize: 11,
+    nameSize: 16,
+    headingSize: 12,
+    margins: 1.0,
+    lineHeight: "1.35",
     pageStyle: {
-      fontFamily: 'Georgia, "Times New Roman", serif',
+      fontFamily: '"Times New Roman", Times, serif',
       fontSize: "11pt",
       padding: "25.4mm",
       width: "210mm",
@@ -1375,29 +1401,41 @@ const RESUME_TEMPLATE_STYLES = {
       maxWidth: "100%",
       lineHeight: "1.35",
     },
-    headingClass: "mt-4 mb-1 border-b border-stone-400 pb-1 text-[11pt] font-bold uppercase tracking-[0.18em] text-stone-900",
-    nameClass: "text-[18pt] font-bold tracking-[0.08em] text-stone-950",
+    headingClass: "mt-4 mb-1 border-b border-stone-400 pb-1 font-bold uppercase tracking-[0.18em] text-stone-900",
+    nameClass: "font-bold tracking-[0.08em] text-stone-950",
     subheadingClass: "mt-2 mb-0.5 text-stone-700",
     bodyStyle: { fontSize: "1em", lineHeight: "1.35" },
   },
   modern: {
     pageClass: "text-slate-800",
+    fontFamily: 'Calibri, "Segoe UI", sans-serif',
+    bodySize: 10,
+    nameSize: 14,
+    headingSize: 11,
+    margins: 0.6,
+    lineHeight: "1.33",
     pageStyle: {
       fontFamily: 'Calibri, "Segoe UI", sans-serif',
-      fontSize: "11pt",
+      fontSize: "10pt",
       padding: "15.2mm",
       width: "210mm",
       minHeight: "297mm",
       maxWidth: "100%",
       lineHeight: "1.33",
     },
-    headingClass: "mt-4 mb-1 border-b border-indigo-500 pb-1 text-[11pt] font-bold uppercase tracking-[0.18em] text-slate-900",
-    nameClass: "text-[18pt] font-bold tracking-[0.04em] text-slate-950",
+    headingClass: "mt-4 mb-1 border-b border-indigo-500 pb-1 font-bold uppercase tracking-[0.18em] text-slate-900",
+    nameClass: "font-bold tracking-[0.04em] text-slate-950",
     subheadingClass: "mt-2 mb-0.5 text-slate-700",
     bodyStyle: { fontSize: "1em", lineHeight: "1.33" },
   },
   singapore: {
     pageClass: "text-slate-800",
+    fontFamily: 'Calibri, "Segoe UI", sans-serif',
+    bodySize: 11,
+    nameSize: 15,
+    headingSize: 12,
+    margins: 0.8,
+    lineHeight: "1.35",
     pageStyle: {
       fontFamily: 'Calibri, "Segoe UI", sans-serif',
       fontSize: "11pt",
@@ -1407,24 +1445,30 @@ const RESUME_TEMPLATE_STYLES = {
       maxWidth: "100%",
       lineHeight: "1.35",
     },
-    headingClass: "mt-4 mb-1 border-b-2 border-slate-700 pb-1 text-[11pt] font-bold uppercase tracking-[0.16em] text-slate-950",
-    nameClass: "text-[18pt] font-bold tracking-[0.04em] text-slate-950",
+    headingClass: "mt-4 mb-1 border-b-2 border-slate-700 pb-1 font-bold uppercase tracking-[0.16em] text-slate-950",
+    nameClass: "font-bold tracking-[0.04em] text-slate-950",
     subheadingClass: "mt-2 mb-0.5 text-slate-700",
     bodyStyle: { fontSize: "1em", lineHeight: "1.35" },
   },
   compact: {
     pageClass: "text-zinc-800",
+    fontFamily: "Arial, Helvetica, sans-serif",
+    bodySize: 10,
+    nameSize: 14,
+    headingSize: 11,
+    margins: 0.5,
+    lineHeight: "1.3",
     pageStyle: {
       fontFamily: "Arial, Helvetica, sans-serif",
-      fontSize: "11pt",
+      fontSize: "10pt",
       padding: "12.7mm",
       width: "210mm",
       minHeight: "297mm",
       maxWidth: "100%",
       lineHeight: "1.3",
     },
-    headingClass: "mt-4 mb-1 border-b border-zinc-400 pb-1 text-[11pt] font-bold uppercase tracking-[0.14em] text-zinc-950",
-    nameClass: "text-[18pt] font-bold tracking-[0.03em] text-zinc-950",
+    headingClass: "mt-4 mb-1 border-b border-zinc-400 pb-1 font-bold uppercase tracking-[0.14em] text-zinc-950",
+    nameClass: "font-bold tracking-[0.03em] text-zinc-950",
     subheadingClass: "mt-2 mb-0.5 text-zinc-700",
     bodyStyle: { fontSize: "1em", lineHeight: "1.3" },
   },
@@ -1527,6 +1571,16 @@ const RESUME_WEAK_STARTS = ["responsible for", "helped", "assisted"];
 const RESUME_BULLET_RE = /^(\s*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)]))\s*(.*)$/;
 const RESUME_METRIC_RE = /\d+%|\$[\d,]+|\d+\s*(?:users|user|team|people|projects|systems|clients|hours|weeks|months|years)|\d+[kKmMbB]\b|\d{1,3}(?:,\d{3})+/;
 const RESUME_DATE_HINT_RE = /\b(?:19|20)\d{2}\b|present|current|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i;
+const RESUME_SECTION_TITLES = {
+  summary: "Professional Summary",
+  personal: "Personal",
+  education: "Education",
+  experience: "Professional Experience",
+  projects: "Projects",
+  activities: "Activities",
+  skills: "Skills",
+  certifications: "Certifications",
+};
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1536,6 +1590,74 @@ function titleCase(value) {
   return value
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getTemplateFontStack(font) {
+  if (font === "Times New Roman") return '"Times New Roman", Times, serif';
+  if (font === "Calibri") return 'Calibri, "Segoe UI", sans-serif';
+  if (font === "Arial") return "Arial, Helvetica, sans-serif";
+  return font || 'Calibri, "Segoe UI", sans-serif';
+}
+
+function getResumeTemplateStyles(templateId, templateMeta) {
+  const fallbackMeta = DEFAULT_RESUME_TEMPLATES.find((template) => template.id === templateId)
+    || DEFAULT_RESUME_TEMPLATES[1];
+  const theme = RESUME_TEMPLATE_STYLES[templateId] || RESUME_TEMPLATE_STYLES.modern;
+  const font = templateMeta?.font || fallbackMeta.font || "Calibri";
+  const bodySize = Number.isFinite(Number(templateMeta?.body_size))
+    ? Number(templateMeta.body_size)
+    : Number.isFinite(Number(fallbackMeta.body_size))
+      ? Number(fallbackMeta.body_size)
+      : theme.bodySize || 11;
+  const nameSize = Number.isFinite(Number(templateMeta?.name_size))
+    ? Number(templateMeta.name_size)
+    : Number.isFinite(Number(fallbackMeta.name_size))
+      ? Number(fallbackMeta.name_size)
+      : theme.nameSize || 14;
+  const margins = Number.isFinite(Number(templateMeta?.margins))
+    ? Number(templateMeta.margins)
+    : Number.isFinite(Number(fallbackMeta.margins))
+      ? Number(fallbackMeta.margins)
+      : theme.margins || 0.8;
+  const headingSize = theme.headingSize || bodySize + 1;
+  const lineHeight = theme.lineHeight || (bodySize <= 10 ? "1.32" : "1.35");
+  const fontFamily = getTemplateFontStack(font);
+
+  return {
+    ...theme,
+    pageStyle: {
+      ...theme.pageStyle,
+      fontFamily,
+      fontSize: `${bodySize}pt`,
+      padding: `${margins}in`,
+      lineHeight,
+    },
+    headingStyle: {
+      fontFamily,
+      fontSize: `${headingSize}pt`,
+      lineHeight: "1.25",
+    },
+    nameStyle: {
+      fontFamily,
+      fontSize: `${nameSize}pt`,
+      lineHeight: "1.1",
+    },
+    contactStyle: {
+      fontFamily,
+      fontSize: "9pt",
+      lineHeight: "1.25",
+    },
+    bodyStyle: {
+      fontFamily,
+      fontSize: `${bodySize}pt`,
+      lineHeight,
+    },
+    dateStyle: {
+      fontFamily,
+      fontSize: `${bodySize}pt`,
+      lineHeight: "1.25",
+    },
+  };
 }
 
 function stripResumeMarkdown(line) {
@@ -1631,6 +1753,70 @@ function reorderParsedSections(sections, templateOrder = []) {
   });
 
   return [...preamble, ...orderedGroups.flatMap((group) => group.items)];
+}
+
+function toMmFromInches(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return `${(numeric * 25.4).toFixed(1)}mm`;
+}
+
+function buildTemplateStyles(templateId, templateMeta) {
+  const base = RESUME_TEMPLATE_STYLES[templateId] || RESUME_TEMPLATE_STYLES.modern;
+  const fontFamily = templateMeta?.font || base.fontFamily;
+  const bodySize = Number.isFinite(Number(templateMeta?.body_size))
+    ? Number(templateMeta.body_size)
+    : base.bodySize;
+  const nameSize = Number.isFinite(Number(templateMeta?.name_size))
+    ? Number(templateMeta.name_size)
+    : base.nameSize;
+  const headingSize = Number.isFinite(Number(templateMeta?.heading_size))
+    ? Number(templateMeta.heading_size)
+    : base.headingSize;
+  const margins = Number.isFinite(Number(templateMeta?.margins))
+    ? Number(templateMeta.margins)
+    : base.margins;
+
+  return {
+    ...base,
+    pageStyle: {
+      ...base.pageStyle,
+      fontFamily,
+      fontSize: `${bodySize}pt`,
+      padding: toMmFromInches(margins) || base.pageStyle.padding,
+      lineHeight: base.lineHeight,
+    },
+    headingStyle: {
+      fontFamily,
+      fontSize: `${headingSize}pt`,
+      lineHeight: "1.2",
+    },
+    nameStyle: {
+      fontFamily,
+      fontSize: `${nameSize}pt`,
+      lineHeight: "1.1",
+    },
+    contactStyle: {
+      fontFamily,
+      fontSize: "9pt",
+      lineHeight: "1.2",
+    },
+    bodyStyle: {
+      fontFamily,
+      fontSize: `${bodySize}pt`,
+      lineHeight: base.lineHeight,
+    },
+    subheadingLeftStyle: {
+      fontFamily,
+      fontSize: `${bodySize}pt`,
+      lineHeight: base.lineHeight,
+    },
+    subheadingRightStyle: {
+      fontFamily,
+      fontSize: `${Math.max(bodySize - 1, 9)}pt`,
+      lineHeight: "1.2",
+    },
+  };
 }
 
 function normalizeScoreData(data) {
@@ -1939,6 +2125,65 @@ function removeResumeLine(text, section) {
   return lines.join("\n");
 }
 
+function insertResumeContentIntoSection(text, sectionKey, content, { asBullet = true } = {}) {
+  const cleanContent = content.replace(/\r/g, "").trim();
+  if (!cleanContent || !sectionKey) return null;
+
+  const parsed = parseResumeToSections(text, [], []);
+  let targetHeading = null;
+  let insertAfterLine = null;
+
+  for (const section of parsed) {
+    if (section.type === "heading") {
+      const currentKey = section.sectionKey || getResumeSectionKey(section.text);
+      if (targetHeading && currentKey !== sectionKey) break;
+      if (!targetHeading && currentKey === sectionKey) {
+        targetHeading = section;
+        insertAfterLine = section.lineIndex;
+      }
+      continue;
+    }
+
+    if (targetHeading) insertAfterLine = section.lineIndex;
+  }
+
+  if (!targetHeading) return null;
+
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const nextLine = asBullet ? `• ${cleanContent}` : cleanContent;
+  lines.splice((insertAfterLine ?? targetHeading.lineIndex) + 1, 0, nextLine);
+  return lines.join("\n");
+}
+
+function normalizeSuggestionPayload(item) {
+  if (!item || typeof item !== "object" || typeof item.keyword !== "string") return null;
+
+  const edit = item.edit && typeof item.edit === "object"
+    ? {
+      original: typeof item.edit.original === "string" ? item.edit.original.trim() : "",
+      rewritten: typeof item.edit.rewritten === "string" ? item.edit.rewritten.trim() : "",
+      reason: typeof item.edit.reason === "string" ? item.edit.reason.trim() : "",
+    }
+    : null;
+  const fresh = item.new && typeof item.new === "object"
+    ? {
+      sentence: typeof item.new.sentence === "string" ? item.new.sentence.trim() : "",
+      suggestedSection: typeof item.new.suggested_section === "string" ? item.new.suggested_section.trim() : "",
+      reason: typeof item.new.reason === "string" ? item.new.reason.trim() : "",
+    }
+    : null;
+
+  const validEdit = edit?.original && edit?.rewritten ? edit : null;
+  const validFresh = fresh?.sentence ? fresh : null;
+  if (!validEdit && !validFresh) return null;
+
+  return {
+    keyword: item.keyword.trim(),
+    edit: validEdit,
+    fresh: validFresh,
+  };
+}
+
 function getDownloadFilename(response, fallbackName) {
   const contentDisposition = response.headers.get("Content-Disposition") || "";
   const match = contentDisposition.match(/filename="?([^"]+)"?/i);
@@ -2100,6 +2345,12 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [formatError, setFormatError] = useState("");
   const [rewriteResults, setRewriteResults] = useState({});
   const [rewriteLoading, setRewriteLoading] = useState({});
+  const [jobMatchData, setJobMatchData] = useState(null);
+  const [jobMatchLoading, setJobMatchLoading] = useState(false);
+  const [jobMatchError, setJobMatchError] = useState("");
+  const [keywordAssist, setKeywordAssist] = useState(null);
+  const [keywordAssistLoading, setKeywordAssistLoading] = useState("");
+  const [keywordAssistError, setKeywordAssistError] = useState("");
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
   const [downloadReady, setDownloadReady] = useState(false);
@@ -2270,7 +2521,10 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const templateMeta = templates.find((template) => template.id === selectedTemplate)
     || DEFAULT_RESUME_TEMPLATES.find((template) => template.id === selectedTemplate)
     || DEFAULT_RESUME_TEMPLATES[1];
-  const templateStyles = RESUME_TEMPLATE_STYLES[selectedTemplate] || RESUME_TEMPLATE_STYLES.modern;
+  const templateStyles = useMemo(
+    () => buildTemplateStyles(selectedTemplate, templateMeta),
+    [selectedTemplate, templateMeta],
+  );
   const templateOrder = Array.isArray(templateMeta?.section_order) && templateMeta.section_order.length > 0
     ? templateMeta.section_order
     : RESUME_TEMPLATE_SECTION_ORDER[selectedTemplate] || [];
@@ -2322,10 +2576,59 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     previousJobDescriptionRef.current = jobDescription;
   }, [jobDescription, scoreData]);
 
+  useEffect(() => {
+    setKeywordAssist(null);
+    setKeywordAssistError("");
+
+    if (!selectedJob?.id || resumeText.trim().length < 50) {
+      setJobMatchData(null);
+      setJobMatchLoading(false);
+      setJobMatchError("");
+      return undefined;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setJobMatchLoading(true);
+      setJobMatchError("");
+
+      try {
+        const response = await apiFetch(`/api/jobs/${selectedJob.id}/match`, {
+          method: "POST",
+          body: JSON.stringify({
+            resume_text: resumeText,
+            job_description: jobDescription,
+          }),
+        });
+        const data = await response.json();
+        if (!data || !Array.isArray(data.matched) || !Array.isArray(data.missing)) {
+          throw new Error("Job match response was malformed.");
+        }
+        if (!cancelled) {
+          setJobMatchData(data);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setJobMatchData(null);
+          setJobMatchError(err.message || "We couldn't compare this resume against the selected job.");
+        }
+      } finally {
+        if (!cancelled) setJobMatchLoading(false);
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [jobDescription, resumeText, selectedJob?.id]);
+
   const applyResumeText = useCallback((nextText, { rescore = false, clearRewrites = false } = {}) => {
     setResumeText(nextText);
     setScoreChange(null);
     setDownloadReady(false);
+    setKeywordAssist(null);
+    setKeywordAssistError("");
     if (clearRewrites) setRewriteResults({});
     if (rescore) {
       runScore(nextText, jobDescription, { phase: "opening" });
@@ -2537,6 +2840,91 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     });
   };
 
+  const requestKeywordAssist = useCallback(async (keywordItem) => {
+    const keyword = extractKeywordLabel(keywordItem);
+    if (!keyword || !resumeText.trim()) return;
+
+    setKeywordAssistLoading(keyword);
+    setKeywordAssistError("");
+
+    try {
+      const response = await apiFetch("/api/ai/integrate-keywords", {
+        method: "POST",
+        body: JSON.stringify({
+          resume_text: resumeText,
+          missing_keywords: [keyword],
+          job_title: selectedJob?.title || "",
+          session_id: sessionId,
+        }),
+      });
+      const data = await response.json();
+      if (!data || !Array.isArray(data.suggestions) || data.suggestions.length === 0) {
+        throw new Error("Keyword integration response was malformed.");
+      }
+
+      const suggestion = data.suggestions
+        .map(normalizeSuggestionPayload)
+        .find((item) => item && item.keyword.toLowerCase() === keyword.toLowerCase())
+        || normalizeSuggestionPayload(data.suggestions[0]);
+
+      if (!suggestion) {
+        throw new Error("Keyword integration suggestions were missing the expected edit/new options.");
+      }
+
+      setKeywordAssist({
+        keyword,
+        model: data.model || "AI",
+        suggestion,
+      });
+      if (typeof window !== "undefined" && window.innerWidth < 1024) {
+        setMobilePanel("feedback");
+      }
+    } catch (err) {
+      setKeywordAssist(null);
+      setKeywordAssistError(err.message || `We couldn't prepare keyword suggestions for "${keyword}".`);
+    } finally {
+      setKeywordAssistLoading("");
+    }
+  }, [resumeText, selectedJob?.title, sessionId]);
+
+  const applyKeywordEdit = useCallback(() => {
+    const edit = keywordAssist?.suggestion?.edit;
+    if (!edit?.original || !edit?.rewritten) return;
+
+    const normalizeLine = (value) => value.replace(/\s+/g, " ").trim().toLowerCase();
+    const target = bulletSections.find((section) => normalizeLine(section.text) === normalizeLine(edit.original));
+    if (!target) {
+      setKeywordAssistError(`We couldn't find the original bullet for "${keywordAssist.keyword}" in the current resume.`);
+      return;
+    }
+
+    const nextText = updateResumeLine(resumeText, target, edit.rewritten);
+    setSelectedBulletId(target.id);
+    applyResumeText(nextText);
+  }, [applyResumeText, bulletSections, keywordAssist, resumeText]);
+
+  const insertKeywordSentence = useCallback(() => {
+    const fresh = keywordAssist?.suggestion?.fresh;
+    if (!fresh?.sentence) return;
+
+    const targetSection = getResumeSectionKey(fresh.suggestedSection || "");
+    const nextText = insertResumeContentIntoSection(
+      resumeText,
+      targetSection,
+      fresh.sentence,
+      { asBullet: targetSection !== "skills" },
+    );
+
+    if (!nextText) {
+      setKeywordAssistError(
+        `We couldn't find the "${fresh.suggestedSection || "target"}" section in the current draft, so this suggestion was left as copy-only.`,
+      );
+      return;
+    }
+
+    applyResumeText(nextText);
+  }, [applyResumeText, keywordAssist, resumeText]);
+
   const handleDownload = async () => {
     if (!resumeText.trim()) return;
 
@@ -2631,8 +3019,16 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const wordCount = resumeText.split(/\s+/).filter(Boolean).length;
   const overallScore = scoreData?.overall_score || 0;
   const scoreTheme = getScoreTheme(overallScore);
-  const matchedKeywords = scoreData?.keyword_match?.matched || [];
-  const missingKeywords = scoreData?.keyword_match?.missing || [];
+  const genericMatchedKeywords = scoreData?.keyword_match?.matched || [];
+  const genericMissingKeywords = scoreData?.keyword_match?.missing || [];
+  const matchedKeywords = selectedJob ? (jobMatchData?.matched || []) : genericMatchedKeywords;
+  const missingKeywords = selectedJob ? (jobMatchData?.missing || []) : genericMissingKeywords;
+  const keywordTotal = selectedJob
+    ? (Number.isFinite(jobMatchData?.total_skills) ? jobMatchData.total_skills : matchedKeywords.length + missingKeywords.length)
+    : matchedKeywords.length + missingKeywords.length;
+  const keywordMatchPercent = selectedJob
+    ? (Number.isFinite(jobMatchData?.match_percent) ? jobMatchData.match_percent : 0)
+    : (scoreData?.keyword_match?.score_percent || 0);
   const selectedRewrite = selectedBullet ? rewriteResults[selectedBullet.id] : null;
   const selectedBulletTabs = useMemo(
     () => getBulletFeedbackTabs(selectedBullet, resumeText),
@@ -2816,6 +3212,18 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                   Back to Jobs
                 </button>
               </div>
+              {jobMatchLoading && (
+                <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-indigo-700">
+                  <Loader2 size={12} className="animate-spin" />
+                  Comparing your resume to this JD
+                </div>
+              )}
+              {!jobMatchLoading && jobMatchData && (
+                <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-indigo-700">
+                  <Sparkles size={12} />
+                  {jobMatchData.match_percent}% job-skill match
+                </div>
+              )}
               <div className="mt-2 text-lg font-semibold text-slate-900">{selectedJob.title}</div>
               <div className="mt-1 text-sm text-slate-600">{selectedJob.company}</div>
               {selectedJob.skills?.length > 0 && (
@@ -2828,7 +3236,9 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                 </div>
               )}
               {selectedJob.description && (
-                <p className="mt-3 text-sm leading-relaxed text-slate-700 line-clamp-5">{selectedJob.description}</p>
+                <div className="mt-3 max-h-40 overflow-y-auto rounded-xl bg-white/70 p-3 text-sm leading-relaxed text-slate-700">
+                  {selectedJob.description}
+                </div>
               )}
             </div>
           )}
@@ -3022,9 +3432,9 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
         </div>
       )}
 
-      {(uploadError || scoreError || coachError || formatError || downloadError || error) && (
+      {(uploadError || scoreError || coachError || formatError || downloadError || jobMatchError || keywordAssistError || error) && (
         <div className="space-y-2">
-          {[uploadError, scoreError, coachError, formatError, downloadError, error].filter(Boolean).map((message, index) => (
+          {[uploadError, scoreError, coachError, formatError, downloadError, jobMatchError, keywordAssistError, error].filter(Boolean).map((message, index) => (
             <div key={`${message}-${index}`} className="flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               <AlertCircle size={14} className="flex-shrink-0" />
               <span>{message}</span>
@@ -3512,20 +3922,29 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
           {isFeedbackView && (
           <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
             <div className="text-sm font-semibold text-gray-800">Relevant Terms</div>
-            {scoreData ? (
+            {selectedJob && jobMatchLoading ? (
+              <div className="mt-3 flex items-center gap-2 text-sm text-gray-500">
+                <Loader2 size={14} className="animate-spin" />
+                Comparing the current resume against the selected job...
+              </div>
+            ) : scoreData ? (
               <>
                 <div className="mt-2 text-sm text-gray-600">
-                  Matched {matchedKeywords.length} term{matchedKeywords.length === 1 ? "" : "s"}{matchedKeywords.length + missingKeywords.length > 0 ? ` of ${matchedKeywords.length + missingKeywords.length}` : ""}.
+                  {selectedJob
+                    ? `Matched ${matchedKeywords.length} job term${matchedKeywords.length === 1 ? "" : "s"}${keywordTotal > 0 ? ` of ${keywordTotal}` : ""} (${keywordMatchPercent}%).`
+                    : `Matched ${matchedKeywords.length} term${matchedKeywords.length === 1 ? "" : "s"}${keywordTotal > 0 ? ` of ${keywordTotal}` : ""}.`}
                 </div>
                 <div className="mt-2 text-xs leading-relaxed text-gray-500">
-                  Use these as alignment cues, not as a keyword-stuffing checklist.
+                  {selectedJob
+                    ? "These come from a direct resume-to-job comparison. Click a missing term to generate ATS-safe edit and new-sentence options."
+                    : "Use these as alignment cues, not as a keyword-stuffing checklist."}
                 </div>
                 {matchedKeywords.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {matchedKeywords.map((keyword, idx) => {
-                      const label = typeof keyword === 'string' ? keyword : keyword?.skill || '';
+                      const label = typeof keyword === "string" ? keyword : keyword?.skill || "";
                       return (
-                        <span key={label || idx} className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700" title={keyword?.resume_context || ''}>
+                        <span key={label || idx} className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700" title={keyword?.resume_context || ""}>
                           {label}
                         </span>
                       );
@@ -3537,15 +3956,90 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                     <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Missing</div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {missingKeywords.slice(0, 12).map((keyword, idx) => {
-                        const label = typeof keyword === 'string' ? keyword : keyword?.skill || '';
+                        const label = typeof keyword === "string" ? keyword : keyword?.skill || "";
+                        const loadingThisKeyword = keywordAssistLoading === label;
+                        const selectedThisKeyword = keywordAssist?.keyword === label;
                         return (
-                          <span key={label || idx} className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 cursor-pointer hover:bg-rose-200" title={keyword?.jd_context || 'Click to see JD context'}>
-                            {label}
-                          </span>
+                          <button
+                            key={label || idx}
+                            type="button"
+                            onClick={() => requestKeywordAssist(keyword)}
+                            disabled={loadingThisKeyword}
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-medium transition ${
+                              selectedThisKeyword
+                                ? "bg-rose-200 text-rose-800"
+                                : "bg-rose-100 text-rose-700 hover:bg-rose-200"
+                            } disabled:opacity-60`}
+                            title={keyword?.jd_context || "Click to generate ATS-safe keyword suggestions"}
+                          >
+                            {loadingThisKeyword ? `Loading ${label}...` : label}
+                          </button>
                         );
                       })}
                     </div>
                   </>
+                )}
+
+                {keywordAssist && (
+                  <div className="mt-4 rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">ATS-safe keyword assist</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-900">
+                          {keywordAssist.keyword} • {keywordAssist.model}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setKeywordAssist(null)}
+                        className="rounded-full bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    {keywordAssist.suggestion.edit && (
+                      <div className="mt-4 rounded-2xl border border-white bg-white p-4">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Edit Existing Bullet</div>
+                        <div className="mt-3 text-xs font-semibold text-slate-500">Current</div>
+                        <div className="mt-1 text-sm leading-relaxed text-slate-600">{keywordAssist.suggestion.edit.original}</div>
+                        <div className="mt-3 text-xs font-semibold text-slate-500">Suggested rewrite</div>
+                        <div className="mt-1 text-sm leading-relaxed text-slate-800">{keywordAssist.suggestion.edit.rewritten}</div>
+                        {keywordAssist.suggestion.edit.reason && (
+                          <div className="mt-2 text-xs leading-relaxed text-slate-500">{keywordAssist.suggestion.edit.reason}</div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={applyKeywordEdit}
+                          className="mt-3 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                        >
+                          <CheckCircle size={14} />
+                          Apply Edit
+                        </button>
+                      </div>
+                    )}
+
+                    {keywordAssist.suggestion.fresh && (
+                      <div className="mt-4 rounded-2xl border border-white bg-white p-4">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">New Sentence</div>
+                        <div className="mt-3 text-sm leading-relaxed text-slate-800">{keywordAssist.suggestion.fresh.sentence}</div>
+                        <div className="mt-2 text-xs text-slate-500">
+                          Suggested section: {keywordAssist.suggestion.fresh.suggestedSection || "Not specified"}
+                        </div>
+                        {keywordAssist.suggestion.fresh.reason && (
+                          <div className="mt-2 text-xs leading-relaxed text-slate-500">{keywordAssist.suggestion.fresh.reason}</div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={insertKeywordSentence}
+                          className="mt-3 inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          <Plus size={14} />
+                          Insert New Sentence
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 )}
               </>
             ) : (
