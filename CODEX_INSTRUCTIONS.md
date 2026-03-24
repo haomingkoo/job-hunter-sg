@@ -187,7 +187,7 @@ After all fixes, verify:
 - [ ] Upload resume PDF → text appears, name parsed, score calculated
 - [ ] Score shows bullet count > 0 (not "0/0 bullets")
 - [ ] "AI Improve All" reformats resume AND re-scores
-- [ ] "AI Rewrite This Bullet" shows 3 options (not empty)
+- [ ] "AI Rewrite This Bullet" shows 3 options (not empty) — uses 32B model (fast, interactive)
 - [ ] Accepting a rewrite updates the resume text
 - [ ] "Finalize Score" triggers a fresh score
 - [ ] Certifications not flagged as "Review Opening"
@@ -200,6 +200,160 @@ After all fixes, verify:
 - [ ] All buttons have loading states
 - [ ] All API calls have error handling
 - [ ] No console errors in browser dev tools
+
+### Pipeline-specific tests (new backend):
+- [ ] `POST /api/resume/tailor` with `{resume_text, job_id, intensity: "full"}` returns `session_id`
+- [ ] `GET /api/resume/tailor/{session_id}/status` returns progress stages correctly
+- [ ] `GET /api/resume/tailor/{session_id}/result` returns tailored resume + REAL before/after skill match (re-scanned, not estimated)
+- [ ] `POST /api/resume/tailor/{session_id}/feedback` with `{bullet_id, action: "accept"}` marks change
+- [ ] `POST /api/resume/tailor/{session_id}/apply` applies only accepted changes, returns final text + score
+- [ ] `GET /api/jobs/{job_id}/parsed` returns pre-parsed JD with required_skills, preferred_skills
+- [ ] Pipeline runs all 7 stages without crashing. If AI calls fail, `pipeline_notes` explains what degraded (no hidden fallbacks).
+- [ ] Validation gates reject hallucinated metrics (test: add fake "$5M" to a bullet that had no numbers)
+- [ ] AI phrase cleanup replaces "spearheaded" with "led" (unless JD uses "spearheaded")
+- [ ] Verb dedup: if two bullets in same job entry start with "Led", second gets replaced with synonym
+- [ ] `ats_gaps` in result shows remaining missing skills with suggested section + entry for each
+- [ ] Skills section gets reordered: JD-matched skills moved to top
+- [ ] `skill_match.after` is an actual re-scan of tailored text, not an estimate
+- [ ] Stage 3 uses JSON output format (`{"rewrites": [...]}`) with numbered-line fallback
+
+---
+
+## NEW: Resume Tailoring Pipeline (backend complete, needs frontend)
+
+### Why we built this
+
+Our old approach was broken. We were sending the entire resume + JD in a single LLM call and asking it to review every bullet, diagnose issues, rewrite them, AND integrate keywords -- all at once, capped at 3000 tokens. Even a strong model produces mediocre results when you cram 5 tasks into one call.
+
+We studied Resume-Matcher (26K stars, similar FastAPI stack) and found they use a **multi-pass pipeline**: separate focused calls for keyword extraction, bullet rewriting, keyword injection, AI phrase cleanup, and hallucination detection. Each call does ONE thing well.
+
+Our new pipeline applies the same principle:
+- **Structured data model**: Resume is parsed into sections/entries/bullets with IDs (not a flat string). Every AI call knows exactly what section and entry it's working in.
+- **Focused calls**: One call for strategy (which bullets to prioritize), separate calls for per-bullet rewrites (batched 4 at a time), one call for executive summary.
+- **Local validation**: 5 gates check every AI rewrite -- fact preservation, hallucination detection, AI phrase cleanup, length sanity, keyword verification. No LLM cost for these.
+- **Pre-parsed JDs**: Job descriptions are analyzed at scrape time (regex, ~50ms, no LLM). When a user clicks "Tailor", skill gaps are instant -- no waiting for JD analysis.
+- **70B reasoning model**: The API gives us `Llama-SEA-LION-v3.5-70B-R` (70B reasoning) at the same rate limit and cost as the 32B. Pipeline uses 70B since it runs in background. Single-bullet interactive rewrites use 32B for speed.
+
+### Architecture
+A 7-stage pipeline that transforms a raw resume into a JD-tailored version. Runs as a background thread with progress polling.
+
+**New backend files** (do NOT modify these, they are tested and working):
+- `jd_preparser.py` — pre-parses JDs at scrape time (runs on every new job, ~50ms, no LLM)
+- `resume_structurer.py` — parses resume into structured sections/entries/bullets
+- `ai_phrases.py` — 107 AI-sounding phrase replacements with JD protection
+- `validation_gates.py` — 5 validation gates (fact preservation, hallucination detection, etc.)
+- `tailoring_pipeline.py` — 7-stage orchestrator
+
+**Model selection**:
+- Single bullet rewrite (`/api/ai/rewrite`): **32B Qwen** (fast, interactive, user is watching)
+- Full pipeline (`/api/resume/tailor`): **70B Llama reasoning** (background, user sees progress bar)
+
+**New endpoints**:
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `POST /api/resume/tailor` | Start pipeline | `{resume_text, job_id, intensity}` -> `{session_id}` |
+| `GET /api/resume/tailor/{session_id}/status` | Poll progress | Returns stage number, progress %, message |
+| `GET /api/resume/tailor/{session_id}/result` | Get result | Returns full result + `ats_gaps` + real `skill_match` |
+| `POST /api/resume/tailor/{session_id}/feedback` | Accept/reject | `{bullet_id, action: "accept"|"reject"|"edit", edited_text}` |
+| `POST /api/resume/tailor/{session_id}/apply` | Apply changes | Applies accepted changes only, returns final text + score |
+| `GET /api/jobs/{job_id}/parsed` | Get parsed JD | Returns pre-parsed skills/requirements |
+
+**`intensity` levels**:
+- `"nudge"` — local fixes only (AI phrase cleanup, verb dedup). No LLM calls. ~5 seconds.
+- `"keywords"` — nudge + keyword injection + bullet rewrites. ~30 seconds.
+- `"full"` — everything + executive summary generation. ~45-60 seconds.
+
+### Frontend work needed
+1. **"Tailor for This Job" button** on job cards (expanded view) and in the Resume tab when a job is selected
+2. **Progress UI**: poll `/status` every 2-3s, show stage name + progress bar. 7 stages with labels.
+3. **Result display**: show before/after diff per bullet, accept/reject/edit controls per change
+4. **Accept/reject flow**: each change shows original vs tailored. User clicks Accept, Reject, or Edit. Uses `POST /feedback` endpoint.
+5. **"Apply Changes" button**: calls `POST /apply` endpoint, only applies accepted changes. Shows final score.
+6. **ATS Gap Report**: after pipeline completes, show `ats_gaps` from result:
+   - Each missing skill shows: name, required/preferred badge, suggested section + entry
+   - If `needs_user_input: true`, show input: "Do you have experience with [skill]? Describe briefly."
+   - Actions: [Add to bullet] [Add to Skills only] [Skip - I don't have this]
+7. **Score comparison**: show skill match before/after (real re-scanned numbers) AND resume score before/after
+8. **Loading states**: clear loading during pipeline. Show active stage name. No hidden spinners.
+9. **Pipeline notes**: if `result.degraded` is true, show `pipeline_notes` explaining what degraded. No hidden fallbacks.
+
+### DB changes
+- `ScrapedJob` has new `parsed_jd` JSON column (auto-populated at scrape time)
+- `TailoredResume` table for session tracking (not yet used by frontend)
+
+---
+
+## CODE REVIEW REQUEST FOR CODEX
+
+Codex: you are the second pair of eyes. The new pipeline files were written in one session and need a thorough review. Please check ALL of the following:
+
+### 1. Import + runtime verification
+For each new backend file, verify it actually imports and runs without error:
+```bash
+cd backend
+python3 -c "from jd_preparser import preparse_job_description; print('jd_preparser OK')"
+python3 -c "from resume_structurer import structure_resume, get_all_bullets, flatten_to_text; print('structurer OK')"
+python3 -c "from ai_phrases import clean_ai_phrases; print('ai_phrases OK')"
+python3 -c "from validation_gates import run_all_gates, validate_and_fix; print('gates OK')"
+python3 -c "from tailoring_pipeline import run_pipeline, get_pipeline_state; print('pipeline OK')"
+```
+
+### 2. Database migration
+The `ScrapedJob` model now has a `parsed_jd` column and there's a new `TailoredResume` table. Verify:
+- SQLite creates these on `init_db()` (SQLAlchemy `create_all`)
+- Existing data is not lost
+- The `parsed_jd` column is nullable (old jobs can have NULL)
+
+### 3. Endpoint contract verification
+Test each new endpoint returns the documented response shape:
+- `POST /api/resume/tailor` - returns `{session_id, status, estimated_seconds}`
+- `GET /api/resume/tailor/{id}/status` - returns `{stage, stage_number, total_stages, progress, message, complete}`
+- `GET /api/resume/tailor/{id}/result` - returns `{tailored_text, changes[], skill_match{before, after, matched_after, missing_after}, score{before, after}, ats_gaps[]}`
+- `POST /api/resume/tailor/{id}/feedback` - returns `{bullet_id, action, accepted, rejected, pending}`
+- `POST /api/resume/tailor/{id}/apply` - returns `{tailored_text, applied, rejected, skipped_pending, score_after}`
+- `GET /api/jobs/{id}/parsed` - returns `{job_id, title, company, parsed_jd, has_parsed_jd}`
+
+### 4. Error path verification
+Confirm NO hidden fallbacks. Every error path should either:
+- Return an explicit HTTP error with a clear message, OR
+- Add to `pipeline_notes` explaining what degraded and why
+
+Check specifically:
+- What happens if the LLM returns empty/null for Stage 1 strategy?
+- What happens if Stage 3 JSON parsing fails AND the numbered-line fallback also fails?
+- What happens if `_stage_6_validate` receives a structured resume with zero sections?
+- What happens if `parsed_jd` is None when `_execute_pipeline` runs?
+
+### 5. Validation gate edge cases
+Test these with unit tests:
+- `gate_fact_preservation`: original has "$3M", tailored changes to "$3.5M" - should FAIL
+- `gate_fact_preservation`: original has "12 engineers", tailored has "12 engineers" - should PASS
+- `gate_hallucination`: tailored adds "Kubernetes, Docker, Terraform" when original had none - should FAIL
+- `gate_ai_phrases`: tailored says "spearheaded", JD also says "spearheaded" - should be PROTECTED (not replaced)
+- `gate_length_sanity`: 45-word rewrite of a 20-word original - should FAIL (>1.8x)
+
+### 6. Concurrency check
+The pipeline uses `threading.Thread`. Verify:
+- `_active_pipelines` dict access is thread-safe (uses `_pipelines_lock`)
+- `PipelineState` updates are thread-safe (uses `self._lock`)
+- Rate limiter handles concurrent pipeline threads (multiple threads calling `_call_sealion`)
+
+### 7. Memory / cleanup
+- `_active_pipelines` has a TTL cleanup. Verify `_cleanup_expired_pipelines()` is actually called somewhere (it may need to be wired into lifespan or a periodic task).
+- Each pipeline result stores full resume text. With many concurrent users, check memory isn't unbounded.
+
+### 8. Known issues to fix if found
+- `_cleanup_expired_pipelines` is now called on every `get_pipeline_state()` read. Verify it works.
+- `auth.py` now generates ephemeral JWT keys in local dev (not a hardcoded fallback). Verify tokens work during a dev session.
+- `main.py` uses `lifespan` instead of deprecated `on_event("startup")`. Verify startup still works correctly.
+
+---
+
+## FULL REVIEW SPEC
+
+**See `CODEX_REVIEW.md` for the complete 6-phase review checklist.**
+
+Codex: when you pick up this project, run the review FIRST before doing any feature work. The pipeline was built in one session and needs a reliability audit. The review spec has test cases to write, error paths to trace, and specific bugs to check for. Write results to `REVIEW_RESULTS.md`.
 
 ---
 

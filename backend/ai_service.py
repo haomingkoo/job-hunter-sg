@@ -64,12 +64,18 @@ class _RateLimiter:
 # ── SEA-LION Client ─────────────────────────────────────────────────────────
 
 SEALION_BASE_URL = "https://api.sea-lion.ai/v1"
-SEALION_MODEL = "aisingapore/Qwen-SEA-LION-v4-32B-IT"
+SEALION_MODEL_INTERACTIVE = "aisingapore/Qwen-SEA-LION-v4-32B-IT"
+SEALION_MODEL_PIPELINE_BULLETS = "aisingapore/Qwen-SEA-LION-v4-32B-IT"
+SEALION_MODEL_REASONING = "aisingapore/Llama-SEA-LION-v3.5-70B-R"
+
+# Backwards-compatible aliases used by older call sites.
+SEALION_MODEL = SEALION_MODEL_INTERACTIVE
+SEALION_MODEL_FAST = SEALION_MODEL_PIPELINE_BULLETS
 
 # Available models (for reference):
-# - aisingapore/Qwen-SEA-LION-v4-32B-IT  (best quality, 32B)
+# - aisingapore/Qwen-SEA-LION-v4-32B-IT  (best interactive / batched rewrite model)
 # - aisingapore/Gemma-SEA-LION-v4-27B-IT (27B, good alternative)
-# - aisingapore/Llama-SEA-LION-v3.5-70B-R (70B reasoning, slower)
+# - aisingapore/Llama-SEA-LION-v3.5-70B-R (70B reasoning, slower but stronger)
 # - aisingapore/Llama-SEA-LION-v3-70B-IT  (70B instruct)
 # - aisingapore/SEA-Guard (safety model)
 
@@ -207,6 +213,61 @@ def _call_sealion(
         return None
 
 
+# ── JSON-safe call with progressive retry ──────────────────────────────────
+
+def call_sealion_json(
+    messages: list[dict],
+    max_tokens: int = 1000,
+    model: str = SEALION_MODEL,
+    max_retries: int = 2,
+) -> Optional[str]:
+    """Call SEA-LION with progressive temperature retry for JSON responses.
+
+    Starts at temperature 0.2, increases by 0.2 on each retry.
+    Appends hints about JSON completeness on retries.
+    """
+    temperatures = [0.2 + (0.2 * i) for i in range(max_retries + 1)]
+
+    for attempt, temp in enumerate(temperatures):
+        retry_messages = list(messages)
+        if attempt > 0:
+            retry_messages.append({
+                "role": "user",
+                "content": (
+                    "Your previous response was incomplete or invalid JSON. "
+                    "Please return ONLY valid, complete JSON. "
+                    "Ensure all arrays and objects are properly closed."
+                ),
+            })
+        result = _call_sealion(
+            retry_messages,
+            max_tokens=max_tokens,
+            model=model,
+            temperature=temp,
+        )
+        if result and result.strip():
+            stripped = result.strip()
+            # Extract JSON substring if wrapped in commentary
+            json_start = stripped.find("{") if "{" in stripped else stripped.find("[")
+            json_end = (stripped.rfind("}") + 1) if "}" in stripped else (stripped.rfind("]") + 1)
+            if json_start >= 0 and json_end > json_start:
+                candidate = stripped[json_start:json_end]
+                try:
+                    json.loads(candidate)  # Actually parse to validate
+                    return candidate
+                except (json.JSONDecodeError, ValueError):
+                    pass  # Fall through to retry
+
+            if attempt == max_retries:
+                log.warning("[AI] Final attempt: returning raw response (not valid JSON)")
+                return result
+            log.info(f"[AI] Retry {attempt + 1}: response not valid JSON, retrying at temp={temp + 0.2:.1f}")
+            continue
+        if attempt == max_retries:
+            return result
+    return None
+
+
 # ── Status ──────────────────────────────────────────────────────────────────
 
 def get_ai_status() -> dict:
@@ -310,9 +371,30 @@ Keep it conversational — like you're sitting across from them at a coffee shop
     }
 
 
-def rewrite_bullet(bullet: str, job_title: str = "", context: str = "", used_verbs: str = "") -> Optional[list]:
+def rewrite_bullet(
+    bullet: str,
+    job_title: str = "",
+    context: str = "",
+    used_verbs: str = "",
+    rewrite_focus: str = "",
+    focused_feedback: str = "",
+) -> Optional[list]:
     """Rewrite a single resume bullet — returns 3 OPTIONS, not just one."""
     avoid_verbs = f"\nAVOID these verbs (already used in other bullets): {used_verbs}" if used_verbs else ""
+    focus_tokens = {token.strip().lower() for token in rewrite_focus.split(",") if token.strip()}
+    focus_rules = []
+    if "bullet_length" in focus_tokens or "shorten" in focus_tokens:
+        focus_rules.append("- Option 1 MUST be the shortest scan-friendly rewrite. Keep it crisp, front-load the result, and aim for roughly 18-26 words when possible without losing facts.")
+    if "overused_avoided" in focus_tokens or "tighten" in focus_tokens:
+        focus_rules.append("- Reduce repeated broad words and replace generic phrasing with more specific wording when the original supports it.")
+    if "action_oriented" in focus_tokens or "action" in focus_tokens:
+        focus_rules.append("- Lead with a strong, specific action verb rather than a weak or generic opening.")
+    if "specifics" in focus_tokens:
+        focus_rules.append("- Keep existing numbers and scope cues prominent. If the bullet already has metrics, place them closer to the outcome instead of burying them.")
+    if "bulletize" in focus_tokens or "format" in focus_tokens:
+        focus_rules.append("- Each option must read like a single resume bullet line, not a paragraph.")
+    focus_hint = f"\nFOCUS FOR THIS REWRITE:\n" + "\n".join(focus_rules) if focus_rules else ""
+    feedback_hint = f"\nTARGETED FEEDBACK TO ADDRESS:\n{focused_feedback}" if focused_feedback else ""
 
     system = f"""You are a resume writing expert who has helped thousands of professionals in Singapore.
 
@@ -322,12 +404,16 @@ CRITICAL — DO NOT HALLUCINATE:
 - If there are no numbers, use placeholders like [X%] or [N] that the user fills in themselves
 - Preserve all factual information exactly as-is
 {avoid_verbs}
+{focus_hint}
+{feedback_hint}
 
 Provide exactly 3 different rewrites of the bullet. Each should:
 - Start with a DIFFERENT strong action verb
 - Include measurable IMPACT (%, $, team size, time saved, users affected)
 - Keep it to 1-2 lines max
 - Make it ATS-friendly
+- Use the job context only to choose more relevant wording. Do NOT add responsibilities, tools, or scope that the original bullet does not support.
+- When targeted feedback identifies a specific issue, each option should try to resolve that issue clearly enough to pass a practical resume check for it (for example: action-oriented bullets should open with a real action verb, long bullets should be tightened, and repeated wording should be reduced).
 
 If the bullet is already strong and doesn't need changes, return "NO_CHANGE" as the only output.
 
@@ -341,6 +427,8 @@ Return EXACTLY this format (3 lines, nothing else):
         user_msg += f"\n\nThis is for a {job_title} role."
     if context:
         user_msg += f"\nContext: {context}"
+    if focused_feedback:
+        user_msg += f"\nFocused feedback to address: {focused_feedback}"
 
     content = _call_sealion(
         messages=[

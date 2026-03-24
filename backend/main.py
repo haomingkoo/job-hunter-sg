@@ -63,14 +63,71 @@ from resume_scorer import ResumeScorer
 from resume_templates import generate_docx, list_templates
 from skill_extractor import extract_skill_phrases, match_resume_skills_with_context
 from scraper import JobAggregator, SSGSkillsFrameworkAPI
+from tailoring_pipeline import get_pipeline_state, run_pipeline
+from jd_preparser import preparse_job_description as preparse_jd
 
 log = logging.getLogger("jobhunter")
 
 # Disable OpenAPI docs in production to reduce attack surface
 _is_production = "postgresql" in os.environ.get("DATABASE_URL", "")
+
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Startup and shutdown lifecycle for the app."""
+    # ── Startup ──
+    init_db()
+    from database import SessionLocal
+
+    # Auto-cleanup jobs older than 30 days
+    try:
+        db = SessionLocal()
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        stale = db.query(ScrapedJob).filter(
+            ScrapedJob.scraped_at < cutoff.isoformat()
+        ).count()
+        if stale > 0:
+            db.query(ScrapedJob).filter(
+                ScrapedJob.scraped_at < cutoff.isoformat()
+            ).delete()
+            db.commit()
+            log.info(f"Cleaned up {stale} stale jobs (older than 30 days)")
+        db.close()
+    except Exception as e:
+        log.warning(f"Stale job cleanup failed: {e}")
+
+    # Auto-create admin account if configured
+    try:
+        db2 = SessionLocal()
+        admin_email = os.environ.get("ADMIN_EMAIL", "")
+        admin_pw = os.environ.get("ADMIN_PASSWORD", "")
+        if admin_email and admin_pw and not db2.query(User).filter(User.email == admin_email).first():
+            admin = User(
+                email=admin_email,
+                password_hash=hash_password(admin_pw),
+                name="Admin",
+                tier="admin",
+            )
+            db2.add(admin)
+            db2.commit()
+            log.info("Admin account created")
+        db2.close()
+    except Exception as e:
+        log.warning(f"Admin account creation failed: {e}")
+
+    yield  # App is running
+
+    # ── Shutdown ──
+    log.info("Shutting down Job Hunter SG API")
+
+
 app = FastAPI(
     title="Job Hunter SG API",
     version="2.0.0",
+    lifespan=lifespan,
     docs_url=None if _is_production else "/docs",
     redoc_url=None if _is_production else "/redoc",
     openapi_url=None if _is_production else "/openapi.json",
@@ -112,6 +169,74 @@ POWER_SKILL_TERMS = {
     "communication", "leadership", "change management", "quality", "spc",
     "six sigma", "manufacturing", "semulator3d", "jira", "salesforce",
     "figma", "product management", "program management", "root cause analysis",
+    "semiconductor", "process integration", "process control", "yield engineering",
+    "yield optimization", "yield ramp", "lithography", "metrology",
+    "wafer fabrication", "fab operations", "product engineering operations",
+    "front end operations", "quality systems", "eqms", "feol", "beol",
+    "doe", "design of experiments", "virtual doe", "equipment engineering",
+    "wet process development", "defect metrology", "hbm3e", "lpddr5x",
+}
+
+POWER_ALLOWED_SINGLE_SKILLS = {
+    "python", "sql", "excel", "tableau", "aws", "azure", "gcp", "docker",
+    "kubernetes", "terraform", "linux", "react", "typescript", "javascript",
+    "java", "node", "golang", "rust", "git", "agile", "scrum", "analytics",
+    "ai", "leadership", "quality", "spc", "jira", "manufacturing",
+    "semiconductor", "lithography", "metrology", "yield", "automation",
+    "reliability", "validation", "integration", "eqms", "feol", "beol",
+    "doe", "semulator3d", "hbm3e", "lpddr5x",
+}
+
+POWER_NOISE_SKILLS = {
+    "professional experience", "professional summary", "core skills",
+    "core competencies", "technical skills", "additional information",
+    "certification", "certifications", "education", "languages",
+    "personal", "professional learning communities", "exit interviews",
+    "loan processing", "medical study", "subject matter expert",
+    "certifications & technical upskilling",
+}
+
+POWER_GENERIC_SINGLE_SKILLS = {
+    "experience", "professional", "organization", "performance", "development",
+    "transformation", "documentation", "collaboration", "validation",
+    "automation", "leadership", "engineering", "integration",
+}
+
+POWER_DISPLAY_SINGLE_SKILLS = {
+    "python", "sql", "excel", "tableau", "aws", "azure", "gcp", "docker",
+    "kubernetes", "react", "typescript", "javascript", "java", "agile",
+    "analytics", "ai", "spc", "jira", "semiconductor", "lithography",
+    "metrology", "eqms", "doe", "semulator3d", "hbm3e", "lpddr5x",
+    "feol", "beol",
+}
+
+POWER_DISPLAY_EXCLUDE = POWER_NOISE_SKILLS | {
+    "professional experience", "professional summary", "technical skills",
+    "core skills", "core competencies", "additional information",
+    "standardized documentation", "documentation", "organization",
+    "performance", "development", "transformation", "integration",
+    "automation", "leadership", "reliability", "engineering", "validation",
+    "collaboration", "certifications", "professional",
+}
+
+SEMICONDUCTOR_DOMAIN_TERMS = {
+    "semiconductor", "process integration", "process control",
+    "yield engineering", "yield optimization", "yield ramp", "lithography",
+    "metrology", "wafer fabrication", "fab operations", "product engineering operations",
+    "front end operations", "quality systems", "eqms", "spc", "root cause analysis",
+    "design of experiments", "virtual doe", "equipment engineering",
+    "wet process development", "defect metrology", "feol", "beol",
+    "semulator3d", "hbm3e", "lpddr5x",
+}
+
+SEMICONDUCTOR_HARD_TERMS = {
+    "semiconductor", "semiconductor manufacturing", "process integration",
+    "process control", "yield engineering", "yield optimization", "yield ramp",
+    "lithography", "metrology", "wafer fabrication", "fab operations",
+    "product engineering operations", "front end operations", "quality systems",
+    "eqms", "root cause analysis", "design of experiments", "virtual doe",
+    "equipment engineering", "wet process development", "defect metrology",
+    "feol", "beol", "semulator3d", "hbm3e", "lpddr5x",
 }
 
 POWER_ROLE_STOPWORDS = {
@@ -149,43 +274,8 @@ POWER_BRIDGE_LIBRARY = [
 ]
 
 
-# ── Startup ──────────────────────────────────────────────────────────────────
 
-@app.on_event("startup")
-def on_startup() -> None:
-    init_db()
-    from database import SessionLocal
-    # Auto-cleanup jobs older than 30 days on startup
-    try:
-        db = SessionLocal()
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-        stale = db.query(ScrapedJob).filter(ScrapedJob.scraped_at < cutoff.isoformat()).count()
-        if stale > 0:
-            db.query(ScrapedJob).filter(ScrapedJob.scraped_at < cutoff.isoformat()).delete()
-            db.commit()
-            log.info(f"Cleaned up {stale} stale jobs (older than 30 days)")
-        db.close()
-    except Exception as e:
-        log.warning(f"Stale job cleanup failed: {e}")
-
-    # Auto-create admin account if it doesn't exist
-    try:
-        db2 = SessionLocal()
-        admin_email = os.environ.get("ADMIN_EMAIL", "")
-        admin_pw = os.environ.get("ADMIN_PASSWORD", "")
-        if admin_email and admin_pw and not db2.query(User).filter(User.email == admin_email).first():
-            admin = User(
-                email=admin_email,
-                password_hash=hash_password(admin_pw),
-                name="Admin",
-                tier="admin",
-            )
-            db2.add(admin)
-            db2.commit()
-            log.info("Admin account created")
-        db2.close()
-    except Exception as e:
-        log.warning(f"Admin account creation failed: {e}")
+# Startup logic moved to lifespan() context manager above.
 
 
 def _normalize_skill_strings(raw_skills) -> list[str]:
@@ -221,6 +311,84 @@ def _normalize_skill_strings(raw_skills) -> list[str]:
     return deduped
 
 
+def _is_power_skill_noise(skill: str) -> bool:
+    lower = re.sub(r"\s+", " ", (skill or "").strip().lower())
+    if not lower:
+        return True
+    if lower in POWER_NOISE_SKILLS:
+        return True
+    if lower in POWER_GENERIC_SINGLE_SKILLS and lower not in POWER_ALLOWED_SINGLE_SKILLS:
+        return True
+    if len(lower.split()) == 1 and lower not in POWER_ALLOWED_SINGLE_SKILLS:
+        return True
+    return False
+
+
+def _clean_power_skills(skills: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for skill in skills:
+        normalized = re.sub(r"\s+", " ", (skill or "").strip())
+        lower = normalized.lower()
+        if not normalized or lower in seen or _is_power_skill_noise(normalized):
+            continue
+        seen.add(lower)
+        cleaned.append(normalized)
+    return cleaned
+
+
+def _is_power_surface_noise(skill: str) -> bool:
+    lower = re.sub(r"\s+", " ", (skill or "").strip().lower())
+    if not lower:
+        return True
+    if lower in POWER_DISPLAY_EXCLUDE:
+        return True
+    if re.fullmatch(r"(professional|work|core|technical|additional|selected)\s+(experience|summary|skills?|competencies|information|projects?)", lower):
+        return True
+    if len(lower.split()) == 1 and lower not in POWER_DISPLAY_SINGLE_SKILLS:
+        return True
+    return False
+
+
+def _surface_power_skills(skills: list[str], limit: int = 24) -> list[str]:
+    surfaced: list[str] = []
+    seen: set[str] = set()
+    ranked = sorted(
+        skills,
+        key=lambda skill: (
+            0 if skill.lower() in SEMICONDUCTOR_HARD_TERMS else 1,
+            0 if len(skill.split()) >= 2 else 1,
+            -len(skill.split()),
+            skill.lower(),
+        ),
+    )
+    for skill in ranked:
+        normalized = re.sub(r"\s+", " ", (skill or "").strip())
+        lower = normalized.lower()
+        if not normalized or lower in seen or _is_power_surface_noise(normalized):
+            continue
+        seen.add(lower)
+        surfaced.append(normalized)
+        if len(surfaced) >= limit:
+            break
+    return surfaced
+
+
+def _extract_job_match_skills(job: ScrapedJob, db: Session) -> list[str]:
+    jd_skills = extract_skill_phrases(
+        job.description or "",
+        job_skills=_normalize_skill_strings(job.skills),
+        db_session=db,
+    )
+    title_terms = _extract_title_terms(job.title)
+    combined = jd_skills + [term for term in title_terms if term in POWER_SKILL_TERMS or term in SEMICONDUCTOR_DOMAIN_TERMS]
+    return _clean_power_skills(combined)
+
+
+def _count_domain_hits(terms: list[str], domain_terms: set[str]) -> int:
+    return sum(1 for term in terms if term.lower() in domain_terms)
+
+
 def _get_or_create_memory(user: Optional[User], db: Session) -> Optional[UserMemory]:
     if not user:
         return None
@@ -244,32 +412,24 @@ def _persist_resume_to_memory(user: Optional[User], db: Session, resume_text: st
 
 def _extract_resume_skills(resume_text: str, db: Session) -> tuple[list[str], str]:
     lower_text = resume_text.lower()
-    skill_map: dict[str, str] = {}
-
-    recent_skill_rows = (
-        db.query(ScrapedJob.skills)
-        .order_by(ScrapedJob.id.desc())
-        .limit(1500)
-        .all()
-    )
-    for (raw_skills,) in recent_skill_rows:
-        for skill in _normalize_skill_strings(raw_skills):
-            skill_map.setdefault(skill.lower(), skill)
-
+    extracted = extract_skill_phrases(resume_text, db_session=db)
+    supplemental: list[str] = []
     for skill in POWER_SKILL_TERMS:
-        skill_map.setdefault(skill.lower(), skill)
-
-    matched: list[str] = []
-    seen: set[str] = set()
-    for lower_skill, display in sorted(skill_map.items(), key=lambda item: len(item[0]), reverse=True):
-        pattern = rf"(?<![a-z0-9]){re.escape(lower_skill)}(?![a-z0-9])"
+        pattern = rf"(?<![a-z0-9]){re.escape(skill.lower())}(?![a-z0-9])"
         if re.search(pattern, lower_text):
-            if lower_skill not in seen:
-                matched.append(display)
-                seen.add(lower_skill)
+            supplemental.append(skill)
 
+    matched = _clean_power_skills(extracted + supplemental)
     if matched:
-        return matched[:30], "skill_corpus"
+        ranked = sorted(
+            matched,
+            key=lambda skill: (
+                0 if skill.lower() in SEMICONDUCTOR_DOMAIN_TERMS else 1,
+                -len(skill.split()),
+                skill.lower(),
+            ),
+        )
+        return ranked[:30], "skill_corpus"
 
     fallback_terms = re.findall(r"\b[A-Z][A-Za-z0-9+#.]{2,}\b", resume_text)
     fallback_deduped: list[str] = []
@@ -283,11 +443,117 @@ def _extract_resume_skills(resume_text: str, db: Session) -> tuple[list[str], st
     return fallback_deduped[:20], "fallback_terms"
 
 
+def _select_power_match_candidates(
+    db: Session,
+    resume_text: str,
+    resume_skills: list[str],
+    limit: int = 500,
+) -> list[ScrapedJob]:
+    hard_resume_terms = [
+        skill for skill in resume_skills
+        if skill.lower() in SEMICONDUCTOR_HARD_TERMS
+    ]
+    prioritized_terms = hard_resume_terms[:8] + [
+        skill for skill in resume_skills[:12]
+        if skill.lower() not in {term.lower() for term in hard_resume_terms[:8]}
+    ]
+    lower_resume = resume_text.lower()
+    for term in SEMICONDUCTOR_HARD_TERMS:
+        if term in lower_resume and term not in prioritized_terms:
+            prioritized_terms.append(term)
+        if len(prioritized_terms) >= 16:
+            break
+
+    prioritized_terms = [
+        term for term in prioritized_terms
+        if term and not _is_power_skill_noise(term)
+    ]
+
+    if not prioritized_terms:
+        return db.query(ScrapedJob).order_by(ScrapedJob.id.desc()).limit(limit).all()
+
+    conditions = []
+    for term in prioritized_terms:
+        pattern = f"%{term}%"
+        conditions.extend(
+            [
+                ScrapedJob.title.ilike(pattern),
+                ScrapedJob.company.ilike(pattern),
+                ScrapedJob.description.ilike(pattern),
+                ScrapedJob.search_keyword.ilike(pattern),
+                cast(ScrapedJob.skills, String).ilike(pattern),
+            ]
+        )
+
+    matched_jobs = (
+        db.query(ScrapedJob)
+        .filter(or_(*conditions))
+        .order_by(ScrapedJob.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+    if len(matched_jobs) >= min(80, limit):
+        return matched_jobs
+
+    seen_ids = {job.id for job in matched_jobs}
+    backfill_jobs = (
+        db.query(ScrapedJob)
+        .order_by(ScrapedJob.id.desc())
+        .limit(max(100, limit // 2))
+        .all()
+    )
+    for job in backfill_jobs:
+        if job.id in seen_ids:
+            continue
+        matched_jobs.append(job)
+        seen_ids.add(job.id)
+        if len(matched_jobs) >= limit:
+            break
+
+    return matched_jobs
+
+
 def _extract_title_terms(title: str) -> list[str]:
     return [
         word for word in re.findall(r"[a-zA-Z][a-zA-Z+#.]{2,}", title.lower())
         if word not in POWER_ROLE_STOPWORDS
     ]
+
+
+def _infer_resume_level(resume_text: str) -> int:
+    lower = resume_text.lower()
+    years_match = re.search(r"(\d+)\+?\s+years?", lower)
+    years = int(years_match.group(1)) if years_match else 0
+
+    if any(term in lower for term in {"vice president", "vp", "director", "head of", "general manager"}):
+        return 5
+    if any(term in lower for term in {"senior manager", "program manager", "manager", "principal", "lead"}):
+        return 4
+    if any(term in lower for term in {"senior engineer", "staff engineer", "senior executive", "professional"}):
+        return 3
+    if years >= 8:
+        return 4
+    if years >= 4:
+        return 3
+    if years >= 1:
+        return 2
+    return 1
+
+
+def _infer_job_level(job: ScrapedJob) -> int:
+    combined = f"{job.seniority or ''} {job.title or ''}".lower()
+    if any(term in combined for term in {"vice president", "vp", "director", "head of", "general manager", "senior management"}):
+        return 5
+    if any(term in combined for term in {"senior manager", "manager", "principal", "lead"}):
+        return 4
+    if any(term in combined for term in {"senior executive", "staff", "professional", "engineer", "analyst", "specialist", "executive"}):
+        return 3
+    if any(term in combined for term in {"junior", "associate", "technician", "entry", "fresh", "non-executive"}):
+        return 2
+    if "intern" in combined:
+        return 1
+    return 3
 
 
 def _build_bridge_plan(missing_skills: list[str]) -> list[dict]:
@@ -574,7 +840,24 @@ def list_cached_jobs(
         numbers = [int(part.replace(",", "")) for part in re.findall(r"\d[\d,]*", value or "")]
         return numbers[0] if numbers else 0
 
-    query = db.query(ScrapedJob)
+    job_list_columns = (
+        ScrapedJob.id,
+        ScrapedJob.title,
+        ScrapedJob.company,
+        ScrapedJob.location,
+        ScrapedJob.salary,
+        ScrapedJob.source,
+        ScrapedJob.url,
+        ScrapedJob.posted_date,
+        ScrapedJob.employment_type,
+        ScrapedJob.seniority,
+        ScrapedJob.description,
+        ScrapedJob.skills,
+        ScrapedJob.agency,
+        ScrapedJob.scraped_at,
+    )
+
+    query = db.query(*job_list_columns)
     if q:
         # Split query into words — match ALL words (AND logic)
         # "micron i4" matches jobs with BOTH "micron" AND "i4" anywhere
@@ -740,17 +1023,18 @@ def get_power_match(
     resume_skills, resume_signal_mode = _extract_resume_skills(resume_text, db)
     resume_skill_lookup = {skill.lower(): skill for skill in resume_skills}
     lower_resume = resume_text.lower()
+    resume_level = _infer_resume_level(resume_text)
 
-    candidate_jobs = (
-        db.query(ScrapedJob)
-        .order_by(ScrapedJob.id.desc())
-        .limit(300)
-        .all()
+    candidate_jobs = _select_power_match_candidates(
+        db=db,
+        resume_text=resume_text,
+        resume_skills=resume_skills,
+        limit=500,
     )
 
     recommendations: list[dict] = []
     for job in candidate_jobs:
-        job_skills = _normalize_skill_strings(job.skills)
+        job_skills = _extract_job_match_skills(job, db)
         matched_skills = [
             skill for skill in job_skills
             if skill.lower() in resume_skill_lookup or skill.lower() in lower_resume
@@ -761,6 +1045,14 @@ def get_power_match(
         ]
         title_terms = _extract_title_terms(job.title)
         title_hits = [term for term in title_terms if term in lower_resume]
+        resume_domain_hits = _count_domain_hits(resume_skills, SEMICONDUCTOR_DOMAIN_TERMS)
+        job_domain_hits = _count_domain_hits(job_skills + title_terms, SEMICONDUCTOR_DOMAIN_TERMS)
+        matched_domain_hits = _count_domain_hits(matched_skills + title_hits, SEMICONDUCTOR_DOMAIN_TERMS)
+        resume_hard_hits = _count_domain_hits(resume_skills, SEMICONDUCTOR_HARD_TERMS)
+        job_hard_hits = _count_domain_hits(job_skills + title_terms, SEMICONDUCTOR_HARD_TERMS)
+        matched_hard_hits = _count_domain_hits(matched_skills + title_hits, SEMICONDUCTOR_HARD_TERMS)
+        job_level = _infer_job_level(job)
+        level_text = f"{job.seniority or ''} {job.title or ''}".lower()
 
         if not matched_skills and not title_hits and not job_skills:
             continue
@@ -771,7 +1063,46 @@ def get_power_match(
             10,
             sum(1 for skill in matched_skills[:4] if skill.lower() in (job.description or "").lower()) * 3,
         )
-        suitability_score = round(min(98, skill_score + title_score + description_bonus))
+        domain_bonus = 0
+        domain_penalty = 0
+        level_bonus = 0
+        level_penalty = 0
+        if resume_hard_hits > 0 and job_hard_hits > 0:
+            domain_bonus = min(20, max(8, matched_hard_hits * 5 or 8))
+        elif resume_domain_hits > 0 and job_domain_hits > 0:
+            domain_bonus = min(10, max(4, matched_domain_hits * 3 or 4))
+        if resume_hard_hits > 0 and job_hard_hits == 0:
+            domain_penalty = 12
+        level_gap = resume_level - job_level
+        if abs(level_gap) <= 1:
+            level_bonus = 4
+        elif level_gap >= 2:
+            level_penalty = min(18, level_gap * 7)
+        elif level_gap <= -2:
+            level_penalty = min(8, abs(level_gap) * 3)
+        low_level_role = resume_level >= 4 and any(
+            term in level_text
+            for term in {"technician", "assistant", "associate", "entry", "fresh", "junior", "non-executive"}
+        )
+        if low_level_role:
+            level_penalty = max(level_penalty, 24)
+        suitability_score = round(
+            min(
+                98,
+                max(
+                    0,
+                    skill_score
+                    + title_score
+                    + description_bonus
+                    + domain_bonus
+                    + level_bonus
+                    - domain_penalty
+                    - level_penalty,
+                ),
+            )
+        )
+        if low_level_role:
+            suitability_score = min(suitability_score, 48)
 
         if suitability_score < 18:
             continue
@@ -785,12 +1116,19 @@ def get_power_match(
         else:
             suitability_label = "Explore"
 
-        if matched_skills:
+        if matched_hard_hits > 0:
+            why = f"Semiconductor-domain overlap in {', '.join((matched_skills + title_hits)[:3])}."
+        elif matched_domain_hits > 0:
+            why = f"Domain overlap in {', '.join((matched_skills + title_hits)[:3])}."
+        elif matched_skills:
             why = f"Matches on {', '.join(matched_skills[:3])}."
         elif title_hits:
             why = f"Your resume aligns with {', '.join(title_hits[:3])} from the role title."
         else:
             why = "Worth exploring, but the skill signal is still light."
+
+        surfaced_matched_skills = _surface_power_skills(matched_skills, limit=6)
+        surfaced_missing_skills = _surface_power_skills(missing_skills, limit=6)
 
         recommendations.append({
             "job": {
@@ -811,10 +1149,10 @@ def get_power_match(
             },
             "suitability_score": suitability_score,
             "suitability_label": suitability_label,
-            "matched_skills": matched_skills[:6],
-            "missing_skills": missing_skills[:6],
+            "matched_skills": surfaced_matched_skills,
+            "missing_skills": surfaced_missing_skills,
             "why": why,
-            "bridge_plan": _build_bridge_plan(missing_skills),
+            "bridge_plan": _build_bridge_plan(surfaced_missing_skills or missing_skills),
         })
 
     recommendations.sort(
@@ -835,11 +1173,14 @@ def get_power_match(
     top_gaps = [
         {"skill": skill, "count": count}
         for skill, count in top_gap_counts.most_common(8)
+        if count >= 2 and not _is_power_surface_noise(skill)
     ]
 
     recommended_queries = []
     seen_queries = set()
     for item in recommendations:
+        if item["suitability_score"] < 50:
+            continue
         title = item["job"]["title"]
         if title in seen_queries:
             continue
@@ -852,7 +1193,7 @@ def get_power_match(
         "resume_ready": True,
         "message": "Power matches generated from your latest stored resume.",
         "resume_signal_mode": resume_signal_mode,
-        "resume_skills": resume_skills[:24],
+        "resume_skills": _surface_power_skills(resume_skills, limit=24),
         "top_gaps": top_gaps,
         "recommended_queries": recommended_queries,
         "recommendations": recommendations,
@@ -878,7 +1219,7 @@ def match_resume_to_job(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    from skill_extractor import extract_skill_phrases, match_resume_skills
+    from skill_extractor import extract_skill_phrases, match_resume_skills_with_context
     import json as _json
 
     # Get skills from the job's database record + description
@@ -890,7 +1231,11 @@ def match_resume_to_job(
 
     # Match against resume
     resume_text = sanitize_resume_text(body.resume_text)
-    result = match_resume_skills(resume_text, jd_phrases)
+    result = match_resume_skills_with_context(
+        resume_text,
+        jd_phrases,
+        jd_text=jd_text,
+    )
 
     return {
         "job_id": job_id,
@@ -1391,9 +1736,19 @@ def ai_rewrite_bullet(
 
     bullet = sanitize_user_input(body.bullet)
     job_title = sanitize_user_input(body.job_title)
+    job_description = sanitize_user_input(body.job_description) if hasattr(body, "job_description") else ""
     used_verbs = sanitize_user_input(body.used_verbs) if hasattr(body, "used_verbs") else ""
+    rewrite_focus = sanitize_user_input(body.rewrite_focus) if hasattr(body, "rewrite_focus") else ""
+    focused_feedback = sanitize_user_input(body.focused_feedback) if hasattr(body, "focused_feedback") else ""
 
-    result = rewrite_bullet(bullet, job_title=job_title, used_verbs=used_verbs)
+    result = rewrite_bullet(
+        bullet,
+        job_title=job_title,
+        context=job_description,
+        used_verbs=used_verbs,
+        rewrite_focus=rewrite_focus,
+        focused_feedback=focused_feedback,
+    )
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1906,6 +2261,247 @@ if _static_dir.is_dir():
         return response
 
     app.mount("/", StaticFiles(directory=str(_static_dir)), name="static")
+
+
+# ── Resume Tailoring Pipeline ───────────────────────────────────────────────
+
+
+@app.post("/api/resume/tailor")
+def start_tailoring(
+    body: dict,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Start the multi-pass resume tailoring pipeline for a specific job.
+
+    Body: {resume_text, job_id, intensity: "nudge"|"keywords"|"full"}
+    Returns session_id to poll for progress.
+    """
+    resume_text = sanitize_resume_text(body.get("resume_text", ""))
+    job_id = body.get("job_id")
+    intensity = body.get("intensity", "full")
+
+    if not resume_text or len(resume_text) < 50:
+        raise HTTPException(status_code=400, detail="Resume text is too short (min 50 chars).")
+    if intensity not in ("nudge", "keywords", "full"):
+        raise HTTPException(status_code=400, detail="Intensity must be nudge, keywords, or full.")
+
+    # Load job and its pre-parsed JD
+    jd_text = ""
+    parsed_jd = None
+    if job_id:
+        job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found.")
+        jd_text = job.description or ""
+        parsed_jd = job.parsed_jd
+        # Pre-parse on the fly if missing
+        if not parsed_jd and jd_text:
+            skills_list = job.skills if isinstance(job.skills, list) else []
+            parsed_jd = preparse_jd(jd_text, skills=skills_list)
+            job.parsed_jd = parsed_jd
+            db.commit()
+    else:
+        jd_text = sanitize_user_input(body.get("job_description", ""))
+
+    if user:
+        check_rate_limit(user, "ai", db)
+        db.add(UsageLog(user_id=user.id, action="ai", detail="tailor_pipeline"))
+        db.commit()
+
+    state = run_pipeline(
+        resume_text=resume_text,
+        job_description=jd_text,
+        parsed_jd=parsed_jd,
+        intensity=intensity,
+    )
+
+    return {
+        "session_id": state.session_id,
+        "status": "started",
+        "estimated_seconds": 45 if intensity == "full" else 15 if intensity == "keywords" else 5,
+    }
+
+
+@app.get("/api/resume/tailor/{session_id}/status")
+def get_tailoring_status(session_id: str) -> dict:
+    """Poll for pipeline progress."""
+    state = get_pipeline_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Tailoring session not found.")
+    return state.to_dict()
+
+
+@app.get("/api/resume/tailor/{session_id}/result")
+def get_tailoring_result(session_id: str) -> dict:
+    """Get the tailoring result (available even before pipeline completes)."""
+    state = get_pipeline_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Tailoring session not found.")
+    if state.error:
+        raise HTTPException(status_code=500, detail=state.error)
+    if not state.result:
+        return {
+            "session_id": session_id,
+            "complete": False,
+            "stage": state.stage_name,
+            "message": state.message,
+        }
+    return state.result
+
+
+@app.get("/api/jobs/{job_id}/parsed")
+def get_parsed_jd(
+    job_id: int,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Get the pre-parsed JD data for a job (skills, requirements, etc.)."""
+    job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found.")
+
+    # Parse on the fly if not already done
+    if not job.parsed_jd and job.description:
+        skills_list = job.skills if isinstance(job.skills, list) else []
+        job.parsed_jd = preparse_jd(job.description, skills=skills_list)
+        db.commit()
+
+    return {
+        "job_id": job_id,
+        "title": job.title,
+        "company": job.company,
+        "parsed_jd": job.parsed_jd or {},
+        "has_parsed_jd": job.parsed_jd is not None,
+    }
+
+
+@app.post("/api/resume/tailor/{session_id}/feedback")
+def submit_tailoring_feedback(
+    session_id: str,
+    body: dict,
+) -> dict:
+    """Accept, reject, or edit an individual change from the pipeline."""
+    state = get_pipeline_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Tailoring session not found.")
+    if not state.result:
+        raise HTTPException(status_code=400, detail="Pipeline has not completed yet.")
+
+    bullet_id = body.get("bullet_id", "")
+    action = body.get("action", "")  # "accept" | "reject" | "edit"
+    edited_text = body.get("edited_text", "")
+
+    if action not in ("accept", "reject", "edit"):
+        raise HTTPException(status_code=400, detail="Action must be accept, reject, or edit.")
+    if action == "edit" and not edited_text.strip():
+        raise HTTPException(status_code=400, detail="edited_text required when action is edit.")
+
+    changes = state.result.get("changes", [])
+    found = False
+    for change in changes:
+        if change.get("bullet_id") == bullet_id or change.get("type") == "summary_rewrite":
+            if change.get("type") == "summary_rewrite" and bullet_id == "summary":
+                change["user_status"] = action
+                if action == "edit":
+                    change["user_edited_text"] = edited_text
+                found = True
+                break
+            elif change.get("bullet_id") == bullet_id:
+                change["user_status"] = action
+                if action == "edit":
+                    change["user_edited_text"] = edited_text
+                found = True
+                break
+
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Change for bullet_id '{bullet_id}' not found.")
+
+    accepted = sum(1 for c in changes if c.get("user_status") == "accept")
+    rejected = sum(1 for c in changes if c.get("user_status") == "reject")
+    pending = sum(1 for c in changes if c.get("user_status") == "pending")
+
+    return {
+        "bullet_id": bullet_id,
+        "action": action,
+        "accepted": accepted,
+        "rejected": rejected,
+        "pending": pending,
+    }
+
+
+@app.post("/api/resume/tailor/{session_id}/apply")
+def apply_tailoring_changes(
+    session_id: str,
+) -> dict:
+    """Apply all accepted changes and return the final tailored resume text."""
+    state = get_pipeline_state(session_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Tailoring session not found.")
+    if not state.result:
+        raise HTTPException(status_code=400, detail="Pipeline has not completed yet.")
+
+    original_text = state.result.get("original_text", "")
+    changes = state.result.get("changes", [])
+
+    # Start from original text and apply only accepted changes
+    lines = original_text.replace("\r\n", "\n").split("\n")
+
+    applied_count = 0
+    rejected_count = 0
+
+    for change in changes:
+        user_status = change.get("user_status", "pending")
+
+        if user_status == "reject":
+            rejected_count += 1
+            continue
+        if user_status == "pending":
+            continue  # skip unreviewed changes
+
+        # Determine the final text for this change
+        if user_status == "edit":
+            final_text = change.get("user_edited_text", change.get("tailored", ""))
+        else:
+            final_text = change.get("tailored", "")
+
+        original = change.get("original", "")
+        if not original or not final_text:
+            continue
+
+        # Find and replace in lines
+        normalize = lambda s: re.sub(r"\s+", " ", s.strip().lower())
+        for i, line in enumerate(lines):
+            # Strip bullet markers for comparison
+            stripped = re.sub(
+                r"^[\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)]\s)\s*",
+                "", line,
+            ).strip()
+            if normalize(stripped) == normalize(original):
+                # Preserve the original bullet marker
+                marker_match = re.match(
+                    r"^([\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)]\s)\s*)",
+                    line,
+                )
+                marker = marker_match.group(1) if marker_match else ""
+                lines[i] = f"{marker}{final_text}"
+                applied_count += 1
+                break
+
+    tailored_text = "\n".join(lines)
+
+    # Re-score the final version
+    scorer = ResumeScorer()
+    final_score = scorer.analyze(tailored_text)
+
+    return {
+        "tailored_text": tailored_text,
+        "applied": applied_count,
+        "rejected": rejected_count,
+        "skipped_pending": sum(1 for c in changes if c.get("user_status") == "pending"),
+        "score_after": final_score.get("overall_score", 0),
+        "ats_gaps": state.result.get("ats_gaps", []),
+    }
 
 
 # ── Run ──────────────────────────────────────────────────────────────────────
