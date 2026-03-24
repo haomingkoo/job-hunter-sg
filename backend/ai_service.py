@@ -386,7 +386,15 @@ def rewrite_bullet(
     if "bullet_length" in focus_tokens or "shorten" in focus_tokens:
         focus_rules.append("- Option 1 MUST be the shortest scan-friendly rewrite. Keep it crisp, front-load the result, and aim for roughly 18-26 words when possible without losing facts.")
     if "overused_avoided" in focus_tokens or "tighten" in focus_tokens:
-        focus_rules.append("- Reduce repeated broad words and replace generic phrasing with more specific wording when the original supports it.")
+        # Extract the actual overused words from focused_feedback if available
+        overused_words = ""
+        if focused_feedback:
+            # focused_feedback often contains the flagged words
+            overused_words = focused_feedback
+        focus_rules.append(
+            f"- The resume overuses certain words. In THIS rewrite, AVOID these specific words and use alternatives instead: {overused_words}. "
+            f"Do NOT just swap with another generic word — use a specific, concrete word that fits the bullet's actual content."
+        )
     if "action_oriented" in focus_tokens or "action" in focus_tokens:
         focus_rules.append("- Lead with a strong, specific action verb rather than a weak or generic opening.")
     if "specifics" in focus_tokens:
