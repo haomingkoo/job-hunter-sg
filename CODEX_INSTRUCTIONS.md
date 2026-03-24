@@ -200,3 +200,42 @@ After all fixes, verify:
 - [ ] All buttons have loading states
 - [ ] All API calls have error handling
 - [ ] No console errors in browser dev tools
+
+---
+
+## ADDITIONAL FEATURE: Smart Keyword Integration
+
+### The Flow
+1. JD skills are extracted as MULTI-WORD phrases (not single words)
+   - "project management" not "project" + "management"  
+   - "cross-functional collaboration" not "cross" + "functional" + "collaboration"
+   - "semiconductor manufacturing" not "semiconductor" + "manufacturing"
+
+2. When showing "Missing" keywords in the resume workspace:
+   - Each keyword shows the sentence FROM THE JD where it appears
+   - User clicks a missing keyword
+   - AI generates 3 sentence options that:
+     a) Keep the keyword as EXACT MATCH (verbatim, not paraphrased)
+     b) Fit naturally into the user's existing resume style
+     c) Reference their actual experience (not hallucinated)
+
+3. User picks an option → it inserts into their resume at the right place
+
+### Backend Endpoint (already exists)
+`POST /api/ai/integrate-keywords` — accepts resume_text + missing_keywords + job_title
+
+### Frontend Implementation
+- In the "Missing" keywords section, make each pill CLICKABLE
+- On click, show:
+  1. JD context: the sentence containing this keyword
+  2. "AI Suggest" button → calls /api/ai/integrate-keywords for this keyword
+  3. 3 rewrite options with the keyword in BOLD
+  4. Accept → inserts into resume text
+
+### Multi-Word Phrase Extraction
+The keyword extraction currently splits on single words. Need to extract phrases:
+- Use the job's `skills` array from the database (MCF provides these as phrases)
+- For JD text: extract noun phrases (2-3 word combinations) not just individual words
+- Common multi-word skills: "machine learning", "data analysis", "project management", etc.
+- Maintain a skills dictionary of known multi-word terms
+

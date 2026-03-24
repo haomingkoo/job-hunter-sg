@@ -2482,7 +2482,7 @@ function ResumeTab({ selectedJob, user }) {
   const shouldInjectProfileHeader = inferredHeaderLines.length === 0 && (profile.name || profile.email || profile.phone || profile.location);
   const improvementQueue = useMemo(() => {
     const bulletItems = bulletSections
-      .filter((section) => section.annotation?.tone !== "emerald")
+      .filter((section) => section.annotation?.tone && section.annotation.tone !== "emerald")
       .map((section) => ({
         id: section.id,
         kind: "bullet",
@@ -2546,7 +2546,7 @@ function ResumeTab({ selectedJob, user }) {
       },
     ];
   }, [bulletSections, parsedSections, wordCount]);
-  const issueBulletCount = bulletSections.filter((section) => section.annotation?.tone !== "emerald").length;
+  const issueBulletCount = bulletSections.filter((section) => section.annotation?.tone && section.annotation.tone !== "emerald").length;
   const improvementCount = issueBulletCount + (scoreData?.top_suggestions?.length || 0) + Math.min(missingKeywords.length, 6);
   const isFeedbackView = workspaceView === "feedback";
   const isEditorView = workspaceView === "editor";
