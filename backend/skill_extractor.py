@@ -346,10 +346,17 @@ def extract_skill_phrases(
     found_skills: list[str] = _find_known_skills_in_text(text_lower)
 
     # 2. Add job_skills from the database that are multi-word
+    # Filter out noisy/irrelevant skills from job metadata
+    _skill_blocklist = {
+        "medical study", "medical studies", "social study", "social studies",
+        "general knowledge", "life skills", "physical education",
+        "religious studies", "moral education", "home economics",
+        "art appreciation", "music appreciation",
+    }
     if job_skills:
         for raw_skill in job_skills:
             normalized = _normalize_skill(raw_skill)
-            if not normalized:
+            if not normalized or normalized in _skill_blocklist:
                 continue
             # Only add multi-word skills (single words handled elsewhere)
             word_count = len(normalized.split())
@@ -361,9 +368,9 @@ def extract_skill_phrases(
                 ) + r"\b"
                 if re.search(pattern, text_lower):
                     found_skills.append(normalized)
-                else:
-                    # Even if not in JD text, the job lists it as a skill,
-                    # so include it (it came from the job's metadata).
+                # Only include metadata skills that are in our known dictionary
+                # to avoid noise like "Medical Study" from job source data
+                elif normalized in KNOWN_SKILLS:
                     found_skills.append(normalized)
 
     # 3. Deduplicate, preserving order

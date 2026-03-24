@@ -777,6 +777,7 @@ class ResumeScorer:
                     f"Strengthen {comp_name} with keywords: "
                     f"{', '.join(missing_kw)}"
                 )
+            missing_all = [kw for kw in keywords if kw not in text_lower]
             items[comp_name] = {
                 "score": score,
                 "max": 6,
@@ -785,6 +786,7 @@ class ResumeScorer:
                     f"{len(matched)}/{len(keywords)} keywords matched"
                 ),
                 "matched_keywords": matched,
+                "missing_keywords": missing_all[:8],
                 "suggestions": suggestions,
             }
 

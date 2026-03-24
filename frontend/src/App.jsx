@@ -30,16 +30,6 @@ const SG_JOB_PORTALS = [
   { name: "JobStreet", key: "jobstreet", type: "scrape" },
 ];
 
-const ATS_KEYWORDS_BY_ROLE = {
-  "Software Engineer": ["agile", "CI/CD", "microservices", "REST API", "cloud", "AWS", "Docker", "Kubernetes", "Git", "unit testing", "system design", "scalable"],
-  "Frontend Developer": ["React", "TypeScript", "JavaScript", "CSS", "responsive design", "accessibility", "performance optimization", "webpack", "testing", "UI/UX"],
-  "Full Stack Engineer": ["React", "Node.js", "SQL", "NoSQL", "REST API", "GraphQL", "Docker", "AWS", "agile", "CI/CD", "TypeScript"],
-  "Data Analyst": ["SQL", "Python", "Tableau", "Power BI", "Excel", "data visualization", "statistical analysis", "ETL", "data modeling"],
-  "Product Manager": ["roadmap", "stakeholder management", "agile", "user research", "metrics", "KPIs", "cross-functional", "prioritization", "A/B testing"],
-  "DevOps Engineer": ["AWS", "Docker", "Kubernetes", "CI/CD", "Terraform", "Linux", "monitoring", "Git", "Python", "microservices"],
-  default: ["communication", "teamwork", "problem-solving", "leadership", "analytical", "project management", "detail-oriented", "results-driven"],
-};
-
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 const todayStr = () => new Date().toISOString().split("T")[0];
@@ -169,7 +159,7 @@ function AuthModal({ onAuth, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}>
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}>
       <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 relative">
         {onClose && <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20} /></button>}
         <div className="text-center mb-6">
@@ -246,7 +236,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
   const [sourceFilter, setSourceFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("all");
   const [minSalaryFilter, setMinSalaryFilter] = useState("");
-  const [sortBy, setSortBy] = useState("relevance");
+  const [sortBy, setSortBy] = useState("newest");
   const [error, setError] = useState("");
   const [trackError, setTrackError] = useState("");
   const [page, setPage] = useState(1);
@@ -264,8 +254,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     setLoading(true);
     setError("");
     try {
-      const queryWords = searchQuery.trim().split(/\s+/).filter(Boolean);
-      const backendQuery = queryWords.length > 1 ? queryWords[0] : searchQuery.trim();
+      const normalizedQuery = searchQuery.trim();
       const params = new URLSearchParams({ page: String(pageNum), per_page: "20" });
       const activeLevel = nextFilters.levelFilter ?? levelFilter;
       const activeEmployment = nextFilters.employmentFilter ?? employmentFilter;
@@ -273,7 +262,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       const activeLocation = nextFilters.locationFilter ?? locationFilter;
       const activeMinSalary = nextFilters.minSalaryFilter ?? minSalaryFilter;
 
-      if (backendQuery) params.set("q", backendQuery);
+      if (normalizedQuery) params.set("q", normalizedQuery);
       if (activeLevel !== "all") params.set("seniority", activeLevel);
       if (activeEmployment !== "all") params.set("employment_type", activeEmployment);
       if (activeSource !== "all") params.set("source", activeSource);
@@ -300,22 +289,12 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
         level: j.seniority || "",
         url: j.url || "",
       }));
-      const andFiltered = queryWords.length > 1
-        ? mapped.filter((job) => {
-          const searchableText = [job.title, job.company, job.description, ...(job.skills || [])]
-            .join(" ")
-            .toLowerCase();
-          return queryWords.every((word) => searchableText.includes(word.toLowerCase()));
-        })
-        : mapped;
-      setResults(andFiltered);
-      setSubmittedQuery(searchQuery.trim());
+      setResults(mapped);
+      setSubmittedQuery(normalizedQuery);
       setPage(pageNum);
       setTotalPages(data.pages || 1);
       setExpandedJobId(null);
-      const total = queryWords.length > 1
-        ? `${andFiltered.length.toLocaleString()} jobs on this page`
-        : `${(data.total || andFiltered.length).toLocaleString()} jobs`;
+      const total = `${(data.total || mapped.length).toLocaleString()} jobs`;
       setTotalLabel(total);
     } catch (err) {
       setError(err.message || "Failed to load jobs. Please try again.");
@@ -1617,10 +1596,18 @@ function getResumeSectionKey(value) {
 
 function isAllCapsHeading(line) {
   const trimmed = stripResumeMarkdown(line);
-  return Boolean(trimmed)
-    && trimmed === trimmed.toUpperCase()
-    && /[A-Z]/.test(trimmed)
-    && trimmed.split(/\s+/).length <= 6;
+  if (!trimmed || trimmed !== trimmed.toUpperCase() || !/[A-Z]/.test(trimmed)) return false;
+  const words = trimmed.split(/\s+/);
+  // Must be short (≤4 words) to avoid matching all-caps summary/body text
+  if (words.length > 4) return false;
+  // Reject lines that look like bullet content or certifications
+  if (/^[•\-*]/.test(trimmed)) return false;
+  if (/certification|in progress|target|completed|accredited/i.test(trimmed.toLowerCase())) return false;
+  // Reject lines ending with period (likely sentences, not headings)
+  if (trimmed.endsWith(".")) return false;
+  // Reject lines with parentheses (likely descriptions, e.g. "PMP CERTIFICATION (IN PROGRESS)")
+  if (/\(.*\)/.test(trimmed)) return false;
+  return true;
 }
 
 function hasDateHint(value) {
@@ -2962,7 +2949,12 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
       return RESUME_ACTION_VERBS.has(firstWord);
     }).length;
 
-    return [
+    // Check for missing template sections
+    const foundSectionKeys = new Set(parsedSections.filter((s) => s.type === "heading").map((s) => s.sectionKey).filter(Boolean));
+    const expectedSections = RESUME_TEMPLATE_SECTION_ORDER[selectedTemplate] || [];
+    const missingSections = expectedSections.filter((key) => key && !foundSectionKeys.has(key));
+
+    const rows = [
       {
         label: "Word count",
         current: String(wordCount),
@@ -2992,7 +2984,25 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
         note: actionOpenings < Math.min(Math.max(bulletSections.length - 2, 0), 16) ? "More bullets can open stronger." : "Strong action language coverage.",
       },
     ];
-  }, [bulletSections, parsedSections, wordCount]);
+
+    if (missingSections.length > 0) {
+      const sectionLabels = {
+        summary: "Professional Summary", experience: "Experience", education: "Education",
+        skills: "Skills", projects: "Projects", certifications: "Certifications",
+        activities: "Activities & Leadership", personal: "Personal Details",
+      };
+      const missingLabels = missingSections.map((key) => sectionLabels[key] || titleCase(key));
+      rows.push({
+        label: "Missing sections",
+        current: missingLabels.join(", "),
+        target: `${selectedTemplate} template`,
+        status: "review",
+        note: `The ${titleCase(selectedTemplate)} template expects: ${missingLabels.join(", ")}. Consider adding ${missingSections.length === 1 ? "this section" : "these sections"}.`,
+      });
+    }
+
+    return rows;
+  }, [bulletSections, parsedSections, wordCount, selectedTemplate]);
   const issueBulletCount = bulletSections.filter((section) => section.annotation?.tone && section.annotation.tone !== "emerald").length;
   const improvementCount = issueBulletCount + (scoreData?.top_suggestions?.length || 0) + Math.min(relevantMissingKeywords.length, 6);
   const isFeedbackView = workspaceView === "feedback";
@@ -3539,23 +3549,47 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                         {Object.entries(dimension.items || {}).map(([itemName, item]) => {
                           const itemStatus = getStatusMeta(item.score, item.max);
                           return (
-                            <div key={itemName} className="rounded-2xl bg-gray-50 p-3">
-                              <div className="flex items-start justify-between gap-2">
-                                <div>
-                                  <div className="text-sm font-medium text-gray-800">{titleCase(itemName)}</div>
-                                  <div className="mt-1 text-xs text-gray-500">{item.detail}</div>
+                            <details key={itemName} className="rounded-2xl bg-gray-50">
+                              <summary className="cursor-pointer list-none p-3">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div>
+                                    <div className="text-sm font-medium text-gray-800">{titleCase(itemName)}</div>
+                                    <div className="mt-1 text-xs text-gray-500">{item.detail}</div>
+                                  </div>
+                                  <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold ${itemStatus.className}`}>
+                                    {itemStatus.icon}
+                                    {item.score}/{item.max}
+                                  </span>
                                 </div>
-                                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold ${itemStatus.className}`}>
-                                  {itemStatus.icon}
-                                  {item.score}/{item.max}
-                                </span>
+                                {item.suggestions?.length > 0 && (
+                                  <div className="mt-2 text-xs leading-relaxed text-gray-600">
+                                    {item.suggestions[0]}
+                                  </div>
+                                )}
+                              </summary>
+                              <div className="border-t border-gray-200 px-3 pb-3 pt-2">
+                                {item.matched_keywords?.length > 0 && (
+                                  <div className="mb-2">
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Matched</div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {item.matched_keywords.map((kw) => (
+                                        <span key={kw} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">{kw}</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {item.missing_keywords?.length > 0 && (
+                                  <div>
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Try adding</div>
+                                    <div className="flex flex-wrap gap-1">
+                                      {item.missing_keywords.map((kw) => (
+                                        <span key={kw} className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] text-rose-600">{kw}</span>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
-                              {item.suggestions?.length > 0 && (
-                                <div className="mt-2 text-xs leading-relaxed text-gray-600">
-                                  {item.suggestions[0]}
-                                </div>
-                              )}
-                            </div>
+                            </details>
                           );
                         })}
                       </div>
