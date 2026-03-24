@@ -518,12 +518,21 @@ def list_cached_jobs(
 
     query = db.query(ScrapedJob)
     if q:
-        pattern = f"%{q}%"
-        query = query.filter(
-            (ScrapedJob.title.ilike(pattern))
-            | (ScrapedJob.company.ilike(pattern))
-            | (ScrapedJob.search_keyword.ilike(pattern))
-        )
+        # Split multi-word queries into individual terms and match ANY
+        terms = [t.strip() for t in q.split() if t.strip()]
+        if terms:
+            term_filters = []
+            for term in terms:
+                pattern = f"%{term}%"
+                term_filters.append(
+                    (ScrapedJob.title.ilike(pattern))
+                    | (ScrapedJob.company.ilike(pattern))
+                    | (ScrapedJob.description.ilike(pattern))
+                    | (ScrapedJob.search_keyword.ilike(pattern))
+                )
+            # All terms must match (AND) — "micron principal" finds jobs matching BOTH words
+            for tf in term_filters:
+                query = query.filter(tf)
     if employment_type:
         query = query.filter(ScrapedJob.employment_type.ilike(f"%{employment_type}%"))
     if seniority:

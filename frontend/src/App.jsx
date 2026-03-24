@@ -2472,7 +2472,6 @@ function ResumeTab({ selectedJob, user, setActiveTab, setSelectedJob }) {
       anchor.download = getDownloadFilename(response, "resume.docx");
       anchor.click();
       URL.revokeObjectURL(url);
-      setDownloadSuccess(true);
     } catch (err) {
       setDownloadError(err.message || "Download failed. Please try again.");
     } finally {
@@ -2900,44 +2899,6 @@ function ResumeTab({ selectedJob, user, setActiveTab, setSelectedJob }) {
               <span>{message}</span>
             </div>
           ))}
-        </div>
-      )}
-
-      {downloadSuccess && (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-emerald-900">
-                <CheckCircle size={16} />
-                Resume downloaded! What's next?
-              </div>
-              <p className="mt-1 text-sm text-emerald-700">Keep the momentum going with one of these actions.</p>
-            </div>
-            <button type="button" onClick={() => setDownloadSuccess(false)} className="text-emerald-400 hover:text-emerald-600">
-              <X size={16} />
-            </button>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => { setDownloadSuccess(false); setActiveTab("scraper"); }}
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700"
-            >
-              <Search size={14} />
-              Search for matching jobs
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setDownloadSuccess(false);
-                setActiveTab("tracker");
-              }}
-              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              <Briefcase size={14} />
-              Track this application
-            </button>
-          </div>
         </div>
       )}
 

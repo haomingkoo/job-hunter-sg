@@ -90,41 +90,35 @@ COMPETENCY_KEYWORDS: dict[str, list[str]] = {
     "analytical": [
         "data", "analysis", "research", "metrics", "statistical",
         "evaluate", "optimize", "quantitative", "forecast", "insights",
-        "modeled", "assessed", "benchmarked", "analyzed", "investigated",
-        "diagnosed", "measured", "calculated", "interpreted", "validated",
-        "yield", "root cause", "rca", "fmea", "spc", "doe", "regression",
-        "dashboard", "tableau", "sql", "python", "analytics", "kpi",
-        "trend", "pattern", "correlation", "hypothesis",
+        "modeled", "assessed", "benchmarked", "measured", "analyzed",
+        "diagnostic", "root cause", "yield", "metrology", "data-driven",
+        "kpi", "dashboard", "visualization", "trend",
     ],
     "communication": [
         "presented", "communicated", "collaborated", "stakeholder",
         "facilitated", "negotiated", "articulated", "liaised",
-        "reported", "briefed", "authored", "published", "chaired",
-        "conveyed", "demonstrated", "documented", "trained", "coached",
-        "workshop", "alignment", "governance", "steering", "steered",
-        "briefing", "roadmap", "visibility", "transparency",
+        "reported", "briefed", "authored", "published", "aligned",
+        "coordination", "multi-site", "workshop", "training",
+        "cross-site", "briefed", "documented", "governance",
     ],
     "leadership": [
         "led", "managed", "supervised", "mentored", "directed",
         "spearheaded", "oversaw", "headed", "governed", "guided",
-        "delegated", "inspired", "drove", "championed", "orchestrated",
-        "transformed", "built", "scaled", "elevated", "empowered",
-        "program-managed", "co-led", "accountable", "owned",
+        "delegated", "inspired", "chaired", "drove", "steered",
+        "orchestrated", "championed", "accountable", "owned",
     ],
     "teamwork": [
         "cross-functional", "collaborated", "partnered", "team",
         "contributed", "coordinated", "cooperated", "supported",
-        "aligned", "joint", "multi-site", "global", "regional",
-        "cross-fab", "cross-site", "interdisciplinary", "matrixed",
-        "vendor", "supplier", "integration", "bridged",
+        "aligned", "joint", "multi-site", "multi-team", "liaison",
+        "integration", "cross-fab", "cross-site", "stakeholder",
     ],
     "initiative": [
         "initiated", "launched", "created", "established", "pioneered",
         "proposed", "founded", "introduced", "innovated", "championed",
-        "conceptualized", "originated", "developed", "designed",
-        "implemented", "deployed", "built", "architected", "automated",
-        "digitalized", "modernized", "revamped", "standardized",
-        "instituted", "engineered",
+        "conceptualized", "originated", "spearheaded", "revamped",
+        "transformed", "built", "designed", "developed", "implemented",
+        "deployed", "scaled", "automated",
     ],
 }
 
@@ -664,17 +658,8 @@ class ResumeScorer:
 
         for comp_name, keywords in COMPETENCY_KEYWORDS.items():
             matched = [kw for kw in keywords if kw in text_lower]
-            # Score based on absolute count, not percentage of huge keyword list
-            # 0 matched = 0, 1-2 = 2, 3-4 = 4, 5+ = 6
-            count = len(matched)
-            if count >= 5:
-                score = 6
-            elif count >= 3:
-                score = 4
-            elif count >= 1:
-                score = 2
-            else:
-                score = 0
+            ratio = len(matched) / len(keywords) if keywords else 0
+            score = min(6, round(ratio * 6))
             suggestions: list[str] = []
             if score < 4:
                 missing_kw = [
