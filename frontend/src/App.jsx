@@ -1643,8 +1643,8 @@ function annotateBullet(text, keywords) {
   const hasActionVerb = RESUME_ACTION_VERBS.has(firstWord) || RESUME_ACTION_VERBS.has(baseVerb);
 
   // Skip annotation for certifications, education entries, and short labels
-  const looksLikeCert = /certification|certifications|certificate|certified|pmp|wsq|skillsfuture|accredited|in progress|target|gmat|upskilling/i.test(lowered);
-  const looksLikeEducation = /university|polytechnic|gpa|degree|diploma|bachelor|master|phd|exchange|graduated|major|minor|focus|capstone/i.test(lowered);
+  const looksLikeCert = /certification|certifications|certificate|certified|pmp|wsq|skillsfuture|accredited|in progress|target|gmat|upskilling|emeritus|heicoders|completed.*course|full stack development|generative ai|currently pursuing/i.test(lowered);
+  const looksLikeEducation = /university|polytechnic|gpa|degree|diploma|bachelor|master|phd|exchange|graduated|major|minor|focus|capstone|national university|nanyang|singapore management|nus |ntu |smu |sutd|sit |suss/i.test(lowered);
   if (looksLikeCert || looksLikeEducation) {
     return null;
   }
