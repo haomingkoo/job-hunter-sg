@@ -7,6 +7,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import json
 import logging
 import os
 import random
@@ -60,7 +61,7 @@ from schemas import (
 from ai_service import _call_sealion, coach_resume, get_ai_status, integrate_keywords, rewrite_bullet
 from resume_parser import parse_resume
 from resume_scorer import ResumeScorer
-from resume_templates import generate_docx, list_templates
+from resume_templates import generate_docx, inspect_resume_export, list_templates
 from skill_extractor import extract_skill_phrases, match_resume_skills_with_context
 from scraper import JobAggregator, SSGSkillsFrameworkAPI
 from tailoring_pipeline import get_pipeline_state, run_pipeline
@@ -1267,12 +1268,34 @@ def match_resume_to_job(
         jd_phrases,
         jd_text=jd_text,
     )
+    matched_by_skill = {
+        str(item.get("skill", "")).strip().lower(): item
+        for item in result.get("matched", [])
+        if str(item.get("skill", "")).strip()
+    }
+    missing_by_skill = {
+        str(item.get("skill", "")).strip().lower(): item
+        for item in result.get("missing", [])
+        if str(item.get("skill", "")).strip()
+    }
+    canonical_terms = []
+    for phrase in jd_phrases:
+        normalized = str(phrase or "").strip().lower()
+        if not normalized:
+            continue
+        if normalized in matched_by_skill:
+            canonical_terms.append(matched_by_skill[normalized])
+        elif normalized in missing_by_skill:
+            canonical_terms.append(missing_by_skill[normalized])
+        else:
+            canonical_terms.append({"skill": phrase})
 
     return {
         "job_id": job_id,
         "job_title": job.title,
         "job_company": job.company,
         "job_skills": db_skills,
+        "job_terms": canonical_terms,
         "matched": result.get("matched", []),
         "missing": result.get("missing", []),
         "match_percent": result.get("match_percent", 0),
@@ -2142,10 +2165,31 @@ def download_resume(
     email_addr = sanitize_user_input(body.get("email", ""))
     phone = sanitize_user_input(body.get("phone", ""))
     location = sanitize_user_input(body.get("location", ""))
+    sanitized_resume = sanitize_resume_text(resume_text)
+    export_hash = hashlib.sha256(sanitized_resume.encode("utf-8")).hexdigest()[:12]
+    export_debug = inspect_resume_export(sanitized_resume, template_id)
+
+    log.info(
+        "DOCX export requested hash=%s template=%s words=%s chars=%s sections=%s missing=%s header_lines=%s",
+        export_hash,
+        template_id,
+        export_debug["word_count"],
+        export_debug["char_count"],
+        export_debug["non_header_sections"],
+        export_debug["missing_expected"],
+        export_debug["header_lines"],
+    )
+    if export_debug["looks_header_only"]:
+        log.warning(
+            "DOCX export looks header-only before generation hash=%s template=%s line_counts=%s",
+            export_hash,
+            template_id,
+            export_debug["section_line_counts"],
+        )
 
     try:
         docx_bytes = generate_docx(
-            resume_text=sanitize_resume_text(resume_text),
+            resume_text=sanitized_resume,
             template_id=template_id,
             name=name,
             email=email_addr,
@@ -2153,8 +2197,20 @@ def download_resume(
             location=location,
         )
     except Exception as e:
-        log.warning(f"DOCX generation failed: {e}")
+        log.exception(
+            "DOCX generation failed hash=%s template=%s sections=%s",
+            export_hash,
+            template_id,
+            export_debug["sections_found"],
+        )
         raise HTTPException(status_code=500, detail="Failed to generate resume document")
+
+    log.info(
+        "DOCX export completed hash=%s template=%s bytes=%s",
+        export_hash,
+        template_id,
+        len(docx_bytes),
+    )
 
     db.add(UsageLog(
         user_id=user.id if user else None,

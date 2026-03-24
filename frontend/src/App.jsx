@@ -1733,13 +1733,20 @@ const BULLET_ACTION_SUGGESTIONS = [
 ];
 
 const RESUME_WEAK_STARTS = ["responsible for", "helped", "assisted"];
-const RESUME_BULLET_RE = /^(\s*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)]))\s*(.*)$/;
+const RESUME_BULLET_RE = /^(\s*(?:[-*o\u2022\u2023\u25E6\u2043\u2219\u25AA\u25AB\u25CF\uF0B7▪●]|\d+[.)]))\s*(.*)$/;
 const RESUME_METRIC_RE = /\d+%|\$[\d,]+|\d+\s*(?:users|user|team|people|projects|systems|clients|hours|weeks|months|years)|\d+[kKmMbB]\b|\d{1,3}(?:,\d{3})+/;
+const RESUME_SCALE_CUE_PATTERNS = [
+  /\bteam of \d+\b/gi,
+  /\b\d+\s+(?:direct|indirect)\s+reports?\b/gi,
+  /\b\d+\s+(?:reports?|engineers?|specialists?|operators?|owners?|stakeholders?|people|users?|clients?|projects?|systems?|hours?|weeks?|months?|years?|sites?|fabs?|fab\s+lines?|lines?|plants?|dashboards?|sensors?|parameters?|countries?|regions?|modules?|tools?)\b/gi,
+  /\b(?:across|over|under|up to|more than|less than|nearly|almost)\s+\d+(?:\.\d+)?\s+(?:sites?|fabs?|fab\s+lines?|lines?|plants?|regions?|countries?|teams?|people|users?|projects?|systems?|clients?|engineers?|specialists?|reports?|hours?|weeks?|months?|years?|dashboards?|sensors?|parameters?)\b/gi,
+];
 const RESUME_DATE_HINT_RE = /\b(?:19|20)\d{2}\b|present|current|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i;
 const RESUME_CERTIFICATION_RE = /certification|certifications|certificate|certified|pmp|wsq|skillsfuture|accredited|in progress|target|gmat|upskilling|emeritus|heicoders|completed.*course|full stack development|generative ai|currently pursuing/i;
-const RESUME_EDUCATION_RE = /university|polytechnic|college|school|institute|academy|gpa|degree|diploma|bachelor|master|phd|exchange|graduated|major|minor|focus|capstone|national university|nanyang|singapore management|nus |ntu |smu |sutd|sit |suss/i;
-const RESUME_DEGREE_RE = /\b(?:b\.?sc|m\.?sc|bachelor|master|phd|doctorate|diploma|degree|mba)\b/i;
-const DEGREE_START_RE = /^(M\.?Sc|B\.?Sc|B\.?Eng|MBA|M\.?Eng|Ph\.?D|B\.?A|M\.?A|Diploma)/i;
+const RESUME_EDUCATION_RE = /\b(?:university|polytechnic|college|school|institute|academy|faculty|gpa|degree|diploma|bachelor|master|ph\.?d|exchange|graduated|major|minor|focus|capstone|national university|nanyang|singapore management|nus|ntu|smu|sutd|sit|suss)\b/i;
+const RESUME_EDUCATION_INSTITUTION_RE = /\b(?:university|polytechnic|college|school|institute|academy|faculty|national university|nanyang|singapore management|nus|ntu|smu|sutd|sit|suss)\b/i;
+const RESUME_DEGREE_RE = /\b(?:b\.?sc|m\.?sc|b\.?eng|m\.?eng|b\.?a|m\.?a|bachelor|master|ph\.?d|doctorate|diploma|advanced diploma|associate|degree|mba|certificate|cert)\b/i;
+const DEGREE_START_RE = /^(M\.?Sc|B\.?Sc|B\.?Eng|MBA|M\.?Eng|Ph\.?D|B\.?A|M\.?A|Diploma|Advanced Diploma|Associate|Graduate Cert(?:ificate)?|Certificate|Cert)/i;
 const RESUME_EDUCATION_DETAIL_RE = /gpa|exchange|focus|capstone|graduate certificate|graduate certificates|minor|major|distinction|honou?r/i;
 const RESUME_OVERUSED_IGNORE = new Set([
   "automation", "digital", "transformation", "program", "manager", "management",
@@ -1782,7 +1789,10 @@ const TAILOR_STAGE_LABELS = [
   { id: "validate", label: "Validate" },
 ];
 const ADD_SECTION_OPTIONS = [
+  { id: "summary", label: "Professional Summary", heading: "PROFESSIONAL SUMMARY", starter: "Add a concise summary of your fit, scope, and focus areas here." },
   { id: "projects", label: "Projects", heading: "PROJECTS", starter: "• Add project details here" },
+  { id: "certifications", label: "Certifications", heading: "CERTIFICATIONS", starter: "• Add certification or ongoing credential here" },
+  { id: "languages", label: "Languages", heading: "LANGUAGES", starter: "Add languages and proficiency here." },
   { id: "volunteer", label: "Volunteer", heading: "VOLUNTEER EXPERIENCE", starter: "• Add volunteer experience here" },
   { id: "awards", label: "Awards", heading: "AWARDS", starter: "• Add award or recognition here" },
   { id: "custom", label: "Custom", heading: "", starter: "• Add details here" },
@@ -1835,7 +1845,7 @@ function splitInlineHeadingContent(value) {
   const headingCandidates = [...RESUME_HEADINGS].sort((a, b) => b.length - a.length);
   for (const heading of headingCandidates) {
     const pattern = new RegExp(
-      `^(${escapeRegExp(heading)})(?:\\s*[:|-]\\s*|\\s+)(.+)$`,
+      `^(${escapeRegExp(heading)})(?:\\s*[:|-]\\s*|\\s*\\|\\s*)(.+)$`,
       "i",
     );
     const match = cleaned.match(pattern);
@@ -1862,6 +1872,7 @@ function extractKeywordLabel(item) {
 function getResumeSectionKey(value) {
   const normalized = normalizeHeadingLabel(value);
   if (!normalized) return "";
+  if (normalized.includes("academic qualification") || normalized.includes("academic qualifications")) return "education";
   if (
     normalized.includes("summary")
     || normalized.includes("profile")
@@ -1914,6 +1925,25 @@ function hasDateHint(value) {
   return RESUME_DATE_HINT_RE.test(stripResumeMarkdown(value));
 }
 
+function extractResumeMetricSignals(value) {
+  const text = stripResumeMarkdown(value);
+  if (!text) return [];
+
+  const matches = [];
+  const addMatches = (pattern) => {
+    const found = text.match(pattern) || [];
+    found.forEach((item) => {
+      const cleaned = item.trim().replace(/\s+/g, " ");
+      if (cleaned) matches.push(cleaned);
+    });
+  };
+
+  addMatches(/\d+%|\$[\d,]+|\d+[kKmMbB]\b|\d{1,3}(?:,\d{3})+/g);
+  RESUME_SCALE_CUE_PATTERNS.forEach(addMatches);
+
+  return [...new Set(matches)];
+}
+
 function isResumeActionVerb(word) {
   const normalized = String(word || "").toLowerCase().replace(/[,:;.]$/, "");
   if (!normalized) return false;
@@ -1931,12 +1961,35 @@ function looksLikeEducationText(value) {
   return RESUME_EDUCATION_RE.test(stripResumeMarkdown(value));
 }
 
+function looksLikeEducationInstitution(value) {
+  return RESUME_EDUCATION_INSTITUTION_RE.test(stripResumeMarkdown(value));
+}
+
 function looksLikeCertificationText(value) {
   return RESUME_CERTIFICATION_RE.test(stripResumeMarkdown(value));
 }
 
 function looksLikeEducationDetail(value) {
   return RESUME_EDUCATION_DETAIL_RE.test(stripResumeMarkdown(value));
+}
+
+function looksLikeEducationMain(value) {
+  const trimmed = stripResumeMarkdown(value);
+  if (!trimmed) return false;
+  return !looksLikeEducationDetail(trimmed)
+    && (
+      looksLikeEducationText(trimmed)
+      || looksLikeEducationInstitution(trimmed)
+      || RESUME_DEGREE_RE.test(trimmed)
+      || hasDateHint(trimmed)
+    );
+}
+
+function startsNewEducationEntry(value) {
+  const trimmed = stripResumeMarkdown(value);
+  if (!trimmed) return false;
+  if (DEGREE_START_RE.test(trimmed)) return true;
+  return looksLikeEducationInstitution(trimmed) && !looksLikeEducationDetail(trimmed);
 }
 
 function splitEducationMeta(value) {
@@ -2143,7 +2196,7 @@ function buildEducationPair(lines, lineIndex, currentSectionKey, keywords) {
   const canExtendEducationMeta = third
     && !isHeadingLine(third)
     && !RESUME_BULLET_RE.test(thirdRaw || "")
-    && !DEGREE_START_RE.test(third)
+    && !startsNewEducationEntry(third)
     && looksLikeEducationText(next)
     && !hasDateHint(next)
     && (hasDateHint(third) || /singapore|canada|usa|uk|australia|japan|taiwan|university|college|school|institute/i.test(third));
@@ -2153,8 +2206,8 @@ function buildEducationPair(lines, lineIndex, currentSectionKey, keywords) {
     consumed = 2;
   }
 
-  const currentIsEducationMain = looksLikeEducationText(current) || RESUME_DEGREE_RE.test(current);
-  const nextIsEducationMain = looksLikeEducationText(next) || hasDateHint(next);
+  const currentIsEducationMain = looksLikeEducationMain(current);
+  const nextIsEducationMain = looksLikeEducationMain(next);
   if (currentIsEducationMain && nextIsEducationMain) {
     return {
       type: "subheading",
@@ -2191,13 +2244,22 @@ function mergeParsedParagraphRuns(sections) {
 
   sections.forEach((section) => {
     const previous = merged[merged.length - 1];
+    const previousContext = merged.length >= 2 ? merged[merged.length - 2] : null;
+    const previousLooksLikeLostBullet = previous?.type === "paragraph"
+      ? inferWordBulletLines(previous.text, previous.sectionKey, previousContext)?.length > 0
+      : false;
+    const currentLooksLikeLostBullet = section?.type === "paragraph"
+      ? inferWordBulletLines(section.text, section.sectionKey, previous)?.length > 0
+      : false;
     const canMergeParagraph = previous
       && previous.type === "paragraph"
       && section.type === "paragraph"
       && previous.sectionKey === section.sectionKey
       && previous.lineIndices?.length
       && section.lineIndices?.length
-      && previous.lineIndices[previous.lineIndices.length - 1] + 1 === section.lineIndices[0];
+      && previous.lineIndices[previous.lineIndices.length - 1] + 1 === section.lineIndices[0]
+      && !previousLooksLikeLostBullet
+      && !currentLooksLikeLostBullet;
 
     if (canMergeParagraph) {
       previous.text = `${previous.text} ${section.text}`.trim();
@@ -2446,23 +2508,42 @@ function splitActionSentenceBullets(text) {
   return parts.map((part) => part.replace(/[.;]+$/, "").trim()).filter(Boolean);
 }
 
+function looksLikeWordBulletLead(text) {
+  const cleaned = stripResumeMarkdown(text);
+  if (!cleaned) return false;
+  return startsLineWithResumeActionVerb(cleaned)
+    || /^(?:co-|re-)?[A-Za-z]+(?:ed|ing)\b/.test(cleaned)
+    || /^(?:Built|Led|Drove|Created|Managed|Supported|Partnered|Worked|Chaired|Completed|Currently|Directed|Engineered|Developed|Standardized|Implemented|Optimized|Scaled|Reduced|Improved|Delivered)\b/i.test(cleaned);
+}
+
 function inferWordBulletLines(text, currentSectionKey, previousSection) {
   const cleaned = stripResumeMarkdown(text);
   if (!cleaned) return null;
 
-  const bulletFriendlySection = ["experience", "projects", "activities"].includes(currentSectionKey);
+  const bulletFriendlySection = ["experience", "projects", "activities", "certifications", "awards"].includes(currentSectionKey);
   if (!bulletFriendlySection) return null;
 
-  const startsWithAction = startsLineWithResumeActionVerb(cleaned);
+  if (cleaned.includes("|")) return null;
+  if (parseSubheadingParts(cleaned, currentSectionKey)) return null;
+
+  const startsWithAction = looksLikeWordBulletLead(cleaned);
   const hasMetric = RESUME_METRIC_RE.test(cleaned);
   const hasResultCue = /(?:improv|reduc|increas|deliver|achiev|saving|revenue|cost|efficien|quality|yield|launched|deployed|implemented)/i.test(cleaned);
-  const looksLikeAchievementSentence = cleaned.split(/\s+/).length >= 8 && (startsWithAction || hasMetric || hasResultCue);
+  const wordCount = cleaned.split(/\s+/).filter(Boolean).length;
+  const previousWasBullet = previousSection?.type === "bullet";
+  const looksLikeAchievementSentence = wordCount >= 5
+    && (
+      startsWithAction
+      || (hasMetric && wordCount >= 6)
+      || (hasResultCue && wordCount >= 7)
+      || (previousWasBullet && wordCount >= 6)
+    );
   const previousCreatesBulletContext = previousSection
     && (
       previousSection.type === "subheading"
       || previousSection.type === "heading"
       || previousSection.type === "heading_paragraph"
-      || previousSection.type === "bullet"
+      || previousWasBullet
       || (previousSection.type === "paragraph" && hasDateHint(previousSection.text))
     );
 
@@ -2478,7 +2559,8 @@ function analyzeBulletFeedback(text, resumeText = "", sectionKey = "") {
   const trimmed = text.trim();
   const lowered = trimmed.toLowerCase();
   const firstWord = trimmed.split(/\s+/)[0]?.toLowerCase().replace(/[,:;.]$/, "") || "";
-  const hasMetric = RESUME_METRIC_RE.test(trimmed);
+  const metricSignals = extractResumeMetricSignals(trimmed);
+  const hasMetric = metricSignals.length > 0;
   const weakStart = RESUME_WEAK_STARTS.find((phrase) => lowered.startsWith(phrase));
   const keywordMatches = collectKeywordMatches(trimmed, []);
   const bulletLengthWords = trimmed.split(/\s+/).filter(Boolean).length;
@@ -2507,6 +2589,7 @@ function analyzeBulletFeedback(text, resumeText = "", sectionKey = "") {
     hasMetric,
     weakStart,
     keywordMatches,
+    metricSignals,
     bulletLengthWords,
     bulletLengthChars,
     isTooShort,
@@ -2620,17 +2703,6 @@ function parseResumeToSections(text, keywords, templateOrder = []) {
     }
 
     const bulletMatch = line.match(RESUME_BULLET_RE);
-    const educationPair = bulletMatch ? null : buildEducationPair(lines, lineIndex, currentSectionKey, keywords);
-    if (educationPair) {
-      parsed.push({
-        ...base,
-        ...educationPair,
-        id: `line-${lineIndex}-education-pair`,
-        sectionKey: currentSectionKey,
-      });
-      lineIndex += educationPair.consumed;
-      continue;
-    }
     const subheadingParts = bulletMatch ? null : parseSubheadingParts(normalizedLine, currentSectionKey);
     if (subheadingParts) {
       parsed.push({
@@ -2641,6 +2713,18 @@ function parseResumeToSections(text, keywords, templateOrder = []) {
         sectionKey: currentSectionKey,
         keywordMatches: collectKeywordMatches(normalizedLine, keywords),
       });
+      continue;
+    }
+
+    const educationPair = bulletMatch ? null : buildEducationPair(lines, lineIndex, currentSectionKey, keywords);
+    if (educationPair) {
+      parsed.push({
+        ...base,
+        ...educationPair,
+        id: `line-${lineIndex}-education-pair`,
+        sectionKey: currentSectionKey,
+      });
+      lineIndex += educationPair.consumed;
       continue;
     }
 
@@ -2756,6 +2840,30 @@ function removeResumeLine(text, section) {
   return lines.join("\n");
 }
 
+function removeResumeSectionBlock(text, section, parsedSections = []) {
+  if (!section || !["heading", "heading_paragraph"].includes(section.type)) {
+    return removeResumeLine(text, section);
+  }
+
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const startIndex = section.lineIndex;
+  const nextHeading = parsedSections.find(
+    (candidate) => candidate.lineIndex > startIndex && ["heading", "heading_paragraph"].includes(candidate.type),
+  );
+  const endIndexExclusive = nextHeading ? nextHeading.lineIndex : lines.length;
+  lines.splice(startIndex, Math.max(endIndexExclusive - startIndex, 1));
+
+  const cleanedLines = [];
+  lines.forEach((line) => {
+    if (!stripResumeMarkdown(line) && !cleanedLines[cleanedLines.length - 1]?.trim()) {
+      return;
+    }
+    cleanedLines.push(line);
+  });
+
+  return cleanedLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function getDownloadFilename(response, fallbackName) {
   const contentDisposition = response.headers.get("Content-Disposition") || "";
   const match = contentDisposition.match(/filename="?([^"]+)"?/i);
@@ -2807,7 +2915,7 @@ function getBulletFeedbackTabs(section, resumeText) {
   if (analysis.skipAnnotation) return [];
 
   const text = analysis.trimmed;
-  const metricMatches = text.match(/\d+%|\$[\d,]+|\d+\s*(?:users|user|team|people|projects|systems|clients|hours|weeks|months|years)|\d+[kKmMbB]\b|\d{1,3}(?:,\d{3})+/g) || [];
+  const metricMatches = analysis.metricSignals || [];
   const lengthGood = !analysis.lengthIssue;
 
   return [
@@ -2916,34 +3024,108 @@ function getRewriteButtonLabel(activeBulletTab, selectedBullet) {
   return "AI Rewrite This Bullet";
 }
 
-function getRewriteOptionLabel(optionIndex, rewriteFocus = "") {
-  const focus = new Set(String(rewriteFocus).split(",").map((item) => item.trim()).filter(Boolean));
-  if ((focus.has("shorten") || focus.has("bullet_length")) && optionIndex === 0) return "Shorter Option";
-  if ((focus.has("tighten") || focus.has("overused_avoided")) && optionIndex === 1) return "Tighter Option";
-  if ((focus.has("action_oriented") || focus.has("specifics")) && optionIndex === 2) return "Stronger Option";
-  return `Option ${optionIndex + 1}`;
+function normalizeRewriteOptionText(value) {
+  const cleaned = stripResumeMarkdown(String(value || ""))
+    .replace(/^[•\-*o▪●\u2022\u2023\u25E6\u2043\u2219\u25AA\u25AB\u25CF\uF0B7]+\s*/, "")
+    .trim();
+  if (!cleaned) return "";
+  return cleaned.replace(/^([^A-Za-z]*)([a-z])/, (_, prefix, char) => `${prefix}${char.toUpperCase()}`);
+}
+
+function getRewriteFocusIds(rewriteFocus = "") {
+  return String(rewriteFocus).split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function getIssueLabel(issueId = "") {
+  if (issueId === "action_oriented") return "action opening";
+  if (issueId === "specifics") return "specifics";
+  if (issueId === "overused_avoided") return "overused wording";
+  if (issueId === "bullet_length") return "bullet length";
+  return issueId;
+}
+
+function evaluateRewriteOption(option, section, resumeText, rewriteFocus = "") {
+  const normalizedOption = normalizeRewriteOptionText(option);
+  const analysis = analyzeBulletFeedback(normalizedOption, resumeText, section?.sectionKey || "");
+  const issueIds = [];
+  if (analysis.actionIssue) issueIds.push("action_oriented");
+  if (analysis.specificsIssue) issueIds.push("specifics");
+  if (analysis.overusedIssue) issueIds.push("overused_avoided");
+  if (analysis.lengthIssue) issueIds.push("bullet_length");
+
+  const focusIds = getRewriteFocusIds(rewriteFocus);
+  const unresolvedFocused = issueIds.filter((issueId) => focusIds.includes(issueId));
+
+  return {
+    text: normalizedOption,
+    issueIds,
+    issueCount: issueIds.length,
+    focusIds,
+    unresolvedFocused,
+    focusMisses: unresolvedFocused.length,
+    clearsFocusedIssue: focusIds.length > 0 ? unresolvedFocused.length === 0 : issueIds.length === 0,
+  };
+}
+
+function getRewriteOptionMeta(optionIndex, rewriteFocus = "", optionEvaluation = null) {
+  const focus = new Set(getRewriteFocusIds(rewriteFocus));
+  const focusLabel = focus.has("bullet_length")
+    ? "shortening this bullet"
+    : focus.has("overused_avoided")
+      ? "tightening the wording"
+      : focus.has("action_oriented")
+        ? "strengthening the action verb"
+        : focus.has("specifics")
+          ? "adding sharper evidence"
+          : "improving this bullet";
+
+  if (optionIndex === 0) {
+    const detail = optionEvaluation?.clearsFocusedIssue
+      ? `Best fit for ${focusLabel}.`
+      : optionEvaluation?.unresolvedFocused?.length
+        ? `Closest match, but still needs work on ${optionEvaluation.unresolvedFocused.map(getIssueLabel).join(" and ")}.`
+        : `Best fit for ${focusLabel}.`;
+    return {
+      label: optionEvaluation?.clearsFocusedIssue ? "Recommended Rewrite" : "Closest Rewrite",
+      detail,
+      cta: optionEvaluation?.clearsFocusedIssue ? "Use Recommended Rewrite" : "Use Closest Rewrite",
+    };
+  }
+
+  if (optionIndex === 1) {
+    return {
+      label: focus.has("bullet_length") || focus.has("overused_avoided") ? "More Concise Rewrite" : "Alternative Rewrite",
+      detail: focus.has("bullet_length") || focus.has("overused_avoided")
+        ? "Leans shorter and faster to scan."
+        : "A different phrasing with the same evidence.",
+      cta: focus.has("bullet_length") || focus.has("overused_avoided") ? "Use Concise Rewrite" : "Use Alternative Rewrite",
+    };
+  }
+
+  return {
+    label: focus.has("action_oriented") || focus.has("specifics") ? "Stronger Rewrite" : "Alternative Rewrite",
+    detail: focus.has("action_oriented") || focus.has("specifics")
+      ? "Pushes harder on impact, verbs, or evidence."
+      : "Another viable way to phrase the same point.",
+    cta: focus.has("action_oriented") || focus.has("specifics") ? "Use Stronger Rewrite" : "Use Alternative Rewrite",
+  };
 }
 
 function rankRewriteOptions(options, section, resumeText, rewriteFocus = "") {
-  const focus = new Set(String(rewriteFocus).split(",").map((item) => item.trim()).filter(Boolean));
   return [...options]
     .map((option, index) => {
-      const analysis = analyzeBulletFeedback(option, resumeText, section?.sectionKey || "");
-      const issueIds = [];
-      if (analysis.actionIssue) issueIds.push("action_oriented");
-      if (analysis.specificsIssue) issueIds.push("specifics");
-      if (analysis.overusedIssue) issueIds.push("overused_avoided");
-      if (analysis.lengthIssue) issueIds.push("bullet_length");
-      const focusMisses = issueIds.filter((issueId) => focus.has(issueId)).length;
+      const evaluation = evaluateRewriteOption(option, section, resumeText, rewriteFocus);
       return {
-        text: option,
+        text: evaluation.text,
         index,
-        issueCount: issueIds.length,
-        focusMisses,
+        issueCount: evaluation.issueCount,
+        focusMisses: evaluation.focusMisses,
+        clearsFocusedIssue: evaluation.clearsFocusedIssue,
       };
     })
     .sort((left, right) => (
-      left.focusMisses - right.focusMisses
+      Number(right.clearsFocusedIssue) - Number(left.clearsFocusedIssue)
+      || left.focusMisses - right.focusMisses
       || left.issueCount - right.issueCount
       || left.index - right.index
     ))
@@ -3544,8 +3726,11 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     }
   };
 
-  const handleFullTailorRun = async () => {
-    if (!resumeText.trim() || !jobDescription.trim()) return;
+  const handleFullTailorRun = async ({ resumeOverride = null, allowNoJob = false } = {}) => {
+    const sourceResumeText = typeof resumeOverride === "string" ? resumeOverride : resumeText;
+    const sourceJobDescription = jobDescription.trim();
+    if (!sourceResumeText.trim()) return;
+    if (!allowNoJob && !sourceJobDescription) return;
 
     setTailoringLoading(true);
     setTailoringError("");
@@ -3562,9 +3747,9 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
       const response = await apiFetch("/api/resume/tailor", {
         method: "POST",
         body: JSON.stringify({
-          resume_text: resumeText,
+          resume_text: sourceResumeText,
           job_id: selectedJob?.id || null,
-          job_description: jobDescription,
+          job_description: sourceJobDescription,
           intensity: "full",
         }),
       });
@@ -3812,6 +3997,16 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     setShowAddSectionMenu(false);
   }, [applyResumeText, resumeText]);
 
+  const insertSectionNearTop = useCallback((heading, starter) => {
+    const lines = resumeText.replace(/\r\n?/g, "\n").split("\n");
+    const insertAt = headerMeta.lineIndices.length
+      ? headerMeta.lineIndices[headerMeta.lineIndices.length - 1] + 1
+      : 0;
+    lines.splice(insertAt, 0, "", heading, starter, "");
+    applyResumeText(lines.join("\n").replace(/\n{3,}/g, "\n\n").trim());
+    setShowAddSectionMenu(false);
+  }, [applyResumeText, headerMeta.lineIndices, resumeText]);
+
   const handleAddSection = useCallback((option) => {
     if (!option) return;
     if (option.id === "custom") {
@@ -3820,8 +4015,12 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
       insertSectionAtEnd(customHeading.trim().toUpperCase(), option.starter);
       return;
     }
+    if (option.id === "summary") {
+      insertSectionNearTop(option.heading, option.starter);
+      return;
+    }
     insertSectionAtEnd(option.heading, option.starter);
-  }, [insertSectionAtEnd]);
+  }, [insertSectionAtEnd, insertSectionNearTop]);
 
   const appendGapToSection = useCallback((sectionKey, value) => {
     const headings = parsedSections.filter((section) => section.type === "heading" && section.sectionKey === sectionKey);
@@ -3859,14 +4058,9 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   }, [appendGapToSection, applyResumeText, atsGapInputs]);
 
   const handleOptimizeSummary = useCallback(() => {
-    if (!jobDescription.trim()) {
-      setTailoringError("Select a target job first so summary optimization has JD context.");
-      openMobileFeedbackPanel();
-      return;
-    }
     openMobileFeedbackPanel();
-    handleFullTailorRun();
-  }, [handleFullTailorRun, jobDescription, openMobileFeedbackPanel]);
+    handleFullTailorRun({ allowNoJob: true });
+  }, [handleFullTailorRun, openMobileFeedbackPanel]);
 
   const handleDownload = async () => {
     if (!resumeText.trim()) return;
@@ -3971,17 +4165,16 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     () => buildJobSkillDisplay(selectedJob?.skills, selectedJob?.description),
     [selectedJob?.skills, selectedJob?.description],
   );
+  const selectedJobCanonicalTerms = useMemo(
+    () => cleanAlignmentTerms(
+      jobMatchData?.job_terms?.length ? jobMatchData.job_terms : selectedJobSkillDisplay.visibleSkills,
+      selectedJob?.description,
+    ),
+    [jobMatchData?.job_terms, selectedJobSkillDisplay.visibleSkills, selectedJob?.description],
+  );
   const selectedJobSkillAlignment = useMemo(
-    () => buildSkillAlignment(selectedJobSkillDisplay.visibleSkills, resumeText),
-    [selectedJobSkillDisplay.visibleSkills, resumeText],
-  );
-  const scoredMatchedKeywords = useMemo(
-    () => cleanAlignmentTerms(matchedKeywords, selectedJob?.description),
-    [matchedKeywords, selectedJob?.description],
-  );
-  const scoredMissingKeywords = useMemo(
-    () => cleanAlignmentTerms(missingKeywords, selectedJob?.description),
-    [missingKeywords, selectedJob?.description],
+    () => buildSkillAlignment(selectedJobCanonicalTerms, resumeText),
+    [selectedJobCanonicalTerms, resumeText],
   );
   const jobMatchedKeywords = useMemo(
     () => cleanAlignmentTerms(jobMatchData?.matched || [], selectedJob?.description),
@@ -3991,37 +4184,63 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     () => cleanAlignmentTerms(jobMatchData?.missing || [], selectedJob?.description),
     [jobMatchData?.missing, selectedJob?.description],
   );
-  const fallbackMatchedKeywords = useMemo(
-    () => cleanAlignmentTerms(selectedJobSkillAlignment.matched, selectedJob?.description),
-    [selectedJobSkillAlignment.matched, selectedJob?.description],
-  );
-  const fallbackMissingKeywords = useMemo(
-    () => cleanAlignmentTerms(selectedJobSkillAlignment.missing, selectedJob?.description),
-    [selectedJobSkillAlignment.missing, selectedJob?.description],
-  );
-  const hasJobMatchTerms = jobMatchedKeywords.length + jobMissingKeywords.length > 0;
-  const hasServerKeywordTerms = scoredMatchedKeywords.length + scoredMissingKeywords.length > 0;
-  const relevantMatchedKeywords = hasJobMatchTerms
-    ? jobMatchedKeywords
-    : hasServerKeywordTerms
-      ? scoredMatchedKeywords
-      : fallbackMatchedKeywords;
-  const relevantMissingKeywords = hasJobMatchTerms
-    ? jobMissingKeywords
-    : hasServerKeywordTerms
-      ? scoredMissingKeywords
-      : fallbackMissingKeywords;
-  const relevantTermTotal = relevantMatchedKeywords.length + relevantMissingKeywords.length;
+  const canonicalJobMatchSets = useMemo(() => {
+    const matchedBySkill = new Map(jobMatchedKeywords.map((item) => [extractKeywordLabel(item).toLowerCase(), item]));
+    const missingBySkill = new Map(jobMissingKeywords.map((item) => [extractKeywordLabel(item).toLowerCase(), item]));
+    const fallbackMatchedBySkill = new Map(
+      cleanAlignmentTerms(selectedJobSkillAlignment.matched, selectedJob?.description)
+        .map((item) => [extractKeywordLabel(item).toLowerCase(), item]),
+    );
+    const fallbackMissingBySkill = new Map(
+      cleanAlignmentTerms(selectedJobSkillAlignment.missing, selectedJob?.description)
+        .map((item) => [extractKeywordLabel(item).toLowerCase(), item]),
+    );
+
+    const usingJobMatch = jobMatchedKeywords.length + jobMissingKeywords.length > 0;
+    const usingFallback = !usingJobMatch;
+    const matched = [];
+    const missing = [];
+
+    selectedJobCanonicalTerms.forEach((term) => {
+      const skill = extractKeywordLabel(term);
+      const normalized = skill.toLowerCase();
+      if (!skill) return;
+
+      if (usingJobMatch) {
+        if (matchedBySkill.has(normalized)) matched.push(matchedBySkill.get(normalized) || term);
+        else missing.push(missingBySkill.get(normalized) || term);
+        return;
+      }
+
+      if (fallbackMatchedBySkill.has(normalized)) matched.push(fallbackMatchedBySkill.get(normalized) || term);
+      else missing.push(fallbackMissingBySkill.get(normalized) || term);
+    });
+
+    return {
+      matched,
+      missing,
+      usingJobMatch,
+      usingFallback,
+    };
+  }, [
+    jobMatchedKeywords,
+    jobMissingKeywords,
+    selectedJobCanonicalTerms,
+    selectedJobSkillAlignment.matched,
+    selectedJobSkillAlignment.missing,
+    selectedJob?.description,
+  ]);
+  const relevantMatchedKeywords = canonicalJobMatchSets.matched;
+  const relevantMissingKeywords = canonicalJobMatchSets.missing;
+  const relevantTermTotal = selectedJobCanonicalTerms.length;
   const relevantTermsMode = !jobDescription.trim()
     ? "no_job"
     : jobMatchLoading
       ? "matching"
     : relevantTermTotal > 0
-      ? hasJobMatchTerms
+      ? canonicalJobMatchSets.usingJobMatch
         ? "job_match"
-        : hasServerKeywordTerms
-          ? "scored"
-          : "skills_fallback"
+        : "skills_fallback"
       : jobMatchError
         ? "match_error"
       : "empty";
@@ -4063,6 +4282,10 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const bodySections = useMemo(
     () => parsedSections.filter((section) => !headerMeta.lineIndices.includes(section.lineIndex)),
     [parsedSections, headerMeta.lineIndices],
+  );
+  const hasSummarySection = useMemo(
+    () => parsedSections.some((section) => ["heading", "heading_paragraph"].includes(section.type) && section.sectionKey === "summary"),
+    [parsedSections],
   );
   const improvementQueue = useMemo(() => {
     const bulletItems = bulletSections
@@ -4306,13 +4529,13 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
 
   const handleDeleteSection = useCallback((section) => {
     if (!section) return;
-    const nextText = removeResumeLine(resumeText, section);
+    const nextText = removeResumeSectionBlock(resumeText, section, parsedSections);
     setEditingNodeId(null);
     setEditingValue("");
     if (selectedBulletId === section.id) setSelectedBulletId(null);
     if (selectedSectionId === section.id) setSelectedSectionId(null);
     applyResumeText(nextText);
-  }, [applyResumeText, resumeText, selectedBulletId, selectedSectionId]);
+  }, [applyResumeText, parsedSections, resumeText, selectedBulletId, selectedSectionId]);
 
   return (
     <div className="space-y-6 pb-24">
@@ -4353,13 +4576,15 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
               </div>
               <div className="mt-2 text-lg font-semibold text-slate-900">{selectedJob.title}</div>
               <div className="mt-1 text-sm text-slate-600">{selectedJob.company}</div>
-              {selectedJobSkillDisplay.visibleSkills.length > 0 && (
+              {selectedJobCanonicalTerms.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {selectedJobSkillDisplay.visibleSkills.map((skill) => (
-                    <span key={skill} className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
-                      {skill}
+                  {selectedJobCanonicalTerms.map((term, index) => {
+                    const label = extractKeywordLabel(term);
+                    return (
+                    <span key={`${label}-${index}`} className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700" title={term?.jd_context || ""}>
+                      {label}
                     </span>
-                  ))}
+                  );})}
                 </div>
               )}
               {selectedJob.description && (
@@ -5054,22 +5279,34 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                       <>
                         <div className="space-y-2">
                           {(selectedRewrite.options || []).map((option, optionIndex) => (
-                            <div key={`${selectedBullet.id}-rewrite-${optionIndex}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
-                                {getRewriteOptionLabel(optionIndex, selectedRewrite.rewrite_focus)}
-                              </div>
-                              <div className="mt-2 text-sm leading-relaxed text-gray-700">{option}</div>
-                              <button
-                                type="button"
-                                onClick={() => acceptRewrite(selectedBullet, optionIndex)}
-                                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-                              >
-                                <CheckCircle size={14} />
-                                {getRewriteOptionLabel(optionIndex, selectedRewrite.rewrite_focus).startsWith("Option")
-                                  ? `Use Option ${optionIndex + 1}`
-                                  : `Use ${getRewriteOptionLabel(optionIndex, selectedRewrite.rewrite_focus)}`}
-                              </button>
-                            </div>
+                            (() => {
+                              const optionEvaluation = evaluateRewriteOption(option, selectedBullet, resumeText, selectedRewrite.rewrite_focus);
+                              const optionMeta = getRewriteOptionMeta(optionIndex, selectedRewrite.rewrite_focus, optionEvaluation);
+                              return (
+                                <div key={`${selectedBullet.id}-rewrite-${optionIndex}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
+                                    {optionMeta.label}
+                                  </div>
+                                  <div className="mt-1 text-[11px] leading-relaxed text-gray-500">
+                                    {optionMeta.detail}
+                                  </div>
+                                  <div className="mt-2 text-sm leading-relaxed text-gray-700">{option}</div>
+                                  {optionEvaluation.unresolvedFocused.length > 0 && (
+                                    <div className="mt-2 text-xs leading-relaxed text-amber-700">
+                                      Still flags: {optionEvaluation.unresolvedFocused.map(getIssueLabel).join(", ")}.
+                                    </div>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => acceptRewrite(selectedBullet, optionIndex)}
+                                    className="mt-3 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                                  >
+                                    <CheckCircle size={14} />
+                                    {optionMeta.cta}
+                                  </button>
+                                </div>
+                              );
+                            })()
                           ))}
                         </div>
                         <button
@@ -5146,13 +5383,11 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                     </div>
                     <div className="mt-2 text-xs leading-relaxed text-gray-500">
                       {relevantTermsMode === "job_match"
-                        ? "Using this job's matched and missing terms with job-specific context."
-                        : relevantTermsMode === "scored"
-                          ? "Using the score engine's JD term extraction. This is broader than the job-specific match view."
-                          : relevantTermsMode === "skills_fallback"
-                            ? "Using the selected job's listed skill cues until richer JD matching is available."
+                        ? "Using this job's canonical term list with job-specific match context."
+                        : relevantTermsMode === "skills_fallback"
+                            ? "Using the same canonical job terms above, with local resume matching until richer JD matching is available."
                             : relevantTermsMode === "match_error"
-                              ? "Job-specific matching is unavailable right now, so this panel is falling back to the broader score/JD cues."
+                              ? "Job-specific matching is unavailable right now, so this panel is falling back to the same visible job terms above."
                               : "Use these as alignment cues, not as a keyword-stuffing checklist."}
                     </div>
                   </>
@@ -5228,7 +5463,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                 {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
                 {tailoringLoading ? "Tailoring..." : "Run Full Tailor"}
               </button>
-              {selectedSection?.sectionKey === "summary" && (
+              {(selectedSection?.sectionKey === "summary" || !hasSummarySection) && (
                 <button
                   type="button"
                   onClick={handleOptimizeSummary}
@@ -5236,7 +5471,18 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                   className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-medium text-violet-800 transition hover:bg-violet-100 disabled:opacity-40"
                 >
                   {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                  Optimize Summary
+                  {hasSummarySection ? "Optimize Summary" : "Generate Summary"}
+                </button>
+              )}
+              {selectedSection && ["heading", "heading_paragraph"].includes(selectedSection.type) && (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteSection(selectedSection)}
+                  disabled={!resumeText.trim()}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-40"
+                >
+                  <Trash2 size={14} />
+                  Delete Section
                 </button>
               )}
               <button
@@ -5261,7 +5507,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
             )}
             {!jobDescription.trim() && (
               <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
-                Select a job first if you want the full tailor run to rewrite bullets, sections, and the summary against a specific JD.
+                Select a job first if you want the full tailor run to rewrite bullets, sections, and the summary against a specific JD. Summary generation can still run without one.
               </div>
             )}
             {aiStatus && (

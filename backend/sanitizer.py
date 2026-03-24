@@ -23,6 +23,8 @@ _EVENT_HANDLER_RE = re.compile(
     r"""\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*)""",
     re.IGNORECASE,
 )
+_INLINE_WHITESPACE_RE = re.compile(r"[^\S\n]+")
+_MULTI_NEWLINE_RE = re.compile(r"\n{3,}")
 
 MAX_DESCRIPTION_LEN = 5000
 MAX_USER_INPUT_LEN = 1000
@@ -72,10 +74,25 @@ def sanitize_job(job_dict: dict) -> dict:
 
 
 def sanitize_resume_text(text: str) -> str:
-    """Strip HTML from resume text. No length truncation — resumes need full text."""
+    """
+    Strip HTML from resume text while preserving line structure.
+    No length truncation — resumes need full text and section breaks.
+    """
     if not text:
         return ""
-    return sanitize_html(text)
+    text = _SCRIPT_RE.sub("", text)
+    text = _STYLE_RE.sub("", text)
+    text = _EVENT_HANDLER_RE.sub("", text)
+    # Preserve existing line structure for resume parsing/export.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"(?i)<\s*br\s*/?\s*>", "\n", text)
+    text = re.sub(r"(?i)</\s*(p|div|li|tr|h[1-6])\s*>", "\n", text)
+    text = _TAG_RE.sub(" ", text)
+    text = html.unescape(text)
+    text = _INLINE_WHITESPACE_RE.sub(" ", text)
+    text = re.sub(r" *\n *", "\n", text)
+    text = _MULTI_NEWLINE_RE.sub("\n\n", text)
+    return text.strip()
 
 
 def sanitize_user_input(text: str) -> str:

@@ -336,6 +336,22 @@ class TestSanitizer:
 
         result = sanitize_resume_text("  Normal resume text  \n  With lines  ")
         assert result.strip() == result  # Should be stripped
+        assert result == "Normal resume text\nWith lines"
+
+    def test_sanitize_resume_text_preserves_resume_sections(self):
+        from sanitizer import sanitize_resume_text
+
+        raw = (
+            "Haoming Koo\n"
+            "haomingkoo@gmail.com\n\n"
+            "PROFESSIONAL SUMMARY\n"
+            "Transformation leader.\n\n"
+            "EXPERIENCE\n"
+            "Led delivery.\n"
+        )
+        result = sanitize_resume_text(raw)
+        assert "PROFESSIONAL SUMMARY\nTransformation leader." in result
+        assert "\n\nEXPERIENCE\n" in result
 
     def test_sanitize_job(self):
         from sanitizer import sanitize_job

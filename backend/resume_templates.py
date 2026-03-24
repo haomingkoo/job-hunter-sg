@@ -18,11 +18,14 @@ All templates are ATS-friendly:
 from __future__ import annotations
 
 import io
+import logging
 import re
 
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+log = logging.getLogger("jobhunter.docx")
 
 
 TEMPLATES = {
@@ -229,6 +232,39 @@ def _parse_sections(resume_text: str) -> dict[str, str]:
     return {k: "\n".join(v) for k, v in sections.items() if v}
 
 
+def inspect_resume_export(resume_text: str, template_id: str = "modern") -> dict[str, object]:
+    """
+    Return privacy-safe diagnostics for DOCX generation.
+    This intentionally avoids returning raw resume content.
+    """
+    config = TEMPLATES.get(template_id, TEMPLATES["modern"])
+    sections = _parse_sections(resume_text)
+    line_counts = {
+        key: len([line for line in value.split("\n") if line.strip()])
+        for key, value in sections.items()
+    }
+    expected_sections = list(config["section_order"])
+    missing_expected = [
+        section for section in expected_sections
+        if not sections.get(section, "").strip()
+    ]
+    non_header_sections = [
+        key for key in sections.keys()
+        if key != "header" and sections.get(key, "").strip()
+    ]
+    return {
+        "template_id": template_id,
+        "header_lines": line_counts.get("header", 0),
+        "sections_found": list(sections.keys()),
+        "non_header_sections": non_header_sections,
+        "section_line_counts": line_counts,
+        "missing_expected": missing_expected,
+        "looks_header_only": len(non_header_sections) == 0,
+        "word_count": len(resume_text.split()),
+        "char_count": len(resume_text),
+    }
+
+
 def generate_docx(
     resume_text: str,
     template_id: str = "modern",
@@ -263,10 +299,14 @@ def generate_docx(
     _add_name_header(doc, config, display_name, contact_line)
 
     # Add sections in template order
+    rendered_sections: list[str] = []
+    rendered_bullets = 0
+    rendered_paragraphs = 0
     for section_key in config["section_order"]:
         content = sections.get(section_key, "")
         if not content:
             continue
+        rendered_sections.append(section_key)
 
         # Map section keys to display names
         display_names = {
@@ -293,21 +333,50 @@ def generate_docx(
                 bullet_text = re.sub(r"^[-*•–]\s*", "", line)
                 bullet_text = re.sub(r"^\d+\.\s*", "", bullet_text)
                 _add_bullet(doc, bullet_text, config)
+                rendered_bullets += 1
             else:
                 doc.add_paragraph(line)
+                rendered_paragraphs += 1
 
     # Any remaining sections not in the template order
     for section_key, content in sections.items():
         if section_key in config["section_order"] or section_key == "header":
             continue
         if content:
+            rendered_sections.append(section_key)
             _add_section_header(doc, section_key.title())
             for line in content.split("\n"):
                 if line.strip():
-                    doc.add_paragraph(line.strip())
+                    stripped = line.strip()
+                    if stripped.startswith(("-", "*", "•", "–")) or re.match(r"^\d+\.", stripped):
+                        bullet_text = re.sub(r"^[-*•–]\s*", "", stripped)
+                        bullet_text = re.sub(r"^\d+\.\s*", "", bullet_text)
+                        _add_bullet(doc, bullet_text, config)
+                        rendered_bullets += 1
+                    else:
+                        doc.add_paragraph(stripped)
+                        rendered_paragraphs += 1
 
     # Save to bytes
     buf = io.BytesIO()
     doc.save(buf)
     buf.seek(0)
-    return buf.getvalue()
+    docx_bytes = buf.getvalue()
+    log.info(
+        "DOCX generated template=%s rendered_sections=%s doc_paragraphs=%s body_paragraphs=%s bullets=%s bytes=%s",
+        template_id,
+        rendered_sections,
+        len(doc.paragraphs),
+        rendered_paragraphs,
+        rendered_bullets,
+        len(docx_bytes),
+    )
+    if not rendered_sections or len(doc.paragraphs) <= 2:
+        log.warning(
+            "DOCX output looks sparse template=%s rendered_sections=%s doc_paragraphs=%s bytes=%s",
+            template_id,
+            rendered_sections,
+            len(doc.paragraphs),
+            len(docx_bytes),
+        )
+    return docx_bytes
