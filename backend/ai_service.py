@@ -428,3 +428,77 @@ def match_resume_to_jobs(resume_text: str, jobs: list[dict], top_n: int = 5) -> 
         pass
 
     return [{"rank": 1, "job_index": 0, "reason": content[:200]}]
+
+
+def integrate_keywords(
+    resume_text: str,
+    missing_keywords: list[str],
+    job_title: str = "",
+) -> Optional[list[dict]]:
+    """Suggest where and how to naturally integrate missing keywords into the resume."""
+    if not missing_keywords:
+        return []
+
+    system = """You are a resume keyword optimization expert. Given a resume and a list of missing keywords from a job description, suggest how to NATURALLY integrate each keyword into existing resume bullets.
+
+Rules:
+- Find the existing bullet that is the BEST fit for each keyword
+- Rewrite that bullet to include the keyword naturally — not forced
+- If a keyword doesn't fit any bullet, suggest adding it to the Skills section
+- NEVER invent achievements or metrics — only reword existing content
+- NEVER change company names, job titles, or dates
+- Return a JSON array only — no markdown, no explanation outside the array
+
+For each keyword, return:
+{
+  "keyword": "the keyword",
+  "original_bullet": "the original bullet text from the resume",
+  "suggested_rewrite": "the rewritten bullet with the keyword integrated",
+  "section": "experience or skills",
+  "reason": "brief explanation of the change"
+}
+
+If a keyword belongs in Skills (no good bullet match):
+{
+  "keyword": "the keyword",
+  "original_bullet": null,
+  "suggested_rewrite": "Add to Skills section: The Keyword",
+  "section": "skills",
+  "reason": "No existing bullet covers this — best added as a skill"
+}"""
+
+    keywords_str = ", ".join(missing_keywords[:20])  # Cap at 20 keywords
+    user_msg = f"Resume:\n{resume_text[:4000]}\n\nMissing keywords: {keywords_str}"
+    if job_title:
+        user_msg += f"\n\nTarget role: {job_title}"
+
+    content = _call_sealion(
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        max_tokens=2000,
+        temperature=0.3,
+    )
+
+    if not content:
+        return None
+
+    # Parse JSON array from response
+    try:
+        start = content.find("[")
+        end = content.rfind("]") + 1
+        if start >= 0 and end > start:
+            suggestions = json.loads(content[start:end])
+            # Validate structure — each item must have required keys
+            required_keys = {"keyword", "original_bullet", "suggested_rewrite", "section", "reason"}
+            validated = []
+            for item in suggestions:
+                if isinstance(item, dict) and required_keys.issubset(item.keys()):
+                    validated.append(item)
+            if validated:
+                return validated
+    except (json.JSONDecodeError, ValueError) as e:
+        log.warning(f"[AI] integrate_keywords JSON parse failed: {e}")
+
+    return None

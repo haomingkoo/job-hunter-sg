@@ -170,3 +170,10 @@ class RewriteBulletRequest(BaseModel):
     bullet: str = Field(..., min_length=1, max_length=1000)
     job_title: str = Field("", max_length=200)
     session_id: str = Field("", max_length=64)
+
+
+class IntegrateKeywordsRequest(BaseModel):
+    resume_text: str = Field(..., min_length=50, max_length=10000)
+    missing_keywords: list[str] = Field(..., min_length=1, max_length=20)
+    job_title: str = Field("", max_length=200)
+    session_id: str = Field("", max_length=64)

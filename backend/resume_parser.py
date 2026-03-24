@@ -45,6 +45,58 @@ def validate_upload(filename: str, content_type: str, size: int) -> str:
     return file_type
 
 
+def _join_broken_lines(text: str) -> str:
+    """Rejoin lines that pdfplumber broke mid-sentence.
+
+    Preserves blank lines between sections.  Keeps lines that start with
+    a bullet character, a section header (ALL CAPS ≥2 words), a date
+    pattern, or a company/role-style line (contains | or —) on their own.
+    Lines starting with lowercase or that look like a sentence continuation
+    are joined to the previous line.
+    """
+    _bullet_start = re.compile(r"^[\s]*[•\-\*▪\u2022\u2023\u25E6\u2043\u2219]")
+    _date_line = re.compile(
+        r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}"
+        r"|\d{1,2}/\d{4}"
+        r"|\d{4}\s*[-–]\s*(?:\d{4}|present|current)",
+        re.I,
+    )
+    _all_caps_header = re.compile(r"^[A-Z][A-Z &/\-]{2,}$")
+    _role_separator = re.compile(r"[|—–]")
+
+    lines = text.split("\n")
+    merged: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Preserve blank lines (section separators)
+        if not stripped:
+            merged.append("")
+            continue
+
+        # Determine if this line should start a new logical line
+        starts_new = False
+        if _bullet_start.match(stripped):
+            starts_new = True
+        elif _all_caps_header.match(stripped):
+            starts_new = True
+        elif _date_line.search(stripped):
+            starts_new = True
+        elif _role_separator.search(stripped):
+            starts_new = True
+        elif stripped[0].isupper() or stripped[0].isdigit():
+            starts_new = True
+
+        if starts_new or not merged or merged[-1] == "":
+            merged.append(stripped)
+        else:
+            # Continuation of the previous line
+            merged[-1] = merged[-1] + " " + stripped
+
+    return "\n".join(merged)
+
+
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     """Extract full text from a PDF file. No truncation."""
     import pdfplumber
@@ -64,6 +116,7 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     if not full_text.strip():
         raise ValueError("No text found in PDF. If your resume is a scanned image, please upload a DOCX or text-based PDF instead.")
 
+    full_text = _join_broken_lines(full_text)
     return full_text
 
 

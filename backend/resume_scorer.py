@@ -161,12 +161,50 @@ class ResumeScorer:
 
     @staticmethod
     def _extract_bullets(text: str) -> list[str]:
-        """Extract bullet-point lines from resume text."""
+        """Extract bullet-point lines from resume text.
+
+        Detects bullets in three ways:
+        1. Lines starting with a bullet character (•, -, *, etc.)
+        2. Lines starting with an action verb that follow a subheading/date
+        3. Lines that look like achievements (contain metrics)
+        """
+        _date_re = re.compile(
+            r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}"
+            r"|\d{1,2}/\d{4}"
+            r"|\d{4}\s*[-–]\s*(?:\d{4}|present|current)",
+            re.I,
+        )
+        _achievement_re = re.compile(
+            r"\d+%"
+            r"|\$[\d,]+"
+            r"|\d+\s*(?:team|users|people|projects|systems|clients)"
+            r"|team\s+of\s+\d+"
+            r"|\d+[kKmMbB]\b"
+            r"|\d{1,3}(?:,\d{3})+",
+        )
+        _all_caps_header = re.compile(r"^[A-Z][A-Z &/\-]{2,}$")
+        _role_separator = re.compile(r"[|—–]")
+
         bullets: list[str] = []
-        for line in text.split("\n"):
+        lines = text.split("\n")
+        after_subheading = False
+
+        for line in lines:
             stripped = line.strip()
             if not stripped:
+                after_subheading = False
                 continue
+
+            # Track whether we're after a subheading/date line
+            is_header = _all_caps_header.match(stripped)
+            has_date = bool(_date_re.search(stripped))
+            has_role_sep = bool(_role_separator.search(stripped))
+
+            if is_header or has_date or has_role_sep:
+                after_subheading = True
+                continue
+
+            # Method 1: explicit bullet character
             if _BULLET_RE.match(line):
                 cleaned = re.sub(
                     r"^[\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]"
@@ -176,6 +214,21 @@ class ResumeScorer:
                 ).strip()
                 if cleaned:
                     bullets.append(cleaned)
+                continue
+
+            # Methods 2 & 3: action-verb start or achievement pattern
+            first_word = stripped.split()[0].lower().rstrip(",;:") if stripped.split() else ""
+            starts_with_action = first_word in ACTION_VERBS
+            looks_like_achievement = bool(_achievement_re.search(stripped))
+
+            if after_subheading and (starts_with_action or looks_like_achievement):
+                bullets.append(stripped)
+                continue
+
+            # Achievement line even without prior subheading context
+            if starts_with_action and looks_like_achievement:
+                bullets.append(stripped)
+
         return bullets
 
     @staticmethod
@@ -275,9 +328,27 @@ class ResumeScorer:
             "been", "has", "had", "have", "that", "this", "it", "as",
             "from", "not", "but", "i", "my", "me",
         }
+        # Technical / domain terms that legitimately repeat on resumes
+        _tech_exempt = {
+            "python", "java", "javascript", "typescript", "react",
+            "node", "django", "flask", "fastapi", "docker",
+            "kubernetes", "linux", "windows", "azure", "cloud",
+            "database", "software", "development", "engineering",
+            "management", "quality", "system", "systems", "data",
+            "analytics", "analysis", "machine", "learning", "model",
+            "design", "testing", "security", "network", "server",
+            "frontend", "backend", "fullstack", "devops", "agile",
+            "scrum", "project", "product", "business", "customer",
+            "service", "sales", "marketing", "operations", "process",
+            "team", "company", "experience", "skills", "education",
+            "singapore", "certification", "certified",
+        }
         overused = [
             w for w, c in word_counts.items()
-            if c >= 3 and w not in stopwords and len(w) > 3
+            if c >= 5
+            and w not in stopwords
+            and w not in _tech_exempt
+            and len(w) > 3
         ]
         penalty = len(overused) * 2
         overusage_score = max(0, 10 - penalty)
@@ -291,7 +362,7 @@ class ResumeScorer:
             "score": overusage_score,
             "max": 10,
             "status": _status(overusage_score, 10),
-            "detail": f"{len(overused)} words used 3+ times",
+            "detail": f"{len(overused)} non-technical words used 5+ times",
             "suggestions": overusage_suggestions,
         }
 

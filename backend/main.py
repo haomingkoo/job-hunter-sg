@@ -41,6 +41,7 @@ from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
 from schemas import (
     AuthResponse,
     ContactRequest,
+    IntegrateKeywordsRequest,
     JobOut,
     LoginRequest,
     ResumeScoreRequest,
@@ -53,7 +54,7 @@ from schemas import (
     TrackedJobUpdate,
     UserOut,
 )
-from ai_service import _call_sealion, coach_resume, get_ai_status, rewrite_bullet
+from ai_service import _call_sealion, coach_resume, get_ai_status, integrate_keywords, rewrite_bullet
 from resume_parser import parse_resume
 from resume_scorer import ResumeScorer
 from resume_templates import generate_docx, list_templates
@@ -1273,6 +1274,86 @@ def ai_rewrite_bullet(
     return {"original": bullet, "rewritten": result, "model": "AI"}
 
 
+@app.post("/api/ai/integrate-keywords")
+def ai_integrate_keywords(
+    request: Request,
+    body: IntegrateKeywordsRequest,
+    user: Optional[User] = Depends(get_optional_user),
+    jh_anon: str = Cookie(None),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Smart keyword integration — suggests where and how to add missing keywords.
+    Free if a valid session_id is provided (from /api/ai/coach).
+    Otherwise counts as 1 AI credit.
+    """
+    # Check if this request belongs to an active session
+    session_id = body.session_id or ""
+    session_valid = False
+
+    if session_id:
+        today_start = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0,
+        )
+        session_log = db.query(UsageLog).filter(
+            UsageLog.action == "ai",
+            UsageLog.detail.contains(f"session:{session_id}"),
+            UsageLog.created_at >= today_start,
+        ).first()
+        if session_log:
+            session_owned = False
+            if user and session_log.user_id == user.id:
+                session_owned = True
+            elif not user and jh_anon:
+                detail = session_log.detail or ""
+                client_ip = _get_client_ip(request)
+                session_owned = (
+                    f"anon:{jh_anon}" in detail
+                    and f"ip:{client_ip}" in detail
+                )
+            if session_owned:
+                session_valid = True
+
+    if session_valid:
+        db.add(UsageLog(
+            user_id=user.id if user else None,
+            action="ai_integrate",
+            detail=f"session:{session_id}",
+        ))
+        db.commit()
+    else:
+        check_rate_limit(user, "ai", db)
+        db.add(UsageLog(
+            user_id=user.id if user else None,
+            action="ai",
+            detail="integrate:standalone",
+        ))
+        db.commit()
+
+    resume_text = sanitize_resume_text(body.resume_text)
+    job_title = sanitize_user_input(body.job_title)
+    keywords = [sanitize_user_input(kw) for kw in body.missing_keywords if kw.strip()]
+
+    if not keywords:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No valid keywords provided.",
+        )
+
+    suggestions = integrate_keywords(
+        resume_text=resume_text,
+        missing_keywords=keywords,
+        job_title=job_title,
+    )
+    if suggestions is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service unavailable — rate limit or API error. Try again shortly.",
+        )
+
+    return {"suggestions": suggestions, "model": "AI"}
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # RESUME UPLOAD + FORMAT
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1335,9 +1416,22 @@ CRITICAL — DO NOT HALLUCINATE:
 - If you're unsure about a detail, keep the original text exactly as-is
 - Do NOT add achievements, metrics, or skills that are not in the original resume
 
+CRITICAL STRUCTURE RULES:
+- NEVER turn job titles into bullet points
+- Preserve this hierarchy exactly:
+  SECTION HEADER (ALL CAPS)
+  Company Name — Location
+  Job Title | Date Range
+  • Achievement bullet 1
+  • Achievement bullet 2
+- Job titles with dates (e.g., "Program Manager | Aug 2022 – Jan 2025") are SUBHEADINGS, not bullets
+- Only achievement/responsibility lines should be bullets (starting with •)
+- NEVER merge or reorder sections
+- NEVER change dates, company names, or job titles
+
 Formatting rules:
 - Use clear section headers: PROFESSIONAL SUMMARY, EXPERIENCE, EDUCATION, SKILLS, CERTIFICATIONS
-- Each job entry: Company Name | Location, Job Title, Date Range (MMM YYYY - MMM YYYY)
+- Each job entry: Company Name — Location on one line, then Job Title | Date Range on the next line
 - Bullet points start with strong action verbs
 - Remove filler words and weak phrases
 - Keep ALL content — do not remove or summarize anything. Reorganize and clean up formatting only.

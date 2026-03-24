@@ -1296,30 +1296,30 @@ const RESUME_TEMPLATE_STYLES = {
   classic: {
     pageClass: "text-stone-800",
     pageStyle: { fontFamily: 'Georgia, "Times New Roman", serif' },
-    headingClass: "mt-6 border-b border-stone-400 pb-1 text-[0.95rem] font-bold uppercase tracking-[0.18em] text-stone-900",
+    headingClass: "mt-8 mb-4 border-b border-stone-400 pb-1 text-[0.95rem] font-bold uppercase tracking-[0.18em] text-stone-900",
     nameClass: "text-[1.9rem] font-bold tracking-[0.08em] text-stone-950",
-    subheadingClass: "text-stone-700",
+    subheadingClass: "mt-5 mb-2 text-stone-700",
   },
   modern: {
     pageClass: "text-slate-800",
     pageStyle: { fontFamily: 'Calibri, "Segoe UI", sans-serif' },
-    headingClass: "mt-6 border-l-4 border-indigo-500 pl-3 text-[0.95rem] font-bold uppercase tracking-[0.18em] text-slate-900",
+    headingClass: "mt-8 mb-4 border-l-4 border-indigo-500 pl-3 text-[0.95rem] font-bold uppercase tracking-[0.18em] text-slate-900",
     nameClass: "text-[1.85rem] font-semibold tracking-[0.04em] text-slate-950",
-    subheadingClass: "text-slate-700",
+    subheadingClass: "mt-5 mb-2 text-slate-700",
   },
   singapore: {
     pageClass: "text-slate-800",
     pageStyle: { fontFamily: 'Calibri, "Segoe UI", sans-serif' },
-    headingClass: "mt-6 border-b-2 border-slate-700 pb-1 text-[0.95rem] font-bold uppercase tracking-[0.16em] text-slate-950",
+    headingClass: "mt-8 mb-4 border-b-2 border-slate-700 pb-1 text-[0.95rem] font-bold uppercase tracking-[0.16em] text-slate-950",
     nameClass: "text-[1.88rem] font-semibold tracking-[0.04em] text-slate-950",
-    subheadingClass: "text-slate-700",
+    subheadingClass: "mt-5 mb-2 text-slate-700",
   },
   compact: {
     pageClass: "text-zinc-800",
     pageStyle: { fontFamily: "Arial, Helvetica, sans-serif" },
-    headingClass: "mt-5 text-[0.92rem] font-bold uppercase tracking-[0.14em] text-zinc-950",
+    headingClass: "mt-8 mb-4 text-[0.92rem] font-bold uppercase tracking-[0.14em] text-zinc-950",
     nameClass: "text-[1.75rem] font-bold tracking-[0.03em] text-zinc-950",
-    subheadingClass: "text-zinc-700",
+    subheadingClass: "mt-5 mb-2 text-zinc-700",
   },
 };
 
@@ -3316,11 +3316,11 @@ function ResumeTab({ selectedJob, user }) {
               </div>
             </div>
 
-            <div className={`mx-auto mt-5 min-h-[800px] max-w-[700px] bg-white p-6 shadow-[0_24px_60px_rgba(15,23,42,0.14)] sm:p-8 ${templateStyles.pageClass}`} style={templateStyles.pageStyle}>
+            <div className={`mx-auto mt-5 bg-white leading-relaxed shadow-[0_2px_20px_rgba(0,0,0,0.1)] border border-gray-200 ${templateStyles.pageClass}`} style={{...templateStyles.pageStyle, width: '210mm', minHeight: '297mm', padding: '20mm 18mm', maxWidth: '100%'}}>
               {resumeText.trim() ? (
                 <>
                   {shouldInjectProfileHeader && (
-                    <div className="mb-6 border-b border-gray-200 pb-4 text-center">
+                    <div className="mb-8 border-b border-gray-200 pb-4 text-center">
                       {profile.name && <div className={templateStyles.nameClass}>{profile.name}</div>}
                       <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[0.95rem] text-gray-600">
                         {profile.email && <span>{profile.email}</span>}
@@ -3330,7 +3330,7 @@ function ResumeTab({ selectedJob, user }) {
                     </div>
                   )}
 
-                  <div className="space-y-1 text-[0.98rem] leading-7">
+                  <div className="space-y-2 text-[0.98rem] leading-7">
                     {parsedSections.map((section) => {
                       if (section.type === "spacer") return <div key={section.id} className="h-3" />;
 
@@ -3380,7 +3380,7 @@ function ResumeTab({ selectedJob, user }) {
                             </div>
                           )}
                           {section.type === "paragraph" && (
-                            <p className="text-[0.98rem] leading-7 text-gray-700">
+                            <p className="mb-4 text-[0.98rem] leading-7 text-gray-700">
                               {renderHighlightedText(section.text, section.keywordMatches || [])}
                             </p>
                           )}
