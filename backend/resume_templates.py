@@ -229,16 +229,22 @@ def generate_docx(
     doc = Document()
     _setup_styles(doc, config)
 
+    # Parse resume into sections early so we can infer header details
+    sections = _parse_sections(resume_text)
+    header_lines = [
+        line.strip() for line in sections.get("header", "").split("\n")
+        if line.strip()
+    ]
+
     # Build contact line
     contact_parts = [p for p in [email, phone, location] if p]
+    if not contact_parts and len(header_lines) > 1:
+        contact_parts = header_lines[1:4]
     contact_line = " | ".join(contact_parts)
 
     # Add name header
-    display_name = name or "Your Name"
+    display_name = name or (header_lines[0] if header_lines else "") or "Your Name"
     _add_name_header(doc, config, display_name, contact_line)
-
-    # Parse resume into sections
-    sections = _parse_sections(resume_text)
 
     # Add sections in template order
     for section_key in config["section_order"]:

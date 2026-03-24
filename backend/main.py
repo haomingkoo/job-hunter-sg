@@ -12,6 +12,7 @@ import os
 import random
 import re
 import secrets
+from collections import Counter
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -97,6 +98,51 @@ aggregator = JobAggregator()
 ssg_api = SSGSkillsFrameworkAPI()
 _scorer = ResumeScorer()
 
+POWER_SKILL_TERMS = {
+    "python", "sql", "excel", "tableau", "power bi", "aws", "azure", "gcp",
+    "docker", "kubernetes", "terraform", "linux", "react", "typescript",
+    "javascript", "java", "node.js", "node", "golang", "rust", "git",
+    "ci/cd", "agile", "scrum", "project management", "stakeholder management",
+    "roadmap", "analytics", "data analysis", "machine learning", "ai",
+    "communication", "leadership", "change management", "quality", "spc",
+    "six sigma", "manufacturing", "semulator3d", "jira", "salesforce",
+    "figma", "product management", "program management", "root cause analysis",
+}
+
+POWER_ROLE_STOPWORDS = {
+    "the", "and", "for", "with", "from", "lead", "senior", "junior", "staff",
+    "principal", "manager", "engineer", "executive", "associate", "specialist",
+    "analyst", "intern", "contract", "full", "time", "part", "level",
+}
+
+POWER_BRIDGE_LIBRARY = [
+    {
+        "title": "Cloud & DevOps bridge",
+        "keywords": {"aws", "azure", "gcp", "docker", "kubernetes", "terraform", "linux", "ci/cd"},
+        "suggestion": "Bridge this with cloud foundations, one deployment lab, and one shipped project artifact before you prioritise similar roles.",
+    },
+    {
+        "title": "Data & analytics bridge",
+        "keywords": {"sql", "python", "tableau", "power bi", "excel", "analytics", "data analysis", "etl"},
+        "suggestion": "Bridge this with an analytics short course, a dashboard or SQL portfolio sample, and one quantified resume bullet.",
+    },
+    {
+        "title": "Software engineering bridge",
+        "keywords": {"react", "typescript", "javascript", "java", "node", "node.js", "golang", "rust", "git"},
+        "suggestion": "Bridge this with a hands-on build, repository evidence, and one project bullet that shows delivery, testing, and ownership.",
+    },
+    {
+        "title": "Product & delivery bridge",
+        "keywords": {"product management", "program management", "project management", "roadmap", "stakeholder management", "agile", "scrum", "jira"},
+        "suggestion": "Bridge this with delivery case studies, roadmap artifacts, and examples that show prioritisation, cross-functional work, and measurable outcomes.",
+    },
+    {
+        "title": "Operations & quality bridge",
+        "keywords": {"quality", "spc", "six sigma", "manufacturing", "root cause analysis", "change management"},
+        "suggestion": "Bridge this with process-improvement coursework, one before/after case study, and quantified quality or efficiency wins.",
+    },
+]
+
 
 # ── Startup ──────────────────────────────────────────────────────────────────
 
@@ -118,6 +164,139 @@ def on_startup() -> None:
         log.warning(f"Stale job cleanup failed: {e}")
 
     # Auto-create admin account if it doesn't exist
+
+
+def _normalize_skill_strings(raw_skills) -> list[str]:
+    collected: list[str] = []
+
+    def visit(value) -> None:
+        if isinstance(value, str):
+            for part in re.split(r"[;,|/]", value):
+                cleaned = part.strip()
+                if cleaned:
+                    collected.append(cleaned)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                visit(key)
+                visit(item)
+
+    visit(raw_skills)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for skill in collected:
+        cleaned = re.sub(r"\s+", " ", skill).strip(" -•\t")
+        lower = cleaned.lower()
+        if not cleaned or len(cleaned) < 2 or len(cleaned) > 60:
+            continue
+        if lower in seen:
+            continue
+        seen.add(lower)
+        deduped.append(cleaned)
+    return deduped
+
+
+def _get_or_create_memory(user: Optional[User], db: Session) -> Optional[UserMemory]:
+    if not user:
+        return None
+    mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
+    if not mem:
+        mem = UserMemory(user_id=user.id)
+        db.add(mem)
+        db.flush()
+    return mem
+
+
+def _persist_resume_to_memory(user: Optional[User], db: Session, resume_text: str) -> None:
+    if not user or not resume_text.strip():
+        return
+    mem = _get_or_create_memory(user, db)
+    if not mem:
+        return
+    mem.resume_text = sanitize_resume_text(resume_text)[:10000]
+    db.flush()
+
+
+def _extract_resume_skills(resume_text: str, db: Session) -> tuple[list[str], str]:
+    lower_text = resume_text.lower()
+    skill_map: dict[str, str] = {}
+
+    recent_skill_rows = (
+        db.query(ScrapedJob.skills)
+        .order_by(ScrapedJob.id.desc())
+        .limit(1500)
+        .all()
+    )
+    for (raw_skills,) in recent_skill_rows:
+        for skill in _normalize_skill_strings(raw_skills):
+            skill_map.setdefault(skill.lower(), skill)
+
+    for skill in POWER_SKILL_TERMS:
+        skill_map.setdefault(skill.lower(), skill)
+
+    matched: list[str] = []
+    seen: set[str] = set()
+    for lower_skill, display in sorted(skill_map.items(), key=lambda item: len(item[0]), reverse=True):
+        pattern = rf"(?<![a-z0-9]){re.escape(lower_skill)}(?![a-z0-9])"
+        if re.search(pattern, lower_text):
+            if lower_skill not in seen:
+                matched.append(display)
+                seen.add(lower_skill)
+
+    if matched:
+        return matched[:30], "skill_corpus"
+
+    fallback_terms = re.findall(r"\b[A-Z][A-Za-z0-9+#.]{2,}\b", resume_text)
+    fallback_deduped: list[str] = []
+    fallback_seen: set[str] = set()
+    for term in fallback_terms:
+        lower = term.lower()
+        if lower in fallback_seen:
+            continue
+        fallback_seen.add(lower)
+        fallback_deduped.append(term)
+    return fallback_deduped[:20], "fallback_terms"
+
+
+def _extract_title_terms(title: str) -> list[str]:
+    return [
+        word for word in re.findall(r"[a-zA-Z][a-zA-Z+#.]{2,}", title.lower())
+        if word not in POWER_ROLE_STOPWORDS
+    ]
+
+
+def _build_bridge_plan(missing_skills: list[str]) -> list[dict]:
+    plans: list[dict] = []
+    seen_titles: set[str] = set()
+    for skill in missing_skills[:6]:
+        lower_skill = skill.lower()
+        matched_path = None
+        for path in POWER_BRIDGE_LIBRARY:
+            if any(keyword in lower_skill for keyword in path["keywords"]):
+                matched_path = path
+                break
+
+        if matched_path:
+            if matched_path["title"] in seen_titles:
+                continue
+            seen_titles.add(matched_path["title"])
+            plans.append({
+                "skill": skill,
+                "pathway": matched_path["title"],
+                "suggestion": matched_path["suggestion"],
+            })
+        else:
+            plans.append({
+                "skill": skill,
+                "pathway": "Role-specific bridging",
+                "suggestion": f"Bridge {skill} with one short course, one practice project, and one credible resume bullet before prioritising similar roles.",
+            })
+        if len(plans) >= 3:
+            break
+    return plans
     try:
         from database import SessionLocal
         db2 = SessionLocal()
@@ -323,10 +502,19 @@ def search_jobs(
 @app.get("/api/jobs")
 def list_cached_jobs(
     q: Optional[str] = Query(None, max_length=200, description="Filter by keyword"),
+    employment_type: Optional[str] = Query(None, max_length=100),
+    seniority: Optional[str] = Query(None, max_length=100),
+    source: Optional[str] = Query(None, max_length=100),
+    location: Optional[str] = Query(None, max_length=200),
+    min_salary: Optional[int] = Query(None, ge=0),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> dict:
+    def salary_floor(value: str) -> int:
+        numbers = [int(part.replace(",", "")) for part in re.findall(r"\d[\d,]*", value or "")]
+        return numbers[0] if numbers else 0
+
     query = db.query(ScrapedJob)
     if q:
         pattern = f"%{q}%"
@@ -335,10 +523,24 @@ def list_cached_jobs(
             | (ScrapedJob.company.ilike(pattern))
             | (ScrapedJob.search_keyword.ilike(pattern))
         )
-    total = query.count()
-    query = query.order_by(ScrapedJob.id.desc())
+    if employment_type:
+        query = query.filter(ScrapedJob.employment_type.ilike(f"%{employment_type}%"))
+    if seniority:
+        query = query.filter(ScrapedJob.seniority.ilike(f"%{seniority}%"))
+    if source:
+        query = query.filter(ScrapedJob.source.ilike(f"%{source}%"))
+    if location:
+        query = query.filter(ScrapedJob.location.ilike(f"%{location}%"))
+
+    jobs = query.order_by(ScrapedJob.id.desc()).all()
+    if min_salary:
+        salary_matched = [job for job in jobs if salary_floor(job.salary) >= min_salary]
+        salary_unknown = [job for job in jobs if salary_floor(job.salary) == 0]
+        jobs = salary_matched + salary_unknown
+
+    total = len(jobs)
     offset = (page - 1) * per_page
-    jobs = query.offset(offset).limit(per_page).all()
+    jobs = jobs[offset: offset + per_page]
     return {
         "jobs": [
             {
@@ -398,8 +600,10 @@ def get_recommended_jobs(
     Searches cached jobs for keyword matches from the resume.
     """
     if not resume_text or len(resume_text) < 20:
-        # Return most recent jobs as fallback
-        return db.query(ScrapedJob).order_by(ScrapedJob.id.desc()).limit(limit).all()
+        raise HTTPException(
+            status_code=400,
+            detail="resume_text is required for recommendations. No fallback list is returned.",
+        )
 
     # Extract likely skill keywords from the resume (capitalized words, tech terms)
     # Find capitalized multi-letter words and common tech terms
@@ -414,7 +618,7 @@ def get_recommended_jobs(
             words.add(term)
 
     if not words:
-        return db.query(ScrapedJob).order_by(ScrapedJob.id.desc()).limit(limit).all()
+        return []
 
     # Search for jobs matching these keywords
     conditions = []
@@ -439,6 +643,149 @@ def get_recommended_jobs(
             deduped.append(job)
 
     return deduped[:limit]
+
+
+@app.get("/api/jobs/power-match")
+def get_power_match(
+    limit: int = Query(8, ge=1, le=20),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Power-match cached jobs against the logged-in user's latest resume.
+    Returns suitability, gaps, and bridge suggestions.
+    """
+    mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
+    resume_text = (mem.resume_text or "").strip() if mem else ""
+    if len(resume_text) < 50:
+        return {
+            "resume_ready": False,
+            "message": "Upload or score a resume first so we can build your power matches.",
+            "resume_skills": [],
+            "top_gaps": [],
+            "recommendations": [],
+        }
+
+    resume_skills, resume_signal_mode = _extract_resume_skills(resume_text, db)
+    resume_skill_lookup = {skill.lower(): skill for skill in resume_skills}
+    lower_resume = resume_text.lower()
+
+    candidate_jobs = (
+        db.query(ScrapedJob)
+        .order_by(ScrapedJob.id.desc())
+        .limit(300)
+        .all()
+    )
+
+    recommendations: list[dict] = []
+    for job in candidate_jobs:
+        job_skills = _normalize_skill_strings(job.skills)
+        matched_skills = [
+            skill for skill in job_skills
+            if skill.lower() in resume_skill_lookup or skill.lower() in lower_resume
+        ]
+        missing_skills = [
+            skill for skill in job_skills
+            if skill.lower() not in resume_skill_lookup and skill.lower() not in lower_resume
+        ]
+        title_terms = _extract_title_terms(job.title)
+        title_hits = [term for term in title_terms if term in lower_resume]
+
+        if not matched_skills and not title_hits and not job_skills:
+            continue
+
+        skill_score = (len(matched_skills) / max(3, min(len(job_skills), 8))) * 72 if job_skills else 0
+        title_score = min(18, len(title_hits) * 6)
+        description_bonus = min(
+            10,
+            sum(1 for skill in matched_skills[:4] if skill.lower() in (job.description or "").lower()) * 3,
+        )
+        suitability_score = round(min(98, skill_score + title_score + description_bonus))
+
+        if suitability_score < 18:
+            continue
+
+        if suitability_score >= 75:
+            suitability_label = "Strong Match"
+        elif suitability_score >= 55:
+            suitability_label = "Good Match"
+        elif suitability_score >= 35:
+            suitability_label = "Stretch Match"
+        else:
+            suitability_label = "Explore"
+
+        if matched_skills:
+            why = f"Matches on {', '.join(matched_skills[:3])}."
+        elif title_hits:
+            why = f"Your resume aligns with {', '.join(title_hits[:3])} from the role title."
+        else:
+            why = "Worth exploring, but the skill signal is still light."
+
+        recommendations.append({
+            "job": {
+                "id": job.id,
+                "title": job.title,
+                "company": job.company,
+                "location": job.location,
+                "salary": job.salary,
+                "source": job.source,
+                "url": job.url,
+                "posted_date": job.posted_date,
+                "employment_type": job.employment_type,
+                "seniority": job.seniority,
+                "description": job.description,
+                "skills": job.skills or [],
+                "agency": job.agency,
+                "scraped_at": job.scraped_at,
+            },
+            "suitability_score": suitability_score,
+            "suitability_label": suitability_label,
+            "matched_skills": matched_skills[:6],
+            "missing_skills": missing_skills[:6],
+            "why": why,
+            "bridge_plan": _build_bridge_plan(missing_skills),
+        })
+
+    recommendations.sort(
+        key=lambda item: (
+            item["suitability_score"],
+            len(item["matched_skills"]),
+            item["job"]["id"],
+        ),
+        reverse=True,
+    )
+    recommendations = recommendations[:limit]
+
+    top_gap_counts = Counter(
+        skill
+        for item in recommendations
+        for skill in item["missing_skills"][:3]
+    )
+    top_gaps = [
+        {"skill": skill, "count": count}
+        for skill, count in top_gap_counts.most_common(8)
+    ]
+
+    recommended_queries = []
+    seen_queries = set()
+    for item in recommendations:
+        title = item["job"]["title"]
+        if title in seen_queries:
+            continue
+        seen_queries.add(title)
+        recommended_queries.append(title)
+        if len(recommended_queries) >= 5:
+            break
+
+    return {
+        "resume_ready": True,
+        "message": "Power matches generated from your latest stored resume.",
+        "resume_signal_mode": resume_signal_mode,
+        "resume_skills": resume_skills[:24],
+        "top_gaps": top_gaps,
+        "recommended_queries": recommended_queries,
+        "recommendations": recommendations,
+    }
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobOut)
@@ -618,9 +965,11 @@ def score_resume(
 ) -> dict:
     check_rate_limit(user, "search", db)
     db.add(UsageLog(user_id=user.id if user else None, action="resume_score"))
+    resume_text = sanitize_resume_text(body.resume_text)
+    _persist_resume_to_memory(user, db, resume_text)
     db.commit()
     return _scorer.analyze(
-        resume_text=sanitize_resume_text(body.resume_text),
+        resume_text=resume_text,
         job_description=sanitize_user_input(body.job_description),
     )
 
@@ -846,8 +1195,10 @@ def ai_coach_resume(
 
 @app.post("/api/ai/rewrite")
 def ai_rewrite_bullet(
+    request: Request,
     body: RewriteBulletRequest,
     user: Optional[User] = Depends(get_optional_user),
+    jh_anon: str = Cookie(None),
     db: Session = Depends(get_db),
 ) -> dict:
     """
@@ -868,6 +1219,17 @@ def ai_rewrite_bullet(
             UsageLog.created_at >= today_start,
         ).first()
         if session_log:
+            session_owned = False
+            if user and session_log.user_id == user.id:
+                session_owned = True
+            elif not user and jh_anon:
+                detail = session_log.detail or ""
+                client_ip = _get_client_ip(request)
+                session_owned = (
+                    f"anon:{jh_anon}" in detail
+                    and f"ip:{client_ip}" in detail
+                )
+
             # Count how many rewrites already used this session
             rewrite_count = (
                 db.query(func.count(UsageLog.id))
@@ -878,7 +1240,7 @@ def ai_rewrite_bullet(
                 )
                 .scalar() or 0
             )
-            if rewrite_count < MAX_REWRITES_PER_SESSION:
+            if session_owned and rewrite_count < MAX_REWRITES_PER_SESSION:
                 session_valid = True
 
     if session_valid:
@@ -941,6 +1303,7 @@ async def upload_resume(
         action="resume_upload",
         detail=f"{result['file_type']}:{result['word_count']}words",
     ))
+    _persist_resume_to_memory(user, db, result["text"])
     db.commit()
 
     return result

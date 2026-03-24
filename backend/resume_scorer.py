@@ -322,11 +322,11 @@ class ResumeScorer:
         extra_found = any(
             kw in text_lower for kw in EXTRACURRICULAR_KEYWORDS
         )
-        extra_score = 5 if extra_found else 0
+        extra_score = 5 if extra_found else 3
         extra_suggestions: list[str] = []
         if not extra_found:
             extra_suggestions.append(
-                "Add volunteer work, activities, or leadership sections"
+                "Optional: add leadership, volunteer, or community activity only if it strengthens your story"
             )
         items["extracurricular"] = {
             "score": extra_score,
@@ -335,7 +335,7 @@ class ResumeScorer:
             "detail": (
                 "Extracurricular/volunteer content detected"
                 if extra_found
-                else "No extracurricular content found"
+                else "No extracurricular content detected -- optional for many experienced candidates"
             ),
             "suggestions": extra_suggestions,
         }
