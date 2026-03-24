@@ -1,395 +1,219 @@
-# CODEX INSTRUCTIONS — Complete Fix Plan
+# CODEX INSTRUCTIONS — Priority Fix List
 
 ## Context
-Job Hunter SG is a Singapore job aggregator + AI resume coach. The backend is solid (30+ endpoints, all working). The frontend (App.jsx, 3915 lines) has multiple bugs and missing features. This document lists EVERY issue to fix, in priority order.
+Job Hunter SG is a Singapore job aggregator + AI resume coach. Live at https://jobhunter.kooexperience.com. Public repo: https://github.com/haomingkoo/job-hunter-sg
 
-**Files**: `frontend/src/App.jsx` (primary), `backend/main.py`, `backend/ai_service.py`
+**Stack**: FastAPI backend, React+Vite+Tailwind frontend (single file `App.jsx`), SQLite/Postgres, SEA-LION AI (OpenAI-compatible).
+
+**New this session**: A 7-stage resume tailoring pipeline was built (see `backend/PIPELINE_README.md`). Backend is complete. Frontend integration is partial.
 
 **Rules**:
-- No hidden fallbacks — if something fails, show error
-- No hardcoded credentials
-- No VMock, SEA-LION, or developer jargon in user-facing text
-- All useState before conditional returns
-- Every API call needs try/catch with user-visible error
+- No hidden fallbacks. If something fails, show error or explain in pipeline_notes.
+- No hardcoded credentials.
+- No developer jargon in user-facing text (no "SEA-LION", "VMock", "32B").
+- Test locally before pushing. Railway auto-deploys from main.
 
 ---
 
-## CRITICAL FIXES
+## CRITICAL FIXES (do these first)
 
-### Fix 1: AI Rewrite shows empty "Suggested Rewrite" box
-**Location**: App.jsx ~line 3114 and ~line 2269
-**Problem**: Backend returns `{options: ["opt1", "opt2", "opt3"]}` but frontend reads `result.rewritten` (undefined).
-**Fix**:
-- Find `selectedRewrite.rewritten` and replace with `selectedRewrite.options`
-- Show ALL 3 options as selectable cards:
-```jsx
-{selectedRewrite?.no_change ? (
-  <div className="bg-emerald-50 p-3 rounded-xl text-emerald-700 text-sm">
-    {selectedRewrite.message || "This bullet is already strong — no changes needed."}
-  </div>
-) : selectedRewrite?.options?.length > 0 ? (
-  <div className="space-y-2">
-    <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Pick a rewrite</div>
-    {selectedRewrite.options.map((opt, idx) => (
-      <div key={idx} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-        <p className="text-sm text-gray-700 leading-relaxed">{opt}</p>
-        <button onClick={() => acceptRewrite(selectedBullet, idx)}
-          className="mt-2 bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs">
-          Accept Option {idx + 1}
-        </button>
-      </div>
-    ))}
-  </div>
-) : null}
+### Fix 1: Education entries lumped together
+**Location**: `frontend/src/App.jsx` — `buildEducationPair()` function (~line 2081)
+**Problem**: Two degrees (M.Sc. and B.Sc.) render as one merged block instead of separate entries.
+
+The raw text from backend is correct:
 ```
-- Update `acceptRewrite(section)` → `acceptRewrite(section, optionIndex=0)`:
+Line 32: M.Sc., Smart Industries & Digital Transformation — NUS, 2022
+Line 33: GPA: 4.85 / 5.00 | Graduate Certificates in IoT...
+Line 34: B.Sc. (Hons, Distinction), Chemistry — NUS
+Line 35: GPA: 4.46 / 5.00 | Exchange: Simon Fraser University
+```
+
+Lines 32+33 should be one education entry. Lines 34+35 should be a SEPARATE entry. Currently the parser merges all 4 lines into one block.
+
+**Fix**: In `buildEducationPair`, when processing the "next" line and considering `canExtendEducationMeta` (line 2093), check if the third line starts a NEW degree (`RESUME_DEGREE_RE` match). If it does, do NOT merge — stop at `consumed=1` and let the next iteration create a new pair.
+
+Add degree detection:
 ```javascript
-const candidate = rewriteResults?.[section.id]?.options?.[optionIndex];
+const DEGREE_START_RE = /^(M\.?Sc|B\.?Sc|B\.?Eng|MBA|M\.?Eng|Ph\.?D|B\.?A|M\.?A|Diploma)/i;
 ```
-- Also find the line `const candidate = rewriteResults?.[section.id]?.rewritten;` and change to `.options?.[0]`
+If `third` matches this regex, set `canExtendEducationMeta = false`.
 
-### Fix 2: Admin account creation is unreachable code
-**Location**: backend/main.py ~line 301-318
-**Problem**: Admin creation code ended up inside `_build_bridge_plan()` after a `return` statement — unreachable.
-**Fix**: Move the admin creation try/except block into `on_startup()` function (after line 168), properly indented.
+**Test**: Upload a resume with 2+ degrees. Each should render as a separate entry with its own GPA line.
 
-### Fix 3: "Finalize Score" doesn't re-score
-**Location**: App.jsx — find the Finalize Score button's onClick handler
-**Problem**: The button exists but doesn't call POST /api/resume/score with the current resumeText.
-**Fix**: The handler should:
-1. Set `scoring = true`
-2. Call `POST /api/resume/score` with `{resume_text: resumeText, job_description: selectedJob?.description || ""}`
-3. Update `scoreData` with the response
-4. Set `scoring = false`
-5. Show before/after if old score exists (e.g., "41 → 67")
+### Fix 2: Section order wrong
+**Location**: `frontend/src/App.jsx` — `reorderParsedSections()` function
+**Problem**: "Additional Information" and "Languages" appear before "Professional Summary" in the preview. The backend returns sections in correct order (Summary first).
 
-### Fix 4: Re-score automatically after "AI Improve All"
-**Location**: App.jsx — `handleAIFormat` function (~line 2209-2235)
-**Problem**: After AI reformats the resume, score stays stale.
-**Fix**: After `applyResumeText(data.formatted_resume, ...)`, trigger a re-score call.
+**Fix**: The template ordering logic in `reorderParsedSections` is overriding the natural document order. Either:
+1. Fix the template section order to put `summary` first, OR
+2. Keep sections in their original document order unless the template explicitly specifies otherwise
+
+**Test**: Upload resume. Sections should appear in this order: Contact → Summary → Core Skills → Experience → Education → Certifications → Additional Info → Languages.
+
+### Fix 3: Empty sections still render
+**Location**: `frontend/src/App.jsx` — resume document renderer
+**Problem**: "ADDITIONAL INFORMATION" shows as a heading with no content below it.
+
+**Fix**: In the render loop, skip sections that have:
+- Type "heading" followed immediately by another heading or spacer
+- No bullets, paragraphs, or subheadings between this heading and the next
+
+**Test**: Upload resume with an empty section heading. It should not appear in the preview.
+
+### Fix 4: Specifics score — show WHICH bullets lack metrics
+**Location**: `frontend/src/App.jsx` — Specifics feedback panel
+**Problem**: Shows "8/22 bullets contain metrics/numbers" but doesn't tell the user WHICH 14 bullets are missing metrics. The data is available in the annotations (bullets with "Good Start" badge have no metrics, "Solid Impact" have metrics).
+
+**Fix**: Under the Specifics score, add a list of the bullets that are missing metrics:
+```
+Bullets missing quantification:
+• "Managed a cross-site team of 6..." — already has team size, but no outcome metric
+• "Partnered with process integration..." — add a %, $, or scale number
+• "Standardized documentation..." — what was the result? How many docs? Time saved?
+```
+
+For each bullet missing metrics, show the first 60 chars + a hint about what metric to add.
 
 ---
 
-## HIGH FIXES
+## HIGH PRIORITY
 
-### Fix 5: Resume preview must match DOCX output exactly
-**Location**: App.jsx lines 1296-1324 (template styles) and line 3336 (page container)
-**Problem**: Preview uses different font sizes, margins, and section header styles than the DOCX templates.
-**Fix**: Make page container style TEMPLATE-SPECIFIC:
-```javascript
-const templatePageStyles = {
-  classic: { fontFamily: 'Georgia, "Times New Roman", serif', fontSize: '11pt', padding: '25mm 25mm' },
-  modern: { fontFamily: 'Calibri, "Segoe UI", sans-serif', fontSize: '10pt', padding: '15mm 15mm' },
-  singapore: { fontFamily: 'Calibri, "Segoe UI", sans-serif', fontSize: '11pt', padding: '20mm 20mm' },
-  compact: { fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '10pt', padding: '13mm 13mm' },
-};
+### Fix 5: "Run Full Tailor" progress UI
+**Location**: `frontend/src/App.jsx` — tailoring section
+**Problem**: The pipeline starts but the progress UI is minimal. Users need to see which of the 7 stages is active.
+
+The backend returns from `GET /api/resume/tailor/{session_id}/status`:
+```json
+{
+  "stage": "bullet_rewrite",
+  "stage_number": 3,
+  "total_stages": 7,
+  "progress": {"completed": 8, "total": 20},
+  "message": "Rewriting bullets 8 of 20...",
+  "complete": false
+}
 ```
-Apply the selected template's page style to the container `style` prop.
 
-### Fix 6: Job cards should expand to show full description + skills analysis
-**Location**: App.jsx — Jobs tab, ScraperTab component
-**Problem**: Job cards only show title, company, location. No way to see the full JD or skills.
-**Fix**: Make each job card expandable on click:
-- Add `expandedJobId` state
-- On click, toggle expansion
-- Expanded view shows: full description, skills tags, "Required Skills Analysis" section
-- MCF jobs have descriptions + skills in the DB already
-- CareersGov jobs may not have descriptions — show "View full listing" link instead
-
-### Fix 7: Missing keywords should link back to the JD context
-**Location**: App.jsx — Resume tab, Relevant Terms / Missing section
-**Problem**: Missing keywords are just red pills with no context. User doesn't know WHERE in the JD the keyword appears.
-**Fix**: When user hovers/clicks a missing keyword, show the sentence from the JD that contains it. For example:
+**Fix**: Show a step progress bar with 7 stages:
 ```
-Missing: "collaborate"
-From JD: "...collaborate with cross-functional teams to deliver..."
-Suggestion: Add this to your teamwork bullet.
+[✓ Analyze] [✓ Strategy] [✓ Cleanup] [● Rewriting 8/20] [ Polish] [ Summary] [ Validate]
 ```
-This requires passing the JD text to the frontend and doing a simple substring search around each keyword.
+Each stage gets a label. Active stage shows progress. Completed stages get a checkmark.
 
-### Fix 8: Tracker tab messaging for free-tier users
-**Location**: App.jsx ~line 1038
-**Problem**: Shows "Application tracking requires an @aisg.sg account" even when user IS logged in (just on free tier).
-**Fix**: Change to "Upgrade to AISG tier to track applications. Sign up with @aisg.sg to unlock."
+### Fix 6: Pipeline result — accept/reject per change
+**Location**: `frontend/src/App.jsx`
+**Problem**: When the pipeline completes, the result contains `changes[]` with `original` and `tailored` per bullet, but there's no diff view or accept/reject UI.
+
+**Endpoints available**:
+- `POST /api/resume/tailor/{session_id}/feedback` — `{bullet_id, action: "accept"|"reject"|"edit", edited_text}`
+- `POST /api/resume/tailor/{session_id}/apply` — applies only accepted changes
+
+**Fix**: After pipeline completes, show each change as a card:
+```
+ORIGINAL: "Responsible for managing stakeholder relationships across APAC"
+TAILORED: "Directed stakeholder engagement across 4 APAC regions, aligning engineering and operations teams"
+[✓ Accept] [✗ Reject] [✎ Edit]
+```
+
+Then an "Apply Accepted Changes" button that calls `/apply`.
+
+### Fix 7: ATS gap report UI
+**Location**: `frontend/src/App.jsx`
+**Problem**: Pipeline returns `ats_gaps[]` showing remaining missing skills with suggested placement, but no UI displays this.
+
+Each gap looks like:
+```json
+{
+  "skill": "kubernetes",
+  "required": true,
+  "suggested_section": "skills",
+  "suggested_entry_id": null,
+  "action": "No existing bullets relate to 'kubernetes'. Add to Skills if you have it, or skip.",
+  "needs_user_input": true
+}
+```
+
+**Fix**: After pipeline results, show an "ATS Gaps" section:
+```
+REMAINING GAPS (3 skills still missing)
+
+[REQUIRED] kubernetes
+  → Add to Skills if you have this experience, or skip
+  [Add to Skills] [Skip — I don't have this]
+
+[PREFERRED] real-time streaming
+  → Your AI Singapore role mentions NLP pipeline — could be relevant
+  [Add to bullet] [Add to Skills] [Skip]
+```
+
+### Fix 8: Add Section / Add Bullet
+**Location**: `frontend/src/App.jsx` — resume editor
+**Problem**: Template coverage says "consider adding Projects" but there's no way to add a new section. The "+ Add Bullet Below" button exists for existing sections, but there's no "+ Add Section".
+
+**Fix**: Add a "+ Add Section" button at the bottom of the resume preview. On click, show options:
+- Projects
+- Volunteer / Activities
+- Awards / Honors
+- Custom section (user types name)
+
+When selected, insert the heading + one empty bullet into the resume text and re-render.
 
 ---
 
-## MEDIUM FIXES
+## MEDIUM PRIORITY
 
-### Fix 9: Power Match tab "not listed" fallback text
-**Location**: App.jsx ~lines 803-805
-**Fix**: Use `{item.job.location && <span>...</span>}` pattern instead of `|| "not listed"`
+### Fix 9: Sort default to Newest
+**Location**: `frontend/src/App.jsx` — ScraperTab sort
+**Problem**: Default sort shows "Sort: Relevance" but there's no "Newest" option. Jobs should default to newest first.
 
-### Fix 10: Send `used_verbs` in AI rewrite request
-**Location**: App.jsx — `handleBulletRewrite` function
-**Fix**: Before calling API, collect first words of all other bullets:
-```javascript
-const usedVerbs = bulletSections
-  .filter(s => s.id !== selectedBullet.id && s.type === "bullet")
-  .map(s => s.text.split(/\s+/)[0]?.toLowerCase())
-  .filter(Boolean)
-  .join(", ");
-// Add to request body: used_verbs: usedVerbs
-```
+**Fix**: Add "Sort: Newest" option (already present as "newest" in some code paths). Make it the default. Backend already returns by `id DESC` which is roughly newest first.
 
-### Fix 11: Pagination should use total pages from API
-**Location**: App.jsx — Jobs tab pagination
-**Fix**: Store `totalPages` from `data.pages` and show Next only when `page < totalPages`
+### Fix 10: Filter dropdowns from all jobs
+**Location**: `frontend/src/App.jsx` — ScraperTab filters
+**Problem**: Location/source/employment dropdowns were built from current 20 results. Backend now returns `filter_meta` on page 1 responses.
 
-### Fix 12: Certifications and education entries should not be annotated
-**Location**: App.jsx — `annotateBullet` function
-**Fix**: Check if text contains certification/education keywords and return neutral annotation.
-The regex check `looksLikeCert` and `looksLikeEducation` may already be in the code — verify it's working.
+**Fix**: Use `data.filter_meta.sources`, `data.filter_meta.employment_types`, and `data.filter_meta.locations` from the `/api/jobs` response to populate dropdowns. Only fall back to current-page values if `filter_meta` is missing.
+
+### Fix 11: Summary optimization button
+**Problem**: No way to click on the Professional Summary and get AI to rewrite it.
+**Fix**: When user clicks the Professional Summary section, show an "Optimize Summary" button in the left panel. On click, call the pipeline in "full" mode (which includes Stage 5 summary generation), or add a dedicated summary-only endpoint.
 
 ---
 
-## FEATURE ADDITIONS
+## BACKEND FILES (do NOT modify)
+These were built and tested this session. Do not change unless a bug is found during review:
+- `backend/jd_preparser.py`
+- `backend/resume_structurer.py`
+- `backend/ai_phrases.py`
+- `backend/validation_gates.py`
+- `backend/tailoring_pipeline.py`
 
-### Feature 1: Job card expansion with JD + analytics
-When clicking a job in the Jobs tab:
-```
-┌──────────────────────────────────────────────────────┐
-│ Senior Engineer, HIG-HBM Product System & Eng.       │
-│ MICRON SEMICONDUCTOR | North Coast Drive | $6K-$12K  │
-│                                                      │
-│ ▼ DESCRIPTION                                        │
-│ Responsibilities: Reliability Test Program Coding... │
-│                                                      │
-│ ▼ TOP SKILLS REQUIRED (from this JD)                 │
-│ [Reliability Testing] [Electronics] [Python] [C++]   │
-│ [Problem Solving] [Semiconductor]                    │
-│                                                      │
-│ ▼ YOUR MATCH (if resume uploaded)                    │
-│ 4/6 skills matched • 67% match                      │
-│ Missing: [C++] [Reliability Testing]                 │
-│                                                      │
-│ [Generate Resume for This Job] [+ Track] [View]      │
-└──────────────────────────────────────────────────────┘
-```
+## BACKEND CHANGES ALREADY MADE (for reference)
+- `backend/main.py` — 6 new pipeline endpoints, lifespan (replaced deprecated on_event), validated rewrite options
+- `backend/ai_service.py` — 70B model constants, progressive JSON retry, validated rewrites
+- `backend/auth.py` — ephemeral JWT key in dev (no hardcoded fallback)
+- `backend/models.py` — parsed_jd column on ScrapedJob, TailoredResume table
+- `backend/seed_jobs.py` — auto pre-parse JD on scrape
+- `backend/scraper.py` — MCF employment_type extraction from plural field
+- `backend/resume_scorer.py` — word count range widened to 400-900
 
-### Feature 2: AI generates points to match the JD
-When clicking "Generate Resume for This Job":
-- Compare user's resume against this job's skills/description
-- AI suggests which bullets to modify and what keywords to add
-- Uses the existing POST /api/ai/integrate-keywords endpoint
+## REVIEW CHECKLIST
+Before pushing any changes, also run `CODEX_REVIEW.md` — it has 6 mechanical test tasks for the pipeline reliability.
 
-### Feature 3: Keyword context from JD
-When showing "Missing" keywords in the resume workspace:
-- Each keyword should show the sentence from the JD that mentions it
-- Helps user understand WHY the keyword matters for this specific role
-- Simple implementation: find the keyword in JD text, extract surrounding sentence
-
----
-
-## TESTING CHECKLIST
-
-After all fixes, verify:
-- [ ] Upload resume PDF → text appears, name parsed, score calculated
-- [ ] Score shows bullet count > 0 (not "0/0 bullets")
-- [ ] "AI Improve All" reformats resume AND re-scores
-- [ ] "AI Rewrite This Bullet" shows 3 options (not empty) — uses 32B model (fast, interactive)
-- [ ] Accepting a rewrite updates the resume text
-- [ ] "Finalize Score" triggers a fresh score
-- [ ] Certifications not flagged as "Review Opening"
-- [ ] Resume preview matches DOCX template (font, margins, spacing)
-- [ ] Download DOCX produces a real file
-- [ ] Job cards expand to show full description
-- [ ] Missing keywords show JD context
-- [ ] Pagination shows correct total and pages
-- [ ] No "not listed" fallback text anywhere
-- [ ] All buttons have loading states
-- [ ] All API calls have error handling
-- [ ] No console errors in browser dev tools
-
-### Pipeline-specific tests (new backend):
-- [ ] `POST /api/resume/tailor` with `{resume_text, job_id, intensity: "full"}` returns `session_id`
-- [ ] `GET /api/resume/tailor/{session_id}/status` returns progress stages correctly
-- [ ] `GET /api/resume/tailor/{session_id}/result` returns tailored resume + REAL before/after skill match (re-scanned, not estimated)
-- [ ] `POST /api/resume/tailor/{session_id}/feedback` with `{bullet_id, action: "accept"}` marks change
-- [ ] `POST /api/resume/tailor/{session_id}/apply` applies only accepted changes, returns final text + score
-- [ ] `GET /api/jobs/{job_id}/parsed` returns pre-parsed JD with required_skills, preferred_skills
-- [ ] Pipeline runs all 7 stages without crashing. If AI calls fail, `pipeline_notes` explains what degraded (no hidden fallbacks).
-- [ ] Validation gates reject hallucinated metrics (test: add fake "$5M" to a bullet that had no numbers)
-- [ ] AI phrase cleanup replaces "spearheaded" with "led" (unless JD uses "spearheaded")
-- [ ] Verb dedup: if two bullets in same job entry start with "Led", second gets replaced with synonym
-- [ ] `ats_gaps` in result shows remaining missing skills with suggested section + entry for each
-- [ ] Skills section gets reordered: JD-matched skills moved to top
-- [ ] `skill_match.after` is an actual re-scan of tailored text, not an estimate
-- [ ] Stage 3 uses JSON output format (`{"rewrites": [...]}`) with numbered-line fallback
-
----
-
-## NEW: Resume Tailoring Pipeline (backend complete, needs frontend)
-
-### Why we built this
-
-Our old approach was broken. We were sending the entire resume + JD in a single LLM call and asking it to review every bullet, diagnose issues, rewrite them, AND integrate keywords -- all at once, capped at 3000 tokens. Even a strong model produces mediocre results when you cram 5 tasks into one call.
-
-We studied Resume-Matcher (26K stars, similar FastAPI stack) and found they use a **multi-pass pipeline**: separate focused calls for keyword extraction, bullet rewriting, keyword injection, AI phrase cleanup, and hallucination detection. Each call does ONE thing well.
-
-Our new pipeline applies the same principle:
-- **Structured data model**: Resume is parsed into sections/entries/bullets with IDs (not a flat string). Every AI call knows exactly what section and entry it's working in.
-- **Focused calls**: One call for strategy (which bullets to prioritize), separate calls for per-bullet rewrites (batched 4 at a time), one call for executive summary.
-- **Local validation**: 5 gates check every AI rewrite -- fact preservation, hallucination detection, AI phrase cleanup, length sanity, keyword verification. No LLM cost for these.
-- **Pre-parsed JDs**: Job descriptions are analyzed at scrape time (regex, ~50ms, no LLM). When a user clicks "Tailor", skill gaps are instant -- no waiting for JD analysis.
-- **70B reasoning model**: The API gives us `Llama-SEA-LION-v3.5-70B-R` (70B reasoning) at the same rate limit and cost as the 32B. Pipeline uses 70B since it runs in background. Single-bullet interactive rewrites use 32B for speed.
-
-### Architecture
-A 7-stage pipeline that transforms a raw resume into a JD-tailored version. Runs as a background thread with progress polling.
-
-**New backend files** (do NOT modify these, they are tested and working):
-- `jd_preparser.py` — pre-parses JDs at scrape time (runs on every new job, ~50ms, no LLM)
-- `resume_structurer.py` — parses resume into structured sections/entries/bullets
-- `ai_phrases.py` — 107 AI-sounding phrase replacements with JD protection
-- `validation_gates.py` — 5 validation gates (fact preservation, hallucination detection, etc.)
-- `tailoring_pipeline.py` — 7-stage orchestrator
-
-**Model selection**:
-- Single bullet rewrite (`/api/ai/rewrite`): **32B Qwen** (fast, interactive, user is watching)
-- Full pipeline (`/api/resume/tailor`): **70B Llama reasoning** (background, user sees progress bar)
-
-**New endpoints**:
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `POST /api/resume/tailor` | Start pipeline | `{resume_text, job_id, intensity}` -> `{session_id}` |
-| `GET /api/resume/tailor/{session_id}/status` | Poll progress | Returns stage number, progress %, message |
-| `GET /api/resume/tailor/{session_id}/result` | Get result | Returns full result + `ats_gaps` + real `skill_match` |
-| `POST /api/resume/tailor/{session_id}/feedback` | Accept/reject | `{bullet_id, action: "accept"|"reject"|"edit", edited_text}` |
-| `POST /api/resume/tailor/{session_id}/apply` | Apply changes | Applies accepted changes only, returns final text + score |
-| `GET /api/jobs/{job_id}/parsed` | Get parsed JD | Returns pre-parsed skills/requirements |
-
-**`intensity` levels**:
-- `"nudge"` — local fixes only (AI phrase cleanup, verb dedup). No LLM calls. ~5 seconds.
-- `"keywords"` — nudge + keyword injection + bullet rewrites. ~30 seconds.
-- `"full"` — everything + executive summary generation. ~45-60 seconds.
-
-### Frontend work needed
-1. **"Tailor for This Job" button** on job cards (expanded view) and in the Resume tab when a job is selected
-2. **Progress UI**: poll `/status` every 2-3s, show stage name + progress bar. 7 stages with labels.
-3. **Result display**: show before/after diff per bullet, accept/reject/edit controls per change
-4. **Accept/reject flow**: each change shows original vs tailored. User clicks Accept, Reject, or Edit. Uses `POST /feedback` endpoint.
-5. **"Apply Changes" button**: calls `POST /apply` endpoint, only applies accepted changes. Shows final score.
-6. **ATS Gap Report**: after pipeline completes, show `ats_gaps` from result:
-   - Each missing skill shows: name, required/preferred badge, suggested section + entry
-   - If `needs_user_input: true`, show input: "Do you have experience with [skill]? Describe briefly."
-   - Actions: [Add to bullet] [Add to Skills only] [Skip - I don't have this]
-7. **Score comparison**: show skill match before/after (real re-scanned numbers) AND resume score before/after
-8. **Loading states**: clear loading during pipeline. Show active stage name. No hidden spinners.
-9. **Pipeline notes**: if `result.degraded` is true, show `pipeline_notes` explaining what degraded. No hidden fallbacks.
-
-### DB changes
-- `ScrapedJob` has new `parsed_jd` JSON column (auto-populated at scrape time)
-- `TailoredResume` table for session tracking (not yet used by frontend)
-
----
-
-## CODE REVIEW REQUEST FOR CODEX
-
-Codex: you are the second pair of eyes. The new pipeline files were written in one session and need a thorough review. Please check ALL of the following:
-
-### 1. Import + runtime verification
-For each new backend file, verify it actually imports and runs without error:
-```bash
-cd backend
-python3 -c "from jd_preparser import preparse_job_description; print('jd_preparser OK')"
-python3 -c "from resume_structurer import structure_resume, get_all_bullets, flatten_to_text; print('structurer OK')"
-python3 -c "from ai_phrases import clean_ai_phrases; print('ai_phrases OK')"
-python3 -c "from validation_gates import run_all_gates, validate_and_fix; print('gates OK')"
-python3 -c "from tailoring_pipeline import run_pipeline, get_pipeline_state; print('pipeline OK')"
-```
-
-### 2. Database migration
-The `ScrapedJob` model now has a `parsed_jd` column and there's a new `TailoredResume` table. Verify:
-- SQLite creates these on `init_db()` (SQLAlchemy `create_all`)
-- Existing data is not lost
-- The `parsed_jd` column is nullable (old jobs can have NULL)
-
-### 3. Endpoint contract verification
-Test each new endpoint returns the documented response shape:
-- `POST /api/resume/tailor` - returns `{session_id, status, estimated_seconds}`
-- `GET /api/resume/tailor/{id}/status` - returns `{stage, stage_number, total_stages, progress, message, complete}`
-- `GET /api/resume/tailor/{id}/result` - returns `{tailored_text, changes[], skill_match{before, after, matched_after, missing_after}, score{before, after}, ats_gaps[]}`
-- `POST /api/resume/tailor/{id}/feedback` - returns `{bullet_id, action, accepted, rejected, pending}`
-- `POST /api/resume/tailor/{id}/apply` - returns `{tailored_text, applied, rejected, skipped_pending, score_after}`
-- `GET /api/jobs/{id}/parsed` - returns `{job_id, title, company, parsed_jd, has_parsed_jd}`
-
-### 4. Error path verification
-Confirm NO hidden fallbacks. Every error path should either:
-- Return an explicit HTTP error with a clear message, OR
-- Add to `pipeline_notes` explaining what degraded and why
-
-Check specifically:
-- What happens if the LLM returns empty/null for Stage 1 strategy?
-- What happens if Stage 3 JSON parsing fails AND the numbered-line fallback also fails?
-- What happens if `_stage_6_validate` receives a structured resume with zero sections?
-- What happens if `parsed_jd` is None when `_execute_pipeline` runs?
-
-### 5. Validation gate edge cases
-Test these with unit tests:
-- `gate_fact_preservation`: original has "$3M", tailored changes to "$3.5M" - should FAIL
-- `gate_fact_preservation`: original has "12 engineers", tailored has "12 engineers" - should PASS
-- `gate_hallucination`: tailored adds "Kubernetes, Docker, Terraform" when original had none - should FAIL
-- `gate_ai_phrases`: tailored says "spearheaded", JD also says "spearheaded" - should be PROTECTED (not replaced)
-- `gate_length_sanity`: 45-word rewrite of a 20-word original - should FAIL (>1.8x)
-
-### 6. Concurrency check
-The pipeline uses `threading.Thread`. Verify:
-- `_active_pipelines` dict access is thread-safe (uses `_pipelines_lock`)
-- `PipelineState` updates are thread-safe (uses `self._lock`)
-- Rate limiter handles concurrent pipeline threads (multiple threads calling `_call_sealion`)
-
-### 7. Memory / cleanup
-- `_active_pipelines` has a TTL cleanup. Verify `_cleanup_expired_pipelines()` is actually called somewhere (it may need to be wired into lifespan or a periodic task).
-- Each pipeline result stores full resume text. With many concurrent users, check memory isn't unbounded.
-
-### 8. Known issues to fix if found
-- `_cleanup_expired_pipelines` is now called on every `get_pipeline_state()` read. Verify it works.
-- `auth.py` now generates ephemeral JWT keys in local dev (not a hardcoded fallback). Verify tokens work during a dev session.
-- `main.py` uses `lifespan` instead of deprecated `on_event("startup")`. Verify startup still works correctly.
-
----
-
-## FULL REVIEW SPEC
-
-**See `CODEX_REVIEW.md` for the complete 6-phase review checklist.**
-
-Codex: when you pick up this project, run the review FIRST before doing any feature work. The pipeline was built in one session and needs a reliability audit. The review spec has test cases to write, error paths to trace, and specific bugs to check for. Write results to `REVIEW_RESULTS.md`.
-
----
-
-## ADDITIONAL FEATURE: Smart Keyword Integration
-
-### The Flow
-1. JD skills are extracted as MULTI-WORD phrases (not single words)
-   - "project management" not "project" + "management"  
-   - "cross-functional collaboration" not "cross" + "functional" + "collaboration"
-   - "semiconductor manufacturing" not "semiconductor" + "manufacturing"
-
-2. When showing "Missing" keywords in the resume workspace:
-   - Each keyword shows the sentence FROM THE JD where it appears
-   - User clicks a missing keyword
-   - AI generates 3 sentence options that:
-     a) Keep the keyword as EXACT MATCH (verbatim, not paraphrased)
-     b) Fit naturally into the user's existing resume style
-     c) Reference their actual experience (not hallucinated)
-
-3. User picks an option → it inserts into their resume at the right place
-
-### Backend Endpoint (already exists)
-`POST /api/ai/integrate-keywords` — accepts resume_text + missing_keywords + job_title
-
-### Frontend Implementation
-- In the "Missing" keywords section, make each pill CLICKABLE
-- On click, show:
-  1. JD context: the sentence containing this keyword
-  2. "AI Suggest" button → calls /api/ai/integrate-keywords for this keyword
-  3. 3 rewrite options with the keyword in BOLD
-  4. Accept → inserts into resume text
-
-### Multi-Word Phrase Extraction
-The keyword extraction currently splits on single words. Need to extract phrases:
-- Use the job's `skills` array from the database (MCF provides these as phrases)
-- For JD text: extract noun phrases (2-3 word combinations) not just individual words
-- Common multi-word skills: "machine learning", "data analysis", "project management", etc.
-- Maintain a skills dictionary of known multi-word terms
-
+## TESTING
+After all fixes, verify on https://jobhunter.kooexperience.com:
+- [ ] Upload resume PDF/DOCX — sections render in correct order
+- [ ] Education shows as separate entries (M.Sc. and B.Sc. not merged)
+- [ ] Empty sections (like "Additional Information" with no content) are hidden
+- [ ] Specifics score panel shows which bullets lack metrics
+- [ ] "Run Full Tailor" completes without 405 error
+- [ ] Pipeline progress shows 7 stages with active indicator
+- [ ] Pipeline result shows accept/reject per change
+- [ ] ATS gaps shown with actionable suggestions
+- [ ] "+ Add Section" button works at bottom of resume
+- [ ] Sort defaults to Newest
+- [ ] Filter dropdowns show all sources/locations/employment types from DB
+- [ ] AI rewrite options pass validation (no more picking an option that fails the same check)
+- [ ] Score recalculates correctly after edits (Specifics count matches annotations)
+- [ ] No console errors, no white screens, no hidden fallbacks
