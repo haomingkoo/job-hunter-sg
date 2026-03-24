@@ -1470,6 +1470,7 @@ def score_resume(
     user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ) -> dict:
+    started_at = datetime.now(timezone.utc)
     check_rate_limit(user, "search", db)
     db.add(UsageLog(user_id=user.id if user else None, action="resume_score"))
     resume_text = sanitize_resume_text(body.resume_text)
@@ -1477,14 +1478,23 @@ def score_resume(
     db.commit()
 
     jd_text = sanitize_user_input(body.job_description)
+    log.info(
+        "Resume score requested words=%s jd_chars=%s user=%s",
+        len(resume_text.split()),
+        len(jd_text),
+        user.id if user else "anon",
+    )
     result = _scorer.analyze(
         resume_text=resume_text,
         job_description=jd_text,
     )
+    analyze_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
 
     # Enhance with multi-word skill phrase matching
     if jd_text.strip():
-        jd_skill_phrases = extract_skill_phrases(jd_text, db_session=db)
+        # Keep score responsive: use fast JD phrase extraction without
+        # rebuilding the dynamic skills dictionary from the entire jobs table.
+        jd_skill_phrases = extract_skill_phrases(jd_text)
         skill_match = match_resume_skills_with_context(
             resume_text=resume_text,
             jd_skills=jd_skill_phrases,
@@ -1497,6 +1507,16 @@ def score_resume(
             "missing": [],
             "match_percent": 0,
         }
+
+    total_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
+    log.info(
+        "Resume score completed overall=%s analyze_ms=%s total_ms=%s matched=%s missing=%s",
+        result.get("overall_score"),
+        analyze_ms,
+        total_ms,
+        len(result["skill_match"].get("matched", [])),
+        len(result["skill_match"].get("missing", [])),
+    )
 
     return result
 
