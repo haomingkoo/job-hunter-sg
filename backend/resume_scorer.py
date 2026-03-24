@@ -90,35 +90,27 @@ COMPETENCY_KEYWORDS: dict[str, list[str]] = {
     "analytical": [
         "data", "analysis", "research", "metrics", "statistical",
         "evaluate", "optimize", "quantitative", "forecast", "insights",
-        "modeled", "assessed", "benchmarked", "measured", "analyzed",
-        "diagnostic", "root cause", "yield", "metrology", "data-driven",
-        "kpi", "dashboard", "visualization", "trend",
+        "modeled", "assessed", "benchmarked",
     ],
     "communication": [
         "presented", "communicated", "collaborated", "stakeholder",
         "facilitated", "negotiated", "articulated", "liaised",
-        "reported", "briefed", "authored", "published", "aligned",
-        "coordination", "multi-site", "workshop", "training",
-        "cross-site", "briefed", "documented", "governance",
+        "reported", "briefed", "authored", "published",
     ],
     "leadership": [
         "led", "managed", "supervised", "mentored", "directed",
         "spearheaded", "oversaw", "headed", "governed", "guided",
-        "delegated", "inspired", "chaired", "drove", "steered",
-        "orchestrated", "championed", "accountable", "owned",
+        "delegated", "inspired",
     ],
     "teamwork": [
         "cross-functional", "collaborated", "partnered", "team",
         "contributed", "coordinated", "cooperated", "supported",
-        "aligned", "joint", "multi-site", "multi-team", "liaison",
-        "integration", "cross-fab", "cross-site", "stakeholder",
+        "aligned", "joint",
     ],
     "initiative": [
         "initiated", "launched", "created", "established", "pioneered",
         "proposed", "founded", "introduced", "innovated", "championed",
-        "conceptualized", "originated", "spearheaded", "revamped",
-        "transformed", "built", "designed", "developed", "implemented",
-        "deployed", "scaled", "automated",
+        "conceptualized", "originated",
     ],
 }
 

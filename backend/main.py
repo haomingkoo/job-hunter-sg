@@ -518,21 +518,12 @@ def list_cached_jobs(
 
     query = db.query(ScrapedJob)
     if q:
-        # Split multi-word queries into individual terms and match ANY
-        terms = [t.strip() for t in q.split() if t.strip()]
-        if terms:
-            term_filters = []
-            for term in terms:
-                pattern = f"%{term}%"
-                term_filters.append(
-                    (ScrapedJob.title.ilike(pattern))
-                    | (ScrapedJob.company.ilike(pattern))
-                    | (ScrapedJob.description.ilike(pattern))
-                    | (ScrapedJob.search_keyword.ilike(pattern))
-                )
-            # All terms must match (AND) — "micron principal" finds jobs matching BOTH words
-            for tf in term_filters:
-                query = query.filter(tf)
+        pattern = f"%{q}%"
+        query = query.filter(
+            (ScrapedJob.title.ilike(pattern))
+            | (ScrapedJob.company.ilike(pattern))
+            | (ScrapedJob.search_keyword.ilike(pattern))
+        )
     if employment_type:
         query = query.filter(ScrapedJob.employment_type.ilike(f"%{employment_type}%"))
     if seniority:
@@ -1440,35 +1431,38 @@ def format_resume(
     ))
     db.commit()
 
-    system = """You are an expert resume editor. You will receive a resume and optionally a job description.
+    system = """You are an expert resume formatter. Take the raw resume text and return a perfectly formatted, ATS-friendly resume.
 
-YOUR TASK: Improve ONLY the weak parts. Leave strong parts UNTOUCHED.
+CRITICAL — DO NOT HALLUCINATE:
+- NEVER change, invent, or alter: names, email addresses, phone numbers, dates, company names, job titles, degree names, university names, certifications, or any factual information
+- ONLY improve: formatting, structure, bullet point wording, action verbs, and section organization
+- If you're unsure about a detail, keep the original text exactly as-is
+- Do NOT add achievements, metrics, or skills that are not in the original resume
 
-RULES:
-1. PRESERVE ALL STRUCTURE EXACTLY:
-   - Section headers (EXPERIENCE, EDUCATION, etc) → keep as-is
-   - Company names → keep as-is
-   - Job titles → keep as-is
-   - Dates → keep as-is
-   - Education entries → keep as-is
-   - Certifications → keep as-is
+CRITICAL STRUCTURE RULES:
+- NEVER turn job titles into bullet points
+- Preserve this hierarchy exactly:
+  SECTION HEADER (ALL CAPS)
+  Company Name — Location
+  Job Title | Date Range
+  • Achievement bullet 1
+  • Achievement bullet 2
+- Job titles with dates (e.g., "Program Manager | Aug 2022 – Jan 2025") are SUBHEADINGS, not bullets
+- Only achievement/responsibility lines should be bullets (starting with •)
+- NEVER merge or reorder sections
+- NEVER change dates, company names, or job titles
 
-2. ONLY IMPROVE bullet points that:
-   - Start with weak verbs (Responsible for, Helped, Assisted, Worked on)
-   - Lack quantification (no numbers, %, $)
-   - Are vague (no specific outcomes)
-
-3. For bullets that are ALREADY STRONG (start with action verbs, have metrics), KEEP THEM EXACTLY AS-IS.
-
-4. NEVER invent metrics, company names, or achievements.
-
-5. If a job description is provided, weave in MISSING KEYWORDS naturally — but only where they fit honestly.
-
-6. Return the COMPLETE resume with improvements marked. Use this format:
-   - Unchanged lines: return exactly as-is
-   - Improved lines: return the improved version
-
-7. Maintain the EXACT same number of lines/sections. Do not add or remove content."""
+Formatting rules:
+- Use clear section headers: PROFESSIONAL SUMMARY, EXPERIENCE, EDUCATION, SKILLS, CERTIFICATIONS
+- Each job entry: Company Name — Location on one line, then Job Title | Date Range on the next line
+- Bullet points start with strong action verbs
+- Remove filler words and weak phrases
+- Keep ALL content — do not remove or summarize anything. Reorganize and clean up formatting only.
+- Use consistent date formats throughout
+- Put skills in a comma-separated list, grouped by category
+- If residency status is mentioned, keep it prominent
+- Output as clean plain text that can be copied directly into a .docx template
+- Do NOT add any commentary — return ONLY the formatted resume"""
 
     resume_text = sanitize_resume_text(body.resume_text)
     jd = sanitize_user_input(body.job_description)
