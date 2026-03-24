@@ -171,7 +171,7 @@ class MyCareersFutureScraper:
                     source="MyCareersFuture",
                     url=f"https://www.mycareersfuture.gov.sg/job/{uuid}" if uuid else "",
                     posted_date=item.get("metadata", {}).get("newPostingDate", "") if isinstance(item.get("metadata"), dict) else "",
-                    employment_type=item.get("employmentType", "") if isinstance(item.get("employmentType"), str) else "",
+                    employment_type=_extract_employment_type(item),
                     seniority=seniority,
                     description=_clean_html(item.get("description", "")),
                     skills=skills,
@@ -879,6 +879,36 @@ def export_csv(results: dict, filepath: str):
             row.pop("dedup_key", None)
             writer.writerow(row)
     log.info(f"Saved {len(results['jobs'])} jobs to {filepath}")
+
+
+def _extract_employment_type(item: dict) -> str:
+    """Extract employment type from MCF API response.
+
+    MCF uses multiple field names across API versions:
+    - employmentType (string)
+    - employmentTypes (list of dicts with {employmentType: str})
+    - employment_type (string)
+    """
+    # Try singular string first
+    emp = item.get("employmentType")
+    if isinstance(emp, str) and emp:
+        return emp
+
+    # Try plural list: [{employmentType: "Full Time", ...}]
+    emp_list = item.get("employmentTypes", [])
+    if isinstance(emp_list, list) and emp_list:
+        first = emp_list[0]
+        if isinstance(first, dict):
+            return first.get("employmentType", "") or first.get("employment_type", "")
+        if isinstance(first, str):
+            return first
+
+    # Try snake_case
+    emp_snake = item.get("employment_type")
+    if isinstance(emp_snake, str) and emp_snake:
+        return emp_snake
+
+    return ""
 
 
 def _clean_html(text: str) -> str:

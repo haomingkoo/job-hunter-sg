@@ -895,6 +895,36 @@ def list_cached_jobs(
     else:
         total = query.count()
         jobs = ordered_query.offset(offset).limit(per_page).all()
+    # Build filter metadata from ALL jobs (not just current page)
+    # so frontend dropdowns show complete options
+    filter_meta = {}
+    if page == 1:
+        source_counts = (
+            db.query(ScrapedJob.source, func.count())
+            .filter(ScrapedJob.source != "")
+            .group_by(ScrapedJob.source)
+            .all()
+        )
+        emp_counts = (
+            db.query(ScrapedJob.employment_type, func.count())
+            .filter(ScrapedJob.employment_type != "")
+            .group_by(ScrapedJob.employment_type)
+            .all()
+        )
+        loc_counts = (
+            db.query(ScrapedJob.location, func.count())
+            .filter(ScrapedJob.location != "", ScrapedJob.location != "Singapore")
+            .group_by(ScrapedJob.location)
+            .order_by(func.count().desc())
+            .limit(30)
+            .all()
+        )
+        filter_meta = {
+            "sources": [{"value": s, "count": c} for s, c in source_counts if s],
+            "employment_types": [{"value": t, "count": c} for t, c in emp_counts if t],
+            "locations": [{"value": loc, "count": c} for loc, c in loc_counts if loc],
+        }
+
     return {
         "jobs": [
             {
@@ -910,6 +940,7 @@ def list_cached_jobs(
         "total": total,
         "page": page,
         "pages": max(1, (total + per_page - 1) // per_page),
+        "filter_meta": filter_meta,
     }
 
 

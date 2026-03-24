@@ -416,14 +416,27 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     return r;
   }, [results, sortBy]);
 
+  const [filterMeta, setFilterMeta] = useState({ sources: [], employment_types: [], locations: [] });
+
   const sourceOptions = useMemo(
-    () => [...new Set(results.map((job) => job.source).filter(Boolean))].sort(),
-    [results],
+    () => filterMeta.sources.length > 0
+      ? filterMeta.sources.map((s) => s.value)
+      : [...new Set(results.map((job) => job.source).filter(Boolean))].sort(),
+    [results, filterMeta.sources],
+  );
+
+  const employmentTypeOptions = useMemo(
+    () => filterMeta.employment_types.length > 0
+      ? filterMeta.employment_types.map((t) => t.value)
+      : [...new Set(results.map((job) => job.type).filter(Boolean))].sort(),
+    [results, filterMeta.employment_types],
   );
 
   const locationOptions = useMemo(
-    () => [...new Set(results.map((job) => job.location).filter(Boolean))].sort().slice(0, 12),
-    [results],
+    () => filterMeta.locations.length > 0
+      ? filterMeta.locations.map((l) => l.value).slice(0, 20)
+      : [...new Set(results.map((job) => job.location).filter(Boolean))].sort().slice(0, 12),
+    [results, filterMeta.locations],
   );
 
   const trackJob = async (scrapedJob) => {
