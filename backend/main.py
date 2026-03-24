@@ -1264,14 +1264,17 @@ def ai_rewrite_bullet(
 
     bullet = sanitize_user_input(body.bullet)
     job_title = sanitize_user_input(body.job_title)
+    used_verbs = sanitize_user_input(body.used_verbs) if hasattr(body, "used_verbs") else ""
 
-    result = rewrite_bullet(bullet, job_title=job_title)
-    if not result:
+    result = rewrite_bullet(bullet, job_title=job_title, used_verbs=used_verbs)
+    if result is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI service unavailable. Try again shortly.",
         )
-    return {"original": bullet, "rewritten": result, "model": "AI"}
+    if result == []:
+        return {"original": bullet, "options": [], "no_change": True, "message": "This bullet is already strong — no changes needed."}
+    return {"original": bullet, "options": result, "model": "AI"}
 
 
 @app.post("/api/ai/integrate-keywords")

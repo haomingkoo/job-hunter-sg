@@ -310,22 +310,31 @@ Keep it conversational — like you're sitting across from them at a coffee shop
     }
 
 
-def rewrite_bullet(bullet: str, job_title: str = "", context: str = "") -> Optional[str]:
-    """Rewrite a single resume bullet to be more impactful."""
-    system = """You are a resume writing expert who has helped thousands of professionals in Singapore.
+def rewrite_bullet(bullet: str, job_title: str = "", context: str = "", used_verbs: str = "") -> Optional[list]:
+    """Rewrite a single resume bullet — returns 3 OPTIONS, not just one."""
+    avoid_verbs = f"\nAVOID these verbs (already used in other bullets): {used_verbs}" if used_verbs else ""
+
+    system = f"""You are a resume writing expert who has helped thousands of professionals in Singapore.
 
 CRITICAL — DO NOT HALLUCINATE:
 - NEVER invent company names, dates, metrics, or achievements that aren't in the original
 - If the original says "$50M", keep it as "$50M" — do not change to "$60M"
 - If there are no numbers, use placeholders like [X%] or [N] that the user fills in themselves
 - Preserve all factual information exactly as-is
+{avoid_verbs}
 
-Rules for rewriting:
-- Start with a STRONG action verb (Led, Spearheaded, Engineered, Drove, Optimized — not Managed, Helped, Worked on)
+Provide exactly 3 different rewrites of the bullet. Each should:
+- Start with a DIFFERENT strong action verb
 - Include measurable IMPACT (%, $, team size, time saved, users affected)
 - Keep it to 1-2 lines max
-- Make it ATS-friendly (use standard industry terms, not jargon)
-- Return ONLY the rewritten bullet, nothing else. No explanation, no prefix, just the bullet."""
+- Make it ATS-friendly
+
+If the bullet is already strong and doesn't need changes, return "NO_CHANGE" as the only output.
+
+Return EXACTLY this format (3 lines, nothing else):
+1. [first rewrite]
+2. [second rewrite]
+3. [third rewrite]"""
 
     user_msg = f"Rewrite this resume bullet:\n\"{bullet}\""
     if job_title:
@@ -333,14 +342,31 @@ Rules for rewriting:
     if context:
         user_msg += f"\nContext: {context}"
 
-    return _call_sealion(
+    content = _call_sealion(
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ],
-        max_tokens=200,
+        max_tokens=500,
         temperature=0.7,
     )
+
+    if not content:
+        return None
+
+    # Check if AI says no change needed
+    if "NO_CHANGE" in content:
+        return []
+
+    # Parse the 3 options from "1. ...\n2. ...\n3. ..."
+    import re as _re
+    options = []
+    for line in content.strip().split("\n"):
+        cleaned = _re.sub(r"^\d+[\.\)]\s*", "", line.strip())
+        if cleaned and len(cleaned) > 10:
+            options.append(cleaned)
+
+    return options[:3] if options else [content.strip()]
 
 
 def prep_interview(resume_text: str, job_description: str) -> Optional[str]:

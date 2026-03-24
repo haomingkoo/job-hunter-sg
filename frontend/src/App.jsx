@@ -3333,7 +3333,7 @@ function ResumeTab({ selectedJob, user }) {
               </div>
             </div>
 
-            <div className={`mx-auto mt-5 bg-white shadow-[0_2px_20px_rgba(0,0,0,0.1)] border border-gray-200 ${templateStyles.pageClass}`} style={{...templateStyles.pageStyle, width: '210mm', minHeight: '297mm', padding: '15mm 20mm', maxWidth: '100%', fontSize: '10.5pt', lineHeight: '1.35'}}>
+            <div className={`mx-auto mt-5 bg-white shadow-[0_2px_20px_rgba(0,0,0,0.1)] border border-gray-200 ${templateStyles.pageClass}`} style={{...templateStyles.pageStyle, width: '210mm', minHeight: '297mm', padding: '12mm 18mm', maxWidth: '100%', fontSize: '11pt', lineHeight: '1.4', textAlign: 'justify', textJustify: 'inter-word'}}>
               {resumeText.trim() ? (
                 <>
                   {shouldInjectProfileHeader && (
