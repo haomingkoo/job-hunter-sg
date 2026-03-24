@@ -1,67 +1,51 @@
-# Next Session — Priority Fixes
+# Next Session - Priority Issues
 
-## Critical Issues (must fix)
+## Critical (deploy-breaking)
 
-### 1. PDF Parser Splits Bullets Across Lines
-**Problem**: pdfplumber breaks lines based on PDF layout, not sentences. One bullet becomes 2-3 lines:
-```
-"Led multi-site manufacturing and quality transformation initiatives spanning 4"
-"regions, aligning engineering, operations and supplier teams under a unified QMS"
-"framework."
-```
-Should be one line.
+### FIXED: 405 on /api/resume/tailor
+Static mount was before pipeline routes. Moved to end of file. Deployed.
 
-**Fix**: After extraction, join lines that don't start with a bullet char, section header, or date pattern. Lines that start with lowercase or don't look like a new entry should be joined to the previous line.
+## High Priority (UX bugs visible to users)
 
-### 2. Scorer Can't Detect Bullets Without Bullet Characters
-**Problem**: PDF strips •, -, * characters. Scorer sees 0 bullets → scores 0/10 on Action Oriented and Specifics (20 points lost).
+### 1. Education entries lumped together
+Two degrees (M.Sc. and B.Sc.) render as one block instead of separate entries.
+The frontend `parseResumeToSections` function doesn't detect "B.Sc." as a new entry within the Education section.
+**Fix**: In `parseResumeToSections`, detect lines starting with degree abbreviations (M.Sc., B.Sc., B.Eng, MBA, etc.) as new subheadings within education sections.
 
-**Fix**: In `resume_scorer.py`, detect bullets by:
-- Lines starting with action verbs (from the ACTION_VERBS set)
-- Lines that follow a subheading (company/role/date line)
-- Lines that are indented or part of a list pattern
-- Not just lines starting with •, -, *
+### 2. Section order wrong in preview
+"Additional Information" and "Languages" appear before "Professional Summary".
+The backend parses correctly (line 3 = Professional Summary, line 40 = Additional Information).
+**Fix**: Frontend template ordering is overriding the natural order. Check `RESUME_TEMPLATE_SECTION_ORDER` and `templateOrder` in `parseResumeToSections`.
 
-### 3. Finalize Score Button Doesn't Re-Score
-**Problem**: Clicking "Finalize Score" doesn't trigger a new POST /api/resume/score call. The score stays stale.
+### 3. Empty sections still render
+"ADDITIONAL INFORMATION" shows as a heading with no content below it.
+**Fix**: Skip rendering sections that have no entries and no content.
 
-**Fix**: In App.jsx, the Finalize Score handler needs to call the score API with the current resumeText.
+### 4. ATS gap integration UI
+The pipeline returns `ats_gaps` with suggested placement per missing skill, but there's no frontend UI to:
+- Show each missing skill with its suggested section/entry
+- Let user click to add it (either to a bullet or skills section)
+- Get AI-generated sentence suggestions for integration
+**Design**: Each missing skill pill should be clickable. On click, show: suggested entry, AI-generated bullet incorporating the keyword, accept/skip buttons.
 
-### 4. Resume Preview Too Cramped
-**Problem**: Text in the document preview is too dense — needs more line-height, paragraph spacing, and padding.
+### 5. Summary optimization button
+Stage 5 of the pipeline generates a new summary, but there's no standalone "Optimize Summary" button.
+Users should be able to click on the Professional Summary section and get AI to rewrite it based on the bullets below + the target JD.
 
-**Fix**: Increase padding on the page container from `p-6 sm:p-8` to `p-8 sm:p-12`. Increase line-height. Add more spacing between sections.
+### 6. Filter dropdowns need backend data
+The `filter_meta` is now returned from `/api/jobs` but frontend may not be consuming it yet for employment type dropdown. Also the employment_type data for 66K MCF jobs is empty until next crawl.
 
-### 5. Batch Rewrite (One-Shot All Suggestions)
-**Feature**: Instead of clicking rewrite per bullet, one AI call returns rewrite options for ALL flagged bullets at once. User picks Option A, B, or Keep Original for each.
+## Medium Priority
 
-**Backend**: New endpoint `POST /api/ai/batch-rewrite` that sends all bullets + job description, returns `{rewrites: [{original, options: [a, b], reason}]}`.
+### 7. Overused word rewrites still use the same words
+Fixed: now passes the specific overused words to the rewrite prompt. Needs verification.
 
-### 6. Overusage Score Too Harsh
-**Problem**: Score shows "66 words used 3+ times" and scores 0/10. Technical resumes legitimately repeat domain terms (Python, quality, data). Threshold should be higher and domain/skill terms should be exempted.
+### 8. Sort default should be "Newest"
+Was changed in the feature branch but may have been overwritten by Codex changes. Verify.
 
-### 7. AI Format Destroys Resume Structure
-**Problem**: "AI Improve All" flattens job titles/subheadings into bullet points. "Senior Process & Equipment Engineer – Wet Process | Nov 2019 – Nov 2021" becomes a bullet instead of a subheading.
+### 9. Cover letter generation
+Not built yet. Natural extension of the pipeline (resume + JD + strategy = cover letter).
 
-**Fix**: Update the AI Format system prompt in `main.py` to explicitly:
-- Preserve section headers (EXPERIENCE, EDUCATION, SKILLS) as headers
-- Preserve job title | company | date lines as subheadings (NOT bullets)
-- Only format actual achievement/responsibility lines as bullets
-- Never merge a job title with a bullet point
-- Maintain the hierarchy: Section → Company → Role + Date → Bullets
+## For Codex
 
-### 8. Frontend Resume Preview Parser Needs Improvement
-**Problem**: The `parseResumeToSections()` function doesn't distinguish job titles from bullets well enough. Lines with dates and `|` separators should be subheadings, not bullets.
-
-**Fix**: Improve the parser to detect:
-- Lines with date ranges (e.g., "Jan 2020 – Dec 2023") → subheading
-- Lines with `|` or `—` separator → subheading
-- Lines starting with `**text**` markdown bold → subheading
-- ALL CAPS short lines → section heading
-
-## Nice to Have
-
-- Re-seed CareersGov with fixed scraper (location + posted date now captured)
-- Job market analytics dashboard
-- Cold start resume builder for users with no resume
-- Email alerts for job matches
+Run `CODEX_REVIEW.md` - it has 6 mechanical tasks (import check, unit tests, pipeline test, error path audit, live API check, write results). Do not just read - RUN.
