@@ -346,17 +346,10 @@ def extract_skill_phrases(
     found_skills: list[str] = _find_known_skills_in_text(text_lower)
 
     # 2. Add job_skills from the database that are multi-word
-    # Filter out noisy/irrelevant skills from job metadata
-    _skill_blocklist = {
-        "medical study", "medical studies", "social study", "social studies",
-        "general knowledge", "life skills", "physical education",
-        "religious studies", "moral education", "home economics",
-        "art appreciation", "music appreciation",
-    }
     if job_skills:
         for raw_skill in job_skills:
             normalized = _normalize_skill(raw_skill)
-            if not normalized or normalized in _skill_blocklist:
+            if not normalized:
                 continue
             # Only add multi-word skills (single words handled elsewhere)
             word_count = len(normalized.split())
