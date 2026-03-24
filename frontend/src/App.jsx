@@ -3999,13 +3999,14 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
 
   const insertSectionNearTop = useCallback((heading, starter) => {
     const lines = resumeText.replace(/\r\n?/g, "\n").split("\n");
-    const insertAt = headerMeta.lineIndices.length
-      ? headerMeta.lineIndices[headerMeta.lineIndices.length - 1] + 1
+    const headerLineIndices = extractResumeHeaderMeta(resumeText).lineIndices;
+    const insertAt = headerLineIndices.length
+      ? headerLineIndices[headerLineIndices.length - 1] + 1
       : 0;
     lines.splice(insertAt, 0, "", heading, starter, "");
     applyResumeText(lines.join("\n").replace(/\n{3,}/g, "\n\n").trim());
     setShowAddSectionMenu(false);
-  }, [applyResumeText, headerMeta.lineIndices, resumeText]);
+  }, [applyResumeText, resumeText]);
 
   const handleAddSection = useCallback((option) => {
     if (!option) return;
