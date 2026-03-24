@@ -318,6 +318,51 @@ def _build_bridge_plan(missing_skills: list[str]) -> list[dict]:
     return plans
 
 
+# ── Admin: Protected seed/refresh endpoint ────────────────────────────────────
+
+_ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
+
+
+@app.post("/api/admin/seed")
+def admin_seed_jobs(
+    body: dict,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """
+    Trigger a job re-seed. Protected by ADMIN_API_KEY.
+    Body: {sources: "mcf,careersgov", limit: 20, keywords: "software engineer,data analyst"}
+    Or {full: true} for full crawl.
+
+    Can be called by a Railway cron job or manually.
+    """
+    # Check admin API key
+    token = ""
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    import threading
+    from seed_jobs import seed_jobs, crawl_all_jobs
+
+    if body.get("full"):
+        # Run full crawl in background thread
+        threading.Thread(target=crawl_all_jobs, daemon=True).start()
+        return {"status": "started", "mode": "full_crawl", "message": "Full crawl started in background"}
+    else:
+        sources = body.get("sources", "mcf,careersgov").split(",")
+        limit = body.get("limit", 20)
+        keywords = body.get("keywords", "").split(",") if body.get("keywords") else None
+
+        def run_seed():
+            seed_jobs(keywords=keywords or [], sources=sources, limit_per_source=limit)
+
+        threading.Thread(target=run_seed, daemon=True).start()
+        return {"status": "started", "mode": "keyword_seed", "sources": sources, "limit": limit}
+
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/")
