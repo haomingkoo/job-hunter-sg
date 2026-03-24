@@ -1772,22 +1772,75 @@ def ai_rewrite_bullet(
     rewrite_focus = sanitize_user_input(body.rewrite_focus) if hasattr(body, "rewrite_focus") else ""
     focused_feedback = sanitize_user_input(body.focused_feedback) if hasattr(body, "focused_feedback") else ""
 
-    result = rewrite_bullet(
-        bullet,
-        job_title=job_title,
-        context=job_description,
-        used_verbs=used_verbs,
-        rewrite_focus=rewrite_focus,
-        focused_feedback=focused_feedback,
-    )
-    if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service unavailable. Try again shortly.",
+    # Generate options, validate each, retry once if all fail
+    from validation_gates import validate_and_fix
+
+    max_attempts = 2
+    validated_options = []
+
+    for attempt in range(max_attempts):
+        result = rewrite_bullet(
+            bullet,
+            job_title=job_title,
+            context=job_description,
+            used_verbs=used_verbs,
+            rewrite_focus=rewrite_focus,
+            focused_feedback=focused_feedback,
         )
-    if result == []:
-        return {"original": bullet, "options": [], "no_change": True, "message": "This bullet is already strong — no changes needed."}
-    return {"original": bullet, "options": result, "model": "AI"}
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI service unavailable. Try again shortly.",
+            )
+        if result == []:
+            return {"original": bullet, "options": [], "no_change": True, "message": "This bullet is already strong -- no changes needed."}
+
+        # Validate each option through the gates
+        validated_options = []
+        for option in result:
+            final_text, gate_results = validate_and_fix(
+                original=bullet,
+                tailored=option,
+                jd_text=job_description,
+            )
+            # If critical gate reverted to original, skip this option
+            if final_text == bullet:
+                continue
+            validated_options.append({
+                "text": final_text,
+                "gates": [
+                    {"gate": g.gate_name, "passed": g.passed, "message": g.message}
+                    for g in gate_results
+                    if not g.passed or g.auto_fixed
+                ],
+            })
+
+        if validated_options:
+            break
+        # All options failed gates -- retry with more specific feedback
+        focused_feedback = (
+            f"{focused_feedback} IMPORTANT: Your previous rewrites failed quality checks. "
+            f"Preserve ALL original numbers and facts. Do not add skills or tools not in the original. "
+            f"Keep the rewrite under 35 words."
+        )
+
+    # Return validated options (or original options if validation produced nothing)
+    if validated_options:
+        return {
+            "original": bullet,
+            "options": [opt["text"] for opt in validated_options],
+            "gates": [opt["gates"] for opt in validated_options],
+            "model": "AI",
+            "validated": True,
+        }
+    # Fallback: return raw options with a warning
+    return {
+        "original": bullet,
+        "options": result or [],
+        "model": "AI",
+        "validated": False,
+        "warning": "These rewrites could not be fully validated. Review carefully before accepting.",
+    }
 
 
 @app.post("/api/ai/integrate-keywords")
