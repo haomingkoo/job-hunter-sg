@@ -48,21 +48,30 @@ def validate_upload(filename: str, content_type: str, size: int) -> str:
 def _join_broken_lines(text: str) -> str:
     """Rejoin lines that pdfplumber broke mid-sentence.
 
-    Preserves blank lines between sections.  Keeps lines that start with
-    a bullet character, a section header (ALL CAPS ≥2 words), a date
-    pattern, or a company/role-style line (contains | or —) on their own.
-    Lines starting with lowercase or that look like a sentence continuation
-    are joined to the previous line.
+    The key insight: PDF line breaks are layout-driven, not semantic.
+    A sentence like "Led cross-functional delivery" might become two lines:
+      "Led cross-"
+      "functional delivery"
+
+    We join aggressively and only keep lines separate when they clearly
+    start a new semantic block (section header, bullet, role/date line).
     """
-    _bullet_start = re.compile(r"^[\s]*[•\-\*▪\u2022\u2023\u25E6\u2043\u2219]")
-    _date_line = re.compile(
+    _bullet_start = re.compile(r"^[\s]*[•\-\*▪\u2022\u2023\u25E6\u2043\u2219]\s")
+    _date_pattern = re.compile(
         r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}"
         r"|\d{1,2}/\d{4}"
-        r"|\d{4}\s*[-–]\s*(?:\d{4}|present|current)",
-        re.I,
+        r"|\d{4}\s*[-–—]\s*(?:\d{4}|[Pp]resent|[Cc]urrent)",
     )
-    _all_caps_header = re.compile(r"^[A-Z][A-Z &/\-]{2,}$")
-    _role_separator = re.compile(r"[|—–]")
+    _all_caps_header = re.compile(r"^[A-Z][A-Z &/\-]{3,}$")
+    _role_separator = re.compile(r"\s[|—–]\s")
+    # Known section headers
+    _section_words = {
+        "experience", "education", "skills", "summary", "objective",
+        "certifications", "projects", "awards", "languages", "interests",
+        "volunteer", "activities", "publications", "references",
+        "professional summary", "professional experience", "work experience",
+        "core skills", "core competencies", "technical skills",
+    }
 
     lines = text.split("\n")
     merged: list[str] = []
@@ -70,28 +79,56 @@ def _join_broken_lines(text: str) -> str:
     for line in lines:
         stripped = line.strip()
 
-        # Preserve blank lines (section separators)
+        # Preserve blank lines
         if not stripped:
             merged.append("")
             continue
 
-        # Determine if this line should start a new logical line
+        # Check if PREVIOUS line ends with hyphen (word split across lines)
+        if merged and merged[-1] and merged[-1].endswith("-"):
+            # Join without space, removing the trailing hyphen
+            merged[-1] = merged[-1][:-1] + stripped
+            continue
+
+        # Determine if this line starts a new semantic block
         starts_new = False
+        lower = stripped.lower()
+
+        # Bullet point (• Led..., - Built..., etc)
         if _bullet_start.match(stripped):
             starts_new = True
+        # ALL CAPS section header (PROFESSIONAL EXPERIENCE, EDUCATION, etc)
         elif _all_caps_header.match(stripped):
             starts_new = True
-        elif _date_line.search(stripped):
+        # Known section header words
+        elif lower in _section_words or lower.rstrip(":") in _section_words:
             starts_new = True
+        # Line with a date (likely a role/company line)
+        elif _date_pattern.search(stripped):
+            starts_new = True
+        # Line with role separator (Company | Location, Title — Date)
         elif _role_separator.search(stripped):
             starts_new = True
-        elif stripped[0].isupper() or stripped[0].isdigit():
-            starts_new = True
+        # Short line that looks like a company/institution name (< 60 chars, starts with caps)
+        elif len(stripped) < 60 and stripped[0].isupper() and not stripped[0:1].islower():
+            # Check if it looks like a heading (no period at end, mostly proper nouns)
+            if not stripped.endswith((".",";")):
+                words = stripped.split()
+                # If most words are capitalized, likely a heading/company name
+                caps_words = sum(1 for w in words if w[0].isupper())
+                if caps_words >= len(words) * 0.6 and len(words) <= 8:
+                    starts_new = True
+
+        # If previous line ends with period/semicolon AND this starts with caps, new line
+        if not starts_new and merged and merged[-1]:
+            prev = merged[-1]
+            if prev.endswith((".", ";", ":", "!")) and stripped[0].isupper():
+                starts_new = True
 
         if starts_new or not merged or merged[-1] == "":
             merged.append(stripped)
         else:
-            # Continuation of the previous line
+            # Continuation — join to previous line
             merged[-1] = merged[-1] + " " + stripped
 
     return "\n".join(merged)
