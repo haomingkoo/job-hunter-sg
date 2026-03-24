@@ -802,6 +802,43 @@ def get_cached_job(job_id: int, db: Session = Depends(get_db)) -> ScrapedJob:
     return job
 
 
+@app.post("/api/jobs/{job_id}/match")
+def match_resume_to_job(
+    job_id: int,
+    body: ResumeScoreRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Compare resume against a specific job's skills and description."""
+    job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    from skill_extractor import extract_skill_phrases, match_resume_skills
+    import json as _json
+
+    # Get skills from the job's database record + description
+    db_skills = job.skills if isinstance(job.skills, list) else _json.loads(job.skills) if job.skills else []
+    jd_text = job.description or ""
+
+    # Extract multi-word phrases from JD
+    jd_phrases = extract_skill_phrases(jd_text, db_skills)
+
+    # Match against resume
+    resume_text = sanitize_resume_text(body.resume_text)
+    result = match_resume_skills(resume_text, jd_phrases)
+
+    return {
+        "job_id": job_id,
+        "job_title": job.title,
+        "job_company": job.company,
+        "job_skills": db_skills,
+        "matched": result.get("matched", []),
+        "missing": result.get("missing", []),
+        "match_percent": result.get("match_percent", 0),
+        "total_skills": len(jd_phrases),
+    }
+
+
 @app.get("/api/skills")
 def get_skills(q: str = Query(..., min_length=1, max_length=200, description="Role keyword")) -> dict:
     skills_list = ssg_api.get_skills_for_role(q)

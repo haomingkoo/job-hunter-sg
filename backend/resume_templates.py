@@ -70,9 +70,18 @@ TEMPLATES = {
 
 
 def list_templates() -> list[dict]:
-    """Return available templates for frontend display."""
+    """Return available templates for frontend display — includes section_order and styling info."""
     return [
-        {"id": tid, "name": t["name"], "description": t["description"]}
+        {
+            "id": tid,
+            "name": t["name"],
+            "description": t["description"],
+            "section_order": t["section_order"],
+            "font": t["font"],
+            "body_size": t["body_size"],
+            "name_size": t["name_size"],
+            "margins": t["margins"],
+        }
         for tid, t in TEMPLATES.items()
     ]
 

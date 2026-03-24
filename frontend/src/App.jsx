@@ -238,6 +238,7 @@ function AuthModal({ onAuth, onClose }) {
 
 function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, onSignIn }) {
   const [query, setQuery] = useState("");
+  const [submittedQuery, setSubmittedQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [levelFilter, setLevelFilter] = useState("all");
@@ -262,6 +263,8 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     setLoading(true);
     setError("");
     try {
+      const queryWords = searchQuery.trim().split(/\s+/).filter(Boolean);
+      const backendQuery = queryWords.length > 1 ? queryWords[0] : searchQuery.trim();
       const params = new URLSearchParams({ page: String(pageNum), per_page: "20" });
       const activeLevel = nextFilters.levelFilter ?? levelFilter;
       const activeEmployment = nextFilters.employmentFilter ?? employmentFilter;
@@ -269,7 +272,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       const activeLocation = nextFilters.locationFilter ?? locationFilter;
       const activeMinSalary = nextFilters.minSalaryFilter ?? minSalaryFilter;
 
-      if (searchQuery.trim()) params.set("q", searchQuery.trim());
+      if (backendQuery) params.set("q", backendQuery);
       if (activeLevel !== "all") params.set("seniority", activeLevel);
       if (activeEmployment !== "all") params.set("employment_type", activeEmployment);
       if (activeSource !== "all") params.set("source", activeSource);
@@ -296,16 +299,26 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
         level: j.seniority || "",
         url: j.url || "",
       }));
-      setResults(mapped);
+      const andFiltered = queryWords.length > 1
+        ? mapped.filter((job) => {
+          const searchableText = [job.title, job.company, job.description, ...(job.skills || [])]
+            .join(" ")
+            .toLowerCase();
+          return queryWords.every((word) => searchableText.includes(word.toLowerCase()));
+        })
+        : mapped;
+      setResults(andFiltered);
+      setSubmittedQuery(searchQuery.trim());
       setPage(pageNum);
       setTotalPages(data.pages || 1);
       setExpandedJobId(null);
-      const total = data.total || mapped.length;
+      const total = queryWords.length > 1 ? andFiltered.length : (data.total || andFiltered.length);
       setTotalLabel(`${total.toLocaleString()} jobs`);
     } catch (err) {
       setError(err.message || "Failed to load jobs. Please try again.");
       setResults([]);
       setTotalPages(1);
+      setSubmittedQuery(searchQuery.trim());
     } finally {
       setLoading(false);
     }
@@ -408,7 +421,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       {totalLabel && (
         <p className="text-sm text-gray-500">
           <span className="font-medium text-gray-700">{totalLabel}</span>
-          {query ? ` matching "${query}"` : " across Singapore"}
+          {submittedQuery ? ` matching "${submittedQuery}"` : " across Singapore"}
           {results.length > 0 && ` — showing ${(page - 1) * 20 + 1}-${(page - 1) * 20 + results.length}`}
         </p>
       )}
@@ -1360,7 +1373,7 @@ const RESUME_TEMPLATE_STYLES = {
       lineHeight: "1.35",
     },
     headingClass: "mt-4 mb-1 border-b border-stone-400 pb-1 text-[11pt] font-bold uppercase tracking-[0.18em] text-stone-900",
-    nameClass: "text-[16pt] font-bold tracking-[0.08em] text-stone-950",
+    nameClass: "text-[18pt] font-bold tracking-[0.08em] text-stone-950",
     subheadingClass: "mt-2 mb-0.5 text-stone-700",
     bodyStyle: { fontSize: "1em", lineHeight: "1.35" },
   },
@@ -1368,7 +1381,7 @@ const RESUME_TEMPLATE_STYLES = {
     pageClass: "text-slate-800",
     pageStyle: {
       fontFamily: 'Calibri, "Segoe UI", sans-serif',
-      fontSize: "10pt",
+      fontSize: "11pt",
       padding: "15.2mm",
       width: "210mm",
       minHeight: "297mm",
@@ -1376,7 +1389,7 @@ const RESUME_TEMPLATE_STYLES = {
       lineHeight: "1.33",
     },
     headingClass: "mt-4 mb-1 border-l-4 border-indigo-500 pl-3 text-[11pt] font-bold uppercase tracking-[0.18em] text-slate-900",
-    nameClass: "text-[15pt] font-semibold tracking-[0.04em] text-slate-950",
+    nameClass: "text-[18pt] font-bold tracking-[0.04em] text-slate-950",
     subheadingClass: "mt-2 mb-0.5 text-slate-700",
     bodyStyle: { fontSize: "1em", lineHeight: "1.33" },
   },
@@ -1392,7 +1405,7 @@ const RESUME_TEMPLATE_STYLES = {
       lineHeight: "1.35",
     },
     headingClass: "mt-4 mb-1 border-b-2 border-slate-700 pb-1 text-[11pt] font-bold uppercase tracking-[0.16em] text-slate-950",
-    nameClass: "text-[15pt] font-semibold tracking-[0.04em] text-slate-950",
+    nameClass: "text-[18pt] font-bold tracking-[0.04em] text-slate-950",
     subheadingClass: "mt-2 mb-0.5 text-slate-700",
     bodyStyle: { fontSize: "1em", lineHeight: "1.35" },
   },
@@ -1400,7 +1413,7 @@ const RESUME_TEMPLATE_STYLES = {
     pageClass: "text-zinc-800",
     pageStyle: {
       fontFamily: "Arial, Helvetica, sans-serif",
-      fontSize: "10pt",
+      fontSize: "11pt",
       padding: "12.7mm",
       width: "210mm",
       minHeight: "297mm",
@@ -1408,7 +1421,7 @@ const RESUME_TEMPLATE_STYLES = {
       lineHeight: "1.3",
     },
     headingClass: "mt-4 mb-1 text-[0.92rem] font-bold uppercase tracking-[0.14em] text-zinc-950",
-    nameClass: "text-[14pt] font-bold tracking-[0.03em] text-zinc-950",
+    nameClass: "text-[18pt] font-bold tracking-[0.03em] text-zinc-950",
     subheadingClass: "mt-2 mb-0.5 text-zinc-700",
     bodyStyle: { fontSize: "1em", lineHeight: "1.3" },
   },
@@ -1916,7 +1929,7 @@ function TemplatePreview({ templateId }) {
   );
 }
 
-function ResumeTab({ selectedJob, user }) {
+function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [profile, setProfile] = useState(() => {
     try {
       const saved = sessionStorage.getItem("jh_resume_profile");
@@ -1961,6 +1974,7 @@ function ResumeTab({ selectedJob, user }) {
   const [rewriteLoading, setRewriteLoading] = useState({});
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
+  const [downloadReady, setDownloadReady] = useState(false);
   const [showSetupPanel, setShowSetupPanel] = useState(() => !resumeText.trim());
   const [workspaceView, setWorkspaceView] = useState("feedback");
   const [mobilePanel, setMobilePanel] = useState("edit");
@@ -2031,7 +2045,9 @@ function ResumeTab({ selectedJob, user }) {
 
   const jobDescription = useMemo(() => {
     if (!selectedJob) return "";
-    const parts = [`${selectedJob.title} at ${selectedJob.company}`];
+    const parts = [];
+    if (selectedJob.title && selectedJob.company) parts.push(`${selectedJob.title} at ${selectedJob.company}`);
+    else if (selectedJob.title) parts.push(selectedJob.title);
     if (selectedJob.skills?.length) parts.push(`Required skills: ${selectedJob.skills.join(", ")}`);
     if (selectedJob.description) parts.push(selectedJob.description);
     return parts.join(". ");
@@ -2123,14 +2139,22 @@ function ResumeTab({ selectedJob, user }) {
     }
   }, [resumeText, jobDescription, runScore]);
 
+  const templateMeta = templates.find((template) => template.id === selectedTemplate)
+    || DEFAULT_RESUME_TEMPLATES.find((template) => template.id === selectedTemplate)
+    || DEFAULT_RESUME_TEMPLATES[1];
+  const templateStyles = RESUME_TEMPLATE_STYLES[selectedTemplate] || RESUME_TEMPLATE_STYLES.modern;
+  const templateOrder = Array.isArray(templateMeta?.section_order) && templateMeta.section_order.length > 0
+    ? templateMeta.section_order
+    : RESUME_TEMPLATE_SECTION_ORDER[selectedTemplate] || [];
+
   const resumeKeywords = useMemo(
     () => buildResumeKeywords(selectedJob, scoreData),
     [selectedJob, scoreData],
   );
 
   const parsedSections = useMemo(
-    () => parseResumeToSections(resumeText, resumeKeywords),
-    [resumeText, resumeKeywords],
+    () => parseResumeToSections(resumeText, resumeKeywords, templateOrder),
+    [resumeText, resumeKeywords, templateOrder],
   );
 
   const bulletSections = useMemo(
@@ -2389,10 +2413,11 @@ function ResumeTab({ selectedJob, user }) {
 
     setDownloading(true);
     setDownloadError("");
+    setDownloadReady(false);
 
     try {
       if (needsRescore) {
-        await runScore(resumeText, jobDescription, { phase: "final" });
+        await handleFinalizeScore();
       }
 
       const token = localStorage.getItem("token");
@@ -2430,6 +2455,7 @@ function ResumeTab({ selectedJob, user }) {
       anchor.download = getDownloadFilename(response, "resume.docx");
       anchor.click();
       URL.revokeObjectURL(url);
+      setDownloadReady(true);
     } catch (err) {
       setDownloadError(err.message || "Download failed. Please try again.");
     } finally {
@@ -2473,8 +2499,6 @@ function ResumeTab({ selectedJob, user }) {
     applyResumeText(nextText);
   };
 
-  const templateMeta = templates.find((template) => template.id === selectedTemplate) || DEFAULT_RESUME_TEMPLATES.find((template) => template.id === selectedTemplate) || DEFAULT_RESUME_TEMPLATES[1];
-  const templateStyles = RESUME_TEMPLATE_STYLES[selectedTemplate] || RESUME_TEMPLATE_STYLES.modern;
   const wordCount = resumeText.split(/\s+/).filter(Boolean).length;
   const overallScore = scoreData?.overall_score || 0;
   const scoreTheme = getScoreTheme(overallScore);
@@ -2486,8 +2510,13 @@ function ResumeTab({ selectedJob, user }) {
     [selectedBullet, resumeText],
   );
   const activeBulletTab = selectedBulletTabs.find((tab) => tab.id === selectedBulletTab) || selectedBulletTabs[0] || null;
-  const inferredHeaderLines = useMemo(() => extractResumeHeaderLines(resumeText), [resumeText]);
-  const shouldInjectProfileHeader = inferredHeaderLines.length === 0 && (profile.name || profile.email || profile.phone || profile.location);
+  const headerMeta = useMemo(() => extractResumeHeaderMeta(resumeText), [resumeText]);
+  const fallbackHeaderLines = [profile.name, [profile.email, profile.phone, profile.location].filter(Boolean).join(" | ")].filter(Boolean);
+  const displayHeaderLines = headerMeta.lines.length > 0 ? headerMeta.lines : fallbackHeaderLines;
+  const bodySections = useMemo(
+    () => parsedSections.filter((section) => !headerMeta.lineIndices.includes(section.lineIndex)),
+    [parsedSections, headerMeta.lineIndices],
+  );
   const improvementQueue = useMemo(() => {
     const bulletItems = bulletSections
       .filter((section) => section.annotation?.tone && section.annotation.tone !== "emerald")
@@ -2646,17 +2675,30 @@ function ResumeTab({ selectedJob, user }) {
             </p>
           </div>
           {selectedJob && (
-            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 shadow-sm">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-600">Targeting</div>
-              <div className="mt-1 font-semibold text-slate-900">{selectedJob.title} @ {selectedJob.company}</div>
+            <div className="max-w-xl rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-4 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-600">Target Job Description</div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("scraper")}
+                  className="text-xs font-semibold text-indigo-700 hover:text-indigo-900"
+                >
+                  Back to Jobs
+                </button>
+              </div>
+              <div className="mt-2 text-lg font-semibold text-slate-900">{selectedJob.title}</div>
+              <div className="mt-1 text-sm text-slate-600">{selectedJob.company}</div>
               {selectedJob.skills?.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {selectedJob.skills.slice(0, 8).map((skill) => (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {selectedJob.skills.map((skill) => (
                     <span key={skill} className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
                       {skill}
                     </span>
                   ))}
                 </div>
+              )}
+              {selectedJob.description && (
+                <p className="mt-3 text-sm leading-relaxed text-slate-700 line-clamp-5">{selectedJob.description}</p>
               )}
             </div>
           )}
@@ -2693,6 +2735,34 @@ function ResumeTab({ selectedJob, user }) {
           })}
         </div>
       </div>
+
+      {downloadReady && (
+        <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
+          <div className="text-sm font-semibold uppercase tracking-[0.16em] text-emerald-700">Next Steps</div>
+          <div className="mt-2 text-lg font-semibold text-slate-900">Your resume export is ready.</div>
+          <p className="mt-2 text-sm leading-relaxed text-slate-600">
+            Keep momentum by searching for matching roles or moving straight into application tracking.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveTab("scraper")}
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700"
+            >
+              <Search size={14} />
+              Search Matching Jobs
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("tracker")}
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <Plus size={14} />
+              Track This Application
+            </button>
+          </div>
+        </div>
+      )}
 
       {setupVisible ? (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.9fr)]">
@@ -3488,17 +3558,19 @@ function ResumeTab({ selectedJob, user }) {
             >
               {resumeText.trim() ? (
                 <>
-                  {shouldInjectProfileHeader && (
-                    <div className="mb-3 pb-2 text-center">
-                      {profile.name && <div className={templateStyles.nameClass}>{profile.name}</div>}
-                      <div className="mt-0.5 text-[9pt] text-gray-600">
-                        {[profile.email, profile.phone, profile.location].filter(Boolean).join(" | ")}
-                      </div>
+                  {displayHeaderLines.length > 0 && (
+                    <div className="mb-4 border-b border-gray-300 pb-2 text-center">
+                      <div className={templateStyles.nameClass}>{displayHeaderLines[0]}</div>
+                      {displayHeaderLines.slice(1).map((line, index) => (
+                        <div key={`resume-header-${index}`} className="mt-0.5 text-[9pt] text-gray-600">
+                          {line}
+                        </div>
+                      ))}
                     </div>
                   )}
 
                   <div className="space-y-0.5" style={templateStyles.bodyStyle}>
-                    {parsedSections.map((section) => {
+                    {bodySections.map((section) => {
                       if (section.type === "spacer") return <div key={section.id} className="h-3" />;
 
                       const isEditing = editingNodeId === section.id;
@@ -3542,7 +3614,9 @@ function ResumeTab({ selectedJob, user }) {
                           )}
                           {section.type === "subheading" && (
                             <div className={`flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between ${templateStyles.subheadingClass}`}>
-                              <div className="font-semibold text-gray-900">{renderHighlightedText(section.left, section.keywordMatches || [])}</div>
+                              <div className={section.variant === "dated" ? "font-semibold text-gray-900" : "font-normal text-gray-800"}>
+                                {renderHighlightedText(section.left, section.keywordMatches || [])}
+                              </div>
                               <div className="text-sm text-gray-500">{section.right}</div>
                             </div>
                           )}
@@ -4067,7 +4141,7 @@ export default function JobHunterSG() {
               <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Follow-up Reminders" />
             )
           )}
-          {activeTab === "resume" && <ResumeTab selectedJob={selectedJob} user={user} />}
+          {activeTab === "resume" && <ResumeTab selectedJob={selectedJob} user={user} setActiveTab={setActiveTab} />}
           {activeTab === "account" && (
             user ? (
               <AccountTab user={user} onLogout={handleLogout} />
