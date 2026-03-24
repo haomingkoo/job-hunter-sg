@@ -689,15 +689,32 @@ Return ONLY the summary text, nothing else."""
         "summary_created": summary_was_missing,
         "original_summary": "",
         "new_summary": "",
+        "_degraded": False,
+        "_degraded_reason": "",
     }
 
-    if content and summary_section is not None and _summary_needs_refresh(summary_section):
+    if not content:
+        result["_degraded"] = True
+        result["_degraded_reason"] = (
+            "AI summary polishing was unavailable, so the pipeline kept the current summary content."
+        )
+    elif summary_section is not None and _summary_needs_refresh(summary_section):
         new_summary = content.strip().strip('"')
         if len(new_summary) > 30:
             result["original_summary"] = summary_section.get("content", "")
             result["new_summary"] = new_summary
             result["summary_rewritten"] = True
             summary_section["content"] = new_summary
+        else:
+            result["_degraded"] = True
+            result["_degraded_reason"] = (
+                "AI summary polishing returned unusable content, so the pipeline kept the current summary."
+            )
+    elif summary_was_missing and summary_section is not None and not summary_section.get("content", "").strip():
+        result["_degraded"] = True
+        result["_degraded_reason"] = (
+            "The resume did not contain enough structured content to generate a professional summary."
+        )
 
     state.update_progress(1, 1, "Full polish complete.")
     return result
@@ -990,6 +1007,11 @@ def _execute_pipeline(
             polish = _stage_5_full_polish(
                 analysis["structured"], strategy, parsed_jd, jd_text, state,
             )
+            if polish.get("_degraded"):
+                pipeline_notes.append({
+                    "type": "summary_fallback",
+                    "message": polish.get("_degraded_reason", "The summary stage kept the current content because AI polishing was unavailable."),
+                })
             if polish.get("summary_rewritten"):
                 all_changes.append({
                     "type": "summary_rewrite",

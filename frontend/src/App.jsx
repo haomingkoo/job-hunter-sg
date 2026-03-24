@@ -336,7 +336,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
   const [totalPages, setTotalPages] = useState(1);
   const [totalLabel, setTotalLabel] = useState("");
   const [expandedJobId, setExpandedJobId] = useState(null);
-  const activeSearchQuery = submittedQuery || query;
+  const activeSearchQuery = submittedQuery;
 
   // Load cached jobs on mount (browse mode)
   useEffect(() => {
@@ -383,16 +383,27 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
         url: j.url || "",
       }));
       setResults(mapped);
+      if (pageNum === 1 && data.filter_meta && typeof data.filter_meta === "object") {
+        setFilterMeta({
+          sources: Array.isArray(data.filter_meta.sources) ? data.filter_meta.sources : [],
+          employment_types: Array.isArray(data.filter_meta.employment_types) ? data.filter_meta.employment_types : [],
+          locations: Array.isArray(data.filter_meta.locations) ? data.filter_meta.locations : [],
+        });
+      }
       setSubmittedQuery(normalizedQuery);
       setPage(pageNum);
-      setTotalPages(data.pages || 1);
+      const totalPagesValue = Number(data.pages);
+      setTotalPages(Number.isFinite(totalPagesValue) && totalPagesValue > 0 ? totalPagesValue : 1);
       setExpandedJobId(null);
-      const total = `${(data.total || mapped.length).toLocaleString()} jobs`;
+      const totalCountValue = Number(data.total);
+      const totalCount = Number.isFinite(totalCountValue) && totalCountValue >= 0 ? totalCountValue : mapped.length;
+      const total = `${Math.max(totalCount, 0).toLocaleString()} jobs`;
       setTotalLabel(total);
     } catch (err) {
       setError(err.message || "Failed to load jobs. Please try again.");
       setResults([]);
       setTotalPages(1);
+      setTotalLabel("");
       setSubmittedQuery(searchQuery.trim());
     } finally {
       setLoading(false);
@@ -564,11 +575,9 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
             >
               <option value="all">All employment types</option>
-              <option value="Full">Full Time</option>
-              <option value="Part">Part Time</option>
-              <option value="Contract">Contract</option>
-              <option value="Temporary">Temporary</option>
-              <option value="Intern">Internship</option>
+              {employmentTypeOptions.map((type) => (
+                <option key={type} value={type}>{type}</option>
+              ))}
             </select>
 
             <select
@@ -1730,6 +1739,7 @@ const RESUME_DATE_HINT_RE = /\b(?:19|20)\d{2}\b|present|current|jan|feb|mar|apr|
 const RESUME_CERTIFICATION_RE = /certification|certifications|certificate|certified|pmp|wsq|skillsfuture|accredited|in progress|target|gmat|upskilling|emeritus|heicoders|completed.*course|full stack development|generative ai|currently pursuing/i;
 const RESUME_EDUCATION_RE = /university|polytechnic|college|school|institute|academy|gpa|degree|diploma|bachelor|master|phd|exchange|graduated|major|minor|focus|capstone|national university|nanyang|singapore management|nus |ntu |smu |sutd|sit |suss/i;
 const RESUME_DEGREE_RE = /\b(?:b\.?sc|m\.?sc|bachelor|master|phd|doctorate|diploma|degree|mba)\b/i;
+const DEGREE_START_RE = /^(M\.?Sc|B\.?Sc|B\.?Eng|MBA|M\.?Eng|Ph\.?D|B\.?A|M\.?A|Diploma)/i;
 const RESUME_EDUCATION_DETAIL_RE = /gpa|exchange|focus|capstone|graduate certificate|graduate certificates|minor|major|distinction|honou?r/i;
 const RESUME_OVERUSED_IGNORE = new Set([
   "automation", "digital", "transformation", "program", "manager", "management",
@@ -1749,6 +1759,49 @@ const RESUME_SMALL_TITLE_WORDS = new Set([
   "a", "an", "and", "as", "at", "by", "for", "from", "in", "into", "of",
   "on", "or", "the", "to", "with",
 ]);
+const RESUME_SECTION_LABELS = {
+  summary: "Professional Summary",
+  objective: "Objective",
+  experience: "Professional Experience",
+  education: "Education",
+  skills: "Core Skills",
+  projects: "Projects",
+  certifications: "Certifications",
+  activities: "Volunteer & Leadership",
+  personal: "Additional Information",
+  languages: "Languages",
+  awards: "Awards",
+};
+const TAILOR_STAGE_LABELS = [
+  { id: "analyze", label: "Analyze" },
+  { id: "strategize", label: "Strategy" },
+  { id: "local_cleanup", label: "Cleanup" },
+  { id: "bullet_rewrite", label: "Rewrite" },
+  { id: "section_polish", label: "Polish" },
+  { id: "full_polish", label: "Summary" },
+  { id: "validate", label: "Validate" },
+];
+const ADD_SECTION_OPTIONS = [
+  { id: "projects", label: "Projects", heading: "PROJECTS", starter: "• Add project details here" },
+  { id: "volunteer", label: "Volunteer", heading: "VOLUNTEER EXPERIENCE", starter: "• Add volunteer experience here" },
+  { id: "awards", label: "Awards", heading: "AWARDS", starter: "• Add award or recognition here" },
+  { id: "custom", label: "Custom", heading: "", starter: "• Add details here" },
+];
+
+function getTailorChangeKey(change, index = 0) {
+  if (!change) return `change-${index}`;
+  if (change.type === "summary_rewrite") return "summary";
+  return change.bullet_id || `${change.type || "change"}-${index}`;
+}
+
+function getAtsGapKey(gap) {
+  return [
+    gap?.skill || "",
+    gap?.suggested_section || "",
+    gap?.required ? "required" : "preferred",
+    gap?.action || "",
+  ].join("::");
+}
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1920,46 +1973,43 @@ function looksLikeDenseSkillList(parts) {
 }
 
 function reorderParsedSections(sections, templateOrder = []) {
-  if (!Array.isArray(templateOrder) || templateOrder.length === 0) return sections;
+  void templateOrder;
+  return sections;
+}
 
-  const preamble = [];
-  const groups = [];
-  let currentGroup = null;
+function pruneEmptySectionGroups(sections) {
+  const pruned = [];
 
-  sections.forEach((section) => {
-    if (section.type === "heading" || section.type === "heading_paragraph") {
-      if (currentGroup) groups.push(currentGroup);
-      currentGroup = {
-        key: section.sectionKey || getResumeSectionKey(section.text),
-        items: [section],
-      };
-      return;
+  for (let index = 0; index < sections.length; index += 1) {
+    const current = sections[index];
+
+    if (current?.type !== "heading") {
+      pruned.push(current);
+      continue;
     }
 
-    if (currentGroup) currentGroup.items.push(section);
-    else preamble.push(section);
-  });
+    const groupItems = [current];
+    let nextIndex = index + 1;
+    let hasRenderableContent = false;
 
-  if (currentGroup) groups.push(currentGroup);
-  if (groups.length === 0) return sections;
-
-  const orderedGroups = [];
-  const usedGroups = new Set();
-
-  templateOrder.forEach((key) => {
-    groups.forEach((group, index) => {
-      if (!usedGroups.has(index) && group.key === key) {
-        orderedGroups.push(group);
-        usedGroups.add(index);
+    while (nextIndex < sections.length) {
+      const next = sections[nextIndex];
+      if (next?.type === "heading" || next?.type === "heading_paragraph") break;
+      groupItems.push(next);
+      if (next?.type && next.type !== "spacer") {
+        hasRenderableContent = true;
       }
-    });
-  });
+      nextIndex += 1;
+    }
 
-  groups.forEach((group, index) => {
-    if (!usedGroups.has(index)) orderedGroups.push(group);
-  });
+    if (hasRenderableContent) {
+      pruned.push(...groupItems);
+    }
 
-  return [...preamble, ...orderedGroups.flatMap((group) => group.items)];
+    index = nextIndex - 1;
+  }
+
+  return pruned;
 }
 
 function normalizeScoreData(data) {
@@ -2093,6 +2143,7 @@ function buildEducationPair(lines, lineIndex, currentSectionKey, keywords) {
   const canExtendEducationMeta = third
     && !isHeadingLine(third)
     && !RESUME_BULLET_RE.test(thirdRaw || "")
+    && !DEGREE_START_RE.test(third)
     && looksLikeEducationText(next)
     && !hasDateHint(next)
     && (hasDateHint(third) || /singapore|canada|usa|uk|australia|japan|taiwan|university|college|school|institute/i.test(third));
@@ -2631,7 +2682,9 @@ function parseResumeToSections(text, keywords, templateOrder = []) {
     });
   }
 
-  return reorderParsedSections(mergeSummaryLeadParagraphs(mergeParsedParagraphRuns(parsed)), templateOrder);
+  return pruneEmptySectionGroups(
+    reorderParsedSections(mergeSummaryLeadParagraphs(mergeParsedParagraphRuns(parsed)), templateOrder),
+  );
 }
 
 function extractResumeHeaderMeta(text) {
@@ -3008,12 +3061,19 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [workspaceView, setWorkspaceView] = useState("feedback");
   const [mobilePanel, setMobilePanel] = useState("edit");
   const [selectedBulletId, setSelectedBulletId] = useState(null);
+  const [selectedSectionId, setSelectedSectionId] = useState(null);
   const [editingNodeId, setEditingNodeId] = useState(null);
   const [editingValue, setEditingValue] = useState("");
   const [annotationsOn, setAnnotationsOn] = useState(true);
   const [selectedBulletTab, setSelectedBulletTab] = useState("action_oriented");
   const [scoreChange, setScoreChange] = useState(null);
   const [error, setError] = useState("");
+  const [tailorDecisionBusy, setTailorDecisionBusy] = useState({});
+  const [tailorEditedTexts, setTailorEditedTexts] = useState({});
+  const [tailorApplyBusy, setTailorApplyBusy] = useState(false);
+  const [atsGapInputs, setAtsGapInputs] = useState({});
+  const [atsGapDecisions, setAtsGapDecisions] = useState({});
+  const [showAddSectionMenu, setShowAddSectionMenu] = useState(false);
 
   const fileInputRef = useRef(null);
   const scorePanelRef = useRef(null);
@@ -3021,6 +3081,16 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const initialScoredRef = useRef(false);
   const previousJobDescriptionRef = useRef("");
   const tailoringPollAttemptsRef = useRef(0);
+
+  const openMobileFeedbackPanel = useCallback((targetRef = scorePanelRef) => {
+    if (typeof window === "undefined" || window.innerWidth >= 1024) return;
+    setMobilePanel("feedback");
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        targetRef?.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+  }, []);
 
   useEffect(() => {
     try {
@@ -3099,13 +3169,11 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
             if (cancelled) return;
             setTailoringResult(resultData);
             setTailoringLoading(false);
-            if (typeof window !== "undefined" && window.innerWidth < 1024) {
-              setMobilePanel("feedback");
-            }
+            openMobileFeedbackPanel();
             return;
           }
 
-          await new Promise((resolve) => setTimeout(resolve, 1500));
+          await new Promise((resolve) => setTimeout(resolve, 2500));
         } catch (err) {
           if (cancelled) return;
           setTailoringError(
@@ -3128,7 +3196,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     return () => {
       cancelled = true;
     };
-  }, [tailoringLoading, tailoringResult, tailoringSessionId]);
+  }, [openMobileFeedbackPanel, tailoringLoading, tailoringResult, tailoringSessionId]);
 
   const jobDescription = useMemo(() => {
     if (!selectedJob) return "";
@@ -3212,6 +3280,10 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     () => bulletSections.find((section) => section.id === selectedBulletId) || null,
     [bulletSections, selectedBulletId],
   );
+  const selectedSection = useMemo(
+    () => parsedSections.find((section) => section.id === selectedSectionId) || null,
+    [parsedSections, selectedSectionId],
+  );
 
   useEffect(() => {
     if (selectedBulletId && !bulletSections.some((section) => section.id === selectedBulletId)) {
@@ -3220,10 +3292,30 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   }, [bulletSections, selectedBulletId]);
 
   useEffect(() => {
+    if (selectedSectionId && !parsedSections.some((section) => section.id === selectedSectionId)) {
+      setSelectedSectionId(null);
+    }
+  }, [parsedSections, selectedSectionId]);
+
+  useEffect(() => {
     if (selectedBullet && selectedFeedbackRef.current) {
       selectedFeedbackRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }, [selectedBullet]);
+
+  useEffect(() => {
+    if (!Array.isArray(tailoringResult?.changes)) return;
+    setTailorEditedTexts((current) => {
+      const next = { ...current };
+      tailoringResult.changes.forEach((change, index) => {
+        const key = change?.bullet_id || (change?.type === "summary_rewrite" ? "summary" : `change-${index}`);
+        if (!(key in next)) {
+          next[key] = change?.user_edited_text || change?.tailored || "";
+        }
+      });
+      return next;
+    });
+  }, [tailoringResult]);
 
   useEffect(() => {
     const tabs = getBulletFeedbackTabs(selectedBullet, resumeText);
@@ -3279,17 +3371,24 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     };
   }, [selectedJob?.id, scoreData, needsRescore, jobDescription, resumeText]);
 
-  const applyResumeText = useCallback((nextText, { rescore = false, clearRewrites = false } = {}) => {
+  const applyResumeText = useCallback((nextText, { rescore = false, clearRewrites = false, preserveTailoringContext = false } = {}) => {
     setResumeText(nextText);
     setScoreChange(null);
     setDownloadReady(false);
     setReviewAllSuggestions([]);
     setReviewAllSummary(null);
     setReviewDecisions({});
-    setTailoringSessionId("");
-    setTailoringStatus(null);
-    setTailoringResult(null);
-    setTailoringError("");
+    if (!preserveTailoringContext) {
+      setTailoringSessionId("");
+      setTailoringStatus(null);
+      setTailoringResult(null);
+      setTailoringError("");
+      setTailorDecisionBusy({});
+      setTailorEditedTexts({});
+      setTailorApplyBusy(false);
+      setAtsGapInputs({});
+      setAtsGapDecisions({});
+    }
     if (clearRewrites) setRewriteResults({});
     if (rescore) {
       runScore(nextText, jobDescription, { phase: "opening" });
@@ -3395,9 +3494,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
       const data = await response.json();
       setCoachResponse(data);
       if (data.session_id) setSessionId(data.session_id);
-      if (typeof window !== "undefined" && window.innerWidth < 1024) {
-        setMobilePanel("feedback");
-      }
+      openMobileFeedbackPanel();
     } catch (err) {
       const message = err.message?.includes("429")
         ? "You’ve reached today’s AI coaching limit."
@@ -3435,9 +3532,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
 
       setReviewAllSuggestions(normalizedSuggestions);
       setReviewAllSummary(data.summary || null);
-      if (typeof window !== "undefined" && window.innerWidth < 1024) {
-        setMobilePanel("feedback");
-      }
+      openMobileFeedbackPanel();
     } catch (err) {
       setFormatError(
         err.message?.includes("429")
@@ -3457,6 +3552,11 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     setTailoringSessionId("");
     setTailoringStatus(null);
     setTailoringResult(null);
+    setTailorDecisionBusy({});
+    setTailorEditedTexts({});
+    setTailorApplyBusy(false);
+    setAtsGapInputs({});
+    setAtsGapDecisions({});
 
     try {
       const response = await apiFetch("/api/resume/tailor", {
@@ -3477,6 +3577,8 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
       setTailoringStatus({
         session_id: data.session_id,
         stage: "queued",
+        stage_number: 0,
+        total_stages: TAILOR_STAGE_LABELS.length,
         message: "Queued for a staged tailor run...",
         progress: { completed: 0, total: 0 },
       });
@@ -3532,9 +3634,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
           focused_feedback: focusedFeedback,
         },
       }));
-      if (typeof window !== "undefined" && window.innerWidth < 1024) {
-        setMobilePanel("feedback");
-      }
+      openMobileFeedbackPanel(selectedFeedbackRef);
     } catch (err) {
       setCoachError(
         err.message?.includes("429")
@@ -3632,6 +3732,142 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     }
   }, [applyResumeText, jobDescription, runScore, scoreData?.overall_score, tailoringResult]);
 
+  const submitTailorFeedback = useCallback(async (change, action) => {
+    if (!tailoringSessionId || !change) return;
+    const bulletId = change.type === "summary_rewrite" ? "summary" : change.bullet_id;
+    const key = bulletId || change.original || change.tailored;
+    if (!bulletId) return;
+
+    setTailorDecisionBusy((current) => ({ ...current, [key]: true }));
+    try {
+      const payload = {
+        bullet_id: bulletId,
+        action,
+      };
+      if (action === "edit") {
+        payload.edited_text = tailorEditedTexts[key] || change.tailored || "";
+      }
+
+      await apiFetch(`/api/resume/tailor/${tailoringSessionId}/feedback`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      setTailoringResult((current) => {
+        if (!current) return current;
+        return {
+          ...current,
+          changes: (current.changes || []).map((item) => {
+            const itemBulletId = item.type === "summary_rewrite" ? "summary" : item.bullet_id;
+            if (itemBulletId !== bulletId) return item;
+            return {
+              ...item,
+              user_status: action,
+              ...(action === "edit" ? { user_edited_text: tailorEditedTexts[key] || item.user_edited_text || item.tailored } : {}),
+            };
+          }),
+        };
+      });
+    } catch (err) {
+      setTailoringError(err.message || "Could not save your review decision.");
+    } finally {
+      setTailorDecisionBusy((current) => ({ ...current, [key]: false }));
+    }
+  }, [tailorEditedTexts, tailoringSessionId]);
+
+  const applyAcceptedTailoringChanges = useCallback(async () => {
+    if (!tailoringSessionId) return;
+    setTailorApplyBusy(true);
+    setTailoringError("");
+    try {
+      const response = await apiFetch(`/api/resume/tailor/${tailoringSessionId}/apply`, {
+        method: "POST",
+      });
+      const data = await response.json();
+      if (!data?.tailored_text) {
+        throw new Error("Tailoring apply response was malformed.");
+      }
+
+      const previousScore = scoreData?.overall_score;
+      setSelectedBulletId(null);
+      setSelectedSectionId(null);
+      setEditingNodeId(null);
+      applyResumeText(data.tailored_text, { clearRewrites: true });
+      const rescored = await runScore(data.tailored_text, jobDescription, { phase: "opening" });
+      if (Number.isFinite(previousScore) && Number.isFinite(rescored?.overall_score)) {
+        setScoreChange({ before: previousScore, after: rescored.overall_score, context: "Updated after accepted tailor changes" });
+      } else if (Number.isFinite(rescored?.overall_score)) {
+        setScoreChange({ before: null, after: rescored.overall_score, context: "Updated after accepted tailor changes" });
+      }
+    } catch (err) {
+      setTailoringError(err.message || "Could not apply accepted tailoring changes.");
+    } finally {
+      setTailorApplyBusy(false);
+    }
+  }, [applyResumeText, jobDescription, runScore, scoreData?.overall_score, tailoringSessionId]);
+
+  const insertSectionAtEnd = useCallback((heading, starter) => {
+    const nextText = `${resumeText.replace(/\s+$/g, "")}\n\n${heading}\n${starter}\n`;
+    applyResumeText(nextText);
+    setShowAddSectionMenu(false);
+  }, [applyResumeText, resumeText]);
+
+  const handleAddSection = useCallback((option) => {
+    if (!option) return;
+    if (option.id === "custom") {
+      const customHeading = window.prompt("Section heading", "CUSTOM SECTION");
+      if (!customHeading?.trim()) return;
+      insertSectionAtEnd(customHeading.trim().toUpperCase(), option.starter);
+      return;
+    }
+    insertSectionAtEnd(option.heading, option.starter);
+  }, [insertSectionAtEnd]);
+
+  const appendGapToSection = useCallback((sectionKey, value) => {
+    const headings = parsedSections.filter((section) => section.type === "heading" && section.sectionKey === sectionKey);
+    if (headings.length === 0) {
+      const headingLabel = RESUME_SECTION_LABELS[sectionKey] || titleCase(sectionKey);
+      return `${resumeText.replace(/\s+$/g, "")}\n\n${headingLabel.toUpperCase()}\n• ${value}\n`;
+    }
+
+    const targetHeading = headings[headings.length - 1];
+    return insertResumeLineAfter(resumeText, targetHeading, `• ${value}`);
+  }, [parsedSections, resumeText]);
+
+  const handleAtsGapAction = useCallback((gap, action) => {
+    if (!gap?.skill) return;
+    const gapKey = getAtsGapKey(gap);
+    if (action === "skip") {
+      setAtsGapDecisions((current) => ({ ...current, [gapKey]: "skip" }));
+      return;
+    }
+
+    const userInput = (atsGapInputs[gapKey] || "").trim();
+    if (gap.needs_user_input && !userInput) {
+      setTailoringError(`Add a short fact or example before placing "${gap.skill}".`);
+      return;
+    }
+
+    const insertedText = action === "skills"
+      ? gap.skill
+      : userInput || gap.skill;
+    const targetSection = action === "skills" ? "skills" : (gap.suggested_section || "experience");
+    const nextText = appendGapToSection(targetSection, insertedText);
+    applyResumeText(nextText, { preserveTailoringContext: true });
+    setAtsGapDecisions((current) => ({ ...current, [gapKey]: action }));
+    setTailoringError("");
+  }, [appendGapToSection, applyResumeText, atsGapInputs]);
+
+  const handleOptimizeSummary = useCallback(() => {
+    if (!jobDescription.trim()) {
+      setTailoringError("Select a target job first so summary optimization has JD context.");
+      openMobileFeedbackPanel();
+      return;
+    }
+    openMobileFeedbackPanel();
+    handleFullTailorRun();
+  }, [handleFullTailorRun, jobDescription, openMobileFeedbackPanel]);
+
   const handleDownload = async () => {
     if (!resumeText.trim()) return;
 
@@ -3703,14 +3939,15 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   };
 
   const jumpToScorePanel = () => {
-    setMobilePanel("feedback");
-    scorePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    openMobileFeedbackPanel();
   };
 
   const openEditorForSection = (section) => {
+    setSelectedSectionId(section.id);
     setEditingNodeId(section.id);
     setEditingValue(section.text);
     if (section.type === "bullet") setSelectedBulletId(section.id);
+    else setSelectedBulletId(null);
   };
 
   const commitEdit = (section) => {
@@ -3797,6 +4034,10 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     () => summarizeTailoringChanges(tailoringResult?.changes || []),
     [tailoringResult],
   );
+  const tailoringChanges = Array.isArray(tailoringResult?.changes) ? tailoringResult.changes : [];
+  const tailoringAcceptedCount = tailoringChanges.filter((change) => change?.user_status === "accept" || change?.user_status === "edit").length;
+  const tailoringRejectedCount = tailoringChanges.filter((change) => change?.user_status === "reject").length;
+  const tailoringPendingCount = tailoringChanges.filter((change) => !change?.user_status || change?.user_status === "pending").length;
   const acceptedReviewCount = reviewableSuggestions.filter((suggestion) => reviewDecisions[suggestion.id] === "accept").length;
   const pendingReviewCount = reviewableSuggestions.filter((suggestion) => !reviewDecisions[suggestion.id]).length;
   const selectedBulletTabs = useMemo(
@@ -3960,6 +4201,13 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     const bulletAnalyses = bulletSections.map((section) => analyzeBulletFeedback(section.text, resumeText, section.sectionKey));
     const actionCount = bulletAnalyses.filter((analysis) => analysis.hasActionVerb).length;
     const metricCount = bulletAnalyses.filter((analysis) => analysis.hasMetric).length;
+    const bulletsMissingMetrics = bulletSections
+      .filter((section) => !analyzeBulletFeedback(section.text, resumeText, section.sectionKey).hasMetric)
+      .map((section) => ({
+        id: section.id,
+        preview: section.text.length > 60 ? `${section.text.slice(0, 60)}...` : section.text,
+        hint: "Add a %, $, timeline, team size, or scale cue.",
+      }));
     const totalBullets = liveBulletCount || 1;
     const actionScore = Math.min(10, Math.round((actionCount / totalBullets) * 10));
     const specificsScore = Math.min(10, Math.round((metricCount / totalBullets) * 10));
@@ -3990,6 +4238,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
         max: 10,
         detail: `${metricCount}/${liveBulletCount} bullets contain metrics/numbers`,
         suggestions: specificsSuggestions,
+        missing_examples: bulletsMissingMetrics,
       },
     };
   }, [bulletSections, resumeText]);
@@ -3997,6 +4246,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const improvementCount = issueBulletCount + (scoreData?.top_suggestions?.length || 0) + Math.min(relevantMissingKeywords.length, 6);
   const isFeedbackView = workspaceView === "feedback";
   const isEditorView = workspaceView === "editor";
+  const showFeedbackPanels = isFeedbackView || mobilePanel === "feedback";
   const lowScoreWarning = scoreData && overallScore !== null && overallScore < 50;
   const setupVisible = showSetupPanel || !resumeText.trim();
   const scorePhaseLabel = !scoreData && scoreError
@@ -4031,6 +4281,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
 
   const focusBullet = useCallback((sectionId) => {
     setSelectedBulletId(sectionId);
+    setSelectedSectionId(sectionId);
     setMobilePanel("feedback");
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
@@ -4049,6 +4300,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     setEditingNodeId(nextId);
     setEditingValue("");
     setSelectedBulletId(nextId);
+    setSelectedSectionId(nextId);
     applyResumeText(nextText);
   }, [applyResumeText, resumeText]);
 
@@ -4058,8 +4310,9 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     setEditingNodeId(null);
     setEditingValue("");
     if (selectedBulletId === section.id) setSelectedBulletId(null);
+    if (selectedSectionId === section.id) setSelectedSectionId(null);
     applyResumeText(nextText);
-  }, [applyResumeText, resumeText, selectedBulletId]);
+  }, [applyResumeText, resumeText, selectedBulletId, selectedSectionId]);
 
   return (
     <div className="space-y-6 pb-24">
@@ -4411,7 +4664,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
           </button>
           <button
             type="button"
-            onClick={() => setMobilePanel("feedback")}
+            onClick={() => openMobileFeedbackPanel()}
             className={`rounded-xl px-4 py-2 text-sm font-medium transition ${mobilePanel === "feedback" ? "bg-gray-900 text-white" : "text-gray-600"}`}
           >
             Feedback
@@ -4420,7 +4673,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
       </div>
 
       <div className={`grid gap-6 ${isEditorView ? "lg:grid-cols-[minmax(0,65%)_minmax(320px,35%)]" : "lg:grid-cols-[minmax(320px,35%)_minmax(0,65%)]"}`}>
-        <aside className={`${mobilePanel === "feedback" ? "block" : "hidden"} space-y-4 ${isEditorView ? "lg:order-2" : "lg:order-1"} lg:block lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto`}>
+        <aside className={`${mobilePanel === "feedback" ? "block max-h-[calc(100vh-10rem)] overflow-y-auto pr-1" : "hidden"} space-y-4 ${isEditorView ? "lg:order-2" : "lg:order-1"} lg:block lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto`}>
           {isEditorView && (
             <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
@@ -4518,7 +4771,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
             </div>
           </div>
 
-          {isFeedbackView && scoreData && Object.keys(scoreData.dimensions || {}).length > 0 && (
+          {showFeedbackPanels && scoreData && Object.keys(scoreData.dimensions || {}).length > 0 && (
             <div className="space-y-3">
               {Object.entries(scoreData.dimensions).map(([name, dimension]) => {
                 const displayItems = Object.fromEntries(
@@ -4574,6 +4827,21 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 {item.suggestions?.length > 0 && (
                                   <div className="mt-2 text-xs leading-relaxed text-gray-600">
                                     {item.suggestions[0]}
+                                  </div>
+                                )}
+                                {Array.isArray(item.missing_examples) && item.missing_examples.length > 0 && (
+                                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
+                                    <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-800">
+                                      Bullets Missing Metrics
+                                    </div>
+                                    <div className="mt-2 max-h-40 space-y-2 overflow-y-auto pr-1">
+                                      {item.missing_examples.map((example) => (
+                                        <div key={example.id} className="rounded-lg bg-white px-2.5 py-2 text-xs leading-relaxed text-amber-900">
+                                          <div className="font-medium">{example.preview}</div>
+                                          <div className="mt-1 text-[11px] text-amber-800">{example.hint}</div>
+                                        </div>
+                                      ))}
+                                    </div>
                                   </div>
                                 )}
                               </summary>
@@ -4715,7 +4983,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                           {activeBulletTab.tip}
                         </div>
 
-                        {selectedBullet.annotation.keywordMatches?.length > 0 && (
+                        {selectedBullet.annotation?.keywordMatches?.length > 0 && (
                           <div className="mt-4">
                             <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Matched Keywords</div>
                             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -4824,7 +5092,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
             )}
           </div>
 
-          {isFeedbackView && (
+          {showFeedbackPanels && (
           <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
             <div className="text-sm font-semibold text-gray-800">Benchmark Snapshot</div>
             <div className="mt-1 text-xs text-gray-500">Compared against the NUS cues you shared with me.</div>
@@ -4855,7 +5123,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
           </div>
           )}
 
-          {isFeedbackView && (
+          {showFeedbackPanels && (
           <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
             <div className="text-sm font-semibold text-gray-800">Relevant Terms</div>
             {scoreData ? (
@@ -4960,6 +5228,17 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                 {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
                 {tailoringLoading ? "Tailoring..." : "Run Full Tailor"}
               </button>
+              {selectedSection?.sectionKey === "summary" && (
+                <button
+                  type="button"
+                  onClick={handleOptimizeSummary}
+                  disabled={tailoringLoading || !resumeText.trim()}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-medium text-violet-800 transition hover:bg-violet-100 disabled:opacity-40"
+                >
+                  {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  Optimize Summary
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleAIReview}
@@ -5017,7 +5296,32 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
 
               {tailoringStatus && (
                 <div className="mt-4 rounded-2xl border border-violet-200 bg-white p-4">
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
+                    {TAILOR_STAGE_LABELS.map((stage, stageIndex) => {
+                      const currentStageNumber = Number.isFinite(tailoringStatus?.stage_number) ? tailoringStatus.stage_number : 0;
+                      const isComplete = tailoringResult ? true : currentStageNumber > stageIndex;
+                      const isActive = !tailoringResult && tailoringStatus?.stage === stage.id;
+                      const pillClass = isComplete
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        : isActive
+                          ? "border-violet-200 bg-violet-50 text-violet-800"
+                          : "border-gray-200 bg-gray-50 text-gray-500";
+                      const activeLabel = stage.id === "bullet_rewrite" && tailoringStatus?.progress?.total
+                        ? `${stage.label} ${tailoringStatus.progress.completed}/${tailoringStatus.progress.total}`
+                        : stage.label;
+                      return (
+                        <div key={stage.id} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${pillClass}`}>
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-[11px] font-bold">
+                              {isComplete ? "✓" : isActive ? "●" : stageIndex + 1}
+                            </span>
+                            <span>{isActive ? activeLabel : stage.label}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-4 flex items-center justify-between gap-3">
                     <div>
                       <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Stage</div>
                       <div className="mt-1 text-sm font-semibold text-gray-900">
@@ -5029,7 +5333,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                       <div className="mt-1 text-sm font-semibold text-gray-900">
                         {tailoringStatus.progress?.total
                           ? `${tailoringStatus.progress.completed}/${tailoringStatus.progress.total}`
-                          : "Staged run"}
+                          : `${Math.max((tailoringStatus.stage_number || 0) + 1, 1)}/${tailoringStatus.total_stages || TAILOR_STAGE_LABELS.length}`}
                       </div>
                     </div>
                   </div>
@@ -5093,14 +5397,183 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                     </div>
                   )}
 
+                  {tailoringChanges.length > 0 && (
+                    <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Review Tailor Changes</div>
+                          <div className="mt-1 text-sm text-gray-700">Accept, reject, or edit each proposed change before applying them to the draft.</div>
+                        </div>
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          <span className="rounded-full bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-800">Accepted {tailoringAcceptedCount}</span>
+                          <span className="rounded-full bg-rose-100 px-2.5 py-1 font-semibold text-rose-800">Rejected {tailoringRejectedCount}</span>
+                          <span className="rounded-full bg-gray-100 px-2.5 py-1 font-semibold text-gray-700">Pending {tailoringPendingCount}</span>
+                        </div>
+                      </div>
+                      <div className="max-h-[34rem] space-y-3 overflow-y-auto pr-1">
+                        {tailoringChanges.map((change, index) => {
+                          const bulletId = change.type === "summary_rewrite" ? "summary" : change.bullet_id;
+                          const changeKey = bulletId || `${change.type}-${index}`;
+                          const userStatus = change.user_status || "pending";
+                          return (
+                            <div key={`${changeKey}-${index}`} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">
+                                  {titleCase(String(change.type || "change").replace(/_/g, " "))}
+                                </div>
+                                <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                                  userStatus === "accept" || userStatus === "edit"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : userStatus === "reject"
+                                      ? "bg-rose-100 text-rose-800"
+                                      : "bg-amber-100 text-amber-800"
+                                }`}>
+                                  {userStatus === "pending" ? "Pending review" : userStatus === "edit" ? "Edited" : titleCase(userStatus)}
+                                </span>
+                              </div>
+                              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                                <div className="rounded-xl border border-gray-200 bg-white p-3">
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">Original</div>
+                                  <div className="mt-2 text-sm leading-relaxed text-gray-700">{change.original}</div>
+                                </div>
+                                <div className="rounded-xl border border-violet-200 bg-violet-50 p-3">
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-700">Tailored</div>
+                                  <div className="mt-2 text-sm leading-relaxed text-violet-950">{change.tailored}</div>
+                                </div>
+                              </div>
+                              <textarea
+                                value={tailorEditedTexts[changeKey] || ""}
+                                onChange={(event) => setTailorEditedTexts((current) => ({ ...current, [changeKey]: event.target.value }))}
+                                rows={3}
+                                className="mt-3 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm leading-relaxed text-gray-700"
+                                placeholder="Optional: edit this tailored text before applying it"
+                              />
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  disabled={tailorDecisionBusy[changeKey]}
+                                  onClick={() => submitTailorFeedback(change, "accept")}
+                                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
+                                >
+                                  {tailorDecisionBusy[changeKey] ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
+                                  Accept
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={tailorDecisionBusy[changeKey]}
+                                  onClick={() => submitTailorFeedback(change, "reject")}
+                                  className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-40"
+                                >
+                                  <X size={13} />
+                                  Reject
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={tailorDecisionBusy[changeKey] || !(tailorEditedTexts[changeKey] || "").trim()}
+                                  onClick={() => submitTailorFeedback(change, "edit")}
+                                  className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-medium text-violet-700 hover:bg-violet-50 disabled:opacity-40"
+                                >
+                                  <Edit3 size={13} />
+                                  Edit
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {Array.isArray(tailoringResult.ats_gaps) && tailoringResult.ats_gaps.length > 0 && (
+                    <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-4">
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">ATS Gap Report</div>
+                        <div className="mt-1 text-sm text-gray-700">These skills are still missing or underrepresented after the tailor run.</div>
+                      </div>
+                      <div className="space-y-3">
+                        {tailoringResult.ats_gaps.map((gap, index) => {
+                          const gapKey = getAtsGapKey(gap);
+                          const gapDecision = atsGapDecisions[gapKey] || "";
+                          return (
+                            <div key={`${gapKey}-${index}`} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="text-sm font-semibold text-gray-900">{gap.skill}</div>
+                                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${gap.required ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>
+                                  {gap.required ? "Required" : "Preferred"}
+                                </span>
+                              </div>
+                              <div className="mt-2 text-sm leading-relaxed text-gray-600">
+                                Suggested placement: <span className="font-medium text-gray-800">{RESUME_SECTION_LABELS[gap.suggested_section] || titleCase(gap.suggested_section || "experience")}</span>
+                              </div>
+                              {gap.action && (
+                                <div className="mt-1 text-sm leading-relaxed text-gray-600">
+                                  Suggested action: {gap.action}
+                                </div>
+                              )}
+                              {gap.needs_user_input && (
+                                <textarea
+                                  rows={2}
+                                  value={atsGapInputs[gapKey] || ""}
+                                  onChange={(event) => setAtsGapInputs((current) => ({ ...current, [gapKey]: event.target.value }))}
+                                  placeholder={`Add a real example or fact for ${gap.skill}`}
+                                  className="mt-3 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm leading-relaxed text-gray-700"
+                                />
+                              )}
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleAtsGapAction(gap, "skills")}
+                                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
+                                >
+                                  <Plus size={13} />
+                                  Add to Skills
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAtsGapAction(gap, "bullet")}
+                                  className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-800 hover:bg-violet-100"
+                                >
+                                  <Plus size={13} />
+                                  Add to Bullet
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAtsGapAction(gap, "skip")}
+                                  className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                >
+                                  <X size={13} />
+                                  Skip
+                                </button>
+                                {gapDecision && (
+                                  <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-gray-700">
+                                    {titleCase(gapDecision)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={applyTailoredDraft}
-                      className="inline-flex items-center gap-2 rounded-2xl bg-violet-700 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-800"
+                      onClick={applyAcceptedTailoringChanges}
+                      disabled={tailorApplyBusy || tailoringAcceptedCount === 0}
+                      className="inline-flex items-center gap-2 rounded-2xl bg-violet-700 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-800 disabled:opacity-40"
                     >
-                      <CheckCircle size={14} />
-                      Apply Tailored Draft
+                      {tailorApplyBusy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+                      {tailorApplyBusy ? "Applying..." : "Apply Accepted Changes"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyTailoredDraft}
+                      className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-medium text-violet-700 transition hover:bg-violet-50"
+                    >
+                      <Zap size={14} />
+                      Apply All Suggested Changes
                     </button>
                     <button
                       type="button"
@@ -5109,6 +5582,11 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                         setTailoringStatus(null);
                         setTailoringResult(null);
                         setTailoringError("");
+                        setTailorDecisionBusy({});
+                        setTailorEditedTexts({});
+                        setTailorApplyBusy(false);
+                        setAtsGapInputs({});
+                        setAtsGapDecisions({});
                       }}
                       className="inline-flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
                     >
@@ -5256,7 +5734,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
             </div>
           )}
 
-          {isFeedbackView && (
+          {showFeedbackPanels && (
           <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
             <div className="text-sm font-semibold text-gray-800">Singapore Tips</div>
             <ul className="mt-3 space-y-2">
@@ -5354,10 +5832,11 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
 
                       const isEditing = editingNodeId === section.id;
                       const isSelectedBullet = selectedBulletId === section.id;
+                      const isSelectedSection = selectedSectionId === section.id;
                       const annotation = section.annotation;
                       const wrapperClasses = section.type === "bullet" && annotationsOn
                         ? `${annotation?.borderClass || "border-transparent bg-transparent"} border-l-[3px]`
-                        : isSelectedBullet
+                        : (isSelectedBullet || isSelectedSection)
                           ? "border-l-[3px] border-indigo-300 bg-indigo-50/60"
                           : "border-l-[3px] border-transparent";
 
@@ -5379,6 +5858,11 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                             }
                           }}
                           className="w-full resize-none rounded-xl border border-indigo-200 bg-white px-3 py-2 text-inherit leading-relaxed text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          style={{
+                            fontSize: "16px",
+                            lineHeight: templateStyles.bodyStyle.lineHeight,
+                            fontFamily: templateStyles.bodyStyle.fontFamily,
+                          }}
                         />
                       ) : (
                         <button
@@ -5513,6 +5997,39 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                         </div>
                       );
                     })}
+                    <div className="mt-3 rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/70 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">Need another section?</div>
+                          <div className="mt-1 text-xs leading-relaxed text-slate-600">
+                            Add Projects, Volunteer, Awards, or a custom section directly into the draft.
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowAddSectionMenu((current) => !current)}
+                          className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
+                        >
+                          <Plus size={14} />
+                          Add Section
+                        </button>
+                      </div>
+                      {showAddSectionMenu && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {ADD_SECTION_OPTIONS.map((option) => (
+                            <button
+                              key={option.id}
+                              type="button"
+                              onClick={() => handleAddSection(option)}
+                              className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                            >
+                              <Plus size={13} />
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </>
               ) : (
