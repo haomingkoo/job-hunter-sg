@@ -253,6 +253,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
   const [totalPages, setTotalPages] = useState(1);
   const [totalLabel, setTotalLabel] = useState("");
   const [expandedJobId, setExpandedJobId] = useState(null);
+  const activeSearchQuery = submittedQuery || query;
 
   // Load cached jobs on mount (browse mode)
   useEffect(() => {
@@ -312,8 +313,10 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       setPage(pageNum);
       setTotalPages(data.pages || 1);
       setExpandedJobId(null);
-      const total = queryWords.length > 1 ? andFiltered.length : (data.total || andFiltered.length);
-      setTotalLabel(`${total.toLocaleString()} jobs`);
+      const total = queryWords.length > 1
+        ? `${andFiltered.length.toLocaleString()} jobs on this page`
+        : `${(data.total || andFiltered.length).toLocaleString()} jobs`;
+      setTotalLabel(total);
     } catch (err) {
       setError(err.message || "Failed to load jobs. Please try again.");
       setResults([]);
@@ -390,7 +393,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     setLocationFilter("all");
     setMinSalaryFilter("");
     setExpandedJobId(null);
-    loadJobs(query, 1, {
+    loadJobs(activeSearchQuery, 1, {
       levelFilter: "all",
       employmentFilter: "all",
       sourceFilter: "all",
@@ -421,7 +424,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       {totalLabel && (
         <p className="text-sm text-gray-500">
           <span className="font-medium text-gray-700">{totalLabel}</span>
-          {submittedQuery ? ` matching "${submittedQuery}"` : " across Singapore"}
+          {activeSearchQuery ? ` matching "${activeSearchQuery}"` : " across Singapore"}
           {results.length > 0 && ` — showing ${(page - 1) * 20 + 1}-${(page - 1) * 20 + results.length}`}
         </p>
       )}
@@ -455,7 +458,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               onChange={(e) => {
                 const value = e.target.value;
                 setLevelFilter(value);
-                loadJobs(query, 1, { levelFilter: value });
+                loadJobs(activeSearchQuery, 1, { levelFilter: value });
               }}
               className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
             >
@@ -471,7 +474,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               onChange={(e) => {
                 const value = e.target.value;
                 setEmploymentFilter(value);
-                loadJobs(query, 1, { employmentFilter: value });
+                loadJobs(activeSearchQuery, 1, { employmentFilter: value });
               }}
               className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
             >
@@ -488,7 +491,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               onChange={(e) => {
                 const value = e.target.value;
                 setSourceFilter(value);
-                loadJobs(query, 1, { sourceFilter: value });
+                loadJobs(activeSearchQuery, 1, { sourceFilter: value });
               }}
               className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
             >
@@ -503,7 +506,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               onChange={(e) => {
                 const value = e.target.value;
                 setLocationFilter(value);
-                loadJobs(query, 1, { locationFilter: value });
+                loadJobs(activeSearchQuery, 1, { locationFilter: value });
               }}
               className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
             >
@@ -521,9 +524,9 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
                 const value = e.target.value;
                 setMinSalaryFilter(value);
               }}
-              onBlur={() => loadJobs(query, 1, { minSalaryFilter })}
+              onBlur={() => loadJobs(activeSearchQuery, 1, { minSalaryFilter })}
               onKeyDown={(e) => {
-                if (e.key === "Enter") loadJobs(query, 1, { minSalaryFilter });
+                if (e.key === "Enter") loadJobs(activeSearchQuery, 1, { minSalaryFilter });
               }}
               placeholder="Minimum salary"
               className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
@@ -659,11 +662,11 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       {totalPages > 1 && (
         <div className="flex justify-center gap-3">
           {page > 1 && (
-            <button onClick={() => loadJobs(query, page - 1)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Previous</button>
+            <button onClick={() => loadJobs(activeSearchQuery, page - 1)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Previous</button>
           )}
           <span className="px-4 py-2 text-sm text-gray-500">Page {page} of {totalPages}</span>
           {page < totalPages && (
-            <button onClick={() => loadJobs(query, page + 1)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Next</button>
+            <button onClick={() => loadJobs(activeSearchQuery, page + 1)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Next</button>
           )}
         </div>
       )}
@@ -1388,7 +1391,7 @@ const RESUME_TEMPLATE_STYLES = {
       maxWidth: "100%",
       lineHeight: "1.33",
     },
-    headingClass: "mt-4 mb-1 border-l-4 border-indigo-500 pl-3 text-[11pt] font-bold uppercase tracking-[0.18em] text-slate-900",
+    headingClass: "mt-4 mb-1 border-b border-indigo-500 pb-1 text-[11pt] font-bold uppercase tracking-[0.18em] text-slate-900",
     nameClass: "text-[18pt] font-bold tracking-[0.04em] text-slate-950",
     subheadingClass: "mt-2 mb-0.5 text-slate-700",
     bodyStyle: { fontSize: "1em", lineHeight: "1.33" },
@@ -1420,7 +1423,7 @@ const RESUME_TEMPLATE_STYLES = {
       maxWidth: "100%",
       lineHeight: "1.3",
     },
-    headingClass: "mt-4 mb-1 text-[0.92rem] font-bold uppercase tracking-[0.14em] text-zinc-950",
+    headingClass: "mt-4 mb-1 border-b border-zinc-400 pb-1 text-[11pt] font-bold uppercase tracking-[0.14em] text-zinc-950",
     nameClass: "text-[18pt] font-bold tracking-[0.03em] text-zinc-950",
     subheadingClass: "mt-2 mb-0.5 text-zinc-700",
     bodyStyle: { fontSize: "1em", lineHeight: "1.3" },
@@ -2322,6 +2325,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const applyResumeText = useCallback((nextText, { rescore = false, clearRewrites = false } = {}) => {
     setResumeText(nextText);
     setScoreChange(null);
+    setDownloadReady(false);
     if (clearRewrites) setRewriteResults({});
     if (rescore) {
       runScore(nextText, jobDescription, { phase: "opening" });
@@ -2638,6 +2642,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const headerMeta = useMemo(() => extractResumeHeaderMeta(resumeText), [resumeText]);
   const fallbackHeaderLines = [profile.name, [profile.email, profile.phone, profile.location].filter(Boolean).join(" | ")].filter(Boolean);
   const displayHeaderLines = headerMeta.lines.length > 0 ? headerMeta.lines : fallbackHeaderLines;
+  const displayContactLine = displayHeaderLines.slice(1).join(" | ");
   const bodySections = useMemo(
     () => parsedSections.filter((section) => !headerMeta.lineIndices.includes(section.lineIndex)),
     [parsedSections, headerMeta.lineIndices],
@@ -3686,11 +3691,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                   {displayHeaderLines.length > 0 && (
                     <div className="mb-4 border-b border-gray-300 pb-2 text-center">
                       <div className={templateStyles.nameClass}>{displayHeaderLines[0]}</div>
-                      {displayHeaderLines.slice(1).map((line, index) => (
-                        <div key={`resume-header-${index}`} className="mt-0.5 text-[9pt] text-gray-600">
-                          {line}
-                        </div>
-                      ))}
+                      {displayContactLine && <div className="mt-0.5 text-[9pt] text-gray-600">{displayContactLine}</div>}
                     </div>
                   )}
 

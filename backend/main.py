@@ -1455,6 +1455,91 @@ async def upload_resume(
     return result
 
 
+@app.post("/api/ai/review-all")
+def review_all_bullets(
+    body: ResumeScoreRequest,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Review ALL bullets at once — returns per-bullet suggestions WITHOUT changing anything.
+    User reviews each suggestion, accepts/rejects individually, then applies all.
+    This replaces the old "AI Improve All" which blindly rewrote everything.
+    """
+    check_rate_limit(user, "ai", db)
+    db.add(UsageLog(user_id=user.id if user else None, action="ai", detail="review_all"))
+    db.commit()
+
+    resume_text = sanitize_resume_text(body.resume_text)
+    jd = sanitize_user_input(body.job_description)
+
+    system = """You are an expert resume reviewer. Analyze each bullet point in the resume and provide specific improvement suggestions.
+
+For EACH bullet that needs improvement, provide:
+- The original bullet text (exact match)
+- What's wrong with it (weak verb, no metrics, vague impact, etc.)
+- A rewritten version that fixes the issue
+- Whether it's a minor fix or major rewrite
+
+For bullets that are already STRONG (action verb + metrics + clear impact), mark them as "keep" with no changes.
+
+CRITICAL:
+- NEVER change facts, dates, company names, or metrics
+- If no numbers exist, use [X%] or [N] placeholders
+- The keyword from the job description must appear VERBATIM if you add it
+- Preserve the original meaning — only improve the phrasing
+
+Return a JSON array:
+[
+  {"original": "exact bullet text", "status": "keep", "reason": "Strong action verb with measurable impact"},
+  {"original": "exact bullet text", "status": "improve", "issue": "Weak opening verb", "suggested": "Rewritten version here", "reason": "Replaced 'Responsible for' with 'Directed'"},
+  ...
+]"""
+
+    user_msg = f"Resume:\n{resume_text}"
+    if jd:
+        user_msg += f"\n\nTarget job description:\n{jd}"
+        user_msg += "\n\nWeave in missing keywords from the JD where they fit naturally. Keywords must be EXACT MATCH."
+
+    content = _call_sealion(
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        max_tokens=3000,
+        temperature=0.3,
+    )
+
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service unavailable. Try again shortly.",
+        )
+
+    # Parse JSON from AI response
+    suggestions = []
+    try:
+        start = content.find("[")
+        end = content.rfind("]") + 1
+        if start >= 0 and end > start:
+            suggestions = json.loads(content[start:end])
+    except (json.JSONDecodeError, ValueError):
+        suggestions = [{"error": "Could not parse AI response", "raw": content[:500]}]
+
+    keep_count = sum(1 for s in suggestions if s.get("status") == "keep")
+    improve_count = sum(1 for s in suggestions if s.get("status") == "improve")
+
+    return {
+        "suggestions": suggestions,
+        "summary": {
+            "total_bullets": len(suggestions),
+            "keep": keep_count,
+            "improve": improve_count,
+            "message": f"{keep_count} bullets are strong. {improve_count} can be improved."
+        }
+    }
+
+
 @app.post("/api/resume/format")
 def format_resume(
     body: ResumeScoreRequest,
