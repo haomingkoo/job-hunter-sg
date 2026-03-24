@@ -3322,22 +3322,28 @@ function ResumeTab({ selectedJob, user }) {
                 </div>
                 {matchedKeywords.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    {matchedKeywords.map((keyword) => (
-                      <span key={keyword} className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                        {keyword}
-                      </span>
-                    ))}
+                    {matchedKeywords.map((keyword, idx) => {
+                      const label = typeof keyword === 'string' ? keyword : keyword?.skill || '';
+                      return (
+                        <span key={label || idx} className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700" title={keyword?.resume_context || ''}>
+                          {label}
+                        </span>
+                      );
+                    })}
                   </div>
                 )}
                 {missingKeywords.length > 0 && (
                   <>
                     <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Missing</div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
-                      {missingKeywords.slice(0, 12).map((keyword) => (
-                        <span key={keyword} className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700">
-                          {keyword}
-                        </span>
-                      ))}
+                      {missingKeywords.slice(0, 12).map((keyword, idx) => {
+                        const label = typeof keyword === 'string' ? keyword : keyword?.skill || '';
+                        return (
+                          <span key={label || idx} className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 cursor-pointer hover:bg-rose-200" title={keyword?.jd_context || 'Click to see JD context'}>
+                            {label}
+                          </span>
+                        );
+                      })}
                     </div>
                   </>
                 )}
