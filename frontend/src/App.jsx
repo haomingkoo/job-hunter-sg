@@ -555,8 +555,8 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               </div>
               <div className="flex items-center gap-4 text-sm text-gray-500 mb-2 flex-wrap">
                 <span className="flex items-center gap-1"><Building2 size={13} />{job.company}</span>
-                <span className="flex items-center gap-1"><MapPin size={13} />{job.location || "Location not listed"}</span>
-                <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary || "Salary not listed"}</span>
+                {job.location && <span className="flex items-center gap-1"><MapPin size={13} />{job.location}</span>}
+                {job.salary && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
               </div>
               {job.description && <p className="text-sm text-gray-600 mb-3 line-clamp-2">{job.description}</p>}
               {job.skills.length > 0 && (
@@ -571,9 +571,9 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between border-t border-gray-100 pt-3 mt-1 gap-2">
             <div className="flex items-center gap-3 text-xs text-gray-400">
-              <span>{job.source || "Source not listed"}</span>
-              <span>{job.posted || "Posted date not listed"}</span>
-              <span>{job.type || "Employment type not listed"}</span>
+              {job.source && <span>{job.source}</span>}
+              {job.posted && <span>{job.posted}</span>}
+              {job.type && <span>{job.type}</span>}
             </div>
             <div className="flex flex-wrap gap-2">
               <button onClick={() => generateResume(job)} className="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-emerald-700 transition">
@@ -2006,7 +2006,7 @@ function ResumeTab({ selectedJob, user }) {
     } catch {
       const fallback = scoreFallback(text, jd);
       setScoreData(fallback);
-      setScoreError("Full scorer unavailable. Showing a lighter analysis instead.");
+      setScoreError("Detailed scoring is temporarily unavailable. Showing a lighter analysis instead.");
       setNeedsRescore(false);
       setScorePhase(phase === "final" ? "final_complete" : "opening_scored");
       return fallback;
@@ -2636,7 +2636,7 @@ function ResumeTab({ selectedJob, user }) {
             <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Reference Cues</div>
             <div className="mt-2 text-lg font-semibold text-slate-900">NUS benchmark signals</div>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">
-              These are calibration cues from the NUS/VMock materials you shared. They are guide rails, not hard rules.
+              These are calibration cues drawn from NUS career-centre benchmarks. They are guide rails, not hard rules.
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -3814,7 +3814,7 @@ export default function JobHunterSG() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-5xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-6 py-5">
           <div className="flex items-center justify-between">

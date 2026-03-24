@@ -221,29 +221,27 @@ class CareersGovScraper:
 
             for item in results:
                 title = item.get("title", "")
-                # Extract external path for URL
                 external_path = item.get("externalPath", "")
                 url = f"https://sggovterp.wd102.myworkdayjobs.com/en-US/PublicServiceCareers{external_path}" if external_path else ""
 
-                # Bullet fields contain location, posted date etc
-                bullets = item.get("bulletFields", [])
-                location = bullets[0] if len(bullets) > 0 else "Singapore"
-                posted = bullets[1] if len(bullets) > 1 else ""
-
-                # Extract subtitles for agency info
-                subtitles = item.get("locationsText", "")
+                # Workday API fields:
+                # - locationsText: actual office location (e.g. "Paya Lebar Quarter")
+                # - postedOn: posted date string (e.g. "Posted 30+ Days Ago")
+                # - bulletFields: just the job requisition ID
+                location = item.get("locationsText", "") or "Singapore"
+                posted = item.get("postedOn", "")
 
                 job = Job(
                     title=title,
                     company="Singapore Public Service",
                     location=location,
-                    salary="",  # Workday doesn't expose salary in search
+                    salary="",
                     source="Careers@Gov",
                     url=url,
                     posted_date=posted,
-                    employment_type="",
+                    employment_type="Full-time",
                     seniority="",
-                    description="",  # Need individual page fetch for full desc
+                    description="",
                     skills=[],
                     agency=subtitles,
                 )
