@@ -38,7 +38,7 @@ if not SECRET_KEY:
     SECRET_KEY = "insecure-local-dev-only"
 
 # Configurable via env vars — tune from Railway dashboard, no redeploy needed
-_FREE_AI = int(os.environ.get("FREE_AI_PER_DAY", "10"))
+_FREE_AI = int(os.environ.get("FREE_AI_PER_DAY", "999999"))
 _PRO_AI = int(os.environ.get("PRO_AI_PER_DAY", "50"))
 _PRO_DOMAINS = [
     d.strip().lower()
