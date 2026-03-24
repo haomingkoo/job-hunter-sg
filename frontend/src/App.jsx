@@ -3281,7 +3281,7 @@ function ResumeTab({ selectedJob, user }) {
           {isFeedbackView && (
           <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
             <div className="text-sm font-semibold text-gray-800">Benchmark Snapshot</div>
-            <div className="mt-1 text-xs text-gray-500">Benchmarked against industry standards for Singapore resumes.</div>
+            <div className="mt-1 text-xs text-gray-500">Compared against the NUS cues you shared with me.</div>
             <div className="mt-4 space-y-2">
               {benchmarkRows.map((row) => (
                 <div key={row.label} className="rounded-2xl border border-gray-100 bg-gray-50 px-3 py-3">
