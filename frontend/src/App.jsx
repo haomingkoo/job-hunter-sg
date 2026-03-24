@@ -336,6 +336,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
   const [totalPages, setTotalPages] = useState(1);
   const [totalLabel, setTotalLabel] = useState("");
   const [expandedJobId, setExpandedJobId] = useState(null);
+  const [parsedJobMeta, setParsedJobMeta] = useState({});
   const activeSearchQuery = submittedQuery;
 
   // Load cached jobs on mount (browse mode)
@@ -481,6 +482,56 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
   const toggleExpandedJob = (jobId) => {
     setExpandedJobId((current) => (current === jobId ? null : jobId));
   };
+
+  useEffect(() => {
+    if (!expandedJobId || parsedJobMeta[expandedJobId]?.loaded || parsedJobMeta[expandedJobId]?.loading) return;
+
+    let cancelled = false;
+    setParsedJobMeta((current) => ({
+      ...current,
+      [expandedJobId]: { ...(current[expandedJobId] || {}), loading: true, loaded: false, error: "" },
+    }));
+
+    apiFetch(`/api/jobs/${expandedJobId}/parsed`)
+      .then((resp) => resp.json())
+      .then((data) => {
+        if (cancelled) return;
+        const parsed = data?.parsed_jd && typeof data.parsed_jd === "object" ? data.parsed_jd : {};
+        const jobTerms = Array.isArray(data?.job_terms) ? data.job_terms : [];
+        const extractedTerms = [
+          ...(Array.isArray(parsed.required_skills) ? parsed.required_skills : []),
+          ...(Array.isArray(parsed.preferred_skills) ? parsed.preferred_skills : []),
+          ...(Array.isArray(parsed.single_word_skills) ? parsed.single_word_skills : []),
+        ];
+        setParsedJobMeta((current) => ({
+          ...current,
+          [expandedJobId]: {
+            loaded: true,
+            loading: false,
+            error: "",
+            parsed,
+            jobTerms,
+            extractedTerms,
+          },
+        }));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setParsedJobMeta((current) => ({
+          ...current,
+          [expandedJobId]: {
+            ...(current[expandedJobId] || {}),
+            loaded: true,
+            loading: false,
+            error: err.message || "Failed to load parsed JD cues.",
+          },
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [expandedJobId, parsedJobMeta]);
 
   const clearFilters = () => {
     setLevelFilter("all");
@@ -669,7 +720,13 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       {!loading && filtered.map((job) => {
         const isExpanded = expandedJobId === job.id;
         const skillDisplay = buildJobSkillDisplay(job.skills, job.description);
-        const previewSkills = skillDisplay.visibleSkills.slice(0, 6);
+        const parsedMeta = parsedJobMeta[job.id] || null;
+        const parsedDisplay = buildJobSkillDisplay(
+          parsedMeta?.jobTerms?.length ? parsedMeta.jobTerms : (parsedMeta?.extractedTerms || []),
+          job.description,
+        );
+        const effectiveSkillDisplay = parsedDisplay.visibleSkills.length > 0 ? parsedDisplay : skillDisplay;
+        const previewSkills = effectiveSkillDisplay.visibleSkills.slice(0, 6);
 
         return (
         <div
@@ -695,7 +752,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
                   {previewSkills.map((skill) => (
                     <span key={skill} className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded-full text-xs">{skill}</span>
                   ))}
-                  {skillDisplay.visibleSkills.length > previewSkills.length && <span className="text-xs text-gray-400">+{skillDisplay.visibleSkills.length - previewSkills.length} more</span>}
+                  {effectiveSkillDisplay.visibleSkills.length > previewSkills.length && <span className="text-xs text-gray-400">+{effectiveSkillDisplay.visibleSkills.length - previewSkills.length} more</span>}
                 </div>
               )}
             </div>
@@ -713,31 +770,42 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               )}
 
               <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Source Tags & Skill Cues</div>
-              {skillDisplay.visibleSkills.length > 0 ? (
+              {effectiveSkillDisplay.visibleSkills.length > 0 ? (
                 <>
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {skillDisplay.visibleSkills.map((skill) => (
+                    {effectiveSkillDisplay.visibleSkills.map((skill) => (
                       <span key={skill} className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-gray-700 ring-1 ring-gray-200">
                         {skill}
                       </span>
                     ))}
                   </div>
                   <div className="mt-3 text-xs text-gray-500">
-                    Showing {skillDisplay.visibleSkills.length} practical cue{skillDisplay.visibleSkills.length === 1 ? "" : "s"} from {skillDisplay.sourceTagCount} source tag{skillDisplay.sourceTagCount === 1 ? "" : "s"}.
+                    {parsedDisplay.visibleSkills.length > 0
+                      ? `Showing ${effectiveSkillDisplay.visibleSkills.length} practical cue${effectiveSkillDisplay.visibleSkills.length === 1 ? "" : "s"} extracted from the JD and source data.`
+                      : `Showing ${effectiveSkillDisplay.visibleSkills.length} practical cue${effectiveSkillDisplay.visibleSkills.length === 1 ? "" : "s"} from ${effectiveSkillDisplay.sourceTagCount} source tag${effectiveSkillDisplay.sourceTagCount === 1 ? "" : "s"}.`}
                   </div>
-                  {skillDisplay.hiddenStudyAreas.length > 0 && (
+                  {effectiveSkillDisplay.hiddenStudyAreas.length > 0 && (
                     <div className="mt-2 text-xs text-amber-700">
-                      Hid {skillDisplay.hiddenStudyAreas.length} broad study-area label{skillDisplay.hiddenStudyAreas.length === 1 ? "" : "s"} like {skillDisplay.hiddenStudyAreas.slice(0, 2).join(", ")} so this stays focused on practical fit.
+                      Hid {effectiveSkillDisplay.hiddenStudyAreas.length} broad study-area label{effectiveSkillDisplay.hiddenStudyAreas.length === 1 ? "" : "s"} like {effectiveSkillDisplay.hiddenStudyAreas.slice(0, 2).join(", ")} so this stays focused on practical fit.
                     </div>
                   )}
                 </>
+              ) : parsedMeta?.loading ? (
+                <div className="mt-2 flex items-center gap-2 text-sm text-gray-600">
+                  <Loader2 size={14} className="animate-spin" />
+                  Extracting skill cues from the job description...
+                </div>
+              ) : parsedMeta?.error ? (
+                <div className="mt-2 text-sm text-gray-600">
+                  {parsedMeta.error}
+                </div>
               ) : job.skills.length > 0 ? (
                 <div className="mt-2 text-sm text-gray-600">
                   This listing only exposed broad source tags, so we did not surface them as practical skill cues.
                 </div>
               ) : (
                 <div className="mt-2 text-sm text-gray-600">
-                  No structured skills were captured from this source for this posting.
+                  No structured skills were captured from this source for this posting, and we could not confidently extract practical cues from the JD yet.
                 </div>
               )}
             </div>
