@@ -249,7 +249,9 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
   const [error, setError] = useState("");
   const [trackError, setTrackError] = useState("");
   const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
   const [totalLabel, setTotalLabel] = useState("");
+  const [expandedJobId, setExpandedJobId] = useState(null);
 
   // Load cached jobs on mount (browse mode)
   useEffect(() => {
@@ -295,6 +297,8 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       }));
       setResults(mapped);
       setPage(pageNum);
+      setTotalPages(data.pages || 1);
+      setExpandedJobId(null);
       const total = data.total || mapped.length;
       setTotalLabel(`${total.toLocaleString()} jobs`);
     } catch (err) {
@@ -360,12 +364,17 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     setActiveTab("resume");
   };
 
+  const toggleExpandedJob = (jobId) => {
+    setExpandedJobId((current) => (current === jobId ? null : jobId));
+  };
+
   const clearFilters = () => {
     setLevelFilter("all");
     setEmploymentFilter("all");
     setSourceFilter("all");
     setLocationFilter("all");
     setMinSalaryFilter("");
+    setExpandedJobId(null);
     loadJobs(query, 1, {
       levelFilter: "all",
       employmentFilter: "all",
@@ -546,19 +555,24 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
 
       {/* Results */}
       {!loading && filtered.map((job) => (
-        <div key={job.id} className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition">
+        <div
+          key={job.id}
+          onClick={() => toggleExpandedJob(job.id)}
+          className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition cursor-pointer"
+        >
           <div className="flex justify-between items-start">
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-1">
                 <h3 className="font-semibold text-gray-800">{job.title}</h3>
                 {job.level && <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{job.level}</span>}
+                <ChevronRight size={14} className={`ml-auto text-gray-400 transition-transform ${expandedJobId === job.id ? "rotate-90" : ""}`} />
               </div>
               <div className="flex items-center gap-4 text-sm text-gray-500 mb-2 flex-wrap">
                 <span className="flex items-center gap-1"><Building2 size={13} />{job.company}</span>
                 {job.location && <span className="flex items-center gap-1"><MapPin size={13} />{job.location}</span>}
                 {job.salary && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
               </div>
-              {job.description && <p className="text-sm text-gray-600 mb-3 line-clamp-2">{job.description}</p>}
+              {job.description && expandedJobId !== job.id && <p className="text-sm text-gray-600 mb-3 line-clamp-2">{job.description}</p>}
               {job.skills.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-3">
                   {job.skills.slice(0, 8).map((s) => (
@@ -569,6 +583,39 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               )}
             </div>
           </div>
+          {expandedJobId === job.id && (
+            <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 p-4">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Description</div>
+              {job.description ? (
+                <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-gray-700">{job.description}</p>
+              ) : (
+                <p className="mt-2 text-sm text-gray-600">
+                  This source did not provide a structured description in our cache.
+                  {job.url && " Open the listing to inspect the full posting."}
+                </p>
+              )}
+
+              <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Required Skills Analysis</div>
+              {job.skills.length > 0 ? (
+                <>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {job.skills.map((skill) => (
+                      <span key={skill} className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-gray-700 ring-1 ring-gray-200">
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="mt-3 text-xs text-gray-500">
+                    We captured {job.skills.length} structured skill cue{job.skills.length === 1 ? "" : "s"} from this listing.
+                  </div>
+                </>
+              ) : (
+                <div className="mt-2 text-sm text-gray-600">
+                  No structured skills were captured from this source for this posting.
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between border-t border-gray-100 pt-3 mt-1 gap-2">
             <div className="flex items-center gap-3 text-xs text-gray-400">
               {job.source && <span>{job.source}</span>}
@@ -576,14 +623,14 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               {job.type && <span>{job.type}</span>}
             </div>
             <div className="flex flex-wrap gap-2">
-              <button onClick={() => generateResume(job)} className="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-emerald-700 transition">
+              <button onClick={(event) => { event.stopPropagation(); generateResume(job); }} className="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-emerald-700 transition">
                 <FileText size={12} /> Generate Resume
               </button>
-              <button onClick={() => trackJob(job)} className="flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-indigo-700 transition">
+              <button onClick={(event) => { event.stopPropagation(); trackJob(job); }} className="flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-indigo-700 transition">
                 <Plus size={12} /> Track
               </button>
               {job.url && (
-                <a href={job.url} target="_blank" rel="noreferrer"
+                <a href={job.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}
                   className="flex items-center gap-1.5 border border-gray-200 text-gray-600 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-gray-50 transition">
                   <ExternalLink size={12} /> View
                 </a>
@@ -594,13 +641,15 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       ))}
 
       {/* Pagination */}
-      {results.length === 20 && (
+      {totalPages > 1 && (
         <div className="flex justify-center gap-3">
           {page > 1 && (
             <button onClick={() => loadJobs(query, page - 1)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Previous</button>
           )}
-          <span className="px-4 py-2 text-sm text-gray-500">Page {page}</span>
-          <button onClick={() => loadJobs(query, page + 1)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Next</button>
+          <span className="px-4 py-2 text-sm text-gray-500">Page {page} of {totalPages}</span>
+          {page < totalPages && (
+            <button onClick={() => loadJobs(query, page + 1)} className="px-4 py-2 text-sm border border-gray-200 rounded-lg hover:bg-gray-50">Next</button>
+          )}
         </div>
       )}
     </div>
@@ -1295,31 +1344,67 @@ const DEFAULT_RESUME_TEMPLATES = [
 const RESUME_TEMPLATE_STYLES = {
   classic: {
     pageClass: "text-stone-800",
-    pageStyle: { fontFamily: 'Georgia, "Times New Roman", serif' },
+    pageStyle: {
+      fontFamily: 'Georgia, "Times New Roman", serif',
+      fontSize: "11pt",
+      padding: "25.4mm",
+      width: "210mm",
+      minHeight: "297mm",
+      maxWidth: "100%",
+      lineHeight: "1.35",
+    },
     headingClass: "mt-4 mb-1 border-b border-stone-400 pb-1 text-[11pt] font-bold uppercase tracking-[0.18em] text-stone-900",
     nameClass: "text-[16pt] font-bold tracking-[0.08em] text-stone-950",
     subheadingClass: "mt-2 mb-0.5 text-stone-700",
+    bodyStyle: { fontSize: "1em", lineHeight: "1.35" },
   },
   modern: {
     pageClass: "text-slate-800",
-    pageStyle: { fontFamily: 'Calibri, "Segoe UI", sans-serif' },
+    pageStyle: {
+      fontFamily: 'Calibri, "Segoe UI", sans-serif',
+      fontSize: "10pt",
+      padding: "15.2mm",
+      width: "210mm",
+      minHeight: "297mm",
+      maxWidth: "100%",
+      lineHeight: "1.33",
+    },
     headingClass: "mt-4 mb-1 border-l-4 border-indigo-500 pl-3 text-[11pt] font-bold uppercase tracking-[0.18em] text-slate-900",
     nameClass: "text-[15pt] font-semibold tracking-[0.04em] text-slate-950",
     subheadingClass: "mt-2 mb-0.5 text-slate-700",
+    bodyStyle: { fontSize: "1em", lineHeight: "1.33" },
   },
   singapore: {
     pageClass: "text-slate-800",
-    pageStyle: { fontFamily: 'Calibri, "Segoe UI", sans-serif' },
+    pageStyle: {
+      fontFamily: 'Calibri, "Segoe UI", sans-serif',
+      fontSize: "11pt",
+      padding: "20.3mm",
+      width: "210mm",
+      minHeight: "297mm",
+      maxWidth: "100%",
+      lineHeight: "1.35",
+    },
     headingClass: "mt-4 mb-1 border-b-2 border-slate-700 pb-1 text-[11pt] font-bold uppercase tracking-[0.16em] text-slate-950",
     nameClass: "text-[15pt] font-semibold tracking-[0.04em] text-slate-950",
     subheadingClass: "mt-2 mb-0.5 text-slate-700",
+    bodyStyle: { fontSize: "1em", lineHeight: "1.35" },
   },
   compact: {
     pageClass: "text-zinc-800",
-    pageStyle: { fontFamily: "Arial, Helvetica, sans-serif" },
+    pageStyle: {
+      fontFamily: "Arial, Helvetica, sans-serif",
+      fontSize: "10pt",
+      padding: "12.7mm",
+      width: "210mm",
+      minHeight: "297mm",
+      maxWidth: "100%",
+      lineHeight: "1.3",
+    },
     headingClass: "mt-4 mb-1 text-[0.92rem] font-bold uppercase tracking-[0.14em] text-zinc-950",
     nameClass: "text-[14pt] font-bold tracking-[0.03em] text-zinc-950",
     subheadingClass: "mt-2 mb-0.5 text-zinc-700",
+    bodyStyle: { fontSize: "1em", lineHeight: "1.3" },
   },
 };
 
@@ -1552,18 +1637,10 @@ function annotateBullet(text, keywords) {
   const hasActionVerb = RESUME_ACTION_VERBS.has(firstWord) || RESUME_ACTION_VERBS.has(baseVerb);
 
   // Skip annotation for certifications, education entries, and short labels
-  const looksLikeCert = /certification|certificate|certified|PMP|WSQ|skillsfuture|accredited|in progress|target/i.test(trimmed);
-  const looksLikeEducation = /university|polytechnic|GPA|degree|diploma|bachelor|master|PhD|exchange/i.test(trimmed);
+  const looksLikeCert = /certification|certifications|certificate|certified|pmp|wsq|skillsfuture|accredited|in progress|target|gmat|upskilling/i.test(lowered);
+  const looksLikeEducation = /university|polytechnic|gpa|degree|diploma|bachelor|master|phd|exchange|graduated|major|minor|focus|capstone/i.test(lowered);
   if (looksLikeCert || looksLikeEducation) {
-    return {
-      tone: "neutral",
-      label: null,
-      icon: null,
-      borderClass: "",
-      pillClass: "",
-      message: "",
-      keywordMatches,
-    };
+    return null;
   }
 
   if (weakStart || isTooShort || isTooLong) {
@@ -1730,7 +1807,7 @@ function getWordCounts(text) {
 }
 
 function getBulletFeedbackTabs(section, resumeText) {
-  if (!section?.text) return [];
+  if (!section?.text || !section.annotation) return [];
 
   const text = section.text.trim();
   const lower = text.toLowerCase();
@@ -1886,6 +1963,7 @@ function ResumeTab({ selectedJob, user }) {
   const [editingValue, setEditingValue] = useState("");
   const [annotationsOn, setAnnotationsOn] = useState(true);
   const [selectedBulletTab, setSelectedBulletTab] = useState("action_oriented");
+  const [scoreChange, setScoreChange] = useState(null);
   const [error, setError] = useState("");
 
   const fileInputRef = useRef(null);
@@ -2219,9 +2297,14 @@ function ResumeTab({ selectedJob, user }) {
       });
       const data = await response.json();
       if (data.formatted_resume) {
+        const previousScore = scoreData?.overall_score;
         setSelectedBulletId(null);
         setEditingNodeId(null);
         applyResumeText(data.formatted_resume, { clearRewrites: true });
+        const rescored = await runScore(data.formatted_resume, jobDescription, { phase: "opening" });
+        if (Number.isFinite(previousScore) && Number.isFinite(rescored?.overall_score)) {
+          setScoreChange({ before: previousScore, after: rescored.overall_score, context: "Updated after AI Improve All" });
+        }
       }
     } catch (err) {
       setFormatError(
@@ -2239,6 +2322,11 @@ function ResumeTab({ selectedJob, user }) {
 
     setRewriteLoading((current) => ({ ...current, [section.id]: true }));
     setCoachError("");
+    const usedVerbs = bulletSections
+      .filter((candidate) => candidate.id !== section.id && candidate.type === "bullet")
+      .map((candidate) => candidate.text.split(/\s+/)[0]?.toLowerCase().replace(/[,:;.]$/, ""))
+      .filter(Boolean)
+      .join(", ");
 
     try {
       const response = await apiFetch("/api/ai/rewrite", {
@@ -2247,6 +2335,7 @@ function ResumeTab({ selectedJob, user }) {
           bullet: section.text,
           job_title: selectedJob?.title || "",
           session_id: sessionId,
+          used_verbs: usedVerbs,
         }),
       });
       const data = await response.json();
@@ -2265,8 +2354,8 @@ function ResumeTab({ selectedJob, user }) {
     }
   };
 
-  const acceptRewrite = (section) => {
-    const candidate = rewriteResults?.[section.id]?.rewritten;
+  const acceptRewrite = (section, optionIndex = 0) => {
+    const candidate = rewriteResults?.[section.id]?.options?.[optionIndex];
     if (!candidate) return;
     const nextText = updateResumeLine(resumeText, section, candidate);
     setRewriteResults((current) => {
@@ -2338,6 +2427,16 @@ function ResumeTab({ selectedJob, user }) {
     }
   };
 
+  const handleFinalizeScore = async () => {
+    const previousScore = scoreData?.overall_score;
+    const updated = await runScore(resumeText, jobDescription, { phase: "final" });
+    if (Number.isFinite(previousScore) && Number.isFinite(updated?.overall_score)) {
+      setScoreChange({ before: previousScore, after: updated.overall_score, context: "Final score updated" });
+    } else if (Number.isFinite(updated?.overall_score)) {
+      setScoreChange({ before: null, after: updated.overall_score, context: "Final score updated" });
+    }
+  };
+
   const jumpToScorePanel = () => {
     setMobilePanel("feedback");
     scorePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2397,7 +2496,8 @@ function ResumeTab({ selectedJob, user }) {
     return [...bulletItems, ...suggestionItems];
   }, [bulletSections, scoreData]);
   const annotationCounts = bulletSections.reduce((counts, section) => {
-    const tone = section.annotation?.tone || "emerald";
+    if (!section.annotation?.tone) return counts;
+    const tone = section.annotation.tone;
     counts[tone] = (counts[tone] || 0) + 1;
     return counts;
   }, {});

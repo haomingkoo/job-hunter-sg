@@ -154,6 +154,35 @@ def _status(score: int, max_score: int) -> str:
     return "needs_work"
 
 
+def _split_action_sentences(text: str) -> list[str]:
+    """Split a line into individual sentences when each starts with an action verb.
+
+    Handles the common case where PDF extraction joins multiple bullets
+    onto one line, e.g. "Led X. Directed Y. Achieved Z."
+    Returns the original text as a single-element list when splitting
+    doesn't apply.
+    """
+    # Split on sentence boundaries: period/semicolon followed by space
+    # and a capitalized word
+    parts = re.split(r"(?<=[.;])\s+(?=[A-Z])", text)
+    if len(parts) <= 1:
+        return [text]
+
+    # Only split if each part starts with an action verb
+    result: list[str] = []
+    for part in parts:
+        cleaned = part.strip().rstrip(".")
+        if not cleaned:
+            continue
+        first = cleaned.split()[0].lower().rstrip(",;:") if cleaned.split() else ""
+        if first in ACTION_VERBS:
+            result.append(cleaned)
+        else:
+            # If any part doesn't start with an action verb, don't split
+            return [text]
+    return result if result else [text]
+
+
 class ResumeScorer:
     """Analyses resume text and returns a structured score report."""
 
@@ -222,12 +251,17 @@ class ResumeScorer:
             looks_like_achievement = bool(_achievement_re.search(stripped))
 
             if after_subheading and (starts_with_action or looks_like_achievement):
-                bullets.append(stripped)
+                # Split multi-sentence lines where each sentence starts
+                # with an action verb (common when PDF joins bullets onto
+                # one line, e.g. "Led X. Directed Y. Achieved Z.")
+                _sub_bullets = _split_action_sentences(stripped)
+                bullets.extend(_sub_bullets)
                 continue
 
             # Achievement line even without prior subheading context
             if starts_with_action and looks_like_achievement:
-                bullets.append(stripped)
+                _sub_bullets = _split_action_sentences(stripped)
+                bullets.extend(_sub_bullets)
 
         return bullets
 

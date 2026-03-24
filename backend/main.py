@@ -150,9 +150,9 @@ POWER_BRIDGE_LIBRARY = [
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    from database import SessionLocal
     # Auto-cleanup jobs older than 30 days on startup
     try:
-        from database import SessionLocal
         db = SessionLocal()
         cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         stale = db.query(ScrapedJob).filter(ScrapedJob.scraped_at < cutoff.isoformat()).count()
@@ -165,6 +165,23 @@ def on_startup() -> None:
         log.warning(f"Stale job cleanup failed: {e}")
 
     # Auto-create admin account if it doesn't exist
+    try:
+        db2 = SessionLocal()
+        admin_email = os.environ.get("ADMIN_EMAIL", "")
+        admin_pw = os.environ.get("ADMIN_PASSWORD", "")
+        if admin_email and admin_pw and not db2.query(User).filter(User.email == admin_email).first():
+            admin = User(
+                email=admin_email,
+                password_hash=hash_password(admin_pw),
+                name="Admin",
+                tier="admin",
+            )
+            db2.add(admin)
+            db2.commit()
+            log.info("Admin account created")
+        db2.close()
+    except Exception as e:
+        log.warning(f"Admin account creation failed: {e}")
 
 
 def _normalize_skill_strings(raw_skills) -> list[str]:
@@ -298,24 +315,6 @@ def _build_bridge_plan(missing_skills: list[str]) -> list[dict]:
         if len(plans) >= 3:
             break
     return plans
-    try:
-        from database import SessionLocal
-        db2 = SessionLocal()
-        admin_email = os.environ.get("ADMIN_EMAIL", "")
-        admin_pw = os.environ.get("ADMIN_PASSWORD", "")
-        if admin_email and admin_pw and not db2.query(User).filter(User.email == admin_email).first():
-            admin = User(
-                email=admin_email,
-                password_hash=hash_password(admin_pw),
-                name="Admin",
-                tier="admin",
-            )
-            db2.add(admin)
-            db2.commit()
-            log.info("Admin account created")
-        db2.close()
-    except Exception as e:
-        log.warning(f"Admin account creation failed: {e}")
 
 
 # ── Health ───────────────────────────────────────────────────────────────────
