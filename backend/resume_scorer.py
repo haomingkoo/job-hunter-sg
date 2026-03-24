@@ -598,9 +598,11 @@ class ResumeScorer:
         word_count = len(words)
 
         # word_count (5)
-        if 400 <= word_count <= 700:
+        # SG market: 2-page resumes (up to ~900 words) are standard
+        # for mid-senior professionals. Only penalize extremes.
+        if 400 <= word_count <= 900:
             wc_score = 5
-        elif 300 <= word_count <= 900:
+        elif 300 <= word_count <= 1100:
             wc_score = 3
         else:
             wc_score = 1
@@ -608,12 +610,12 @@ class ResumeScorer:
         if word_count < 400:
             wc_suggestions.append(
                 f"Resume is short ({word_count} words). "
-                f"Aim for 400-700 words."
+                f"Aim for 400-900 words."
             )
-        elif word_count > 700:
+        elif word_count > 900:
             wc_suggestions.append(
                 f"Resume is long ({word_count} words). "
-                f"Aim for 400-700 words."
+                f"Consider trimming to under 900 words (2 pages)."
             )
         items["word_count"] = {
             "score": wc_score,
