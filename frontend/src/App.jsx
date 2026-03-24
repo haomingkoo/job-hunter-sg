@@ -3,7 +3,7 @@ import {
   Search, Briefcase, Bell, FileText, Plus, X, ChevronRight, Clock,
   CheckCircle, AlertCircle, ExternalLink, Trash2, Edit3, Save, Filter,
   RefreshCw, Zap, Download, Copy, Star, MapPin, DollarSign, Building2,
-  Loader2, User, LogOut, Mail,
+  Loader2, User, LogOut, Mail, ArrowLeft,
   RotateCcw, Sparkles, UploadCloud,
 } from "lucide-react";
 
@@ -693,7 +693,7 @@ function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
         status: "applied",
         source: item.job.source,
         follow_up_date: new Date(Date.now() + 14 * 86400000).toISOString().split("T")[0],
-        notes: `Power Match ${item.suitability_score}/100 | Missing: ${(item.missing_skills || []).join(", ")}`,
+        notes: `Power Match ${item.suitability_score}/100 | Missing: ${(item.missing_skills || []).map((s) => typeof s === "string" ? s : s?.skill || "").filter(Boolean).join(", ")}`,
         scraped_job_id: item.job.id,
       });
     } catch (err) {
@@ -877,11 +877,15 @@ function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Matched Skills</div>
                         <div className="mt-2 flex flex-wrap gap-2">
-                          {(item.matched_skills || []).length > 0 ? item.matched_skills.map((skill) => (
-                            <span key={skill} className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">
-                              {skill}
-                            </span>
-                          )) : (
+                          {(item.matched_skills || []).length > 0 ? item.matched_skills.map((skill, sIdx) => {
+                            const label = typeof skill === "string" ? skill : skill?.skill || "";
+                            const tooltip = typeof skill === "object" ? skill?.resume_context || "" : "";
+                            return (
+                              <span key={label || sIdx} className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700" title={tooltip}>
+                                {label}
+                              </span>
+                            );
+                          }) : (
                             <span className="text-sm text-gray-500">No strong overlap detected yet.</span>
                           )}
                         </div>
@@ -890,11 +894,15 @@ function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                       <div>
                         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Missing Skills</div>
                         <div className="mt-2 flex flex-wrap gap-2">
-                          {(item.missing_skills || []).length > 0 ? item.missing_skills.map((skill) => (
-                            <span key={skill} className="rounded-full bg-rose-100 px-2.5 py-1 text-xs font-medium text-rose-700">
-                              {skill}
-                            </span>
-                          )) : (
+                          {(item.missing_skills || []).length > 0 ? item.missing_skills.map((skill, sIdx) => {
+                            const label = typeof skill === "string" ? skill : skill?.skill || "";
+                            const tooltip = typeof skill === "object" ? skill?.jd_context || "" : "";
+                            return (
+                              <span key={label || sIdx} className="rounded-full bg-rose-100 px-2.5 py-1 text-xs font-medium text-rose-700" title={tooltip}>
+                                {label}
+                              </span>
+                            );
+                          }) : (
                             <span className="text-sm text-gray-500">No clear named gap surfaced on this role.</span>
                           )}
                         </div>
@@ -1357,12 +1365,19 @@ const RESUME_TEMPLATE_STYLES = {
       width: "210mm",
       minHeight: "297mm",
       maxWidth: "100%",
-      lineHeight: "1.35",
+      lineHeight: "1.45",
     },
-    headingClass: "mt-4 mb-1 border-b border-stone-400 pb-1 text-[11pt] font-bold uppercase tracking-[0.18em] text-stone-900",
-    nameClass: "text-[16pt] font-bold tracking-[0.08em] text-stone-950",
+    headingClass: "mt-6 mb-2 border-b border-stone-400 pb-1 text-[11pt] font-bold uppercase tracking-[0.18em] text-stone-900",
+    nameClass: "text-[18pt] font-bold tracking-[0.08em] text-stone-950 text-center",
+    contactClass: "text-[9pt] text-center text-gray-600 mt-0.5",
     subheadingClass: "mt-2 mb-0.5 text-stone-700",
-    bodyStyle: { fontSize: "1em", lineHeight: "1.35" },
+    subheadingLayout: "flex items-baseline justify-between gap-2",
+    titleClass: "font-bold text-stone-900",
+    companyClass: "text-stone-700 font-normal",
+    dateClass: "text-sm text-stone-500 text-right whitespace-nowrap",
+    bulletMarkerClass: "pt-0.5 text-stone-500",
+    bodyStyle: { fontSize: "1em", lineHeight: "1.45" },
+    skillsPillClass: "text-stone-700",
   },
   modern: {
     pageClass: "text-slate-800",
@@ -1373,12 +1388,19 @@ const RESUME_TEMPLATE_STYLES = {
       width: "210mm",
       minHeight: "297mm",
       maxWidth: "100%",
-      lineHeight: "1.33",
+      lineHeight: "1.4",
     },
-    headingClass: "mt-4 mb-1 border-l-4 border-indigo-500 pl-3 text-[11pt] font-bold uppercase tracking-[0.18em] text-slate-900",
-    nameClass: "text-[15pt] font-semibold tracking-[0.04em] text-slate-950",
+    headingClass: "mt-6 mb-2 border-l-4 border-indigo-500 pl-3 text-[11pt] font-bold uppercase tracking-[0.18em] text-slate-900",
+    nameClass: "text-[18pt] font-semibold tracking-[0.04em] text-slate-950 text-center",
+    contactClass: "text-[9pt] text-center text-gray-600 mt-0.5",
     subheadingClass: "mt-2 mb-0.5 text-slate-700",
-    bodyStyle: { fontSize: "1em", lineHeight: "1.33" },
+    subheadingLayout: "flex items-baseline justify-between gap-2",
+    titleClass: "font-bold text-slate-900",
+    companyClass: "text-slate-600 font-normal",
+    dateClass: "text-sm text-slate-500 text-right whitespace-nowrap",
+    bulletMarkerClass: "pt-0.5 text-indigo-400",
+    bodyStyle: { fontSize: "1em", lineHeight: "1.4" },
+    skillsPillClass: "text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full text-xs font-medium",
   },
   singapore: {
     pageClass: "text-slate-800",
@@ -1389,12 +1411,19 @@ const RESUME_TEMPLATE_STYLES = {
       width: "210mm",
       minHeight: "297mm",
       maxWidth: "100%",
-      lineHeight: "1.35",
+      lineHeight: "1.45",
     },
-    headingClass: "mt-4 mb-1 border-b-2 border-slate-700 pb-1 text-[11pt] font-bold uppercase tracking-[0.16em] text-slate-950",
-    nameClass: "text-[15pt] font-semibold tracking-[0.04em] text-slate-950",
+    headingClass: "mt-6 mb-2 border-b-2 border-slate-700 pb-1 text-[11pt] font-bold uppercase tracking-[0.16em] text-slate-950",
+    nameClass: "text-[18pt] font-semibold tracking-[0.04em] text-slate-950 text-center",
+    contactClass: "text-[9pt] text-center text-gray-600 mt-0.5",
     subheadingClass: "mt-2 mb-0.5 text-slate-700",
-    bodyStyle: { fontSize: "1em", lineHeight: "1.35" },
+    subheadingLayout: "flex items-baseline justify-between gap-2",
+    titleClass: "font-bold text-slate-900",
+    companyClass: "text-slate-600 font-normal",
+    dateClass: "text-sm text-slate-500 text-right whitespace-nowrap",
+    bulletMarkerClass: "pt-0.5 text-slate-400",
+    bodyStyle: { fontSize: "1em", lineHeight: "1.45" },
+    skillsPillClass: "text-slate-700",
   },
   compact: {
     pageClass: "text-zinc-800",
@@ -1405,12 +1434,19 @@ const RESUME_TEMPLATE_STYLES = {
       width: "210mm",
       minHeight: "297mm",
       maxWidth: "100%",
-      lineHeight: "1.3",
+      lineHeight: "1.35",
     },
-    headingClass: "mt-4 mb-1 text-[0.92rem] font-bold uppercase tracking-[0.14em] text-zinc-950",
-    nameClass: "text-[14pt] font-bold tracking-[0.03em] text-zinc-950",
+    headingClass: "mt-6 mb-2 text-[0.92rem] font-bold uppercase tracking-[0.14em] text-zinc-950 border-b border-zinc-300 pb-0.5",
+    nameClass: "text-[18pt] font-bold tracking-[0.03em] text-zinc-950 text-center",
+    contactClass: "text-[9pt] text-center text-gray-600 mt-0.5",
     subheadingClass: "mt-2 mb-0.5 text-zinc-700",
-    bodyStyle: { fontSize: "1em", lineHeight: "1.3" },
+    subheadingLayout: "flex items-baseline justify-between gap-2",
+    titleClass: "font-bold text-zinc-900",
+    companyClass: "text-zinc-600 font-normal",
+    dateClass: "text-sm text-zinc-500 text-right whitespace-nowrap",
+    bulletMarkerClass: "pt-0.5 text-zinc-400",
+    bodyStyle: { fontSize: "1em", lineHeight: "1.35" },
+    skillsPillClass: "text-zinc-700",
   },
 };
 
@@ -1592,7 +1628,11 @@ function buildResumeKeywords(selectedJob, scoreData) {
   if (Array.isArray(scoreData?.keyword_match?.matched)) collected.push(...scoreData.keyword_match.matched.slice(0, 12));
 
   return [...new Set(collected
-    .map((item) => String(item || "").trim())
+    .map((item) => {
+      if (typeof item === "string") return item.trim();
+      if (item && typeof item === "object" && item.skill) return String(item.skill).trim();
+      return String(item || "").trim();
+    })
     .filter((item) => item.length >= 3)
   )];
 }
@@ -1916,7 +1956,7 @@ function TemplatePreview({ templateId }) {
   );
 }
 
-function ResumeTab({ selectedJob, user }) {
+function ResumeTab({ selectedJob, user, setActiveTab, setSelectedJob }) {
   const [profile, setProfile] = useState(() => {
     try {
       const saved = sessionStorage.getItem("jh_resume_profile");
@@ -1971,6 +2011,8 @@ function ResumeTab({ selectedJob, user }) {
   const [selectedBulletTab, setSelectedBulletTab] = useState("action_oriented");
   const [scoreChange, setScoreChange] = useState(null);
   const [error, setError] = useState("");
+  const [showTargetJd, setShowTargetJd] = useState(false);
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
 
   const fileInputRef = useRef(null);
   const scorePanelRef = useRef(null);
@@ -2430,6 +2472,7 @@ function ResumeTab({ selectedJob, user }) {
       anchor.download = getDownloadFilename(response, "resume.docx");
       anchor.click();
       URL.revokeObjectURL(url);
+      setDownloadSuccess(true);
     } catch (err) {
       setDownloadError(err.message || "Download failed. Please try again.");
     } finally {
@@ -2646,8 +2689,18 @@ function ResumeTab({ selectedJob, user }) {
             </p>
           </div>
           {selectedJob && (
-            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 shadow-sm">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-600">Targeting</div>
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-3 shadow-sm max-w-md">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-600">Targeting</div>
+                <button
+                  type="button"
+                  onClick={() => { setSelectedJob(null); setActiveTab("scraper"); }}
+                  className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                >
+                  <ArrowLeft size={12} />
+                  Back to Jobs
+                </button>
+              </div>
               <div className="mt-1 font-semibold text-slate-900">{selectedJob.title} @ {selectedJob.company}</div>
               {selectedJob.skills?.length > 0 && (
                 <div className="mt-2 flex flex-wrap gap-1.5">
@@ -2656,6 +2709,23 @@ function ResumeTab({ selectedJob, user }) {
                       {skill}
                     </span>
                   ))}
+                </div>
+              )}
+              {selectedJob.description && (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowTargetJd((c) => !c)}
+                    className="text-xs font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
+                  >
+                    <ChevronRight size={12} className={`transition-transform ${showTargetJd ? "rotate-90" : ""}`} />
+                    {showTargetJd ? "Hide JD" : "Show JD"}
+                  </button>
+                  {showTargetJd && (
+                    <div className="mt-2 max-h-48 overflow-y-auto rounded-xl border border-indigo-100 bg-white p-3 text-xs leading-relaxed text-gray-700 whitespace-pre-line">
+                      {selectedJob.description}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -2830,6 +2900,44 @@ function ResumeTab({ selectedJob, user }) {
               <span>{message}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {downloadSuccess && (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-emerald-900">
+                <CheckCircle size={16} />
+                Resume downloaded! What's next?
+              </div>
+              <p className="mt-1 text-sm text-emerald-700">Keep the momentum going with one of these actions.</p>
+            </div>
+            <button type="button" onClick={() => setDownloadSuccess(false)} className="text-emerald-400 hover:text-emerald-600">
+              <X size={16} />
+            </button>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => { setDownloadSuccess(false); setActiveTab("scraper"); }}
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700"
+            >
+              <Search size={14} />
+              Search for matching jobs
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDownloadSuccess(false);
+                setActiveTab("tracker");
+              }}
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <Briefcase size={14} />
+              Track this application
+            </button>
+          </div>
         </div>
       )}
 
@@ -3489,9 +3597,9 @@ function ResumeTab({ selectedJob, user }) {
               {resumeText.trim() ? (
                 <>
                   {shouldInjectProfileHeader && (
-                    <div className="mb-3 pb-2 text-center">
+                    <div className="mb-4 pb-2">
                       {profile.name && <div className={templateStyles.nameClass}>{profile.name}</div>}
-                      <div className="mt-0.5 text-[9pt] text-gray-600">
+                      <div className={templateStyles.contactClass}>
                         {[profile.email, profile.phone, profile.location].filter(Boolean).join(" | ")}
                       </div>
                     </div>
@@ -3541,9 +3649,9 @@ function ResumeTab({ selectedJob, user }) {
                             </h3>
                           )}
                           {section.type === "subheading" && (
-                            <div className={`flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between ${templateStyles.subheadingClass}`}>
-                              <div className="font-semibold text-gray-900">{renderHighlightedText(section.left, section.keywordMatches || [])}</div>
-                              <div className="text-sm text-gray-500">{section.right}</div>
+                            <div className={`${templateStyles.subheadingLayout} ${templateStyles.subheadingClass}`}>
+                              <div className={templateStyles.titleClass}>{renderHighlightedText(section.left, section.keywordMatches || [])}</div>
+                              <div className={templateStyles.dateClass}>{section.right}</div>
                             </div>
                           )}
                           {section.type === "paragraph" && (
@@ -3552,8 +3660,8 @@ function ResumeTab({ selectedJob, user }) {
                             </p>
                           )}
                           {section.type === "bullet" && (
-                            <div className="flex gap-3">
-                              <div className="pt-1 text-[1rem] text-gray-400">•</div>
+                            <div className="flex gap-3 pl-2">
+                              <div className={`text-[1rem] ${templateStyles.bulletMarkerClass}`}>{"\u2022"}</div>
                               <div className="flex-1">
                                 <p className="text-gray-700" style={templateStyles.bodyStyle}>
                                   {renderHighlightedText(section.text, annotation?.keywordMatches || [])}
@@ -4067,7 +4175,7 @@ export default function JobHunterSG() {
               <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Follow-up Reminders" />
             )
           )}
-          {activeTab === "resume" && <ResumeTab selectedJob={selectedJob} user={user} />}
+          {activeTab === "resume" && <ResumeTab selectedJob={selectedJob} user={user} setActiveTab={setActiveTab} setSelectedJob={setSelectedJob} />}
           {activeTab === "account" && (
             user ? (
               <AccountTab user={user} onLogout={handleLogout} />
