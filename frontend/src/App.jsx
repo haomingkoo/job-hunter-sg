@@ -1527,6 +1527,18 @@ const RESUME_WEAK_STARTS = ["responsible for", "helped", "assisted"];
 const RESUME_BULLET_RE = /^(\s*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)]))\s*(.*)$/;
 const RESUME_METRIC_RE = /\d+%|\$[\d,]+|\d+\s*(?:users|user|team|people|projects|systems|clients|hours|weeks|months|years)|\d+[kKmMbB]\b|\d{1,3}(?:,\d{3})+/;
 const RESUME_DATE_HINT_RE = /\b(?:19|20)\d{2}\b|present|current|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i;
+const RESUME_CERTIFICATION_RE = /certification|certifications|certificate|certified|pmp|wsq|skillsfuture|accredited|in progress|target|gmat|upskilling|emeritus|heicoders|completed.*course|full stack development|generative ai|currently pursuing/i;
+const RESUME_EDUCATION_RE = /university|polytechnic|college|school|institute|academy|gpa|degree|diploma|bachelor|master|phd|exchange|graduated|major|minor|focus|capstone|national university|nanyang|singapore management|nus |ntu |smu |sutd|sit |suss/i;
+const RESUME_DEGREE_RE = /\b(?:b\.?sc|m\.?sc|bachelor|master|phd|doctorate|diploma|degree|mba)\b/i;
+const RESUME_EDUCATION_DETAIL_RE = /gpa|exchange|focus|capstone|graduate certificate|graduate certificates|minor|major|distinction|honou?r/i;
+const RESUME_OVERUSED_IGNORE = new Set([
+  "automation", "digital", "transformation", "program", "manager", "management",
+  "yield", "data", "analytics", "analysis", "operations", "engineering",
+  "technology", "technologies", "quality", "process", "processes", "project",
+  "projects", "stakeholder", "stakeholders", "cross", "functional", "global",
+  "system", "systems", "team", "teams", "experience", "skills", "education",
+  "resume", "singapore", "micron", "ai", "ml", "reliability",
+]);
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1613,6 +1625,30 @@ function isAllCapsHeading(line) {
 
 function hasDateHint(value) {
   return RESUME_DATE_HINT_RE.test(stripResumeMarkdown(value));
+}
+
+function isResumeActionVerb(word) {
+  const normalized = String(word || "").toLowerCase().replace(/[,:;.]$/, "");
+  if (!normalized) return false;
+  const baseVerb = normalized.includes("-") ? normalized.split("-").pop() : normalized;
+  return RESUME_ACTION_VERBS.has(normalized) || RESUME_ACTION_VERBS.has(baseVerb);
+}
+
+function looksLikeEducationText(value) {
+  return RESUME_EDUCATION_RE.test(stripResumeMarkdown(value));
+}
+
+function looksLikeCertificationText(value) {
+  return RESUME_CERTIFICATION_RE.test(stripResumeMarkdown(value));
+}
+
+function looksLikeEducationDetail(value) {
+  return RESUME_EDUCATION_DETAIL_RE.test(stripResumeMarkdown(value));
+}
+
+function looksLikeDenseSkillList(parts) {
+  return parts.length >= 3
+    && parts.every((part) => !hasDateHint(part) && part.split(/\s+/).length <= 6);
 }
 
 function reorderParsedSections(sections, templateOrder = []) {
@@ -1748,19 +1784,59 @@ function buildResumeKeywords(selectedJob, scoreData) {
   )];
 }
 
+function buildSkillAlignment(skills, text) {
+  const uniqueSkills = [...new Set(
+    (Array.isArray(skills) ? skills : [])
+      .map(extractKeywordLabel)
+      .filter((item) => item.length >= 2),
+  )];
+
+  if (uniqueSkills.length === 0) {
+    return { matched: [], missing: [] };
+  }
+
+  const resumeLower = text.toLowerCase();
+  const matched = uniqueSkills.filter((skill) => resumeLower.includes(skill.toLowerCase()));
+  const missing = uniqueSkills.filter((skill) => !resumeLower.includes(skill.toLowerCase()));
+  return { matched, missing };
+}
+
 function isHeadingLine(line) {
   const normalized = normalizeHeadingLabel(line);
   if (!normalized) return false;
   return RESUME_HEADINGS.has(normalized) || Boolean(getResumeSectionKey(normalized)) || isAllCapsHeading(line);
 }
 
-function parseSubheadingParts(line) {
+function parseSubheadingParts(line, sectionKey = "") {
   const trimmed = stripResumeMarkdown(line);
   if (!trimmed) return null;
 
   if (trimmed.includes("|")) {
     const parts = trimmed.split("|").map((part) => part.trim()).filter(Boolean);
-    if (parts.length >= 2) {
+    const lastPart = parts[parts.length - 1] || "";
+    const hasDateOnRight = hasDateHint(lastPart);
+    const hasEducationSignal = parts.some((part) => looksLikeEducationText(part) || RESUME_DEGREE_RE.test(part));
+    const denseSkillList = looksLikeDenseSkillList(parts)
+      || ((sectionKey === "skills" || sectionKey === "certifications") && parts.length >= 2 && !hasDateOnRight);
+
+    if (denseSkillList) return null;
+
+    if (sectionKey === "education" && parts.length >= 2 && (hasDateOnRight || hasEducationSignal)) {
+      if (parts.length === 2) {
+        return {
+          left: parts[0],
+          right: parts[1],
+          variant: looksLikeEducationDetail(parts[0]) || looksLikeEducationDetail(parts[1]) ? "education_detail" : "education_main",
+        };
+      }
+      return {
+        left: parts[0],
+        right: parts.slice(1).join(" | "),
+        variant: "education_main",
+      };
+    }
+
+    if (parts.length === 2 || hasDateOnRight) {
       const right = parts.pop();
       return {
         left: parts.join(" | "),
@@ -1774,6 +1850,14 @@ function parseSubheadingParts(line) {
   if (separatorMatch) {
     const left = separatorMatch[1].trim();
     const right = separatorMatch[2].trim();
+    if ((sectionKey === "skills" || sectionKey === "certifications") && !hasDateHint(right)) return null;
+    if (sectionKey === "education") {
+      return {
+        left,
+        right,
+        variant: looksLikeEducationDetail(left) || looksLikeEducationDetail(right) ? "education_detail" : "education_main",
+      };
+    }
     return {
       left,
       right,
@@ -1784,69 +1868,109 @@ function parseSubheadingParts(line) {
   return null;
 }
 
-function annotateBullet(text, keywords) {
+function analyzeBulletFeedback(text, resumeText = "", sectionKey = "") {
   const trimmed = text.trim();
   const lowered = trimmed.toLowerCase();
   const firstWord = trimmed.split(/\s+/)[0]?.toLowerCase().replace(/[,:;.]$/, "") || "";
   const hasMetric = RESUME_METRIC_RE.test(trimmed);
   const weakStart = RESUME_WEAK_STARTS.find((phrase) => lowered.startsWith(phrase));
-  const keywordMatches = collectKeywordMatches(trimmed, keywords);
-  const isTooShort = trimmed.length < 40;
-  const isTooLong = trimmed.length > 200;
-  // Handle hyphenated verbs: "Co-led" → check "co-led" AND "led"
-  const baseVerb = firstWord.includes("-") ? firstWord.split("-").pop() : firstWord;
-  const hasActionVerb = RESUME_ACTION_VERBS.has(firstWord) || RESUME_ACTION_VERBS.has(baseVerb);
+  const keywordMatches = collectKeywordMatches(trimmed, []);
+  const bulletLengthWords = trimmed.split(/\s+/).filter(Boolean).length;
+  const bulletLengthChars = trimmed.length;
+  const isTooShort = bulletLengthChars < 40 || bulletLengthWords < 7;
+  const isTooLong = bulletLengthChars > 210 || bulletLengthWords > 30;
+  const hasActionVerb = isResumeActionVerb(firstWord);
+  const wordCounts = resumeText ? getWordCounts(resumeText) : {};
+  const overusedWords = [...new Set(
+    (lowered.match(/[a-z][a-z-]*/g) || []).filter((word) => (
+      word.length > 4
+      && !RESUME_OVERUSED_IGNORE.has(word)
+      && (wordCounts[word] || 0) >= 4
+    )),
+  )].slice(0, 4);
+  const avoidedMatches = RESUME_AVOIDED_PHRASES.filter((phrase) => lowered.includes(phrase));
+  const skipAnnotation = sectionKey === "education"
+    || sectionKey === "certifications"
+    || looksLikeCertificationText(lowered)
+    || looksLikeEducationText(lowered);
 
-  // Skip annotation for certifications, education entries, and short labels
-  const looksLikeCert = /certification|certifications|certificate|certified|pmp|wsq|skillsfuture|accredited|in progress|target|gmat|upskilling|emeritus|heicoders|completed.*course|full stack development|generative ai|currently pursuing/i.test(lowered);
-  const looksLikeEducation = /university|polytechnic|gpa|degree|diploma|bachelor|master|phd|exchange|graduated|major|minor|focus|capstone|national university|nanyang|singapore management|nus |ntu |smu |sutd|sit |suss/i.test(lowered);
-  if (looksLikeCert || looksLikeEducation) {
+  return {
+    trimmed,
+    lowered,
+    firstWord,
+    hasMetric,
+    weakStart,
+    keywordMatches,
+    bulletLengthWords,
+    bulletLengthChars,
+    isTooShort,
+    isTooLong,
+    hasActionVerb,
+    overusedWords,
+    avoidedMatches,
+    skipAnnotation,
+    actionIssue: Boolean(weakStart || !hasActionVerb),
+    specificsIssue: !hasMetric,
+    overusedIssue: overusedWords.length > 0 || avoidedMatches.length > 0,
+    lengthIssue: isTooShort || isTooLong,
+  };
+}
+
+function annotateBullet(text, keywords, resumeText = "", sectionKey = "") {
+  const analysis = analyzeBulletFeedback(text, resumeText, sectionKey);
+  if (analysis.skipAnnotation) {
     return null;
   }
 
-  if (weakStart || isTooShort || isTooLong) {
+  const keywordMatches = collectKeywordMatches(analysis.trimmed, keywords);
+  const issueIds = [];
+  if (analysis.actionIssue) issueIds.push("action_oriented");
+  if (analysis.overusedIssue) issueIds.push("overused_avoided");
+  if (analysis.lengthIssue) issueIds.push("bullet_length");
+
+  if (analysis.actionIssue || analysis.overusedIssue || analysis.lengthIssue) {
     let message = "Tighten this bullet so the impact is clearer.";
-    if (weakStart) message = `Replace "${weakStart}" with a stronger verb.`;
-    if (isTooShort) message = "Add more outcome detail so this bullet feels complete.";
-    if (isTooLong) message = "Split or tighten this bullet so the result lands faster.";
+    if (analysis.weakStart) message = `Replace "${analysis.weakStart}" with a stronger verb.`;
+    else if (!analysis.hasActionVerb) message = "Start with a stronger action verb so the outcome lands faster.";
+    else if (analysis.overusedIssue && analysis.lengthIssue) message = "This bullet is dense and repeats a few broad terms. Trim it and sharpen the language.";
+    else if (analysis.overusedIssue) message = "A few repeated or filler terms are diluting the impact.";
+    else if (analysis.isTooShort) message = "Add more outcome detail so this bullet feels complete.";
+    else if (analysis.isTooLong) message = "Split or tighten this bullet so the strongest result lands earlier.";
+
+    const tone = analysis.actionIssue ? "rose" : "amber";
     return {
-      tone: "amber",
-      label: "Review Bullet",
-      icon: <AlertCircle size={14} />,
-      borderClass: "border-amber-300 bg-amber-50/70",
-      pillClass: "bg-amber-100 text-amber-800",
+      tone,
+      label: issueIds.length > 1 ? `${issueIds.length} Issues` : "Review Bullet",
+      icon: tone === "rose" ? <X size={14} /> : <AlertCircle size={14} />,
+      borderClass: tone === "rose" ? "border-rose-300 bg-rose-50/70" : "border-amber-300 bg-amber-50/70",
+      pillClass: tone === "rose" ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800",
       message,
       keywordMatches,
-    };
-  }
-
-  if (!hasActionVerb) {
-    return {
-      tone: "rose",
-      label: "Review Opening",
-      icon: <X size={14} />,
-      borderClass: "border-rose-300 bg-rose-50/70",
-      pillClass: "bg-rose-100 text-rose-800",
-      message: "Start with a stronger action verb to make the outcome scan faster.",
-      keywordMatches,
+      issueIds,
+      issueCount: issueIds.length,
     };
   }
 
   return {
     tone: "emerald",
-    label: hasMetric ? "Solid Impact" : "Good Start",
+    label: analysis.hasMetric ? "Solid Impact" : "Good Start",
     icon: <CheckCircle size={14} />,
     borderClass: "border-emerald-300 bg-emerald-50/70",
     pillClass: "bg-emerald-100 text-emerald-800",
-    message: hasMetric
+    message: analysis.hasMetric
       ? "This bullet already shows measurable impact."
       : "This bullet starts well. Add a metric if you have one.",
     keywordMatches,
+    issueIds: [],
+    issueCount: 0,
   };
 }
 
 function parseResumeToSections(text, keywords, templateOrder = []) {
-  const parsed = text.replace(/\r\n?/g, "\n").split("\n").map((line, lineIndex) => {
+  const parsed = [];
+  let currentSectionKey = "";
+
+  text.replace(/\r\n?/g, "\n").split("\n").forEach((line, lineIndex) => {
     const normalizedLine = stripResumeMarkdown(line);
     const base = {
       id: `line-${lineIndex}`,
@@ -1856,59 +1980,69 @@ function parseResumeToSections(text, keywords, templateOrder = []) {
     };
 
     if (!normalizedLine) {
-      return { ...base, type: "spacer" };
+      parsed.push({ ...base, type: "spacer", sectionKey: currentSectionKey });
+      return;
     }
 
     const inlineHeading = splitInlineHeadingContent(normalizedLine);
     if (inlineHeading) {
-      return {
+      currentSectionKey = inlineHeading.sectionKey || currentSectionKey;
+      parsed.push({
         ...base,
         type: "heading_paragraph",
         headingText: inlineHeading.headingText,
         bodyText: inlineHeading.bodyText,
         sectionKey: inlineHeading.sectionKey,
         keywordMatches: collectKeywordMatches(inlineHeading.bodyText, keywords),
-      };
+      });
+      return;
     }
 
     if (isHeadingLine(normalizedLine)) {
-      return {
+      currentSectionKey = getResumeSectionKey(normalizedLine) || currentSectionKey;
+      parsed.push({
         ...base,
         type: "heading",
         text: normalizedLine.replace(/:$/, ""),
-        sectionKey: getResumeSectionKey(normalizedLine),
+        sectionKey: currentSectionKey,
         keywordMatches: [],
-      };
+      });
+      return;
     }
 
     const bulletMatch = line.match(RESUME_BULLET_RE);
-    const subheadingParts = bulletMatch ? null : parseSubheadingParts(normalizedLine);
+    const subheadingParts = bulletMatch ? null : parseSubheadingParts(normalizedLine, currentSectionKey);
     if (subheadingParts) {
-      return {
+      parsed.push({
         ...base,
         type: "subheading",
         ...subheadingParts,
         text: normalizedLine,
+        sectionKey: currentSectionKey,
         keywordMatches: collectKeywordMatches(normalizedLine, keywords),
-      };
+      });
+      return;
     }
 
     if (bulletMatch) {
       const textValue = stripResumeMarkdown(bulletMatch[2]);
-      return {
+      parsed.push({
         ...base,
         type: "bullet",
         marker: bulletMatch[1].trim(),
         text: textValue,
-        annotation: annotateBullet(textValue, keywords),
-      };
+        sectionKey: currentSectionKey,
+        annotation: annotateBullet(textValue, keywords, text, currentSectionKey),
+      });
+      return;
     }
 
-    return {
+    parsed.push({
       ...base,
       type: "paragraph",
+      sectionKey: currentSectionKey,
       keywordMatches: collectKeywordMatches(normalizedLine, keywords),
-    };
+    });
   });
 
   return reorderParsedSections(parsed, templateOrder);
@@ -2007,40 +2141,35 @@ function normalizeReviewSuggestion(item, index) {
 }
 
 function getBulletFeedbackTabs(section, resumeText) {
-  if (!section?.text || !section.annotation) return [];
+  if (!section?.text) return [];
 
-  const text = section.text.trim();
-  const lower = text.toLowerCase();
-  const firstWord = text.split(/\s+/)[0]?.toLowerCase().replace(/[,:;.]$/, "") || "";
-  const hasActionVerb = RESUME_ACTION_VERBS.has(firstWord);
+  const analysis = analyzeBulletFeedback(section.text, resumeText, section.sectionKey);
+  if (analysis.skipAnnotation) return [];
+
+  const text = analysis.trimmed;
   const metricMatches = text.match(/\d+%|\$[\d,]+|\d+\s*(?:users|user|team|people|projects|systems|clients|hours|weeks|months|years)|\d+[kKmMbB]\b|\d{1,3}(?:,\d{3})+/g) || [];
-  const wordCounts = getWordCounts(resumeText);
-  const overusedWords = [...new Set(
-    (lower.match(/[a-z][a-z-]*/g) || []).filter((word) => word.length > 4 && (wordCounts[word] || 0) >= 3),
-  )].slice(0, 4);
-  const avoidedMatches = RESUME_AVOIDED_PHRASES.filter((phrase) => lower.includes(phrase));
-  const bulletLengthChars = text.length;
-  const bulletLengthWords = text.split(/\s+/).filter(Boolean).length;
-  const lengthGood = bulletLengthChars >= 40 && bulletLengthChars <= 200;
+  const lengthGood = !analysis.lengthIssue;
 
   return [
     {
       id: "action_oriented",
       title: "Action Oriented",
-      status: hasActionVerb ? "good" : "issue",
-      summary: hasActionVerb
+      tone: analysis.actionIssue ? "rose" : "emerald",
+      status: analysis.actionIssue ? "issue" : "good",
+      summary: !analysis.actionIssue
         ? `This bullet already opens with "${text.split(/\s+/)[0]}," which gives it momentum.`
         : "This bullet would read stronger if it opened with a clearer action verb.",
-      chips: hasActionVerb
+      chips: !analysis.actionIssue
         ? [text.split(/\s+/)[0]]
         : BULLET_ACTION_SUGGESTIONS,
-      tip: hasActionVerb
+      tip: !analysis.actionIssue
         ? "Keep the opening verb, then tighten the rest around the outcome."
         : "Try replacing the opening with a sharper verb that signals what you actually drove or delivered.",
     },
     {
       id: "specifics",
       title: "Specifics",
+      tone: metricMatches.length > 0 ? "emerald" : "amber",
       status: metricMatches.length > 0 ? "good" : "issue",
       summary: metricMatches.length > 0
         ? "This bullet already includes measurable scope or outcomes."
@@ -2055,28 +2184,30 @@ function getBulletFeedbackTabs(section, resumeText) {
     {
       id: "overused_avoided",
       title: "Overused & Avoided",
-      status: overusedWords.length > 0 || avoidedMatches.length > 0 ? "issue" : "good",
-      summary: overusedWords.length > 0 || avoidedMatches.length > 0
+      tone: analysis.overusedIssue ? "rose" : "emerald",
+      status: analysis.overusedIssue ? "issue" : "good",
+      summary: analysis.overusedIssue
         ? "A few repeated or filler terms are diluting the impact of this bullet."
         : "This bullet avoids the most obvious filler phrasing.",
-      chips: [...avoidedMatches, ...overusedWords].slice(0, 5),
-      tip: overusedWords.length > 0 || avoidedMatches.length > 0
+      chips: [...analysis.avoidedMatches, ...analysis.overusedWords].slice(0, 5),
+      tip: analysis.overusedIssue
         ? "Swap repeated terms for more specific language, and remove filler phrases unless they add real meaning."
         : "Keep favoring concrete nouns and verbs over generic phrasing.",
     },
     {
       id: "bullet_length",
       title: "Bullet Length",
+      tone: lengthGood ? "emerald" : "amber",
       status: lengthGood ? "good" : "issue",
       summary: lengthGood
         ? "This bullet sits in a healthy length range for scanability."
-        : bulletLengthChars < 40
+        : analysis.bulletLengthChars < 40
           ? "This bullet is too short to communicate real scope."
           : "This bullet is getting long and may be harder to scan quickly.",
-      chips: [`${bulletLengthWords} words`, `${bulletLengthChars} chars`],
+      chips: [`${analysis.bulletLengthWords} words`, `${analysis.bulletLengthChars} chars`],
       tip: lengthGood
         ? "Aim to keep most bullets at roughly one to two lines in the final document."
-        : bulletLengthChars < 40
+        : analysis.bulletLengthChars < 40
           ? "Add the outcome, scale, or context so the reader understands why the work mattered."
           : "Split the detail or trim supporting clauses so the strongest result lands earlier.",
     },
@@ -2752,6 +2883,19 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const scoreTheme = getScoreTheme(overallScore);
   const matchedKeywords = scoreData?.keyword_match?.matched || [];
   const missingKeywords = scoreData?.keyword_match?.missing || [];
+  const selectedJobSkillAlignment = useMemo(
+    () => buildSkillAlignment(selectedJob?.skills, resumeText),
+    [selectedJob?.skills, resumeText],
+  );
+  const hasServerKeywordTerms = matchedKeywords.length + missingKeywords.length > 0;
+  const relevantMatchedKeywords = hasServerKeywordTerms ? matchedKeywords : selectedJobSkillAlignment.matched;
+  const relevantMissingKeywords = hasServerKeywordTerms ? missingKeywords : selectedJobSkillAlignment.missing;
+  const relevantTermTotal = relevantMatchedKeywords.length + relevantMissingKeywords.length;
+  const relevantTermsMode = !jobDescription.trim()
+    ? "no_job"
+    : relevantTermTotal > 0
+      ? hasServerKeywordTerms ? "scored" : "skills_fallback"
+      : "empty";
   const selectedRewrite = selectedBullet ? rewriteResults[selectedBullet.id] : null;
   const reviewableSuggestions = useMemo(
     () => reviewAllSuggestions.filter((suggestion) => suggestion.status === "improve"),
@@ -2764,6 +2908,17 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     [selectedBullet, resumeText],
   );
   const activeBulletTab = selectedBulletTabs.find((tab) => tab.id === selectedBulletTab) || selectedBulletTabs[0] || null;
+  const selectedBulletIssueTabs = selectedBulletTabs.filter((tab) => tab.status === "issue");
+  const selectedBulletBadge = useMemo(() => {
+    if (!selectedBullet) return null;
+    if (selectedBulletIssueTabs.length <= 1) return selectedBullet.annotation || null;
+    const hasHighSeverityIssue = selectedBulletIssueTabs.some((tab) => tab.tone === "rose");
+    return {
+      icon: hasHighSeverityIssue ? <X size={14} /> : <AlertCircle size={14} />,
+      label: `${selectedBulletIssueTabs.length} Issues`,
+      pillClass: hasHighSeverityIssue ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800",
+    };
+  }, [selectedBullet, selectedBulletIssueTabs]);
   const headerMeta = useMemo(() => extractResumeHeaderMeta(resumeText), [resumeText]);
   const fallbackHeaderLines = [profile.name, [profile.email, profile.phone, profile.location].filter(Boolean).join(" | ")].filter(Boolean);
   const displayHeaderLines = headerMeta.lines.length > 0 ? headerMeta.lines : fallbackHeaderLines;
@@ -2839,7 +2994,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     ];
   }, [bulletSections, parsedSections, wordCount]);
   const issueBulletCount = bulletSections.filter((section) => section.annotation?.tone && section.annotation.tone !== "emerald").length;
-  const improvementCount = issueBulletCount + (scoreData?.top_suggestions?.length || 0) + Math.min(missingKeywords.length, 6);
+  const improvementCount = issueBulletCount + (scoreData?.top_suggestions?.length || 0) + Math.min(relevantMissingKeywords.length, 6);
   const isFeedbackView = workspaceView === "feedback";
   const isEditorView = workspaceView === "editor";
   const lowScoreWarning = scoreData && overallScore < 50;
@@ -3236,7 +3391,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
               </span>
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-indigo-500">Open Improvements</div>
-                <div className="text-xs">{issueBulletCount} bullet issues, {missingKeywords.length} missing keywords</div>
+                <div className="text-xs">{issueBulletCount} bullet issues, {relevantMissingKeywords.length} missing keywords</div>
               </div>
             </div>
           </div>
@@ -3422,10 +3577,10 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                   {selectedBullet ? "Focused feedback" : "Choose a highlighted bullet"}
                 </div>
               </div>
-              {selectedBullet?.annotation && (
-                <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${selectedBullet.annotation.pillClass}`}>
-                  {selectedBullet.annotation.icon}
-                  {selectedBullet.annotation.label}
+              {selectedBulletBadge && (
+                <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${selectedBulletBadge.pillClass}`}>
+                  {selectedBulletBadge.icon}
+                  {selectedBulletBadge.label}
                 </span>
               )}
             </div>
@@ -3445,9 +3600,13 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                           ? selected
                             ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                             : "border-gray-200 bg-white text-gray-700"
-                          : selected
-                            ? "border-rose-200 bg-rose-50 text-rose-800"
-                            : "border-gray-200 bg-white text-gray-700";
+                          : tab.tone === "amber"
+                            ? selected
+                              ? "border-amber-200 bg-amber-50 text-amber-800"
+                              : "border-amber-100 bg-amber-50/70 text-amber-800"
+                            : selected
+                              ? "border-rose-200 bg-rose-50 text-rose-800"
+                              : "border-rose-100 bg-rose-50/70 text-rose-800";
 
                         return (
                           <button
@@ -3475,7 +3634,9 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                           <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
                             activeBulletTab.status === "good"
                               ? "bg-emerald-100 text-emerald-800"
-                              : "bg-rose-100 text-rose-800"
+                              : activeBulletTab.tone === "amber"
+                                ? "bg-amber-100 text-amber-800"
+                                : "bg-rose-100 text-rose-800"
                           }`}>
                             {activeBulletTab.status === "good" ? "Good" : "Review"}
                           </span>
@@ -3489,7 +3650,9 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 className={`rounded-full px-2.5 py-1 text-xs font-medium ${
                                   activeBulletTab.status === "good"
                                     ? "bg-emerald-50 text-emerald-700"
-                                    : "bg-gray-100 text-gray-700"
+                                    : activeBulletTab.tone === "amber"
+                                      ? "bg-amber-50 text-amber-800"
+                                      : "bg-rose-50 text-rose-800"
                                 }`}
                               >
                                 {chip}
@@ -3498,7 +3661,13 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                           </div>
                         )}
 
-                        <div className="mt-4 rounded-2xl bg-gray-50 px-3 py-3 text-sm leading-relaxed text-gray-600">
+                        <div className={`mt-4 rounded-2xl px-3 py-3 text-sm leading-relaxed ${
+                          activeBulletTab.status === "good"
+                            ? "bg-emerald-50 text-emerald-900"
+                            : activeBulletTab.tone === "amber"
+                              ? "bg-amber-50 text-amber-900"
+                              : "bg-rose-50 text-rose-900"
+                        }`}>
                           {activeBulletTab.tip}
                         </div>
 
@@ -3641,15 +3810,31 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
             <div className="text-sm font-semibold text-gray-800">Relevant Terms</div>
             {scoreData ? (
               <>
-                <div className="mt-2 text-sm text-gray-600">
-                  Matched {matchedKeywords.length} term{matchedKeywords.length === 1 ? "" : "s"}{matchedKeywords.length + missingKeywords.length > 0 ? ` of ${matchedKeywords.length + missingKeywords.length}` : ""}.
-                </div>
-                <div className="mt-2 text-xs leading-relaxed text-gray-500">
-                  Use these as alignment cues, not as a keyword-stuffing checklist.
-                </div>
-                {matchedKeywords.length > 0 && (
+                {relevantTermsMode === "no_job" && (
+                  <div className="mt-2 rounded-2xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm leading-relaxed text-gray-600">
+                    Attach a job or open this workspace from a selected role to see matched and missing terms.
+                  </div>
+                )}
+                {relevantTermsMode !== "no_job" && (
+                  <>
+                    <div className="mt-2 text-sm text-gray-600">
+                      Matched {relevantMatchedKeywords.length} term{relevantMatchedKeywords.length === 1 ? "" : "s"}{relevantTermTotal > 0 ? ` of ${relevantTermTotal}` : ""}.
+                    </div>
+                    <div className="mt-2 text-xs leading-relaxed text-gray-500">
+                      {relevantTermsMode === "skills_fallback"
+                        ? "Using the selected job's listed skills as alignment cues until the full JD keyword match is available."
+                        : "Use these as alignment cues, not as a keyword-stuffing checklist."}
+                    </div>
+                  </>
+                )}
+                {relevantTermsMode === "empty" && (
+                  <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm leading-relaxed text-gray-600">
+                    We couldn’t extract reliable alignment terms from this job yet. Try another role or rescore after the JD loads fully.
+                  </div>
+                )}
+                {relevantMatchedKeywords.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    {matchedKeywords.map((keyword, idx) => {
+                    {relevantMatchedKeywords.map((keyword, idx) => {
                       const label = typeof keyword === 'string' ? keyword : keyword?.skill || '';
                       return (
                         <span key={label || idx} className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700" title={keyword?.resume_context || ''}>
@@ -3659,11 +3844,11 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                     })}
                   </div>
                 )}
-                {missingKeywords.length > 0 && (
+                {relevantMissingKeywords.length > 0 && (
                   <>
                     <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Missing</div>
                     <div className="mt-2 flex flex-wrap gap-1.5">
-                      {missingKeywords.slice(0, 12).map((keyword, idx) => {
+                      {relevantMissingKeywords.slice(0, 12).map((keyword, idx) => {
                         const label = typeof keyword === 'string' ? keyword : keyword?.skill || '';
                         return (
                           <span key={label || idx} className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 cursor-pointer hover:bg-rose-200" title={keyword?.jd_context || 'Click to see JD context'}>
@@ -4011,12 +4196,28 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                             </div>
                           )}
                           {section.type === "subheading" && (
-                            <div className={`flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between ${templateStyles.subheadingClass}`}>
-                              <div className={section.variant === "dated" ? "font-semibold text-gray-900" : "font-normal text-gray-800"}>
-                                {renderHighlightedText(section.left, section.keywordMatches || [])}
+                            section.variant === "education_main" ? (
+                              <div className={`mb-1 grid grid-cols-[minmax(0,1.25fr)_minmax(0,0.95fr)] gap-x-6 gap-y-1 ${templateStyles.subheadingClass}`}>
+                                <div className="font-semibold text-gray-900">
+                                  {renderHighlightedText(section.left, section.keywordMatches || [])}
+                                </div>
+                                <div className="text-right text-sm text-gray-500">
+                                  {section.right}
+                                </div>
                               </div>
-                              <div className="text-sm text-gray-500">{section.right}</div>
-                            </div>
+                            ) : section.variant === "education_detail" ? (
+                              <div className="mb-3 grid grid-cols-[minmax(0,0.6fr)_minmax(0,1fr)] gap-x-6 gap-y-1 text-[0.96em] text-gray-600">
+                                <div>{renderHighlightedText(section.left, section.keywordMatches || [])}</div>
+                                <div className="text-right">{section.right}</div>
+                              </div>
+                            ) : (
+                              <div className={`flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between ${templateStyles.subheadingClass}`}>
+                                <div className={section.variant === "dated" ? "font-semibold text-gray-900" : "font-normal text-gray-800"}>
+                                  {renderHighlightedText(section.left, section.keywordMatches || [])}
+                                </div>
+                                <div className="text-sm text-gray-500">{section.right}</div>
+                              </div>
+                            )
                           )}
                           {section.type === "paragraph" && (
                             <p className="mb-4 text-gray-700" style={templateStyles.bodyStyle}>
