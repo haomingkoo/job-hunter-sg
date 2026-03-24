@@ -3433,7 +3433,7 @@ function ResumeTab({ selectedJob, user }) {
       </div>
 
       <div className="fixed inset-x-0 bottom-4 z-20 px-4">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white/95 px-4 py-3 shadow-[0_16px_40px_rgba(15,23,42,0.18)] backdrop-blur">
+        <div className="mx-auto flex w-full items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white/95 px-4 py-3 shadow-[0_16px_40px_rgba(15,23,42,0.18)] backdrop-blur">
           <button
             type="button"
             onClick={jumpToScorePanel}
@@ -3814,7 +3814,7 @@ export default function JobHunterSG() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto">
+      <div className="w-full px-4 sm:px-6 lg:px-10">
         {/* Header */}
         <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-6 py-5">
           <div className="flex items-center justify-between">
