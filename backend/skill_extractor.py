@@ -11,7 +11,13 @@ No external dependencies -- pure stdlib + re.
 
 from __future__ import annotations
 
+import logging
 import re
+import time
+from collections import Counter
+from typing import Optional
+
+log = logging.getLogger("jobhunter.skills")
 
 # ── Known multi-word skill phrases ──────────────────────────────────────────
 # 200+ common multi-word skills in tech, business, and SG-specific domains.
@@ -326,6 +332,7 @@ def _find_known_skills_in_text(text_lower: str) -> list[str]:
 def extract_skill_phrases(
     jd_text: str,
     job_skills: list[str] | None = None,
+    db_session=None,
 ) -> list[str]:
     """Extract multi-word skill phrases from a job description.
 
@@ -342,28 +349,36 @@ def extract_skill_phrases(
 
     text_lower = jd_text.lower()
 
-    # 1. Match against known skills dictionary
+    # 1. Match against known skills dictionary (static)
     found_skills: list[str] = _find_known_skills_in_text(text_lower)
 
-    # 2. Add job_skills from the database that are multi-word
+    # 2. Build the valid skills set (static + dynamic from scraped JDs)
+    valid_skills = set(KNOWN_SKILLS)
+    if db_session:
+        try:
+            dynamic = build_dynamic_skills(db_session)
+            valid_skills.update(dynamic.keys())
+        except Exception as e:
+            log.warning(f"Dynamic skill build failed, using static only: {e}")
+
+    # 3. Add job_skills from the database that are multi-word
     if job_skills:
         for raw_skill in job_skills:
             normalized = _normalize_skill(raw_skill)
             if not normalized:
                 continue
-            # Only add multi-word skills (single words handled elsewhere)
             word_count = len(normalized.split())
             if word_count >= 2 and normalized not in found_skills:
-                # Verify the phrase actually appears in the JD text
+                # If the phrase appears in the JD text, always include it
                 parts = normalized.split()
                 pattern = r"\b" + r"[\s\-]+".join(
                     re.escape(p) for p in parts
                 ) + r"\b"
                 if re.search(pattern, text_lower):
                     found_skills.append(normalized)
-                # Only include metadata skills that are in our known dictionary
-                # to avoid noise like "Medical Study" from job source data
-                elif normalized in KNOWN_SKILLS:
+                # Otherwise only include if it's a recognized skill
+                # (from static dictionary OR seen across multiple JDs)
+                elif normalized in valid_skills:
                     found_skills.append(normalized)
 
     # 3. Deduplicate, preserving order
@@ -483,3 +498,175 @@ def match_resume_skills_with_context(
         "missing": missing,
         "match_percent": match_percent,
     }
+
+
+# ── Dynamic skill dictionary (built from scraped JDs) ─────────────────────
+
+# Stop words to ignore when extracting n-grams
+_STOP_WORDS = {
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "as", "is", "was", "are", "were", "be",
+    "been", "being", "have", "has", "had", "do", "does", "did", "will",
+    "would", "could", "should", "may", "might", "shall", "can", "need",
+    "must", "that", "this", "these", "those", "it", "its", "not", "no",
+    "nor", "so", "if", "then", "than", "too", "very", "just", "also",
+    "such", "like", "only", "more", "most", "other", "some", "any", "all",
+    "each", "every", "both", "few", "many", "much", "own", "same", "well",
+    "about", "into", "through", "during", "before", "after", "above",
+    "below", "between", "under", "over", "up", "out", "off", "down",
+    "while", "where", "when", "what", "which", "who", "whom", "how",
+    "there", "here", "their", "they", "them", "we", "us", "our", "you",
+    "your", "he", "she", "his", "her", "my", "me", "i",
+    # Common JD filler words
+    "able", "ensure", "include", "including", "required", "preferred",
+    "responsible", "experience", "work", "working", "role", "position",
+    "candidate", "strong", "good", "excellent", "minimum", "least",
+    "years", "year", "related", "relevant", "knowledge", "understanding",
+    "ability", "skills", "skill", "using", "used", "use",
+    "new", "etc", "e.g", "eg", "ie", "i.e",
+}
+
+# Minimum number of JDs a phrase must appear in to be considered a real skill
+_MIN_JD_FREQUENCY = 3
+
+# Cache for the dynamic dictionary
+_dynamic_cache: dict = {
+    "skills": {},       # skill -> count of JDs containing it
+    "built_at": 0,      # timestamp
+    "job_count": 0,     # number of JDs analyzed
+}
+
+
+def _tokenize_for_ngrams(text: str) -> list[str]:
+    """Tokenize text into lowercase words, stripping punctuation."""
+    return re.findall(r"[a-z][a-z0-9+#/.'-]*", text.lower())
+
+
+def _extract_ngrams(tokens: list[str], n: int) -> list[str]:
+    """Extract n-grams from token list, filtering stop-word-heavy phrases."""
+    ngrams = []
+    for i in range(len(tokens) - n + 1):
+        gram = tokens[i:i + n]
+        # Skip if more than half are stop words
+        stop_count = sum(1 for w in gram if w in _STOP_WORDS)
+        if stop_count > n // 2:
+            continue
+        # Skip if first or last word is a stop word
+        if gram[0] in _STOP_WORDS or gram[-1] in _STOP_WORDS:
+            continue
+        # Skip very short words (single char except known ones like R, C)
+        if any(len(w) < 2 and w not in {"r", "c", "ai"} for w in gram):
+            continue
+        phrase = " ".join(gram)
+        ngrams.append(phrase)
+    return ngrams
+
+
+def build_dynamic_skills(db_session) -> dict[str, int]:
+    """Analyze all scraped JDs and build a frequency-based skill dictionary.
+
+    Returns dict of {skill_phrase: number_of_JDs_containing_it}.
+    Results are cached for 6 hours.
+    """
+    from models import ScrapedJob
+
+    # Return cache if fresh (< 6 hours old)
+    cache_age = time.time() - _dynamic_cache["built_at"]
+    if _dynamic_cache["built_at"] > 0 and cache_age < 6 * 3600:
+        return _dynamic_cache["skills"]
+
+    log.info("Building dynamic skill dictionary from scraped JDs...")
+    start = time.time()
+
+    # Fetch all JD descriptions
+    jobs = db_session.query(
+        ScrapedJob.description, ScrapedJob.skills
+    ).filter(ScrapedJob.description != "").all()
+
+    if not jobs:
+        return {}
+
+    # Count how many JDs each phrase appears in (document frequency)
+    phrase_df: Counter = Counter()
+
+    for desc, job_skills in jobs:
+        if not desc:
+            continue
+
+        # Extract n-grams from description
+        tokens = _tokenize_for_ngrams(desc)
+        phrases_in_this_jd: set[str] = set()
+
+        for n in (2, 3):
+            for phrase in _extract_ngrams(tokens, n):
+                phrases_in_this_jd.add(phrase)
+
+        # Also add multi-word skills from job metadata
+        if job_skills:
+            skills_list = job_skills if isinstance(job_skills, list) else []
+            for raw in skills_list:
+                if isinstance(raw, str):
+                    normalized = _normalize_skill(raw)
+                    if normalized and len(normalized.split()) >= 2:
+                        phrases_in_this_jd.add(normalized)
+
+        # Increment document frequency for each unique phrase in this JD
+        for phrase in phrases_in_this_jd:
+            phrase_df[phrase] += 1
+
+    # Filter: keep phrases that appear in enough JDs
+    min_freq = max(_MIN_JD_FREQUENCY, len(jobs) // 100)  # At least 1% of jobs
+    real_skills = {
+        phrase: count
+        for phrase, count in phrase_df.items()
+        if count >= min_freq
+    }
+
+    # Also merge in our static KNOWN_SKILLS (they're always valid)
+    for skill in KNOWN_SKILLS:
+        if skill not in real_skills:
+            # Check if it appears in any JDs
+            if skill in phrase_df:
+                real_skills[skill] = phrase_df[skill]
+
+    # Update cache
+    _dynamic_cache["skills"] = real_skills
+    _dynamic_cache["built_at"] = time.time()
+    _dynamic_cache["job_count"] = len(jobs)
+
+    elapsed = time.time() - start
+    log.info(
+        f"Dynamic skill dictionary built: {len(real_skills)} phrases "
+        f"from {len(jobs)} JDs in {elapsed:.1f}s"
+    )
+
+    return real_skills
+
+
+def get_trending_skills(
+    db_session,
+    limit: int = 50,
+    category: Optional[str] = None,
+) -> list[dict]:
+    """Get the most common skill phrases across all scraped JDs.
+
+    Returns a ranked list of {skill, count, percent} dicts.
+    """
+    skills = build_dynamic_skills(db_session)
+    if not skills:
+        return []
+
+    job_count = _dynamic_cache["job_count"] or 1
+
+    # Sort by frequency
+    ranked = sorted(skills.items(), key=lambda x: -x[1])
+
+    results = []
+    for phrase, count in ranked[:limit]:
+        results.append({
+            "skill": phrase,
+            "count": count,
+            "percent": round(count / job_count * 100, 1),
+        })
+
+    return results

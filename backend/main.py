@@ -23,7 +23,7 @@ from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, or_, text
+from sqlalchemy import String, cast, func, or_, text
 from sqlalchemy.orm import Session
 
 from auth import (
@@ -548,6 +548,16 @@ def search_jobs(
     }
 
 
+@app.get("/api/skills/trending")
+def trending_skills(
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """Get most common skill phrases across all scraped JDs."""
+    from skill_extractor import get_trending_skills
+    return get_trending_skills(db, limit=limit)
+
+
 @app.get("/api/jobs")
 def list_cached_jobs(
     q: Optional[str] = Query(None, max_length=200, description="Filter by keyword"),
@@ -572,10 +582,13 @@ def list_cached_jobs(
         for word in words:
             word_pattern = f"%{word}%"
             query = query.filter(
-                (ScrapedJob.title.ilike(word_pattern))
-                | (ScrapedJob.company.ilike(word_pattern))
-                | (ScrapedJob.description.ilike(word_pattern))
-                | (ScrapedJob.search_keyword.ilike(word_pattern))
+                or_(
+                    ScrapedJob.title.ilike(word_pattern),
+                    ScrapedJob.company.ilike(word_pattern),
+                    ScrapedJob.description.ilike(word_pattern),
+                    ScrapedJob.search_keyword.ilike(word_pattern),
+                    cast(ScrapedJob.skills, String).ilike(word_pattern),
+                )
             )
     if employment_type:
         query = query.filter(ScrapedJob.employment_type.ilike(f"%{employment_type}%"))
@@ -586,15 +599,19 @@ def list_cached_jobs(
     if location:
         query = query.filter(ScrapedJob.location.ilike(f"%{location}%"))
 
-    jobs = query.order_by(ScrapedJob.id.desc()).all()
-    if min_salary:
+    ordered_query = query.order_by(ScrapedJob.id.desc())
+    offset = (page - 1) * per_page
+
+    if min_salary is not None:
+        jobs = ordered_query.all()
         salary_matched = [job for job in jobs if salary_floor(job.salary) >= min_salary]
         salary_unknown = [job for job in jobs if salary_floor(job.salary) == 0]
         jobs = salary_matched + salary_unknown
-
-    total = len(jobs)
-    offset = (page - 1) * per_page
-    jobs = jobs[offset: offset + per_page]
+        total = len(jobs)
+        jobs = jobs[offset: offset + per_page]
+    else:
+        total = query.count()
+        jobs = ordered_query.offset(offset).limit(per_page).all()
     return {
         "jobs": [
             {
@@ -1068,7 +1085,7 @@ def score_resume(
 
     # Enhance with multi-word skill phrase matching
     if jd_text.strip():
-        jd_skill_phrases = extract_skill_phrases(jd_text)
+        jd_skill_phrases = extract_skill_phrases(jd_text, db_session=db)
         skill_match = match_resume_skills_with_context(
             resume_text=resume_text,
             jd_skills=jd_skill_phrases,
