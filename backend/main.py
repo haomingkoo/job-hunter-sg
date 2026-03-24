@@ -518,12 +518,17 @@ def list_cached_jobs(
 
     query = db.query(ScrapedJob)
     if q:
-        pattern = f"%{q}%"
-        query = query.filter(
-            (ScrapedJob.title.ilike(pattern))
-            | (ScrapedJob.company.ilike(pattern))
-            | (ScrapedJob.search_keyword.ilike(pattern))
-        )
+        # Split query into words — match ALL words (AND logic)
+        # "micron i4" matches jobs with BOTH "micron" AND "i4" anywhere
+        words = [w.strip() for w in q.split() if w.strip()]
+        for word in words:
+            word_pattern = f"%{word}%"
+            query = query.filter(
+                (ScrapedJob.title.ilike(word_pattern))
+                | (ScrapedJob.company.ilike(word_pattern))
+                | (ScrapedJob.description.ilike(word_pattern))
+                | (ScrapedJob.search_keyword.ilike(word_pattern))
+            )
     if employment_type:
         query = query.filter(ScrapedJob.employment_type.ilike(f"%{employment_type}%"))
     if seniority:
@@ -1461,7 +1466,9 @@ Formatting rules:
 - Use consistent date formats throughout
 - Put skills in a comma-separated list, grouped by category
 - If residency status is mentioned, keep it prominent
-- Output as clean plain text that can be copied directly into a .docx template
+- Output as clean PLAIN TEXT — no markdown, no **bold**, no _italic_, no # headers
+- Section headers must be ALL CAPS on their own line (e.g., PROFESSIONAL EXPERIENCE)
+- Do NOT wrap anything in **asterisks** or markdown formatting
 - Do NOT add any commentary — return ONLY the formatted resume"""
 
     resume_text = sanitize_resume_text(body.resume_text)
