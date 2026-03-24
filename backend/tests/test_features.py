@@ -170,6 +170,20 @@ class TestResumeParser:
         lines = [l for l in result.split("\n") if l.strip()]
         assert lines[0].strip() == "PROFESSIONAL EXPERIENCE"
 
+    def test_join_broken_lines_preserves_executive_summary_heading(self):
+        """Executive Summary should not be merged into the paragraph below."""
+        from resume_parser import _join_broken_lines
+
+        text = (
+            "EXECUTIVE SUMMARY\n"
+            "Transformation leader with 7+ years in semiconductor manufacturing.\n"
+            "Led cross-functional programs across global fabs."
+        )
+        result = _join_broken_lines(text)
+        lines = [l for l in result.split("\n") if l.strip()]
+        assert lines[0].strip() == "EXECUTIVE SUMMARY"
+        assert lines[1].startswith("Transformation leader")
+
     def test_name_detection(self):
         """parse_resume metadata should extract a name from the first lines."""
         from resume_parser import parse_resume
@@ -188,6 +202,31 @@ class TestResumeParser:
             doc.save(buf)
             result = parse_resume("test.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buf.getvalue())
             assert result["name"] == "John Smith"
+        except ImportError:
+            pytest.skip("python-docx not installed")
+
+    def test_docx_list_bullets_preserved(self):
+        """DOCX list bullets should be extracted as visible bullet lines."""
+        from resume_parser import parse_resume
+        import io
+
+        try:
+            from docx import Document
+
+            doc = Document()
+            doc.add_paragraph("Jane Doe")
+            doc.add_paragraph("PROFESSIONAL EXPERIENCE")
+            bullet = doc.add_paragraph(style="List Bullet")
+            bullet.add_run("Led cross-functional process integration across 3 fabs")
+            buf = io.BytesIO()
+            doc.save(buf)
+
+            result = parse_resume(
+                "bullets.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                buf.getvalue(),
+            )
+            assert "• Led cross-functional process integration across 3 fabs" in result["text"]
         except ImportError:
             pytest.skip("python-docx not installed")
 

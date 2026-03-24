@@ -68,6 +68,9 @@ class ScrapedJob(Base):
     search_keyword: Mapped[str] = mapped_column(String(300), default="")
     scraped_at: Mapped[str] = mapped_column(String(50), default="")
 
+    # Pre-parsed JD data for instant resume tailoring (populated at scrape time)
+    parsed_jd: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+
     __table_args__ = (
         Index("ix_scraped_jobs_keyword", "search_keyword"),
     )
@@ -119,6 +122,39 @@ class UserMemory(Base):
     # AI coaching memory — accumulated across sessions
     coaching_notes: Mapped[str] = mapped_column(Text, default="")      # AI summary of past sessions
     session_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class TailoredResume(Base):
+    """
+    Stores a structured resume tailoring session tied to a user and a job.
+    Tracks pipeline progress, changes made, and before/after metrics.
+    """
+    __tablename__ = "tailored_resumes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    job_id: Mapped[int] = mapped_column(Integer, ForeignKey("scraped_jobs.id"), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+
+    # Structured resume snapshots
+    original_resume: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    tailored_resume: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # Pipeline state
+    pipeline_stage: Mapped[str] = mapped_column(String(50), default="init")
+    pipeline_progress: Mapped[dict | None] = mapped_column(JSON, default=dict)
+
+    # Change tracking
+    changes: Mapped[list | None] = mapped_column(JSON, default=list)
+
+    # Before/after metrics
+    match_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    match_after: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    score_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    score_after: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

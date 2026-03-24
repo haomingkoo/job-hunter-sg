@@ -169,8 +169,11 @@ class ResumeScoreRequest(BaseModel):
 class RewriteBulletRequest(BaseModel):
     bullet: str = Field(..., min_length=1, max_length=1000)
     job_title: str = Field("", max_length=200)
+    job_description: str = Field("", max_length=10000)
     session_id: str = Field("", max_length=64)
     used_verbs: str = Field("", max_length=500)
+    rewrite_focus: str = Field("", max_length=200)
+    focused_feedback: str = Field("", max_length=2000)
 
 
 class IntegrateKeywordsRequest(BaseModel):

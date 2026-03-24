@@ -80,6 +80,7 @@ STANDARD_SECTIONS = [
     "projects", "awards", "honors", "publications",
     "professional summary", "professional experience",
     "core skills", "core competencies", "technical skills",
+    "about", "licenses & certifications", "honors & awards",
     "additional information", "languages", "languages & work authorization",
     "activities", "volunteer", "certifications & technical upskilling",
 ]
@@ -151,6 +152,7 @@ _DATE_FORMATS = [
 ]
 
 _NORMALIZED_SECTION_KEYS = {
+    "about": "summary",
     "professional summary": "summary",
     "career summary": "summary",
     "summary": "summary",
@@ -166,7 +168,9 @@ _NORMALIZED_SECTION_KEYS = {
     "projects": "projects",
     "certifications": "certifications",
     "certification": "certifications",
+    "licenses & certifications": "certifications",
     "certifications & technical upskilling": "certifications",
+    "honors & awards": "awards",
     "additional information": "additional_information",
     "languages": "languages",
     "languages & work authorization": "languages",
@@ -175,6 +179,19 @@ _NORMALIZED_SECTION_KEYS = {
 }
 
 _INLINE_HEADINGS = sorted(STANDARD_SECTIONS, key=len, reverse=True)
+_MARKDOWN_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+")
+_NOISE_LINE_PATTERNS = [
+    re.compile(r"^\s*```"),
+    re.compile(r"^\s*(?:---|\*\*\*|___)\s*$"),
+    re.compile(r"copy\s*&\s*paste\s+ready", re.I),
+    re.compile(r"paste\s+into\s+textedit", re.I),
+    re.compile(r"paste\s+method", re.I),
+    re.compile(r"shift\+enter", re.I),
+    re.compile(r"paragraph\s+break", re.I),
+    re.compile(r"description\s+paragraph\s*\(", re.I),
+    re.compile(r"bullets?\s*\(", re.I),
+    re.compile(r"then\s+type\s+these\s+bullets", re.I),
+]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -221,7 +238,16 @@ def _split_action_sentences(text: str) -> list[str]:
 
 
 def _clean_line(text: str) -> str:
-    return re.sub(r"(\*\*|__)", "", text or "").strip()
+    stripped = re.sub(r"(\*\*|__)", "", text or "")
+    stripped = _MARKDOWN_HEADING_RE.sub("", stripped)
+    return stripped.strip()
+
+
+def _is_noise_line(text: str) -> bool:
+    stripped = _clean_line(text)
+    if not stripped:
+        return False
+    return any(pattern.search(stripped) for pattern in _NOISE_LINE_PATTERNS)
 
 
 def _section_key(line: str) -> str:
@@ -246,6 +272,8 @@ def _split_inline_heading_line(line: str) -> list[str]:
         remainder = match.group(2).strip()
         if not remainder:
             continue
+        if remainder.startswith(("&", "/", "and ")):
+            continue
         # Avoid splitting genuine headers like "Professional Summary:"
         if remainder.lower() in _NORMALIZED_SECTION_KEYS:
             continue
@@ -259,6 +287,8 @@ def _split_inline_heading_line(line: str) -> list[str]:
 def _iter_resume_lines(text: str) -> list[str]:
     lines: list[str] = []
     for raw_line in text.split("\n"):
+        if _is_noise_line(raw_line):
+            continue
         lines.extend(_split_inline_heading_line(raw_line))
     return lines
 

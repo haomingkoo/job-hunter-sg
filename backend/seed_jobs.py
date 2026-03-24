@@ -28,6 +28,11 @@ from models import ScrapedJob
 from sanitizer import sanitize_job
 from scraper import JobAggregator
 
+try:
+    from jd_preparser import preparse_job_description
+except ImportError:
+    preparse_job_description = None
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -118,9 +123,22 @@ def seed_jobs(
                     for key, val in clean.items():
                         if key != "id":
                             setattr(existing, key, val)
+                    # Pre-parse JD if not already done
+                    if preparse_job_description and not existing.parsed_jd:
+                        existing.parsed_jd = preparse_job_description(
+                            existing.description or "",
+                            skills=existing.skills if isinstance(existing.skills, list) else [],
+                        )
                     stats["updated_jobs"] += 1
                 else:
-                    db.add(ScrapedJob(**clean))
+                    job_row = ScrapedJob(**clean)
+                    # Pre-parse JD at insert time
+                    if preparse_job_description:
+                        job_row.parsed_jd = preparse_job_description(
+                            clean.get("description", ""),
+                            skills=clean.get("skills", []),
+                        )
+                    db.add(job_row)
                     stats["new_jobs"] += 1
 
                 stats["total_cached"] += 1

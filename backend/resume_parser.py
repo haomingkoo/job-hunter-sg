@@ -20,6 +20,45 @@ ALLOWED_TYPES = {
 }
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc"}
 
+SECTION_HEADER_ALIASES = {
+    "experience", "professional experience", "work experience", "employment history",
+    "career history", "professional background", "education", "academic background",
+    "skills", "technical skills", "technical proficiencies", "core skills",
+    "core competencies", "competencies", "summary", "professional summary",
+    "executive summary", "career summary", "professional profile", "profile",
+    "summary of qualifications", "qualifications", "objective", "projects",
+    "selected projects", "leadership", "activities", "volunteer", "volunteering",
+    "certifications", "certification", "licenses", "licenses & certifications",
+    "certifications & technical upskilling", "additional information",
+    "languages", "interests", "awards", "publications", "personal", "personal particulars",
+}
+
+DOCX_BULLET_STYLE_TOKENS = (
+    "list bullet",
+    "bullet",
+    "list paragraph",
+)
+
+DOCX_NUMBER_STYLE_TOKENS = (
+    "list number",
+    "number",
+)
+
+
+def _looks_like_section_header(value: str) -> bool:
+    stripped = value.strip()
+    if not stripped:
+        return False
+
+    lower = stripped.lower().rstrip(":")
+    if lower in SECTION_HEADER_ALIASES:
+        return True
+
+    if re.fullmatch(r"[A-Z][A-Z &/\-]{3,}", stripped):
+        return True
+
+    return False
+
 
 def validate_upload(filename: str, content_type: str, size: int) -> str:
     """Validate file upload. Returns file type or raises ValueError."""
@@ -64,16 +103,10 @@ def _join_broken_lines(text: str) -> str:
     )
     _all_caps_header = re.compile(r"^[A-Z][A-Z &/\-]{3,}$")
     _role_separator = re.compile(r"\s[|—–]\s")
+    _contact_signal = re.compile(r"@|linkedin|github|portfolio|https?://", re.IGNORECASE)
+    _phone_only = re.compile(r"^[\+]?[\d\s\-\(\)]{8,}$")
     # Known section headers
-    _section_words = {
-        "experience", "education", "skills", "summary", "objective",
-        "certifications", "projects", "awards", "languages", "interests",
-        "volunteer", "activities", "publications", "references",
-        "professional summary", "professional experience", "work experience",
-        "core skills", "core competencies", "technical skills",
-        "additional information", "languages & work authorization",
-        "certifications & technical upskilling",
-    }
+    _section_words = SECTION_HEADER_ALIASES
 
     lines = text.split("\n")
     merged: list[str] = []
@@ -98,6 +131,8 @@ def _join_broken_lines(text: str) -> str:
 
         # Bullet point (• Led..., - Built..., etc)
         if _bullet_start.match(stripped):
+            starts_new = True
+        elif _contact_signal.search(stripped) or _phone_only.match(stripped):
             starts_new = True
         # ALL CAPS section header (PROFESSIONAL EXPERIENCE, EDUCATION, etc)
         elif _all_caps_header.match(stripped):
@@ -125,15 +160,13 @@ def _join_broken_lines(text: str) -> str:
         if not starts_new and merged and merged[-1]:
             prev = merged[-1]
             prev_lower = prev.strip().lower().rstrip(":")
-            prev_is_section = (
-                bool(_all_caps_header.match(prev.strip()))
-                or prev_lower in _section_words
-                or prev_lower.rstrip(":") in _section_words
-            )
+            prev_is_section = _looks_like_section_header(prev.strip())
             prev_is_subheading = bool(_date_pattern.search(prev)) or bool(_role_separator.search(prev))
 
             # Never join content onto a section header or dated role line.
             if prev_is_section or prev_is_subheading:
+                starts_new = True
+            elif _contact_signal.search(prev) or _phone_only.match(prev.strip()):
                 starts_new = True
 
         if not starts_new and merged and merged[-1]:
@@ -148,6 +181,35 @@ def _join_broken_lines(text: str) -> str:
             merged[-1] = merged[-1] + " " + stripped
 
     return "\n".join(merged)
+
+
+def _looks_like_docx_list_paragraph(paragraph) -> bool:
+    style_name = (getattr(getattr(paragraph, "style", None), "name", "") or "").strip().lower()
+    if any(token in style_name for token in DOCX_BULLET_STYLE_TOKENS + DOCX_NUMBER_STYLE_TOKENS):
+        return True
+
+    paragraph_props = getattr(getattr(paragraph, "_p", None), "pPr", None)
+    numbering_props = getattr(paragraph_props, "numPr", None)
+    return numbering_props is not None
+
+
+def _extract_docx_paragraph_text(paragraph) -> str:
+    raw = getattr(paragraph, "text", "") or ""
+    lines = [segment.strip() for segment in raw.splitlines() if segment.strip()]
+    if not lines:
+        return ""
+
+    cleaned = "\n".join(lines)
+    if _looks_like_docx_list_paragraph(paragraph) and not re.match(r"^\s*(?:[•\-\*▪\u2022\u2023\u25E6\u2043\u2219]|\d+[.)])\s+", cleaned):
+        cleaned = f"• {cleaned}"
+    return cleaned
+
+
+def _append_text_lines(target: list[str], value: str) -> None:
+    for line in str(value or "").splitlines():
+        cleaned = line.strip()
+        if cleaned:
+            target.append(cleaned)
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -185,13 +247,23 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
 
     text_parts = []
     for para in doc.paragraphs:
-        if para.text.strip():
-            text_parts.append(para.text)
+        paragraph_text = _extract_docx_paragraph_text(para)
+        if paragraph_text:
+            _append_text_lines(text_parts, paragraph_text)
 
     # Also extract from tables (some resumes use tables for layout)
     for table in doc.tables:
         for row in table.rows:
-            row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+            row_values: list[str] = []
+            for cell in row.cells:
+                cell_lines: list[str] = []
+                for para in cell.paragraphs:
+                    paragraph_text = _extract_docx_paragraph_text(para)
+                    if paragraph_text:
+                        _append_text_lines(cell_lines, paragraph_text)
+                if cell_lines:
+                    row_values.append(" ".join(cell_lines).strip())
+            row_text = " | ".join(value for value in row_values if value)
             if row_text:
                 text_parts.append(row_text)
 
@@ -199,7 +271,7 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     if not full_text.strip():
         raise ValueError("No text found in DOCX file.")
 
-    return full_text
+    return _join_broken_lines(full_text)
 
 
 def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
@@ -228,12 +300,19 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
     # Name detection — first non-empty line that looks like a name
     # (2-4 words, no special chars, not an email/phone/url, not a section header)
     name = None
-    section_headers = {"experience", "education", "skills", "summary", "objective",
-                       "certifications", "professional", "work", "projects", "contact"}
+    top_block = []
     for line in lines:
         cleaned = line.strip()
         if not cleaned or len(cleaned) < 3:
             continue
+        if _looks_like_section_header(cleaned):
+            break
+        top_block.append(cleaned)
+        if len(top_block) >= 6:
+            break
+
+    section_headers = SECTION_HEADER_ALIASES | {"professional", "work", "contact"}
+    for cleaned in top_block:
         lower = cleaned.lower()
         # Skip emails, phones, URLs, section headers
         if "@" in cleaned or "http" in lower or "linkedin" in lower:
