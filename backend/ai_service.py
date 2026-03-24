@@ -465,32 +465,46 @@ def integrate_keywords(
     if not missing_keywords:
         return []
 
-    system = """You are a resume keyword optimization expert. Given a resume and a list of missing keywords from a job description, suggest how to NATURALLY integrate each keyword into existing resume bullets.
+    system = """You are a resume keyword optimization expert. Given a resume and missing keywords from a job description, suggest how to integrate each keyword.
+
+CRITICAL: The keyword phrase must appear VERBATIM (exact match) in the suggestion. ATS systems match exact strings.
+
+For EACH keyword, provide TWO options:
+1. "edit" — rewrite an EXISTING bullet to naturally include the keyword
+2. "new" — a NEW sentence that includes the keyword, ready to insert
 
 Rules:
-- Find the existing bullet that is the BEST fit for each keyword
-- Rewrite that bullet to include the keyword naturally — not forced
-- If a keyword doesn't fit any bullet, suggest adding it to the Skills section
-- NEVER invent achievements or metrics — only reword existing content
-- NEVER change company names, job titles, or dates
-- Return a JSON array only — no markdown, no explanation outside the array
+- The keyword must appear as an EXACT phrase in both options (not paraphrased)
+- Find the existing bullet that is the BEST fit for the "edit" option
+- The "new" sentence should be based on the user's actual experience — never fabricate
+- If the keyword only fits in Skills, say so
+- NEVER change company names, job titles, dates, or metrics
+- Return a JSON array only
 
-For each keyword, return:
+For each keyword return:
 {
-  "keyword": "the keyword",
-  "original_bullet": "the original bullet text from the resume",
-  "suggested_rewrite": "the rewritten bullet with the keyword integrated",
-  "section": "experience or skills",
-  "reason": "brief explanation of the change"
+  "keyword": "cross-functional collaboration",
+  "edit": {
+    "original": "Partnered with IT and MFG teams to deploy automation",
+    "rewritten": "Drove cross-functional collaboration with IT and MFG teams to deploy automation across 4 sites",
+    "reason": "Natural verb swap, keyword fits the teamwork context"
+  },
+  "new": {
+    "sentence": "Facilitated cross-functional collaboration across engineering, operations, and quality teams to align on yield improvement initiatives",
+    "suggested_section": "experience",
+    "reason": "New bullet highlighting the collaboration aspect of existing work"
+  }
 }
 
-If a keyword belongs in Skills (no good bullet match):
+If keyword only fits in Skills:
 {
-  "keyword": "the keyword",
-  "original_bullet": null,
-  "suggested_rewrite": "Add to Skills section: The Keyword",
-  "section": "skills",
-  "reason": "No existing bullet covers this — best added as a skill"
+  "keyword": "Kubernetes",
+  "edit": null,
+  "new": {
+    "sentence": "Add to Skills: Kubernetes",
+    "suggested_section": "skills",
+    "reason": "Technical skill — best added to skills list"
+  }
 }"""
 
     keywords_str = ", ".join(missing_keywords[:20])  # Cap at 20 keywords

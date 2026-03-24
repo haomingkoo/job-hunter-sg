@@ -1453,22 +1453,37 @@ const NUS_RESUME_BENCHMARKS = [
 const RESUME_HEADINGS = new Set([
   "summary",
   "professional summary",
+  "career summary",
   "experience",
   "professional experience",
   "work experience",
   "education",
   "skills",
+  "core skills",
   "technical skills",
   "core competencies",
   "projects",
   "leadership",
   "activities",
   "certifications",
+  "certifications & technical upskilling",
   "awards",
   "volunteer",
   "interests",
   "languages",
+  "languages & work authorization",
+  "additional information",
+  "co-curricular experience",
+  "extra-curriculars",
+  "personal",
 ]);
+
+const RESUME_TEMPLATE_SECTION_ORDER = {
+  classic: ["summary", "education", "experience", "skills", "certifications"],
+  modern: ["summary", "experience", "projects", "skills", "education"],
+  singapore: ["personal", "summary", "education", "experience", "activities", "skills"],
+  compact: ["summary", "experience", "skills", "education", "certifications"],
+};
 
 const RESUME_ACTION_VERBS = new Set([
   "achieved", "analyzed", "architected", "automated", "built", "championed",
@@ -1518,6 +1533,101 @@ function titleCase(value) {
   return value
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function stripResumeMarkdown(line) {
+  return String(line || "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .trim();
+}
+
+function normalizeHeadingLabel(value) {
+  return stripResumeMarkdown(value)
+    .toLowerCase()
+    .replace(/[:*]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractKeywordLabel(item) {
+  if (typeof item === "string") return item.trim();
+  if (item && typeof item.skill === "string") return item.skill.trim();
+  return "";
+}
+
+function getResumeSectionKey(value) {
+  const normalized = normalizeHeadingLabel(value);
+  if (!normalized) return "";
+  if (normalized.includes("summary")) return "summary";
+  if (normalized.includes("education")) return "education";
+  if (normalized.includes("experience")) {
+    if (normalized.includes("co-curricular") || normalized.includes("extra-curricular") || normalized.includes("volunteer") || normalized.includes("activities")) {
+      return "activities";
+    }
+    return "experience";
+  }
+  if (normalized.includes("skill") || normalized.includes("competenc")) return "skills";
+  if (normalized.includes("project")) return "projects";
+  if (normalized.includes("certification") || normalized.includes("upskilling") || normalized.includes("additional information")) return "certifications";
+  if (normalized.includes("activity") || normalized.includes("leadership") || normalized.includes("volunteer") || normalized.includes("club")) return "activities";
+  if (normalized === "personal" || normalized.includes("personal information")) return "personal";
+  return "";
+}
+
+function isAllCapsHeading(line) {
+  const trimmed = stripResumeMarkdown(line);
+  return Boolean(trimmed)
+    && trimmed === trimmed.toUpperCase()
+    && /[A-Z]/.test(trimmed)
+    && trimmed.split(/\s+/).length <= 6;
+}
+
+function hasDateHint(value) {
+  return RESUME_DATE_HINT_RE.test(stripResumeMarkdown(value));
+}
+
+function reorderParsedSections(sections, templateOrder = []) {
+  if (!Array.isArray(templateOrder) || templateOrder.length === 0) return sections;
+
+  const preamble = [];
+  const groups = [];
+  let currentGroup = null;
+
+  sections.forEach((section) => {
+    if (section.type === "heading") {
+      if (currentGroup) groups.push(currentGroup);
+      currentGroup = {
+        key: getResumeSectionKey(section.text),
+        items: [section],
+      };
+      return;
+    }
+
+    if (currentGroup) currentGroup.items.push(section);
+    else preamble.push(section);
+  });
+
+  if (currentGroup) groups.push(currentGroup);
+  if (groups.length === 0) return sections;
+
+  const orderedGroups = [];
+  const usedGroups = new Set();
+
+  templateOrder.forEach((key) => {
+    groups.forEach((group, index) => {
+      if (!usedGroups.has(index) && group.key === key) {
+        orderedGroups.push(group);
+        usedGroups.add(index);
+      }
+    });
+  });
+
+  groups.forEach((group, index) => {
+    if (!usedGroups.has(index)) orderedGroups.push(group);
+  });
+
+  return [...preamble, ...orderedGroups.flatMap((group) => group.items)];
 }
 
 function normalizeScoreData(data) {
@@ -1605,38 +1715,42 @@ function buildResumeKeywords(selectedJob, scoreData) {
   if (Array.isArray(scoreData?.keyword_match?.matched)) collected.push(...scoreData.keyword_match.matched.slice(0, 12));
 
   return [...new Set(collected
-    .map((item) => String(item || "").trim())
+    .map(extractKeywordLabel)
     .filter((item) => item.length >= 3)
   )];
 }
 
 function isHeadingLine(line) {
-  const trimmed = line.trim();
-  if (!trimmed) return false;
-  const lowered = trimmed.toLowerCase().replace(/:$/, "");
-  if (RESUME_HEADINGS.has(lowered)) return true;
-  return (
-    trimmed === trimmed.toUpperCase()
-    && /[A-Z]/.test(trimmed)
-    && trimmed.split(/\s+/).length <= 5
-  );
+  const normalized = normalizeHeadingLabel(line);
+  if (!normalized) return false;
+  return RESUME_HEADINGS.has(normalized) || Boolean(getResumeSectionKey(normalized)) || isAllCapsHeading(line);
 }
 
 function parseSubheadingParts(line) {
-  const trimmed = line.trim();
-  if (!trimmed || !RESUME_DATE_HINT_RE.test(trimmed)) return null;
+  const trimmed = stripResumeMarkdown(line);
+  if (!trimmed) return null;
 
   if (trimmed.includes("|")) {
     const parts = trimmed.split("|").map((part) => part.trim()).filter(Boolean);
     if (parts.length >= 2) {
       const right = parts.pop();
-      return { left: parts.join(" | "), right };
+      return {
+        left: parts.join(" | "),
+        right,
+        variant: hasDateHint(right) ? "dated" : "company",
+      };
     }
   }
 
-  const dashMatch = trimmed.match(/^(.*?)(?:\s+[–—-]\s+)(.*(?:\d{4}|Present|Current).*)$/i);
-  if (dashMatch) {
-    return { left: dashMatch[1].trim(), right: dashMatch[2].trim() };
+  const separatorMatch = trimmed.match(/^(.*?)(?:\s+[–—-]\s+)(.*)$/);
+  if (separatorMatch) {
+    const left = separatorMatch[1].trim();
+    const right = separatorMatch[2].trim();
+    return {
+      left,
+      right,
+      variant: hasDateHint(right) || hasDateHint(trimmed) ? "dated" : "company",
+    };
   }
 
   return null;
@@ -1703,23 +1817,44 @@ function annotateBullet(text, keywords) {
   };
 }
 
-function parseResumeToSections(text, keywords) {
-  return text.replace(/\r\n?/g, "\n").split("\n").map((line, lineIndex) => {
-    const trimmed = line.trim();
+function parseResumeToSections(text, keywords, templateOrder = []) {
+  const parsed = text.replace(/\r\n?/g, "\n").split("\n").map((line, lineIndex) => {
+    const normalizedLine = stripResumeMarkdown(line);
     const base = {
       id: `line-${lineIndex}`,
       lineIndex,
       raw: line,
-      text: trimmed,
+      text: normalizedLine,
     };
 
-    if (!trimmed) {
+    if (!normalizedLine) {
       return { ...base, type: "spacer" };
     }
 
+    if (isHeadingLine(normalizedLine)) {
+      return {
+        ...base,
+        type: "heading",
+        text: normalizedLine.replace(/:$/, ""),
+        sectionKey: getResumeSectionKey(normalizedLine),
+        keywordMatches: [],
+      };
+    }
+
     const bulletMatch = line.match(RESUME_BULLET_RE);
+    const subheadingParts = bulletMatch ? null : parseSubheadingParts(normalizedLine);
+    if (subheadingParts) {
+      return {
+        ...base,
+        type: "subheading",
+        ...subheadingParts,
+        text: normalizedLine,
+        keywordMatches: collectKeywordMatches(normalizedLine, keywords),
+      };
+    }
+
     if (bulletMatch) {
-      const textValue = bulletMatch[2].trim();
+      const textValue = stripResumeMarkdown(bulletMatch[2]);
       return {
         ...base,
         type: "bullet",
@@ -1729,43 +1864,33 @@ function parseResumeToSections(text, keywords) {
       };
     }
 
-    if (isHeadingLine(trimmed)) {
-      return { ...base, type: "heading", keywordMatches: collectKeywordMatches(trimmed, keywords) };
-    }
-
-    const subheadingParts = parseSubheadingParts(trimmed);
-    if (subheadingParts) {
-      return {
-        ...base,
-        type: "subheading",
-        ...subheadingParts,
-        keywordMatches: collectKeywordMatches(trimmed, keywords),
-      };
-    }
-
     return {
       ...base,
       type: "paragraph",
-      keywordMatches: collectKeywordMatches(trimmed, keywords),
+      keywordMatches: collectKeywordMatches(normalizedLine, keywords),
     };
   });
+
+  return reorderParsedSections(parsed, templateOrder);
 }
 
-function extractResumeHeaderLines(text) {
+function extractResumeHeaderMeta(text) {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const headerLines = [];
-  for (const line of lines) {
-    const trimmed = line.trim();
+  const lineIndices = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = stripResumeMarkdown(lines[index]);
     if (!trimmed) {
       if (headerLines.length > 0) break;
       continue;
     }
     if (isHeadingLine(trimmed)) break;
-    if (RESUME_BULLET_RE.test(line)) break;
+    if (RESUME_BULLET_RE.test(lines[index])) break;
     headerLines.push(trimmed);
+    lineIndices.push(index);
     if (headerLines.length >= 4) break;
   }
-  return headerLines;
+  return { lines: headerLines, lineIndices };
 }
 
 function renderHighlightedText(text, keywords) {
