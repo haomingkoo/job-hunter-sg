@@ -664,8 +664,17 @@ class ResumeScorer:
 
         for comp_name, keywords in COMPETENCY_KEYWORDS.items():
             matched = [kw for kw in keywords if kw in text_lower]
-            ratio = len(matched) / len(keywords) if keywords else 0
-            score = min(6, round(ratio * 6))
+            # Score based on absolute count, not percentage of huge keyword list
+            # 0 matched = 0, 1-2 = 2, 3-4 = 4, 5+ = 6
+            count = len(matched)
+            if count >= 5:
+                score = 6
+            elif count >= 3:
+                score = 4
+            elif count >= 1:
+                score = 2
+            else:
+                score = 0
             suggestions: list[str] = []
             if score < 4:
                 missing_kw = [
