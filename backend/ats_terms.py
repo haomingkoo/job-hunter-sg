@@ -20,6 +20,7 @@ ATS_ALLOWED_SINGLE_TERMS: set[str] = {
     "spc", "jira", "manufacturing", "semiconductor", "lithography",
     "metrology", "yield", "reliability", "validation", "integration",
     "eqms", "feol", "beol", "doe", "semulator3d", "hbm3e", "lpddr5x",
+    "opnet", "qunetsim", "ns-3", "matlab",
 }
 
 ATS_SINGLE_GENERIC_NOISE: set[str] = {
@@ -50,6 +51,12 @@ _ATS_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 _ATS_WORD_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9+#./-]{1,}")
+_ATS_TITLE_SPLIT_RE = re.compile(r"\s*(?:[-–/|]|,)\s*")
+_ATS_TITLE_NOISE = {
+    "assistant", "associate", "executive", "senior", "snr", "junior",
+    "lead", "principal", "manager", "engineer", "director", "officer",
+    "analyst", "specialist", "staff", "head", "vp", "avp", "am", "m",
+}
 
 
 def _normalize_term(term: str) -> str:
@@ -104,6 +111,35 @@ def _extract_single_word_terms(text: str) -> list[str]:
     return found
 
 
+def _extract_title_seed_phrases(job_title: str) -> list[str]:
+    title = str(job_title or "").strip()
+    if not title:
+        return []
+
+    phrases: list[str] = []
+
+    for chunk in re.findall(r"\(([^)]+)\)", title):
+        for piece in _ATS_TITLE_SPLIT_RE.split(chunk):
+            normalized = _normalize_term(piece).lower()
+            if 2 <= len(normalized.split()) <= 5:
+                phrases.append(normalized)
+
+    stripped_title = re.sub(r"\([^)]*\)", " ", title)
+    words = [w.lower() for w in _ATS_WORD_RE.findall(stripped_title)]
+    filtered = [w for w in words if w not in _ATS_TITLE_NOISE]
+    if 2 <= len(filtered) <= 5:
+        phrases.append(" ".join(filtered))
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for phrase in phrases:
+        if not phrase or phrase in seen:
+            continue
+        seen.add(phrase)
+        deduped.append(phrase)
+    return deduped
+
+
 def _looks_like_study_area(term: str, context: str) -> bool:
     lowered = term.lower()
     return (
@@ -134,6 +170,7 @@ def build_job_ats_terms(
     parsed_jd: dict | None = None,
     job_title: str = "",
     limit: int | None = None,
+    db_session=None,
 ) -> list[dict]:
     """
     Build one canonical ATS term list from the JD body, parsed JD metadata,
@@ -148,8 +185,9 @@ def build_job_ats_terms(
     parsed_single_terms = parsed.get("single_word_skills", []) if isinstance(parsed.get("single_word_skills", []), list) else []
     competency_signals = parsed.get("competency_signals", {}) if isinstance(parsed.get("competency_signals", {}), dict) else {}
 
-    extracted_phrases = extract_skill_phrases(description, skills_list)
-    title_phrases = extract_skill_phrases(job_title, skills_list) if job_title else []
+    extracted_phrases = extract_skill_phrases(description, skills_list, db_session=db_session)
+    title_phrases = extract_skill_phrases(job_title, skills_list, db_session=db_session) if job_title else []
+    title_seed_phrases = _extract_title_seed_phrases(job_title)
     title_single_terms = _extract_single_word_terms(job_title)
     fallback_single_terms = parsed_single_terms or _extract_single_word_terms(description)
 
@@ -188,6 +226,7 @@ def build_job_ats_terms(
     add_terms(preferred_terms, 80, "preferred", preferred=True)
     add_terms(fallback_single_terms, 70, "single_word", technical=True)
     add_terms(skills_list, 60, "source_tags")
+    add_terms(title_seed_phrases, 58, "title_seed")
     add_terms(title_phrases, 55, "title")
     add_terms(title_single_terms, 50, "title", technical=True)
     add_terms(competency_terms, 40, "competency")

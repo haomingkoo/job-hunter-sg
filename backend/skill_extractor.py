@@ -178,6 +178,17 @@ KNOWN_SKILLS: set[str] = {
     "procurement management", "warehouse management",
     "operations management", "operational excellence",
     "facilities management", "fleet management",
+    # --- Modeling / Networks / Simulation ---
+    "modeling and simulation", "modelling and simulation",
+    "system modeling", "system modelling",
+    "end-to-end systems", "end-to-end system modeling",
+    "end-to-end system modelling",
+    "communication networks", "quantum networks",
+    "enterprise applications", "industrial applications",
+    "scenario analysis", "simulation tools",
+    "performance metrics", "response time", "error rates",
+    "technical documentation", "telecommunications engineering",
+    "electrical engineering",
     # --- Semiconductor / Manufacturing Engineering ---
     "semiconductor manufacturing", "semiconductor operations",
     "process integration", "process control", "process validation",

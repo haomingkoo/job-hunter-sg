@@ -32,7 +32,7 @@ SINGLE_WORD_TECH: set[str] = {
     "pytorch", "tensorflow", "keras", "scikit-learn", "pandas",
     "numpy", "spark", "hadoop", "airflow", "kafka", "rabbitmq",
     "graphql", "rest", "grpc", "websocket", "html", "css", "sass",
-    "tailwind",
+    "tailwind", "opnet", "qunetsim", "ns-3", "matlab",
 }
 
 # Markers that split required vs preferred skills
@@ -202,6 +202,8 @@ def _extract_competency_signals(
 def preparse_job_description(
     description: str,
     skills: list[str] | None = None,
+    db_session=None,
+    job_title: str = "",
 ) -> dict:
     """Pre-parse a job description into structured fields.
 
@@ -239,7 +241,20 @@ def preparse_job_description(
         preferred_text = ""
 
     # Extract multi-word skill phrases per section
-    all_skills = extract_skill_phrases(description, skills)
+    all_skills = extract_skill_phrases(
+        description,
+        skills,
+        db_session=db_session,
+    )
+    if job_title:
+        title_skills = extract_skill_phrases(
+            job_title,
+            skills,
+            db_session=db_session,
+        )
+        for skill in title_skills:
+            if skill not in all_skills:
+                all_skills.append(skill)
     required_lower = required_text.lower()
     preferred_lower = preferred_text.lower()
 

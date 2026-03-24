@@ -201,6 +201,47 @@ class TestSkillExtractor:
         assert "quality systems" in labels
         assert "ai" in labels
 
+    def test_careersgov_jd_surfaces_technical_cues_without_source_tags(self):
+        from ats_terms import build_job_ats_terms
+        from jd_preparser import preparse_job_description
+
+        jd = (
+            "We are currently seeking a Modelling and Simulation Lead with a focus on "
+            "End-to-End Systems to analyse the performance of enterprise applications "
+            "across various communication networks. Your expertise in end-to-end system "
+            "modelling and simulation techniques will ensure a thorough understanding "
+            "of application performance metrics, such as response time, latency, and "
+            "error rates. Proficiency in end-to-end system modelling and simulation "
+            "tools, such as OPNET, NS-3, QuNetSim, or similar."
+        )
+        parsed = preparse_job_description(
+            jd,
+            skills=[],
+            job_title="Lead Engineer (Modeling and Simulation)",
+        )
+        terms = build_job_ats_terms(
+            jd_text=jd,
+            job_skills=[],
+            parsed_jd=parsed,
+            job_title="Lead Engineer (Modeling and Simulation)",
+        )
+        labels = {item["skill"].lower() for item in terms}
+
+        assert "modeling and simulation" in labels or "modelling and simulation" in labels
+        assert "communication networks" in labels
+        assert "end-to-end systems" in labels or "end-to-end system modelling" in labels
+        assert any(tool in labels for tool in {"opnet", "ns-3", "qunetsim"})
+
+    def test_careersgov_html_cleanup_preserves_bullets_and_paragraphs(self):
+        from scraper import _clean_html
+
+        html = "<p>Overview paragraph.</p><ul><li>First item</li><li>Second item</li></ul>"
+        cleaned = _clean_html(html)
+
+        assert "Overview paragraph." in cleaned
+        assert "\n- First item" in cleaned
+        assert "\n- Second item" in cleaned
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. Resume Parser
@@ -520,6 +561,13 @@ class TestAPIEndpoints:
         data = resp.json()
         # Returns paginated response with jobs list
         assert "jobs" in data or isinstance(data, list)
+
+    def test_parse_job_posted_at_prefers_newer_relative_dates(self):
+        from main import _parse_job_posted_at
+
+        recent = _parse_job_posted_at("Posted 4 Days Ago")
+        stale = _parse_job_posted_at("Posted 30+ Days Ago")
+        assert recent > stale
 
     def test_tiers_endpoint(self, client):
         resp = client.get("/api/tiers")

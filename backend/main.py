@@ -397,7 +397,12 @@ def _build_canonical_job_terms(job: ScrapedJob, db: Session | None = None) -> li
     parsed_jd = job.parsed_jd if isinstance(job.parsed_jd, dict) else None
 
     if not parsed_jd and (job.description or "").strip():
-        parsed_jd = preparse_jd(job.description, skills=db_skills)
+        parsed_jd = preparse_jd(
+            job.description,
+            skills=db_skills,
+            db_session=db,
+            job_title=job.title or "",
+        )
         job.parsed_jd = parsed_jd
         if db is not None:
             db.flush()
@@ -408,6 +413,7 @@ def _build_canonical_job_terms(job: ScrapedJob, db: Session | None = None) -> li
         parsed_jd=parsed_jd,
         job_title=job.title or "",
         limit=24,
+        db_session=db,
     )
 
     return [
@@ -418,6 +424,61 @@ def _build_canonical_job_terms(job: ScrapedJob, db: Session | None = None) -> li
 
 def _count_domain_hits(terms: list[str], domain_terms: set[str]) -> int:
     return sum(1 for term in terms if term.lower() in domain_terms)
+
+
+def _parse_job_posted_at(posted_date: str, scraped_at: str = "") -> datetime:
+    raw = str(posted_date or "").strip()
+    lowered = raw.lower()
+    now = datetime.now(timezone.utc)
+
+    if lowered:
+        if "today" in lowered:
+            return now
+        if "yesterday" in lowered:
+            return now - timedelta(days=1)
+
+        relative_patterns = (
+            (r"(\d+)\s*\+?\s*hour", "hours"),
+            (r"(\d+)\s*\+?\s*day", "days"),
+            (r"(\d+)\s*\+?\s*week", "weeks"),
+            (r"(\d+)\s*\+?\s*month", "months"),
+        )
+        for pattern, unit in relative_patterns:
+            match = re.search(pattern, lowered)
+            if not match:
+                continue
+            amount = int(match.group(1))
+            if unit == "months":
+                return now - timedelta(days=amount * 30)
+            return now - timedelta(**{unit: amount})
+
+        normalized = raw.replace("Z", "+00:00")
+        for candidate in (normalized, normalized.split("T")[0]):
+            try:
+                parsed = datetime.fromisoformat(candidate)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.astimezone(timezone.utc)
+            except ValueError:
+                pass
+
+        for fmt in ("%d %b %Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y", "%Y/%m/%d", "%d/%m/%Y"):
+            try:
+                return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+
+    if scraped_at:
+        normalized_scraped = scraped_at.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized_scraped)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            pass
+
+    return datetime.fromtimestamp(0, tz=timezone.utc)
 
 
 def _get_or_create_memory(user: Optional[User], db: Session) -> Optional[UserMemory]:
@@ -471,6 +532,83 @@ def _extract_careersgov_skills(detail: dict) -> list[str]:
     return deduped
 
 
+def _has_rich_job_terms(terms: list[dict]) -> bool:
+    useful = 0
+    for term in terms or []:
+        skill = re.sub(r"\s+", " ", str(term.get("skill", "")).strip())
+        if not skill:
+            continue
+        if term.get("technical"):
+            useful += 1
+            continue
+        if len(skill.split()) >= 2 and term.get("source") != "competency":
+            useful += 1
+    return useful >= 4
+
+
+def _derive_careersgov_skill_cues(
+    *,
+    title: str,
+    description: str,
+    skills: list[str],
+    db: Session,
+) -> tuple[list[str], dict]:
+    parsed = preparse_jd(
+        description,
+        skills=skills,
+        db_session=db,
+        job_title=title,
+    )
+    terms = build_job_ats_terms(
+        jd_text=description,
+        job_skills=skills,
+        parsed_jd=parsed,
+        job_title=title,
+        limit=12,
+        db_session=db,
+    )
+    cues: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        label = re.sub(r"\s+", " ", str(term.get("skill", "")).strip())
+        lower = label.lower()
+        if not label or lower in seen:
+            continue
+        if not (term.get("technical") or len(label.split()) >= 2):
+            continue
+        seen.add(lower)
+        cues.append(label)
+        if len(cues) >= 10:
+            break
+    return cues, parsed
+
+
+def _refresh_careersgov_terms_if_weak(job: ScrapedJob, db: Session) -> bool:
+    if not job or job.source != "Careers@Gov" or not (job.description or "").strip():
+        return False
+
+    current_terms = _build_canonical_job_terms(job, db)
+    if _has_rich_job_terms(current_terms):
+        return False
+
+    existing_skills = job.skills if isinstance(job.skills, list) else []
+    derived_skills, parsed = _derive_careersgov_skill_cues(
+        title=job.title or "",
+        description=job.description or "",
+        skills=existing_skills,
+        db=db,
+    )
+
+    changed = False
+    if parsed and parsed != (job.parsed_jd or {}):
+        job.parsed_jd = parsed
+        changed = True
+    if derived_skills and derived_skills != existing_skills:
+        job.skills = derived_skills
+        changed = True
+    return changed
+
+
 def _enrich_careersgov_job(job: ScrapedJob, db: Session) -> bool:
     if not job or job.source != "Careers@Gov":
         return False
@@ -499,9 +637,20 @@ def _enrich_careersgov_job(job: ScrapedJob, db: Session) -> bool:
         job.agency = agency
         updated = True
 
-    if updated and job.description:
+    if job.description:
         skills_list = job.skills if isinstance(job.skills, list) else []
-        job.parsed_jd = preparse_jd(job.description, skills=skills_list)
+        derived_skills, parsed = _derive_careersgov_skill_cues(
+            title=job.title or "",
+            description=job.description or "",
+            skills=skills_list,
+            db=db,
+        )
+        if parsed and parsed != (job.parsed_jd or {}):
+            job.parsed_jd = parsed
+            updated = True
+        if derived_skills and derived_skills != skills_list:
+            job.skills = derived_skills
+            updated = True
     return updated
 
 
@@ -511,7 +660,17 @@ def _hydrate_missing_careersgov_jobs(jobs: list, db: Session) -> int:
         source = getattr(job, "source", None)
         description = getattr(job, "description", None)
         job_id = getattr(job, "id", None)
-        if source == "Careers@Gov" and not (description or "").strip() and job_id is not None:
+        skills = getattr(job, "skills", None)
+        parsed_jd = getattr(job, "parsed_jd", None)
+        if (
+            source == "Careers@Gov"
+            and job_id is not None
+            and (
+                not (description or "").strip()
+                or not (skills or [])
+                or parsed_jd in (None, {})
+            )
+        ):
             target_ids.append(job_id)
     if not target_ids:
         return 0
@@ -1040,29 +1199,41 @@ def list_cached_jobs(
     if location:
         query = query.filter(ScrapedJob.location.ilike(f"%{location}%"))
 
-    ordered_query = query.order_by(ScrapedJob.id.desc())
     offset = (page - 1) * per_page
 
+    jobs = query.all()
+    jobs.sort(
+        key=lambda job: (
+            _parse_job_posted_at(job.posted_date, job.scraped_at),
+            job.id,
+        ),
+        reverse=True,
+    )
+
     if min_salary is not None:
-        jobs = ordered_query.all()
         salary_matched = [job for job in jobs if salary_floor(job.salary) >= min_salary]
         salary_unknown = [job for job in jobs if salary_floor(job.salary) == 0]
         jobs = salary_matched + salary_unknown
-        total = len(jobs)
-        jobs = jobs[offset: offset + per_page]
-    else:
-        total = query.count()
-        jobs = ordered_query.offset(offset).limit(per_page).all()
+
+    total = len(jobs)
+    jobs = jobs[offset: offset + per_page]
 
     hydrated_count = _hydrate_missing_careersgov_jobs(jobs, db)
     if hydrated_count:
+        jobs = query.all()
+        jobs.sort(
+            key=lambda job: (
+                _parse_job_posted_at(job.posted_date, job.scraped_at),
+                job.id,
+            ),
+            reverse=True,
+        )
         if min_salary is not None:
-            jobs = ordered_query.all()
             salary_matched = [job for job in jobs if salary_floor(job.salary) >= min_salary]
             salary_unknown = [job for job in jobs if salary_floor(job.salary) == 0]
-            jobs = (salary_matched + salary_unknown)[offset: offset + per_page]
-        else:
-            jobs = ordered_query.offset(offset).limit(per_page).all()
+            jobs = salary_matched + salary_unknown
+        total = len(jobs)
+        jobs = jobs[offset: offset + per_page]
 
     # Build filter metadata from ALL jobs (not just current page)
     # so frontend dropdowns show complete options
@@ -1408,6 +1579,8 @@ def get_cached_job(job_id: int, db: Session = Depends(get_db)) -> ScrapedJob:
     if job.source == "Careers@Gov" and not (job.description or "").strip():
         _enrich_careersgov_job(job, db)
         db.commit()
+    elif job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(job, db):
+        db.commit()
     return job
 
 
@@ -1424,6 +1597,8 @@ def match_resume_to_job(
     if job.source == "Careers@Gov" and not (job.description or "").strip():
         if _enrich_careersgov_job(job, db):
             db.commit()
+    elif job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(job, db):
+        db.commit()
 
     import json as _json
 
@@ -1643,7 +1818,7 @@ def score_resume(
 
     # Enhance with canonical ATS term matching.
     if jd_text.strip():
-        parsed_jd = preparse_jd(jd_text)
+        parsed_jd = preparse_jd(jd_text, db_session=db)
         job_terms = build_job_ats_terms(
             jd_text=jd_text,
             parsed_jd=parsed_jd,
@@ -2599,7 +2774,7 @@ def start_tailoring(
         # Pre-parse on the fly if missing
         if not parsed_jd and jd_text:
             skills_list = job.skills if isinstance(job.skills, list) else []
-            parsed_jd = preparse_jd(jd_text, skills=skills_list)
+            parsed_jd = preparse_jd(jd_text, skills=skills_list, db_session=db)
             job.parsed_jd = parsed_jd
             db.commit()
     else:
@@ -2663,11 +2838,18 @@ def get_parsed_jd(
     if job.source == "Careers@Gov" and not (job.description or "").strip():
         if _enrich_careersgov_job(job, db):
             db.commit()
+    elif job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(job, db):
+        db.commit()
 
     # Parse on the fly if not already done
     if not job.parsed_jd and job.description:
         skills_list = job.skills if isinstance(job.skills, list) else []
-        job.parsed_jd = preparse_jd(job.description, skills=skills_list)
+        job.parsed_jd = preparse_jd(
+            job.description,
+            skills=skills_list,
+            db_session=db,
+            job_title=job.title or "",
+        )
         db.commit()
 
     return {

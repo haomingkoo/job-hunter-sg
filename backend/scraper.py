@@ -949,11 +949,23 @@ def _extract_employment_type(item: dict) -> str:
 
 
 def _clean_html(text: str) -> str:
-    """Strip HTML tags from text."""
+    """Strip HTML tags while preserving paragraph and bullet boundaries."""
     if not text:
         return ""
     soup = BeautifulSoup(text, "html.parser")
-    return soup.get_text(separator=" ", strip=True)
+    for tag in soup.find_all(["br"]):
+        tag.replace_with("\n")
+    for tag in soup.find_all(["li"]):
+        content = tag.get_text(" ", strip=True)
+        tag.replace_with(f"\n- {content}\n")
+    for tag in soup.find_all(["p", "div", "section"]):
+        content = tag.get_text(" ", strip=True)
+        if content:
+            tag.replace_with(f"\n{content}\n")
+    cleaned = soup.get_text(separator=" ", strip=False)
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 def print_summary(results: dict):
