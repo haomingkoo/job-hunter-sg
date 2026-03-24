@@ -17,9 +17,12 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from pathlib import Path
+
 from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
@@ -365,7 +368,7 @@ def admin_seed_jobs(
 
 # ── Health ───────────────────────────────────────────────────────────────────
 
-@app.get("/")
+@app.get("/api/health")
 def health(db: Session = Depends(get_db)) -> dict:
     try:
         db.execute(text("SELECT 1"))
@@ -1863,6 +1866,29 @@ def get_usage(
         "tracked_limit": limits["max_tracked_jobs"],
         "can_export": limits["can_export"],
     }
+
+
+# ── Static frontend (single-service deploy) ─────────────────────────────────
+
+_static_dir = Path(__file__).resolve().parent / "static"
+if _static_dir.is_dir():
+    log.info("Serving frontend from %s", _static_dir)
+
+    @app.middleware("http")
+    async def _spa_middleware(request: Request, call_next):
+        """Serve SPA — fall back to index.html for non-API, non-file routes."""
+        response = await call_next(request)
+        # If the path is not an API route and got a 404, serve index.html
+        if (
+            response.status_code == 404
+            and not request.url.path.startswith("/api")
+            and not request.url.path.startswith("/docs")
+            and not request.url.path.startswith("/openapi")
+        ):
+            return FileResponse(_static_dir / "index.html")
+        return response
+
+    app.mount("/", StaticFiles(directory=str(_static_dir)), name="static")
 
 
 # ── Run ──────────────────────────────────────────────────────────────────────
