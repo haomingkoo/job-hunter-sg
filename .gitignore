@@ -24,6 +24,9 @@ frontend/dist/
 *.swp
 .DS_Store
 
+# Internal dev notes
+.claude/notes/
+
 # Data
 *.csv
 *.json

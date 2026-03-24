@@ -12,12 +12,13 @@ Search across multiple SG job portals in one place, get your resume scored and i
 - Similar job recommendations
 - Salary data where available
 
-**AI Resume Coach** (powered by AI)
+**AI Resume Coach** (powered by SEA-LION, AI Singapore)
 - Upload your resume (PDF or DOCX)
 - Get a 100-point score across Impact, Presentation, and Competencies
 - AI-powered coaching with specific, actionable feedback
-- Rewrite individual bullets with stronger action verbs
-- Auto-format into ATS-friendly templates
+- Rewrite individual bullets with stronger action verbs and validation gates
+- Multi-pass tailoring pipeline: tailor your resume for a specific job with one click
+- ATS gap report: see which keywords you're missing and where to add them
 - Download as DOCX in 4 template styles (Classic, Modern, Singapore Professional, Compact)
 
 **Application Tracker** (requires sign-in)
@@ -86,17 +87,23 @@ All API keys go in the `.env` file. See `.env.example` for the full list.
 ```
 frontend/          React + Vite + Tailwind CSS
 backend/
-  main.py          FastAPI app (30+ endpoints)
-  scraper.py       7 job sources (MCF, CareersGov, Adzuna, Jooble, NodeFlair, Indeed, JobStreet)
-  ai_service.py    AI integration with rate-limited round-robin
-  resume_scorer.py 100-point scoring engine (Impact/Presentation/Competencies)
-  resume_parser.py PDF + DOCX text extraction
-  resume_templates.py  4 ATS-friendly DOCX templates
-  auth.py          JWT + Cloudflare Access auth
-  models.py        SQLAlchemy ORM (User, ScrapedJob, TrackedJob, UserMemory)
-  database.py      SQLite (local) / PostgreSQL (production)
-  sanitizer.py     Input sanitization (HTML, URL, resume text)
-  seed_jobs.py     Pre-populate job database
+  main.py                FastAPI app (40+ endpoints)
+  scraper.py             7 job sources (MCF, CareersGov, Adzuna, Jooble, NodeFlair, Indeed, JobStreet)
+  ai_service.py          SEA-LION AI client (70B reasoning + 32B fast) with rate-limited round-robin
+  tailoring_pipeline.py  7-stage resume tailoring pipeline (strategy, rewrite, polish, validate)
+  validation_gates.py    5 gates on every AI rewrite (fact preservation, hallucination, etc.)
+  jd_preparser.py        Pre-parse job descriptions at scrape time (no LLM, ~50ms)
+  resume_structurer.py   Parse resume into structured sections/entries/bullets
+  ai_phrases.py          107 AI-sounding phrase replacements
+  resume_scorer.py       100-point scoring engine (Impact/Presentation/Competencies)
+  resume_parser.py       PDF + DOCX text extraction
+  resume_templates.py    4 ATS-friendly DOCX templates
+  skill_extractor.py     200+ multi-word skill phrase extractor
+  auth.py                JWT auth
+  models.py              SQLAlchemy ORM (User, ScrapedJob, TrackedJob, UserMemory, TailoredResume)
+  database.py            SQLite (local) / PostgreSQL (production)
+  sanitizer.py           Input sanitization
+  seed_jobs.py           Pre-populate job database
 ```
 
 ## Deployment (Railway)
