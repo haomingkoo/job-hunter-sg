@@ -197,6 +197,31 @@ class CareersGovScraper:
     """
     BASE_URL = "https://sggovterp.wd102.myworkdayjobs.com/wday/cxs/sggovterp/PublicServiceCareers/jobs"
 
+    @staticmethod
+    def _extract_skills_from_detail(detail: dict) -> list[str]:
+        skills: list[str] = []
+        for tag_section in detail.get("skillTags", []):
+            if isinstance(tag_section, str):
+                skills.append(tag_section)
+            elif isinstance(tag_section, dict):
+                value = tag_section.get("name", "")
+                if value:
+                    skills.append(value)
+        if not skills:
+            tag_line = detail.get("tagLine", "")
+            if tag_line:
+                skills = [s.strip() for s in tag_line.split(",") if s.strip()]
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for skill in skills:
+            normalized = re.sub(r"\s+", " ", (skill or "").strip())
+            lowered = normalized.lower()
+            if not normalized or lowered in seen:
+                continue
+            seen.add(lowered)
+            deduped.append(normalized)
+        return deduped
+
     def search(self, keyword: str, limit: int = 20, offset: int = 0) -> list[Job]:
         log.info(f"[Careers@Gov] Searching for '{keyword}' (limit={limit})...")
         jobs = []
@@ -230,6 +255,18 @@ class CareersGovScraper:
                 # - bulletFields: just the job requisition ID
                 location = item.get("locationsText", "") or "Singapore"
                 posted = item.get("postedOn", "")
+                description = ""
+                skills: list[str] = []
+                agency = location
+
+                if external_path:
+                    detail = self.get_job_detail(external_path)
+                    if detail:
+                        description = _clean_html(detail.get("jobDescription", ""))
+                        skills = self._extract_skills_from_detail(detail)
+                        company_name = detail.get("companyName", "") or detail.get("company", "")
+                        if company_name:
+                            agency = company_name
 
                 job = Job(
                     title=title,
@@ -241,9 +278,9 @@ class CareersGovScraper:
                     posted_date=posted,
                     employment_type="Full-time",
                     seniority="",
-                    description="",
-                    skills=[],
-                    agency=location,
+                    description=description,
+                    skills=skills,
+                    agency=agency,
                 )
                 jobs.append(job)
 

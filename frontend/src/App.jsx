@@ -1599,7 +1599,7 @@ function buildResumeTemplateStyles(templateMeta, templateId) {
 const NUS_RESUME_BENCHMARKS = [
   {
     value: "490",
-    label: "Average words seen across NUS resumes",
+    label: "Average words seen across NUS resumes, not a hard cap",
   },
   {
     value: "21",
@@ -4332,9 +4332,9 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
       {
         label: "Word count",
         current: String(wordCount),
-        target: "~490",
-        status: wordCount >= 400 && wordCount <= 650 ? "good" : "review",
-        note: wordCount < 400 ? "Draft is still light." : wordCount > 650 ? "May read dense." : "Healthy range.",
+        target: "1-2 pages",
+        status: wordCount >= 350 && wordCount <= 1200 ? "good" : "review",
+        note: wordCount < 350 ? "Draft is still light." : wordCount > 1200 ? "May read dense." : "Healthy range for mid-senior resumes.",
       },
       {
         label: "Bullets",

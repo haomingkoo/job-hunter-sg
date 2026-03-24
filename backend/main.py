@@ -17,6 +17,7 @@ from collections import Counter
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pathlib import Path
 
@@ -63,7 +64,7 @@ from resume_parser import parse_resume
 from resume_scorer import ResumeScorer
 from resume_templates import generate_docx, inspect_resume_export, list_templates
 from skill_extractor import extract_skill_phrases, match_resume_skills_with_context
-from scraper import JobAggregator, SSGSkillsFrameworkAPI
+from scraper import CareersGovScraper, JobAggregator, SSGSkillsFrameworkAPI, _clean_html
 from tailoring_pipeline import get_pipeline_state, run_pipeline
 from jd_preparser import preparse_job_description as preparse_jd
 
@@ -71,6 +72,8 @@ log = logging.getLogger("jobhunter")
 
 # Disable OpenAPI docs in production to reduce attack surface
 _is_production = "postgresql" in os.environ.get("DATABASE_URL", "")
+
+_CAREERSGOV_PATH_RE = re.compile(r"/en-US/PublicServiceCareers(/job/.+)$")
 
 
 from contextlib import asynccontextmanager
@@ -409,6 +412,133 @@ def _persist_resume_to_memory(user: Optional[User], db: Session, resume_text: st
         return
     mem.resume_text = sanitize_resume_text(resume_text)[:10000]
     db.flush()
+
+
+def _extract_careersgov_external_path(url: str) -> str:
+    match = _CAREERSGOV_PATH_RE.search(url or "")
+    return match.group(1) if match else ""
+
+
+def _extract_careersgov_skills(detail: dict) -> list[str]:
+    skills: list[str] = []
+    for tag_section in detail.get("skillTags", []):
+        if isinstance(tag_section, str):
+            skills.append(tag_section)
+        elif isinstance(tag_section, dict):
+            value = tag_section.get("name", "")
+            if value:
+                skills.append(value)
+    if not skills:
+        tag_line = detail.get("tagLine", "")
+        if tag_line:
+            skills = [s.strip() for s in tag_line.split(",") if s.strip()]
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for skill in skills:
+        normalized = re.sub(r"\s+", " ", (skill or "").strip())
+        lowered = normalized.lower()
+        if not normalized or lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(normalized)
+    return deduped
+
+
+def _enrich_careersgov_job(job: ScrapedJob, db: Session) -> bool:
+    if not job or job.source != "Careers@Gov":
+        return False
+    external_path = _extract_careersgov_external_path(job.url or "")
+    if not external_path:
+        return False
+
+    scraper = CareersGovScraper()
+    detail = scraper.get_job_detail(external_path)
+    if not detail:
+        return False
+
+    updated = False
+    description = _clean_html(detail.get("jobDescription", ""))
+    if description and description != (job.description or ""):
+        job.description = description
+        updated = True
+
+    skills = _extract_careersgov_skills(detail)
+    if skills and skills != (job.skills or []):
+        job.skills = skills
+        updated = True
+
+    agency = detail.get("companyName", "") or detail.get("company", "")
+    if agency and agency != (job.agency or ""):
+        job.agency = agency
+        updated = True
+
+    if updated and job.description:
+        skills_list = job.skills if isinstance(job.skills, list) else []
+        job.parsed_jd = preparse_jd(job.description, skills=skills_list)
+    return updated
+
+
+def _hydrate_missing_careersgov_jobs(jobs: list, db: Session) -> int:
+    target_ids: list[int] = []
+    for job in jobs:
+        source = getattr(job, "source", None)
+        description = getattr(job, "description", None)
+        job_id = getattr(job, "id", None)
+        if source == "Careers@Gov" and not (description or "").strip() and job_id is not None:
+            target_ids.append(job_id)
+    if not target_ids:
+        return 0
+
+    targets = (
+        db.query(ScrapedJob)
+        .filter(ScrapedJob.id.in_(target_ids))
+        .all()
+    )
+    if not targets:
+        return 0
+
+    log.info("Hydrating %s Careers@Gov jobs with missing descriptions", len(targets))
+    detail_results: dict[int, dict] = {}
+
+    with ThreadPoolExecutor(max_workers=min(4, len(targets))) as pool:
+        future_map = {}
+        for job in targets:
+            external_path = _extract_careersgov_external_path(job.url or "")
+            if not external_path:
+                continue
+            future = pool.submit(CareersGovScraper().get_job_detail, external_path)
+            future_map[future] = job.id
+
+        for future in as_completed(future_map):
+            job_id = future_map[future]
+            try:
+                detail_results[job_id] = future.result() or {}
+            except Exception as exc:
+                log.warning("Careers@Gov hydration failed for job_id=%s: %s", job_id, exc)
+
+    updated = 0
+    for job in targets:
+        detail = detail_results.get(job.id)
+        if not detail:
+            continue
+        description = _clean_html(detail.get("jobDescription", ""))
+        if description:
+            job.description = description
+        skills = _extract_careersgov_skills(detail)
+        if skills:
+            job.skills = skills
+        agency = detail.get("companyName", "") or detail.get("company", "")
+        if agency:
+            job.agency = agency
+        if description:
+            skills_list = job.skills if isinstance(job.skills, list) else []
+            job.parsed_jd = preparse_jd(description, skills=skills_list)
+            updated += 1
+
+    if updated:
+        db.commit()
+        log.info("Hydrated %s Careers@Gov jobs on-demand", updated)
+    return updated
 
 
 def _extract_resume_skills(resume_text: str, db: Session) -> tuple[list[str], str]:
@@ -896,6 +1026,17 @@ def list_cached_jobs(
     else:
         total = query.count()
         jobs = ordered_query.offset(offset).limit(per_page).all()
+
+    hydrated_count = _hydrate_missing_careersgov_jobs(jobs, db)
+    if hydrated_count:
+        if min_salary is not None:
+            jobs = ordered_query.all()
+            salary_matched = [job for job in jobs if salary_floor(job.salary) >= min_salary]
+            salary_unknown = [job for job in jobs if salary_floor(job.salary) == 0]
+            jobs = (salary_matched + salary_unknown)[offset: offset + per_page]
+        else:
+            jobs = ordered_query.offset(offset).limit(per_page).all()
+
     # Build filter metadata from ALL jobs (not just current page)
     # so frontend dropdowns show complete options
     filter_meta = {}
@@ -1237,6 +1378,9 @@ def get_cached_job(job_id: int, db: Session = Depends(get_db)) -> ScrapedJob:
     job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    if job.source == "Careers@Gov" and not (job.description or "").strip():
+        _enrich_careersgov_job(job, db)
+        db.commit()
     return job
 
 
@@ -1250,6 +1394,9 @@ def match_resume_to_job(
     job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    if job.source == "Careers@Gov" and not (job.description or "").strip():
+        if _enrich_careersgov_job(job, db):
+            db.commit()
 
     from skill_extractor import extract_skill_phrases, match_resume_skills_with_context
     import json as _json
@@ -2497,6 +2644,9 @@ def get_parsed_jd(
     job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
+    if job.source == "Careers@Gov" and not (job.description or "").strip():
+        if _enrich_careersgov_job(job, db):
+            db.commit()
 
     # Parse on the fly if not already done
     if not job.parsed_jd and job.description:

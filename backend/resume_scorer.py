@@ -598,24 +598,25 @@ class ResumeScorer:
         word_count = len(words)
 
         # word_count (5)
-        # SG market: 2-page resumes (up to ~900 words) are standard
-        # for mid-senior professionals. Only penalize extremes.
-        if 400 <= word_count <= 900:
+        # SG market: 1-2 page resumes are common, and experienced candidates
+        # can reasonably stretch past 900 words without it being a problem.
+        # Only penalize clear extremes.
+        if 350 <= word_count <= 1200:
             wc_score = 5
-        elif 300 <= word_count <= 1100:
+        elif 250 <= word_count <= 1400:
             wc_score = 3
         else:
             wc_score = 1
         wc_suggestions: list[str] = []
-        if word_count < 400:
+        if word_count < 350:
             wc_suggestions.append(
                 f"Resume is short ({word_count} words). "
-                f"Aim for 400-900 words."
+                f"Aim for roughly 350-1200 words depending on experience."
             )
-        elif word_count > 900:
+        elif word_count > 1200:
             wc_suggestions.append(
                 f"Resume is long ({word_count} words). "
-                f"Consider trimming to under 900 words (2 pages)."
+                f"Consider trimming if it runs materially beyond 2 pages."
             )
         items["word_count"] = {
             "score": wc_score,
@@ -745,7 +746,7 @@ class ResumeScorer:
         }
 
         # page_estimate (5)
-        pages = max(1, round(word_count / 500))
+        pages = max(1, round(word_count / 550))
         if 1 <= pages <= 2:
             pg_score = 5
         elif pages == 3:
@@ -753,9 +754,9 @@ class ResumeScorer:
         else:
             pg_score = 1
         pg_suggestions: list[str] = []
-        if pages > 2:
+        if pages > 3:
             pg_suggestions.append(
-                f"Estimated {pages} pages. Aim for 1-2 pages."
+                f"Estimated {pages} pages. Aim for 1-3 pages depending on seniority."
             )
         elif word_count < 250:
             pg_suggestions.append(
