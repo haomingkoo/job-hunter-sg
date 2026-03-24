@@ -22,3 +22,28 @@
 12. **Verb suggestions not clickable** — the pills should replace the verb on click
 13. **Used verbs not sent to AI** — causes verb repetition (multiple "Spearheaded")
 14. **Resume preview doesn't change per template** — Modern/Classic/SG Pro look the same
+
+## URGENT ADDITIONS (from user testing)
+
+15. **Templates must reorder sections**:
+    - Classic: Summary → Education → Experience → Skills → Certs
+    - Modern: Summary → Experience → Skills → Education → Certs
+    - SG Pro: Summary → Experience → Education → Skills → Certs
+    - Compact: Summary → Experience → Skills → Education
+    Currently all templates show same order.
+
+16. **Name styling**: must be 18-20pt, BOLD, centered. Currently too small, left-aligned.
+
+17. **"Professional Summary" not styled as section header** — renders as regular text
+
+18. **Skills breaking across lines**: "AI &" on one line, rest on next. Must wrap at | boundaries
+
+19. **Contact line**: email | phone | linkedin on ONE centered line, 9pt
+
+20. **Too much vertical spacing** — every element has too much gap. Reduce to match real PDF resume
+
+21. **After download: show "Search matching jobs" and "Track application" buttons**
+
+22. **JD should be visible when targeting a job** — show collapsible JD panel on Resume tab
+
+23. **"AI Improve All" should only fix weak bullets**, not rewrite the whole resume
