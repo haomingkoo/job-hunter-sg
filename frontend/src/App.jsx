@@ -278,10 +278,11 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
 
       const resp = await apiFetch(`/api/jobs?${params}`, { method: "GET" });
       const data = await resp.json();
+      if (!data || !Array.isArray(data.jobs)) {
+        throw new Error("Jobs response was malformed.");
+      }
 
-      // /api/jobs returns a flat array of JobOut objects
-      const jobs = Array.isArray(data) ? data : (data.jobs || data);
-      const mapped = jobs.map((j) => ({
+      const mapped = data.jobs.map((j) => ({
         id: j.id,
         title: j.title,
         company: j.company,
@@ -304,6 +305,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     } catch (err) {
       setError(err.message || "Failed to load jobs. Please try again.");
       setResults([]);
+      setTotalPages(1);
     } finally {
       setLoading(false);
     }
@@ -785,7 +787,11 @@ function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-semibold text-gray-800">Detected Resume Skills</div>
-                  <div className="mt-1 text-xs text-gray-500">{data.resume_signal_mode === "skill_corpus" ? "Matched against job-skill schema" : "Fallback skill signal extraction"}</div>
+                  <div className="mt-1 text-xs text-gray-500">
+                    {data.resume_signal_mode === "skill_corpus"
+                      ? "Skills were grounded in the extracted job-skill vocabulary."
+                      : "Skills were extracted directly from your latest stored resume."}
+                  </div>
                 </div>
                 <span className="inline-flex h-10 min-w-10 items-center justify-center rounded-2xl bg-indigo-600 px-2 text-sm font-bold text-white">
                   {data.resume_skills?.length || 0}
@@ -849,9 +855,9 @@ function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-gray-500">
                         <span className="flex items-center gap-1"><Building2 size={13} />{item.job.company}</span>
-                        <span className="flex items-center gap-1"><MapPin size={13} />{item.job.location || "Location not listed"}</span>
-                        <span className="flex items-center gap-1"><DollarSign size={13} />{item.job.salary || "Salary not listed"}</span>
-                        <span>{item.job.employment_type || "Employment type not listed"}</span>
+                        <span className="flex items-center gap-1"><MapPin size={13} />{item.job.location || "Location unavailable"}</span>
+                        <span className="flex items-center gap-1"><DollarSign size={13} />{item.job.salary || "Salary unavailable"}</span>
+                        <span>{item.job.employment_type || "Employment type unavailable"}</span>
                         {item.job.seniority && <span>{item.job.seniority}</span>}
                       </div>
                       <div className="mt-3 text-sm leading-relaxed text-gray-600">{item.why}</div>
@@ -1084,8 +1090,8 @@ function TrackerTab({ user, jobs, refreshJobs }) {
 
       {atLimit && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-          <div className="font-medium mb-1">Application tracking requires an @aisg.sg account</div>
-          <p>Sign up with your @aisg.sg email for unlimited tracked jobs, CSV export, and follow-up reminders.</p>
+          <div className="font-medium mb-1">Application tracking is unlocked on AISG Tier</div>
+          <p>Upgrade to unlock unlimited tracked jobs, CSV export, and follow-up reminders.</p>
         </div>
       )}
 
@@ -2166,6 +2172,7 @@ function ResumeTab({ selectedJob, user }) {
 
   const applyResumeText = useCallback((nextText, { rescore = false, clearRewrites = false } = {}) => {
     setResumeText(nextText);
+    setScoreChange(null);
     if (clearRewrites) setRewriteResults({});
     if (rescore) {
       runScore(nextText, jobDescription, { phase: "opening" });
