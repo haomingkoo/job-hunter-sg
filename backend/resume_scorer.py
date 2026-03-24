@@ -840,11 +840,12 @@ class ResumeScorer:
             return {"matched": [], "missing": [], "score_percent": 0}
 
         try:
-            from skill_extractor import extract_skill_phrases, match_resume_skills
-            jd_skills = extract_skill_phrases(job_description)
-            if not jd_skills:
+            from ats_terms import build_job_ats_terms, match_resume_against_job_terms
+
+            jd_terms = build_job_ats_terms(job_description)
+            if not jd_terms:
                 return {"matched": [], "missing": [], "score_percent": 0}
-            result = match_resume_skills(text, jd_skills)
+            result = match_resume_against_job_terms(text, jd_terms, jd_text=job_description)
             return {
                 "matched": result.get("matched", []),
                 "missing": result.get("missing", []),

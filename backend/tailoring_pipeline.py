@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from ai_phrases import clean_ai_phrases
+from ats_terms import build_job_ats_terms, match_resume_against_job_terms
 from ai_service import (
     SEALION_MODEL_PIPELINE_BULLETS,
     SEALION_MODEL_REASONING,
@@ -32,7 +33,6 @@ from ai_service import (
 from jd_preparser import preparse_job_description
 from resume_scorer import ResumeScorer
 from resume_structurer import flatten_to_text, get_all_bullets, structure_resume
-from skill_extractor import match_resume_skills_with_context
 from validation_gates import validate_and_fix
 
 log = logging.getLogger("jobhunter.pipeline")
@@ -736,15 +736,19 @@ def _stage_6_validate(
 
     state.update_progress(1, 4, "Re-scanning skill match...")
 
-    # REAL skill match re-scan against tailored text (not a fake count)
-    all_jd_skills = (
-        parsed_jd.get("required_skills", [])
-        + parsed_jd.get("preferred_skills", [])
-        + parsed_jd.get("single_word_skills", [])
+    # REAL skill match re-scan against tailored text using the same canonical
+    # ATS term builder used by score + job match.
+    canonical_terms = build_job_ats_terms(
+        jd_text=jd_text,
+        parsed_jd=parsed_jd,
     )
-    tailored_lower = tailored_text.lower()
-    matched_after = [s for s in all_jd_skills if s.lower() in tailored_lower]
-    missing_after = [s for s in all_jd_skills if s.lower() not in tailored_lower]
+    rescan = match_resume_against_job_terms(
+        resume_text=tailored_text,
+        job_terms=canonical_terms,
+        jd_text=jd_text,
+    )
+    matched_after = [item.get("skill", "") for item in rescan.get("matched", []) if item.get("skill")]
+    missing_after = [item.get("skill", "") for item in rescan.get("missing", []) if item.get("skill")]
 
     state.update_progress(2, 4, "Building ATS gap report...")
 

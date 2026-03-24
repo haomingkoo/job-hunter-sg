@@ -60,10 +60,11 @@ from schemas import (
     UserOut,
 )
 from ai_service import _call_sealion, coach_resume, get_ai_status, integrate_keywords, rewrite_bullet
+from ats_terms import build_job_ats_terms, match_resume_against_job_terms, merge_job_terms_with_match
 from resume_parser import parse_resume
 from resume_scorer import ResumeScorer
 from resume_templates import generate_docx, inspect_resume_export, list_templates
-from skill_extractor import extract_skill_phrases, match_resume_skills_with_context
+from skill_extractor import extract_skill_phrases
 from scraper import CareersGovScraper, JobAggregator, SSGSkillsFrameworkAPI, _clean_html
 from tailoring_pipeline import get_pipeline_state, run_pipeline
 from jd_preparser import preparse_job_description as preparse_jd
@@ -379,14 +380,40 @@ def _surface_power_skills(skills: list[str], limit: int = 24) -> list[str]:
 
 
 def _extract_job_match_skills(job: ScrapedJob, db: Session) -> list[str]:
-    jd_skills = extract_skill_phrases(
-        job.description or "",
-        job_skills=_normalize_skill_strings(job.skills),
-        db_session=db,
+    return [
+        term["skill"] if isinstance(term, dict) else str(term)
+        for term in _build_canonical_job_terms(job, db)
+    ]
+
+
+def _build_canonical_job_terms(job: ScrapedJob, db: Session | None = None) -> list[dict]:
+    """Build a canonical ATS term list for a job.
+
+    Parsed JD stays primary, but the shared ats_terms helper also layers in
+    source tags, title hints, and safe single-word technical terms so score,
+    job match, and Power Match stop drifting.
+    """
+    db_skills = _normalize_skill_strings(job.skills)
+    parsed_jd = job.parsed_jd if isinstance(job.parsed_jd, dict) else None
+
+    if not parsed_jd and (job.description or "").strip():
+        parsed_jd = preparse_jd(job.description, skills=db_skills)
+        job.parsed_jd = parsed_jd
+        if db is not None:
+            db.flush()
+
+    terms = build_job_ats_terms(
+        jd_text=job.description or "",
+        job_skills=db_skills,
+        parsed_jd=parsed_jd,
+        job_title=job.title or "",
+        limit=24,
     )
-    title_terms = _extract_title_terms(job.title)
-    combined = jd_skills + [term for term in title_terms if term in POWER_SKILL_TERMS or term in SEMICONDUCTOR_DOMAIN_TERMS]
-    return _clean_power_skills(combined)
+
+    return [
+        term for term in terms
+        if not _is_power_skill_noise(term.get("skill", ""))
+    ]
 
 
 def _count_domain_hits(terms: list[str], domain_terms: set[str]) -> int:
@@ -1398,55 +1425,32 @@ def match_resume_to_job(
         if _enrich_careersgov_job(job, db):
             db.commit()
 
-    from skill_extractor import extract_skill_phrases, match_resume_skills_with_context
     import json as _json
 
     # Get skills from the job's database record + description
     db_skills = job.skills if isinstance(job.skills, list) else _json.loads(job.skills) if job.skills else []
     jd_text = job.description or ""
-
-    # Extract multi-word phrases from JD
-    jd_phrases = extract_skill_phrases(jd_text, db_skills)
+    canonical_terms = _build_canonical_job_terms(job, db)
 
     # Match against resume
     resume_text = sanitize_resume_text(body.resume_text)
-    result = match_resume_skills_with_context(
-        resume_text,
-        jd_phrases,
+    result = match_resume_against_job_terms(
+        resume_text=resume_text,
+        job_terms=canonical_terms,
         jd_text=jd_text,
     )
-    matched_by_skill = {
-        str(item.get("skill", "")).strip().lower(): item
-        for item in result.get("matched", [])
-        if str(item.get("skill", "")).strip()
-    }
-    missing_by_skill = {
-        str(item.get("skill", "")).strip().lower(): item
-        for item in result.get("missing", [])
-        if str(item.get("skill", "")).strip()
-    }
-    canonical_terms = []
-    for phrase in jd_phrases:
-        normalized = str(phrase or "").strip().lower()
-        if not normalized:
-            continue
-        if normalized in matched_by_skill:
-            canonical_terms.append(matched_by_skill[normalized])
-        elif normalized in missing_by_skill:
-            canonical_terms.append(missing_by_skill[normalized])
-        else:
-            canonical_terms.append({"skill": phrase})
+    resolved_terms = merge_job_terms_with_match(canonical_terms, result)
 
     return {
         "job_id": job_id,
         "job_title": job.title,
         "job_company": job.company,
         "job_skills": db_skills,
-        "job_terms": canonical_terms,
+        "job_terms": resolved_terms,
         "matched": result.get("matched", []),
         "missing": result.get("missing", []),
         "match_percent": result.get("match_percent", 0),
-        "total_skills": len(jd_phrases),
+        "total_skills": len(canonical_terms),
     }
 
 
@@ -1637,18 +1641,30 @@ def score_resume(
     )
     analyze_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
 
-    # Enhance with multi-word skill phrase matching
+    # Enhance with canonical ATS term matching.
     if jd_text.strip():
-        # Keep score responsive: use fast JD phrase extraction without
-        # rebuilding the dynamic skills dictionary from the entire jobs table.
-        jd_skill_phrases = extract_skill_phrases(jd_text)
-        skill_match = match_resume_skills_with_context(
+        parsed_jd = preparse_jd(jd_text)
+        job_terms = build_job_ats_terms(
+            jd_text=jd_text,
+            parsed_jd=parsed_jd,
+        )
+        skill_match = match_resume_against_job_terms(
             resume_text=resume_text,
-            jd_skills=jd_skill_phrases,
+            job_terms=job_terms,
             jd_text=jd_text,
         )
+        result["keyword_match"] = {
+            "matched": skill_match.get("matched", []),
+            "missing": skill_match.get("missing", []),
+            "score_percent": skill_match.get("match_percent", 0),
+        }
         result["skill_match"] = skill_match
     else:
+        result["keyword_match"] = {
+            "matched": [],
+            "missing": [],
+            "score_percent": 0,
+        }
         result["skill_match"] = {
             "matched": [],
             "missing": [],
@@ -2659,6 +2675,7 @@ def get_parsed_jd(
         "title": job.title,
         "company": job.company,
         "parsed_jd": job.parsed_jd or {},
+        "job_terms": _build_canonical_job_terms(job, db),
         "has_parsed_jd": job.parsed_jd is not None,
     }
 

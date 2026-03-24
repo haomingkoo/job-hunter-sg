@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -109,6 +110,96 @@ class TestSkillExtractor:
         result = match_resume_skills("some resume text", [])
         assert result["matched"] == []
         assert result["missing"] == []
+
+    def test_canonical_ats_terms_include_single_word_tech_and_filter_noise(self):
+        from ats_terms import build_job_ats_terms
+
+        jd = (
+            "Build data pipelines in Python and SQL for semiconductor manufacturing. "
+            "Medical Study is listed in the source taxonomy but should not be surfaced."
+        )
+        parsed_jd = {
+            "required_skills": ["data pipelines", "semiconductor manufacturing"],
+            "preferred_skills": [],
+            "single_word_skills": ["python", "sql"],
+            "competency_signals": {},
+        }
+        terms = build_job_ats_terms(
+            jd_text=jd,
+            job_skills=["Medical Study", "Python"],
+            parsed_jd=parsed_jd,
+            job_title="Data Engineer",
+        )
+        skills = {item["skill"] for item in terms}
+        assert "python" in skills
+        assert "sql" in skills
+        assert "semiconductor manufacturing" in skills
+        assert "medical study" not in skills
+
+    def test_resume_scorer_keyword_match_uses_canonical_ats_terms(self):
+        from resume_scorer import ResumeScorer
+
+        scorer = ResumeScorer()
+        result = scorer.analyze(
+            "Built Python automation and SQL reporting for wafer fabrication teams.",
+            "Role requires Python, SQL, and wafer fabrication experience.",
+        )
+        matched = {item["skill"] for item in result["keyword_match"]["matched"]}
+        assert "python" in matched
+        assert "sql" in matched
+        assert "wafer fabrication" in matched
+
+    def test_canonical_job_terms_include_parsed_jd_and_single_word_terms(self):
+        from main import _build_canonical_job_terms
+
+        job = SimpleNamespace(
+            title="Principal Program Manager, FE Strategy & Operations",
+            description=(
+                "Drive wafer fabrication analytics, supply chain management, and "
+                "lead implementation of Industry 4.0 initiatives with Python and SQL."
+            ),
+            skills=[
+                "Wafer Fabrication",
+                "Supply Chain Management",
+                "Communication Skills",
+            ],
+            parsed_jd={
+                "required_skills": ["wafer fabrication", "supply chain management"],
+                "preferred_skills": ["lead implementation"],
+                "single_word_skills": ["python", "sql"],
+            },
+        )
+
+        terms = _build_canonical_job_terms(job, None)
+        labels = {item["skill"].lower() for item in terms}
+
+        assert "wafer fabrication" in labels
+        assert "supply chain management" in labels
+        assert "lead implementation" in labels
+        assert "python" in labels
+        assert "sql" in labels
+
+    def test_canonical_job_terms_filter_noise_and_dedupe(self):
+        from main import _build_canonical_job_terms
+
+        job = SimpleNamespace(
+            title="Senior Engineer",
+            description="Build machine learning pipelines and quality systems.",
+            skills=["Professional Experience", "Machine Learning", "machine learning"],
+            parsed_jd={
+                "required_skills": ["machine learning"],
+                "preferred_skills": ["quality systems"],
+                "single_word_skills": ["AI"],
+            },
+        )
+
+        terms = _build_canonical_job_terms(job, None)
+        labels = [item["skill"].lower() for item in terms]
+
+        assert "professional experience" not in labels
+        assert labels.count("machine learning") == 1
+        assert "quality systems" in labels
+        assert "ai" in labels
 
 
 # ═══════════════════════════════════════════════════════════════════════════
