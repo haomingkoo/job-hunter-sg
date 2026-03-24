@@ -1547,7 +1547,24 @@ function annotateBullet(text, keywords) {
   const keywordMatches = collectKeywordMatches(trimmed, keywords);
   const isTooShort = trimmed.length < 40;
   const isTooLong = trimmed.length > 200;
-  const hasActionVerb = RESUME_ACTION_VERBS.has(firstWord);
+  // Handle hyphenated verbs: "Co-led" → check "co-led" AND "led"
+  const baseVerb = firstWord.includes("-") ? firstWord.split("-").pop() : firstWord;
+  const hasActionVerb = RESUME_ACTION_VERBS.has(firstWord) || RESUME_ACTION_VERBS.has(baseVerb);
+
+  // Skip annotation for certifications, education entries, and short labels
+  const looksLikeCert = /certification|certificate|certified|PMP|WSQ|skillsfuture|accredited|in progress|target/i.test(trimmed);
+  const looksLikeEducation = /university|polytechnic|GPA|degree|diploma|bachelor|master|PhD|exchange/i.test(trimmed);
+  if (looksLikeCert || looksLikeEducation) {
+    return {
+      tone: "neutral",
+      label: null,
+      icon: null,
+      borderClass: "",
+      pillClass: "",
+      message: "",
+      keywordMatches,
+    };
+  }
 
   if (weakStart || isTooShort || isTooLong) {
     let message = "Tighten this bullet so the impact is clearer.";
@@ -2804,7 +2821,7 @@ function ResumeTab({ selectedJob, user }) {
       </div>
 
       <div className={`grid gap-6 ${isEditorView ? "lg:grid-cols-[minmax(0,65%)_minmax(320px,35%)]" : "lg:grid-cols-[minmax(320px,35%)_minmax(0,65%)]"}`}>
-        <aside className={`${mobilePanel === "feedback" ? "block" : "hidden"} space-y-4 ${isEditorView ? "lg:order-2" : "lg:order-1"} lg:block`}>
+        <aside className={`${mobilePanel === "feedback" ? "block" : "hidden"} space-y-4 ${isEditorView ? "lg:order-2" : "lg:order-1"} lg:block lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto`}>
           {isEditorView && (
             <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
