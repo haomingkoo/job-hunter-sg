@@ -17,6 +17,23 @@ Job Hunter SG is a Singapore job aggregator + AI resume coach. Live at https://j
 
 ## CRITICAL FIXES (do these first)
 
+### Fix 0: Mobile is completely broken (3 sub-issues)
+
+**0a. Search returns 0 results on mobile**
+Searching "Micron" on mobile shows "0 jobs matching Micron" but works fine on desktop. Debug the search flow on mobile — check if query param, filters, or request encoding differs. Test with Chrome DevTools mobile emulation.
+
+**0b. Resume editor — AI feedback panel invisible on mobile**
+On mobile, the left panel (score, bullet feedback, AI buttons) is behind the Edit/Feedback toggle. When tapping "Feedback", the scoring panel + AI rewrite options + action buttons must be fully visible and scrollable. Currently the AI buttons (Improve All, Run Full Tailor, AI Coach) may be below the fold or not rendering in the Feedback view at all.
+
+**0c. Mobile editing zoom goes crazy**
+Tapping a bullet to edit on mobile causes uncontrollable zoom and the editing area clips off-screen. Fix:
+- Set `font-size: 16px` on ALL input, textarea, and contenteditable elements. iOS Safari zooms in on inputs with font-size < 16px.
+- Add to `index.html`: `<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">`
+- The editing input must be full-width on mobile, not clipped to a narrow column
+- When the keyboard opens, the sticky bottom bar ("Score --" / "Download DOCX") must not overlap the editing area. Use `position: sticky` with proper bottom offset, or hide the bar when keyboard is open.
+
+**Test all 3 on Chrome DevTools (iPhone 14 Pro, 393x852) and a real phone if possible.**
+
 ### Fix 1: Education entries lumped together
 **Location**: `frontend/src/App.jsx` — `buildEducationPair()` function (~line 2081)
 **Problem**: Two degrees (M.Sc. and B.Sc.) render as one merged block instead of separate entries.
