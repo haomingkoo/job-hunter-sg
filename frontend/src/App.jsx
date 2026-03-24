@@ -789,7 +789,7 @@ function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                   <div className="text-sm font-semibold text-gray-800">Detected Resume Skills</div>
                   <div className="mt-1 text-xs text-gray-500">
                     {data.resume_signal_mode === "skill_corpus"
-                      ? "Skills were grounded in the extracted job-skill vocabulary."
+                      ? "Skills were matched against the roles in our current job dataset."
                       : "Skills were extracted directly from your latest stored resume."}
                   </div>
                 </div>
@@ -2346,6 +2346,9 @@ function ResumeTab({ selectedJob, user }) {
         }),
       });
       const data = await response.json();
+      if (!data || typeof data.original !== "string" || !Array.isArray(data.options)) {
+        throw new Error("Rewrite response was malformed.");
+      }
       setRewriteResults((current) => ({ ...current, [section.id]: data }));
       if (typeof window !== "undefined" && window.innerWidth < 1024) {
         setMobilePanel("feedback");
@@ -2435,10 +2438,15 @@ function ResumeTab({ selectedJob, user }) {
   };
 
   const handleFinalizeScore = async () => {
+    if (!resumeText.trim()) return;
     const previousScore = scoreData?.overall_score;
     const updated = await runScore(resumeText, jobDescription, { phase: "final" });
     if (Number.isFinite(previousScore) && Number.isFinite(updated?.overall_score)) {
-      setScoreChange({ before: previousScore, after: updated.overall_score, context: "Final score updated" });
+      setScoreChange({
+        before: previousScore,
+        after: updated.overall_score,
+        context: previousScore === updated.overall_score ? "Final score confirmed" : "Final score updated",
+      });
     } else if (Number.isFinite(updated?.overall_score)) {
       setScoreChange({ before: null, after: updated.overall_score, context: "Final score updated" });
     }
@@ -3218,25 +3226,48 @@ function ResumeTab({ selectedJob, user }) {
                 {selectedRewrite && (
                   <div className="space-y-3 rounded-2xl border border-indigo-200 bg-white p-4">
                     <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Suggested Rewrite</div>
-                    <div className="rounded-xl bg-gray-50 p-3 text-sm leading-relaxed text-gray-700">{selectedRewrite.rewritten}</div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => acceptRewrite(selectedBullet)}
-                        className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-                      >
-                        <CheckCircle size={14} />
-                        Accept
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => rejectRewrite(selectedBullet.id)}
-                        className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-                      >
-                        <X size={14} />
-                        Dismiss
-                      </button>
-                    </div>
+                    {selectedRewrite.no_change ? (
+                      <>
+                        <div className="rounded-xl bg-amber-50 p-3 text-sm leading-relaxed text-amber-900">
+                          {selectedRewrite.message || "No stronger rewrite was suggested for this bullet."}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => rejectRewrite(selectedBullet.id)}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          <X size={14} />
+                          Close
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="space-y-2">
+                          {(selectedRewrite.options || []).map((option, optionIndex) => (
+                            <div key={`${selectedBullet.id}-rewrite-${optionIndex}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                              <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">Option {optionIndex + 1}</div>
+                              <div className="mt-2 text-sm leading-relaxed text-gray-700">{option}</div>
+                              <button
+                                type="button"
+                                onClick={() => acceptRewrite(selectedBullet, optionIndex)}
+                                className="mt-3 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                              >
+                                <CheckCircle size={14} />
+                                Use Option {optionIndex + 1}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => rejectRewrite(selectedBullet.id)}
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                        >
+                          <X size={14} />
+                          Dismiss
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -3322,7 +3353,7 @@ function ResumeTab({ selectedJob, user }) {
             <div className="mt-4 space-y-2.5">
               <button
                 type="button"
-                onClick={() => runScore(resumeText, jobDescription, { phase: "final" })}
+                onClick={handleFinalizeScore}
                 disabled={scoring || !resumeText.trim()}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-800 transition hover:bg-gray-50 disabled:opacity-40"
               >
@@ -3351,6 +3382,11 @@ function ResumeTab({ selectedJob, user }) {
             {needsRescore && (
               <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 You’ve made edits since the opening score. We’ll score the final version when you finalize or download.
+              </div>
+            )}
+            {scoreChange && (
+              <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                {scoreChange.context}: {Number.isFinite(scoreChange.before) ? `${scoreChange.before} → ` : ""}{scoreChange.after}
               </div>
             )}
             {aiStatus && (
@@ -3440,7 +3476,10 @@ function ResumeTab({ selectedJob, user }) {
               </div>
             </div>
 
-            <div className={`mx-auto mt-5 bg-white shadow-[0_2px_20px_rgba(0,0,0,0.1)] border border-gray-200 ${templateStyles.pageClass}`} style={{...templateStyles.pageStyle, width: '210mm', minHeight: '297mm', padding: '12mm 18mm', maxWidth: '100%', fontSize: '11pt', lineHeight: '1.4', textAlign: 'justify', textJustify: 'inter-word'}}>
+            <div
+              className={`mx-auto mt-5 bg-white shadow-[0_2px_20px_rgba(0,0,0,0.1)] border border-gray-200 ${templateStyles.pageClass}`}
+              style={{ ...templateStyles.pageStyle, textAlign: "justify", textJustify: "inter-word" }}
+            >
               {resumeText.trim() ? (
                 <>
                   {shouldInjectProfileHeader && (
@@ -3452,7 +3491,7 @@ function ResumeTab({ selectedJob, user }) {
                     </div>
                   )}
 
-                  <div className="space-y-0.5" style={{fontSize: '10.5pt', lineHeight: '1.35'}}>
+                  <div className="space-y-0.5" style={templateStyles.bodyStyle}>
                     {parsedSections.map((section) => {
                       if (section.type === "spacer") return <div key={section.id} className="h-3" />;
 
@@ -3460,7 +3499,7 @@ function ResumeTab({ selectedJob, user }) {
                       const isSelectedBullet = selectedBulletId === section.id;
                       const annotation = section.annotation;
                       const wrapperClasses = section.type === "bullet" && annotationsOn
-                        ? `${annotation.borderClass} border-l-[3px]`
+                        ? `${annotation?.borderClass || "border-transparent bg-transparent"} border-l-[3px]`
                         : isSelectedBullet
                           ? "border-l-[3px] border-indigo-300 bg-indigo-50/60"
                           : "border-l-[3px] border-transparent";
@@ -3502,7 +3541,7 @@ function ResumeTab({ selectedJob, user }) {
                             </div>
                           )}
                           {section.type === "paragraph" && (
-                            <p className="mb-4 text-[0.98rem] leading-7 text-gray-700">
+                            <p className="mb-4 text-gray-700" style={templateStyles.bodyStyle}>
                               {renderHighlightedText(section.text, section.keywordMatches || [])}
                             </p>
                           )}
@@ -3510,10 +3549,10 @@ function ResumeTab({ selectedJob, user }) {
                             <div className="flex gap-3">
                               <div className="pt-1 text-[1rem] text-gray-400">•</div>
                               <div className="flex-1">
-                                <p className="text-[0.98rem] leading-7 text-gray-700">
+                                <p className="text-gray-700" style={templateStyles.bodyStyle}>
                                   {renderHighlightedText(section.text, annotation?.keywordMatches || [])}
                                 </p>
-                                {annotationsOn && (
+                                {annotationsOn && annotation && (
                                   <div className="mt-2 flex flex-wrap items-center gap-2">
                                     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${annotation.pillClass}`}>
                                       {annotation.icon}
@@ -3587,7 +3626,7 @@ function ResumeTab({ selectedJob, user }) {
             {needsRescore && (
               <button
                 type="button"
-                onClick={() => runScore(resumeText, jobDescription, { phase: "final" })}
+                onClick={handleFinalizeScore}
                 disabled={scoring || !resumeText.trim()}
                 className="hidden sm:inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-40"
               >
@@ -3746,7 +3785,7 @@ function AccountTab({ user, onLogout }) {
               </tr>
               <tr>
                 <td className="px-4 py-3 text-gray-700">Tracked jobs</td>
-                <td className="px-4 py-3 text-center text-gray-600">Sign in required</td>
+                <td className="px-4 py-3 text-center text-gray-600">Upgrade required</td>
                 <td className="px-4 py-3 text-center text-indigo-700 font-medium">Unlimited</td>
               </tr>
               <tr>
@@ -3770,7 +3809,7 @@ function AccountTab({ user, onLogout }) {
               <h4 className="font-semibold text-gray-800">Upgrade to AISG Tier</h4>
             </div>
             <p className="text-sm text-gray-600 mb-3">
-              Sign up with your @aisg.sg email to get 50 AI reviews/day, unlimited tracked jobs, CSV export, and full ATS analysis — completely free.
+              Upgrade to get 50 AI reviews/day, unlimited tracked jobs, CSV export, and full ATS analysis.
             </p>
             <p className="text-sm text-gray-500">
               Have questions? Send us a message below or reach out directly.

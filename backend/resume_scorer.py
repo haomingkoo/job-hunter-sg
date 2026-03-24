@@ -684,41 +684,24 @@ class ResumeScorer:
 
     @staticmethod
     def _keyword_match(text: str, job_description: str) -> dict:
-        """Compare resume words against job description keywords."""
+        """Compare resume against JD using multi-word skill phrase extraction."""
         if not job_description.strip():
             return {"matched": [], "missing": [], "score_percent": 0}
 
-        stopwords = {
-            "the", "a", "an", "and", "or", "of", "to", "in", "for",
-            "with", "on", "at", "by", "is", "was", "are", "were", "be",
-            "been", "has", "had", "have", "that", "this", "it", "as",
-            "from", "not", "but", "you", "your", "will", "can", "our",
-            "their", "they", "we", "who", "all", "may", "should",
-            "must", "also", "such", "than", "more", "about", "into",
-            "able", "etc", "per",
-        }
-        jd_words = set(
-            re.findall(r"[a-z]+", job_description.lower())
-        )
-        jd_keywords = {
-            w for w in jd_words
-            if len(w) > 3 and w not in stopwords
-        }
-
-        resume_words = set(re.findall(r"[a-z]+", text.lower()))
-        matched = sorted(jd_keywords & resume_words)
-        missing = sorted(jd_keywords - resume_words)
-
-        pct = (
-            round(len(matched) / len(jd_keywords) * 100)
-            if jd_keywords
-            else 0
-        )
-        return {
-            "matched": matched,
-            "missing": missing[:20],
-            "score_percent": pct,
-        }
+        try:
+            from skill_extractor import extract_skill_phrases, match_resume_skills
+            jd_skills = extract_skill_phrases(job_description)
+            if not jd_skills:
+                return {"matched": [], "missing": [], "score_percent": 0}
+            result = match_resume_skills(text, jd_skills)
+            return {
+                "matched": result.get("matched", []),
+                "missing": result.get("missing", []),
+                "score_percent": result.get("match_percent", 0),
+            }
+        except Exception:
+            # Fallback: simple word matching if skill_extractor fails
+            return {"matched": [], "missing": [], "score_percent": 0}
 
     # ── Suggestions builder ──────────────────────────────────────────────
 

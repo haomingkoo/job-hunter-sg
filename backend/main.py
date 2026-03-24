@@ -58,6 +58,7 @@ from ai_service import _call_sealion, coach_resume, get_ai_status, integrate_key
 from resume_parser import parse_resume
 from resume_scorer import ResumeScorer
 from resume_templates import generate_docx, list_templates
+from skill_extractor import extract_skill_phrases, match_resume_skills_with_context
 from scraper import JobAggregator, SSGSkillsFrameworkAPI
 
 log = logging.getLogger("jobhunter")
@@ -968,10 +969,30 @@ def score_resume(
     resume_text = sanitize_resume_text(body.resume_text)
     _persist_resume_to_memory(user, db, resume_text)
     db.commit()
-    return _scorer.analyze(
+
+    jd_text = sanitize_user_input(body.job_description)
+    result = _scorer.analyze(
         resume_text=resume_text,
-        job_description=sanitize_user_input(body.job_description),
+        job_description=jd_text,
     )
+
+    # Enhance with multi-word skill phrase matching
+    if jd_text.strip():
+        jd_skill_phrases = extract_skill_phrases(jd_text)
+        skill_match = match_resume_skills_with_context(
+            resume_text=resume_text,
+            jd_skills=jd_skill_phrases,
+            jd_text=jd_text,
+        )
+        result["skill_match"] = skill_match
+    else:
+        result["skill_match"] = {
+            "matched": [],
+            "missing": [],
+            "match_percent": 0,
+        }
+
+    return result
 
 
 # ═════════════════════════════════════════════════════════════════════════════
