@@ -1,183 +1,109 @@
 # CODEX REVIEW — Resume Tailoring Pipeline
 
-## Your Mission
+## INSTRUCTION TO CODEX
 
-A new multi-pass resume tailoring pipeline was built in one session. You are the second pair of eyes. Your job is to **find bugs, edge cases, and reliability issues** before this ships.
+You MUST run every test below. Not read. RUN. Write actual test files, execute them, report pass/fail. If you find a bug, fix it AND add a test. Write results to `REVIEW_RESULTS.md`.
 
-Do NOT just read the code. Run it. Test it. Break it. Use agents to parallelize if needed.
-
-## Priority: RELIABILITY over features. No hidden fallbacks. No silent failures.
+Use agents in parallel where possible to speed this up.
 
 ---
 
-## Phase 1: Verify everything compiles and imports
-
-Run these in `backend/`:
+## TASK 1: Import check (run these, report pass/fail)
 
 ```bash
-python3 -c "from jd_preparser import preparse_job_description; print('OK')"
-python3 -c "from resume_structurer import structure_resume, get_all_bullets, flatten_to_text; print('OK')"
-python3 -c "from ai_phrases import clean_ai_phrases, AI_PHRASE_REPLACEMENTS; print(f'OK: {len(AI_PHRASE_REPLACEMENTS)} phrases')"
-python3 -c "from validation_gates import run_all_gates, validate_and_fix; print('OK')"
-python3 -c "from tailoring_pipeline import run_pipeline, get_pipeline_state, STAGES; print(f'OK: {len(STAGES)} stages')"
-python3 -c "from models import ScrapedJob, TailoredResume; print('OK')"
+cd backend
+python3 -c "from jd_preparser import preparse_job_description; print('PASS')"
+python3 -c "from resume_structurer import structure_resume, get_all_bullets, flatten_to_text; print('PASS')"
+python3 -c "from ai_phrases import clean_ai_phrases, AI_PHRASE_REPLACEMENTS; print(f'PASS: {len(AI_PHRASE_REPLACEMENTS)} phrases')"
+python3 -c "from validation_gates import run_all_gates, validate_and_fix; print('PASS')"
+python3 -c "from tailoring_pipeline import run_pipeline, get_pipeline_state, STAGES; print(f'PASS: {len(STAGES)} stages')"
+python3 -c "from models import ScrapedJob, TailoredResume; print('PASS')"
 ```
-
-If ANY of these fail, fix the import error before proceeding.
 
 ---
 
-## Phase 2: Unit test the validation gates
+## TASK 2: Write and run validation gate tests
 
-Write and run tests for `validation_gates.py`. These are the safety net -- if gates are broken, hallucinated resumes ship.
-
-### Test cases to write:
+Create `backend/tests/test_validation_gates.py` with these EXACT tests:
 
 ```python
-# test_validation_gates.py
+from validation_gates import gate_fact_preservation, gate_ai_phrases, gate_keyword_verbatim, gate_length_sanity, gate_hallucination, validate_and_fix
 
-from validation_gates import (
-    gate_fact_preservation,
-    gate_ai_phrases,
-    gate_keyword_verbatim,
-    gate_length_sanity,
-    gate_hallucination,
-    validate_and_fix,
-)
-
-# Gate 1: Fact preservation
 def test_fact_preserved():
-    r = gate_fact_preservation(
-        "Led team of 12 engineers saving $3M",
-        "Directed team of 12 engineers achieving $3M in cost savings"
-    )
-    assert r.passed  # both facts present
+    """$3M in original must appear in rewrite."""
+    r = gate_fact_preservation("Led team of 12 engineers saving $3M", "Directed team of 12 engineers achieving $3M in savings")
+    assert r.passed, f"Should pass: {r.message}"
 
 def test_fact_altered():
-    r = gate_fact_preservation(
-        "Led team of 12 engineers saving $3M",
-        "Directed team of 15 engineers achieving $5M in cost savings"
-    )
-    assert not r.passed  # $3M and 12 are missing
+    """Changed $3M to $5M must FAIL."""
+    r = gate_fact_preservation("Led team of 12 engineers saving $3M", "Directed team of 15 engineers achieving $5M")
+    assert not r.passed, "Should fail: facts were altered"
 
 def test_fact_removed():
-    r = gate_fact_preservation(
-        "Reduced costs by 25%",
-        "Significantly reduced operational costs"
-    )
-    assert not r.passed  # 25% is gone
+    """Removing 25% must FAIL."""
+    r = gate_fact_preservation("Reduced costs by 25%", "Significantly reduced operational costs")
+    assert not r.passed, "Should fail: 25% was removed"
 
-# Gate 2: AI phrases
 def test_ai_phrase_replaced():
+    """'Spearheaded' should be auto-replaced."""
     r = gate_ai_phrases("Spearheaded a transformative initiative")
-    assert r.auto_fixed
-    assert "spearheaded" not in r.fixed_text.lower()
+    assert r.auto_fixed, "Should auto-fix AI phrases"
+    assert "spearheaded" not in r.fixed_text.lower(), "spearheaded should be replaced"
 
 def test_ai_phrase_protected_by_jd():
-    r = gate_ai_phrases(
-        "Spearheaded the cloud migration",
-        jd_text="Looking for someone who has spearheaded large migrations"
-    )
-    # "spearheaded" is in the JD, so it should be protected
-    assert "spearheaded" in (r.fixed_text or "Spearheaded").lower()
+    """If JD uses 'spearheaded', don't replace it."""
+    r = gate_ai_phrases("Spearheaded the migration", jd_text="Must have spearheaded large projects")
+    # spearheaded is in JD, should be protected
+    if r.fixed_text:
+        assert "spearhead" in r.fixed_text.lower(), "Protected phrase was wrongly replaced"
 
-# Gate 3: Keyword verbatim
 def test_keyword_present():
-    r = gate_keyword_verbatim(
-        "Built machine learning pipeline for real-time data",
-        ["machine learning"]
-    )
+    r = gate_keyword_verbatim("Built machine learning pipeline", ["machine learning"])
     assert r.passed
 
 def test_keyword_missing():
-    r = gate_keyword_verbatim(
-        "Built ML pipeline for real-time data",
-        ["machine learning"]
-    )
-    assert not r.passed  # "ML" != "machine learning"
+    r = gate_keyword_verbatim("Built ML pipeline", ["machine learning"])
+    assert not r.passed, "'ML' is not 'machine learning'"
 
-# Gate 4: Length sanity
 def test_length_too_long():
-    original = "Led a team"
-    tailored = " ".join(["word"] * 45)
-    r = gate_length_sanity(original, tailored)
-    assert not r.passed  # > 40 words
+    r = gate_length_sanity("Led a team", " ".join(["word"] * 45))
+    assert not r.passed, "45 words exceeds 40 max"
 
 def test_length_bloated():
-    original = "Led team of 5"
-    tailored = " ".join(["word"] * 30)  # 30 words from 4 = 7.5x
-    r = gate_length_sanity(original, tailored)
-    assert not r.passed  # > 1.8x
+    r = gate_length_sanity("Led team", " ".join(["word"] * 20))
+    assert not r.passed, "20 words from 2 = 10x, exceeds 1.8x"
 
-# Gate 5: Hallucination
-def test_no_hallucination():
-    r = gate_hallucination(
-        "Led Python team to deploy ML models",
-        "Directed Python team to deploy ML models on AWS",
-        injectable_keywords={"AWS"}
-    )
-    assert r.passed  # AWS is injectable
+def test_hallucination_with_injectable():
+    r = gate_hallucination("Led Python team", "Led Python team to deploy on AWS", injectable_keywords={"AWS"})
+    assert r.passed, "AWS is injectable, should pass"
 
 def test_hallucination_detected():
-    r = gate_hallucination(
-        "Managed team schedule",
-        "Managed Kubernetes Docker Terraform CI/CD pipeline orchestration",
-        injectable_keywords=set()
-    )
-    assert not r.passed  # 4+ new domain terms invented
+    r = gate_hallucination("Managed schedule", "Managed Kubernetes Docker Terraform CI/CD pipeline", injectable_keywords=set())
+    assert not r.passed, "4+ new terms invented"
 
-# Full pipeline: validate_and_fix
 def test_critical_failure_reverts():
+    """If fact is lost, validate_and_fix must return ORIGINAL text."""
     original = "Saved $3M through process optimization"
     tailored = "Revolutionized process optimization achieving unprecedented results"
-    final, results = validate_and_fix(original, tailored)
-    assert final == original  # should revert: $3M fact lost
-
-def test_auto_fix_applied():
-    original = "Led team"
-    tailored = "Spearheaded a cutting-edge team"
-    final, results = validate_and_fix(original, tailored, jd_text="")
-    assert "spearheaded" not in final.lower()  # AI phrases cleaned
-    assert final != original  # but not fully reverted
+    final, _ = validate_and_fix(original, tailored)
+    assert final == original, f"Should revert to original, got: {final}"
 ```
 
-Run with: `python3 -m pytest test_validation_gates.py -v`
+Run: `cd backend && python3 -m pytest tests/test_validation_gates.py -v`
+
+Report: how many pass, how many fail. Fix any failures.
 
 ---
 
-## Phase 3: Integration test the pipeline stages
-
-Test each stage in isolation, then the full pipeline.
-
-### Test jd_preparser with real DB jobs:
+## TASK 3: Run nudge pipeline end-to-end (no LLM needed)
 
 ```python
-# Pick a real job from the DB and verify pre-parsing works
-from database import init_db, SessionLocal
-from models import ScrapedJob
-from jd_preparser import preparse_job_description
+# Save as backend/tests/test_pipeline_nudge.py and RUN it
+import sys, time
+sys.path.insert(0, ".")
+from tailoring_pipeline import run_pipeline, get_pipeline_state
 
-init_db()
-db = SessionLocal()
-job = db.query(ScrapedJob).filter(ScrapedJob.description != "").first()
-if job:
-    result = preparse_job_description(job.description, job.skills or [])
-    assert isinstance(result["required_skills"], list)
-    assert isinstance(result["single_word_skills"], list)
-    assert result["parsed_at"]  # timestamp present
-    print(f"Job: {job.title}")
-    print(f"Required: {result['required_skills'][:5]}")
-    print(f"Tech: {result['single_word_skills'][:5]}")
-    print(f"Experience: {result['experience_years']}")
-db.close()
-```
-
-### Test resume_structurer with a real resume:
-
-```python
-from resume_structurer import structure_resume, get_all_bullets, flatten_to_text
-
-sample = """
+sample_resume = """
 Jane Doe
 jane@example.com | +65 9876 5432
 
@@ -186,6 +112,7 @@ Google - Singapore
 Senior Engineer | Jan 2020 - Present
 - Built scalable data pipeline processing 10M events daily
 - Led team of 8 to migrate legacy systems to cloud
+- Responsible for managing cross-team dependencies
 
 EDUCATION
 NUS - BSc Computer Science | 2016 - 2020
@@ -194,104 +121,85 @@ SKILLS
 Python, Java, Kubernetes, AWS, SQL
 """
 
-result = structure_resume(sample)
-assert result["contact"]["email"] == "jane@example.com"
-assert len(result["sections"]) >= 3
-bullets = get_all_bullets(result)
-assert len(bullets) >= 2
-
-# Round-trip test: flatten and re-parse should not lose content
-flat = flatten_to_text(result)
-assert "10M events" in flat
-assert "Google" in flat
-```
-
-### Test the full pipeline WITHOUT LLM calls (nudge mode):
-
-```python
-from tailoring_pipeline import run_pipeline, get_pipeline_state
-import time
+sample_jd = "Senior Engineer with 5+ years in Python, data pipelines, cloud infrastructure. Kubernetes preferred."
 
 state = run_pipeline(
-    resume_text=sample,  # from above
-    job_description="Looking for a Senior Engineer with 5+ years experience in Python, data pipelines, and cloud infrastructure. Kubernetes preferred.",
-    parsed_jd=None,  # will be parsed on the fly
-    intensity="nudge",  # local only, no LLM
+    resume_text=sample_resume,
+    job_description=sample_jd,
+    parsed_jd=None,
+    intensity="nudge",
 )
 
-# Wait for completion (nudge is fast, ~2s)
-for _ in range(20):
+for _ in range(30):
     status = state.to_dict()
+    print(f"  Stage {status['stage_number']}/{status['total_stages']}: {status['stage']} - {status['message']}")
     if status["complete"]:
+        break
+    if status.get("error"):
+        print(f"  ERROR: {status['error']}")
         break
     time.sleep(0.5)
 
-assert status["complete"], f"Pipeline stuck at: {status['stage']} - {status['message']}"
-assert state.result is not None
-assert state.result["tailored_text"]  # not empty
-assert state.result["score"]["before"] > 0
-assert state.result["score"]["after"] > 0
-assert isinstance(state.result["ats_gaps"], list)
-assert state.result["skill_match"]["after"] >= 0  # real re-scan, not fake
-assert not state.result.get("degraded", False) or state.result.get("pipeline_notes")  # if degraded, must explain why
-print(f"Score: {state.result['score']['before']} -> {state.result['score']['after']}")
-print(f"Skills: {state.result['skill_match']['before']} -> {state.result['skill_match']['after']}")
-print(f"ATS gaps: {len(state.result['ats_gaps'])}")
+assert status["complete"], f"Pipeline stuck at: {status['stage']}"
+result = state.result
+assert result, "No result"
+assert result["tailored_text"], "Empty tailored text"
+assert result["score"]["before"] > 0, "No baseline score"
+assert result["score"]["after"] > 0, "No final score"
+assert isinstance(result["ats_gaps"], list), "No ATS gaps"
+assert isinstance(result["skill_match"]["matched_after"], list), "skill_match.after should be a real list"
+assert not result.get("degraded") or result.get("pipeline_notes"), "If degraded, must explain why"
+
+print(f"\nPASS: Score {result['score']['before']} -> {result['score']['after']}")
+print(f"Skills matched: {result['skill_match']['before']} -> {result['skill_match']['after']}")
+print(f"ATS gaps: {len(result['ats_gaps'])}")
+print(f"Changes: {result['total_changes']}")
 ```
 
----
-
-## Phase 4: Error path audit
-
-For each of these scenarios, trace through the code and verify the behavior is EXPLICIT (no silent swallowing):
-
-1. **LLM returns None for Stage 1 strategy**: Should log warning, use fallback priorities with `_degraded: True`, and pipeline_notes must explain.
-
-2. **LLM returns garbage for Stage 3 rewrites**: JSON parse fails, numbered-line fallback also fails. Should log warning with bullet count, continue with originals, NOT crash.
-
-3. **All validation gates fail for a rewrite**: `validate_and_fix` should return original text. The change should NOT appear in the changes list.
-
-4. **Job has no description**: `preparse_job_description("")` should return empty structure, not crash.
-
-5. **Resume has no bullets**: `get_all_bullets` returns empty list. Stage 3 should skip gracefully.
-
-6. **Rate limiter exhausted**: `_call_sealion` returns None after 30s timeout. Pipeline should degrade gracefully with pipeline_notes.
-
-7. **Concurrent pipelines**: Two users start pipelines simultaneously. Verify `_active_pipelines` dict doesn't corrupt.
+Run: `cd backend && python3 tests/test_pipeline_nudge.py`
 
 ---
 
-## Phase 5: Check for these specific bugs
+## TASK 4: Check error paths (trace through code, verify no silent failures)
 
-1. **`_stage_6_validate` signature**: Verify ALL call sites pass `parsed_jd` (4 args before, now 5). Search for `_stage_6_validate(` and confirm.
+For each scenario, trace the code path and confirm it either raises an error or adds to pipeline_notes:
 
-2. **`skill_match.after` is real**: In the result builder, verify `matched_after` comes from `final.get("matched_after")` which is a real re-scan of `tailored_text`, NOT an estimate.
+1. `_stage_1_strategize` returns None -> should use fallback with `_degraded: True`
+2. Stage 3 LLM returns empty string -> should log warning, keep originals
+3. `validate_and_fix` gets a rewrite where $3M became $5M -> should return original text
+4. `preparse_job_description("")` -> should return empty structure, not crash
+5. `structure_resume("")` -> should not crash
 
-3. **`call_sealion_json` actually parses JSON**: Verify `json.loads(candidate)` is called inside the retry loop, not just bracket matching.
-
-4. **Stage 3 uses `call_sealion_json`**: Verify it's not using `_call_sealion` (which has no retry logic for JSON).
-
-5. **`_cleanup_expired_pipelines` is called**: Verify it runs on `get_pipeline_state()` reads.
-
-6. **`lifespan` replaces `on_event("startup")`**: Verify the old `@app.on_event("startup")` is removed and `app = FastAPI(..., lifespan=lifespan)` is set.
-
-7. **`auth.py` JWT_SECRET**: Verify no hardcoded fallback string. Local dev generates ephemeral key with explicit warning log.
+Run each case manually in Python and report.
 
 ---
 
-## Phase 6: Write a summary
+## TASK 5: Check the live deployment works
 
-After completing all phases, write a `REVIEW_RESULTS.md` with:
-- Total issues found (critical / medium / low)
-- Each issue: file, line, description, fix applied or recommended
-- Confirmation that all Phase 2 tests pass
-- Confirmation that the nudge pipeline runs end-to-end
-- Any remaining concerns
+After Railway deploys, test:
+```bash
+curl -s 'https://jobhunter.kooexperience.com/api/jobs/1/parsed' | python3 -m json.tool
+```
+
+Verify it returns `{job_id, title, company, parsed_jd, has_parsed_jd}`.
 
 ---
 
-## Rules
-- No hidden fallbacks. If something fails, it must be visible to the user or logged explicitly.
-- Do NOT modify the pipeline architecture or add features. This review is about reliability, not new functionality.
-- If you find a bug, fix it AND add a test for it.
-- If you find something you're unsure about, flag it in the summary rather than silently ignoring it.
+## TASK 6: Write REVIEW_RESULTS.md
+
+Format:
+```
+# Review Results
+
+## Import check: X/6 pass
+## Validation gate tests: X/13 pass
+## Nudge pipeline: PASS/FAIL
+## Error paths: X/5 verified
+## Live deployment: PASS/FAIL
+
+## Issues found:
+1. [CRITICAL/MEDIUM/LOW] file:line - description - fix applied: yes/no
+2. ...
+
+## Conclusion: SHIP / NEEDS FIXES
+```
