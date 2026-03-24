@@ -78,6 +78,10 @@ STANDARD_SECTIONS = [
     "summary", "objective", "experience", "work experience",
     "education", "skills", "certifications", "certification",
     "projects", "awards", "honors", "publications",
+    "professional summary", "professional experience",
+    "core skills", "core competencies", "technical skills",
+    "additional information", "languages", "languages & work authorization",
+    "activities", "volunteer", "certifications & technical upskilling",
 ]
 
 EXTRACURRICULAR_KEYWORDS = [
@@ -90,27 +94,34 @@ COMPETENCY_KEYWORDS: dict[str, list[str]] = {
     "analytical": [
         "data", "analysis", "research", "metrics", "statistical",
         "evaluate", "optimize", "quantitative", "forecast", "insights",
-        "modeled", "assessed", "benchmarked",
+        "modeled", "assessed", "benchmarked", "analytics", "yield",
+        "root cause", "rca", "kpi", "roi", "dashboard", "doe",
+        "experiments", "optimization",
     ],
     "communication": [
         "presented", "communicated", "collaborated", "stakeholder",
         "facilitated", "negotiated", "articulated", "liaised",
-        "reported", "briefed", "authored", "published",
+        "reported", "briefed", "authored", "published", "aligned",
+        "engaged", "translated", "partnered", "workshop", "workshops",
+        "influenced",
     ],
     "leadership": [
         "led", "managed", "supervised", "mentored", "directed",
         "spearheaded", "oversaw", "headed", "governed", "guided",
-        "delegated", "inspired",
+        "delegated", "inspired", "owned", "owner", "program-managed",
+        "program managed", "roadmap", "accountability",
     ],
     "teamwork": [
         "cross-functional", "collaborated", "partnered", "team",
         "contributed", "coordinated", "cooperated", "supported",
-        "aligned", "joint",
+        "aligned", "joint", "cross functional", "stakeholders",
+        "multi-site", "global teams", "workshops",
     ],
     "initiative": [
         "initiated", "launched", "created", "established", "pioneered",
         "proposed", "founded", "introduced", "innovated", "championed",
-        "conceptualized", "originated",
+        "conceptualized", "originated", "transformed", "modernized",
+        "orchestrated", "built", "deployed", "drove",
     ],
 }
 
@@ -138,6 +149,32 @@ _DATE_FORMATS = [
         r"\b\d{4}\s*[-\u2013]\s*(?:\d{4}|present|current)\b", re.I
     ),
 ]
+
+_NORMALIZED_SECTION_KEYS = {
+    "professional summary": "summary",
+    "career summary": "summary",
+    "summary": "summary",
+    "objective": "objective",
+    "professional experience": "experience",
+    "work experience": "experience",
+    "experience": "experience",
+    "education": "education",
+    "core skills": "skills",
+    "core competencies": "skills",
+    "technical skills": "skills",
+    "skills": "skills",
+    "projects": "projects",
+    "certifications": "certifications",
+    "certification": "certifications",
+    "certifications & technical upskilling": "certifications",
+    "additional information": "additional_information",
+    "languages": "languages",
+    "languages & work authorization": "languages",
+    "activities": "activities",
+    "volunteer": "activities",
+}
+
+_INLINE_HEADINGS = sorted(STANDARD_SECTIONS, key=len, reverse=True)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -183,6 +220,58 @@ def _split_action_sentences(text: str) -> list[str]:
     return result if result else [text]
 
 
+def _clean_line(text: str) -> str:
+    return re.sub(r"(\*\*|__)", "", text or "").strip()
+
+
+def _section_key(line: str) -> str:
+    lower = _clean_line(line).lower().rstrip(":")
+    return _NORMALIZED_SECTION_KEYS.get(lower, lower)
+
+
+def _split_inline_heading_line(line: str) -> list[str]:
+    stripped = _clean_line(line)
+    if not stripped:
+        return [""]
+
+    lower = stripped.lower()
+    for heading in _INLINE_HEADINGS:
+        pattern = re.compile(
+            rf"^({re.escape(heading)})(?:\s*[:\-|]\s*|\s+)(.+)$",
+            re.I,
+        )
+        match = pattern.match(stripped)
+        if not match:
+            continue
+        remainder = match.group(2).strip()
+        if not remainder:
+            continue
+        # Avoid splitting genuine headers like "Professional Summary:"
+        if remainder.lower() in _NORMALIZED_SECTION_KEYS:
+            continue
+        heading_text = match.group(1).strip()
+        if stripped == stripped.upper():
+            heading_text = heading_text.upper()
+        return [heading_text, remainder]
+    return [stripped]
+
+
+def _iter_resume_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in text.split("\n"):
+        lines.extend(_split_inline_heading_line(raw_line))
+    return lines
+
+
+def _starts_with_action_verb(text: str) -> bool:
+    words = _clean_line(text).split()
+    if not words:
+        return False
+    first = words[0].lower().rstrip(",;:")
+    base = first.split("-")[-1] if "-" in first else first
+    return first in ACTION_VERBS or base in ACTION_VERBS
+
+
 class ResumeScorer:
     """Analyses resume text and returns a structured score report."""
 
@@ -215,22 +304,29 @@ class ResumeScorer:
         _role_separator = re.compile(r"[|—–]")
 
         bullets: list[str] = []
-        lines = text.split("\n")
-        after_subheading = False
+        lines = _iter_resume_lines(text)
+        context_window = 0
+        current_section = ""
 
         for line in lines:
-            stripped = line.strip()
+            stripped = _clean_line(line)
             if not stripped:
-                after_subheading = False
+                context_window = max(0, context_window - 1)
                 continue
 
             # Track whether we're after a subheading/date line
             is_header = _all_caps_header.match(stripped)
             has_date = bool(_date_re.search(stripped))
             has_role_sep = bool(_role_separator.search(stripped))
+            section_key = _section_key(stripped)
 
-            if is_header or has_date or has_role_sep:
-                after_subheading = True
+            if is_header or section_key in _NORMALIZED_SECTION_KEYS.values():
+                current_section = section_key
+                context_window = 2
+                continue
+
+            if has_date or has_role_sep:
+                context_window = 2
                 continue
 
             # Method 1: explicit bullet character
@@ -246,22 +342,30 @@ class ResumeScorer:
                 continue
 
             # Methods 2 & 3: action-verb start or achievement pattern
-            first_word = stripped.split()[0].lower().rstrip(",;:") if stripped.split() else ""
-            starts_with_action = first_word in ACTION_VERBS
+            starts_with_action = _starts_with_action_verb(stripped)
             looks_like_achievement = bool(_achievement_re.search(stripped))
+            bullet_friendly_section = current_section in {
+                "experience", "projects", "activities", ""
+            }
 
-            if after_subheading and (starts_with_action or looks_like_achievement):
+            if bullet_friendly_section and context_window > 0 and (starts_with_action or looks_like_achievement):
                 # Split multi-sentence lines where each sentence starts
                 # with an action verb (common when PDF joins bullets onto
                 # one line, e.g. "Led X. Directed Y. Achieved Z.")
                 _sub_bullets = _split_action_sentences(stripped)
                 bullets.extend(_sub_bullets)
+                context_window = max(0, context_window - 1)
                 continue
 
             # Achievement line even without prior subheading context
-            if starts_with_action and looks_like_achievement:
+            if bullet_friendly_section and starts_with_action and (
+                looks_like_achievement or len(stripped.split()) >= 8
+            ):
                 _sub_bullets = _split_action_sentences(stripped)
                 bullets.extend(_sub_bullets)
+                continue
+
+            context_window = max(0, context_window - 1)
 
         return bullets
 
@@ -269,36 +373,33 @@ class ResumeScorer:
     def _extract_sections(text: str) -> list[str]:
         """Identify section headers in the resume."""
         found: list[str] = []
-        for line in text.split("\n"):
-            stripped = line.strip()
+        for line in _iter_resume_lines(text):
+            stripped = _clean_line(line)
             if not stripped:
                 continue
             lower = stripped.lower().rstrip(":")
             # Exact match against known sections
             if lower in STANDARD_SECTIONS:
-                found.append(lower)
+                found.append(_section_key(lower))
                 continue
             # ALL-CAPS line with 2+ chars and no lowercase
             if (
                 len(stripped) >= 2
                 and stripped == stripped.upper()
                 and re.search(r"[A-Z]", stripped)
-                and len(stripped.split()) <= 5
+                and len(stripped.split()) <= 6
             ):
-                found.append(stripped.lower())
+                found.append(_section_key(stripped))
                 continue
             # Line ending with colon, short enough to be a header
             if stripped.endswith(":") and len(stripped.split()) <= 5:
-                found.append(lower)
+                found.append(_section_key(lower))
         return list(dict.fromkeys(found))  # dedupe, preserve order
 
     @staticmethod
     def _find_action_verbs(bullet: str) -> bool:
         """Check whether the first word of a bullet is an action verb."""
-        words = bullet.split()
-        if not words:
-            return False
-        return words[0].lower().rstrip(",;:") in ACTION_VERBS
+        return _starts_with_action_verb(bullet)
 
     # ── Dimension scorers ────────────────────────────────────────────────
 
@@ -375,7 +476,9 @@ class ResumeScorer:
             "scrum", "project", "product", "business", "customer",
             "service", "sales", "marketing", "operations", "process",
             "team", "company", "experience", "skills", "education",
-            "singapore", "certification", "certified",
+            "singapore", "certification", "certified", "automation",
+            "digital", "transformation", "program", "manager",
+            "leadership", "stakeholder", "stakeholders",
         }
         overused = [
             w for w, c in word_counts.items()
@@ -384,7 +487,7 @@ class ResumeScorer:
             and w not in _tech_exempt
             and len(w) > 3
         ]
-        penalty = len(overused) * 2
+        penalty = min(6, len(overused))
         overusage_score = max(0, 10 - penalty)
         overusage_suggestions: list[str] = []
         if overused:
@@ -517,10 +620,7 @@ class ResumeScorer:
         }
 
         # section_count (5)
-        core = {
-            "summary", "objective", "experience", "work experience",
-            "education", "skills", "certifications", "certification",
-        }
+        core = {"summary", "objective", "experience", "education", "skills", "certifications"}
         matched_sections = [s for s in sections if s in core]
         sc_count = len(matched_sections)
         if sc_count >= 4:
@@ -566,7 +666,12 @@ class ResumeScorer:
                     "Use a consistent date format throughout "
                     "(e.g., Jan 2024)"
                 )
-        caps_blocks = re.findall(r"(?:[A-Z]{2,}\s+){4,}", text)
+        caps_blocks = [
+            line for line in _iter_resume_lines(text)
+            if line
+            and line == line.upper()
+            and len(line.split()) >= 8
+        ]
         if caps_blocks:
             fmt_score -= 2
             fmt_suggestions.append(
@@ -650,8 +755,19 @@ class ResumeScorer:
 
         for comp_name, keywords in COMPETENCY_KEYWORDS.items():
             matched = [kw for kw in keywords if kw in text_lower]
-            ratio = len(matched) / len(keywords) if keywords else 0
-            score = min(6, round(ratio * 6))
+            match_count = len(matched)
+            if match_count >= 5:
+                score = 6
+            elif match_count == 4:
+                score = 5
+            elif match_count == 3:
+                score = 4
+            elif match_count == 2:
+                score = 3
+            elif match_count == 1:
+                score = 2
+            else:
+                score = 1
             suggestions: list[str] = []
             if score < 4:
                 missing_kw = [

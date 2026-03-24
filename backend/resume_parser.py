@@ -71,6 +71,8 @@ def _join_broken_lines(text: str) -> str:
         "volunteer", "activities", "publications", "references",
         "professional summary", "professional experience", "work experience",
         "core skills", "core competencies", "technical skills",
+        "additional information", "languages & work authorization",
+        "certifications & technical upskilling",
     }
 
     lines = text.split("\n")
@@ -120,6 +122,20 @@ def _join_broken_lines(text: str) -> str:
                     starts_new = True
 
         # If previous line ends with period/semicolon AND this starts with caps, new line
+        if not starts_new and merged and merged[-1]:
+            prev = merged[-1]
+            prev_lower = prev.strip().lower().rstrip(":")
+            prev_is_section = (
+                bool(_all_caps_header.match(prev.strip()))
+                or prev_lower in _section_words
+                or prev_lower.rstrip(":") in _section_words
+            )
+            prev_is_subheading = bool(_date_pattern.search(prev)) or bool(_role_separator.search(prev))
+
+            # Never join content onto a section header or dated role line.
+            if prev_is_section or prev_is_subheading:
+                starts_new = True
+
         if not starts_new and merged and merged[-1]:
             prev = merged[-1]
             if prev.endswith((".", ";", ":", "!")) and stripped[0].isupper():
