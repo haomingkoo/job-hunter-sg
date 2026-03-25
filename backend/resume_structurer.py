@@ -384,22 +384,30 @@ def _parse_education_entry(
         )
         is_detail_line = bool(_EDUCATION_DETAIL_RE.search(stripped))
 
+        # Handle GPA-only lines
+        if gpa_match and stripped.strip() == gpa_match.group(0).strip():
+            continue  # GPA already extracted above
+
         if is_degree_line and not degree:
-            # Remove date from degree text
             degree = text_no_date or stripped
         elif is_institution_line and not institution:
-            institution = text_no_date or stripped
+            # Strip "Exchange:" suffix if present
+            inst_text = text_no_date or stripped
+            exchange_match = re.search(
+                r"\s*Exchange\s*:\s*(.+)$", inst_text, re.I,
+            )
+            if exchange_match:
+                details.append(f"Exchange: {exchange_match.group(1).strip()}")
+                inst_text = inst_text[:exchange_match.start()].strip().rstrip(",")
+            institution = inst_text
         elif is_detail_line:
-            # GPA is already extracted; add other details
-            if not gpa_match:
-                details.append(stripped)
-            elif stripped != gpa_match.group(0).strip():
-                # Line has more than just GPA
+            if gpa_match:
                 remaining = _GPA_RE.sub("", stripped).strip().strip(",").strip()
                 if remaining:
                     details.append(remaining)
+            else:
+                details.append(stripped)
         elif not degree and not institution:
-            # First line, could be institution or degree
             if _DEGREE_PREFIX_RE.match(text_no_date):
                 degree = text_no_date
             else:
@@ -407,9 +415,15 @@ def _parse_education_entry(
         elif institution and not degree:
             degree = text_no_date or stripped
         elif degree and not institution:
-            institution = text_no_date or stripped
+            inst_text = text_no_date or stripped
+            exchange_match = re.search(
+                r"\s*Exchange\s*:\s*(.+)$", inst_text, re.I,
+            )
+            if exchange_match:
+                details.append(f"Exchange: {exchange_match.group(1).strip()}")
+                inst_text = inst_text[:exchange_match.start()].strip().rstrip(",")
+            institution = inst_text
         else:
-            # Extra line - treat as detail
             if stripped not in (degree, institution, date_range, gpa):
                 details.append(stripped)
 
@@ -443,7 +457,12 @@ def _parse_education_entry(
 def _build_education_entries(
     section_lines: list[str],
 ) -> list[dict[str, Any]]:
-    """Parse education section into structured entries with rich fields."""
+    """Parse education section into structured entries with rich fields.
+
+    Strategy: aggressively split on degree or institution keywords.
+    Each degree+institution pair = one entry. Details attach to the
+    most recent entry.
+    """
     entries: list[dict[str, Any]] = []
     current_lines: list[str] = []
 
@@ -452,53 +471,56 @@ def _build_education_entries(
         if not current_lines:
             return
         entry = _parse_education_entry(current_lines, len(entries))
-        # Only add if there's meaningful content
         if entry["heading"] or entry["degree"] or entry["institution"]:
             entries.append(entry)
         current_lines = []
+
+    def _current_has(kind: str) -> bool:
+        """Check if current_lines already contain a degree or institution."""
+        for ln in current_lines:
+            s = _clean_line(ln)
+            if not s:
+                continue
+            if kind == "degree" and _DEGREE_PREFIX_RE.match(s):
+                return True
+            if kind == "institution" and _INSTITUTION_RE.search(s) and not _EDUCATION_DETAIL_RE.search(s):
+                return True
+        return False
 
     for line in section_lines:
         stripped = _clean_line(line)
         if not stripped:
             continue
 
-        # Strip bullet prefix for education lines
-        is_bullet = bool(_BULLET_CHAR_RE.match(line))
-        clean_text = _strip_bullet_prefix(line) if is_bullet else stripped
+        is_degree = bool(_DEGREE_PREFIX_RE.match(stripped))
+        is_institution = bool(
+            _INSTITUTION_RE.search(stripped)
+            and not _EDUCATION_DETAIL_RE.search(stripped)
+        )
+        is_detail = bool(_EDUCATION_DETAIL_RE.search(stripped))
 
-        if _is_education_entry_start(line) and current_lines:
-            # Check if this line belongs to the current entry
-            # (e.g., degree line after institution line in the same entry)
-            has_degree = any(
-                _DEGREE_PREFIX_RE.match(_clean_line(ln))
-                for ln in current_lines
-            )
-            has_institution = any(
-                _INSTITUTION_RE.search(_clean_line(ln))
-                and not _EDUCATION_DETAIL_RE.search(_clean_line(ln))
-                for ln in current_lines
-            )
-            is_new_degree = bool(_DEGREE_PREFIX_RE.match(stripped))
-            is_new_institution = bool(
-                _INSTITUTION_RE.search(stripped)
-                and not _EDUCATION_DETAIL_RE.search(stripped)
-            )
+        # Decision: should we start a new entry?
+        start_new = False
+        if current_lines:
+            if is_degree and _current_has("degree"):
+                start_new = True  # Second degree = new entry
+            elif is_institution and _current_has("institution"):
+                start_new = True  # Second institution = new entry
+            elif is_degree and _current_has("institution") and not _current_has("degree"):
+                start_new = False  # Degree after institution = same entry
+            elif is_institution and _current_has("degree") and not _current_has("institution"):
+                start_new = False  # Institution after degree = same entry
+            elif (is_degree or is_institution) and _current_has("degree") and _current_has("institution"):
+                start_new = True  # Already have both = new entry
 
-            # Start new entry if we already have both degree + institution,
-            # or if we see a second degree/institution
-            if (has_degree and is_new_degree) or (
-                has_institution and is_new_institution
-            ) or (has_degree and has_institution):
-                _flush()
+        if start_new:
+            _flush()
 
-        if not current_lines and not _is_education_entry_start(line):
-            # Stray detail line before any entry; still collect it
-            if _EDUCATION_DETAIL_RE.search(stripped):
-                current_lines.append(line)
+        # If this is a detail line and we have no current entry, skip or attach to previous
+        if not current_lines and is_detail and not is_degree and not is_institution:
+            if entries:
+                entries[-1]["details"].append(stripped)
                 continue
-            # Otherwise start a new entry
-            current_lines = [line]
-            continue
 
         current_lines.append(line)
 
