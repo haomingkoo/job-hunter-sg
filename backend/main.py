@@ -1703,6 +1703,56 @@ def trending_skills(
     return get_trending_skills(db, limit=limit)
 
 
+@app.get("/api/analytics/skills")
+def analytics_skills(
+    limit: int = Query(50, ge=1, le=200),
+    source: str | None = Query(None, max_length=50),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Aggregate ATS skill demand from job_terms_preview across all jobs."""
+    query = db.query(ScrapedJob).filter(
+        ScrapedJob.job_terms_preview.isnot(None),
+    )
+    if source:
+        query = query.filter(ScrapedJob.source == source)
+
+    skill_counts: dict[str, int] = {}
+    source_counts: dict[str, int] = {}
+    total_jobs = 0
+
+    for job in query.yield_per(500):
+        preview = job.job_terms_preview
+        if not isinstance(preview, list) or not preview:
+            continue
+        total_jobs += 1
+        src = job.source or "Unknown"
+        source_counts[src] = source_counts.get(src, 0) + 1
+        for term in preview:
+            label = str(term).strip()
+            if not label:
+                continue
+            key = label.lower()
+            skill_counts[key] = skill_counts.get(key, 0) + 1
+
+    # Sort by count descending, take top N
+    sorted_skills = sorted(skill_counts.items(), key=lambda x: -x[1])[:limit]
+
+    # Title case the labels for display
+    top_skills = [
+        {"skill": term.title() if term == term.lower() else term, "count": count}
+        for term, count in sorted_skills
+    ]
+
+    return {
+        "top_skills": top_skills,
+        "total_jobs_with_terms": total_jobs,
+        "sources": [
+            {"source": s, "count": c}
+            for s, c in sorted(source_counts.items(), key=lambda x: -x[1])
+        ],
+    }
+
+
 @app.get("/api/jobs")
 def list_cached_jobs(
     q: Optional[str] = Query(None, max_length=200, description="Filter by keyword"),
@@ -1873,6 +1923,7 @@ def list_cached_jobs(
                 "job_terms_preview_ready": j.job_terms_preview is not None,
                 "jd_summary": j.jd_summary or "",
                 "jd_summary_status": j.jd_summary_status or "",
+                "experience_years": (j.parsed_jd or {}).get("experience_years", "") if isinstance(j.parsed_jd, dict) else "",
                 "agency": j.agency, "scraped_at": j.scraped_at,
             }
             for j in jobs

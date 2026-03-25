@@ -72,6 +72,29 @@ ATS_DISPLAY_EXCLUDE: set[str] = ATS_MULTIWORD_NOISE | {
     "cpf board", "assistant manager",
     "daily operations", "service vendors",
     "agents and toxin act",
+    # Round 7: remaining fragment noise
+    "team members", "team player", "team environment",
+    "fast paced environment", "fast-paced environment",
+    "problem solving", "problem-solving skills",
+    "attention to detail", "detail oriented", "detail-oriented",
+    "self motivated", "self-motivated",
+    "results oriented", "results-oriented",
+    "strong communication", "excellent communication",
+    "verbal and written", "written and verbal",
+    "interpersonal skills", "analytical skills",
+    "organizational skills", "time management",
+    "proven track record", "track record",
+    "tertiary education", "educational institution",
+    "minimum years", "years experience",
+    "full time", "part time",
+    "ad hoc", "ad-hoc",
+    "hands on", "hands-on experience",
+    "day to day", "day-to-day",
+    "end to end", "public sector",
+    "private sector", "career development",
+    "job responsibilities", "job scope",
+    "working closely", "reporting to",
+    "liaising with", "working with",
 }
 
 ATS_OUTLINE_NOISE: set[str] = {
@@ -284,6 +307,10 @@ _RESPONSIBILITY_VERBS = {
     "maintain", "manage", "monitor", "oversee", "participate", "perform",
     "plan", "prepare", "provide", "reinforce", "review", "seek", "shape",
     "support", "work", "coordinate", "execute", "analyze", "analyse",
+    "assist", "handle", "conduct", "liaise", "report", "communicate",
+    "create", "design", "define", "administer", "advise", "align",
+    "assess", "formulate", "guide", "initiate", "inspect", "organize",
+    "oversee", "propose", "recommend", "resolve", "track", "update",
 }
 
 
@@ -361,6 +388,20 @@ def _is_noise_term(term: str, context: str = "") -> bool:
 
     if _looks_like_study_area(lowered, context):
         return True
+
+    # Contains "years" or "year" (experience requirements, not skills)
+    if "year" in lowered:
+        return True
+
+    # Mostly numeric (e.g., "5", "10+", "3-5")
+    if re.match(r"^[\d+\-.\s]+$", lowered):
+        return True
+
+    # Generic adjective + noun patterns that aren't real skills
+    _GENERIC_ADJ = {"new", "various", "multiple", "effective", "appropriate"}
+    if word_count >= 2 and words[0] in _GENERIC_ADJ:
+        return True
+
     return False
 
 

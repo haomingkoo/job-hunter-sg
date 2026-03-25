@@ -4,7 +4,7 @@ import {
   CheckCircle, AlertCircle, ExternalLink, Trash2, Edit3, Save, Filter,
   RefreshCw, Zap, Download, Copy, Star, MapPin, DollarSign, Building2,
   Loader2, User, LogOut, Mail,
-  RotateCcw, Sparkles, UploadCloud,
+  RotateCcw, Sparkles, UploadCloud, BarChart2,
 } from "lucide-react";
 
 // ─── API Config ────────────────────────────────────────────────────────────────
@@ -211,6 +211,7 @@ function Nav({ active, setActive }) {
     { id: "scraper", label: "Jobs", icon: Search },
     { id: "power", label: "Power Match", icon: Sparkles },
     { id: "tracker", label: "Tracker", icon: Briefcase },
+    { id: "analytics", label: "Insights", icon: BarChart2 },
     { id: "reminders", label: "Reminders", icon: Bell },
     { id: "resume", label: "Resume", icon: FileText },
     { id: "account", label: "Account", icon: User },
@@ -404,6 +405,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
         type: j.employment_type || "",
         level: j.seniority || "",
         url: j.url || "",
+        experienceYears: j.experience_years || "",
       }));
       setResults(mapped);
       if (pageNum === 1 && data.filter_meta && typeof data.filter_meta === "object") {
@@ -830,6 +832,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
                 <span className="flex items-center gap-1"><Building2 size={13} />{job.company}</span>
                 {job.location && <span className="flex items-center gap-1"><MapPin size={13} />{job.location}</span>}
                 {job.salary && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
+                {job.experienceYears && <span className="flex items-center gap-1"><Clock size={13} />{job.experienceYears} yrs</span>}
               </div>
               {(summaryText || job.description) && !isExpanded && (
                 <p className="text-sm text-gray-600 mb-3 line-clamp-2">{summaryText || job.description}</p>
@@ -1513,6 +1516,129 @@ function TrackerTab({ user, jobs, refreshJobs }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TAB: ANALYTICS / INSIGHTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function AnalyticsTab() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
+  const [showCount, setShowCount] = useState(30);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const params = new URLSearchParams({ limit: "100" });
+      if (sourceFilter) params.set("source", sourceFilter);
+      const resp = await apiFetch(`/api/analytics/skills?${params}`);
+      if (!resp.ok) throw new Error("Failed to load analytics");
+      setData(await resp.json());
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  }, [sourceFilter]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const maxCount = data?.top_skills?.[0]?.count || 1;
+  const visibleSkills = (data?.top_skills || []).slice(0, showCount);
+
+  return (
+    <div className="mx-auto max-w-5xl space-y-6">
+      <div>
+        <h2 className="flex items-center gap-2 text-2xl font-semibold text-gray-900">
+          <BarChart2 size={20} />
+          Skills Insights
+        </h2>
+        <p className="mt-1 text-sm text-gray-500">
+          Most in-demand skills across {data?.total_jobs_with_terms?.toLocaleString() || "..."} job listings with extracted ATS terms.
+        </p>
+      </div>
+
+      {data?.sources?.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium text-gray-500">Filter by source:</span>
+          <button
+            type="button"
+            onClick={() => setSourceFilter("")}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition ${!sourceFilter ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+          >
+            All Sources
+          </button>
+          {data.sources.map((s) => (
+            <button
+              key={s.source}
+              type="button"
+              onClick={() => setSourceFilter(s.source)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition ${sourceFilter === s.source ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+            >
+              {s.source} ({s.count.toLocaleString()})
+            </button>
+          ))}
+        </div>
+      )}
+
+      {loading && (
+        <div className="flex items-center gap-2 py-12 justify-center text-gray-500">
+          <Loader2 size={18} className="animate-spin" />
+          Loading skill data...
+        </div>
+      )}
+
+      {error && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && visibleSkills.length > 0 && (
+        <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="text-sm font-semibold text-gray-800 mb-4">
+            Top {visibleSkills.length} In-Demand Skills
+          </div>
+          <div className="space-y-2">
+            {visibleSkills.map((item, index) => (
+              <div key={item.skill} className="flex items-center gap-3">
+                <div className="w-5 text-right text-xs text-gray-400 font-mono">{index + 1}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div
+                      className="h-6 rounded-md bg-indigo-500/80"
+                      style={{ width: `${Math.max(4, (item.count / maxCount) * 100)}%` }}
+                    />
+                    <span className="text-sm font-medium text-gray-800 whitespace-nowrap">{item.skill}</span>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-400 font-mono w-12 text-right">{item.count.toLocaleString()}</div>
+              </div>
+            ))}
+          </div>
+          {(data?.top_skills?.length || 0) > showCount && (
+            <button
+              type="button"
+              onClick={() => setShowCount((c) => c + 30)}
+              className="mt-4 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+            >
+              Show more...
+            </button>
+          )}
+        </div>
+      )}
+
+      {!loading && !error && visibleSkills.length === 0 && (
+        <div className="text-center py-12 text-gray-400">
+          <BarChart2 size={32} className="mx-auto mb-2 opacity-40" />
+          <p>No skill data available yet. Skills are extracted as jobs are processed.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -3486,6 +3612,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [showSetupPanel, setShowSetupPanel] = useState(() => !resumeText.trim());
   const [workspaceView, setWorkspaceView] = useState("feedback");
   const [mobilePanel, setMobilePanel] = useState("edit");
+  const [showVersionDropdown, setShowVersionDropdown] = useState(false);
   const [selectedBulletId, setSelectedBulletId] = useState(null);
   const [selectedSectionId, setSelectedSectionId] = useState(null);
   const [editingNodeId, setEditingNodeId] = useState(null);
@@ -5093,32 +5220,91 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
         </div>
       ) : (
         <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
               <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Setup Complete</div>
-              <div className="mt-1 text-sm text-gray-700">
+              <div className="mt-1 text-sm text-gray-700 truncate">
                 {profile.name || "Resume loaded"}{profile.email ? ` • ${profile.email}` : ""}{profile.phone ? ` • ${profile.phone}` : ""}
               </div>
               <div className="mt-1 text-xs text-gray-500">
                 {wordCount} words • {scorePhaseLabel}
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {user && (
+                <>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => { setShowVersionDropdown((c) => !c); if (!resumeVersions.length) fetchVersions(); }}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                    >
+                      <Download size={13} />
+                      Load Version
+                      <ChevronRight size={12} className={`transition-transform ${showVersionDropdown ? "rotate-90" : ""}`} />
+                    </button>
+                    {showVersionDropdown && (
+                      <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
+                        {versionsLoading ? (
+                          <div className="flex items-center gap-2 px-3 py-2 text-xs text-gray-500"><Loader2 size={12} className="animate-spin" />Loading...</div>
+                        ) : resumeVersions.length === 0 ? (
+                          <div className="px-3 py-2 text-xs text-gray-400">No saved versions yet.</div>
+                        ) : (
+                          <div className="max-h-48 overflow-y-auto space-y-0.5">
+                            {resumeVersions.map((v) => (
+                              <button
+                                key={v.id}
+                                type="button"
+                                onClick={() => { loadVersion(v.id); setShowVersionDropdown(false); }}
+                                className="w-full text-left rounded-lg px-3 py-2 text-xs hover:bg-gray-50 transition"
+                              >
+                                <div className="font-medium text-gray-800 truncate">{v.label}</div>
+                                <div className="text-gray-400 mt-0.5">
+                                  {v.score ? `Score ${v.score}` : ""}{v.job_title ? ` • ${v.job_title}` : ""}
+                                  {v.word_count ? ` • ${v.word_count}w` : ""}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white p-1">
+                    <input
+                      type="text"
+                      value={saveVersionLabel}
+                      onChange={(e) => setSaveVersionLabel(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") saveCurrentVersion(); }}
+                      placeholder="Version label..."
+                      className="w-24 rounded-lg bg-transparent px-2 py-1 text-xs focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={saveCurrentVersion}
+                      disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
+                      className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                    >
+                      <Save size={12} />
+                    </button>
+                  </div>
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => setShowSetupPanel(true)}
-                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
               >
-                <Edit3 size={14} />
+                <Edit3 size={13} />
                 Edit Setup
               </button>
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700"
               >
-                <UploadCloud size={14} />
-                Replace Resume
+                <UploadCloud size={13} />
+                Replace
               </button>
             </div>
           </div>
@@ -6499,34 +6685,44 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                           )}
                           {section.type === "subheading" && (
                             section.variant === "education_main" ? (
-                              <div className={`mb-2 grid grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] items-start gap-x-4 gap-y-1 ${templateStyles.subheadingClass}`}>
-                                <div className="font-semibold leading-snug text-gray-900">
-                                  {renderHighlightedText(
-                                    getDisplaySubheadingText(section.left, section.sectionKey, section.variant),
-                                    section.keywordMatches || [],
-                                  )}
-                                </div>
+                              <div className={`mb-1 rounded-lg border border-gray-100 bg-gray-50/40 px-3 py-2.5 ${templateStyles.subheadingClass}`}>
                                 {(() => {
                                   const meta = splitEducationMeta(
                                     getDisplaySubheadingText(section.right, section.sectionKey, section.variant),
                                   );
                                   return (
-                                    <div className="text-right text-[0.98em] leading-snug text-gray-500 break-words">
-                                      <div>{meta.primary}</div>
-                                      {meta.secondary && <div className="mt-0.5 text-[0.94em] text-gray-400">{meta.secondary}</div>}
-                                    </div>
+                                    <>
+                                      <div className="flex items-baseline justify-between gap-4">
+                                        <div className="font-semibold leading-snug text-gray-900">
+                                          {renderHighlightedText(
+                                            getDisplaySubheadingText(section.left, section.sectionKey, section.variant),
+                                            section.keywordMatches || [],
+                                          )}
+                                        </div>
+                                        {meta.secondary && (
+                                          <div className="shrink-0 text-[0.9em] text-gray-400 whitespace-nowrap">
+                                            {meta.secondary}
+                                          </div>
+                                        )}
+                                      </div>
+                                      {meta.primary && (
+                                        <div className="mt-0.5 text-[0.93em] leading-snug text-gray-600">
+                                          {meta.primary}
+                                        </div>
+                                      )}
+                                    </>
                                   );
                                 })()}
                               </div>
                             ) : section.variant === "education_detail" ? (
-                              <div className="mb-3 grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] items-start gap-x-4 gap-y-1 text-[0.93em] text-gray-600">
+                              <div className="-mt-0.5 mb-2 ml-3 flex items-baseline justify-between gap-4 text-[0.88em] text-gray-500">
                                 <div className="leading-snug">
                                   {renderHighlightedText(
                                     getDisplaySubheadingText(section.left, section.sectionKey, section.variant),
                                     section.keywordMatches || [],
                                   )}
                                 </div>
-                                <div className="text-right leading-snug break-words">
+                                <div className="text-right leading-snug shrink-0">
                                   {getDisplaySubheadingText(section.right, section.sectionKey, section.variant)}
                                 </div>
                               </div>
@@ -6562,6 +6758,14 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 );
                               }
 
+                              if (section.sectionKey === "education") {
+                                return (
+                                  <p className="-mt-0.5 mb-2 ml-3 text-[0.88em] leading-snug text-gray-500" style={templateStyles.bodyStyle}>
+                                    {renderHighlightedText(getDisplayParagraphText(section), section.keywordMatches || [])}
+                                  </p>
+                                );
+                              }
+
                               return (
                                 <p
                                   className={`mb-4 text-gray-700 ${section.sectionKey === "summary" && isLikelySummaryLeadParagraph(section.text) && !isShoutySummaryParagraph(section.text, section.sectionKey) ? "font-semibold tracking-[0.03em] text-gray-900" : ""}`}
@@ -6573,10 +6777,10 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                             })()
                           )}
                           {section.type === "bullet" && (
-                            <div className="flex gap-3">
-                              <div className="pt-1 text-[1rem] text-gray-400">•</div>
+                            <div className={`flex gap-3 ${section.sectionKey === "education" ? "ml-2" : ""}`}>
+                              <div className={`pt-1 text-gray-400 ${section.sectionKey === "education" ? "text-[0.85rem]" : "text-[1rem]"}`}>•</div>
                               <div className="flex-1">
-                                <p className="text-gray-700" style={templateStyles.bodyStyle}>
+                                <p className={section.sectionKey === "education" ? "text-[0.88em] text-gray-500" : "text-gray-700"} style={templateStyles.bodyStyle}>
                                   {renderHighlightedText(section.text, annotation?.keywordMatches || [])}
                                 </p>
                                 {annotationsOn && annotation && (
@@ -7111,6 +7315,7 @@ export default function JobHunterSG() {
               <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Application Tracker" />
             )
           )}
+          {activeTab === "analytics" && <AnalyticsTab />}
           {activeTab === "reminders" && (
             user ? (
               <RemindersTab
