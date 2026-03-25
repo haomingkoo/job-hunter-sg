@@ -96,15 +96,15 @@ export default function HomePage({ onNavigate }) {
             <div className="max-w-xl">
               <div className="hero-stagger-1 inline-flex items-center gap-2 rounded-full border border-sky-200/60 bg-sky-50/80 px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-sky-600">
                 <div className="h-1.5 w-1.5 rounded-full bg-sky-500 animate-pulse" />
-                {count}+ jobs updated daily
+                Helping Singapore professionals find meaningful work
               </div>
 
               <h1 className="hero-stagger-2 font-display mt-7 text-[2.5rem] leading-[1.08] tracking-tight text-slate-900 sm:text-[3.25rem] lg:text-[3.75rem]">
-                Land your next role in Singapore
+                Connecting you to your <span className="text-sky-600">dream job</span>
               </h1>
 
               <p className="hero-stagger-3 mt-5 text-lg leading-relaxed text-slate-500 sm:text-[1.15rem]">
-                The only platform that searches every major job portal, scores your resume against real ATS criteria, and tailors every bullet point for the role you want.
+                Your next chapter is out there. We search {count}+ Singapore listings, prepare your resume to stand out, and give you the confidence to go after the role you really want.
               </p>
 
               <div className="hero-stagger-4 mt-8 flex flex-wrap items-center gap-3">
@@ -113,7 +113,7 @@ export default function HomePage({ onNavigate }) {
                   onClick={() => onNavigate("scraper")}
                   className="group inline-flex items-center gap-2.5 rounded-xl bg-slate-900 px-6 py-3.5 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-slate-800 hover:shadow-md active:scale-[0.97]"
                 >
-                  Search Jobs <ArrowRight size={15} className="transition-transform duration-200 group-hover:translate-x-0.5" />
+                  Find Your Role <ArrowRight size={15} className="transition-transform duration-200 group-hover:translate-x-0.5" />
                 </button>
                 <button
                   type="button"
@@ -208,26 +208,26 @@ export default function HomePage({ onNavigate }) {
         <div className="mx-auto max-w-5xl px-6">
           <Reveal>
             <div className="text-center">
-              <h2 className="font-display text-3xl text-slate-900 sm:text-[2.5rem]">One platform, three superpowers</h2>
-              <p className="mx-auto mt-3 max-w-2xl text-[15px] text-slate-500">Everything you need to go from browsing to hired, in one place.</p>
+              <h2 className="font-display text-3xl text-slate-900 sm:text-[2.5rem]">Everything between you and your dream role</h2>
+              <p className="mx-auto mt-3 max-w-2xl text-[15px] text-slate-500">From discovering the right opportunity to submitting a standout application, we have your back at every step.</p>
             </div>
           </Reveal>
 
           <div className="mt-14 grid gap-6 sm:grid-cols-3">
             {[
               {
-                icon: Search, label: "Smart Job Search",
-                desc: "Filter across 5 portals at once. Every listing enriched with ATS-extracted skills so you see what employers actually want.",
+                icon: Search, label: "Discover Opportunities",
+                desc: "See every role that matches your ambitions, from 5 major Singapore job portals in one place. Know exactly what each employer is looking for.",
                 tab: "scraper", accent: "sky",
               },
               {
-                icon: FileText, label: "Resume Intelligence",
-                desc: "Upload your resume, get a detailed score across Impact, Presentation, and Competencies. Line-by-line coaching included.",
+                icon: FileText, label: "Prepare With Confidence",
+                desc: "Understand how your resume stacks up. Get honest feedback, fill the gaps, and tailor your story for the role you want most.",
                 tab: "resume", accent: "violet",
               },
               {
-                icon: BarChart2, label: "Market Insights",
-                desc: "See which skills are trending, what titles are hiring, and how sectors compare. Data updated nightly.",
+                icon: BarChart2, label: "Understand the Market",
+                desc: "Know which skills are in demand, which sectors are growing, and where the opportunities are before you make your move.",
                 tab: "analytics", accent: "teal",
               },
             ].map((c, i) => {
@@ -263,8 +263,8 @@ export default function HomePage({ onNavigate }) {
       <section ref={guideRef} className="scroll-mt-12 bg-white py-20">
         <div className="mx-auto max-w-5xl px-6">
           <Reveal>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-500">How it works</p>
-            <h2 className="font-display mt-2 text-3xl text-slate-900 sm:text-[2.25rem]">Three steps to a stronger application</h2>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-500">Your journey</p>
+            <h2 className="font-display mt-2 text-3xl text-slate-900 sm:text-[2.25rem]">From searching to hired, step by step</h2>
           </Reveal>
 
           {/* Step 1 */}
@@ -272,9 +272,9 @@ export default function HomePage({ onNavigate }) {
             <div className="grid items-center gap-10 lg:grid-cols-2">
               <div>
                 <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-sky-100 text-[11px] font-bold text-sky-600">1</span>
-                <h3 className="font-display mt-4 text-[1.5rem] text-slate-900">Find the right roles, fast</h3>
+                <h3 className="font-display mt-4 text-[1.5rem] text-slate-900">Explore what's out there</h3>
                 <p className="mt-3 text-[14px] leading-relaxed text-slate-500">
-                  Search {count}+ listings from MyCareersFuture, Careers@Gov, and more. Every job is tagged with ATS-extracted skills so you know exactly what the employer wants before you apply.
+                  Browse {count}+ roles across Singapore's top job portals. Every listing shows the skills employers actually care about, so you can focus your energy on the right opportunities.
                 </p>
                 <button type="button" onClick={() => onNavigate("scraper")} className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-sky-600 transition hover:gap-3">
                   Try job search <ArrowRight size={14} />
@@ -336,9 +336,9 @@ export default function HomePage({ onNavigate }) {
               </div>
               <div className="order-1 lg:order-2">
                 <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-violet-100 text-[11px] font-bold text-violet-600">2</span>
-                <h3 className="font-display mt-4 text-[1.5rem] text-slate-900">Know where you stand</h3>
+                <h3 className="font-display mt-4 text-[1.5rem] text-slate-900">See how ready you are</h3>
                 <p className="mt-3 text-[14px] leading-relaxed text-slate-500">
-                  Upload your resume and get an instant breakdown. See your match rate, keyword gaps, and line-by-line coaching suggestions.
+                  Upload your resume and find out honestly where you stand. See what's working, what's missing, and get clear guidance on how to close the gap.
                 </p>
                 <button type="button" onClick={() => onNavigate("resume")} className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-violet-600 transition hover:gap-3">
                   Score my resume <ArrowRight size={14} />
@@ -352,9 +352,9 @@ export default function HomePage({ onNavigate }) {
             <div className="grid items-center gap-10 lg:grid-cols-2">
               <div>
                 <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-teal-100 text-[11px] font-bold text-teal-600">3</span>
-                <h3 className="font-display mt-4 text-[1.5rem] text-slate-900">Tailor and send</h3>
+                <h3 className="font-display mt-4 text-[1.5rem] text-slate-900">Apply with confidence</h3>
                 <p className="mt-3 text-[14px] leading-relaxed text-slate-500">
-                  One click tailors your resume for any role. Matched and missing keywords highlighted. Download as PDF or DOCX, ready to submit.
+                  Tailor your resume to tell the right story for each role. Every bullet optimized, every keyword in place. Download and submit knowing you put your best foot forward.
                 </p>
                 <button type="button" onClick={() => onNavigate("resume")} className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-teal-600 transition hover:gap-3">
                   Start tailoring <ArrowRight size={14} />
@@ -388,14 +388,14 @@ export default function HomePage({ onNavigate }) {
         <div className="mx-auto max-w-5xl px-6">
           <Reveal>
             <div className="text-center">
-              <h2 className="font-display text-3xl text-slate-900 sm:text-[2.25rem]">Built for every career stage</h2>
+              <h2 className="font-display text-3xl text-slate-900 sm:text-[2.25rem]">Wherever you are in your journey</h2>
             </div>
           </Reveal>
           <div className="mt-12 grid gap-6 sm:grid-cols-3">
             {[
-              { icon: GraduationCap, title: "Fresh Graduates", desc: "Understand what employers look for. Learn how ATS systems filter applications and get your first resume right.", accent: "sky" },
-              { icon: Repeat, title: "Career Switchers", desc: "See which skills transfer, identify gaps to fill, and reframe your experience for a new industry.", accent: "violet" },
-              { icon: Award, title: "Senior Professionals", desc: "Fine-tune bullets for executive roles. Ensure your experience articulates real, measurable impact.", accent: "teal" },
+              { icon: GraduationCap, title: "Starting out", desc: "You've got the degree but not the experience. We help you understand what employers want and put together a resume that gets you through the door.", accent: "sky" },
+              { icon: Repeat, title: "Making a change", desc: "Switching careers is scary. We show you which skills already transfer, where the gaps are, and how to tell your story in a way that makes sense to a new industry.", accent: "violet" },
+              { icon: Award, title: "Aiming higher", desc: "You know your worth. We help you articulate it precisely, pass the ATS filters at top companies, and present your track record with the impact it deserves.", accent: "teal" },
             ].map((p, i) => {
               const a = { sky: "bg-sky-50 text-sky-600 border-sky-100", violet: "bg-violet-50 text-violet-600 border-violet-100", teal: "bg-teal-50 text-teal-600 border-teal-100" }[p.accent];
               return (
@@ -462,11 +462,11 @@ export default function HomePage({ onNavigate }) {
       <Reveal>
         <section className="mx-6 mb-12 rounded-3xl bg-slate-900 py-16 sm:mx-8 lg:mx-auto lg:max-w-5xl">
           <div className="mx-auto max-w-2xl px-8 text-center">
-            <h2 className="font-display text-2xl text-white sm:text-3xl">Ready to make your next move?</h2>
-            <p className="mt-3 text-[15px] text-slate-400">Join job seekers across Singapore using smarter tools to stand out.</p>
+            <h2 className="font-display text-2xl text-white sm:text-3xl">Your dream role is closer than you think</h2>
+            <p className="mt-3 text-[15px] text-slate-400">Thousands of Singapore professionals have already taken the first step. Your turn.</p>
             <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
               <button type="button" onClick={() => onNavigate("scraper")} className="group inline-flex items-center gap-2 rounded-xl bg-white px-6 py-3.5 text-sm font-semibold text-slate-900 shadow-sm transition-all duration-200 hover:shadow-md active:scale-[0.97]">
-                Get Started <ArrowRight size={15} className="transition-transform group-hover:translate-x-0.5" />
+                Start Your Journey <ArrowRight size={15} className="transition-transform group-hover:translate-x-0.5" />
               </button>
               <button type="button" onClick={() => onNavigate("resume")} className="rounded-xl border border-white/20 px-6 py-3.5 text-sm font-semibold text-white transition-all duration-200 hover:bg-white/10 active:scale-[0.97]">
                 Score My Resume
