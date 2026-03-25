@@ -3496,8 +3496,44 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   )}
 
                   <div style={templateStyles.bodyStyle}>
-                    {bodySections.map((section) => {
-                      if (section.type === "spacer") return <div key={section.id} className="h-1.5" />;
+                    {bodySections.map((section, sectionIndex) => {
+                      if (section.type === "spacer") {
+                        // Check if next non-spacer item starts a new section - show "Add Entry" button
+                        const prevItem = bodySections.slice(0, sectionIndex).reverse().find((s) => s.type !== "spacer");
+                        const nextItem = bodySections.slice(sectionIndex + 1).find((s) => s.type !== "spacer");
+                        const isEndOfEntrySection = prevItem && nextItem
+                          && nextItem.type === "heading"
+                          && ["experience", "education", "certifications", "projects"].includes(prevItem.sectionKey);
+                        if (isEndOfEntrySection) {
+                          const templates = {
+                            experience: "Company Name | Job Title | Start - End\n- Describe your key achievement",
+                            education: "Degree Name\nUniversity Name, Year",
+                            certifications: "- Certification Name (Year)",
+                            projects: "Project Name | Year\n- Describe the project and your role",
+                          };
+                          const template = templates[prevItem.sectionKey];
+                          if (template) {
+                            return (
+                              <div key={section.id} className="group/addentry flex justify-center py-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const lines = resumeText.replace(/\r\n?/g, "\n").split("\n");
+                                    const insertAt = (prevItem.lineIndices?.[prevItem.lineIndices.length - 1] ?? prevItem.lineIndex) + 1;
+                                    lines.splice(insertAt, 0, "", ...template.split("\n"));
+                                    applyResumeText(lines.join("\n"));
+                                  }}
+                                  className="opacity-0 group-hover/addentry:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1.5 rounded-full border border-dashed border-blue-300 bg-white px-3 py-1 text-[11px] font-medium text-blue-600 hover:bg-blue-50"
+                                >
+                                  <Plus size={11} />
+                                  Add {prevItem.sectionKey === "experience" ? "Position" : prevItem.sectionKey === "education" ? "Education" : "Entry"}
+                                </button>
+                              </div>
+                            );
+                          }
+                        }
+                        return <div key={section.id} className="h-1.5" />;
+                      }
 
                       const isEditing = editingNodeId === section.id;
                       const isSelectedBullet = selectedBulletId === section.id;
