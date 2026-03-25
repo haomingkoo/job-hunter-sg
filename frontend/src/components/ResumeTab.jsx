@@ -1,6 +1,6 @@
 // ResumeTab component extracted from App.jsx (Phase 3)
 
-import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment, memo } from "react";
 import {
   Search, FileText, Plus, X, ChevronRight,
   CheckCircle, AlertCircle, Trash2, Edit3,
@@ -94,7 +94,9 @@ function TemplatePreview({ templateId }) {
   );
 }
 
-function SortableBulletItem({ id, children }) {
+const POINTER_SENSOR_CONFIG = { activationConstraint: { distance: 5 } };
+
+const SortableBulletItem = memo(function SortableBulletItem({ id, children }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -109,8 +111,8 @@ function SortableBulletItem({ id, children }) {
           type="button"
           {...listeners}
           className="cursor-grab active:cursor-grabbing opacity-0 group-hover/section:opacity-60 transition-opacity mt-2 -ml-4 px-0.5 text-gray-300 hover:text-gray-500 shrink-0"
+          aria-label="Drag to reorder bullet"
           title="Drag to reorder"
-          tabIndex={-1}
         >
           <GripVertical size={12} />
         </button>
@@ -118,7 +120,7 @@ function SortableBulletItem({ id, children }) {
       </div>
     </div>
   );
-}
+});
 
 export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [profile, setProfile] = useState(() => {
@@ -1304,10 +1306,11 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   };
 
   const openEditorForSection = (section) => {
+    if (!section) return;
     setSelectedSectionId(section.id);
     setEditingNodeId(section.id);
     // For education entries, show raw multi-line text for editing
-    if (section.type === "education_entry") {
+    if (section.type === "education_entry" && section.lineIndices?.length > 0) {
       const lines = resumeText.replace(/\r\n?/g, "\n").split("\n");
       const entryLines = section.lineIndices.map((idx) => lines[idx] || "").filter(Boolean);
       setEditingValue(entryLines.join("\n"));
@@ -1322,15 +1325,23 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     if (!section) return;
     if (editingNodeId !== section.id) return;
 
-    if (section.type === "education_entry") {
-      // Replace all lines in the entry with edited content
+    if (section.type === "education_entry" && section.lineIndices?.length > 0) {
+      // Replace each original line individually (handles non-contiguous indices)
       const lines = resumeText.replace(/\r\n?/g, "\n").split("\n");
       const newLines = editingValue.replace(/\r/g, "").split("\n");
-      const indices = section.lineIndices;
-      // Replace the range of lines
-      const startIdx = Math.min(...indices);
-      const endIdx = Math.max(...indices);
-      lines.splice(startIdx, endIdx - startIdx + 1, ...newLines);
+      const sortedIndices = [...section.lineIndices].sort((a, b) => a - b);
+      // Map new lines to original indices; blank out extras
+      sortedIndices.forEach((idx, i) => {
+        if (idx >= 0 && idx < lines.length) {
+          lines[idx] = i < newLines.length ? newLines[i] : "";
+        }
+      });
+      // If user added more lines than original, insert after last index
+      if (newLines.length > sortedIndices.length) {
+        const lastIdx = sortedIndices[sortedIndices.length - 1];
+        const extras = newLines.slice(sortedIndices.length);
+        lines.splice(lastIdx + 1, 0, ...extras);
+      }
       setEditingNodeId(null);
       setEditingValue("");
       applyResumeText(lines.join("\n"));
@@ -1749,7 +1760,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   }, []);
 
   // ─── Drag-and-Drop ─────────────────────────────────────────────────────────
-  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const dndSensors = useSensors(useSensor(PointerSensor, POINTER_SENSOR_CONFIG));
   const bulletIds = useMemo(() => bodySections.filter((s) => s.type === "bullet").map((s) => s.id), [bodySections]);
 
   const handleDragEnd = useCallback((event) => {
@@ -3864,7 +3875,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                         </button>
                       );
 
-                      const actionButtons = !isEditing && (section.type === "bullet" || section.type === "subheading" || section.type === "paragraph") ? (
+                      const actionButtons = !isEditing && (section.type === "bullet" || section.type === "subheading" || section.type === "paragraph" || section.type === "education_entry") ? (
                         <div className="flex gap-1 opacity-0 group-hover/section:opacity-100 transition-opacity -mt-0.5 mb-0.5 ml-1">
                           {section.type === "bullet" && ["experience", "projects", "education", "certifications", "activities"].includes(section.sectionKey) && (
                             <button

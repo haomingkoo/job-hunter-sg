@@ -695,6 +695,12 @@ export function groupEducationSections(sections) {
     }
 
     const fields = extractEducationFields(entryItems);
+    // Skip empty entries with no meaningful content
+    if (!fields.degree && !fields.institution && fields.bullets.length === 0 && fields.details.length === 0) {
+      entryItems.forEach((item) => result.push(item));
+      i = j;
+      continue;
+    }
     result.push({
       id: `edu-entry-${section.lineIndex}`,
       type: "education_entry",
@@ -1411,12 +1417,14 @@ export function demoteLineToBullet(text, section) {
     : [section.lineIndex];
 
   const combinedText = targetLines
+    .filter((idx) => idx >= 0 && idx < lines.length)
     .map((idx) => stripResumeMarkdown(lines[idx] || ""))
     .filter(Boolean)
     .join(" ");
 
+  if (!combinedText.trim() || targetLines[0] < 0 || targetLines[0] >= lines.length) return text;
   lines[targetLines[0]] = `• ${combinedText}`;
-  targetLines.slice(1).forEach((idx) => { lines[idx] = ""; });
+  targetLines.slice(1).forEach((idx) => { if (idx >= 0 && idx < lines.length) lines[idx] = ""; });
 
   return lines.join("\n");
 }
@@ -1424,6 +1432,8 @@ export function demoteLineToBullet(text, section) {
 export function moveResumeBullet(text, fromLineIndex, toLineIndex) {
   if (fromLineIndex === toLineIndex) return text;
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  if (fromLineIndex < 0 || fromLineIndex >= lines.length) return text;
+  if (toLineIndex < 0 || toLineIndex >= lines.length) return text;
   const [removed] = lines.splice(fromLineIndex, 1);
   const insertAt = toLineIndex > fromLineIndex ? toLineIndex - 1 : toLineIndex;
   lines.splice(insertAt, 0, removed);
