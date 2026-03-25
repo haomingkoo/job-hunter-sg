@@ -681,10 +681,13 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
             >
               <option value="all">All levels</option>
+              <option value="Entry">Entry Level</option>
+              <option value="Intern">Internship</option>
               <option value="Junior">Junior</option>
               <option value="Mid">Mid</option>
               <option value="Mid-Senior">Mid-Senior</option>
               <option value="Senior">Senior</option>
+              <option value="Director">Director+</option>
             </select>
 
             <select
@@ -911,7 +914,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
             </div>
             <div className="flex flex-wrap gap-2">
               <button onClick={(event) => { event.stopPropagation(); generateResume(job); }} className="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-emerald-700 transition">
-                <FileText size={12} /> Generate Resume
+                <FileText size={12} /> Tailor Resume
               </button>
               <button onClick={(event) => { event.stopPropagation(); trackJob(job); }} className="flex items-center gap-1.5 bg-indigo-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-indigo-700 transition">
                 <Plus size={12} /> Track
@@ -2187,8 +2190,75 @@ function looksLikeDenseSkillList(parts) {
 }
 
 function reorderParsedSections(sections, templateOrder = []) {
-  void templateOrder;
-  return sections;
+  if (!templateOrder.length || !sections.length) return sections;
+
+  // Map section keys to normalized template order keys
+  const normalizeKey = (key) => (key || "").toLowerCase().replace(/[^a-z]/g, "");
+  const sectionKeyMap = {
+    "professionalsummary": "summary", "careersummary": "summary", "summary": "summary",
+    "objective": "summary", "about": "summary",
+    "professionalexperience": "experience", "workexperience": "experience", "experience": "experience",
+    "education": "education", "academicbackground": "education",
+    "coreskills": "skills", "technicalskills": "skills", "skills": "skills",
+    "corecompetencies": "skills", "keyskills": "skills",
+    "projects": "projects", "personalprojects": "projects",
+    "certifications": "certifications", "licensescertifications": "certifications",
+    "certificationstechnicalupskilling": "certifications",
+    "activities": "activities", "extracurricular": "activities",
+    "languages": "languages",
+    "personal": "personal",
+    "awards": "awards", "honorsawards": "awards",
+  };
+
+  const getSectionType = (section) => {
+    const raw = normalizeKey(section.heading || section.text || "");
+    return sectionKeyMap[raw] || raw;
+  };
+
+  // Split into header (before first section) and sections
+  const header = [];
+  const sectionItems = [];
+  for (const s of sections) {
+    if (s.type === "heading" || s.type === "entry" || s.type === "bullet") {
+      sectionItems.push(s);
+    } else if (!sectionItems.length) {
+      header.push(s);
+    } else {
+      sectionItems.push(s);
+    }
+  }
+
+  // Group consecutive items by their section heading
+  const groups = [];
+  let currentGroup = null;
+  for (const item of sectionItems) {
+    if (item.type === "heading") {
+      currentGroup = { key: getSectionType(item), items: [item] };
+      groups.push(currentGroup);
+    } else if (currentGroup) {
+      currentGroup.items.push(item);
+    } else {
+      // Orphan item before any heading
+      header.push(item);
+    }
+  }
+
+  // Sort groups by template order
+  const orderIndex = {};
+  templateOrder.forEach((key, i) => { orderIndex[key] = i; });
+
+  groups.sort((a, b) => {
+    const ai = orderIndex[a.key] ?? 999;
+    const bi = orderIndex[b.key] ?? 999;
+    return ai - bi;
+  });
+
+  // Flatten back
+  const result = [...header];
+  for (const group of groups) {
+    result.push(...group.items);
+  }
+  return result;
 }
 
 function pruneEmptySectionGroups(sections) {
