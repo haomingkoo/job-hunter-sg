@@ -1131,9 +1131,9 @@ export function renderHighlightedText(text, keywords) {
     const isMatch = sorted.some((keyword) => keyword.toLowerCase() === part.toLowerCase());
     if (!isMatch) return <span key={`${part}-${index}`}>{part}</span>;
     return (
-      <span key={`${part}-${index}`} className="rounded bg-sky-100 px-0.5 text-sky-700">
+      <strong key={`${part}-${index}`} className="rounded bg-sky-50 px-0.5 font-semibold text-sky-800">
         {part}
-      </span>
+      </strong>
     );
   });
 }
