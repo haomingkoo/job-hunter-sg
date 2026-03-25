@@ -3644,9 +3644,12 @@ def download_resume_pdf(
     try:
         import weasyprint
         pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+    except ImportError as e:
+        log.exception("weasyprint import failed; missing system deps: %s", e)
+        raise HTTPException(status_code=500, detail="PDF engine not available (system libraries missing)")
     except Exception as e:
         log.exception("PDF generation failed: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to generate PDF")
+        raise HTTPException(status_code=500, detail="PDF generation failed")
 
     db.add(UsageLog(
         user_id=user.id if user else None,

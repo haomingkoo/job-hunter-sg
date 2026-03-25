@@ -54,6 +54,9 @@ export function buildResumeTemplateStyles(templateMeta, templateId) {
       minHeight: "297mm",
       maxWidth: "100%",
       lineHeight: String(lineHeight),
+      overflowWrap: "break-word",
+      wordBreak: "break-word",
+      overflow: "hidden",
     },
     headingClass: fallback.headingClass,
     headingStyle: {
@@ -551,6 +554,164 @@ export function buildEducationPair(lines, lineIndex, currentSectionKey, keywords
   }
 
   return null;
+}
+
+// ─── Education Entry Grouping (ported from backend resume_structurer.py) ─────
+const EDUCATION_GPA_RE = /(?:gpa|cgpa|cap)\s*[:.]?\s*\d+\.?\d*\s*[/]?\s*\d*\.?\d*/i;
+const EDUCATION_HONORS_RE = /\b(?:first class|second class|distinction|honou?rs?|magna|summa|cum laude|dean.?s list|merit|with distinction|valedictorian)\b/i;
+
+function isEducationEntryStart(item) {
+  if (item.type === "subheading" && (item.variant === "education_main" || item.variant === "dated")) return true;
+  if (item.type === "paragraph" && (startsNewEducationEntry(item.text) || (looksLikeEducationMain(item.text) && !looksLikeEducationDetail(item.text)))) return true;
+  return false;
+}
+
+function extractEducationFields(items) {
+  let degree = "";
+  let institution = "";
+  let dateRange = "";
+  let gpa = "";
+  const honors = [];
+  const details = [];
+  const bullets = [];
+
+  for (const item of items) {
+    const text = item.text || "";
+
+    // Extract date from subheading right side or text
+    if (!dateRange) {
+      if (item.type === "subheading" && item.right && hasDateHint(item.right)) {
+        const meta = splitEducationMeta(item.right);
+        dateRange = meta.secondary || item.right;
+      } else {
+        const dateMatch = text.match(/(?:19|20)\d{2}\s*[–—-]\s*(?:(?:19|20)\d{2}|[Pp]resent)/);
+        if (dateMatch) dateRange = dateMatch[0];
+      }
+    }
+
+    // Extract GPA
+    if (!gpa) {
+      const gpaMatch = text.match(EDUCATION_GPA_RE);
+      if (gpaMatch) gpa = gpaMatch[0].trim();
+    }
+
+    // Extract honors
+    const honorsMatch = text.match(EDUCATION_HONORS_RE);
+    if (honorsMatch && !honors.includes(honorsMatch[0])) honors.push(honorsMatch[0]);
+
+    // Classify by item type
+    if (item.type === "bullet") {
+      bullets.push(item);
+      continue;
+    }
+
+    if (item.type === "subheading") {
+      const left = item.left || "";
+      const right = item.right || "";
+
+      if (item.variant === "education_main" || item.variant === "dated") {
+        if (!degree && (RESUME_DEGREE_RE.test(left) || DEGREE_START_RE.test(left))) {
+          degree = left;
+        } else if (!institution && looksLikeEducationInstitution(left)) {
+          institution = left;
+        } else if (!degree) {
+          degree = left;
+        }
+        const rightMeta = splitEducationMeta(right);
+        if (rightMeta.secondary && !dateRange) dateRange = rightMeta.secondary;
+        if (rightMeta.primary) {
+          if (!institution && looksLikeEducationInstitution(rightMeta.primary)) institution = rightMeta.primary;
+          else if (!degree && RESUME_DEGREE_RE.test(rightMeta.primary)) degree = rightMeta.primary;
+          else if (!institution) institution = rightMeta.primary;
+        }
+      } else if (item.variant === "education_detail") {
+        const combined = [left, right].filter(Boolean).join(", ");
+        if (!gpa && EDUCATION_GPA_RE.test(combined)) {
+          gpa = combined.match(EDUCATION_GPA_RE)?.[0] || "";
+          const remaining = combined.replace(EDUCATION_GPA_RE, "").replace(/^[,|\s]+|[,|\s]+$/g, "").trim();
+          if (remaining) details.push(remaining);
+        } else {
+          details.push(combined);
+        }
+      }
+      continue;
+    }
+
+    // Paragraph
+    if (looksLikeEducationDetail(text)) {
+      if (!gpa && EDUCATION_GPA_RE.test(text)) {
+        gpa = text.match(EDUCATION_GPA_RE)?.[0] || "";
+        const remaining = text.replace(EDUCATION_GPA_RE, "").replace(/^[,|\s]+|[,|\s]+$/g, "").trim();
+        if (remaining) details.push(remaining);
+      } else {
+        details.push(text);
+      }
+    } else if (!degree && (RESUME_DEGREE_RE.test(text) || DEGREE_START_RE.test(text))) {
+      degree = text.replace(/(?:19|20)\d{2}\s*[–—-]\s*(?:(?:19|20)\d{2}|[Pp]resent)/, "").trim().replace(/[,\s]+$/, "");
+    } else if (!institution && looksLikeEducationInstitution(text)) {
+      institution = text.replace(/(?:19|20)\d{2}\s*[–—-]\s*(?:(?:19|20)\d{2}|[Pp]resent)/, "").trim().replace(/[,\s]+$/, "");
+    } else if (!degree) {
+      degree = text;
+    } else if (!institution) {
+      institution = text;
+    } else {
+      details.push(text);
+    }
+  }
+
+  return { degree, institution, dateRange, gpa, honors, details, bullets };
+}
+
+export function groupEducationSections(sections) {
+  const result = [];
+  let i = 0;
+
+  while (i < sections.length) {
+    const section = sections[i];
+
+    // Pass through non-education or structural items
+    if (section.sectionKey !== "education" || section.type === "heading" || section.type === "spacer") {
+      result.push(section);
+      i += 1;
+      continue;
+    }
+
+    // Collect consecutive education content into one entry
+    const entryItems = [section];
+    const allLineIndices = [...(section.lineIndices || [section.lineIndex])];
+    const allKeywords = [...(section.keywordMatches || [])];
+
+    let j = i + 1;
+    while (j < sections.length) {
+      const next = sections[j];
+      if (next.type === "heading" || next.sectionKey !== "education") break;
+      if (next.type === "spacer") { j += 1; continue; }
+      // New entry boundary
+      if (entryItems.length > 0 && isEducationEntryStart(next)) break;
+      entryItems.push(next);
+      allLineIndices.push(...(next.lineIndices || [next.lineIndex]));
+      if (next.keywordMatches?.length) allKeywords.push(...next.keywordMatches);
+      j += 1;
+    }
+
+    const fields = extractEducationFields(entryItems);
+    result.push({
+      id: `edu-entry-${section.lineIndex}`,
+      type: "education_entry",
+      sectionKey: "education",
+      lineIndex: section.lineIndex,
+      lineIndices: [...new Set(allLineIndices)],
+      raw: entryItems.map((item) => item.raw).join("\n"),
+      text: entryItems.map((item) => item.text).filter(Boolean).join(" | "),
+      keywordMatches: [...new Set(allKeywords)],
+      fields,
+      items: entryItems,
+    });
+
+    i = j;
+  }
+
+  return result;
 }
 
 export function mergeParsedParagraphRuns(sections) {
@@ -1068,15 +1229,24 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
     }
 
     const bulletMatch = line.match(RESUME_BULLET_RE);
-    const subheadingParts = bulletMatch ? null : parseSubheadingParts(normalizedLine, currentSectionKey);
+    // Auto-promote bullets whose content looks like an entry heading (e.g., "• Senior Engineer (2019-2020)")
+    let subheadingParts;
+    if (bulletMatch) {
+      const bulletText = stripResumeMarkdown(bulletMatch[2]);
+      const promoted = parseSubheadingParts(bulletText, currentSectionKey);
+      subheadingParts = promoted && (promoted.variant === "dated" || promoted.variant.startsWith("education")) ? promoted : null;
+    } else {
+      subheadingParts = parseSubheadingParts(normalizedLine, currentSectionKey);
+    }
     if (subheadingParts) {
+      const displayText = bulletMatch ? stripResumeMarkdown(bulletMatch[2]) : normalizedLine;
       parsed.push({
         ...base,
         type: "subheading",
         ...subheadingParts,
-        text: normalizedLine,
+        text: displayText,
         sectionKey: currentSectionKey,
-        keywordMatches: collectKeywordMatches(normalizedLine, keywords),
+        keywordMatches: collectKeywordMatches(displayText, keywords),
       });
       continue;
     }
@@ -1192,6 +1362,105 @@ export function updateResumeLine(text, section, nextValue) {
     lines[index] = "";
   });
   return lines.join("\n");
+}
+
+export function promoteLineToPosition(text, section) {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const lineIdx = section.lineIndex;
+  const line = lines[lineIdx];
+  if (!line) return text;
+
+  const bMatch = line.match(RESUME_BULLET_RE);
+  let cleaned = bMatch ? bMatch[2].trim() : stripResumeMarkdown(line).trim();
+
+  // Convert date in parentheses to pipe format: "Title (2019-2020)" → "Title | 2019-2020"
+  const dateInParen = cleaned.match(/\s*\((\d{4}\s*[–—-]\s*(?:\d{4}|[Pp]resent))\)\s*$/);
+  if (dateInParen) {
+    cleaned = cleaned.replace(/\s*\((\d{4}\s*[–—-]\s*(?:\d{4}|[Pp]resent))\)\s*$/, ` | ${dateInParen[1]}`);
+  } else if (!cleaned.includes("|") && !hasDateHint(cleaned)) {
+    cleaned = `${cleaned} | Present`;
+  }
+
+  lines[lineIdx] = cleaned;
+  return lines.join("\n");
+}
+
+export function promoteLineToSection(text, section) {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const lineIdx = section.lineIndex;
+  const line = lines[lineIdx];
+  if (!line) return text;
+
+  const bMatch = line.match(RESUME_BULLET_RE);
+  let cleaned = bMatch ? bMatch[2].trim() : stripResumeMarkdown(line).trim();
+  cleaned = cleaned.toUpperCase();
+
+  if (lineIdx > 0 && lines[lineIdx - 1].trim()) {
+    lines.splice(lineIdx, 1, "", cleaned);
+  } else {
+    lines[lineIdx] = cleaned;
+  }
+
+  return lines.join("\n");
+}
+
+export function demoteLineToBullet(text, section) {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const targetLines = Array.isArray(section.lineIndices) && section.lineIndices.length > 0
+    ? section.lineIndices
+    : [section.lineIndex];
+
+  const combinedText = targetLines
+    .map((idx) => stripResumeMarkdown(lines[idx] || ""))
+    .filter(Boolean)
+    .join(" ");
+
+  lines[targetLines[0]] = `• ${combinedText}`;
+  targetLines.slice(1).forEach((idx) => { lines[idx] = ""; });
+
+  return lines.join("\n");
+}
+
+export function moveResumeBullet(text, fromLineIndex, toLineIndex) {
+  if (fromLineIndex === toLineIndex) return text;
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const [removed] = lines.splice(fromLineIndex, 1);
+  const insertAt = toLineIndex > fromLineIndex ? toLineIndex - 1 : toLineIndex;
+  lines.splice(insertAt, 0, removed);
+  return lines.join("\n");
+}
+
+export function moveSectionInText(text, parsedSections, headingId, direction) {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const headings = parsedSections.filter((s) => s.type === "heading");
+  const currentHeading = headings.find((h) => h.id === headingId);
+  if (!currentHeading) return text;
+
+  const currentIdx = headings.indexOf(currentHeading);
+  const targetIdx = currentIdx + direction;
+  if (targetIdx < 0 || targetIdx >= headings.length) return text;
+
+  const getRange = (idx) => {
+    const start = headings[idx].lineIndex;
+    const end = idx + 1 < headings.length ? headings[idx + 1].lineIndex : lines.length;
+    return [start, end];
+  };
+
+  const [aStart, aEnd] = getRange(currentIdx);
+  const [bStart, bEnd] = getRange(targetIdx);
+  const aBlock = lines.slice(aStart, aEnd);
+  const bBlock = lines.slice(bStart, bEnd);
+
+  const [firstStart, , firstBlock, secondStart, secondEnd, secondBlock] = aStart < bStart
+    ? [aStart, aEnd, aBlock, bStart, bEnd, bBlock]
+    : [bStart, bEnd, bBlock, aStart, aEnd, aBlock];
+
+  return [
+    ...lines.slice(0, firstStart),
+    ...secondBlock,
+    ...firstBlock,
+    ...lines.slice(secondEnd),
+  ].join("\n");
 }
 
 export function insertResumeLineAfter(text, section, nextValue) {
