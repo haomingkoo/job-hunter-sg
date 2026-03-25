@@ -16,7 +16,7 @@ ATS_ALLOWED_SINGLE_TERMS: set[str] = {
     "python", "sql", "excel", "tableau", "powerbi", "aws", "azure", "gcp",
     "docker", "kubernetes", "terraform", "linux", "react", "typescript",
     "javascript", "java", "node", "nodejs", "golang", "rust", "git",
-    "agile", "scrum", "analytics", "ai",
+    "agile", "scrum", "analytics", "ai", "leadership", "communication",
     "spc", "jira", "manufacturing", "semiconductor", "lithography",
     "metrology", "yield", "reliability", "validation", "integration",
     "eqms", "feol", "beol", "doe", "semulator3d", "hbm3e", "lpddr5x",
@@ -95,28 +95,9 @@ ATS_DISPLAY_EXCLUDE: set[str] = ATS_MULTIWORD_NOISE | {
     "job responsibilities", "job scope",
     "working closely", "reporting to",
     "liaising with", "working with",
-    # Round 8: generic soft skills that dominate charts but don't help ATS matching
-    "customer service", "customer service skills",
-    "communication skills", "communication",
-    "interpersonal skill", "interpersonal",
-    "microsoft office", "microsoft word", "microsoft excel",
-    "microsoft powerpoint", "ms office", "ms word", "ms excel",
-    "business development", "continuous improvement",
-    "administrative support", "administrative work",
-    "inventory management", "customer satisfaction",
-    "customer experience", "data entry",
-    "cross-functional teams", "cross functional teams",
-    "technical support", "driving license", "driving licence",
-    "class 3 driving license", "class 3 driving licence",
-    "food safety", "account management",
-    "risk management", "quality assurance",
-    "quality control", "human resources",
-    "food handling", "food hygiene",
-    # Generic verbs/adjectives masquerading as skills
+    # Round 8: truly generic soft skills (not ATS-searchable)
     "teamwork", "multitasking", "multi-tasking",
-    "negotiation", "negotiation skills",
-    "presentation skills", "written communication",
-    "oral communication", "good communication",
+    "good communication", "oral communication",
 }
 
 ATS_OUTLINE_NOISE: set[str] = {

@@ -5542,6 +5542,27 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
               </div>
             </div>
 
+            {user && (
+              <div className="inline-flex items-center gap-1.5 rounded-2xl border border-gray-200 bg-white px-2 py-1.5">
+                <input
+                  type="text"
+                  value={saveVersionLabel}
+                  onChange={(e) => setSaveVersionLabel(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") saveCurrentVersion(); }}
+                  placeholder="Name this version..."
+                  className="w-32 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                />
+                <button
+                  type="button"
+                  onClick={saveCurrentVersion}
+                  disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
+                  className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                >
+                  {savingVersion ? "..." : "Save Version"}
+                </button>
+              </div>
+            )}
+
           </div>
         </div>
       </div>
