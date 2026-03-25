@@ -3221,6 +3221,204 @@ def get_usage(
     }
 
 
+# ── Resume Versions ────────────────────────────────────────────────────────
+
+
+@app.get("/api/resume/versions")
+def list_resume_versions(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """List all resume versions for the current user."""
+    from models import ResumeVersion
+
+    versions = (
+        db.query(ResumeVersion)
+        .filter(ResumeVersion.user_id == user.id, ResumeVersion.is_active == True)
+        .order_by(ResumeVersion.updated_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": v.id,
+            "label": v.label,
+            "source": v.source,
+            "job_id": v.job_id,
+            "job_title": v.job_title,
+            "job_company": v.job_company,
+            "score": v.score,
+            "word_count": v.word_count,
+            "is_master": v.is_master,
+            "created_at": v.created_at.isoformat() if v.created_at else "",
+            "updated_at": v.updated_at.isoformat() if v.updated_at else "",
+        }
+        for v in versions
+    ]
+
+
+@app.post("/api/resume/versions")
+def save_resume_version(
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Save a new resume version.
+    Body: {label, resume_text, resume_structured?, job_id?, score?, is_master?}
+    """
+    from models import ResumeVersion
+
+    label = sanitize_user_input(body.get("label", "")).strip()
+    resume_text = body.get("resume_text", "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="Label is required")
+    if not resume_text or len(resume_text) < 50:
+        raise HTTPException(status_code=400, detail="Resume text too short")
+
+    is_master = body.get("is_master", False)
+    # If setting as master, unset previous master
+    if is_master:
+        db.query(ResumeVersion).filter(
+            ResumeVersion.user_id == user.id,
+            ResumeVersion.is_master == True,
+        ).update({"is_master": False})
+
+    # Look up job details if job_id provided
+    job_title = ""
+    job_company = ""
+    job_id = body.get("job_id")
+    if job_id:
+        job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+        if job:
+            job_title = job.title or ""
+            job_company = job.company or ""
+
+    version = ResumeVersion(
+        user_id=user.id,
+        label=label,
+        source=body.get("source", "manual"),
+        resume_text=resume_text,
+        resume_structured=body.get("resume_structured"),
+        job_id=job_id,
+        job_title=job_title,
+        job_company=job_company,
+        score=body.get("score"),
+        word_count=len(resume_text.split()),
+        is_master=is_master,
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+
+    return {"id": version.id, "label": version.label, "created_at": version.created_at.isoformat()}
+
+
+@app.get("/api/resume/versions/{version_id}")
+def get_resume_version(
+    version_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Load a specific resume version."""
+    from models import ResumeVersion
+
+    version = (
+        db.query(ResumeVersion)
+        .filter(
+            ResumeVersion.id == version_id,
+            ResumeVersion.user_id == user.id,
+            ResumeVersion.is_active == True,
+        )
+        .first()
+    )
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    return {
+        "id": version.id,
+        "label": version.label,
+        "source": version.source,
+        "resume_text": version.resume_text,
+        "resume_structured": version.resume_structured,
+        "job_id": version.job_id,
+        "job_title": version.job_title,
+        "job_company": version.job_company,
+        "score": version.score,
+        "word_count": version.word_count,
+        "is_master": version.is_master,
+        "created_at": version.created_at.isoformat() if version.created_at else "",
+        "updated_at": version.updated_at.isoformat() if version.updated_at else "",
+    }
+
+
+@app.put("/api/resume/versions/{version_id}")
+def update_resume_version(
+    version_id: int,
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Update label, text, or master status of a resume version."""
+    from models import ResumeVersion
+
+    version = (
+        db.query(ResumeVersion)
+        .filter(
+            ResumeVersion.id == version_id,
+            ResumeVersion.user_id == user.id,
+            ResumeVersion.is_active == True,
+        )
+        .first()
+    )
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    if "label" in body:
+        version.label = sanitize_user_input(body["label"]).strip()
+    if "resume_text" in body:
+        version.resume_text = body["resume_text"]
+        version.word_count = len(body["resume_text"].split())
+    if "resume_structured" in body:
+        version.resume_structured = body["resume_structured"]
+    if "score" in body:
+        version.score = body["score"]
+    if "is_master" in body and body["is_master"]:
+        db.query(ResumeVersion).filter(
+            ResumeVersion.user_id == user.id,
+            ResumeVersion.is_master == True,
+        ).update({"is_master": False})
+        version.is_master = True
+
+    db.commit()
+    return {"id": version.id, "label": version.label, "updated": True}
+
+
+@app.delete("/api/resume/versions/{version_id}")
+def delete_resume_version(
+    version_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Soft-delete a resume version."""
+    from models import ResumeVersion
+
+    version = (
+        db.query(ResumeVersion)
+        .filter(
+            ResumeVersion.id == version_id,
+            ResumeVersion.user_id == user.id,
+            ResumeVersion.is_active == True,
+        )
+        .first()
+    )
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    version.is_active = False
+    db.commit()
+    return {"id": version.id, "deleted": True}
+
+
 # ── Resume Tailoring Pipeline ───────────────────────────────────────────────
 
 
@@ -3292,7 +3490,11 @@ def get_tailoring_status(session_id: str) -> dict:
 
 
 @app.get("/api/resume/tailor/{session_id}/result")
-def get_tailoring_result(session_id: str) -> dict:
+def get_tailoring_result(
+    session_id: str,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> dict:
     """Get the tailoring result (available even before pipeline completes)."""
     state = get_pipeline_state(session_id)
     if not state:
@@ -3306,7 +3508,44 @@ def get_tailoring_result(session_id: str) -> dict:
             "stage": state.stage_name,
             "message": state.message,
         }
-    return state.result
+
+    # Auto-save as a resume version on first complete fetch
+    result = state.result
+    if user and not result.get("_version_saved"):
+        from models import ResumeVersion
+        tailored_text = result.get("tailored_text", "")
+        job_title = ""
+        job_company = ""
+        job_id = None
+        # Get job info from the TailoredResume record
+        tr = db.query(TailoredResume).filter(TailoredResume.session_id == session_id).first()
+        if tr:
+            job_id = tr.job_id
+            job = db.query(ScrapedJob).filter(ScrapedJob.id == tr.job_id).first() if tr.job_id else None
+            if job:
+                job_title = job.title or ""
+                job_company = job.company or ""
+
+        if tailored_text and len(tailored_text) >= 50:
+            score_after = result.get("score", {}).get("after")
+            label = f"Tailored for {job_title[:40]}" if job_title else f"Tailored {session_id[:8]}"
+            version = ResumeVersion(
+                user_id=user.id,
+                label=label,
+                source="tailored",
+                resume_text=tailored_text,
+                job_id=job_id,
+                job_title=job_title,
+                job_company=job_company,
+                score=score_after,
+                word_count=len(tailored_text.split()),
+            )
+            db.add(version)
+            db.commit()
+            result["_version_saved"] = True
+            result["version_id"] = version.id
+
+    return result
 
 
 @app.get("/api/jobs/{job_id}/parsed")

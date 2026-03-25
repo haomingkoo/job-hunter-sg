@@ -172,6 +172,45 @@ class TailoredResume(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
+class ResumeVersion(Base):
+    """
+    Saved resume versions - from uploads, tailoring pipeline, or manual edits.
+    Users can label, compare, and attach versions to tracked jobs.
+    """
+    __tablename__ = "resume_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+
+    # Identity
+    label: Mapped[str] = mapped_column(String(200), nullable=False)  # "PM version", "Tailored for DBS"
+    source: Mapped[str] = mapped_column(String(50), default="upload")  # upload, tailored, manual, import
+
+    # Content
+    resume_text: Mapped[str] = mapped_column(Text, default="")
+    resume_structured: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # parsed sections/bullets
+
+    # Linked job (optional - set when created via tailoring pipeline)
+    job_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("scraped_jobs.id"), nullable=True)
+    job_title: Mapped[str] = mapped_column(String(500), default="")  # denormalized for display
+    job_company: Mapped[str] = mapped_column(String(500), default="")
+
+    # Metrics snapshot
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    word_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Flags
+    is_master: Mapped[bool] = mapped_column(default=False)  # user's primary/base resume
+    is_active: Mapped[bool] = mapped_column(default=True)  # soft delete
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    __table_args__ = (
+        Index("ix_resume_versions_user", "user_id"),
+    )
+
+
 class UsageLog(Base):
     __tablename__ = "usage_logs"
 
