@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
-import { useReactToPrint } from "react-to-print";
 import {
   Search, Briefcase, Bell, FileText, Plus, X, ChevronRight, Clock,
   CheckCircle, AlertCircle, ExternalLink, Trash2, Edit3, Save, Filter,
@@ -4005,27 +4004,9 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const tailoringPollAttemptsRef = useRef(0);
   const resumePrintRef = useRef(null);
 
-  const handlePrintPdf = useReactToPrint({
-    contentRef: resumePrintRef,
-    documentTitle: `Resume${profile.name ? ` - ${profile.name}` : ""}`,
-    pageStyle: `
-      @media print {
-        @page { size: A4; margin: 0.5in; }
-        body * { visibility: hidden !important; }
-        .resume-print-target, .resume-print-target * { visibility: visible !important; }
-        .resume-print-target {
-          position: absolute !important;
-          left: 0 !important;
-          top: 0 !important;
-          width: 100% !important;
-          box-shadow: none !important;
-          border: none !important;
-          border-radius: 0 !important;
-          margin: 0 !important;
-        }
-      }
-    `,
-  });
+  const handlePrintPdf = useCallback(() => {
+    window.print();
+  }, []);
 
   const openMobileFeedbackPanel = useCallback((targetRef = scorePanelRef) => {
     if (typeof window === "undefined" || window.innerWidth >= 1024) return;
