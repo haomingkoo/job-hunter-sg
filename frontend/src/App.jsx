@@ -116,7 +116,21 @@ export default function JobHunterSG() {
   const navigateTo = (tab) => {
     setActiveTab(tab);
     window.scrollTo({ top: 0, behavior: "smooth" });
+    // Push to browser history so Back button goes to home, not leaves site
+    if (tab !== "home") {
+      window.history.pushState({ tab }, "", `#${tab}`);
+    }
   };
+
+  // Handle browser back button
+  useEffect(() => {
+    const handlePopState = () => {
+      setActiveTab("home");
+      window.scrollTo({ top: 0 });
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   // Loading state
   if (authLoading) {
