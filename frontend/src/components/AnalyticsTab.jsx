@@ -71,34 +71,16 @@ export default function AnalyticsTab() {
         <strong>Beta</strong> - This platform is in early access. AI features are rate-limited (free tier). Data refreshes nightly from MyCareersFuture and Careers@Gov.
       </div>
 
-      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
-        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Filters</div>
-        <div className="flex flex-wrap gap-2">
-          <input
-            type="text"
-            value={companyFilter}
-            onChange={(e) => setCompanyFilter(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") loadData(); }}
-            onBlur={() => loadData()}
-            placeholder="Filter by company..."
-            className="w-44 rounded-lg border border-gray-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300"
-          />
-          <input
-            type="text"
-            value={titleFilter}
-            onChange={(e) => setTitleFilter(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") loadData(); }}
-            onBlur={() => loadData()}
-            placeholder="Filter by job title..."
-            className="w-44 rounded-lg border border-gray-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300"
-          />
-          {(sectorFilter || companyFilter || titleFilter) && (
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div className="text-xs text-gray-500">Click any sector or job title below to filter skills</div>
+          {(sectorFilter || titleFilter) && (
             <button
               type="button"
-              onClick={() => { setSectorFilter(""); setCompanyFilter(""); setTitleFilter(""); }}
+              onClick={() => { setSectorFilter(""); setTitleFilter(""); }}
               className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50"
             >
-              Clear Filters
+              Clear All Filters
             </button>
           )}
         </div>
@@ -142,24 +124,41 @@ export default function AnalyticsTab() {
       {/* Top Job Titles */}
       {!loading && !error && data?.top_titles?.length > 0 && (
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="text-sm font-semibold text-gray-800 mb-4">
-            Top {data.top_titles.length} Job Titles
+          <div className="flex items-center justify-between mb-4">
+            <div className="text-sm font-semibold text-gray-800">
+              Top {data.top_titles.length} Job Titles
+            </div>
+            {titleFilter && (
+              <button type="button" onClick={() => setTitleFilter("")} className="text-xs text-blue-600 hover:text-blue-800">
+                Clear title filter
+              </button>
+            )}
           </div>
-          <div className="space-y-2">
+          {titleFilter && (
+            <div className="mb-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">
+              Showing skills for: <strong>{titleFilter}</strong>
+            </div>
+          )}
+          <div className="space-y-1.5">
             {data.top_titles.map((item, index) => (
-              <div key={item.title} className="flex items-center gap-3">
+              <button
+                key={item.title}
+                type="button"
+                onClick={() => setTitleFilter(titleFilter === item.title ? "" : item.title)}
+                className={`flex w-full items-center gap-3 rounded-lg px-1 py-0.5 text-left transition hover:bg-gray-50 ${titleFilter === item.title ? "bg-blue-50 ring-1 ring-blue-200" : ""}`}
+              >
                 <div className="w-5 text-right text-xs text-gray-400 font-mono">{index + 1}</div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <div
-                      className="h-6 rounded-md bg-emerald-500/70"
+                      className={`h-5 rounded-md ${titleFilter === item.title ? "bg-blue-500/80" : "bg-emerald-500/70"}`}
                       style={{ width: `${Math.max(4, (item.count / titlesMaxCount) * 100)}%` }}
                     />
                     <span className="text-sm font-medium text-gray-800 whitespace-nowrap">{item.title}</span>
                   </div>
                 </div>
                 <div className="text-xs text-gray-400 font-mono w-12 text-right">{item.count.toLocaleString()}</div>
-              </div>
+              </button>
             ))}
           </div>
         </div>

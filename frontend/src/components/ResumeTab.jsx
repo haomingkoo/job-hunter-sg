@@ -102,6 +102,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       return "";
     }
   });
+  const undoStackRef = useRef([]);
+  const redoStackRef = useRef([]);
   const [selectedTemplate, setSelectedTemplate] = useState(() => {
     try {
       return sessionStorage.getItem("jh_resume_template") || "modern";
@@ -505,7 +507,12 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     };
   }, [selectedJob?.id, scoreData, needsRescore, jobDescription, resumeText]);
 
-  const applyResumeText = useCallback((nextText, { rescore = false, clearRewrites = false, preserveTailoringContext = false } = {}) => {
+  const applyResumeText = useCallback((nextText, { rescore = false, clearRewrites = false, preserveTailoringContext = false, _isUndo = false } = {}) => {
+    // Push current text to undo stack (max 30) unless this IS an undo/redo
+    if (!_isUndo && resumeText && resumeText !== nextText) {
+      undoStackRef.current = [...undoStackRef.current.slice(-29), resumeText];
+      redoStackRef.current = [];
+    }
     setResumeText(nextText);
     setScoreChange(null);
     setDownloadReady(false);
@@ -530,7 +537,34 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       setNeedsRescore(Boolean(nextText.trim()));
       if (nextText.trim()) setScorePhase("editing");
     }
-  }, [jobDescription, runScore]);
+  }, [jobDescription, runScore, resumeText]);
+
+  const handleUndo = useCallback(() => {
+    if (undoStackRef.current.length === 0) return;
+    const prev = undoStackRef.current.pop();
+    redoStackRef.current.push(resumeText);
+    applyResumeText(prev, { _isUndo: true });
+  }, [resumeText, applyResumeText]);
+
+  const handleRedo = useCallback(() => {
+    if (redoStackRef.current.length === 0) return;
+    const next = redoStackRef.current.pop();
+    undoStackRef.current.push(resumeText);
+    applyResumeText(next, { _isUndo: true });
+  }, [resumeText, applyResumeText]);
+
+  // Keyboard shortcuts: Ctrl+Z / Ctrl+Shift+Z
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleUndo, handleRedo]);
 
   const handleProfileChange = (field, value) => {
     setProfile((current) => ({ ...current, [field]: value }));
@@ -3407,6 +3441,27 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex items-center rounded-full border border-gray-200 bg-white">
+                  <button
+                    type="button"
+                    onClick={handleUndo}
+                    disabled={undoStackRef.current.length === 0}
+                    className="rounded-l-full px-2.5 py-1.5 text-xs text-gray-500 transition hover:text-gray-700 disabled:opacity-30"
+                    title="Undo (Ctrl+Z)"
+                  >
+                    <RefreshCw size={12} className="scale-x-[-1]" />
+                  </button>
+                  <div className="h-4 w-px bg-gray-200" />
+                  <button
+                    type="button"
+                    onClick={handleRedo}
+                    disabled={redoStackRef.current.length === 0}
+                    className="rounded-r-full px-2.5 py-1.5 text-xs text-gray-500 transition hover:text-gray-700 disabled:opacity-30"
+                    title="Redo (Ctrl+Shift+Z)"
+                  >
+                    <RefreshCw size={12} />
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => setAnnotationsOn((current) => !current)}
