@@ -3706,34 +3706,34 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex items-center rounded-full border border-[#BDDDFC]/30 bg-white">
+                <div className="inline-flex items-center gap-1 rounded-full border border-[#BDDDFC]/30 bg-white px-1">
                   <button
                     type="button"
                     onClick={handleUndo}
                     disabled={undoStackRef.current.length === 0}
-                    className="rounded-l-full px-2.5 py-1.5 text-xs text-[#6A89A7] transition hover:text-[#384959] disabled:opacity-30"
+                    className="inline-flex items-center gap-1 px-2 py-1.5 text-xs text-[#6A89A7] transition hover:text-[#384959] disabled:opacity-30"
                     title="Undo (Ctrl+Z)"
                   >
-                    <RefreshCw size={12} className="scale-x-[-1]" />
+                    <RefreshCw size={12} className="scale-x-[-1]" /> Undo
                   </button>
                   <div className="h-4 w-px bg-[#BDDDFC]/20" />
                   <button
                     type="button"
                     onClick={handleRedo}
                     disabled={redoStackRef.current.length === 0}
-                    className="rounded-r-full px-2.5 py-1.5 text-xs text-[#6A89A7] transition hover:text-[#384959] disabled:opacity-30"
+                    className="inline-flex items-center gap-1 px-2 py-1.5 text-xs text-[#6A89A7] transition hover:text-[#384959] disabled:opacity-30"
                     title="Redo (Ctrl+Shift+Z)"
                   >
-                    <RefreshCw size={12} />
+                    Redo <RefreshCw size={12} />
                   </button>
                 </div>
                 <button
                   type="button"
                   onClick={() => setAnnotationsOn((current) => !current)}
-                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${annotationsOn ? "bg-gray-900 text-white" : "bg-white text-[#6A89A7] ring-1 ring-gray-200"}`}
+                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${annotationsOn ? "bg-[#384959] text-white" : "bg-white text-[#6A89A7] ring-1 ring-[#BDDDFC]/30"}`}
                 >
                   <Zap size={12} />
-                  {annotationsOn ? "Annotations On" : "Annotations Off"}
+                  {annotationsOn ? "Inline Tips On" : "Inline Tips Off"}
                 </button>
                 <button
                   type="button"
