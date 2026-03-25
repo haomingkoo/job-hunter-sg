@@ -57,6 +57,21 @@ ATS_DISPLAY_EXCLUDE: set[str] = ATS_MULTIWORD_NOISE | {
     "relevant experience", "strong understanding", "good knowledge",
     "working experience", "years of experience", "related fields",
     "related field", "relevant work", "work experience",
+    # CareersGov section headers that slip through
+    "qualifications & experience", "skills & attributes",
+    "qualifications and experience", "skills and attributes",
+    "key responsibilities", "duties include",
+    "preferred qualifications", "required qualifications",
+    # Generic institutional/organizational phrases
+    "government agencies", "service vendors", "personal attributes",
+    "month contract", "year contract",
+    "senior communications", "programme partners",
+    "industry working groups",
+    # More garbage from user testing
+    "after office hours", "office hours",
+    "cpf board", "assistant manager",
+    "daily operations", "service vendors",
+    "agents and toxin act",
 }
 
 ATS_OUTLINE_NOISE: set[str] = {
@@ -287,7 +302,7 @@ def _is_noise_term(term: str, context: str = "") -> bool:
     # Single generic words
     if word_count == 1 and lowered in ATS_SINGLE_GENERIC_NOISE:
         return True
-    if word_count == 1 and lowered not in ATS_ALLOWED_SINGLE_TERMS:
+    if word_count == 1 and "-" not in lowered and lowered not in ATS_ALLOWED_SINGLE_TERMS:
         return True
 
     # Too long for an ATS keyword (real skills are 1-4 words)
@@ -298,13 +313,17 @@ def _is_noise_term(term: str, context: str = "") -> bool:
     if word_count >= 2 and words[0] in _RESPONSIBILITY_VERBS:
         return True
 
-    # Starts with a preposition/article/pronoun - likely a JD fragment
+    # Starts with a preposition/article/pronoun/adjective - likely a JD fragment
     _FRAGMENT_STARTERS = {
         "a", "an", "the", "in", "on", "at", "to", "of", "for", "with",
         "by", "from", "as", "both", "all", "any", "our", "their", "your",
         "this", "that", "these", "those", "such", "some", "other",
         "assist", "degree", "minimum", "strong", "good", "excellent",
         "relevant", "preferred", "required", "able", "ability",
+        "proficient", "proficiency", "knowledge", "background",
+        "trained", "skilled", "experienced", "familiar",
+        "when", "where", "how", "what", "who", "which",
+        "calls", "education", "based",
     }
     if word_count >= 2 and words[0] in _FRAGMENT_STARTERS:
         return True
@@ -314,9 +333,30 @@ def _is_noise_term(term: str, context: str = "") -> bool:
     if word_count >= 2 and words[-1] in _FRAGMENT_ENDERS:
         return True
 
-    # Contains "of singapore", "of the" - institutional phrases, not skills
+    # Institutional phrases and proper nouns (not skills)
     if "of singapore" in lowered or "of the " in lowered:
         return True
+    if "ministry" in lowered or "authority" in lowered or "board " in lowered:
+        return True
+
+    # Contains parenthetical fragments like "(excel" or "applications (excel"
+    if "(" in lowered or ")" in lowered:
+        return True
+
+    # Job title fragments: contains slash patterns like "officer/assistant"
+    if "/" in lowered and word_count <= 3:
+        return True
+
+    # Agency codes like "lta-tro", "lta-cc", "nhb-sc" (2-3 char abbreviations)
+    if re.match(r"^[a-z]{2,3}-[a-z]{1,4}\b", lowered) and word_count <= 3:
+        return True
+
+    # Contains "& " followed by section-like words
+    _SECTION_AFTER_AMP = {"community", "other", "local", "experience", "attributes"}
+    if "&" in lowered:
+        after_amp = lowered.split("&")[-1].strip().split()[0] if "&" in lowered else ""
+        if after_amp in _SECTION_AFTER_AMP:
+            return True
 
     if _looks_like_study_area(lowered, context):
         return True

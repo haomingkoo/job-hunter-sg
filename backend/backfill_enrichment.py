@@ -49,16 +49,40 @@ def _normalize_skill_strings(skills: list | dict | None) -> list[str]:
     return []
 
 
+_SKILL_ACRONYMS = {"ai", "ml", "bi", "hr", "it", "ux", "ui", "qa", "pm", "sql",
+                   "api", "aws", "gcp", "ci", "cd", "iot", "erp", "crm", "sop",
+                   "kpi", "roi", "seo", "cet", "amr", "dna", "wsq", "rpa", "gis"}
+
+
+def _title_case_skill(skill: str) -> str:
+    if not skill:
+        return skill
+    if skill != skill.lower() and skill != skill.upper():
+        return skill
+    words = skill.split()
+    result = []
+    for w in words:
+        if w.lower() in _SKILL_ACRONYMS:
+            result.append(w.upper())
+        elif w.lower() in {"and", "&", "of", "for", "in", "to", "the", "with", "on", "or"}:
+            result.append(w.lower())
+        else:
+            result.append(w.capitalize())
+    if result:
+        result[0] = result[0].capitalize() if result[0] == result[0].lower() else result[0]
+    return " ".join(result)
+
+
 def _job_term_labels(terms: list[dict], limit: int = 8) -> list[str]:
     labels: list[str] = []
     seen: set[str] = set()
     for term in terms or []:
-        label = re.sub(r"\s+", " ", str(term.get("skill", "")).strip())
-        lower = label.lower()
-        if not label or lower in seen:
+        raw = re.sub(r"\s+", " ", str(term.get("skill", "")).strip())
+        lower = raw.lower()
+        if not raw or lower in seen:
             continue
         seen.add(lower)
-        labels.append(label)
+        labels.append(_title_case_skill(raw))
         if len(labels) >= limit:
             break
     return labels
