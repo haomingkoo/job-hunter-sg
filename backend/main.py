@@ -1123,16 +1123,35 @@ def admin_seed_jobs(
         return {"status": "started", "mode": "keyword_seed", "sources": sources, "limit": limit}
 
 
-@app.post("/api/admin/backfill")
-def admin_backfill_enrichment(
-    body: dict,
+_backfill_progress: dict = {
+    "running": False,
+    "phase": "",
+    "started_at": "",
+    "preview_done": 0,
+    "preview_total": 0,
+    "summary_done": 0,
+    "summary_failed": 0,
+    "summary_total": 0,
+    "rate_per_min": 0.0,
+    "eta_minutes": 0.0,
+    "last_updated": "",
+}
+_backfill_progress_lock = threading.Lock()
+
+
+def _update_backfill_progress(**kwargs: object) -> None:
+    with _backfill_progress_lock:
+        _backfill_progress.update(kwargs)
+        _backfill_progress["last_updated"] = datetime.now(timezone.utc).isoformat()
+
+
+@app.get("/api/admin/backfill/status")
+def admin_backfill_status(
     authorization: Optional[str] = Header(None),
 ) -> dict:
     """
-    Trigger JD enrichment backfill. Protected by ADMIN_API_KEY.
-    Body: {preview_only: true}  — parsed_jd + term preview only (no LLM)
-           {summary_limit: 500} — limit summary generation count
-           {}                   — full backfill (preview + all summaries)
+    Get enrichment status. Protected by ADMIN_API_KEY.
+    Returns progress, coverage stats, and ETA.
     """
     token = ""
     if authorization:
@@ -1142,15 +1161,99 @@ def admin_backfill_enrichment(
     if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
         raise HTTPException(status_code=403, detail="Invalid admin API key")
 
+    db = SessionLocal()
+    try:
+        total = db.query(func.count(ScrapedJob.id)).scalar()
+        has_desc = db.query(func.count(ScrapedJob.id)).filter(
+            ScrapedJob.description != "", ScrapedJob.description.isnot(None)
+        ).scalar()
+        has_parsed = db.query(func.count(ScrapedJob.id)).filter(
+            ScrapedJob.parsed_jd.isnot(None)
+        ).scalar()
+        has_preview = db.query(func.count(ScrapedJob.id)).filter(
+            ScrapedJob.job_terms_preview.isnot(None)
+        ).scalar()
+        has_summary = db.query(func.count(ScrapedJob.id)).filter(
+            ScrapedJob.jd_summary != "", ScrapedJob.jd_summary.isnot(None)
+        ).scalar()
+        summary_failed = db.query(func.count(ScrapedJob.id)).filter(
+            ScrapedJob.jd_summary_status.in_(["failed", "unavailable"])
+        ).scalar()
+        summary_generating = db.query(func.count(ScrapedJob.id)).filter(
+            ScrapedJob.jd_summary_status == "generating"
+        ).scalar()
+    finally:
+        db.close()
+
+    with _backfill_progress_lock:
+        progress = dict(_backfill_progress)
+
+    return {
+        "coverage": {
+            "total_jobs": total,
+            "have_description": has_desc,
+            "have_parsed_jd": has_parsed,
+            "have_preview": has_preview,
+            "have_summary": has_summary,
+            "summary_failed": summary_failed,
+            "summary_generating": summary_generating,
+            "need_preview": has_desc - has_preview,
+            "need_summary": max(0, has_desc - has_summary - summary_failed),
+            "preview_pct": round(has_preview / max(1, has_desc) * 100, 1),
+            "summary_pct": round(has_summary / max(1, has_desc) * 100, 1),
+        },
+        "backfill": progress,
+    }
+
+
+@app.post("/api/admin/backfill")
+def admin_backfill_enrichment(
+    body: dict,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """
+    Trigger JD enrichment backfill. Protected by ADMIN_API_KEY.
+    Body: {preview_only: true}  -- parsed_jd + term preview only (no LLM)
+           {summary_limit: 500} -- limit summary generation count
+           {}                   -- full backfill (preview + all summaries)
+    """
+    token = ""
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    with _backfill_progress_lock:
+        if _backfill_progress.get("running"):
+            return {"status": "already_running", "backfill": dict(_backfill_progress)}
+        _backfill_progress["running"] = True
+
     from backfill_enrichment import backfill_previews, backfill_summaries
 
     preview_only = body.get("preview_only", False)
     summary_limit = body.get("summary_limit", 0)
 
     def run_backfill() -> None:
-        backfill_previews()
-        if not preview_only:
-            backfill_summaries(limit=summary_limit)
+        _update_backfill_progress(
+            running=True,
+            phase="preview",
+            started_at=datetime.now(timezone.utc).isoformat(),
+            preview_done=0, preview_total=0,
+            summary_done=0, summary_failed=0, summary_total=0,
+            rate_per_min=0.0, eta_minutes=0.0,
+        )
+        try:
+            backfill_previews(progress_callback=_update_backfill_progress)
+            if not preview_only:
+                _update_backfill_progress(phase="summary")
+                backfill_summaries(
+                    limit=summary_limit,
+                    progress_callback=_update_backfill_progress,
+                )
+        finally:
+            _update_backfill_progress(running=False, phase="done")
 
     threading.Thread(target=run_backfill, daemon=True).start()
     return {

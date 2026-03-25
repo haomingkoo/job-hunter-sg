@@ -22,6 +22,7 @@ import argparse
 import logging
 import sys
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 logging.basicConfig(
@@ -72,33 +73,30 @@ def _is_power_skill_noise(skill: str) -> bool:
     }
 
 
-def backfill_previews(batch_size: int = 200) -> int:
+def backfill_previews(
+    batch_size: int = 200,
+    progress_callback: Callable[..., None] | None = None,
+) -> int:
     """Backfill parsed_jd + job_terms_preview for all jobs. No LLM needed."""
     db = SessionLocal()
     total_done = 0
     try:
-        # Count work
-        need_parsed = (
+        total_need = (
             db.query(ScrapedJob.id)
             .filter(
                 ScrapedJob.description != "",
                 ScrapedJob.description.isnot(None),
-                ScrapedJob.parsed_jd.is_(None),
             )
-            .count()
-        )
-        need_preview = (
-            db.query(ScrapedJob.id)
             .filter(
-                ScrapedJob.description != "",
-                ScrapedJob.description.isnot(None),
-                ScrapedJob.job_terms_preview.is_(None),
+                (ScrapedJob.parsed_jd.is_(None))
+                | (ScrapedJob.job_terms_preview.is_(None))
             )
             .count()
         )
-        log.info(f"Need parsed_jd: {need_parsed}, need preview: {need_preview}")
+        log.info(f"Need preview backfill: {total_need}")
+        if progress_callback:
+            progress_callback(preview_total=total_need, preview_done=0)
 
-        offset = 0
         while True:
             jobs = (
                 db.query(ScrapedJob)
@@ -116,9 +114,7 @@ def backfill_previews(batch_size: int = 200) -> int:
             if not jobs:
                 break
 
-            batch_done = 0
             for job in jobs:
-                # Parse JD if needed
                 if not job.parsed_jd:
                     db_skills = _normalize_skill_strings(job.skills)
                     job.parsed_jd = preparse_jd(
@@ -128,7 +124,6 @@ def backfill_previews(batch_size: int = 200) -> int:
                         job_title=job.title or "",
                     )
 
-                # Build term preview if needed
                 if not job.job_terms_preview:
                     db_skills = _normalize_skill_strings(job.skills)
                     parsed_jd = job.parsed_jd if isinstance(job.parsed_jd, dict) else None
@@ -146,11 +141,11 @@ def backfill_previews(batch_size: int = 200) -> int:
                     )
                     job.job_terms_preview = labels
 
-                batch_done += 1
-
             db.commit()
-            total_done += batch_done
-            log.info(f"Preview backfill: {total_done} jobs done")
+            total_done += len(jobs)
+            log.info(f"Preview backfill: {total_done}/{total_need}")
+            if progress_callback:
+                progress_callback(preview_done=total_done, preview_total=total_need)
 
     finally:
         db.close()
@@ -158,7 +153,11 @@ def backfill_previews(batch_size: int = 200) -> int:
     return total_done
 
 
-def backfill_summaries(limit: int = 0, batch_size: int = 10) -> int:
+def backfill_summaries(
+    limit: int = 0,
+    batch_size: int = 10,
+    progress_callback: Callable[..., None] | None = None,
+) -> int:
     """Backfill jd_summary for jobs that have parsed_jd but no summary."""
     from jd_summary import summarize_job_description
     from ai_service import _api_keys, get_ai_health
@@ -170,6 +169,7 @@ def backfill_summaries(limit: int = 0, batch_size: int = 10) -> int:
     db = SessionLocal()
     total_done = 0
     total_failed = 0
+    start_time = time.time()
     try:
         query = (
             db.query(ScrapedJob)
@@ -183,25 +183,23 @@ def backfill_summaries(limit: int = 0, batch_size: int = 10) -> int:
                 | (ScrapedJob.jd_summary == "")
             )
             .filter(
-                # Skip jobs that permanently failed
                 ScrapedJob.jd_summary_status != "unavailable",
             )
-            .order_by(ScrapedJob.id.desc())  # newest first
+            .order_by(ScrapedJob.id.desc())
         )
 
         total_need = query.count()
         if limit > 0:
             total_need = min(total_need, limit)
         log.info(f"Need summaries: {total_need} (limit={limit or 'none'})")
+        if progress_callback:
+            progress_callback(summary_total=total_need, summary_done=0, summary_failed=0)
 
         processed = 0
-        while processed < total_need if limit == 0 else processed < limit:
-            jobs = (
-                query
-                .offset(0)  # always 0 since we're updating as we go
-                .limit(batch_size)
-                .all()
-            )
+        while True:
+            if limit > 0 and processed >= limit:
+                break
+            jobs = query.offset(0).limit(batch_size).all()
             if not jobs:
                 break
 
@@ -239,24 +237,47 @@ def backfill_summaries(limit: int = 0, batch_size: int = 10) -> int:
                     total_failed += 1
 
                 processed += 1
+                if limit > 0 and processed >= limit:
+                    break
 
                 if processed % 10 == 0:
                     db.commit()
-                    rate = total_done / max(1, processed) * 100
+                    elapsed = time.time() - start_time
+                    rate_per_min = processed / max(1, elapsed) * 60
+                    remaining = total_need - processed
+                    eta_min = remaining / max(0.1, rate_per_min)
                     log.info(
-                        f"Summaries: {processed}/{total_need} processed, "
-                        f"{total_done} ok, {total_failed} failed ({rate:.0f}% success)"
+                        f"Summaries: {processed}/{total_need} "
+                        f"({total_done} ok, {total_failed} fail) "
+                        f"| {rate_per_min:.1f}/min | ETA {eta_min:.0f}min"
                     )
+                    if progress_callback:
+                        progress_callback(
+                            summary_done=total_done,
+                            summary_failed=total_failed,
+                            summary_total=total_need,
+                            rate_per_min=round(rate_per_min, 1),
+                            eta_minutes=round(eta_min, 1),
+                        )
 
             db.commit()
 
     finally:
         db.close()
 
+    elapsed = time.time() - start_time
     log.info(
         f"Summary backfill complete: {total_done} ok, {total_failed} failed "
-        f"out of {total_done + total_failed} processed"
+        f"out of {processed} processed in {elapsed / 60:.1f}min"
     )
+    if progress_callback:
+        progress_callback(
+            summary_done=total_done,
+            summary_failed=total_failed,
+            summary_total=total_need,
+            rate_per_min=round(processed / max(1, elapsed) * 60, 1),
+            eta_minutes=0.0,
+        )
     return total_done
 
 
