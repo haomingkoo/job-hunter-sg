@@ -1659,18 +1659,27 @@ def list_cached_jobs(
         total = len(jobs)
         jobs = jobs[offset: offset + per_page]
 
-    hydrated_count = _hydrate_missing_careersgov_jobs(jobs, db)
-    if hydrated_count:
-        ordered_query = query.order_by(ScrapedJob.posted_at_sort.desc(), ScrapedJob.id.desc())
-        if min_salary is None:
-            jobs = ordered_query.offset(offset).limit(per_page).all()
-        else:
-            jobs = ordered_query.all()
-            salary_matched = [job for job in jobs if salary_floor(job.salary) >= min_salary]
-            salary_unknown = [job for job in jobs if salary_floor(job.salary) == 0]
-            jobs = salary_matched + salary_unknown
-            total = len(jobs)
-            jobs = jobs[offset: offset + per_page]
+    # Queue CareersGov hydration in background (don't block the response)
+    cgov_missing = [
+        j.id for j in jobs
+        if j.source == "Careers@Gov" and (
+            not (j.description or "").strip()
+            or not (j.skills or [])
+            or j.parsed_jd in (None, {})
+        )
+    ]
+    if cgov_missing:
+        def _bg_hydrate(job_ids: list[int]) -> None:
+            from database import SessionLocal as _SL
+            bg_db = _SL()
+            try:
+                _hydrate_missing_careersgov_jobs(
+                    bg_db.query(ScrapedJob).filter(ScrapedJob.id.in_(job_ids)).all(),
+                    bg_db,
+                )
+            finally:
+                bg_db.close()
+        _JD_ENRICHMENT_POOL.submit(_bg_hydrate, cgov_missing)
 
     refreshed_terms = False
     queued_count = 0

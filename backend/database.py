@@ -59,6 +59,19 @@ def _apply_lightweight_migrations() -> None:
     if "job_terms_preview" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN job_terms_preview JSON")
 
+    # Add indexes if they don't exist (safe for Postgres and SQLite)
+    existing_indexes = {idx["name"] for idx in inspector.get_indexes("scraped_jobs")}
+    index_defs = {
+        "ix_scraped_jobs_posted_sort": "CREATE INDEX ix_scraped_jobs_posted_sort ON scraped_jobs (posted_at_sort)",
+        "ix_scraped_jobs_source": "CREATE INDEX ix_scraped_jobs_source ON scraped_jobs (source)",
+        "ix_scraped_jobs_location": "CREATE INDEX ix_scraped_jobs_location ON scraped_jobs (location)",
+        "ix_scraped_jobs_seniority": "CREATE INDEX ix_scraped_jobs_seniority ON scraped_jobs (seniority)",
+        "ix_scraped_jobs_emp_type": "CREATE INDEX ix_scraped_jobs_emp_type ON scraped_jobs (employment_type)",
+    }
+    for idx_name, idx_sql in index_defs.items():
+        if idx_name not in existing_indexes:
+            statements.append(idx_sql)
+
     if not statements:
         return
 

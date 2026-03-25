@@ -80,6 +80,11 @@ class ScrapedJob(Base):
 
     __table_args__ = (
         Index("ix_scraped_jobs_keyword", "search_keyword"),
+        Index("ix_scraped_jobs_posted_sort", "posted_at_sort"),
+        Index("ix_scraped_jobs_source", "source"),
+        Index("ix_scraped_jobs_location", "location"),
+        Index("ix_scraped_jobs_seniority", "seniority"),
+        Index("ix_scraped_jobs_emp_type", "employment_type"),
     )
 
 

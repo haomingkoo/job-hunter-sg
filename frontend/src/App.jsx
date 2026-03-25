@@ -588,19 +588,18 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     fetchParsedJobMeta(expandedJobId);
   }, [expandedJobId, fetchParsedJobMeta]);
 
+  // Lazy-fetch parsed data only for the rare job missing a cached preview
+  // (all jobs should have preview from backfill; this is a safety net)
   useEffect(() => {
     if (!results.length) return;
-    const candidates = results
-      .filter((job) => !job.jobTermsPreview?.length && (job.description || "").trim())
-      .slice(0, 4)
-      .map((job) => job.id);
-    if (!candidates.length) return;
+    const candidate = results.find(
+      (job) => !job.jobTermsPreview?.length && (job.description || "").trim()
+    );
+    if (!candidate) return;
 
     const timeoutId = window.setTimeout(() => {
-      candidates.forEach((jobId) => {
-        fetchParsedJobMeta(jobId);
-      });
-    }, 250);
+      fetchParsedJobMeta(candidate.id);
+    }, 1000);
 
     return () => window.clearTimeout(timeoutId);
   }, [results, fetchParsedJobMeta]);
