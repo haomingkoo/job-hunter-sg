@@ -93,59 +93,133 @@ export default function HomePage({ onNavigate }) {
     <div className="font-body w-full homepage-grain" style={{ background: "#f5f0e8" }}>
 
       {/* ═══════ HERO ═════════════════════════════════════════════════════════
-          Massive typography. The text IS the design.
+          Split: bold headline left + floating resume templates right (ICV style)
       ═══════════════════════════════════════════════════════════════════════ */}
-      <section className="relative overflow-hidden px-6 pt-12 pb-8 sm:pt-20 sm:pb-12">
-        <div className="relative mx-auto max-w-5xl">
-          {/* Decorative shapes */}
-          <Triangle className="hero-float absolute -top-2 right-[15%] rotate-12 opacity-80 hidden sm:block" color="#e85d3a" />
-          <Squiggle className="hero-float absolute top-[30%] -right-4 rotate-6 opacity-70 hidden lg:block" color="#7c6ceb" />
-          <Dot className="hero-float absolute top-[20%] left-[5%] hidden sm:block" color="#f5a623" />
-          <Triangle className="hero-float absolute bottom-[20%] left-[8%] -rotate-45 opacity-60 hidden sm:block" color="#7c6ceb" />
-          <Dot className="hero-float absolute bottom-[10%] right-[25%] hidden sm:block" color="#e85d3a" />
+      <section className="relative overflow-hidden px-6 pt-12 pb-16 sm:pt-20 sm:pb-20 lg:pt-24 lg:pb-24">
+        <div className="relative mx-auto max-w-6xl">
+          <div className="grid items-center gap-8 lg:grid-cols-[1fr_1fr]">
+            {/* Left: copy */}
+            <div>
+              <div className="hero-stagger-1">
+                <p className="text-[13px] font-medium tracking-wide text-stone-400">
+                  Singapore's career intelligence platform
+                </p>
+              </div>
 
-          {/* Main headline */}
-          <div className="hero-stagger-1 text-center">
-            <p className="text-[13px] font-medium tracking-wide text-stone-500">
-              Singapore's career intelligence platform
-            </p>
-          </div>
+              <h1 className="hero-stagger-2 font-display mt-6 text-[2.75rem] leading-[0.95] tracking-tight text-stone-900 sm:text-[3.5rem] lg:text-[4.25rem]">
+                Connecting<br />the right people<br />to the{" "}
+                <span className="relative inline-block">
+                  <span className="relative z-10">right job</span>
+                  <svg className="absolute -bottom-1 left-0 w-full z-0" height="8" viewBox="0 0 200 8" preserveAspectRatio="none">
+                    <path d="M0 6C50 0 150 0 200 6" stroke="#7cb9e8" strokeWidth="3" fill="none" strokeLinecap="round" />
+                  </svg>
+                </span>
+              </h1>
 
-          <h1 className="hero-stagger-2 font-display mt-6 text-center text-[3rem] leading-[0.95] tracking-tight text-stone-900 sm:text-[4.5rem] lg:text-[6rem]">
-            Find work<br />
-            <span className="relative inline-block">
-              that
-              <svg className="absolute -bottom-1 left-0 w-full" height="8" viewBox="0 0 200 8" preserveAspectRatio="none">
-                <path d="M0 6C50 0 150 0 200 6" stroke="#7cb9e8" strokeWidth="3" fill="none" strokeLinecap="round" />
-              </svg>
-            </span>{" "}
-            <span className="italic text-stone-500">matters</span>
-          </h1>
+              <p className="hero-stagger-3 mt-7 max-w-md text-[1.05rem] leading-relaxed text-stone-500">
+                Search {count}+ listings, build a resume that tells your story, and go after the career you deserve.
+              </p>
 
-          <p className="hero-stagger-3 mx-auto mt-8 max-w-xl text-center text-[1.05rem] leading-relaxed text-stone-500">
-            We connect Singapore professionals to their dream roles. Search {count}+ listings, prepare your resume to stand out, and go after the career you deserve.
-          </p>
+              <div className="hero-stagger-4 mt-9 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => onNavigate("scraper")}
+                  className="inline-flex items-center gap-2.5 rounded-full bg-slate-900 px-7 py-3.5 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-slate-800 hover:shadow-md active:scale-[0.97]"
+                >
+                  Start exploring <ArrowRight size={15} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onNavigate("resume")}
+                  className="inline-flex items-center gap-2 rounded-full border-2 border-stone-300 bg-transparent px-7 py-3.5 text-sm font-semibold text-stone-700 transition-all duration-200 hover:border-stone-400 hover:bg-stone-100/50 active:scale-[0.97]"
+                >
+                  Build my resume
+                </button>
+              </div>
 
-          <div className="hero-stagger-4 mt-10 flex flex-wrap items-center justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => onNavigate("scraper")}
-              className="inline-flex items-center gap-2.5 rounded-full bg-slate-900 px-7 py-3.5 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:bg-slate-800 hover:shadow-md active:scale-[0.97]"
-            >
-              Start exploring <ArrowRight size={15} />
-            </button>
-            <button
-              type="button"
-              onClick={() => onNavigate("resume")}
-              className="inline-flex items-center gap-2 rounded-full border-2 border-stone-300 bg-transparent px-7 py-3.5 text-sm font-semibold text-stone-700 transition-all duration-200 hover:border-stone-400 hover:bg-stone-100/50 active:scale-[0.97]"
-            >
-              Score my resume
-            </button>
-          </div>
+              <div className="hero-stagger-5 mt-6 flex items-center gap-5 text-[13px] text-stone-400">
+                <span className="flex items-center gap-1.5"><CheckCircle size={13} className="text-emerald-500" /> Free to use</span>
+                <span className="flex items-center gap-1.5"><CheckCircle size={13} className="text-emerald-500" /> No sign-up needed</span>
+              </div>
+            </div>
 
-          <div className="hero-stagger-5 mt-6 flex items-center justify-center gap-5 text-[13px] text-stone-400">
-            <span className="flex items-center gap-1.5"><CheckCircle size={13} className="text-emerald-500" /> Free to use</span>
-            <span className="flex items-center gap-1.5"><CheckCircle size={13} className="text-emerald-500" /> No sign-up needed</span>
+            {/* Right: floating resume templates (ICV style) */}
+            <div className="hero-stagger-3 relative hidden sm:block" style={{ perspective: "1200px" }}>
+              {/* Resume template 1 - front, slightly tilted */}
+              <div
+                className="resume-card absolute top-4 right-4 w-[260px] rounded-lg border border-stone-200 bg-white p-5 shadow-xl"
+                style={{ transform: "rotateY(-8deg) rotateX(2deg)", zIndex: 3 }}
+              >
+                <div className="border-b border-stone-100 pb-3 mb-3">
+                  <div className="text-[13px] font-bold text-stone-800">Sarah Chen</div>
+                  <div className="text-[10px] text-stone-400 mt-0.5">Software Engineer</div>
+                  <div className="text-[8px] text-stone-300 mt-1">sarah@email.com | +65 9123 4567</div>
+                </div>
+                <div className="text-[8px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">Experience</div>
+                <div className="space-y-2">
+                  <div>
+                    <div className="flex justify-between"><span className="text-[9px] font-semibold text-stone-700">Senior Engineer</span><span className="text-[8px] text-stone-400">2022-Present</span></div>
+                    <div className="text-[8px] text-stone-400">DBS Bank</div>
+                    <div className="mt-1 h-1 w-[85%] rounded-full bg-stone-100" /><div className="mt-0.5 h-1 w-[70%] rounded-full bg-stone-100" />
+                  </div>
+                  <div>
+                    <div className="flex justify-between"><span className="text-[9px] font-semibold text-stone-700">Engineer</span><span className="text-[8px] text-stone-400">2019-2022</span></div>
+                    <div className="text-[8px] text-stone-400">GovTech</div>
+                    <div className="mt-1 h-1 w-[90%] rounded-full bg-stone-100" /><div className="mt-0.5 h-1 w-[65%] rounded-full bg-stone-100" />
+                  </div>
+                </div>
+                <div className="mt-3 text-[8px] font-bold uppercase tracking-wider text-stone-500 mb-1">Skills</div>
+                <div className="flex flex-wrap gap-1">
+                  {["Python", "AWS", "React", "SQL"].map((s) => <span key={s} className="rounded bg-sky-50 px-1.5 py-0.5 text-[7px] font-medium text-sky-600">{s}</span>)}
+                </div>
+              </div>
+
+              {/* Resume template 2 - behind, more tilted */}
+              <div
+                className="resume-card absolute top-12 right-[140px] w-[240px] rounded-lg border border-stone-200 bg-white p-5 shadow-lg opacity-80"
+                style={{ transform: "rotateY(-15deg) rotateX(3deg) translateZ(-40px)", zIndex: 2 }}
+              >
+                <div className="flex gap-3 border-b border-stone-100 pb-3 mb-3">
+                  <div className="h-8 w-8 rounded-full bg-stone-200" />
+                  <div>
+                    <div className="text-[12px] font-bold text-stone-800">James Lim</div>
+                    <div className="text-[9px] text-stone-400">Product Manager</div>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="h-1.5 w-full rounded-full bg-stone-100" />
+                  <div className="h-1.5 w-[85%] rounded-full bg-stone-100" />
+                  <div className="h-1.5 w-[92%] rounded-full bg-stone-100" />
+                  <div className="h-1.5 w-[70%] rounded-full bg-stone-100" />
+                </div>
+                <div className="mt-3 flex gap-1">
+                  {["Agile", "SQL", "Figma"].map((s) => <span key={s} className="rounded bg-violet-50 px-1.5 py-0.5 text-[7px] font-medium text-violet-600">{s}</span>)}
+                </div>
+              </div>
+
+              {/* Resume template 3 - far back */}
+              <div
+                className="resume-card absolute top-20 right-[260px] w-[220px] rounded-lg border border-stone-200 bg-white p-4 shadow-md opacity-50"
+                style={{ transform: "rotateY(-22deg) rotateX(4deg) translateZ(-80px)", zIndex: 1 }}
+              >
+                <div className="text-[11px] font-bold text-stone-700 mb-2">Aisha Rahman</div>
+                <div className="text-[9px] text-stone-400 mb-2">Data Analyst</div>
+                <div className="space-y-1">
+                  <div className="h-1 w-full rounded-full bg-stone-100" />
+                  <div className="h-1 w-[80%] rounded-full bg-stone-100" />
+                  <div className="h-1 w-[90%] rounded-full bg-stone-100" />
+                </div>
+              </div>
+
+              {/* Match score floating badge */}
+              <div className="absolute top-0 right-0 hero-float rounded-xl bg-white border border-stone-200 shadow-lg px-3 py-2 z-10">
+                <div className="text-[9px] font-medium text-stone-400">ATS Match</div>
+                <div className="text-lg font-bold text-emerald-600">92%</div>
+              </div>
+
+              {/* Spacer for layout */}
+              <div className="h-[340px] sm:h-[380px]" />
+            </div>
           </div>
         </div>
       </section>
@@ -528,8 +602,16 @@ export default function HomePage({ onNavigate }) {
           animation: float 4s ease-in-out infinite alternate;
         }
         @keyframes float {
-          from { transform: translateY(0) rotate(var(--r, 0deg)); }
-          to { transform: translateY(-8px) rotate(var(--r, 0deg)); }
+          from { transform: translateY(0); }
+          to { transform: translateY(-8px); }
+        }
+        .resume-card {
+          transition: transform 0.4s cubic-bezier(0.23,1,0.32,1), box-shadow 0.4s cubic-bezier(0.23,1,0.32,1);
+        }
+        .resume-card:hover {
+          transform: rotateY(0deg) rotateX(0deg) translateZ(20px) scale(1.03) !important;
+          box-shadow: 0 25px 50px -12px rgba(0,0,0,0.15);
+          z-index: 10 !important;
         }
         @media (prefers-reduced-motion: reduce) {
           .reveal-base { opacity: 1; transform: none; transition: none; }
