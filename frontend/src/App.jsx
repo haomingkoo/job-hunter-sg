@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
-import { Briefcase, Loader2, LogOut } from "lucide-react";
+import { Briefcase, Loader2, LogOut, ChevronLeft } from "lucide-react";
 
 import { apiFetch, clearResumeDraftStorage } from "./lib/api.js";
 
 import Nav from "./components/Nav.jsx";
 import AuthModal from "./components/AuthModal.jsx";
 import AuthPrompt from "./components/AuthPrompt.jsx";
+import HomePage from "./components/HomePage.jsx";
 import ScraperTab from "./components/ScraperTab.jsx";
 import PowerTab from "./components/PowerTab.jsx";
 import TrackerTab from "./components/TrackerTab.jsx";
@@ -20,7 +21,7 @@ import ResumeTab from "./components/ResumeTab.jsx";
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export default function JobHunterSG() {
-  const [activeTab, setActiveTab] = useState("scraper");
+  const [activeTab, setActiveTab] = useState("home");
   const [trackedJobs, setTrackedJobs] = useState([]);
   const [selectedJob, setSelectedJob] = useState(null);
 
@@ -59,7 +60,6 @@ export default function JobHunterSG() {
       const data = await resp.json();
       setTrackedJobs(Array.isArray(data) ? data : data.jobs || []);
     } catch {
-      // Non-critical: tracked jobs will be empty for unauthenticated users
       setTrackedJobs([]);
     }
   }, []);
@@ -68,7 +68,7 @@ export default function JobHunterSG() {
     if (user) refreshJobs();
   }, [user, refreshJobs]);
 
-  // Usage meter (item 7)
+  // Usage meter
   const [usageData, setUsageData] = useState(null);
   useEffect(() => {
     if (!user) return;
@@ -94,7 +94,7 @@ export default function JobHunterSG() {
     setUser(null);
     setToken(null);
     setTrackedJobs([]);
-    setActiveTab("scraper");
+    setActiveTab("home");
   };
 
   const handleTrackJob = async (payload) => {
@@ -113,117 +113,137 @@ export default function JobHunterSG() {
     await refreshJobs();
   };
 
+  const navigateTo = (tab) => {
+    setActiveTab(tab);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   // Loading state
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-white flex items-center justify-center">
         <div className="text-center">
-          <Loader2 size={32} className="animate-spin text-indigo-600 mx-auto" />
-          <p className="text-sm text-gray-500 mt-3">Loading...</p>
+          <Loader2 size={28} className="animate-spin text-blue-600 mx-auto" />
+          <p className="text-sm text-gray-400 mt-3">Loading...</p>
         </div>
       </div>
     );
   }
 
+  const isHome = activeTab === "home";
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="w-full px-4 sm:px-6 lg:px-10">
-        {/* Header */}
-        <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-6 py-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-xl font-bold flex items-center gap-2"><Briefcase size={22} /> Job Hunter SG</h1>
-              <p className="text-indigo-100 text-sm mt-1">Search SG jobs, track applications, and get AI-powered resume coaching.</p>
-            </div>
-            <div className="flex items-center gap-3">
-              {user ? (
-                <>
-                  {usageData && (
-                    <div className="bg-white/15 rounded-lg px-3 py-1.5 text-xs text-indigo-100 hidden sm:block">
-                      {usageData.tracked_jobs} tracked{usageData.can_export ? " | Pro" : ""}
-                    </div>
-                  )}
-                  <div className="text-right">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{user.name}</span>
-                      <TierBadge tier={user.tier} />
-                    </div>
-                    <div className="text-indigo-200 text-xs">{user.email}</div>
-                  </div>
-                  <button onClick={handleLogout} className="text-indigo-200 hover:text-white transition" title="Sign out">
-                    <LogOut size={18} />
-                  </button>
-                </>
-              ) : (
-                <button onClick={() => setShowAuthModal(true)}
-                  className="bg-white/20 hover:bg-white/30 text-white px-4 py-2 rounded-lg text-sm font-medium transition">
-                  Sign In
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <header className={`sticky top-0 z-50 border-b transition-colors ${isHome ? "bg-slate-900 border-slate-800" : "bg-white border-gray-200"}`}>
+        <div className="mx-auto max-w-7xl flex items-center justify-between px-4 sm:px-6 h-14">
+          <button
+            type="button"
+            onClick={() => navigateTo("home")}
+            className={`flex items-center gap-2 text-base font-bold transition ${isHome ? "text-white" : "text-gray-900 hover:text-blue-600"}`}
+          >
+            <Briefcase size={18} />
+            Job Hunter SG
+          </button>
+
+          <div className="flex items-center gap-3">
+            {!isHome && (
+              <button
+                type="button"
+                onClick={() => navigateTo("home")}
+                className="hidden sm:flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 transition"
+              >
+                <ChevronLeft size={14} />
+                Home
+              </button>
+            )}
+            {user ? (
+              <div className="flex items-center gap-3">
+                <div className="hidden sm:flex items-center gap-2 text-sm">
+                  <span className={`font-medium ${isHome ? "text-white" : "text-gray-700"}`}>{user.name}</span>
+                  <TierBadge tier={user.tier} />
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className={`transition ${isHome ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-600"}`}
+                  title="Sign out"
+                >
+                  <LogOut size={16} />
                 </button>
-              )}
-            </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="rounded-lg bg-blue-600 px-4 py-1.5 text-sm font-medium text-white transition hover:bg-blue-500"
+              >
+                Sign In
+              </button>
+            )}
           </div>
         </div>
+      </header>
 
-        {showAuthModal && (
-          <AuthModal onAuth={(authUser, authToken) => { handleAuth(authUser, authToken); setShowAuthModal(false); }} onClose={() => setShowAuthModal(false)} />
-        )}
+      {showAuthModal && (
+        <AuthModal
+          onAuth={(authUser, authToken) => { handleAuth(authUser, authToken); setShowAuthModal(false); }}
+          onClose={() => setShowAuthModal(false)}
+        />
+      )}
 
-        <Nav active={activeTab} setActive={setActiveTab} />
-
-        <div className="p-6">
-          {activeTab === "scraper" && (
-            <ScraperTab
-              user={user}
-              trackedJobs={trackedJobs}
-              onTrack={handleTrackJob}
-              setActiveTab={setActiveTab}
-              setSelectedJob={setSelectedJob}
-              onSignIn={() => setShowAuthModal(true)}
-            />
-          )}
-          {activeTab === "power" && (
-            user ? (
-              <PowerTab
-                onTrack={handleTrackJob}
-                setSelectedJob={setSelectedJob}
-                setActiveTab={setActiveTab}
-              />
-            ) : (
-              <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Power Match" />
-            )
-          )}
-          {activeTab === "tracker" && (
-            user ? (
-              <TrackerTab
+      {/* ── Content ────────────────────────────────────────────────────── */}
+      {isHome ? (
+        <HomePage
+          onNavigate={navigateTo}
+          onSignIn={() => setShowAuthModal(true)}
+          user={user}
+        />
+      ) : (
+        <>
+          <Nav active={activeTab} setActive={navigateTo} />
+          <div className="mx-auto max-w-7xl p-4 sm:p-6">
+            {activeTab === "scraper" && (
+              <ScraperTab
                 user={user}
-                jobs={trackedJobs}
-                refreshJobs={refreshJobs}
+                trackedJobs={trackedJobs}
+                onTrack={handleTrackJob}
+                setActiveTab={navigateTo}
+                setSelectedJob={setSelectedJob}
+                onSignIn={() => setShowAuthModal(true)}
               />
-            ) : (
-              <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Application Tracker" />
-            )
-          )}
-          {activeTab === "analytics" && <AnalyticsTab />}
-          {activeTab === "reminders" && (
-            user ? (
-              <RemindersTab
-                jobs={trackedJobs}
-                onUpdateJob={handleUpdateJob}
-              />
-            ) : (
-              <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Follow-up Reminders" />
-            )
-          )}
-          {activeTab === "resume" && <ResumeTab selectedJob={selectedJob} user={user} setActiveTab={setActiveTab} />}
-          {activeTab === "account" && (
-            user ? (
-              <AccountTab user={user} onLogout={handleLogout} />
-            ) : (
-              <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Account Settings" />
-            )
-          )}
-        </div>
-      </div>
+            )}
+            {activeTab === "power" && (
+              user ? (
+                <PowerTab onTrack={handleTrackJob} setSelectedJob={setSelectedJob} setActiveTab={navigateTo} />
+              ) : (
+                <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Power Match" />
+              )
+            )}
+            {activeTab === "tracker" && (
+              user ? (
+                <TrackerTab user={user} jobs={trackedJobs} refreshJobs={refreshJobs} />
+              ) : (
+                <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Application Tracker" />
+              )
+            )}
+            {activeTab === "analytics" && <AnalyticsTab />}
+            {activeTab === "reminders" && (
+              user ? (
+                <RemindersTab jobs={trackedJobs} onUpdateJob={handleUpdateJob} />
+              ) : (
+                <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Follow-up Reminders" />
+              )
+            )}
+            {activeTab === "resume" && <ResumeTab selectedJob={selectedJob} user={user} setActiveTab={navigateTo} />}
+            {activeTab === "account" && (
+              user ? (
+                <AccountTab user={user} onLogout={handleLogout} />
+              ) : (
+                <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Account Settings" />
+              )
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
