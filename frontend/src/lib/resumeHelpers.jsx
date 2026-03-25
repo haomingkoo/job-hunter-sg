@@ -662,6 +662,29 @@ function extractEducationFields(items) {
   return { degree, institution, dateRange, gpa, honors, details, bullets };
 }
 
+/**
+ * Detect if a text block contains an embedded second education entry
+ * (e.g., "GPA 4.85/5.00 B.Sc. (Hons), Chemistry NUS, 2017, GPA 4.46/5.00")
+ * Returns [beforeText, embeddedEntryText] or null if no split needed.
+ */
+function splitEmbeddedDegree(text, primaryDegree) {
+  if (!text || !primaryDegree) return null;
+  // Look for a second degree pattern that isn't the primary one
+  const degreePatterns = /\b(B\.?Sc|M\.?Sc|B\.?Eng|M\.?Eng|B\.?A|M\.?A|Bachelor|Master|Ph\.?D|Doctorate|Diploma|MBA|Certificate)\b/gi;
+  let match;
+  let foundFirst = false;
+  while ((match = degreePatterns.exec(text)) !== null) {
+    // Skip if this matches the primary degree (already captured)
+    if (!foundFirst) { foundFirst = true; continue; }
+    // Found a second degree - split here
+    const splitIdx = match.index;
+    const before = text.slice(0, splitIdx).replace(/[·|\s,]+$/, "").trim();
+    const after = text.slice(splitIdx).trim();
+    if (after.length > 10) return [before, after];
+  }
+  return null;
+}
+
 export function groupEducationSections(sections) {
   const result = [];
   let i = 0;
@@ -701,6 +724,25 @@ export function groupEducationSections(sections) {
       i = j;
       continue;
     }
+
+    // Check if details contain an embedded second degree (e.g., B.Sc. after M.Sc. GPA)
+    let embeddedEntry = null;
+    for (let di = 0; di < fields.details.length; di++) {
+      const split = splitEmbeddedDegree(fields.details[di], fields.degree);
+      if (split) {
+        const [beforeText, afterText] = split;
+        // Keep the before part as a detail of the first entry
+        fields.details[di] = beforeText;
+        if (!beforeText) fields.details.splice(di, 1);
+        // Parse the embedded second entry
+        const secondFields = extractEducationFields([{ type: "paragraph", text: afterText }]);
+        if (secondFields.degree || secondFields.institution) {
+          embeddedEntry = secondFields;
+        }
+        break;
+      }
+    }
+
     result.push({
       id: `edu-entry-${section.lineIndex}`,
       type: "education_entry",
@@ -713,6 +755,22 @@ export function groupEducationSections(sections) {
       fields,
       items: entryItems,
     });
+
+    // Add the embedded second education entry if found
+    if (embeddedEntry) {
+      result.push({
+        id: `edu-entry-${section.lineIndex}-b`,
+        type: "education_entry",
+        sectionKey: "education",
+        lineIndex: section.lineIndex,
+        lineIndices: [...new Set(allLineIndices)],
+        raw: "",
+        text: [embeddedEntry.degree, embeddedEntry.institution].filter(Boolean).join(" | "),
+        keywordMatches: [],
+        fields: embeddedEntry,
+        items: [],
+      });
+    }
 
     i = j;
   }
