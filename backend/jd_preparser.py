@@ -147,6 +147,111 @@ def _extract_single_word_tech(text: str) -> list[str]:
     return found
 
 
+def _extract_prose_noun_phrases(text: str) -> list[str]:
+    """Extract capitalized multi-word noun phrases from prose text.
+
+    Catches domain terms like "Real Estate", "Life Sciences", "Digital Twin",
+    "Information Technology" that aren't in the static known-skills list.
+    """
+    # Match 2-4 word capitalized phrases (Title Case)
+    pattern = re.compile(
+        r"\b([A-Z][a-z]+(?:\s+(?:and|&|of|for|in)\s+)?[A-Z][a-z]+"
+        r"(?:\s+[A-Z][a-z]+)?(?:\s+[A-Z][a-z]+)?)\b"
+    )
+    # Also match phrases after "such as", "including", "include", "e.g."
+    enum_pattern = re.compile(
+        r"(?:such\s+as|including|include|e\.g\.?|areas?\s+(?:of|like)|"
+        r"fields?\s+(?:such\s+as|like|including))\s+"
+        r"([^.;]{10,120})",
+        re.IGNORECASE,
+    )
+    # Parenthetical terms: (DNA, CET, AMR, etc.)
+    paren_pattern = re.compile(r"\(([A-Z][A-Za-z&/ ]{1,30})\)")
+
+    found: list[str] = []
+    seen: set[str] = set()
+
+    def _add(term: str) -> None:
+        cleaned = term.strip(" ,;.()").strip()
+        if len(cleaned) < 3 or len(cleaned) > 40:
+            return
+        words = cleaned.split()
+        if len(words) < 2 or len(words) > 4:
+            return
+        lower = cleaned.lower()
+        # Skip generic phrases
+        if lower in {
+            "the role", "the team", "the company", "the candidate",
+            "we are", "you will", "you are", "this role",
+            "what the", "what we", "what you", "how you",
+            "in addition", "as well", "at least", "such as",
+        }:
+            return
+        if lower not in seen:
+            seen.add(lower)
+            found.append(cleaned)
+
+    # Capitalized noun phrases
+    for m in pattern.finditer(text):
+        _add(m.group(1))
+
+    # Enumerated terms after "such as X, Y, Z"
+    for m in enum_pattern.finditer(text):
+        chunk = m.group(1)
+        for part in re.split(r",\s*(?:and\s+|or\s+)?|\s+and\s+|\s+or\s+", chunk):
+            part = part.strip()
+            if part and len(part) >= 3:
+                _add(part)
+                # Also add single capitalized terms from enumerations
+                if len(part.split()) == 1 and part[0].isupper() and len(part) >= 3:
+                    lower = part.lower()
+                    if lower not in seen:
+                        seen.add(lower)
+                        found.append(part)
+
+    # Parenthetical abbreviations
+    for m in paren_pattern.finditer(text):
+        term = m.group(1).strip()
+        if 2 <= len(term) <= 10 and term.upper() == term:
+            lower = term.lower()
+            if lower not in seen:
+                seen.add(lower)
+                found.append(term)
+
+    return found
+
+
+def _extract_requirement_phrases(text: str) -> list[str]:
+    """Extract skill-like phrases from requirement bullet lines.
+
+    Targets patterns like:
+    - "Proficient in X"
+    - "Knowledge of X"
+    - "Experience in/with X"
+    - "Trained in X"
+    - "qualification in X"
+    """
+    patterns = [
+        re.compile(r"(?:proficien(?:t|cy))\s+(?:in|with)\s+([^,.;]{3,40})", re.I),
+        re.compile(r"(?:knowledge|understanding)\s+(?:of|in)\s+([^,.;]{3,40})", re.I),
+        re.compile(r"(?:trained|background|qualification)\s+in\s+([^,.;]{3,40})", re.I),
+        re.compile(r"(?:familiar(?:ity)?)\s+with\s+([^,.;]{3,40})", re.I),
+        re.compile(r"(?:experience)\s+(?:in|with)\s+([^,.;]{3,40})", re.I),
+    ]
+    found: list[str] = []
+    seen: set[str] = set()
+    for pat in patterns:
+        for m in pat.finditer(text):
+            term = m.group(1).strip()
+            words = term.split()
+            if 1 <= len(words) <= 4:
+                lower = term.lower()
+                if lower not in seen:
+                    seen.add(lower)
+                    found.append(term)
+    return found
+
+
 def _extract_bullet_lines(text: str, limit: int = 8) -> list[str]:
     """Extract responsibility phrases from bullet-point lines.
 
@@ -255,6 +360,15 @@ def preparse_job_description(
         for skill in title_skills:
             if skill not in all_skills:
                 all_skills.append(skill)
+
+    # Extract additional terms from prose (CareersGov, long-form JDs)
+    prose_terms = _extract_prose_noun_phrases(description)
+    requirement_terms = _extract_requirement_phrases(description)
+    seen_lower = {s.lower() for s in all_skills}
+    for term in prose_terms + requirement_terms:
+        if term.lower() not in seen_lower:
+            seen_lower.add(term.lower())
+            all_skills.append(term)
     required_lower = required_text.lower()
     preferred_lower = preferred_text.lower()
 
