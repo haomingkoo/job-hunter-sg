@@ -3917,34 +3917,6 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const resumePrintRef = useRef(null);
 
   const [downloadingPdf, setDownloadingPdf] = useState(false);
-  const handlePrintPdf = useCallback(async () => {
-    if (!resumeText.trim() || downloadingPdf) return;
-    setDownloadingPdf(true);
-    try {
-      const resp = await apiFetch("/api/resume/download-pdf", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          resume_text: resumeText,
-          template: templateMeta?.id || "modern",
-          name: profile.name || "",
-          email: profile.email || "",
-          phone: profile.phone || "",
-        }),
-      });
-      if (!resp.ok) throw new Error("PDF generation failed");
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${(profile.name || "resume").replace(/[^a-zA-Z0-9]/g, "_")}_resume.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      setDownloadError(err.message || "PDF download failed");
-    }
-    setDownloadingPdf(false);
-  }, [resumeText, downloadingPdf, templateMeta?.id, profile.name, profile.email, profile.phone]);
 
   const openMobileFeedbackPanel = useCallback((targetRef = scorePanelRef) => {
     if (typeof window === "undefined" || window.innerWidth >= 1024) return;
@@ -4913,6 +4885,38 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     } finally {
       setDownloading(false);
     }
+  };
+
+  const handlePrintPdf = async () => {
+    if (!resumeText.trim() || downloadingPdf) return;
+    setDownloadingPdf(true);
+    try {
+      const token = localStorage.getItem("token");
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const resp = await fetch(`${API_BASE}/api/resume/download-pdf`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          resume_text: resumeText,
+          template: selectedTemplate,
+          name: profile.name || "",
+          email: profile.email || "",
+          phone: profile.phone || "",
+        }),
+      });
+      if (!resp.ok) throw new Error("PDF generation failed");
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(profile.name || "resume").replace(/[^a-zA-Z0-9]/g, "_")}_resume.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setDownloadError(err.message || "PDF download failed");
+    }
+    setDownloadingPdf(false);
   };
 
   const handleFinalizeScore = async () => {
