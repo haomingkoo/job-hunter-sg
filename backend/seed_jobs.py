@@ -33,6 +33,42 @@ try:
 except ImportError:
     preparse_job_description = None
 
+try:
+    from ats_terms import build_job_ats_terms
+except ImportError:
+    build_job_ats_terms = None
+
+
+def _build_term_preview(job_row: ScrapedJob, db) -> None:
+    """Compute and cache job_terms_preview at scrape time."""
+    if not build_job_ats_terms or not (job_row.description or "").strip():
+        return
+    if job_row.job_terms_preview:
+        return
+    import re
+    parsed_jd = job_row.parsed_jd if isinstance(job_row.parsed_jd, dict) else None
+    db_skills = [str(s).strip() for s in (job_row.skills or []) if str(s).strip()] if isinstance(job_row.skills, list) else []
+    terms = build_job_ats_terms(
+        jd_text=job_row.description or "",
+        job_skills=db_skills,
+        parsed_jd=parsed_jd,
+        job_title=job_row.title or "",
+        limit=24,
+        db_session=db,
+    )
+    labels: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        label = re.sub(r"\s+", " ", str(term.get("skill", "")).strip())
+        lower = label.lower()
+        if not label or lower in seen:
+            continue
+        seen.add(lower)
+        labels.append(label)
+        if len(labels) >= 8:
+            break
+    job_row.job_terms_preview = labels
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -135,6 +171,7 @@ def seed_jobs(
                             existing.description or "",
                             skills=existing.skills if isinstance(existing.skills, list) else [],
                         )
+                    _build_term_preview(existing, db)
                     stats["updated_jobs"] += 1
                 else:
                     job_row = ScrapedJob(**clean)
@@ -145,6 +182,8 @@ def seed_jobs(
                             skills=clean.get("skills", []),
                         )
                     db.add(job_row)
+                    db.flush()  # get ID assigned for term preview
+                    _build_term_preview(job_row, db)
                     stats["new_jobs"] += 1
 
                 stats["total_cached"] += 1
