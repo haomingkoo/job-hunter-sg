@@ -6,6 +6,7 @@ import {
   CheckCircle, AlertCircle, Trash2, Edit3,
   RefreshCw, Zap, Download, Star,
   Loader2, Sparkles, UploadCloud, Printer,
+  Check, ArrowLeft, ArrowRight,
 } from "lucide-react";
 
 import { API_BASE, apiFetch, clearResumeDraftStorage } from "../lib/api.js";
@@ -165,6 +166,21 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [atsGapDecisions, setAtsGapDecisions] = useState({});
   const [showAddSectionMenu, setShowAddSectionMenu] = useState(false);
   const [insertKeywordPopup, setInsertKeywordPopup] = useState(null);
+  const [wizardStep, setWizardStep] = useState(() => {
+    try {
+      const saved = Number(sessionStorage.getItem("jh_wizard_step"));
+      if (saved >= 1 && saved <= 4) return saved;
+    } catch {
+      // ignore corrupt data
+    }
+    // Default: if resume text exists in session, start at step 3; otherwise step 1
+    try {
+      const text = sessionStorage.getItem("jh_resume_text") || "";
+      return text.trim() ? 3 : 1;
+    } catch {
+      return 1;
+    }
+  });
 
   const fileInputRef = useRef(null);
   const scorePanelRef = useRef(null);
@@ -209,6 +225,25 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       // ignore quota failures
     }
   }, [selectedTemplate]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("jh_wizard_step", String(wizardStep));
+    } catch {
+      // ignore quota failures
+    }
+  }, [wizardStep]);
+
+  // Auto-advance wizard: step 1 -> 2 when resume text appears
+  const prevResumeTextRef = useRef(resumeText);
+  useEffect(() => {
+    const wasFilled = prevResumeTextRef.current.trim().length > 0;
+    const isFilled = resumeText.trim().length > 0;
+    prevResumeTextRef.current = resumeText;
+    if (!wasFilled && isFilled && wizardStep === 1) {
+      setWizardStep(2);
+    }
+  }, [resumeText, wizardStep]);
 
   useEffect(() => {
     const fetchStatus = () => fetch(`${API_BASE}/api/ai/status`)
@@ -550,6 +585,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       setCoachError("");
       setSessionId("");
       setShowSetupPanel(false);
+      if (wizardStep === 1) setWizardStep(2);
       applyResumeText(nextText, { rescore: true, clearRewrites: true });
     } catch (err) {
       setUploadError(err.message || "Failed to upload file. Please try again.");
@@ -574,6 +610,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setCoachError("");
     setSessionId("");
     setShowSetupPanel(false);
+    if (wizardStep === 1) setWizardStep(2);
     applyResumeText(pastedText.trim(), { rescore: true, clearRewrites: true });
   };
 
@@ -605,6 +642,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       setCoachError("");
       setSessionId("");
       setShowSetupPanel(false);
+      if (wizardStep === 1) setWizardStep(2);
       applyResumeText(data.resume_text, { rescore: true, clearRewrites: true });
     } catch { /* ignore */ }
   };
@@ -1532,6 +1570,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const showFeedbackPanels = isFeedbackView || mobilePanel === "feedback";
   const lowScoreWarning = scoreData && overallScore !== null && overallScore < 50;
   const setupVisible = showSetupPanel || !resumeText.trim();
+  const hasResume = resumeText.trim().length > 0;
+  const canGoToStep = (step) => {
+    if (step === 1) return true;
+    if (step === 2) return hasResume;
+    if (step === 3) return hasResume;
+    if (step === 4) return hasResume;
+    return false;
+  };
   const scorePhaseLabel = !scoreData && scoreError
     ? "Scoring unavailable"
     : scorePhase === "final_complete"
@@ -1646,6 +1692,36 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         }}
       />
 
+      {/* ── Wizard Progress Bar ──────────────────────────────────────── */}
+      <div className="flex items-center gap-2 mb-6">
+        {["Upload", "Template", "Edit", "Export"].map((label, i) => {
+          const step = i + 1;
+          const isActive = wizardStep === step;
+          const isComplete = wizardStep > step;
+          return (
+            <button
+              key={label}
+              type="button"
+              onClick={() => {
+                if (!canGoToStep(step)) return;
+                if (step === 1) setShowSetupPanel(true);
+                setWizardStep(step);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition ${
+                isActive
+                  ? "bg-blue-600 text-white"
+                  : isComplete
+                    ? "bg-blue-100 text-blue-700 cursor-pointer hover:bg-blue-200"
+                    : "bg-gray-100 text-gray-400 cursor-default"
+              }`}
+            >
+              {isComplete ? <Check size={12} /> : <span>{step}</span>}
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
       {selectedJob && (
         <div className="mb-4 rounded-3xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
           <div className="flex items-center justify-between">
@@ -1683,37 +1759,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         </div>
       )}
 
-      {/* Clean header - no jargon, no step bar */}
-
-      {downloadReady && (
-        <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
-          <div className="text-sm font-semibold uppercase tracking-[0.16em] text-emerald-700">Next Steps</div>
-          <div className="mt-2 text-lg font-semibold text-slate-900">Your resume export is ready.</div>
-          <p className="mt-2 text-sm leading-relaxed text-slate-600">
-            Keep momentum by searching for matching roles or moving straight into application tracking.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveTab("scraper")}
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700"
-            >
-              <Search size={14} />
-              Search Matching Jobs
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab("tracker")}
-              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
-            >
-              <Plus size={14} />
-              Track This Application
-            </button>
-          </div>
-        </div>
-      )}
-
-      {setupVisible ? (
+      {/* ── Step 1: Upload ──────────────────────────────────────────── */}
+      {wizardStep === 1 && setupVisible ? (
         <div className="mx-auto max-w-3xl space-y-6">
           {/* ── Entry Point Cards ─────────────────────────────────────── */}
           <div>
@@ -1765,6 +1812,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 const starter = `PROFESSIONAL SUMMARY\nAdd a concise summary of your experience and goals.\n\nPROFESSIONAL EXPERIENCE\nCompany Name | Job Title | Start Date - End Date\n- Describe your key achievement or responsibility\n- Include metrics where possible (%, $, team size)\n\nEDUCATION\nDegree Name\nUniversity Name, Graduation Year\n\nSKILLS\nList your technical and professional skills here`;
                 applyResumeText(starter, { rescore: false });
                 setShowSetupPanel(false);
+                setWizardStep(2);
               }}
               className="group text-left rounded-2xl border-2 border-gray-200 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-violet-300"
             >
@@ -1884,8 +1932,24 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               </div>
             </div>
           </div>
+
+          {/* Step 1 Next button */}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              disabled={!hasResume}
+              onClick={() => setWizardStep(2)}
+              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Next: Pick Template
+              <ArrowRight size={14} />
+            </button>
+          </div>
         </div>
-      ) : (
+      ) : null}
+
+      {/* ── Step 3: Setup Complete bar ──────────────────────────────── */}
+      {wizardStep === 3 && !setupVisible && (
         <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
@@ -1959,7 +2023,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               )}
               <button
                 type="button"
-                onClick={() => setShowSetupPanel(true)}
+                onClick={() => { setShowSetupPanel(true); setWizardStep(1); }}
                 className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
               >
                 <Edit3 size={13} />
@@ -1978,7 +2042,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         </div>
       )}
 
-      {(uploadError || scoreError || coachError || formatError || downloadError || error) && (
+      {wizardStep <= 3 && (uploadError || scoreError || coachError || formatError || downloadError || error) && (
         <div className="space-y-2">
           {[uploadError, scoreError, coachError, formatError, downloadError, error].filter(Boolean).map((message, index) => (
             <div key={`${message}-${index}`} className="flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -1989,6 +2053,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         </div>
       )}
 
+      {/* ── Step 2: Template ─────────────────────────────────────────── */}
+      {wizardStep === 2 && (<>
       <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-4">
           <div>
@@ -2029,6 +2095,29 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         </div>
       </div>
 
+      {/* Step 2 navigation */}
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => { setShowSetupPanel(true); setWizardStep(1); }}
+          className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+        >
+          <ArrowLeft size={14} />
+          Back
+        </button>
+        <button
+          type="button"
+          onClick={() => setWizardStep(3)}
+          className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          Next: Review & Edit
+          <ArrowRight size={14} />
+        </button>
+      </div>
+      </>)}
+
+      {/* ── Step 3: Review & Edit ────────────────────────────────────── */}
+      {wizardStep === 3 && (<>
       <div className="rounded-3xl border border-gray-200 bg-white p-3 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="inline-flex rounded-2xl bg-gray-100 p-1">
@@ -3678,25 +3767,166 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
             )}
             <button
               type="button"
-              onClick={handleDownload}
-              disabled={downloading || !resumeText.trim()}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-40"
+              onClick={() => setWizardStep(2)}
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
             >
-              {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-              {downloading ? "Preparing..." : "Download DOCX"}
+              <ArrowLeft size={14} />
+              Templates
             </button>
             <button
               type="button"
-              onClick={handlePrintPdf}
-              disabled={downloadingPdf || !resumeText.trim()}
-              className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-sky-700 disabled:opacity-40"
+              onClick={() => setWizardStep(4)}
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700"
             >
-              {downloadingPdf ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}
-              {downloadingPdf ? "Generating..." : "Download PDF"}
+              <Download size={14} />
+              Export
             </button>
           </div>
         </div>
       </div>
+      </>)}
+
+      {/* ── Step 4: Export ────────────────────────────────────────────── */}
+      {wizardStep === 4 && (
+        <div className="mx-auto max-w-2xl space-y-6">
+          <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm text-center">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Final Score</div>
+            <div className={`mt-3 text-5xl font-bold ${scoreData ? scoreTheme.text : "text-gray-500"}`}>
+              {scoring ? "..." : scoreDisplayValue}
+              <span className="ml-1 text-lg font-medium text-gray-400">{scoreData ? "/100" : ""}</span>
+            </div>
+            <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-gray-100 mx-auto max-w-xs">
+              <div className={`h-full rounded-full transition-all ${scoreTheme.bar}`} style={{ width: `${scoreData && overallScore !== null ? overallScore : 0}%` }} />
+            </div>
+            {needsRescore && (
+              <button
+                type="button"
+                onClick={handleFinalizeScore}
+                disabled={scoring}
+                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+              >
+                {scoring ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                {scoring ? "Scoring..." : "Finalize Score"}
+              </button>
+            )}
+            {lowScoreWarning && (
+              <p className="mt-3 text-xs text-rose-600">
+                This draft may still struggle in ATS or recruiter screens. Consider going back to edit.
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
+            <div className="text-sm font-semibold text-gray-800">Download Your Resume</div>
+            <p className="text-sm text-gray-500">
+              Template: <span className="font-medium text-gray-700">{templateMeta?.name || "Modern"}</span>
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={downloading || !resumeText.trim()}
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-40"
+              >
+                {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                {downloading ? "Preparing..." : "Download DOCX"}
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintPdf}
+                disabled={downloadingPdf || !resumeText.trim()}
+                className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-sky-700 disabled:opacity-40"
+              >
+                {downloadingPdf ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}
+                {downloadingPdf ? "Generating..." : "Download PDF"}
+              </button>
+            </div>
+            {downloadError && (
+              <div className="flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                <AlertCircle size={14} className="flex-shrink-0" />
+                <span>{downloadError}</span>
+              </div>
+            )}
+          </div>
+
+          {user && (
+            <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
+              <div className="text-sm font-semibold text-gray-800">Save This Version</div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={saveVersionLabel}
+                  onChange={(e) => setSaveVersionLabel(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && saveVersionLabel.trim()) saveCurrentVersion(); }}
+                  placeholder="Name this version..."
+                  className="flex-1 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                />
+                <button
+                  type="button"
+                  onClick={saveCurrentVersion}
+                  disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
+                  className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                >
+                  {savingVersion ? "Saving..." : "Save Version"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {downloadReady && (
+            <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-6 shadow-sm">
+              <div className="text-sm font-semibold uppercase tracking-[0.16em] text-emerald-700">Next Steps</div>
+              <div className="mt-2 text-lg font-semibold text-slate-900">Your resume export is ready.</div>
+              <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                Keep momentum by searching for matching roles or moving straight into application tracking.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("scraper")}
+                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700"
+                >
+                  <Search size={14} />
+                  Search Matching Jobs
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("tracker")}
+                  className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  <Plus size={14} />
+                  Track This Application
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => setWizardStep(3)}
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <ArrowLeft size={14} />
+              Back to Editor
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setResumeText("");
+                setScoreData(null);
+                setShowSetupPanel(true);
+                setDownloadReady(false);
+                setWizardStep(1);
+              }}
+              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <Plus size={14} />
+              Start Another
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
