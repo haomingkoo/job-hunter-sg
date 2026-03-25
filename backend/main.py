@@ -3604,6 +3604,143 @@ def download_resume(
     )
 
 
+@app.post("/api/resume/download-pdf")
+def download_resume_pdf(
+    body: dict,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """Generate and download a PDF resume via weasyprint."""
+    resume_text = body.get("resume_text", "")
+    if not resume_text or len(resume_text) < 50:
+        raise HTTPException(status_code=400, detail="Resume text too short")
+
+    template_id = body.get("template", "modern")
+    name = sanitize_user_input(body.get("name", ""))
+    email_addr = sanitize_user_input(body.get("email", ""))
+    phone = sanitize_user_input(body.get("phone", ""))
+
+    sanitized_resume = sanitize_resume_text(resume_text)
+    sections = _parse_sections_for_pdf(sanitized_resume)
+
+    contact_parts = [p for p in [email_addr, phone] if p]
+    contact_line = " | ".join(contact_parts) if contact_parts else ""
+
+    html = _build_resume_html(
+        name=name or "Resume",
+        contact=contact_line,
+        sections=sections,
+        template_id=template_id,
+    )
+
+    try:
+        import weasyprint
+        pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+    except Exception as e:
+        log.exception("PDF generation failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to generate PDF")
+
+    db.add(UsageLog(
+        user_id=user.id if user else None,
+        action="resume_download_pdf",
+        detail=f"template:{template_id}",
+    ))
+    db.commit()
+
+    safe_name = re.sub(r"[^a-zA-Z0-9]", "_", name)[:30] if name else "resume"
+    filename = f"{safe_name}_resume.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _parse_sections_for_pdf(text: str) -> list[dict]:
+    """Parse resume text into sections for HTML rendering."""
+    from resume_templates import _parse_sections
+    raw = _parse_sections(text)
+    result = []
+    for key, content in raw.items():
+        if key == "header":
+            continue
+        lines = [ln.strip() for ln in content.split("\n") if ln.strip()]
+        result.append({"key": key, "lines": lines})
+    return result
+
+
+def _build_resume_html(
+    name: str, contact: str, sections: list[dict], template_id: str,
+) -> str:
+    """Build an A4-formatted HTML resume for PDF conversion."""
+    import html as html_mod
+    _n = html_mod.escape
+
+    section_labels = {
+        "summary": "Professional Summary", "experience": "Professional Experience",
+        "education": "Education", "skills": "Skills", "certifications": "Certifications",
+        "projects": "Projects", "activities": "Activities & Leadership",
+        "languages": "Languages", "awards": "Awards",
+    }
+
+    date_re = re.compile(
+        r"\b(?:19|20)\d{2}\b|present|current|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec",
+        re.I,
+    )
+    sep_re = re.compile(r"\s*[|\u2014\u2013]\s*")
+
+    body_parts = []
+    for sec in sections:
+        key = sec["key"]
+        label = section_labels.get(key, key.replace("_", " ").title())
+        body_parts.append(f'<h2>{_n(label.upper())}</h2>')
+        for line in sec["lines"]:
+            if line.startswith(("-", "*", "\u2022", "\u2013")) or re.match(r"^\d+\.", line):
+                text = re.sub(r"^[-*\u2022\u2013]\s*", "", line)
+                text = re.sub(r"^\d+\.\s*", "", text)
+                body_parts.append(f"<li>{_n(text)}</li>")
+            elif key in ("experience", "education", "projects") and (
+                date_re.search(line) or sep_re.search(line)
+            ):
+                parts = sep_re.split(line)
+                if len(parts) >= 2:
+                    body_parts.append(
+                        f'<div class="entry"><strong>{_n(parts[0])}</strong>'
+                        f'<span class="date">{_n(" | ".join(parts[1:]))}</span></div>'
+                    )
+                else:
+                    body_parts.append(f'<div class="entry"><strong>{_n(line)}</strong></div>')
+            else:
+                body_parts.append(f"<p>{_n(line)}</p>")
+
+    body_html = "\n".join(body_parts)
+
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8">
+<style>
+@page {{ size: A4; margin: 0.6in 0.7in; }}
+body {{ font-family: Calibri, Arial, sans-serif; font-size: 10.5pt; line-height: 1.4; color: #1a1a1a; margin: 0; }}
+h1 {{ font-size: 18pt; margin: 0 0 2pt 0; text-align: center; }}
+.contact {{ text-align: center; font-size: 9.5pt; color: #555; margin-bottom: 12pt; }}
+h2 {{ font-size: 11pt; font-weight: bold; text-transform: uppercase; letter-spacing: 1.5pt;
+     border-bottom: 1px solid #333; padding-bottom: 2pt; margin: 14pt 0 6pt 0; }}
+.entry {{ display: flex; justify-content: space-between; align-items: baseline; margin: 8pt 0 1pt 0; }}
+.entry strong {{ font-size: 10.5pt; }}
+.date {{ font-size: 9.5pt; color: #555; white-space: nowrap; }}
+li {{ margin: 2pt 0; margin-left: 18pt; font-size: 10.5pt; }}
+p {{ margin: 2pt 0; font-size: 10.5pt; }}
+ul {{ padding-left: 18pt; margin: 0; }}
+</style>
+</head>
+<body>
+<h1>{_n(name)}</h1>
+{f'<div class="contact">{_n(contact)}</div>' if contact else ''}
+{body_html}
+</body>
+</html>"""
+
+
 @app.get("/api/resume/templates")
 def get_templates() -> list[dict]:
     """List available resume templates."""

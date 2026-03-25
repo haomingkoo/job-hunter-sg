@@ -218,6 +218,84 @@ def _add_bullet(doc: Document, text: str, config: dict) -> None:
     p.style.font.size = Pt(config["body_size"])
 
 
+_DATE_HINT_RE = re.compile(
+    r"\b(?:19|20)\d{2}\b|present|current|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec",
+    re.I,
+)
+_SEPARATOR_RE = re.compile(r"\s*[|\u2014\u2013]\s*")
+_DEGREE_RE = re.compile(
+    r"^(?:M\.?Sc|B\.?Sc|B\.?Eng|M\.?Eng|B\.?A|M\.?A|MBA|Ph\.?D|"
+    r"Diploma|Bachelor|Master|Graduate Cert)",
+    re.I,
+)
+
+
+def _is_entry_heading_line(line: str) -> bool:
+    """Detect if a line is an entry heading (company/role/date)."""
+    has_date = bool(_DATE_HINT_RE.search(line))
+    has_separator = bool(_SEPARATOR_RE.search(line))
+    is_caps = line == line.upper() and len(line.split()) <= 8 and re.search(r"[A-Z]", line)
+    has_degree = bool(_DEGREE_RE.match(line))
+    return has_date or has_separator or bool(is_caps) or has_degree
+
+
+def _is_education_detail(line: str) -> bool:
+    """Detect education detail lines (GPA, exchange, capstone)."""
+    lower = line.lower()
+    return bool(re.search(
+        r"\b(?:gpa|cgpa|cap|exchange|capstone|thesis|minor|major|"
+        r"distinction|honou?r|cum laude|dean.?s list|first class)\b",
+        lower,
+    ))
+
+
+def _add_entry_heading(doc: Document, line: str, config: dict) -> None:
+    """Add a bold entry heading (company | role | date)."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(2)
+    p.paragraph_format.space_after = Pt(1)
+
+    # Split on separator to bold company/role and right-align date
+    parts = _SEPARATOR_RE.split(line)
+    for i, part in enumerate(parts):
+        part = part.strip()
+        if not part:
+            continue
+        run = p.add_run(part)
+        run.font.name = config["font"]
+        run.font.size = Pt(config["body_size"])
+        # Bold the first part (company or degree name)
+        if i == 0:
+            run.bold = True
+        # Add separator between parts
+        if i < len(parts) - 1:
+            sep = p.add_run("  |  ")
+            sep.font.name = config["font"]
+            sep.font.size = Pt(config["body_size"])
+
+
+def _add_education_detail(doc: Document, line: str, config: dict) -> None:
+    """Add an education detail line (GPA, exchange) in smaller italic."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    run = p.add_run(line)
+    run.font.name = config["font"]
+    run.font.size = Pt(config["body_size"] - 1)
+    run.italic = True
+
+
+def _add_spacing(doc: Document, space: Pt = Pt(6)) -> None:
+    """Add vertical spacing between entries."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    p.style.font.size = Pt(2)
+    # Make it a tiny empty paragraph for spacing
+    run = p.add_run("")
+    run.font.size = Pt(2)
+
+
 def _parse_sections(resume_text: str) -> dict[str, str]:
     """
     Parse resume text into sections by detecting common headers.
@@ -367,20 +445,35 @@ def generate_docx(
 
         _add_section_header(doc, display_names.get(section_key, section_key.title()))
 
-        # Add content — detect bullets vs paragraphs
-        for line in content.split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            # Detect bullet points
-            if line.startswith(("-", "*", "•", "–")) or re.match(r"^\d+\.", line):
+        # Add content — smart detection of entry headings, bullets, paragraphs
+        content_lines = [ln.strip() for ln in content.split("\n") if ln.strip()]
+        is_entry_section = section_key in ("experience", "education", "projects", "activities")
+        prev_was_bullet = False
+
+        for li, line in enumerate(content_lines):
+            is_bullet = line.startswith(("-", "*", "•", "–")) or re.match(r"^\d+\.", line)
+
+            if is_bullet:
                 bullet_text = re.sub(r"^[-*•–]\s*", "", line)
                 bullet_text = re.sub(r"^\d+\.\s*", "", bullet_text)
                 _add_bullet(doc, bullet_text, config)
                 rendered_bullets += 1
-            else:
-                doc.add_paragraph(line)
+                prev_was_bullet = True
+            elif is_entry_section and _is_entry_heading_line(line):
+                # Add spacing before new entry (not the first one)
+                if li > 0 and prev_was_bullet:
+                    _add_spacing(doc, Pt(4))
+                _add_entry_heading(doc, line, config)
                 rendered_paragraphs += 1
+                prev_was_bullet = False
+            else:
+                # Plain paragraph - for education details, use smaller italic
+                if section_key == "education" and _is_education_detail(line):
+                    _add_education_detail(doc, line, config)
+                else:
+                    doc.add_paragraph(line)
+                rendered_paragraphs += 1
+                prev_was_bullet = False
 
     # Any remaining sections not in the template order
     for section_key, content in sections.items():
@@ -390,16 +483,20 @@ def generate_docx(
             rendered_sections.append(section_key)
             _add_section_header(doc, section_key.title())
             for line in content.split("\n"):
-                if line.strip():
-                    stripped = line.strip()
-                    if stripped.startswith(("-", "*", "•", "–")) or re.match(r"^\d+\.", stripped):
-                        bullet_text = re.sub(r"^[-*•–]\s*", "", stripped)
-                        bullet_text = re.sub(r"^\d+\.\s*", "", bullet_text)
-                        _add_bullet(doc, bullet_text, config)
-                        rendered_bullets += 1
-                    else:
-                        doc.add_paragraph(stripped)
-                        rendered_paragraphs += 1
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                if stripped.startswith(("-", "*", "•", "–")) or re.match(r"^\d+\.", stripped):
+                    bullet_text = re.sub(r"^[-*•–]\s*", "", stripped)
+                    bullet_text = re.sub(r"^\d+\.\s*", "", stripped)
+                    _add_bullet(doc, bullet_text, config)
+                    rendered_bullets += 1
+                elif _is_entry_heading_line(stripped):
+                    _add_entry_heading(doc, stripped, config)
+                    rendered_paragraphs += 1
+                else:
+                    doc.add_paragraph(stripped)
+                    rendered_paragraphs += 1
 
     # Save to bytes
     buf = io.BytesIO()

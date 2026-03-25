@@ -3916,9 +3916,35 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const tailoringPollAttemptsRef = useRef(0);
   const resumePrintRef = useRef(null);
 
-  const handlePrintPdf = useCallback(() => {
-    window.print();
-  }, []);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const handlePrintPdf = useCallback(async () => {
+    if (!resumeText.trim() || downloadingPdf) return;
+    setDownloadingPdf(true);
+    try {
+      const resp = await apiFetch("/api/resume/download-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resume_text: resumeText,
+          template: templateMeta?.id || "modern",
+          name: profile.name || "",
+          email: profile.email || "",
+          phone: profile.phone || "",
+        }),
+      });
+      if (!resp.ok) throw new Error("PDF generation failed");
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${(profile.name || "resume").replace(/[^a-zA-Z0-9]/g, "_")}_resume.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setDownloadError(err.message || "PDF download failed");
+    }
+    setDownloadingPdf(false);
+  }, [resumeText, downloadingPdf, templateMeta?.id, profile.name, profile.email, profile.phone]);
 
   const openMobileFeedbackPanel = useCallback((targetRef = scorePanelRef) => {
     if (typeof window === "undefined" || window.innerWidth >= 1024) return;
@@ -7064,9 +7090,9 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                     </div>
                   )}
 
-                  <div className="space-y-0.5" style={templateStyles.bodyStyle}>
+                  <div style={templateStyles.bodyStyle}>
                     {bodySections.map((section) => {
-                      if (section.type === "spacer") return <div key={section.id} className="h-3" />;
+                      if (section.type === "spacer") return <div key={section.id} className="h-1.5" />;
 
                       const isEditing = editingNodeId === section.id;
                       const isSelectedBullet = selectedBulletId === section.id;
@@ -7249,7 +7275,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
 
                       return (
                         <Fragment key={section.id}>
-                          <div id={`resume-section-${section.id}`} className={`rounded-2xl px-3 py-2 transition ${wrapperClasses}`}>
+                          <div id={`resume-section-${section.id}`} className={`rounded-xl px-3 py-0.5 transition ${wrapperClasses}`}>
                             {lineContent}
                             {section.type === "heading" && section.sectionKey === "summary" && selectedJob && !isEditing && (
                               <button
@@ -7401,11 +7427,11 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
             <button
               type="button"
               onClick={handlePrintPdf}
-              disabled={!resumeText.trim()}
+              disabled={downloadingPdf || !resumeText.trim()}
               className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-sky-700 disabled:opacity-40"
             >
-              <Printer size={14} />
-              Download PDF
+              {downloadingPdf ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}
+              {downloadingPdf ? "Generating..." : "Download PDF"}
             </button>
           </div>
         </div>
