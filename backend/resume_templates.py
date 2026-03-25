@@ -260,12 +260,18 @@ def _add_entry_heading(doc: Document, line: str, config: dict) -> None:
     p.paragraph_format.space_before = Pt(2)
     p.paragraph_format.space_after = Pt(1)
 
-    # Split on separator to bold company/role and right-align date
-    parts = _SEPARATOR_RE.split(line)
+    # Split on pipe only (not dashes - those are often in date ranges like 2020-2022)
+    # Preserve en-dash/em-dash in dates
+    parts = [pt.strip() for pt in line.split("|") if pt.strip()]
+    if len(parts) <= 1:
+        # No pipe separator - just bold the whole line
+        run = p.add_run(line)
+        run.font.name = config["font"]
+        run.font.size = Pt(config["body_size"])
+        run.bold = True
+        return
+
     for i, part in enumerate(parts):
-        part = part.strip()
-        if not part:
-            continue
         run = p.add_run(part)
         run.font.name = config["font"]
         run.font.size = Pt(config["body_size"])
