@@ -52,9 +52,28 @@ ATS_OUTLINE_NOISE: set[str] = {
     "key responsibilities",
     "responsibilities",
     "requirements",
+    "qualifications",
+    "about the role",
+    "about the team",
+    "about us",
+    "job scope",
+    "job requirements",
+    "job highlights",
     "what we are looking for",
+    "what the role is",
+    "what you will be working on",
+    "what we can offer",
+    "what you need",
+    "what you bring",
+    "what you will do",
+    "how you can make an impact",
+    "who you are",
+    "why join us",
     "work experience and knowledge",
     "source tags & skill cues",
+    "how to apply",
+    "benefits",
+    "compensation",
 }
 
 _ATS_CONTEXT_RE = re.compile(
@@ -161,8 +180,14 @@ def _extract_outline_terms(text: str) -> list[str]:
 
     for chunk in re.findall(r"\[([^\]]{3,80})\]", source):
         normalized = _normalize_term(chunk)
-        if normalized:
-            candidates.append(normalized)
+        if not normalized:
+            continue
+        # Skip section headers (CareersGov format: [What the role is], etc.)
+        if normalized.lower() in ATS_OUTLINE_NOISE:
+            continue
+        if normalized.lower().startswith(("what ", "how ", "who ", "why ", "about ")):
+            continue
+        candidates.append(normalized)
 
     for raw_line in source.splitlines():
         stripped = re.sub(r"^[\s•*\-–]+", "", raw_line or "").strip(" :")
@@ -204,16 +229,42 @@ def _looks_like_study_area(term: str, context: str) -> bool:
     )
 
 
+_RESPONSIBILITY_VERBS = {
+    "actively", "apply", "balance", "build", "collaborate", "contribute",
+    "deliver", "demonstrate", "develop", "drive", "ensure", "establish",
+    "evaluate", "facilitate", "identify", "implement", "lead", "leverage",
+    "maintain", "manage", "monitor", "oversee", "participate", "perform",
+    "plan", "prepare", "provide", "reinforce", "review", "seek", "shape",
+    "support", "work", "coordinate", "execute", "analyze", "analyse",
+}
+
+
 def _is_noise_term(term: str, context: str = "") -> bool:
-    lowered = term.lower()
+    lowered = term.lower().strip()
     if not lowered:
         return True
     if lowered in ATS_DISPLAY_EXCLUDE:
         return True
-    if len(lowered.split()) == 1 and lowered in ATS_SINGLE_GENERIC_NOISE:
+    if lowered in ATS_OUTLINE_NOISE:
         return True
-    if len(lowered.split()) == 1 and lowered not in ATS_ALLOWED_SINGLE_TERMS:
+
+    words = lowered.split()
+    word_count = len(words)
+
+    # Single generic words
+    if word_count == 1 and lowered in ATS_SINGLE_GENERIC_NOISE:
         return True
+    if word_count == 1 and lowered not in ATS_ALLOWED_SINGLE_TERMS:
+        return True
+
+    # Too long for an ATS keyword (real skills are 1-4 words)
+    if word_count > 4:
+        return True
+
+    # Starts with a verb - likely a responsibility phrase, not a skill
+    if word_count >= 3 and words[0] in _RESPONSIBILITY_VERBS:
+        return True
+
     if _looks_like_study_area(lowered, context):
         return True
     return False

@@ -77,43 +77,43 @@ def _is_power_skill_noise(skill: str) -> bool:
 def backfill_previews(
     batch_size: int = 200,
     progress_callback: Callable[..., None] | None = None,
+    refresh_preview: bool = False,
 ) -> int:
-    """Backfill parsed_jd + job_terms_preview for all jobs. No LLM needed."""
+    """Backfill parsed_jd + job_terms_preview for all jobs. No LLM needed.
+    If refresh_preview=True, recompute all previews (e.g., after fixing term extraction).
+    """
     db = SessionLocal()
     total_done = 0
     try:
-        total_need = (
-            db.query(ScrapedJob.id)
-            .filter(
-                ScrapedJob.description != "",
-                ScrapedJob.description.isnot(None),
-            )
-            .filter(
+        has_desc = (
+            db.query(ScrapedJob)
+            .filter(ScrapedJob.description != "", ScrapedJob.description.isnot(None))
+        )
+        if refresh_preview:
+            total_need = has_desc.count()
+        else:
+            total_need = has_desc.filter(
                 (ScrapedJob.parsed_jd.is_(None))
                 | (ScrapedJob.job_terms_preview.is_(None))
-            )
-            .count()
-        )
-        log.info(f"Need preview backfill: {total_need}")
+            ).count()
+        log.info(f"Need preview backfill: {total_need} (refresh={refresh_preview})")
         if progress_callback:
             progress_callback(preview_total=total_need, preview_done=0)
 
+        offset = 0
         while True:
-            jobs = (
-                db.query(ScrapedJob)
-                .filter(
-                    ScrapedJob.description != "",
-                    ScrapedJob.description.isnot(None),
-                )
-                .filter(
+            query = has_desc
+            if not refresh_preview:
+                query = query.filter(
                     (ScrapedJob.parsed_jd.is_(None))
                     | (ScrapedJob.job_terms_preview.is_(None))
                 )
-                .limit(batch_size)
-                .all()
-            )
+            else:
+                query = query.offset(offset)
+            jobs = query.limit(batch_size).all()
             if not jobs:
                 break
+            offset += len(jobs)
 
             for job in jobs:
                 if not job.parsed_jd:
@@ -125,7 +125,7 @@ def backfill_previews(
                         job_title=job.title or "",
                     )
 
-                if not job.job_terms_preview:
+                if refresh_preview or not job.job_terms_preview:
                     db_skills = _normalize_skill_strings(job.skills)
                     parsed_jd = job.parsed_jd if isinstance(job.parsed_jd, dict) else None
                     terms = build_job_ats_terms(
@@ -302,6 +302,7 @@ def main() -> None:
     parser.add_argument("--summary-only", action="store_true", help="Only backfill summaries (skip preview)")
     parser.add_argument("--summary-limit", type=int, default=0, help="Max summaries to generate (0=all)")
     parser.add_argument("--batch-size", type=int, default=200, help="Batch size for preview backfill")
+    parser.add_argument("--refresh-preview", action="store_true", help="Recompute ALL previews (after fixing term extraction)")
     args = parser.parse_args()
 
     init_db()
@@ -309,7 +310,7 @@ def main() -> None:
     if not args.summary_only:
         log.info("=== Phase 1: Backfill parsed_jd + job_terms_preview ===")
         start = time.time()
-        count = backfill_previews(batch_size=args.batch_size)
+        count = backfill_previews(batch_size=args.batch_size, refresh_preview=args.refresh_preview)
         elapsed = time.time() - start
         log.info(f"Phase 1 done: {count} jobs in {elapsed:.1f}s ({count / max(1, elapsed):.1f} jobs/s)")
 
