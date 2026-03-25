@@ -1123,6 +1123,43 @@ def admin_seed_jobs(
         return {"status": "started", "mode": "keyword_seed", "sources": sources, "limit": limit}
 
 
+@app.post("/api/admin/backfill")
+def admin_backfill_enrichment(
+    body: dict,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """
+    Trigger JD enrichment backfill. Protected by ADMIN_API_KEY.
+    Body: {preview_only: true}  — parsed_jd + term preview only (no LLM)
+           {summary_limit: 500} — limit summary generation count
+           {}                   — full backfill (preview + all summaries)
+    """
+    token = ""
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    from backfill_enrichment import backfill_previews, backfill_summaries
+
+    preview_only = body.get("preview_only", False)
+    summary_limit = body.get("summary_limit", 0)
+
+    def run_backfill() -> None:
+        backfill_previews()
+        if not preview_only:
+            backfill_summaries(limit=summary_limit)
+
+    threading.Thread(target=run_backfill, daemon=True).start()
+    return {
+        "status": "started",
+        "mode": "preview_only" if preview_only else "full",
+        "summary_limit": summary_limit,
+    }
+
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
