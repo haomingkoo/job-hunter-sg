@@ -650,7 +650,9 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       <div className="bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl p-5">
         <h2 className="font-semibold text-gray-800 flex items-center gap-2"><Search size={18} /> Singapore Jobs</h2>
         <p className="text-sm text-gray-500 mt-1">Browse jobs from MyCareersFuture, Careers@Gov, and more across Singapore.</p>
-        <p className="mt-2 text-xs text-gray-500">Fields vary by source. If a site does not provide salary, employment type, or location, we show that explicitly instead of filling it in.</p>
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          <strong>Beta</strong> - Early access. AI features are rate-limited (free tier). Data refreshes nightly.
+        </div>
       </div>
 
       {/* Search */}
@@ -1566,6 +1568,9 @@ function AnalyticsTab() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
+  const [sectorFilter, setSectorFilter] = useState("");
+  const [companyFilter, setCompanyFilter] = useState("");
+  const [titleFilter, setTitleFilter] = useState("");
   const [showCount, setShowCount] = useState(30);
   const [skillSearch, setSkillSearch] = useState("");
 
@@ -1575,6 +1580,9 @@ function AnalyticsTab() {
     try {
       const params = new URLSearchParams({ limit: "200" });
       if (sourceFilter) params.set("source", sourceFilter);
+      if (sectorFilter) params.set("sector", sectorFilter);
+      if (companyFilter) params.set("company", companyFilter);
+      if (titleFilter) params.set("title", titleFilter);
       const resp = await apiFetch(`/api/analytics/skills?${params}`);
       if (!resp.ok) throw new Error("Failed to load analytics");
       setData(await resp.json());
@@ -1582,7 +1590,7 @@ function AnalyticsTab() {
       setError(err.message);
     }
     setLoading(false);
-  }, [sourceFilter]);
+  }, [sourceFilter, sectorFilter, companyFilter, titleFilter]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -1622,28 +1630,42 @@ function AnalyticsTab() {
         </p>
       </div>
 
-      {data?.sources?.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-gray-500">Filter by source:</span>
-          <button
-            type="button"
-            onClick={() => setSourceFilter("")}
-            className={`rounded-full px-3 py-1 text-xs font-medium transition ${!sourceFilter ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
-          >
-            All Sources
-          </button>
-          {data.sources.map((s) => (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <strong>Beta</strong> - This platform is in early access. AI features are rate-limited (free tier). Data refreshes nightly from MyCareersFuture and Careers@Gov.
+      </div>
+
+      <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm space-y-3">
+        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Filters</div>
+        <div className="flex flex-wrap gap-2">
+          <input
+            type="text"
+            value={companyFilter}
+            onChange={(e) => setCompanyFilter(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") loadData(); }}
+            onBlur={() => loadData()}
+            placeholder="Filter by company..."
+            className="w-44 rounded-lg border border-gray-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300"
+          />
+          <input
+            type="text"
+            value={titleFilter}
+            onChange={(e) => setTitleFilter(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") loadData(); }}
+            onBlur={() => loadData()}
+            placeholder="Filter by job title..."
+            className="w-44 rounded-lg border border-gray-200 px-3 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300"
+          />
+          {(sectorFilter || companyFilter || titleFilter) && (
             <button
-              key={s.source}
               type="button"
-              onClick={() => setSourceFilter(s.source)}
-              className={`rounded-full px-3 py-1 text-xs font-medium transition ${sourceFilter === s.source ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+              onClick={() => { setSectorFilter(""); setCompanyFilter(""); setTitleFilter(""); }}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs text-gray-500 hover:bg-gray-50"
             >
-              {s.source} ({s.count.toLocaleString()})
+              Clear Filters
             </button>
-          ))}
+          )}
         </div>
-      )}
+      </div>
 
       {loading && (
         <div className="flex items-center gap-2 py-12 justify-center text-gray-500">
@@ -1666,13 +1688,15 @@ function AnalyticsTab() {
           </div>
           <div className="flex flex-wrap gap-2">
             {data.sectors.map((s, i) => (
-              <span
+              <button
                 key={s.sector}
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${sectorColors[i % sectorColors.length]}`}
+                type="button"
+                onClick={() => setSectorFilter(sectorFilter === s.sector ? "" : s.sector)}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${sectorFilter === s.sector ? "ring-2 ring-indigo-500 ring-offset-1" : ""} ${sectorColors[i % sectorColors.length]}`}
               >
                 {s.sector}
                 <span className="font-mono opacity-70">{s.count.toLocaleString()}</span>
-              </span>
+              </button>
             ))}
           </div>
         </div>

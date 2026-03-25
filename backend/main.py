@@ -92,7 +92,7 @@ _FILTER_META_TTL = 300  # 5 minutes
 # ── Cached analytics/skills response (avoid 70K row scan per request) ─────────
 _analytics_cache: dict | None = None
 _analytics_cache_ts: float = 0
-_ANALYTICS_CACHE_TTL = 300  # 5 minutes
+_ANALYTICS_CACHE_TTL = 86400  # 24 hours - refreshed daily, invalidated on new scrape
 
 # ── Per-user power-match cache (avoid recomputing every request) ──────────────
 _power_match_cache: dict[int, dict] = {}
@@ -1520,6 +1520,44 @@ def admin_backfill_enrichment(
     }
 
 
+@app.post("/api/admin/rebuild-skills-taxonomy")
+def admin_rebuild_skills_taxonomy(
+    body: dict | None = None,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """
+    Rebuild the frequency-based learned skills taxonomy (Tier 2).
+    Scans all job_terms_preview data and saves terms appearing in 50+ jobs.
+    Body: {threshold: 50}  -- optional custom threshold
+    """
+    token = ""
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    from build_learned_skills import build_learned_skills, save_learned_skills
+    from database import SessionLocal
+
+    threshold = (body or {}).get("threshold", 50)
+    db = SessionLocal()
+    try:
+        result = build_learned_skills(db, threshold=threshold)
+        save_learned_skills(result)
+    finally:
+        db.close()
+
+    return {
+        "status": "completed",
+        "total_jobs_scanned": result["total_jobs_scanned"],
+        "tier2_skills_count": len(result["skills"]),
+        "threshold": threshold,
+        "generated_at": result["generated_at"],
+    }
+
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
@@ -1805,17 +1843,21 @@ def analytics_skills(
     limit: int = Query(50, ge=1, le=200),
     source: str | None = Query(None, max_length=50),
     q: str | None = Query(None, max_length=100),
+    sector: str | None = Query(None, max_length=100),
+    company: str | None = Query(None, max_length=200),
+    title: str | None = Query(None, max_length=200),
     db: Session = Depends(get_db),
 ) -> dict:
     """Aggregate ATS skill demand, top titles, and sectors from scraped jobs."""
     global _analytics_cache, _analytics_cache_ts
 
-    # Serve from cache when no source filter and cache is fresh
-    if not source and _analytics_cache is not None:
+    has_filter = source or sector or company or title
+
+    # Serve from cache when no filters and cache is fresh
+    if not has_filter and _analytics_cache is not None:
         if time.time() - _analytics_cache_ts < _ANALYTICS_CACHE_TTL:
             cached = _analytics_cache
             all_skills = cached["_all_skills"]
-            # Apply skill search filter if provided
             if q:
                 q_lower = q.lower()
                 all_skills = [
@@ -1828,6 +1870,7 @@ def analytics_skills(
                 "sources": cached["sources"],
                 "top_titles": cached["top_titles"],
                 "sectors": cached["sectors"],
+                "top_companies": cached.get("top_companies", []),
             }
 
     db_query = db.query(ScrapedJob).filter(
@@ -1835,21 +1878,46 @@ def analytics_skills(
     )
     if source:
         db_query = db_query.filter(ScrapedJob.source == source)
+    if company:
+        db_query = db_query.filter(
+            ScrapedJob.company.ilike(f"%{company}%")
+        )
+    if title:
+        db_query = db_query.filter(
+            ScrapedJob.title.ilike(f"%{title}%")
+        )
 
     skill_counts: dict[str, int] = {}
     source_counts: dict[str, int] = {}
     title_counts: dict[str, int] = {}
     sector_counts: dict[str, int] = {}
+    company_counts: dict[str, int] = {}
     total_jobs = 0
 
     for job in db_query.yield_per(500):
         preview = job.job_terms_preview
         if not isinstance(preview, list) or not preview:
             continue
+
+        # Sector filter: classify title and skip if not matching
+        raw_title = (job.title or "").strip()
+        if sector and raw_title:
+            job_sector = _classify_sector(raw_title)
+            if job_sector.lower() != sector.lower():
+                continue
+
         total_jobs += 1
 
         src = job.source or "Unknown"
         source_counts[src] = source_counts.get(src, 0) + 1
+
+        # Company aggregation
+        comp = (job.company or "").strip()
+        if comp:
+            comp_key = comp.lower()
+            if comp_key not in company_counts:
+                company_counts[comp_key] = {"display": comp, "count": 0}
+            company_counts[comp_key]["count"] += 1
 
         for term in preview:
             label = str(term).strip()
@@ -1859,18 +1927,16 @@ def analytics_skills(
             skill_counts[key] = skill_counts.get(key, 0) + 1
 
         # Aggregate title and sector
-        raw_title = (job.title or "").strip()
         if raw_title:
             norm = _normalize_title(raw_title)
             title_key = norm.lower()
             if title_key:
-                # Keep the best-cased version (first seen)
                 if title_key not in title_counts:
                     title_counts[title_key] = {"display": norm, "count": 0}
                 title_counts[title_key]["count"] += 1
 
-            sector = _classify_sector(raw_title)
-            sector_counts[sector] = sector_counts.get(sector, 0) + 1
+            job_sector = _classify_sector(raw_title)
+            sector_counts[job_sector] = sector_counts.get(job_sector, 0) + 1
 
     # Sort by count descending
     sorted_skills = sorted(skill_counts.items(), key=lambda x: -x[1])
@@ -1895,14 +1961,20 @@ def analytics_skills(
         key=lambda x: -x["count"],
     )
 
-    # Cache the full result when no source filter
-    if not source:
+    top_companies = sorted(
+        [{"company": v["display"], "count": v["count"]} for v in company_counts.values()],
+        key=lambda x: -x["count"],
+    )[:30]
+
+    # Cache the full result when no filters active
+    if not has_filter:
         _analytics_cache = {
             "_all_skills": all_skills,
             "total_jobs_with_terms": total_jobs,
             "sources": sources_list,
             "top_titles": top_titles,
             "sectors": sectors,
+            "top_companies": top_companies,
         }
         _analytics_cache_ts = time.time()
 
@@ -1920,6 +1992,7 @@ def analytics_skills(
         "sources": sources_list,
         "top_titles": top_titles,
         "sectors": sectors,
+        "top_companies": top_companies,
     }
 
 
