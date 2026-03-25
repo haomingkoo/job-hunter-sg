@@ -4848,32 +4848,22 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
         }}
       />
 
-      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Resume Module</div>
-            <h2 className="mt-2 flex items-center gap-2 text-2xl font-semibold text-slate-900">
-              <FileText size={18} />
-              Resume Workspace
-            </h2>
-            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
-              Start with an opening score, refine directly inside the document, and only lock the final score when the draft is ready to export.
-            </p>
+      {selectedJob && (
+        <div className="mb-4 rounded-3xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-600">Target Job Description</div>
+            <button
+              type="button"
+              onClick={() => setActiveTab("scraper")}
+              className="text-xs font-semibold text-indigo-700 hover:text-indigo-900"
+            >
+              Back to Jobs
+            </button>
           </div>
-          {selectedJob && (
-            <div className="max-w-xl rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-4 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-600">Target Job Description</div>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("scraper")}
-                  className="text-xs font-semibold text-indigo-700 hover:text-indigo-900"
-                >
-                  Back to Jobs
-                </button>
-              </div>
-              <div className="mt-2 text-lg font-semibold text-slate-900">{selectedJob.title}</div>
-              <div className="mt-1 text-sm text-slate-600">{selectedJob.company}</div>
+          <div className="mt-2 flex flex-col gap-4 lg:flex-row lg:items-start">
+            <div className="flex-1 min-w-0">
+              <div className="text-lg font-semibold text-slate-900">{selectedJob.title}</div>
+              <div className="text-sm text-slate-600">{selectedJob.company}{selectedJob.location ? ` · ${selectedJob.location}` : ""}</div>
               {selectedJobCanonicalTerms.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {selectedJobCanonicalTerms.map((term, index) => {
@@ -4885,13 +4875,26 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                   );})}
                 </div>
               )}
-              {selectedJob.description && (
-                <div className="mt-3 max-h-40 overflow-y-auto rounded-xl bg-white/70 p-3 text-sm leading-relaxed text-slate-700">
-                  {selectedJob.description}
-                </div>
-              )}
             </div>
-          )}
+            {selectedJob.description && (
+              <div className="flex-1 min-w-0 max-h-48 overflow-y-auto rounded-xl bg-white/70 p-3 text-sm leading-relaxed text-slate-700">
+                {selectedJob.description}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Resume Module</div>
+          <h2 className="mt-2 flex items-center gap-2 text-2xl font-semibold text-slate-900">
+            <FileText size={18} />
+            Resume Workspace
+          </h2>
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
+            Start with an opening score, refine directly inside the document, and only lock the final score when the draft is ready to export.
+          </p>
         </div>
 
         <div className="mt-6 grid gap-3 md:grid-cols-3">
