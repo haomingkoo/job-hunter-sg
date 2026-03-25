@@ -183,7 +183,11 @@ async def lifespan(application: FastAPI):
                             ScrapedJob.description != "",
                             ScrapedJob.parsed_jd.isnot(None),
                             (ScrapedJob.jd_summary.is_(None)) | (ScrapedJob.jd_summary == ""),
-                            ScrapedJob.jd_summary_status.notin_(["unavailable", "generating"]),
+                        )
+                        .filter(
+                            (ScrapedJob.jd_summary_status.is_(None))
+                            | (ScrapedJob.jd_summary_status == "")
+                            | (ScrapedJob.jd_summary_status == "failed")
                         )
                         .order_by(ScrapedJob.id.desc())
                         .first()
