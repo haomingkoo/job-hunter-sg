@@ -3379,6 +3379,10 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [uploadError, setUploadError] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [pastedText, setPastedText] = useState("");
+  const [resumeVersions, setResumeVersions] = useState([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [saveVersionLabel, setSaveVersionLabel] = useState("");
+  const [savingVersion, setSavingVersion] = useState(false);
   const [needsRescore, setNeedsRescore] = useState(false);
   const [aiStatus, setAiStatus] = useState(null);
   const [coachResponse, setCoachResponse] = useState(null);
@@ -3819,6 +3823,61 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     setSessionId("");
     setShowSetupPanel(false);
     applyResumeText(pastedText.trim(), { rescore: true, clearRewrites: true });
+  };
+
+  // ── Resume Versions ──────────────────────────────────────────────────
+  // Auto-load versions for logged-in users
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  React.useEffect(() => { if (user) fetchVersions(); }, [user]);
+
+  const fetchVersions = async () => {
+    if (!user) return;
+    setVersionsLoading(true);
+    try {
+      const resp = await apiFetch("/api/resume/versions");
+      if (resp.ok) {
+        setResumeVersions(await resp.json());
+      }
+    } catch { /* ignore */ }
+    setVersionsLoading(false);
+  };
+
+  const loadVersion = async (versionId) => {
+    try {
+      const resp = await apiFetch(`/api/resume/versions/${versionId}`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      setSelectedBulletId(null);
+      setEditingNodeId(null);
+      setCoachResponse(null);
+      setCoachError("");
+      setSessionId("");
+      setShowSetupPanel(false);
+      applyResumeText(data.resume_text, { rescore: true, clearRewrites: true });
+    } catch { /* ignore */ }
+  };
+
+  const saveCurrentVersion = async () => {
+    if (!user || !resumeText.trim() || !saveVersionLabel.trim()) return;
+    setSavingVersion(true);
+    try {
+      const resp = await apiFetch("/api/resume/versions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          label: saveVersionLabel.trim(),
+          resume_text: resumeText,
+          source: "manual",
+          job_id: selectedJob?.id || null,
+          score: scoreData?.total_score || null,
+        }),
+      });
+      if (resp.ok) {
+        setSaveVersionLabel("");
+        fetchVersions();
+      }
+    } catch { /* ignore */ }
+    setSavingVersion(false);
   };
 
   const handleAIReview = async () => {
@@ -4849,6 +4908,43 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                 )}
               </button>
 
+              {user && (
+                <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Saved Versions</div>
+                    <button type="button" onClick={fetchVersions} className="text-xs text-indigo-600 hover:text-indigo-800">
+                      {versionsLoading ? "Loading..." : "Refresh"}
+                    </button>
+                  </div>
+                  {resumeVersions.length > 0 ? (
+                    <div className="mt-2 max-h-[180px] space-y-1.5 overflow-y-auto">
+                      {resumeVersions.map((v) => (
+                        <button
+                          key={v.id}
+                          type="button"
+                          onClick={() => loadVersion(v.id)}
+                          className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white px-3 py-2 text-left text-sm hover:border-indigo-300 hover:bg-indigo-50 transition"
+                        >
+                          <div>
+                            <div className="font-medium text-gray-800">{v.label}</div>
+                            <div className="text-xs text-gray-500">
+                              {v.source === "tailored" && v.job_company ? `${v.job_company}` : v.source}
+                              {v.score ? ` · Score ${v.score}` : ""}
+                              {v.word_count ? ` · ${v.word_count}w` : ""}
+                            </div>
+                          </div>
+                          {v.is_master && <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">Master</span>}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-xs text-gray-500">
+                      {versionsLoading ? "Loading versions..." : "No saved versions yet. Save your first resume below."}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3">
                 <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Paste Text</div>
                 <textarea
@@ -5036,6 +5132,26 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                 <div className="text-xs">{issueBulletCount} bullet issues, {relevantMissingKeywords.length} missing keywords</div>
               </div>
             </div>
+
+            {user && (
+              <div className="inline-flex items-center gap-1.5 rounded-2xl bg-gray-50 px-2 py-1.5">
+                <input
+                  type="text"
+                  value={saveVersionLabel}
+                  onChange={(e) => setSaveVersionLabel(e.target.value)}
+                  placeholder="Version label..."
+                  className="w-28 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                />
+                <button
+                  type="button"
+                  onClick={saveCurrentVersion}
+                  disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
+                  className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                >
+                  {savingVersion ? "..." : "Save Version"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
