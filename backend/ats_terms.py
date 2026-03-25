@@ -8,9 +8,29 @@ tailoring validation without drifting.
 
 from __future__ import annotations
 
+import logging
 import re
 
 from skill_extractor import extract_skill_phrases, match_resume_skills_with_context
+
+log = logging.getLogger("jobhunter.ats_terms")
+
+# Lazy-load taxonomy to avoid circular imports
+_taxonomy_loaded = False
+_classify_tier = None
+
+
+def _ensure_taxonomy() -> None:
+    global _taxonomy_loaded, _classify_tier
+    if _taxonomy_loaded:
+        return
+    try:
+        from skills_taxonomy import classify_skill_tier
+        _classify_tier = classify_skill_tier
+    except ImportError:
+        log.warning("skills_taxonomy not available, tier classification disabled")
+        _classify_tier = None
+    _taxonomy_loaded = True
 
 ATS_ALLOWED_SINGLE_TERMS: set[str] = {
     "python", "sql", "excel", "tableau", "powerbi", "aws", "azure", "gcp",
@@ -321,6 +341,12 @@ def _is_noise_term(term: str, context: str = "") -> bool:
     lowered = term.lower().strip()
     if not lowered:
         return True
+
+    # Tier 1 known skills are NEVER noise - taxonomy overrides blocklist
+    _ensure_taxonomy()
+    if _classify_tier is not None and _classify_tier(lowered) == 1:
+        return False
+
     if lowered in ATS_DISPLAY_EXCLUDE:
         return True
     if lowered in ATS_OUTLINE_NOISE:
@@ -497,7 +523,17 @@ def build_job_ats_terms(
             item["skill"],
         ),
     )
-    final = [{k: v for k, v in item.items() if k != "_priority"} for item in ordered]
+    # Classify each term by taxonomy tier
+    _ensure_taxonomy()
+    final: list[dict] = []
+    for item in ordered:
+        row = {k: v for k, v in item.items() if k != "_priority"}
+        if _classify_tier is not None:
+            row["tier"] = _classify_tier(row["skill"])
+        else:
+            row["tier"] = 0  # unknown (taxonomy not loaded)
+        final.append(row)
+
     if limit is not None:
         final = final[:limit]
     return final
