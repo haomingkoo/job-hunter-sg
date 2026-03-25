@@ -55,7 +55,7 @@ def _apply_lightweight_migrations() -> None:
     if "jd_summary_generated_at" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN jd_summary_generated_at VARCHAR(50)")
     if "jd_summary_status" not in existing_columns:
-        statements.append("ALTER TABLE scraped_jobs ADD COLUMN jd_summary_status VARCHAR(30)")
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN jd_summary_status VARCHAR(100)")
     if "job_terms_preview" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN job_terms_preview JSON")
 
@@ -72,12 +72,23 @@ def _apply_lightweight_migrations() -> None:
         if idx_name not in existing_indexes:
             statements.append(idx_sql)
 
+    # Widen jd_summary_status if it was created as VARCHAR(30) (too short for model names)
+    if "jd_summary_status" in existing_columns:
+        try:
+            # Postgres: ALTER COLUMN TYPE
+            statements.append("ALTER TABLE scraped_jobs ALTER COLUMN jd_summary_status TYPE VARCHAR(100)")
+        except Exception:
+            pass  # SQLite doesn't support ALTER COLUMN TYPE, but doesn't enforce VARCHAR length anyway
+
     if not statements:
         return
 
     with engine.begin() as connection:
         for statement in statements:
-            connection.execute(text(statement))
+            try:
+                connection.execute(text(statement))
+            except Exception:
+                pass  # Skip if already applied
 
 
 def get_db() -> Generator[Session, None, None]:

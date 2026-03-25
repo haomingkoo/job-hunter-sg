@@ -73,7 +73,7 @@ class ScrapedJob(Base):
     parsed_jd: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
     jd_summary: Mapped[str] = mapped_column(Text, default="")
     jd_summary_generated_at: Mapped[str] = mapped_column(String(50), default="")
-    jd_summary_status: Mapped[str] = mapped_column(String(30), default="")
+    jd_summary_status: Mapped[str] = mapped_column(String(100), default="")
 
     # Cached skill term labels for fast list-page rendering (JSON array of strings)
     job_terms_preview: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
