@@ -4080,6 +4080,11 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     }
   }, [selectedBullet]);
 
+  // Close keyword insert popup when resume text changes or job changes
+  useEffect(() => {
+    setInsertKeywordPopup(null);
+  }, [resumeText, selectedJob?.id]);
+
   useEffect(() => {
     if (!Array.isArray(tailoringResult?.changes)) return;
     setTailorEditedTexts((current) => {
@@ -6277,17 +6282,79 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                 )}
                 {relevantMissingKeywords.length > 0 && (
                   <>
-                    <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Missing</div>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
+                    <div className="mt-4 flex items-center gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Missing</span>
+                      <span className="text-[10px] text-gray-400">Click to insert</span>
+                    </div>
+                    <div className="relative mt-2 flex flex-wrap gap-1.5">
                       {relevantMissingKeywords.slice(0, 12).map((keyword, idx) => {
                         const label = keyword?.skill || "";
+                        const isActive = insertKeywordPopup?.keyword === label;
                         return (
-                          <span key={label || idx} className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-medium text-rose-700 cursor-pointer hover:bg-rose-200" title={keyword?.jd_context || "Missing from this role's JD context"}>
+                          <span
+                            key={label || idx}
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-medium cursor-pointer transition-colors ${
+                              isActive
+                                ? "bg-rose-600 text-white ring-2 ring-rose-300"
+                                : "bg-rose-100 text-rose-700 hover:bg-rose-200"
+                            }`}
+                            title={keyword?.jd_context || "Click to find best bullet for this keyword"}
+                            onClick={(event) => handleMissingKeywordClick(keyword, event)}
+                          >
                             {label}
                           </span>
                         );
                       })}
                     </div>
+                    {insertKeywordPopup && (
+                      <div
+                        className="mt-2 rounded-2xl border border-gray-200 bg-white p-3 shadow-lg"
+                        style={{ zIndex: 50 }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs font-semibold text-gray-800">
+                            Insert <span className="rounded bg-rose-100 px-1.5 py-0.5 text-rose-700">{insertKeywordPopup.keyword}</span> into:
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setInsertKeywordPopup(null)}
+                            className="rounded-full p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                        {insertKeywordPopup.suggestions.length > 0 ? (
+                          <div className="mt-2 space-y-1.5">
+                            {insertKeywordPopup.suggestions.map((bullet) => (
+                              <div
+                                key={bullet.id}
+                                className="group flex items-start gap-2 rounded-xl border border-gray-100 bg-gray-50 px-2.5 py-2 transition hover:border-indigo-200 hover:bg-indigo-50"
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <div className="text-[10px] font-medium uppercase tracking-wider text-gray-400">
+                                    {bullet.sectionKey || "section"}
+                                  </div>
+                                  <div className="mt-0.5 truncate text-xs text-gray-700" title={bullet.text}>
+                                    {bullet.text.length > 80 ? `${bullet.text.slice(0, 80)}...` : bullet.text}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleInsertKeywordIntoBullet(bullet, insertKeywordPopup.keyword)}
+                                  className="shrink-0 rounded-lg bg-indigo-600 px-2 py-1 text-[10px] font-medium text-white transition hover:bg-indigo-700"
+                                >
+                                  Insert
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mt-2 text-xs text-gray-500">
+                            No bullet points found. Add experience bullets to your resume first.
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
               </>
