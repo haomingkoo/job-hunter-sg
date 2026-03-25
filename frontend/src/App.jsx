@@ -4852,7 +4852,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
           const insertAt = Math.min(...summaryParagraphs.map((s) => s.lineIndex));
           lines.splice(insertAt, 0, data.summary);
           nextText = lines.join("\n");
-        } else if (hasSummarySection) {
+        } else if (parsedSections.some((s) => ["heading", "heading_paragraph"].includes(s.type) && s.sectionKey === "summary")) {
           // Summary heading exists but no paragraph content -- insert after heading
           const summaryHeading = parsedSections.find(
             (s) => ["heading", "heading_paragraph"].includes(s.type) && s.sectionKey === "summary",
@@ -4873,7 +4873,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     } finally {
       setRegeneratingSummary(false);
     }
-  }, [resumeText, regeneratingSummary, selectedJob?.id, parsedSections, hasSummarySection, applyResumeText]);
+  }, [resumeText, regeneratingSummary, selectedJob?.id, parsedSections, applyResumeText]);
 
   const handleDownload = async () => {
     if (!resumeText.trim()) return;
