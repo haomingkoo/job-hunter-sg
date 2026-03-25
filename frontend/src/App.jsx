@@ -1,9 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
 import { useReactToPrint } from "react-to-print";
-import { useEditor, EditorContent } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import TiptapUnderline from "@tiptap/extension-underline";
-import TiptapLink from "@tiptap/extension-link";
 import {
   Search, Briefcase, Bell, FileText, Plus, X, ChevronRight, Clock,
   CheckCircle, AlertCircle, ExternalLink, Trash2, Edit3, Save, Filter,
@@ -3546,59 +3542,6 @@ function renderFormattedText(text, keywords) {
 }
 
 // ─── TipTap Inline Editor ──────────────────────────────────────────────────
-function TipTapBulletEditor({ initialValue, onCommit, onCancel, editorStyle }) {
-  const wrapperRef = useRef(null);
-  const committedRef = useRef(false);
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ heading: false, blockquote: false, codeBlock: false, code: false, bulletList: false, orderedList: false, listItem: false, horizontalRule: false, hardBreak: false }),
-      TiptapUnderline,
-      TiptapLink.configure({ openOnClick: false, HTMLAttributes: { class: "text-indigo-600 underline" } }),
-    ],
-    content: markdownToHtml(initialValue),
-    editorProps: {
-      attributes: {
-        class: "w-full resize-none rounded-xl border border-indigo-200 bg-white px-3 py-2 text-inherit leading-relaxed text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-200",
-        style: `font-size:16px;line-height:${editorStyle?.lineHeight || "1.6"};font-family:${editorStyle?.fontFamily || "inherit"}`,
-      },
-    },
-    autofocus: "end",
-  });
-  const stableCommit = useCallback(() => {
-    if (committedRef.current) return;
-    committedRef.current = true;
-    if (!editor) { onCommit(initialValue); return; }
-    onCommit(htmlToMarkdown(editor.getHTML()));
-  }, [editor, onCommit, initialValue]);
-  useEffect(() => {
-    if (!editor) return;
-    const dom = editor.view.dom;
-    const handleKey = (event) => {
-      if (event.key === "Escape") { event.preventDefault(); onCancel(); return; }
-      if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); stableCommit(); }
-    };
-    dom.addEventListener("keydown", handleKey);
-    return () => dom.removeEventListener("keydown", handleKey);
-  }, [editor, onCancel, stableCommit]);
-  const handleBlur = useCallback((event) => {
-    if (wrapperRef.current?.contains(event.relatedTarget)) return;
-    setTimeout(() => { if (!committedRef.current) stableCommit(); }, 150);
-  }, [stableCommit]);
-  if (!editor) return null;
-  return (
-    <div ref={wrapperRef} className="relative" onBlur={handleBlur}>
-      <div className="absolute -top-9 left-0 z-50 flex items-center gap-1 rounded-lg bg-gray-800 px-2 py-1 text-xs text-white shadow-lg" onMouseDown={(e) => e.preventDefault()}>
-        <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={`rounded px-1.5 py-0.5 transition hover:bg-gray-600 ${editor.isActive("bold") ? "bg-gray-600" : ""}`} title="Bold (Ctrl+B)"><Bold size={13} /></button>
-        <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={`rounded px-1.5 py-0.5 transition hover:bg-gray-600 ${editor.isActive("italic") ? "bg-gray-600" : ""}`} title="Italic (Ctrl+I)"><Italic size={13} /></button>
-        <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={`rounded px-1.5 py-0.5 transition hover:bg-gray-600 ${editor.isActive("underline") ? "bg-gray-600" : ""}`} title="Underline (Ctrl+U)"><UnderlineIcon size={13} /></button>
-        <div className="mx-0.5 h-4 w-px bg-gray-600" />
-        <button type="button" onClick={() => { if (editor.isActive("link")) { editor.chain().focus().unsetLink().run(); } else { const url = window.prompt("Enter URL:"); if (url) editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run(); } }} className={`rounded px-1.5 py-0.5 transition hover:bg-gray-600 ${editor.isActive("link") ? "bg-gray-600" : ""}`} title="Add link"><Link2 size={13} /></button>
-      </div>
-      <EditorContent editor={editor} />
-    </div>
-  );
-}
-
 function updateResumeLine(text, section, nextValue) {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const cleanValue = nextValue.replace(/\r/g, "").trim();
@@ -7244,21 +7187,27 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                           : "border-l-[3px] border-transparent";
 
                       const lineContent = isEditing ? (
-                        <TipTapBulletEditor
-                          initialValue={editingValue}
-                          editorStyle={{
+                        <textarea
+                          autoFocus
+                          rows={section.type === "paragraph" ? 3 : 2}
+                          value={editingValue}
+                          onChange={(event) => setEditingValue(event.target.value)}
+                          onBlur={() => commitEdit(section)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                              setEditingNodeId(null);
+                              setEditingValue("");
+                            }
+                            if (event.key === "Enter" && !event.shiftKey) {
+                              event.preventDefault();
+                              commitEdit(section);
+                            }
+                          }}
+                          className="w-full resize-none rounded-xl border border-indigo-200 bg-white px-3 py-2 text-inherit leading-relaxed text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          style={{
+                            fontSize: "16px",
                             lineHeight: templateStyles.bodyStyle.lineHeight,
                             fontFamily: templateStyles.bodyStyle.fontFamily,
-                          }}
-                          onCommit={(md) => {
-                            const nextText = updateResumeLine(resumeText, section, md);
-                            setEditingNodeId(null);
-                            setEditingValue("");
-                            applyResumeText(nextText);
-                          }}
-                          onCancel={() => {
-                            setEditingNodeId(null);
-                            setEditingValue("");
                           }}
                         />
                       ) : (

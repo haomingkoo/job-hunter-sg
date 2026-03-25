@@ -72,6 +72,14 @@ def _apply_lightweight_migrations() -> None:
         if idx_name not in existing_indexes:
             statements.append(idx_sql)
 
+    # tracked_jobs: new columns for resume versioning and stage history
+    if "tracked_jobs" in inspector.get_table_names():
+        tracked_columns = {col["name"] for col in inspector.get_columns("tracked_jobs")}
+        if "resume_version_id" not in tracked_columns:
+            statements.append("ALTER TABLE tracked_jobs ADD COLUMN resume_version_id INTEGER")
+        if "stage_history" not in tracked_columns:
+            statements.append("ALTER TABLE tracked_jobs ADD COLUMN stage_history JSON")
+
     # Widen jd_summary_status if it was created as VARCHAR(30) (too short for model names)
     if "jd_summary_status" in existing_columns:
         try:
