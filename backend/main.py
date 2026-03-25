@@ -1206,6 +1206,125 @@ def admin_backfill_status(
     }
 
 
+@app.get("/api/admin/jd-analysis")
+def admin_jd_analysis(
+    authorization: Optional[str] = Header(None),
+    flag_type: str = "all",
+    limit: int = 50,
+) -> dict:
+    """
+    Get flagged JDs and quality stats. Protected by ADMIN_API_KEY.
+    flag_type: "all", "injection", "red_flag", "low_quality", "duplicates"
+    """
+    token = ""
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    from jd_analyzer import compute_content_hash
+
+    db = SessionLocal()
+    try:
+        # Get all jobs with analysis
+        jobs_with_analysis = (
+            db.query(ScrapedJob)
+            .filter(ScrapedJob.parsed_jd.isnot(None))
+            .all()
+        )
+
+        flagged: list[dict] = []
+        quality_scores: list[int] = []
+        content_hashes: dict[str, list[dict]] = {}
+        injection_count = 0
+        red_flag_count = 0
+
+        for job in jobs_with_analysis:
+            parsed = job.parsed_jd if isinstance(job.parsed_jd, dict) else {}
+            analysis = parsed.get("_analysis", {})
+            if not analysis or analysis.get("skipped"):
+                continue
+
+            quality = analysis.get("quality", {})
+            score = quality.get("score", 0)
+            quality_scores.append(score)
+
+            # Track duplicates by content hash
+            ch = analysis.get("content_hash", "")
+            if ch:
+                if ch not in content_hashes:
+                    content_hashes[ch] = []
+                content_hashes[ch].append({
+                    "id": job.id,
+                    "title": job.title,
+                    "company": job.company,
+                    "agency": job.agency or "",
+                })
+
+            has_injection = analysis.get("has_injection", False)
+            has_red_flags = analysis.get("has_red_flags", False)
+            if has_injection:
+                injection_count += 1
+            if has_red_flags:
+                red_flag_count += 1
+
+            should_include = False
+            if flag_type == "all" and (has_injection or has_red_flags or score < 30):
+                should_include = True
+            elif flag_type == "injection" and has_injection:
+                should_include = True
+            elif flag_type == "red_flag" and has_red_flags:
+                should_include = True
+            elif flag_type == "low_quality" and score < 30:
+                should_include = True
+
+            if should_include and len(flagged) < limit:
+                flagged.append({
+                    "id": job.id,
+                    "title": job.title,
+                    "company": job.company,
+                    "agency": job.agency or "",
+                    "source": job.source,
+                    "quality_score": score,
+                    "injection_findings": analysis.get("prompt_injection", []),
+                    "red_flags": analysis.get("red_flags", []),
+                })
+
+        # Find actual duplicates (same hash, multiple jobs)
+        duplicates = [
+            {"content_hash": h, "count": len(jobs), "jobs": jobs[:5]}
+            for h, jobs in sorted(content_hashes.items(), key=lambda x: -len(x[1]))
+            if len(jobs) > 1
+        ]
+
+        # Quality distribution
+        total_analyzed = len(quality_scores)
+        quality_dist = {
+            "excellent_70_plus": sum(1 for s in quality_scores if s >= 70),
+            "good_50_69": sum(1 for s in quality_scores if 50 <= s < 70),
+            "fair_30_49": sum(1 for s in quality_scores if 30 <= s < 50),
+            "poor_below_30": sum(1 for s in quality_scores if s < 30),
+            "avg_score": round(sum(quality_scores) / max(1, total_analyzed), 1),
+        }
+
+        return {
+            "summary": {
+                "total_analyzed": total_analyzed,
+                "injection_detected": injection_count,
+                "red_flags_detected": red_flag_count,
+                "duplicate_groups": len(duplicates),
+                "duplicate_jobs": sum(d["count"] for d in duplicates),
+                "quality_distribution": quality_dist,
+            },
+            "flagged_jobs": flagged[:limit],
+            "top_duplicates": duplicates[:20] if flag_type in ("all", "duplicates") else [],
+        }
+    finally:
+        db.close()
+
+
 @app.post("/api/admin/backfill")
 def admin_backfill_enrichment(
     body: dict,
