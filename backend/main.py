@@ -2714,15 +2714,37 @@ def score_resume(
     db.commit()
 
     jd_text = sanitize_user_input(body.job_description)
+
+    # Resolve parsed_jd: prefer stored data from job_id, fall back to
+    # parsing the raw JD text provided in the request body.
+    scored_parsed_jd: dict | None = None
+    if body.job_id:
+        job_row = db.query(ScrapedJob).filter(ScrapedJob.id == body.job_id).first()
+        if job_row:
+            import json as _json
+            raw = job_row.parsed_jd
+            if isinstance(raw, dict):
+                scored_parsed_jd = raw
+            elif isinstance(raw, str) and raw.strip():
+                try:
+                    scored_parsed_jd = _json.loads(raw)
+                except (ValueError, TypeError):
+                    scored_parsed_jd = None
+            # Use the job's description as JD text if caller didn't supply one
+            if not jd_text.strip() and job_row.description:
+                jd_text = sanitize_user_input(job_row.description)
+
     log.info(
-        "Resume score requested words=%s jd_chars=%s user=%s",
+        "Resume score requested words=%s jd_chars=%s job_id=%s user=%s",
         len(resume_text.split()),
         len(jd_text),
+        body.job_id,
         user.id if user else "anon",
     )
     result = _scorer.analyze(
         resume_text=resume_text,
         job_description=jd_text,
+        parsed_jd=scored_parsed_jd,
     )
     analyze_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
 

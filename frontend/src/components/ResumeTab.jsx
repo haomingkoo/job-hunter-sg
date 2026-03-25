@@ -2320,13 +2320,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                       onChange={(e) => setSaveVersionLabel(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") saveCurrentVersion(); }}
                       placeholder="Name this version..."
-                      className="w-28 rounded-lg bg-transparent px-2 py-1 text-xs focus:outline-none"
+                      className="w-36 rounded-lg bg-transparent px-2.5 py-1.5 text-sm text-[#384959] placeholder-[#6A89A7]/60 focus:outline-none"
                     />
                     <button
                       type="button"
                       onClick={saveCurrentVersion}
                       disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                      className="rounded-lg bg-[#384959] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
+                      className="rounded-lg bg-[#384959] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
                     >
                       {savingVersion ? "..." : "Save"}
                     </button>
@@ -2465,13 +2465,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   onChange={(e) => setSaveVersionLabel(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") saveCurrentVersion(); }}
                   placeholder="Version name..."
-                  className="w-24 rounded-lg bg-transparent px-2 py-1 text-xs focus:outline-none"
+                  className="w-32 rounded-lg bg-transparent px-2.5 py-1.5 text-sm text-[#384959] placeholder-[#6A89A7]/60 focus:outline-none"
                 />
                 <button
                   type="button"
                   onClick={saveCurrentVersion}
                   disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                  className="rounded-lg bg-[#384959] px-2 py-1 text-xs font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
+                  className="rounded-lg bg-[#384959] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
                 >
                   {savingVersion ? "..." : "Save"}
                 </button>
@@ -4227,7 +4227,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   onChange={(e) => setSaveVersionLabel(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && saveVersionLabel.trim()) saveCurrentVersion(); }}
                   placeholder="Version name..."
-                  className="w-28 rounded-lg bg-transparent px-2 py-1 text-xs focus:outline-none"
+                  className="w-32 rounded-lg bg-transparent px-2.5 py-1.5 text-sm text-[#384959] placeholder-[#6A89A7]/60 focus:outline-none"
                 />
                 <button
                   type="button"

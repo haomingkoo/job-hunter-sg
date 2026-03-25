@@ -880,12 +880,78 @@ class ResumeScorer:
         suggestions.sort(key=lambda s: -s["points"])
         return suggestions[:5]
 
+    # ── ATS keyword match against parsed JD ─────────────────────────────
+
+    @staticmethod
+    def _ats_match_from_parsed_jd(
+        resume_text: str,
+        parsed_jd: dict,
+    ) -> dict:
+        """Score ATS keyword overlap between resume and a pre-parsed JD.
+
+        Extracts skill terms from ``parsed_jd`` (required_skills,
+        preferred_skills, single_word_skills), normalises to lowercase,
+        and counts how many appear as substrings in the resume text.
+
+        Returns:
+            dict with matched, total, match_pct (0-100), and the
+            lists of hit/miss terms.
+        """
+        terms: list[str] = []
+        for key in ("required_skills", "preferred_skills", "single_word_skills"):
+            terms.extend(parsed_jd.get(key, []))
+
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        unique_terms: list[str] = []
+        for term in terms:
+            lower = term.lower().strip()
+            if lower and lower not in seen:
+                seen.add(lower)
+                unique_terms.append(lower)
+
+        if not unique_terms:
+            return {
+                "matched_terms": [],
+                "missing_terms": [],
+                "matched": 0,
+                "total": 0,
+                "match_pct": 0.0,
+            }
+
+        resume_lower = resume_text.lower()
+        matched: list[str] = []
+        missing: list[str] = []
+        for term in unique_terms:
+            if term in resume_lower:
+                matched.append(term)
+            else:
+                missing.append(term)
+
+        match_pct = (len(matched) / len(unique_terms)) * 100
+
+        return {
+            "matched_terms": matched,
+            "missing_terms": missing,
+            "matched": len(matched),
+            "total": len(unique_terms),
+            "match_pct": round(match_pct, 1),
+        }
+
     # ── Main entry point ─────────────────────────────────────────────────
 
     def analyze(
-        self, resume_text: str, job_description: str = "",
+        self,
+        resume_text: str,
+        job_description: str = "",
+        parsed_jd: dict | None = None,
     ) -> dict:
-        """Score a resume and return a structured report."""
+        """Score a resume and return a structured report.
+
+        When *parsed_jd* is provided the overall score blends quality
+        (60 %) with ATS keyword match (40 %).  Without it the score
+        reflects quality only (backward-compatible).
+        """
         text = resume_text.strip()
         bullets = self._extract_bullets(text)
         sections = self._extract_sections(text)
@@ -902,7 +968,7 @@ class ResumeScorer:
             "competencies": competencies,
         }
 
-        overall = (
+        quality_score = (
             impact["score"]
             + presentation["score"]
             + competencies["score"]
@@ -919,10 +985,25 @@ class ResumeScorer:
             " -- list specific skills",
         ]
 
-        return {
+        # Blend with ATS match when parsed JD is available
+        ats_match: dict | None = None
+        if parsed_jd:
+            ats_match = self._ats_match_from_parsed_jd(text, parsed_jd)
+            ats_match_pct = ats_match["match_pct"]
+            overall = round(quality_score * 0.6 + ats_match_pct * 0.4)
+            ats_match["blended"] = True
+        else:
+            overall = quality_score
+
+        result: dict = {
             "overall_score": overall,
+            "quality_score": quality_score,
             "dimensions": dimensions,
             "keyword_match": keyword_match,
             "top_suggestions": top_suggestions,
             "sg_tips": sg_tips,
         }
+        if ats_match is not None:
+            result["ats_match"] = ats_match
+
+        return result

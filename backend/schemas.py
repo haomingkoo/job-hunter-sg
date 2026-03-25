@@ -167,6 +167,7 @@ class TierInfo(BaseModel):
 class ResumeScoreRequest(BaseModel):
     resume_text: str = Field(..., min_length=50, max_length=10000)
     job_description: str = Field("", max_length=10000)
+    job_id: int | None = Field(None, description="Optional job ID to fetch parsed JD for ATS blending")
 
 
 class RewriteBulletRequest(BaseModel):
