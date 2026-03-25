@@ -83,6 +83,11 @@ _JD_ENRICHMENT_LOCK = threading.Lock()
 _JD_ENRICHMENT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3)
 _FAILED_RETRY_SECONDS = 300  # retry failed/unavailable summaries after 5 min
 
+# ── Cached filter metadata (avoid 3 GROUP BY queries per page 1 load) ────────
+_filter_meta_cache: dict = {}
+_filter_meta_ts: float = 0.0
+_FILTER_META_TTL = 300  # 5 minutes
+
 
 from contextlib import asynccontextmanager
 
@@ -1702,35 +1707,41 @@ def list_cached_jobs(
     if refreshed_terms:
         db.commit()
 
-    # Build filter metadata from ALL jobs (not just current page)
-    # so frontend dropdowns show complete options
+    # Build filter metadata (cached for 5 min to avoid 3 GROUP BY per page 1)
     filter_meta = {}
     if page == 1:
-        source_counts = (
-            db.query(ScrapedJob.source, func.count())
-            .filter(ScrapedJob.source != "")
-            .group_by(ScrapedJob.source)
-            .all()
-        )
-        emp_counts = (
-            db.query(ScrapedJob.employment_type, func.count())
-            .filter(ScrapedJob.employment_type != "")
-            .group_by(ScrapedJob.employment_type)
-            .all()
-        )
-        loc_counts = (
-            db.query(ScrapedJob.location, func.count())
-            .filter(ScrapedJob.location != "", ScrapedJob.location != "Singapore")
-            .group_by(ScrapedJob.location)
-            .order_by(func.count().desc())
-            .limit(30)
-            .all()
-        )
-        filter_meta = {
-            "sources": [{"value": s, "count": c} for s, c in source_counts if s],
-            "employment_types": [{"value": t, "count": c} for t, c in emp_counts if t],
-            "locations": [{"value": loc, "count": c} for loc, c in loc_counts if loc],
-        }
+        global _filter_meta_cache, _filter_meta_ts
+        now = time.monotonic()
+        if _filter_meta_cache and (now - _filter_meta_ts) < _FILTER_META_TTL:
+            filter_meta = _filter_meta_cache
+        else:
+            source_counts = (
+                db.query(ScrapedJob.source, func.count())
+                .filter(ScrapedJob.source != "")
+                .group_by(ScrapedJob.source)
+                .all()
+            )
+            emp_counts = (
+                db.query(ScrapedJob.employment_type, func.count())
+                .filter(ScrapedJob.employment_type != "")
+                .group_by(ScrapedJob.employment_type)
+                .all()
+            )
+            loc_counts = (
+                db.query(ScrapedJob.location, func.count())
+                .filter(ScrapedJob.location != "", ScrapedJob.location != "Singapore")
+                .group_by(ScrapedJob.location)
+                .order_by(func.count().desc())
+                .limit(30)
+                .all()
+            )
+            filter_meta = {
+                "sources": [{"value": s, "count": c} for s, c in source_counts if s],
+                "employment_types": [{"value": t, "count": c} for t, c in emp_counts if t],
+                "locations": [{"value": loc, "count": c} for loc, c in loc_counts if loc],
+            }
+            _filter_meta_cache = filter_meta
+            _filter_meta_ts = now
 
     return {
         "jobs": [
