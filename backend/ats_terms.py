@@ -354,7 +354,8 @@ def _is_noise_term(term: str, context: str = "") -> bool:
     # Contains "& " followed by section-like words
     _SECTION_AFTER_AMP = {"community", "other", "local", "experience", "attributes"}
     if "&" in lowered:
-        after_amp = lowered.split("&")[-1].strip().split()[0] if "&" in lowered else ""
+        after_parts = lowered.split("&")[-1].strip().split()
+        after_amp = after_parts[0] if after_parts else ""
         if after_amp in _SECTION_AFTER_AMP:
             return True
 
