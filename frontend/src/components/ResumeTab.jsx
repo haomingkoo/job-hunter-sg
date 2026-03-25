@@ -3689,10 +3689,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                             })()
                           )}
                           {section.type === "bullet" && (
-                            <div className={`flex gap-3 ${section.sectionKey === "education" ? "ml-2" : ""}`}>
-                              <div className={`pt-1 text-gray-400 ${section.sectionKey === "education" ? "text-[0.85rem]" : "text-[1rem]"}`}>•</div>
+                            <div className={`flex gap-3 ${["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "ml-2" : ""}`}>
+                              <div className={`pt-1 text-gray-400 ${["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.85rem]" : "text-[1rem]"}`}>•</div>
                               <div className="flex-1">
-                                <p className={section.sectionKey === "education" ? "text-[0.88em] text-gray-500" : "text-gray-700"} style={templateStyles.bodyStyle}>
+                                <p className={["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.88em] text-gray-500" : "text-gray-700"} style={templateStyles.bodyStyle}>
                                   {renderHighlightedText(section.text, annotation?.keywordMatches || [])}
                                 </p>
                                 {annotationsOn && annotation && (
