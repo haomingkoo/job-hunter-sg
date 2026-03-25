@@ -48,6 +48,16 @@ def _apply_lightweight_migrations() -> None:
     statements: list[str] = []
     if "parsed_jd" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN parsed_jd JSON")
+    if "posted_at_sort" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN posted_at_sort VARCHAR(50)")
+    if "jd_summary" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN jd_summary TEXT")
+    if "jd_summary_generated_at" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN jd_summary_generated_at VARCHAR(50)")
+    if "jd_summary_status" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN jd_summary_status VARCHAR(30)")
+    if "job_terms_preview" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN job_terms_preview JSON")
 
     if not statements:
         return

@@ -67,9 +67,16 @@ class ScrapedJob(Base):
     dedup_key: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     search_keyword: Mapped[str] = mapped_column(String(300), default="")
     scraped_at: Mapped[str] = mapped_column(String(50), default="")
+    posted_at_sort: Mapped[str] = mapped_column(String(50), default="")
 
     # Pre-parsed JD data for instant resume tailoring (populated at scrape time)
     parsed_jd: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
+    jd_summary: Mapped[str] = mapped_column(Text, default="")
+    jd_summary_generated_at: Mapped[str] = mapped_column(String(50), default="")
+    jd_summary_status: Mapped[str] = mapped_column(String(30), default="")
+
+    # Cached skill term labels for fast list-page rendering (JSON array of strings)
+    job_terms_preview: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
 
     __table_args__ = (
         Index("ix_scraped_jobs_keyword", "search_keyword"),

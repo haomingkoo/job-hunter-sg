@@ -45,6 +45,18 @@ ATS_DISPLAY_EXCLUDE: set[str] = ATS_MULTIWORD_NOISE | {
     "basket weaving",
 }
 
+ATS_OUTLINE_NOISE: set[str] = {
+    "job description",
+    "description",
+    "overview",
+    "key responsibilities",
+    "responsibilities",
+    "requirements",
+    "what we are looking for",
+    "work experience and knowledge",
+    "source tags & skill cues",
+}
+
 _ATS_CONTEXT_RE = re.compile(
     r"(areas?\s+of\s+study|field[s]?\s+of\s+study|degree(?:\s+or)?\s+above|"
     r"bachelor|master|phd|major(?:ing)?\s+in|equivalent work experience|disciplines?)",
@@ -140,6 +152,49 @@ def _extract_title_seed_phrases(job_title: str) -> list[str]:
     return deduped
 
 
+def _extract_outline_terms(text: str) -> list[str]:
+    source = str(text or "")
+    if not source.strip():
+        return []
+
+    candidates: list[str] = []
+
+    for chunk in re.findall(r"\[([^\]]{3,80})\]", source):
+        normalized = _normalize_term(chunk)
+        if normalized:
+            candidates.append(normalized)
+
+    for raw_line in source.splitlines():
+        stripped = re.sub(r"^[\s•*\-–]+", "", raw_line or "").strip(" :")
+        if not stripped or len(stripped) < 3 or len(stripped) > 80:
+            continue
+        if stripped.endswith((".", ";")):
+            continue
+        lowered = stripped.lower()
+        if lowered in ATS_OUTLINE_NOISE:
+            continue
+        words = stripped.split()
+        if not (1 <= len(words) <= 6):
+            continue
+        title_like = all(
+            word[:1].isupper() or word.lower() in {"and", "&", "of", "to", "the", "for", "with", "in", "on"}
+            for word in words
+        )
+        if title_like:
+            candidates.append(stripped)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for term in candidates:
+        normalized = _normalize_term(term)
+        lowered = normalized.lower()
+        if not normalized or lowered in seen:
+            continue
+        seen.add(lowered)
+        deduped.append(normalized)
+    return deduped
+
+
 def _looks_like_study_area(term: str, context: str) -> bool:
     lowered = term.lower()
     return (
@@ -188,6 +243,7 @@ def build_job_ats_terms(
     extracted_phrases = extract_skill_phrases(description, skills_list, db_session=db_session)
     title_phrases = extract_skill_phrases(job_title, skills_list, db_session=db_session) if job_title else []
     title_seed_phrases = _extract_title_seed_phrases(job_title)
+    outline_terms = _extract_outline_terms(description)
     title_single_terms = _extract_single_word_terms(job_title)
     fallback_single_terms = parsed_single_terms or _extract_single_word_terms(description)
 
@@ -224,6 +280,7 @@ def build_job_ats_terms(
     add_terms(required_terms, 100, "required", required=True)
     add_terms(extracted_phrases, 90, "description")
     add_terms(preferred_terms, 80, "preferred", preferred=True)
+    add_terms(outline_terms, 75, "outline")
     add_terms(fallback_single_terms, 70, "single_word", technical=True)
     add_terms(skills_list, 60, "source_tags")
     add_terms(title_seed_phrases, 58, "title_seed")

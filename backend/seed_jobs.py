@@ -40,6 +40,11 @@ logging.basicConfig(
 )
 log = logging.getLogger("seed")
 
+
+def _posted_sort_iso(posted_date: str, scraped_at: str = "") -> str:
+    from main import _parse_job_posted_at
+    return _parse_job_posted_at(posted_date, scraped_at).isoformat()
+
 # Popular SG job search keywords to pre-cache
 DEFAULT_KEYWORDS = [
     "software engineer",
@@ -113,6 +118,7 @@ def seed_jobs(
                 raw["dedup_key"] = job.dedup_key  # Property not included by asdict()
                 clean = sanitize_job(raw)
                 clean["search_keyword"] = keyword
+                clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
 
                 existing = (
                     db.query(ScrapedJob)
@@ -207,6 +213,7 @@ def crawl_all_jobs() -> dict:
                 raw["dedup_key"] = job.dedup_key
                 clean = sanitize_job(raw)
                 clean["search_keyword"] = "all"
+                clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
 
                 try:
                     existing = db.query(ScrapedJob).filter(
@@ -265,6 +272,7 @@ def crawl_all_jobs() -> dict:
                 raw["dedup_key"] = job.dedup_key
                 clean = sanitize_job(raw)
                 clean["search_keyword"] = "all"
+                clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
 
                 try:
                     existing = db.query(ScrapedJob).filter(

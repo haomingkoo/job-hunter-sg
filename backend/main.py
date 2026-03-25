@@ -11,8 +11,10 @@ import json
 import logging
 import os
 import random
+import concurrent.futures
 import re
 import secrets
+import threading
 from collections import Counter
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -26,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import String, cast, func, or_, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, load_only
 
 from auth import (
     TIER_LIMITS,
@@ -59,7 +61,7 @@ from schemas import (
     TrackedJobUpdate,
     UserOut,
 )
-from ai_service import _call_sealion, coach_resume, get_ai_status, integrate_keywords, rewrite_bullet
+from ai_service import _call_sealion, coach_resume, get_ai_health, get_ai_status, integrate_keywords, rewrite_bullet
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms, merge_job_terms_with_match
 from resume_parser import parse_resume
 from resume_scorer import ResumeScorer
@@ -68,6 +70,7 @@ from skill_extractor import extract_skill_phrases
 from scraper import CareersGovScraper, JobAggregator, SSGSkillsFrameworkAPI, _clean_html
 from tailoring_pipeline import get_pipeline_state, run_pipeline
 from jd_preparser import preparse_job_description as preparse_jd
+from jd_summary import summarize_job_description
 
 log = logging.getLogger("jobhunter")
 
@@ -75,6 +78,9 @@ log = logging.getLogger("jobhunter")
 _is_production = "postgresql" in os.environ.get("DATABASE_URL", "")
 
 _CAREERSGOV_PATH_RE = re.compile(r"/en-US/PublicServiceCareers(/job/.+)$")
+_JD_ENRICHMENT_IN_FLIGHT: set[int] = set()
+_JD_ENRICHMENT_LOCK = threading.Lock()
+_JD_ENRICHMENT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3)
 
 
 from contextlib import asynccontextmanager
@@ -104,6 +110,23 @@ async def lifespan(application: FastAPI):
     except Exception as e:
         log.warning(f"Stale job cleanup failed: {e}")
 
+    # Backfill sortable posted timestamps for existing rows.
+    try:
+        db_sort = SessionLocal()
+        jobs_missing_sort = (
+            db_sort.query(ScrapedJob)
+            .filter(or_(ScrapedJob.posted_at_sort.is_(None), ScrapedJob.posted_at_sort == ""))
+            .all()
+        )
+        if jobs_missing_sort:
+            for job in jobs_missing_sort:
+                job.posted_at_sort = _posted_sort_iso(job.posted_date, job.scraped_at)
+            db_sort.commit()
+            log.info("Backfilled posted_at_sort for %s jobs", len(jobs_missing_sort))
+        db_sort.close()
+    except Exception as e:
+        log.warning(f"posted_at_sort backfill failed: {e}")
+
     # Auto-create admin account if configured
     try:
         db2 = SessionLocal()
@@ -127,6 +150,7 @@ async def lifespan(application: FastAPI):
 
     # ── Shutdown ──
     log.info("Shutting down Job Hunter SG API")
+    _JD_ENRICHMENT_POOL.shutdown(wait=False, cancel_futures=True)
 
 
 app = FastAPI(
@@ -481,6 +505,10 @@ def _parse_job_posted_at(posted_date: str, scraped_at: str = "") -> datetime:
     return datetime.fromtimestamp(0, tz=timezone.utc)
 
 
+def _posted_sort_iso(posted_date: str, scraped_at: str = "") -> str:
+    return _parse_job_posted_at(posted_date, scraped_at).isoformat()
+
+
 def _get_or_create_memory(user: Optional[User], db: Session) -> Optional[UserMemory]:
     if not user:
         return None
@@ -583,6 +611,138 @@ def _derive_careersgov_skill_cues(
     return cues, parsed
 
 
+def _job_term_labels(terms: list[dict], limit: int = 8) -> list[str]:
+    labels: list[str] = []
+    seen: set[str] = set()
+    for term in terms or []:
+        label = re.sub(r"\s+", " ", str(term.get("skill", "")).strip())
+        lower = label.lower()
+        if not label or lower in seen:
+            continue
+        seen.add(lower)
+        labels.append(label)
+        if len(labels) >= limit:
+            break
+    return labels
+
+
+def _compute_and_cache_term_preview(
+    job: ScrapedJob,
+    db: Session,
+    *,
+    limit: int = 8,
+) -> list[str]:
+    """Compute job_terms_preview, store it on the row, return labels."""
+    terms = _build_canonical_job_terms(job, db)
+    labels = _job_term_labels(terms, limit=limit)
+    job.job_terms_preview = labels
+    return labels
+
+
+def _enrich_job_background(job_id: int) -> None:
+    """Background worker: generate JD summary + cache term preview."""
+    from database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+        if not job or not (job.description or "").strip():
+            return
+
+        # --- term preview ---
+        if not job.job_terms_preview:
+            _compute_and_cache_term_preview(job, db)
+            db.commit()
+
+        # --- JD summary (skip if already done) ---
+        if (job.jd_summary or "").strip():
+            return
+
+        parsed = job.parsed_jd if isinstance(job.parsed_jd, dict) and job.parsed_jd else preparse_jd(
+            job.description or "",
+            skills=job.skills if isinstance(job.skills, list) else [],
+            db_session=db,
+            job_title=job.title or "",
+        )
+        if parsed and parsed != (job.parsed_jd or {}):
+            job.parsed_jd = parsed
+
+        job.jd_summary_status = "generating"
+        db.commit()
+
+        summary, model_used = summarize_job_description(
+            job_title=job.title or "",
+            description=job.description or "",
+            parsed_jd=parsed,
+        )
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if summary:
+            job.jd_summary = summary
+            job.jd_summary_generated_at = now_iso
+            job.jd_summary_status = model_used
+        else:
+            job.jd_summary_generated_at = now_iso
+            job.jd_summary_status = "unavailable"
+        db.commit()
+    except Exception as exc:
+        log.warning("JD enrichment failed for job_id=%s: %s", job_id, exc)
+        try:
+            db.rollback()
+            job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+            if job and not (job.jd_summary or "").strip():
+                job.jd_summary_status = "failed"
+                job.jd_summary_generated_at = datetime.now(timezone.utc).isoformat()
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
+        with _JD_ENRICHMENT_LOCK:
+            _JD_ENRICHMENT_IN_FLIGHT.discard(job_id)
+
+
+_FAILED_RETRY_SECONDS = 300  # retry failed summaries after 5 min
+
+
+def _should_queue_enrichment(job: ScrapedJob) -> bool:
+    """Check if this job needs background enrichment (summary or preview)."""
+    if not job or not job.id or not (job.description or "").strip():
+        return False
+    needs_preview = not job.job_terms_preview
+    needs_summary = not (job.jd_summary or "").strip()
+    if not needs_preview and not needs_summary:
+        return False
+    # Allow retry for failed/unavailable summaries after cooldown
+    status = (job.jd_summary_status or "").strip()
+    if status in ("failed", "unavailable"):
+        generated_at = job.jd_summary_generated_at or ""
+        if generated_at:
+            try:
+                attempted_at = datetime.fromisoformat(generated_at)
+                if (datetime.now(timezone.utc) - attempted_at).total_seconds() < _FAILED_RETRY_SECONDS:
+                    return needs_preview  # only queue if preview still needed
+            except (ValueError, TypeError):
+                pass
+    if status == "generating":
+        return needs_preview  # already in progress for summary
+    return True
+
+
+def _queue_enrichment_if_needed(job: ScrapedJob) -> None:
+    if not _should_queue_enrichment(job):
+        return
+    if not get_ai_health()["is_healthy"]:
+        return
+    with _JD_ENRICHMENT_LOCK:
+        if job.id in _JD_ENRICHMENT_IN_FLIGHT:
+            return
+        if len(_JD_ENRICHMENT_IN_FLIGHT) >= 50:
+            return
+        _JD_ENRICHMENT_IN_FLIGHT.add(job.id)
+    _JD_ENRICHMENT_POOL.submit(_enrich_job_background, job.id)
+
+
 def _refresh_careersgov_terms_if_weak(job: ScrapedJob, db: Session) -> bool:
     if not job or job.source != "Careers@Gov" or not (job.description or "").strip():
         return False
@@ -606,6 +766,8 @@ def _refresh_careersgov_terms_if_weak(job: ScrapedJob, db: Session) -> bool:
     if derived_skills and derived_skills != existing_skills:
         job.skills = derived_skills
         changed = True
+    if changed:
+        _compute_and_cache_term_preview(job, db)
     return changed
 
 
@@ -651,6 +813,12 @@ def _enrich_careersgov_job(job: ScrapedJob, db: Session) -> bool:
         if derived_skills and derived_skills != skills_list:
             job.skills = derived_skills
             updated = True
+    expected_sort = _posted_sort_iso(job.posted_date, job.scraped_at)
+    if expected_sort != (job.posted_at_sort or ""):
+        job.posted_at_sort = expected_sort
+        updated = True
+    if updated and job.description:
+        _compute_and_cache_term_preview(job, db)
     return updated
 
 
@@ -719,7 +887,10 @@ def _hydrate_missing_careersgov_jobs(jobs: list, db: Session) -> int:
         if description:
             skills_list = job.skills if isinstance(job.skills, list) else []
             job.parsed_jd = preparse_jd(description, skills=skills_list)
-            updated += 1
+        expected_sort = _posted_sort_iso(job.posted_date, job.scraped_at)
+        if expected_sort != (job.posted_at_sort or ""):
+            job.posted_at_sort = expected_sort
+        updated += 1
 
     if updated:
         db.commit()
@@ -729,7 +900,11 @@ def _hydrate_missing_careersgov_jobs(jobs: list, db: Session) -> int:
 
 def _extract_resume_skills(resume_text: str, db: Session) -> tuple[list[str], str]:
     lower_text = resume_text.lower()
-    extracted = extract_skill_phrases(resume_text, db_session=db)
+    extracted = extract_skill_phrases(
+        resume_text,
+        db_session=db,
+        use_dynamic_skills=True,
+    )
     supplemental: list[str] = []
     for skill in POWER_SKILL_TERMS:
         pattern = rf"(?<![a-z0-9]){re.escape(skill.lower())}(?![a-z0-9])"
@@ -1096,6 +1271,7 @@ def search_jobs(
         raw["dedup_key"] = job.dedup_key  # Property not included by asdict()
         clean = sanitize_job(raw)
         clean["search_keyword"] = sanitize_user_input(q)
+        clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
 
         # Upsert into scraped_jobs by dedup_key
         existing = (
@@ -1157,24 +1333,30 @@ def list_cached_jobs(
         numbers = [int(part.replace(",", "")) for part in re.findall(r"\d[\d,]*", value or "")]
         return numbers[0] if numbers else 0
 
-    job_list_columns = (
-        ScrapedJob.id,
-        ScrapedJob.title,
-        ScrapedJob.company,
-        ScrapedJob.location,
-        ScrapedJob.salary,
-        ScrapedJob.source,
-        ScrapedJob.url,
-        ScrapedJob.posted_date,
-        ScrapedJob.employment_type,
-        ScrapedJob.seniority,
-        ScrapedJob.description,
-        ScrapedJob.skills,
-        ScrapedJob.agency,
-        ScrapedJob.scraped_at,
+    query = db.query(ScrapedJob).options(
+        load_only(
+            ScrapedJob.id,
+            ScrapedJob.title,
+            ScrapedJob.company,
+            ScrapedJob.location,
+            ScrapedJob.salary,
+            ScrapedJob.source,
+            ScrapedJob.url,
+            ScrapedJob.posted_date,
+            ScrapedJob.employment_type,
+            ScrapedJob.seniority,
+            ScrapedJob.description,
+            ScrapedJob.skills,
+            ScrapedJob.agency,
+            ScrapedJob.scraped_at,
+            ScrapedJob.posted_at_sort,
+            ScrapedJob.parsed_jd,
+            ScrapedJob.jd_summary,
+            ScrapedJob.jd_summary_status,
+            ScrapedJob.jd_summary_generated_at,
+            ScrapedJob.job_terms_preview,
+        )
     )
-
-    query = db.query(*job_list_columns)
     if q:
         # Split query into words — match ALL words (AND logic)
         # "micron i4" matches jobs with BOTH "micron" AND "i4" anywhere
@@ -1201,39 +1383,52 @@ def list_cached_jobs(
 
     offset = (page - 1) * per_page
 
-    jobs = query.all()
-    jobs.sort(
-        key=lambda job: (
-            _parse_job_posted_at(job.posted_date, job.scraped_at),
-            job.id,
-        ),
-        reverse=True,
-    )
+    ordered_query = query.order_by(ScrapedJob.posted_at_sort.desc(), ScrapedJob.id.desc())
 
-    if min_salary is not None:
+    if min_salary is None:
+        total = query.count()
+        jobs = ordered_query.offset(offset).limit(per_page).all()
+    else:
+        jobs = ordered_query.all()
         salary_matched = [job for job in jobs if salary_floor(job.salary) >= min_salary]
         salary_unknown = [job for job in jobs if salary_floor(job.salary) == 0]
         jobs = salary_matched + salary_unknown
-
-    total = len(jobs)
-    jobs = jobs[offset: offset + per_page]
+        total = len(jobs)
+        jobs = jobs[offset: offset + per_page]
 
     hydrated_count = _hydrate_missing_careersgov_jobs(jobs, db)
     if hydrated_count:
-        jobs = query.all()
-        jobs.sort(
-            key=lambda job: (
-                _parse_job_posted_at(job.posted_date, job.scraped_at),
-                job.id,
-            ),
-            reverse=True,
-        )
-        if min_salary is not None:
+        ordered_query = query.order_by(ScrapedJob.posted_at_sort.desc(), ScrapedJob.id.desc())
+        if min_salary is None:
+            jobs = ordered_query.offset(offset).limit(per_page).all()
+        else:
+            jobs = ordered_query.all()
             salary_matched = [job for job in jobs if salary_floor(job.salary) >= min_salary]
             salary_unknown = [job for job in jobs if salary_floor(job.salary) == 0]
             jobs = salary_matched + salary_unknown
-        total = len(jobs)
-        jobs = jobs[offset: offset + per_page]
+            total = len(jobs)
+            jobs = jobs[offset: offset + per_page]
+
+    refreshed_terms = False
+    queued_count = 0
+    for job in jobs:
+        expected_sort = _posted_sort_iso(job.posted_date, job.scraped_at)
+        if expected_sort != (job.posted_at_sort or ""):
+            job.posted_at_sort = expected_sort
+            refreshed_terms = True
+        if job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(job, db):
+            refreshed_terms = True
+            job.job_terms_preview = None  # invalidate stale cache
+        if not (job.job_terms_preview or []) and (job.description or "").strip():
+            preview = _compute_and_cache_term_preview(job, db)
+            if preview:
+                refreshed_terms = True
+        if queued_count < 3 and _should_queue_enrichment(job):
+            _queue_enrichment_if_needed(job)
+            queued_count += 1
+
+    if refreshed_terms:
+        db.commit()
 
     # Build filter metadata from ALL jobs (not just current page)
     # so frontend dropdowns show complete options
@@ -1273,6 +1468,10 @@ def list_cached_jobs(
                 "url": j.url, "posted_date": j.posted_date,
                 "employment_type": j.employment_type, "seniority": j.seniority,
                 "description": j.description, "skills": j.skills or [],
+                "job_terms_preview": j.job_terms_preview or [],
+                "job_terms_preview_ready": j.job_terms_preview is not None,
+                "jd_summary": j.jd_summary or "",
+                "jd_summary_status": j.jd_summary_status or "",
                 "agency": j.agency, "scraped_at": j.scraped_at,
             }
             for j in jobs
@@ -1581,6 +1780,7 @@ def get_cached_job(job_id: int, db: Session = Depends(get_db)) -> ScrapedJob:
         db.commit()
     elif job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(job, db):
         db.commit()
+    _queue_enrichment_if_needed(job)
     return job
 
 
@@ -2852,12 +3052,24 @@ def get_parsed_jd(
         )
         db.commit()
 
+    # Compute terms once, cache preview, queue summary if needed
+    terms = _build_canonical_job_terms(job, db)
+    preview = _job_term_labels(terms, limit=8)
+    if preview != (job.job_terms_preview or []):
+        job.job_terms_preview = preview
+        db.commit()
+    _queue_enrichment_if_needed(job)
+
     return {
         "job_id": job_id,
         "title": job.title,
         "company": job.company,
         "parsed_jd": job.parsed_jd or {},
-        "job_terms": _build_canonical_job_terms(job, db),
+        "job_terms": terms,
+        "job_terms_preview": preview,
+        "job_terms_preview_ready": job.job_terms_preview is not None,
+        "jd_summary": job.jd_summary or "",
+        "jd_summary_status": job.jd_summary_status or "",
         "has_parsed_jd": job.parsed_jd is not None,
     }
 

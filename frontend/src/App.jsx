@@ -121,6 +121,18 @@ function buildJobSkillDisplay(skills = [], description = "") {
   };
 }
 
+function normalizeJobTermLabels(items = []) {
+  return [...new Set(
+    (Array.isArray(items) ? items : [])
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        if (item && typeof item === "object") return String(item.skill || "").trim();
+        return "";
+      })
+      .filter(Boolean),
+  )];
+}
+
 function cleanAlignmentTerms(items = [], description = "") {
   const cleaned = [];
   const seen = new Set();
@@ -378,7 +390,10 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
         source: j.source,
         posted: j.posted_date || "",
         skills: j.skills || [],
+        jobTermsPreview: normalizeJobTermLabels(j.job_terms_preview || []),
         description: j.description || "",
+        jdSummary: j.jd_summary || "",
+        jdSummaryStatus: j.jd_summary_status || "",
         type: j.employment_type || "",
         level: j.seniority || "",
         url: j.url || "",
@@ -484,54 +499,91 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
   };
 
   useEffect(() => {
-    if (!expandedJobId || parsedJobMeta[expandedJobId]?.loaded || parsedJobMeta[expandedJobId]?.loading) return;
+    if (!expandedJobId) return;
 
-    let cancelled = false;
-    setParsedJobMeta((current) => ({
-      ...current,
-      [expandedJobId]: { ...(current[expandedJobId] || {}), loading: true, loaded: false, error: "" },
-    }));
+    let shouldFetch = false;
+    setParsedJobMeta((current) => {
+      const existing = current[expandedJobId];
+      if (existing?.loaded || existing?.loading) return current;
+      shouldFetch = true;
+      return {
+        ...current,
+        [expandedJobId]: {
+          ...(existing || {}),
+          loading: true,
+          loaded: false,
+          error: "",
+          startedAt: Date.now(),
+        },
+      };
+    });
+    if (!shouldFetch) return;
 
-    apiFetch(`/api/jobs/${expandedJobId}/parsed`)
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => {
+      setParsedJobMeta((current) => {
+        const existing = current[expandedJobId];
+        if (!existing?.loading) return current;
+        return {
+          ...current,
+          [expandedJobId]: {
+            ...existing,
+            stalled: true,
+          },
+        };
+      });
+    }, 4500);
+
+    apiFetch(`/api/jobs/${expandedJobId}/parsed`, { signal: controller.signal })
       .then((resp) => resp.json())
       .then((data) => {
-        if (cancelled) return;
         const parsed = data?.parsed_jd && typeof data.parsed_jd === "object" ? data.parsed_jd : {};
         const jobTerms = Array.isArray(data?.job_terms) ? data.job_terms : [];
-        const extractedTerms = [
+        const jobTermLabels = normalizeJobTermLabels(jobTerms);
+        const previewLabels = normalizeJobTermLabels(data?.job_terms_preview || []);
+        const extractedTerms = normalizeJobTermLabels([
           ...(Array.isArray(parsed.required_skills) ? parsed.required_skills : []),
           ...(Array.isArray(parsed.preferred_skills) ? parsed.preferred_skills : []),
           ...(Array.isArray(parsed.single_word_skills) ? parsed.single_word_skills : []),
-        ];
-        setParsedJobMeta((current) => ({
-          ...current,
-          [expandedJobId]: {
-            loaded: true,
-            loading: false,
-            error: "",
-            parsed,
-            jobTerms,
-            extractedTerms,
-          },
-        }));
-      })
-      .catch((err) => {
-        if (cancelled) return;
+        ]);
         setParsedJobMeta((current) => ({
           ...current,
           [expandedJobId]: {
             ...(current[expandedJobId] || {}),
             loaded: true,
             loading: false,
+            error: "",
+            parsed,
+            jobTerms,
+            jobTermLabels,
+            previewLabels,
+            extractedTerms,
+            jdSummary: data?.jd_summary || "",
+            jdSummaryStatus: data?.jd_summary_status || "",
+            stalled: false,
+            startedAt: current[expandedJobId]?.startedAt || Date.now(),
+          },
+        }));
+      })
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
+        setParsedJobMeta((current) => ({
+          ...current,
+          [expandedJobId]: {
+            ...(current[expandedJobId] || {}),
+            loaded: true,
+            loading: false,
+            stalled: false,
             error: err.message || "Failed to load parsed JD cues.",
           },
         }));
       });
 
     return () => {
-      cancelled = true;
+      window.clearTimeout(timeoutId);
+      controller.abort();
     };
-  }, [expandedJobId, parsedJobMeta]);
+  }, [expandedJobId]);
 
   const clearFilters = () => {
     setLevelFilter("all");
@@ -719,14 +771,18 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       {/* Results */}
       {!loading && filtered.map((job) => {
         const isExpanded = expandedJobId === job.id;
-        const skillDisplay = buildJobSkillDisplay(job.skills, job.description);
+        const skillDisplay = buildJobSkillDisplay(job.jobTermsPreview?.length ? job.jobTermsPreview : job.skills, job.description);
         const parsedMeta = parsedJobMeta[job.id] || null;
         const parsedDisplay = buildJobSkillDisplay(
-          parsedMeta?.jobTerms?.length ? parsedMeta.jobTerms : (parsedMeta?.extractedTerms || []),
+          parsedMeta?.jobTermLabels?.length
+            ? parsedMeta.jobTermLabels
+            : (parsedMeta?.previewLabels?.length ? parsedMeta.previewLabels : (parsedMeta?.extractedTerms || [])),
           job.description,
         );
         const effectiveSkillDisplay = parsedDisplay.visibleSkills.length > 0 ? parsedDisplay : skillDisplay;
         const previewSkills = effectiveSkillDisplay.visibleSkills.slice(0, 6);
+        const summaryText = (parsedMeta?.jdSummary || job.jdSummary || "").trim();
+        const longCueLoad = Boolean(parsedMeta?.loading && parsedMeta?.stalled);
 
         return (
         <div
@@ -746,7 +802,9 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
                 {job.location && <span className="flex items-center gap-1"><MapPin size={13} />{job.location}</span>}
                 {job.salary && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
               </div>
-              {job.description && !isExpanded && <p className="text-sm text-gray-600 mb-3 line-clamp-2">{job.description}</p>}
+              {(summaryText || job.description) && !isExpanded && (
+                <p className="text-sm text-gray-600 mb-3 line-clamp-2">{summaryText || job.description}</p>
+              )}
               {!isExpanded && previewSkills.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 mb-3">
                   {previewSkills.map((skill) => (
@@ -759,7 +817,14 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
           </div>
           {isExpanded && (
             <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 p-4">
-              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Description</div>
+              {summaryText && (
+                <>
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">AI Summary</div>
+                  <p className="mt-2 text-sm leading-relaxed text-gray-700">{summaryText}</p>
+                  <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Original Description</div>
+                </>
+              )}
+              {!summaryText && <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Description</div>}
               {job.description ? (
                 <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-gray-700">{job.description}</p>
               ) : (
@@ -790,10 +855,14 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
                     </div>
                   )}
                 </>
-              ) : parsedMeta?.loading ? (
+              ) : parsedMeta?.loading && !longCueLoad ? (
                 <div className="mt-2 flex items-center gap-2 text-sm text-gray-600">
                   <Loader2 size={14} className="animate-spin" />
                   Extracting skill cues from the job description...
+                </div>
+              ) : parsedMeta?.loading && longCueLoad ? (
+                <div className="mt-2 text-sm text-gray-600">
+                  Cue extraction is taking longer than expected. Collapse and reopen the card to retry, or use the full listing if you need the original JD immediately.
                 </div>
               ) : parsedMeta?.error ? (
                 <div className="mt-2 text-sm text-gray-600">

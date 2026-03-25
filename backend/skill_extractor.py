@@ -357,6 +357,7 @@ def extract_skill_phrases(
     jd_text: str,
     job_skills: list[str] | None = None,
     db_session=None,
+    use_dynamic_skills: bool = False,
 ) -> list[str]:
     """Extract multi-word skill phrases from a job description.
 
@@ -378,7 +379,7 @@ def extract_skill_phrases(
 
     # 2. Build the valid skills set (static + dynamic from scraped JDs)
     valid_skills = set(KNOWN_SKILLS)
-    if db_session:
+    if db_session and use_dynamic_skills:
         try:
             dynamic = build_dynamic_skills(db_session)
             valid_skills.update(dynamic.keys())
