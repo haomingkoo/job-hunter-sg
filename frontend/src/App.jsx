@@ -3898,7 +3898,8 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   // ── Resume Versions ──────────────────────────────────────────────────
   // Auto-load versions for logged-in users
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  React.useEffect(() => { if (user) fetchVersions(); }, [user]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (user) fetchVersions(); }, [user]);
 
   const fetchVersions = async () => {
     if (!user) return;
