@@ -1756,93 +1756,134 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       )}
 
       {setupVisible ? (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.9fr)]">
-          <div className="space-y-4">
-            <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="mx-auto max-w-3xl space-y-6">
+          {/* ── Entry Point Cards ─────────────────────────────────────── */}
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">How would you like to start?</h2>
+            <p className="mt-1 text-sm text-gray-500">Choose the option that fits your situation.</p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            {/* Upload */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              onDrop={handleDrop}
+              onDragOver={(event) => { event.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              className={`group text-left rounded-2xl border-2 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 ${
+                dragOver ? "border-blue-400 bg-blue-50" : "border-gray-200 hover:border-blue-300"
+              }`}
+            >
+              {uploading ? (
+                <Loader2 size={28} className="animate-spin text-blue-600" />
+              ) : (
+                <UploadCloud size={28} className="text-blue-600" />
+              )}
+              <h3 className="mt-3 text-base font-semibold text-gray-900">Upload Resume</h3>
+              <p className="mt-1.5 text-sm text-gray-500">
+                {uploading ? "Extracting text..." : "Drop a PDF or DOCX, or click to browse"}
+              </p>
+            </button>
+
+            {/* Paste */}
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById("resume-paste-area");
+                if (el) { el.classList.remove("hidden"); el.querySelector("textarea")?.focus(); }
+              }}
+              className="group text-left rounded-2xl border-2 border-gray-200 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-emerald-300"
+            >
+              <FileText size={28} className="text-emerald-600" />
+              <h3 className="mt-3 text-base font-semibold text-gray-900">Paste Text</h3>
+              <p className="mt-1.5 text-sm text-gray-500">Copy-paste your resume from any source</p>
+            </button>
+
+            {/* Start Fresh */}
+            <button
+              type="button"
+              onClick={() => {
+                const starter = `PROFESSIONAL SUMMARY\nAdd a concise summary of your experience and goals.\n\nPROFESSIONAL EXPERIENCE\nCompany Name | Job Title | Start Date - End Date\n- Describe your key achievement or responsibility\n- Include metrics where possible (%, $, team size)\n\nEDUCATION\nDegree Name\nUniversity Name, Graduation Year\n\nSKILLS\nList your technical and professional skills here`;
+                applyResumeText(starter, { rescore: false });
+                setShowSetupPanel(false);
+              }}
+              className="group text-left rounded-2xl border-2 border-gray-200 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-violet-300"
+            >
+              <Edit3 size={28} className="text-violet-600" />
+              <h3 className="mt-3 text-base font-semibold text-gray-900">Start Fresh</h3>
+              <p className="mt-1.5 text-sm text-gray-500">Build from scratch with a guided template</p>
+            </button>
+          </div>
+
+          {/* ── Paste Area (hidden by default, revealed on click) ──────── */}
+          <div id="resume-paste-area" className="hidden rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-gray-800">Paste your resume text</div>
+            <textarea
+              value={pastedText}
+              onChange={(event) => setPastedText(event.target.value)}
+              placeholder="Paste your resume content here..."
+              className="mt-3 min-h-[160px] w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            />
+            <div className="mt-3 flex gap-2">
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                onDrop={handleDrop}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setDragOver(true);
-                }}
-                onDragLeave={() => setDragOver(false)}
-                className={`flex w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed px-4 py-5 text-center transition ${
-                  dragOver ? "border-indigo-400 bg-indigo-50" : "border-gray-300 bg-gray-50 hover:border-gray-400"
-                }`}
+                onClick={handlePasteResume}
+                disabled={!pastedText.trim()}
+                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-40"
               >
-                {uploading ? (
-                  <>
-                    <Loader2 size={22} className="animate-spin text-indigo-600" />
-                    <div className="mt-2 text-sm font-medium text-indigo-700">Uploading and extracting text...</div>
-                  </>
-                ) : (
-                  <>
-                    <UploadCloud size={24} className="text-gray-400" />
-                    <div className="mt-2 text-sm font-semibold text-gray-700">Drop a PDF or DOCX here</div>
-                    <div className="mt-1 text-xs text-gray-500">or click to browse</div>
-                  </>
-                )}
+                Use This Text
               </button>
+              <button
+                type="button"
+                onClick={() => document.getElementById("resume-paste-area")?.classList.add("hidden")}
+                className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
 
-              {user && (
-                <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Saved Versions</div>
-                    <button type="button" onClick={fetchVersions} className="text-xs text-indigo-600 hover:text-indigo-800">
-                      {versionsLoading ? "Loading..." : "Refresh"}
-                    </button>
-                  </div>
-                  {resumeVersions.length > 0 ? (
-                    <div className="mt-2 max-h-[180px] space-y-1.5 overflow-y-auto">
-                      {resumeVersions.map((v) => (
-                        <button
-                          key={v.id}
-                          type="button"
-                          onClick={() => loadVersion(v.id)}
-                          className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white px-3 py-2 text-left text-sm hover:border-indigo-300 hover:bg-indigo-50 transition"
-                        >
-                          <div>
-                            <div className="font-medium text-gray-800">{v.label}</div>
-                            <div className="text-xs text-gray-500">
-                              {v.source === "tailored" && v.job_company ? `${v.job_company}` : v.source}
-                              {v.score ? ` · Score ${v.score}` : ""}
-                              {v.word_count ? ` · ${v.word_count}w` : ""}
-                            </div>
-                          </div>
-                          {v.is_master && <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">Master</span>}
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="mt-2 text-xs text-gray-500">
-                      {versionsLoading ? "Loading versions..." : "No saved versions yet. Save your first resume below."}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="mt-4 rounded-2xl border border-gray-200 bg-gray-50 p-3">
-                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Paste Text</div>
-                <textarea
-                  value={pastedText}
-                  onChange={(event) => setPastedText(event.target.value)}
-                  placeholder="Paste raw resume text if you prefer to start from plain text."
-                  className="mt-2 min-h-[110px] w-full resize-none rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                />
-                <button
-                  type="button"
-                  onClick={handlePasteResume}
-                  disabled={!pastedText.trim()}
-                  className="mt-3 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3.5 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <Edit3 size={14} />
-                  Use Pasted Text
+          {/* ── Saved Versions (if logged in and has versions) ─────────── */}
+          {user && resumeVersions.length > 0 && (
+            <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold text-gray-800">Your Saved Resumes</div>
+                <button type="button" onClick={fetchVersions} className="text-xs text-blue-600 hover:text-blue-800">
+                  {versionsLoading ? "Loading..." : "Refresh"}
                 </button>
               </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                {resumeVersions.slice(0, 4).map((v) => (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => loadVersion(v.id)}
+                    className="flex items-center justify-between rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-left text-sm hover:border-blue-300 hover:bg-blue-50 transition"
+                  >
+                    <div>
+                      <div className="font-medium text-gray-800">{v.label}</div>
+                      <div className="text-xs text-gray-500">
+                        {v.score ? `Score ${v.score}` : ""}{v.word_count ? ` · ${v.word_count}w` : ""}
+                      </div>
+                    </div>
+                    <ChevronRight size={14} className="text-gray-400" />
+                  </button>
+                ))}
+              </div>
+              {resumeVersions.length > 4 && (
+                <button type="button" onClick={fetchVersions} className="mt-2 text-xs text-blue-600 hover:text-blue-800">
+                  View all {resumeVersions.length} versions
+                </button>
+              )}
             </div>
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          )}
+
+          {/* ── Profile Fields ─────────────────────────────────────────── */}
+          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-gray-800">Your Details</div>
+            <p className="mt-1 text-xs text-gray-500">Used for the resume header. Auto-detected from uploaded files.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {[
                 { key: "name", label: "Name", value: profile.name, placeholder: "Full name" },
                 { key: "email", label: "Email", value: profile.email, placeholder: "Email address" },

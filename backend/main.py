@@ -1825,7 +1825,7 @@ def _classify_sector(title: str) -> str:
 
 
 def _normalize_title(raw_title: str) -> str:
-    """Normalize a job title for grouping (strip seniority prefixes, etc.)."""
+    """Normalize a job title for grouping (strip seniority prefixes, title case)."""
     import re
     t = raw_title.strip()
     # Remove common prefix patterns like "Senior ", "Junior ", "Lead ", etc.
@@ -1836,6 +1836,14 @@ def _normalize_title(raw_title: str) -> str:
     ).strip()
     # Collapse multiple spaces
     t = re.sub(r"\s+", " ", t)
+    # Title case normalization (fix "PROJECT ENGINEER" -> "Project Engineer")
+    _SMALL_WORDS = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"}
+    if t == t.upper() or t == t.lower():
+        words = t.split()
+        t = " ".join(
+            w.lower() if w.lower() in _SMALL_WORDS and i > 0 else w.capitalize()
+            for i, w in enumerate(words)
+        )
     return t
 
 
