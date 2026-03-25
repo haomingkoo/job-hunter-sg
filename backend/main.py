@@ -619,16 +619,42 @@ def _derive_careersgov_skill_cues(
     return cues, parsed
 
 
+def _title_case_skill(skill: str) -> str:
+    """Title-case a skill label, preserving acronyms and known casing."""
+    if not skill:
+        return skill
+    # Already has mixed case (e.g., "Power BI", "JavaScript") - keep it
+    if skill != skill.lower() and skill != skill.upper():
+        return skill
+    # Known acronyms to preserve
+    _ACRONYMS = {"ai", "ml", "bi", "hr", "it", "ux", "ui", "qa", "pm", "sql",
+                 "api", "aws", "gcp", "ci", "cd", "iot", "erp", "crm", "sop",
+                 "kpi", "roi", "seo", "cet", "amr", "dna", "wsq"}
+    words = skill.split()
+    result = []
+    for w in words:
+        if w.lower() in _ACRONYMS:
+            result.append(w.upper())
+        elif w.lower() in {"and", "&", "of", "for", "in", "to", "the", "with", "on", "or"}:
+            result.append(w.lower())
+        else:
+            result.append(w.capitalize())
+    # Always capitalize first word
+    if result:
+        result[0] = result[0].capitalize() if result[0] == result[0].lower() else result[0]
+    return " ".join(result)
+
+
 def _job_term_labels(terms: list[dict], limit: int = 8) -> list[str]:
     labels: list[str] = []
     seen: set[str] = set()
     for term in terms or []:
-        label = re.sub(r"\s+", " ", str(term.get("skill", "")).strip())
-        lower = label.lower()
-        if not label or lower in seen:
+        raw = re.sub(r"\s+", " ", str(term.get("skill", "")).strip())
+        lower = raw.lower()
+        if not raw or lower in seen:
             continue
         seen.add(lower)
-        labels.append(label)
+        labels.append(_title_case_skill(raw))
         if len(labels) >= limit:
             break
     return labels

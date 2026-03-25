@@ -78,9 +78,11 @@ def backfill_previews(
     batch_size: int = 200,
     progress_callback: Callable[..., None] | None = None,
     refresh_preview: bool = False,
+    reparse: bool = False,
 ) -> int:
     """Backfill parsed_jd + job_terms_preview for all jobs. No LLM needed.
-    If refresh_preview=True, recompute all previews (e.g., after fixing term extraction).
+    If refresh_preview=True, recompute all previews.
+    If reparse=True, re-run the JD parser on all jobs (after improving extraction).
     """
     db = SessionLocal()
     total_done = 0
@@ -89,7 +91,7 @@ def backfill_previews(
             db.query(ScrapedJob)
             .filter(ScrapedJob.description != "", ScrapedJob.description.isnot(None))
         )
-        if refresh_preview:
+        if reparse or refresh_preview:
             total_need = has_desc.count()
         else:
             total_need = has_desc.filter(
@@ -103,7 +105,7 @@ def backfill_previews(
         offset = 0
         while True:
             query = has_desc
-            if not refresh_preview:
+            if not refresh_preview and not reparse:
                 query = query.filter(
                     (ScrapedJob.parsed_jd.is_(None))
                     | (ScrapedJob.job_terms_preview.is_(None))
@@ -116,7 +118,7 @@ def backfill_previews(
             offset += len(jobs)
 
             for job in jobs:
-                if not job.parsed_jd:
+                if reparse or not job.parsed_jd:
                     db_skills = _normalize_skill_strings(job.skills)
                     job.parsed_jd = preparse_jd(
                         job.description or "",
@@ -303,6 +305,7 @@ def main() -> None:
     parser.add_argument("--summary-limit", type=int, default=0, help="Max summaries to generate (0=all)")
     parser.add_argument("--batch-size", type=int, default=200, help="Batch size for preview backfill")
     parser.add_argument("--refresh-preview", action="store_true", help="Recompute ALL previews (after fixing term extraction)")
+    parser.add_argument("--reparse", action="store_true", help="Re-run JD parser on ALL jobs (after improving extraction logic)")
     args = parser.parse_args()
 
     init_db()
