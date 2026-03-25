@@ -57,6 +57,23 @@
       [contenteditable="true"] {
         font-size: 16px !important;
       }
+
+      @media print {
+        body * { visibility: hidden !important; }
+        .resume-print-target, .resume-print-target * { visibility: visible !important; }
+        .resume-print-target {
+          position: absolute !important;
+          left: 0 !important;
+          top: 0 !important;
+          width: 100% !important;
+          box-shadow: none !important;
+          border: none !important;
+          border-radius: 0 !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+        @page { size: A4; margin: 0.5in; }
+      }
     </style>
   </head>
   <body>

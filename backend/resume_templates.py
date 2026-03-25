@@ -1,11 +1,15 @@
 """
 Resume template system — generates formatted DOCX files from resume data.
 
-4 templates based on Harvard, MIT/Jake's, NUS, and Stanford research:
+8 templates based on Harvard, MIT/Jake's, NUS, and Stanford research:
 1. classic    — Serif, formal, education-first (Harvard style)
 2. modern     — Dense, clean, projects section (Jake's/tech style)
 3. singapore  — Includes nationality/PR, C.A.R. format (NUS style)
 4. compact    — Summary-first, 2-page friendly (experienced professionals)
+5. executive  — Large name, gray header bar, small-caps headings (C-suite/VP)
+6. creative   — Indigo accent, colored left border on headings (design/marketing)
+7. technical  — Monospace headings, skills-first, compact (engineering/data)
+8. minimal    — No borders, no backgrounds, maximum ATS compatibility
 
 All templates are ATS-friendly:
 - No tables for layout, no columns, no images, no text boxes
@@ -68,6 +72,46 @@ TEMPLATES = {
         "name_size": 14,
         "margins": 0.5,
         "section_order": ["summary", "experience", "skills", "education", "certifications"],
+    },
+    "executive": {
+        "name": "Executive",
+        "description": "Large name, gray header bar, small-caps headings. Best for C-suite, VP, director roles.",
+        "font": "Georgia",
+        "body_size": 11,
+        "heading_size": 13,
+        "name_size": 20,
+        "margins": 1.0,
+        "section_order": ["summary", "experience", "education", "skills", "certifications"],
+    },
+    "creative": {
+        "name": "Creative",
+        "description": "Indigo accent color, colored left border on headings. Best for design, marketing, content roles.",
+        "font": "Calibri",
+        "body_size": 10,
+        "heading_size": 12,
+        "name_size": 16,
+        "margins": 0.75,
+        "section_order": ["summary", "experience", "projects", "skills", "education"],
+    },
+    "technical": {
+        "name": "Technical",
+        "description": "Monospace headings, skills placed prominently second. Best for engineering, data, DevOps roles.",
+        "font": "Calibri",
+        "body_size": 10,
+        "heading_size": 11,
+        "name_size": 14,
+        "margins": 0.6,
+        "section_order": ["summary", "skills", "experience", "projects", "education", "certifications"],
+    },
+    "minimal": {
+        "name": "Minimal",
+        "description": "No borders, no backgrounds, just clean typography. Maximum ATS compatibility.",
+        "font": "Calibri",
+        "body_size": 11,
+        "heading_size": 12,
+        "name_size": 15,
+        "margins": 0.8,
+        "section_order": ["summary", "experience", "education", "skills"],
     },
 }
 

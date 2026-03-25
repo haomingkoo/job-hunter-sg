@@ -7274,7 +7274,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 {section.headingText}
                               </h3>
                               <p className="mb-4 text-gray-700" style={templateStyles.bodyStyle}>
-                                {renderHighlightedText(
+                                {renderFormattedText(
                                   isShoutySummaryParagraph(section.bodyText, section.sectionKey)
                                     ? toSentenceCaseDisplayText(section.bodyText)
                                     : section.bodyText,
@@ -7361,7 +7361,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                               if (section.sectionKey === "education") {
                                 return (
                                   <p className="-mt-0.5 mb-2 ml-3 text-[0.88em] leading-snug text-gray-500" style={templateStyles.bodyStyle}>
-                                    {renderHighlightedText(getDisplayParagraphText(section), section.keywordMatches || [])}
+                                    {renderFormattedText(getDisplayParagraphText(section), section.keywordMatches || [])}
                                   </p>
                                 );
                               }
@@ -7371,7 +7371,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                                   className={`mb-4 text-gray-700 ${section.sectionKey === "summary" && isLikelySummaryLeadParagraph(section.text) && !isShoutySummaryParagraph(section.text, section.sectionKey) ? "font-semibold tracking-[0.03em] text-gray-900" : ""}`}
                                   style={templateStyles.bodyStyle}
                                 >
-                                  {renderHighlightedText(getDisplayParagraphText(section), section.keywordMatches || [])}
+                                  {renderFormattedText(getDisplayParagraphText(section), section.keywordMatches || [])}
                                 </p>
                               );
                             })()
