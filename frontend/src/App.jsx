@@ -7251,7 +7251,6 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                             fontFamily: templateStyles.bodyStyle.fontFamily,
                           }}
                           onCommit={(md) => {
-                            setEditingValue(md);
                             const nextText = updateResumeLine(resumeText, section, md);
                             setEditingNodeId(null);
                             setEditingValue("");
