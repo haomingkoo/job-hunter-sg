@@ -824,6 +824,42 @@ export function parseSubheadingParts(line, sectionKey = "") {
     };
   }
 
+  // Detect "Title, Department (YYYY-YYYY)" or "Title (YYYY-YYYY)" pattern
+  // These are job entry headings with dates in parentheses
+  const dateParenMatch = trimmed.match(/^(.+?)\s*\((\d{4})\s*[–—-]\s*(?:\d{4}|[Pp]resent)\)$/);
+  if (dateParenMatch) {
+    const mainText = dateParenMatch[1].trim();
+    const dateText = trimmed.match(/\(.*\)$/)?.[0]?.replace(/[()]/g, "").trim() || "";
+    // Split on last comma to separate title from department/company
+    const lastComma = mainText.lastIndexOf(",");
+    if (lastComma > 0) {
+      return {
+        left: mainText,
+        right: dateText,
+        variant: "dated",
+      };
+    }
+    return {
+      left: mainText,
+      right: dateText,
+      variant: "dated",
+    };
+  }
+
+  // Detect lines with date hints that aren't caught above (e.g., "Company Name, Singapore")
+  if (hasDateHint(trimmed) && !trimmed.startsWith("-") && !trimmed.startsWith("•")) {
+    const commaIdx = trimmed.lastIndexOf(",");
+    if (commaIdx > 0) {
+      const left = trimmed.substring(0, commaIdx).trim();
+      const right = trimmed.substring(commaIdx + 1).trim();
+      if (hasDateHint(right) || hasDateHint(left)) {
+        return { left, right, variant: "dated" };
+      }
+    }
+    // No comma but has date - entire line is a heading
+    return { left: trimmed, right: "", variant: "dated" };
+  }
+
   return null;
 }
 
