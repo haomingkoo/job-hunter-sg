@@ -344,8 +344,8 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [levelFilter, setLevelFilter] = useState("all");
-  const [employmentFilter, setEmploymentFilter] = useState("all");
-  const [sourceFilter, setSourceFilter] = useState("all");
+  const [employmentFilter, setEmploymentFilter] = useState(new Set());
+  const [expYearsFilter, setExpYearsFilter] = useState(new Set());
   const [locationFilter, setLocationFilter] = useState("all");
   const [minSalaryFilter, setMinSalaryFilter] = useState("");
   const [sortBy, setSortBy] = useState("newest");
@@ -371,14 +371,16 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       const params = new URLSearchParams({ page: String(pageNum), per_page: "20" });
       const activeLevel = nextFilters.levelFilter ?? levelFilter;
       const activeEmployment = nextFilters.employmentFilter ?? employmentFilter;
-      const activeSource = nextFilters.sourceFilter ?? sourceFilter;
       const activeLocation = nextFilters.locationFilter ?? locationFilter;
       const activeMinSalary = nextFilters.minSalaryFilter ?? minSalaryFilter;
 
       if (normalizedQuery) params.set("q", normalizedQuery);
       if (activeLevel !== "all") params.set("seniority", activeLevel);
-      if (activeEmployment !== "all") params.set("employment_type", activeEmployment);
-      if (activeSource !== "all") params.set("source", activeSource);
+      if (activeEmployment instanceof Set && activeEmployment.size > 0) {
+        params.set("employment_type", [...activeEmployment].join(","));
+      } else if (typeof activeEmployment === "string" && activeEmployment !== "all") {
+        params.set("employment_type", activeEmployment);
+      }
       if (activeLocation !== "all") params.set("location", activeLocation);
       if (String(activeMinSalary).trim()) params.set("min_salary", String(activeMinSalary).trim());
 
@@ -441,6 +443,22 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
 
   const filtered = useMemo(() => {
     let r = [...results];
+    if (expYearsFilter.size > 0) {
+      r = r.filter((job) => {
+        const raw = String(job.experienceYears || "").trim();
+        if (!raw) return false;
+        const minMatch = raw.match(/^(\d+)/);
+        if (!minMatch) return false;
+        const minYrs = parseInt(minMatch[1], 10);
+        for (const label of expYearsFilter) {
+          if (label === "0-2 yrs" && minYrs >= 0 && minYrs <= 2) return true;
+          if (label === "3-5 yrs" && minYrs >= 3 && minYrs <= 5) return true;
+          if (label === "6-10 yrs" && minYrs >= 6 && minYrs <= 10) return true;
+          if (label === "10+ yrs" && minYrs > 10) return true;
+        }
+        return false;
+      });
+    }
     if (sortBy === "salary") r.sort((a, b) => {
       const getMax = (s) => {
         const matches = String(s || "").match(/\d[\d,]*/g) || [];
@@ -450,7 +468,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       return getMax(b.salary) - getMax(a.salary);
     });
     return r;
-  }, [results, sortBy]);
+  }, [results, sortBy, expYearsFilter]);
 
   const [filterMeta, setFilterMeta] = useState({ sources: [], employment_types: [], locations: [] });
 
@@ -614,15 +632,14 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
 
   const clearFilters = () => {
     setLevelFilter("all");
-    setEmploymentFilter("all");
-    setSourceFilter("all");
+    setEmploymentFilter(new Set());
+    setExpYearsFilter(new Set());
     setLocationFilter("all");
     setMinSalaryFilter("");
     setExpandedJobId(null);
     loadJobs(activeSearchQuery, 1, {
       levelFilter: "all",
-      employmentFilter: "all",
-      sourceFilter: "all",
+      employmentFilter: new Set(),
       locationFilter: "all",
       minSalaryFilter: "",
     });
@@ -663,7 +680,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               <Filter size={14} className="text-gray-400" />
               <div>
                 <div className="text-sm font-semibold text-gray-800">Search Filters</div>
-                <div className="text-xs text-gray-500">Refine by role level, employment type, source, pay, and location.</div>
+                <div className="text-xs text-gray-500">Refine by role level, employment type, experience, pay, and location.</div>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -678,7 +695,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             <select
               value={levelFilter}
               onChange={(e) => {
@@ -696,36 +713,6 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               <option value="Mid-Senior">Mid-Senior</option>
               <option value="Senior">Senior</option>
               <option value="Director">Director+</option>
-            </select>
-
-            <select
-              value={employmentFilter}
-              onChange={(e) => {
-                const value = e.target.value;
-                setEmploymentFilter(value);
-                loadJobs(activeSearchQuery, 1, { employmentFilter: value });
-              }}
-              className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
-            >
-              <option value="all">All employment types</option>
-              {employmentTypeOptions.map((type) => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
-
-            <select
-              value={sourceFilter}
-              onChange={(e) => {
-                const value = e.target.value;
-                setSourceFilter(value);
-                loadJobs(activeSearchQuery, 1, { sourceFilter: value });
-              }}
-              className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
-            >
-              <option value="all">All sources</option>
-              {sourceOptions.map((source) => (
-                <option key={source} value={source}>{source}</option>
-              ))}
             </select>
 
             <select
@@ -759,6 +746,56 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
             />
           </div>
+
+          {employmentTypeOptions.length > 0 && (
+            <div className="mt-3">
+              <div className="mb-1.5 text-xs font-medium text-gray-500">Employment Type</div>
+              <div className="flex flex-wrap gap-1.5">
+                {employmentTypeOptions.map((type) => {
+                  const active = employmentFilter.has(type);
+                  return (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => {
+                        const next = new Set(employmentFilter);
+                        if (active) next.delete(type); else next.add(type);
+                        setEmploymentFilter(next);
+                        loadJobs(activeSearchQuery, 1, { employmentFilter: next });
+                      }}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition ${active ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+                    >
+                      {type}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="mt-3">
+            <div className="mb-1.5 text-xs font-medium text-gray-500">Experience</div>
+            <div className="flex flex-wrap gap-1.5">
+              {["0-2 yrs", "3-5 yrs", "6-10 yrs", "10+ yrs"].map((label) => {
+                const active = expYearsFilter.has(label);
+                return (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => {
+                      const next = new Set(expYearsFilter);
+                      if (active) next.delete(label); else next.add(label);
+                      setExpYearsFilter(next);
+                    }}
+                    className={`rounded-full px-3 py-1 text-xs font-medium transition ${active ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {minSalaryFilter && (
             <div className="mt-3 text-xs text-gray-500">
               Jobs that explicitly list pay below your floor are hidden. Jobs with no salary posted stay visible.
@@ -1530,12 +1567,13 @@ function AnalyticsTab() {
   const [error, setError] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
   const [showCount, setShowCount] = useState(30);
+  const [skillSearch, setSkillSearch] = useState("");
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const params = new URLSearchParams({ limit: "100" });
+      const params = new URLSearchParams({ limit: "200" });
       if (sourceFilter) params.set("source", sourceFilter);
       const resp = await apiFetch(`/api/analytics/skills?${params}`);
       if (!resp.ok) throw new Error("Failed to load analytics");
@@ -1548,18 +1586,39 @@ function AnalyticsTab() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  const maxCount = data?.top_skills?.[0]?.count || 1;
-  const visibleSkills = (data?.top_skills || []).slice(0, showCount);
+  // Client-side skill search filter
+  const filteredSkills = useMemo(() => {
+    const skills = data?.top_skills || [];
+    if (!skillSearch.trim()) return skills;
+    const q = skillSearch.trim().toLowerCase();
+    return skills.filter((s) => s.skill.toLowerCase().includes(q));
+  }, [data?.top_skills, skillSearch]);
+
+  const maxCount = filteredSkills[0]?.count || 1;
+  const visibleSkills = filteredSkills.slice(0, showCount);
+
+  const titlesMaxCount = data?.top_titles?.[0]?.count || 1;
+
+  // Sector color palette
+  const sectorColors = [
+    "bg-blue-100 text-blue-800", "bg-emerald-100 text-emerald-800",
+    "bg-violet-100 text-violet-800", "bg-amber-100 text-amber-800",
+    "bg-rose-100 text-rose-800", "bg-cyan-100 text-cyan-800",
+    "bg-pink-100 text-pink-800", "bg-lime-100 text-lime-800",
+    "bg-orange-100 text-orange-800", "bg-teal-100 text-teal-800",
+    "bg-indigo-100 text-indigo-800", "bg-fuchsia-100 text-fuchsia-800",
+    "bg-gray-100 text-gray-700",
+  ];
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div>
         <h2 className="flex items-center gap-2 text-2xl font-semibold text-gray-900">
           <BarChart2 size={20} />
-          Skills Insights
+          Market Insights
         </h2>
         <p className="mt-1 text-sm text-gray-500">
-          Most in-demand skills across {data?.total_jobs_with_terms?.toLocaleString() || "..."} job listings with extracted ATS terms.
+          Job market breakdown across {data?.total_jobs_with_terms?.toLocaleString() || "..."} listings with extracted ATS terms.
         </p>
       </div>
 
@@ -1589,7 +1648,7 @@ function AnalyticsTab() {
       {loading && (
         <div className="flex items-center gap-2 py-12 justify-center text-gray-500">
           <Loader2 size={18} className="animate-spin" />
-          Loading skill data...
+          Loading analytics...
         </div>
       )}
 
@@ -1599,41 +1658,122 @@ function AnalyticsTab() {
         </div>
       )}
 
-      {!loading && !error && visibleSkills.length > 0 && (
+      {/* Sectors */}
+      {!loading && !error && data?.sectors?.length > 0 && (
+        <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="text-sm font-semibold text-gray-800 mb-3">
+            Job Sectors
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {data.sectors.map((s, i) => (
+              <span
+                key={s.sector}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${sectorColors[i % sectorColors.length]}`}
+              >
+                {s.sector}
+                <span className="font-mono opacity-70">{s.count.toLocaleString()}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Top Job Titles */}
+      {!loading && !error && data?.top_titles?.length > 0 && (
         <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="text-sm font-semibold text-gray-800 mb-4">
-            Top {visibleSkills.length} In-Demand Skills
+            Top {data.top_titles.length} Job Titles
           </div>
           <div className="space-y-2">
-            {visibleSkills.map((item, index) => (
-              <div key={item.skill} className="flex items-center gap-3">
+            {data.top_titles.map((item, index) => (
+              <div key={item.title} className="flex items-center gap-3">
                 <div className="w-5 text-right text-xs text-gray-400 font-mono">{index + 1}</div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <div
-                      className="h-6 rounded-md bg-indigo-500/80"
-                      style={{ width: `${Math.max(4, (item.count / maxCount) * 100)}%` }}
+                      className="h-6 rounded-md bg-emerald-500/70"
+                      style={{ width: `${Math.max(4, (item.count / titlesMaxCount) * 100)}%` }}
                     />
-                    <span className="text-sm font-medium text-gray-800 whitespace-nowrap">{item.skill}</span>
+                    <span className="text-sm font-medium text-gray-800 whitespace-nowrap">{item.title}</span>
                   </div>
                 </div>
                 <div className="text-xs text-gray-400 font-mono w-12 text-right">{item.count.toLocaleString()}</div>
               </div>
             ))}
           </div>
-          {(data?.top_skills?.length || 0) > showCount && (
-            <button
-              type="button"
-              onClick={() => setShowCount((c) => c + 30)}
-              className="mt-4 text-xs font-medium text-indigo-600 hover:text-indigo-800"
-            >
-              Show more...
-            </button>
+        </div>
+      )}
+
+      {/* Skills with search filter */}
+      {!loading && !error && (data?.top_skills?.length || 0) > 0 && (
+        <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <div className="text-sm font-semibold text-gray-800">
+              Top In-Demand Skills
+            </div>
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={skillSearch}
+                onChange={(e) => { setSkillSearch(e.target.value); setShowCount(30); }}
+                placeholder="Filter skills..."
+                className="rounded-lg border border-gray-200 bg-gray-50 py-1.5 pl-8 pr-3 text-xs text-gray-700 placeholder-gray-400 focus:border-indigo-300 focus:outline-none focus:ring-1 focus:ring-indigo-200 w-48"
+              />
+              {skillSearch && (
+                <button
+                  type="button"
+                  onClick={() => setSkillSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+          </div>
+          {skillSearch && (
+            <div className="text-xs text-gray-400 mb-3">
+              {filteredSkills.length} skill{filteredSkills.length !== 1 ? "s" : ""} matching "{skillSearch}"
+            </div>
+          )}
+          {visibleSkills.length > 0 ? (
+            <>
+              <div className="space-y-2">
+                {visibleSkills.map((item, index) => (
+                  <div key={item.skill} className="flex items-center gap-3">
+                    <div className="w-5 text-right text-xs text-gray-400 font-mono">{index + 1}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="h-6 rounded-md bg-indigo-500/80"
+                          style={{ width: `${Math.max(4, (item.count / maxCount) * 100)}%` }}
+                        />
+                        <span className="text-sm font-medium text-gray-800 whitespace-nowrap">{item.skill}</span>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-400 font-mono w-12 text-right">{item.count.toLocaleString()}</div>
+                  </div>
+                ))}
+              </div>
+              {filteredSkills.length > showCount && (
+                <button
+                  type="button"
+                  onClick={() => setShowCount((c) => c + 30)}
+                  className="mt-4 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                >
+                  Show more ({filteredSkills.length - showCount} remaining)...
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="py-6 text-center text-sm text-gray-400">
+              No skills match "{skillSearch}"
+            </div>
           )}
         </div>
       )}
 
-      {!loading && !error && visibleSkills.length === 0 && (
+      {!loading && !error && (data?.top_skills?.length || 0) === 0 && (
         <div className="text-center py-12 text-gray-400">
           <BarChart2 size={32} className="mx-auto mb-2 opacity-40" />
           <p>No skill data available yet. Skills are extracted as jobs are processed.</p>
@@ -5276,8 +5416,8 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                       value={saveVersionLabel}
                       onChange={(e) => setSaveVersionLabel(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") saveCurrentVersion(); }}
-                      placeholder="Version label..."
-                      className="w-24 rounded-lg bg-transparent px-2 py-1 text-xs focus:outline-none"
+                      placeholder="Name this version..."
+                      className="w-32 rounded-lg bg-transparent px-2 py-1 text-xs focus:outline-none"
                     />
                     <button
                       type="button"
@@ -5285,7 +5425,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                       disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
                       className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
                     >
-                      <Save size={12} />
+                      {savingVersion ? "..." : "Save"}
                     </button>
                   </div>
                 </>
@@ -5402,25 +5542,6 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
               </div>
             </div>
 
-            {user && (
-              <div className="inline-flex items-center gap-1.5 rounded-2xl bg-gray-50 px-2 py-1.5">
-                <input
-                  type="text"
-                  value={saveVersionLabel}
-                  onChange={(e) => setSaveVersionLabel(e.target.value)}
-                  placeholder="Version label..."
-                  className="w-28 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300"
-                />
-                <button
-                  type="button"
-                  onClick={saveCurrentVersion}
-                  disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                  className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
-                >
-                  {savingVersion ? "..." : "Save Version"}
-                </button>
-              </div>
-            )}
           </div>
         </div>
       </div>

@@ -89,6 +89,15 @@ _filter_meta_cache: dict = {}
 _filter_meta_ts: float = 0.0
 _FILTER_META_TTL = 300  # 5 minutes
 
+# ── Cached analytics/skills response (avoid 70K row scan per request) ─────────
+_analytics_cache: dict | None = None
+_analytics_cache_ts: float = 0
+_ANALYTICS_CACHE_TTL = 300  # 5 minutes
+
+# ── Per-user power-match cache (avoid recomputing every request) ──────────────
+_power_match_cache: dict[int, dict] = {}
+_POWER_MATCH_CACHE_TTL = 600  # 10 minutes
+
 
 from contextlib import asynccontextmanager
 
@@ -624,6 +633,7 @@ def _persist_resume_to_memory(user: Optional[User], db: Session, resume_text: st
     if not mem:
         return
     mem.resume_text = sanitize_resume_text(resume_text)[:10000]
+    _power_match_cache.pop(user.id, None)
     db.flush()
 
 
@@ -1703,30 +1713,144 @@ def trending_skills(
     return get_trending_skills(db, limit=limit)
 
 
+# ── Sector classification keywords ────────────────────────────────────────────
+_SECTOR_KEYWORDS: dict[str, list[str]] = {
+    "Engineering": [
+        "engineer", "engineering", "mechanical", "electrical", "civil",
+        "structural", "chemical", "hardware", "firmware", "embedded",
+    ],
+    "IT / Tech": [
+        "software", "developer", "devops", "sre", "cloud", "fullstack",
+        "full-stack", "full stack", "frontend", "front-end", "backend",
+        "back-end", "programmer", "sysadmin", "it ", "information technology",
+        "cybersecurity", "cyber security", "infrastructure", "platform",
+        "solutions architect", "tech lead", "technical lead",
+    ],
+    "Data & AI": [
+        "data", "machine learning", "ml ", "ai ", "artificial intelligence",
+        "analytics", "business intelligence", "bi ", "data scientist",
+        "data engineer", "data analyst", "nlp", "deep learning",
+    ],
+    "Finance & Accounting": [
+        "finance", "financial", "accountant", "accounting", "audit",
+        "tax", "treasury", "credit", "banking", "investment", "fund",
+        "compliance", "risk", "actuary", "actuarial",
+    ],
+    "Healthcare": [
+        "nurse", "nursing", "doctor", "medical", "healthcare",
+        "health care", "clinical", "pharmacy", "pharmacist",
+        "therapist", "physiotherapist", "dental", "dentist",
+    ],
+    "Sales & Marketing": [
+        "sales", "marketing", "business development", "account manager",
+        "brand", "digital marketing", "seo", "sem ", "content",
+        "communications", "public relations", "pr ", "advertising",
+        "growth", "partnership",
+    ],
+    "Admin & Operations": [
+        "admin", "administrator", "operations", "coordinator",
+        "executive assistant", "office", "receptionist", "clerk",
+        "procurement", "supply chain", "logistics", "warehouse",
+    ],
+    "Design & Creative": [
+        "designer", "design", "ux", "ui ", "graphic", "creative",
+        "art director", "visual", "illustrator", "copywriter",
+    ],
+    "HR & Recruitment": [
+        "human resource", "hr ", "recruiter", "recruitment", "talent",
+        "people", "compensation", "benefits", "payroll", "hrbp",
+    ],
+    "Education & Training": [
+        "teacher", "lecturer", "professor", "trainer", "training",
+        "education", "tutor", "curriculum", "instructor", "teaching",
+    ],
+    "Legal": [
+        "lawyer", "legal", "counsel", "paralegal", "litigation",
+        "contract", "regulatory",
+    ],
+    "Product & Project Management": [
+        "product manager", "project manager", "scrum", "agile",
+        "program manager", "product owner", "delivery manager",
+    ],
+}
+
+
+def _classify_sector(title: str) -> str:
+    """Classify a job title into a broad sector. Returns 'Other' if no match."""
+    lower = f" {title.lower()} "
+    for sector, keywords in _SECTOR_KEYWORDS.items():
+        for kw in keywords:
+            if kw in lower:
+                return sector
+    return "Other"
+
+
+def _normalize_title(raw_title: str) -> str:
+    """Normalize a job title for grouping (strip seniority prefixes, etc.)."""
+    import re
+    t = raw_title.strip()
+    # Remove common prefix patterns like "Senior ", "Junior ", "Lead ", etc.
+    t = re.sub(
+        r"^(Senior|Junior|Jr\.?|Sr\.?|Lead|Principal|Staff|Chief|Head of|"
+        r"Associate|Assistant|Intern\b)[,\s]+",
+        "", t, flags=re.IGNORECASE,
+    ).strip()
+    # Collapse multiple spaces
+    t = re.sub(r"\s+", " ", t)
+    return t
+
+
 @app.get("/api/analytics/skills")
 def analytics_skills(
     limit: int = Query(50, ge=1, le=200),
     source: str | None = Query(None, max_length=50),
+    q: str | None = Query(None, max_length=100),
     db: Session = Depends(get_db),
 ) -> dict:
-    """Aggregate ATS skill demand from job_terms_preview across all jobs."""
-    query = db.query(ScrapedJob).filter(
+    """Aggregate ATS skill demand, top titles, and sectors from scraped jobs."""
+    global _analytics_cache, _analytics_cache_ts
+
+    # Serve from cache when no source filter and cache is fresh
+    if not source and _analytics_cache is not None:
+        if time.time() - _analytics_cache_ts < _ANALYTICS_CACHE_TTL:
+            cached = _analytics_cache
+            all_skills = cached["_all_skills"]
+            # Apply skill search filter if provided
+            if q:
+                q_lower = q.lower()
+                all_skills = [
+                    s for s in all_skills
+                    if q_lower in s["skill"].lower()
+                ]
+            return {
+                "top_skills": all_skills[:limit],
+                "total_jobs_with_terms": cached["total_jobs_with_terms"],
+                "sources": cached["sources"],
+                "top_titles": cached["top_titles"],
+                "sectors": cached["sectors"],
+            }
+
+    db_query = db.query(ScrapedJob).filter(
         ScrapedJob.job_terms_preview.isnot(None),
     )
     if source:
-        query = query.filter(ScrapedJob.source == source)
+        db_query = db_query.filter(ScrapedJob.source == source)
 
     skill_counts: dict[str, int] = {}
     source_counts: dict[str, int] = {}
+    title_counts: dict[str, int] = {}
+    sector_counts: dict[str, int] = {}
     total_jobs = 0
 
-    for job in query.yield_per(500):
+    for job in db_query.yield_per(500):
         preview = job.job_terms_preview
         if not isinstance(preview, list) or not preview:
             continue
         total_jobs += 1
+
         src = job.source or "Unknown"
         source_counts[src] = source_counts.get(src, 0) + 1
+
         for term in preview:
             label = str(term).strip()
             if not label:
@@ -1734,22 +1858,68 @@ def analytics_skills(
             key = label.lower()
             skill_counts[key] = skill_counts.get(key, 0) + 1
 
-    # Sort by count descending, take top N
-    sorted_skills = sorted(skill_counts.items(), key=lambda x: -x[1])[:limit]
+        # Aggregate title and sector
+        raw_title = (job.title or "").strip()
+        if raw_title:
+            norm = _normalize_title(raw_title)
+            title_key = norm.lower()
+            if title_key:
+                # Keep the best-cased version (first seen)
+                if title_key not in title_counts:
+                    title_counts[title_key] = {"display": norm, "count": 0}
+                title_counts[title_key]["count"] += 1
 
-    # Title case the labels for display
-    top_skills = [
+            sector = _classify_sector(raw_title)
+            sector_counts[sector] = sector_counts.get(sector, 0) + 1
+
+    # Sort by count descending
+    sorted_skills = sorted(skill_counts.items(), key=lambda x: -x[1])
+
+    all_skills = [
         {"skill": term.title() if term == term.lower() else term, "count": count}
         for term, count in sorted_skills
     ]
 
+    sources_list = [
+        {"source": s, "count": c}
+        for s, c in sorted(source_counts.items(), key=lambda x: -x[1])
+    ]
+
+    top_titles = sorted(
+        [{"title": v["display"], "count": v["count"]} for v in title_counts.values()],
+        key=lambda x: -x["count"],
+    )[:20]
+
+    sectors = sorted(
+        [{"sector": s, "count": c} for s, c in sector_counts.items()],
+        key=lambda x: -x["count"],
+    )
+
+    # Cache the full result when no source filter
+    if not source:
+        _analytics_cache = {
+            "_all_skills": all_skills,
+            "total_jobs_with_terms": total_jobs,
+            "sources": sources_list,
+            "top_titles": top_titles,
+            "sectors": sectors,
+        }
+        _analytics_cache_ts = time.time()
+
+    # Apply skill search filter if provided
+    filtered_skills = all_skills
+    if q:
+        q_lower = q.lower()
+        filtered_skills = [
+            s for s in all_skills if q_lower in s["skill"].lower()
+        ]
+
     return {
-        "top_skills": top_skills,
+        "top_skills": filtered_skills[:limit],
         "total_jobs_with_terms": total_jobs,
-        "sources": [
-            {"source": s, "count": c}
-            for s, c in sorted(source_counts.items(), key=lambda x: -x[1])
-        ],
+        "sources": sources_list,
+        "top_titles": top_titles,
+        "sectors": sectors,
     }
 
 
@@ -2031,6 +2201,10 @@ def get_power_match(
     Power-match cached jobs against the logged-in user's latest resume.
     Returns suitability, gaps, and bridge suggestions.
     """
+    cached = _power_match_cache.get(user.id)
+    if cached and time.monotonic() - cached["_ts"] < _POWER_MATCH_CACHE_TTL:
+        return cached["data"]
+
     mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
     resume_text = (mem.resume_text or "").strip() if mem else ""
     if len(resume_text) < 50:
@@ -2211,7 +2385,7 @@ def get_power_match(
         if len(recommended_queries) >= 5:
             break
 
-    return {
+    result = {
         "resume_ready": True,
         "message": "Power matches generated from your latest stored resume.",
         "resume_signal_mode": resume_signal_mode,
@@ -2220,6 +2394,8 @@ def get_power_match(
         "recommended_queries": recommended_queries,
         "recommendations": recommendations,
     }
+    _power_match_cache[user.id] = {"data": result, "_ts": time.monotonic()}
+    return result
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobOut)
@@ -2724,6 +2900,7 @@ def ai_coach_resume(
             db.add(mem)
         mem.resume_text = resume_text[:10000]
         mem.session_count = (mem.session_count or 0) + 1
+        _power_match_cache.pop(user.id, None)
         db.commit()
 
     result["session_id"] = session_id
