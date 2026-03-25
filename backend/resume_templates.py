@@ -471,7 +471,10 @@ def generate_docx(
                 if section_key == "education" and _is_education_detail(line):
                     _add_education_detail(doc, line, config)
                 else:
-                    doc.add_paragraph(line)
+                    p = doc.add_paragraph(line)
+                    for run in p.runs:
+                        run.font.name = config["font"]
+                        run.font.size = Pt(config["body_size"])
                 rendered_paragraphs += 1
                 prev_was_bullet = False
 
@@ -495,7 +498,10 @@ def generate_docx(
                     _add_entry_heading(doc, stripped, config)
                     rendered_paragraphs += 1
                 else:
-                    doc.add_paragraph(stripped)
+                    p = doc.add_paragraph(stripped)
+                    for run in p.runs:
+                        run.font.name = config["font"]
+                        run.font.size = Pt(config["body_size"])
                     rendered_paragraphs += 1
 
     # Save to bytes
