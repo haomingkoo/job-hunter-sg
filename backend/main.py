@@ -52,6 +52,7 @@ from schemas import (
     IntegrateKeywordsRequest,
     JobOut,
     LoginRequest,
+    RegenerateSummaryRequest,
     ResumeScoreRequest,
     RewriteBulletRequest,
     SearchResponse,
@@ -62,7 +63,7 @@ from schemas import (
     TrackedJobUpdate,
     UserOut,
 )
-from ai_service import _call_sealion, coach_resume, get_ai_health, get_ai_status, integrate_keywords, rewrite_bullet
+from ai_service import SEALION_MODEL, _call_sealion, coach_resume, get_ai_health, get_ai_status, integrate_keywords, rewrite_bullet
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms, merge_job_terms_with_match
 from resume_parser import parse_resume
 from resume_scorer import ResumeScorer
@@ -3073,6 +3074,7 @@ def ai_rewrite_bullet(
 
     # Generate options, validate each, retry up to 3 times
     from validation_gates import validate_and_fix
+    from ai_phrases import clean_ai_phrases
 
     max_attempts = 3
     validated_options = []
@@ -3094,12 +3096,14 @@ def ai_rewrite_bullet(
         if result == []:
             return {"original": bullet, "options": [], "no_change": True, "message": "This bullet is already strong -- no changes needed."}
 
-        # Validate each option through the gates
+        # Validate each option through the gates + AI phrase cleanup
         validated_options = []
         for option in result:
+            # Run AI phrase cleanup first (remove overused words)
+            cleaned_option, _phrase_changes = clean_ai_phrases(option, jd_text=jd_context)
             final_text, gate_results = validate_and_fix(
                 original=bullet,
-                tailored=option,
+                tailored=cleaned_option,
                 jd_text=job_description,
             )
             # If critical gate reverted to original, skip this option
@@ -3220,6 +3224,101 @@ def ai_integrate_keywords(
         )
 
     return {"suggestions": suggestions, "model": "AI"}
+
+
+@app.post("/api/ai/regenerate-summary")
+def ai_regenerate_summary(
+    body: RegenerateSummaryRequest,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Generate a professional summary from the resume content,
+    optionally tailored to a target job description.
+    """
+    check_rate_limit(user, "ai", db)
+    db.add(UsageLog(
+        user_id=user.id if user else None,
+        action="ai",
+        detail="regenerate_summary",
+    ))
+    db.commit()
+
+    resume_text = sanitize_resume_text(body.resume_text)
+
+    # Load parsed JD context if a job is selected
+    parsed_jd: dict = {}
+    jd_text = ""
+    if body.job_id:
+        job = db.query(ScrapedJob).filter(ScrapedJob.id == body.job_id).first()
+        if job:
+            jd_text = job.description or ""
+            parsed_jd = job.parsed_jd if isinstance(job.parsed_jd, dict) else {}
+            if not parsed_jd and jd_text:
+                skills_list = job.skills if isinstance(job.skills, list) else []
+                parsed_jd = preparse_jd(jd_text, skills=skills_list, db_session=db)
+                job.parsed_jd = parsed_jd
+                db.commit()
+
+    # Build bullet context from the resume (first ~15 non-empty lines that look like bullets or content)
+    bullet_lines = []
+    for line in resume_text.split("\n"):
+        stripped = line.strip()
+        if stripped and len(stripped) > 15:
+            bullet_lines.append(f"- {stripped}")
+        if len(bullet_lines) >= 15:
+            break
+
+    # Build the prompt (mirrors Stage 5 logic from tailoring_pipeline.py)
+    system = """You are an expert resume writer specializing in Singapore's job market.
+
+Generate a compelling professional summary (2-4 sentences, ~40-60 words) that:
+1. Opens with years of experience + core expertise
+2. Highlights 2-3 key strengths relevant to the target role
+3. Mentions a quantified achievement if possible
+4. Sounds natural, not AI-generated
+
+CRITICAL: Only reference achievements and skills that appear in the bullet points below. Do NOT invent.
+
+Return ONLY the summary text, nothing else."""
+
+    user_msg = ""
+    if parsed_jd:
+        skills = parsed_jd.get("required_skills", [])[:8]
+        exp = parsed_jd.get("experience_years", "")
+        if skills:
+            user_msg += f"TARGET ROLE SKILLS: {', '.join(skills)}\n"
+        if exp:
+            user_msg += f"EXPERIENCE LEVEL: {exp}\n"
+    if jd_text and not parsed_jd:
+        user_msg += f"TARGET JOB DESCRIPTION (excerpt):\n{jd_text[:1500]}\n\n"
+
+    user_msg += f"KEY CONTENT FROM RESUME:\n" + "\n".join(bullet_lines)
+
+    content = _call_sealion(
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        max_tokens=200,
+        model=SEALION_MODEL,
+        temperature=0.3,
+    )
+
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service unavailable — rate limit or API error. Try again shortly.",
+        )
+
+    summary = content.strip().strip('"')
+    if len(summary) < 30:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI returned an unusable summary. Please try again.",
+        )
+
+    return {"summary": summary}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
