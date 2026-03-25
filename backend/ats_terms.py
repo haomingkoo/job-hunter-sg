@@ -74,6 +74,25 @@ ATS_OUTLINE_NOISE: set[str] = {
     "how to apply",
     "benefits",
     "compensation",
+    # CareersGov sub-section headers
+    "personal competencies",
+    "skills & knowledge",
+    "skills and knowledge",
+    "knowledge/skills",
+    "aptitudes/abilities & other characteristics",
+    "aptitudes and abilities",
+    "additional responsibilities",
+    "experience",
+    "education",
+    "technical skills",
+    "soft skills",
+    "key skills",
+    "core competencies",
+    "desired skills",
+    "preferred qualifications",
+    "minimum qualifications",
+    "other requirements",
+    "working conditions",
 }
 
 _ATS_CONTEXT_RE = re.compile(
