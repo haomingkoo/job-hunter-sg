@@ -36,3 +36,6 @@ frontend/dist/
 !tsconfig.json
 !.env.example
 !backend/.env.example
+!backend/data/onet_extracted.json
+backend/data/*.xlsx
+backend/data/learned_skills.json
