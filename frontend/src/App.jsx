@@ -2998,8 +2998,21 @@ function parseSubheadingParts(line, sectionKey = "") {
 
     if (parts.length === 2 || hasDateOnRight) {
       const right = parts.pop();
+      const leftJoined = parts.join(" | ");
+      // Detect education content even if sectionKey isn't exactly "education"
+      const looksEducation = hasEducationSignal
+        || looksLikeEducationText(leftJoined)
+        || looksLikeEducationText(right)
+        || RESUME_DEGREE_RE.test(leftJoined);
+      if (looksEducation) {
+        return {
+          left: leftJoined,
+          right,
+          variant: looksLikeEducationDetail(leftJoined) || looksLikeEducationDetail(right) ? "education_detail" : "education_main",
+        };
+      }
       return {
-        left: parts.join(" | "),
+        left: leftJoined,
         right,
         variant: hasDateHint(right) ? "dated" : "company",
       };
@@ -7063,6 +7076,26 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                 {scoring ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 {scoring ? "Scoring..." : "Finalize Score"}
               </button>
+            )}
+            {user && (
+              <div className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-1.5 py-1">
+                <input
+                  type="text"
+                  value={saveVersionLabel}
+                  onChange={(e) => setSaveVersionLabel(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && saveVersionLabel.trim()) saveCurrentVersion(); }}
+                  placeholder="Version name..."
+                  className="w-28 rounded-lg bg-transparent px-2 py-1 text-xs focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={saveCurrentVersion}
+                  disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
+                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                >
+                  {savingVersion ? "..." : "Save"}
+                </button>
+              </div>
             )}
             <button
               type="button"
