@@ -185,3 +185,8 @@ class IntegrateKeywordsRequest(BaseModel):
     missing_keywords: list[str] = Field(..., min_length=1, max_length=20)
     job_title: str = Field("", max_length=200)
     session_id: str = Field("", max_length=64)
+
+
+class RegenerateSummaryRequest(BaseModel):
+    resume_text: str = Field(..., min_length=50, max_length=10000)
+    job_id: int | None = Field(None, description="Target job ID for JD context")

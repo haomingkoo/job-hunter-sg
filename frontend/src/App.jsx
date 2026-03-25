@@ -2699,6 +2699,51 @@ function buildSkillAlignment(skills, text) {
   return { matched, missing };
 }
 
+const KEYWORD_INSERT_PREFERRED_SECTIONS = new Set([
+  "experience", "projects", "skills", "technical",
+  "work experience", "professional experience",
+  "achievements", "accomplishments",
+]);
+
+function computeKeywordInsertSuggestions(keyword, bulletSections, allKeywordLabels) {
+  const keywordLower = keyword.toLowerCase();
+  const keywordWords = keywordLower.split(/\s+/).filter((w) => w.length >= 3);
+
+  const scored = bulletSections.map((bullet) => {
+    const textLower = bullet.text.toLowerCase();
+    const wordCount = bullet.text.split(/\s+/).length;
+
+    let score = 0;
+
+    // Word overlap: each keyword sub-word found in bullet text
+    const wordOverlap = keywordWords.filter((w) => textLower.includes(w)).length;
+    score += wordOverlap * 30;
+
+    // Prefer technical/experience sections over summary/education
+    const sectionKey = (bullet.sectionKey || "").toLowerCase();
+    if (KEYWORD_INSERT_PREFERRED_SECTIONS.has(sectionKey)) score += 20;
+    if (sectionKey === "summary" || sectionKey === "objective") score -= 10;
+    if (sectionKey === "education") score -= 15;
+
+    // Prefer shorter bullets (more room)
+    if (wordCount < 15) score += 10;
+    else if (wordCount < 25) score += 5;
+
+    // Prefer bullets with existing keyword matches (better context)
+    const existingMatches = (allKeywordLabels || []).filter(
+      (kw) => kw.toLowerCase() !== keywordLower && textLower.includes(kw.toLowerCase()),
+    ).length;
+    score += Math.min(existingMatches, 3) * 8;
+
+    return { bullet, score };
+  });
+
+  return scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((item) => item.bullet);
+}
+
 function isHeadingLine(line) {
   const trimmed = stripResumeMarkdown(line);
   const normalized = normalizeHeadingLabel(trimmed);
@@ -3786,6 +3831,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
   const [downloadReady, setDownloadReady] = useState(false);
+  const [regeneratingSummary, setRegeneratingSummary] = useState(false);
   const [showSetupPanel, setShowSetupPanel] = useState(() => !resumeText.trim());
   const [workspaceView, setWorkspaceView] = useState("feedback");
   const [mobilePanel, setMobilePanel] = useState("edit");
@@ -3804,6 +3850,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [atsGapInputs, setAtsGapInputs] = useState({});
   const [atsGapDecisions, setAtsGapDecisions] = useState({});
   const [showAddSectionMenu, setShowAddSectionMenu] = useState(false);
+  const [insertKeywordPopup, setInsertKeywordPopup] = useState(null);
 
   const fileInputRef = useRef(null);
   const scorePanelRef = useRef(null);
@@ -4667,6 +4714,61 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
     handleFullTailorRun({ allowNoJob: true });
   }, [handleFullTailorRun, openMobileFeedbackPanel]);
 
+  const handleRegenerateSummary = useCallback(async () => {
+    if (!resumeText.trim() || regeneratingSummary) return;
+    setRegeneratingSummary(true);
+    try {
+      const resp = await apiFetch("/api/ai/regenerate-summary", {
+        method: "POST",
+        body: JSON.stringify({
+          resume_text: resumeText,
+          job_id: selectedJob?.id || null,
+        }),
+      });
+      const data = await resp.json();
+      if (data.summary) {
+        // Find existing summary paragraphs and replace them
+        const summaryParagraphs = parsedSections.filter(
+          (s) => s.type === "paragraph" && s.sectionKey === "summary",
+        );
+        let nextText = resumeText;
+        if (summaryParagraphs.length > 0) {
+          // Replace all summary paragraph lines with the new summary
+          const lines = nextText.replace(/\r\n?/g, "\n").split("\n");
+          const allLineIndices = summaryParagraphs.flatMap(
+            (s) => (Array.isArray(s.lineIndices) && s.lineIndices.length > 0) ? s.lineIndices : [s.lineIndex],
+          ).sort((a, b) => b - a); // reverse order to preserve indices
+          // Remove all old summary lines
+          for (const idx of allLineIndices) {
+            lines.splice(idx, 1);
+          }
+          // Insert new summary at the position of the first removed line
+          const insertAt = Math.min(...summaryParagraphs.map((s) => s.lineIndex));
+          lines.splice(insertAt, 0, data.summary);
+          nextText = lines.join("\n");
+        } else if (hasSummarySection) {
+          // Summary heading exists but no paragraph content -- insert after heading
+          const summaryHeading = parsedSections.find(
+            (s) => ["heading", "heading_paragraph"].includes(s.type) && s.sectionKey === "summary",
+          );
+          if (summaryHeading) {
+            const lines = nextText.replace(/\r\n?/g, "\n").split("\n");
+            lines.splice(summaryHeading.lineIndex + 1, 0, data.summary);
+            nextText = lines.join("\n");
+          }
+        } else {
+          // No summary section at all -- prepend one
+          nextText = `PROFESSIONAL SUMMARY\n${data.summary}\n\n${nextText}`;
+        }
+        applyResumeText(nextText, { rescore: true });
+      }
+    } catch {
+      // Silently handle -- the user can retry
+    } finally {
+      setRegeneratingSummary(false);
+    }
+  }, [resumeText, regeneratingSummary, selectedJob?.id, parsedSections, hasSummarySection, applyResumeText]);
+
   const handleDownload = async () => {
     if (!resumeText.trim()) return;
 
@@ -5119,6 +5221,42 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
         });
       });
     }
+  }, []);
+
+  const handleMissingKeywordClick = useCallback((keyword, event) => {
+    const label = extractKeywordLabel(keyword);
+    if (!label) return;
+
+    const allMatchedLabels = relevantMatchedKeywords.map(extractKeywordLabel).filter(Boolean);
+    const suggestions = computeKeywordInsertSuggestions(label, bulletSections, allMatchedLabels);
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    setInsertKeywordPopup({
+      keyword: label,
+      suggestions,
+      top: rect.bottom + 6,
+      left: Math.min(rect.left, window.innerWidth - 320),
+    });
+  }, [bulletSections, relevantMatchedKeywords]);
+
+  const handleInsertKeywordIntoBullet = useCallback((bullet, keyword) => {
+    setInsertKeywordPopup(null);
+    const currentText = bullet.text;
+    const appendedText = currentText.endsWith(".") || currentText.endsWith(",")
+      ? `${currentText.slice(0, -1)}, ${keyword}${currentText.slice(-1)}`
+      : `${currentText}, ${keyword}`;
+
+    setSelectedSectionId(bullet.id);
+    setSelectedBulletId(bullet.id);
+    setEditingNodeId(bullet.id);
+    setEditingValue(appendedText);
+
+    window.requestAnimationFrame(() => {
+      document.getElementById(`resume-section-${bullet.id}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    });
   }, []);
 
   const handleInsertBulletBelow = useCallback((section) => {
@@ -6984,6 +7122,18 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                       return (
                         <div id={`resume-section-${section.id}`} key={section.id} className={`rounded-2xl px-3 py-2 transition ${wrapperClasses}`}>
                           {lineContent}
+                          {section.type === "heading" && section.sectionKey === "summary" && selectedJob && !isEditing && (
+                            <button
+                              type="button"
+                              onClick={handleRegenerateSummary}
+                              disabled={regeneratingSummary}
+                              className="mt-1 inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-40"
+                              title="Regenerate summary for the selected job"
+                            >
+                              {regeneratingSummary ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                              {regeneratingSummary ? "Regenerating..." : "Regenerate for JD"}
+                            </button>
+                          )}
                         </div>
                       );
                     })}
