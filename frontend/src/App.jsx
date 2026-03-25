@@ -2438,7 +2438,7 @@ function buildEducationPair(lines, lineIndex, currentSectionKey, keywords) {
     && !hasDateHint(next)
     && (hasDateHint(third) || /singapore|canada|usa|uk|australia|japan|taiwan|university|college|school|institute/i.test(third));
 
-  if (canExtendEducationMeta) {
+  if (canExtendEducationMeta && next.length + (third?.length || 0) < 80) {
     next = `${next} ${third}`.replace(/\s+/g, " ").trim();
     consumed = 2;
   }
@@ -2816,6 +2816,9 @@ function analyzeBulletFeedback(text, resumeText = "", sectionKey = "") {
   const avoidedMatches = RESUME_AVOIDED_PHRASES.filter((phrase) => lowered.includes(phrase));
   const skipAnnotation = sectionKey === "education"
     || sectionKey === "certifications"
+    || sectionKey === "skills"
+    || sectionKey === "languages"
+    || sectionKey === "awards"
     || looksLikeCertificationText(lowered)
     || looksLikeEducationText(lowered);
 
@@ -6516,7 +6519,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 })()}
                               </div>
                             ) : section.variant === "education_detail" ? (
-                              <div className="mb-3 grid grid-cols-[minmax(0,0.64fr)_minmax(0,1fr)] items-start gap-x-4 gap-y-1 text-[0.93em] text-gray-600">
+                              <div className="mb-3 grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] items-start gap-x-4 gap-y-1 text-[0.93em] text-gray-600">
                                 <div className="leading-snug">
                                   {renderHighlightedText(
                                     getDisplaySubheadingText(section.left, section.sectionKey, section.variant),
