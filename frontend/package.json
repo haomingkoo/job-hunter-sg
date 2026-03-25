@@ -10,13 +10,11 @@
     "start": "vite preview --host 0.0.0.0 --port ${PORT:-3000}"
   },
   "dependencies": {
-    "@tiptap/extension-bold": "^3.20.5",
-    "@tiptap/extension-italic": "^3.20.5",
-    "@tiptap/extension-link": "^3.20.5",
-    "@tiptap/extension-underline": "^3.20.5",
-    "@tiptap/pm": "^3.20.5",
-    "@tiptap/react": "^3.20.5",
-    "@tiptap/starter-kit": "^3.20.5",
+    "@tiptap/extension-link": "^2.27.2",
+    "@tiptap/extension-underline": "^2.27.2",
+    "@tiptap/pm": "^2.27.2",
+    "@tiptap/react": "^2.27.2",
+    "@tiptap/starter-kit": "^2.27.2",
     "lucide-react": "^0.383.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
