@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from ai_service import SEALION_MODEL_INTERACTIVE, _call_sealion
+from jd_analyzer import sanitize_for_llm
 
 
 def build_structured_jd_outline(
@@ -51,7 +52,7 @@ def build_structured_jd_outline(
 
     return {
         "job_title": str(job_title or "").strip(),
-        "description_excerpt": str(description or "").strip()[:1600],
+        "description_excerpt": sanitize_for_llm(str(description or "").strip()[:1600]),
         "experience_years": str(parsed.get("experience_years", "") or "").strip(),
         "education_level": str(parsed.get("education_level", "") or "").strip(),
         "required_skills": required_skills,

@@ -39,6 +39,7 @@ from database import SessionLocal, init_db
 from models import ScrapedJob
 from jd_preparser import preparse_job_description as preparse_jd
 from ats_terms import build_job_ats_terms
+from jd_analyzer import analyze_job_description
 import re
 
 
@@ -140,6 +141,20 @@ def backfill_previews(
                         limit=8,
                     )
                     job.job_terms_preview = labels
+
+                # Run JD analysis and store in parsed_jd
+                parsed = job.parsed_jd if isinstance(job.parsed_jd, dict) else {}
+                if "_analysis" not in parsed:
+                    analysis = analyze_job_description(
+                        title=job.title or "",
+                        description=job.description or "",
+                        parsed_jd=parsed,
+                        salary=job.salary or "",
+                        company=job.company or "",
+                        agency=job.agency or "",
+                    )
+                    parsed["_analysis"] = analysis
+                    job.parsed_jd = parsed
 
             db.commit()
             total_done += len(jobs)
