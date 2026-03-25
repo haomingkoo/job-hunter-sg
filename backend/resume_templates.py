@@ -213,7 +213,12 @@ def _add_section_header(doc: Document, title: str) -> None:
 
 def _add_bullet(doc: Document, text: str, config: dict) -> None:
     """Add a bullet point."""
-    p = doc.add_paragraph(text, style="List Bullet")
+    # Strip any existing bullet characters from the text (Word adds its own)
+    cleaned = re.sub(r"^[\s]*[-*•●○◦‣›▪▸\u2022\u2023\u25E6\u2043\u2219]+\s*", "", text).strip()
+    cleaned = re.sub(r"^\d+[.)]\s*", "", cleaned).strip()
+    if not cleaned:
+        return
+    p = doc.add_paragraph(cleaned, style="List Bullet")
     p.style.font.name = config["font"]
     p.style.font.size = Pt(config["body_size"])
 
@@ -491,7 +496,7 @@ def generate_docx(
                     continue
                 if stripped.startswith(("-", "*", "•", "–")) or re.match(r"^\d+\.", stripped):
                     bullet_text = re.sub(r"^[-*•–]\s*", "", stripped)
-                    bullet_text = re.sub(r"^\d+\.\s*", "", stripped)
+                    bullet_text = re.sub(r"^\d+\.\s*", "", bullet_text)
                     _add_bullet(doc, bullet_text, config)
                     rendered_bullets += 1
                 elif _is_entry_heading_line(stripped):
