@@ -1161,7 +1161,8 @@ def admin_backfill_status(
     if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
         raise HTTPException(status_code=403, detail="Invalid admin API key")
 
-    db = SessionLocal()
+    from database import SessionLocal as _SessionLocal
+    db = _SessionLocal()
     try:
         total = db.query(func.count(ScrapedJob.id)).scalar()
         has_desc = db.query(func.count(ScrapedJob.id)).filter(
