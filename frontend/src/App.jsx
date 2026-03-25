@@ -13,11 +13,17 @@ const API_BASE = import.meta.env.VITE_API_URL || "";
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG = {
-  applied: { label: "Applied", color: "bg-blue-100 text-blue-800", icon: Clock },
-  interview: { label: "Interview", color: "bg-yellow-100 text-yellow-800", icon: AlertCircle },
-  offer: { label: "Offer", color: "bg-green-100 text-green-800", icon: CheckCircle },
-  rejected: { label: "Rejected", color: "bg-red-100 text-red-700", icon: X },
-  withdrawn: { label: "Withdrawn", color: "bg-gray-100 text-gray-600", icon: X },
+  saved: { label: "Saved", color: "bg-gray-100 text-gray-600", icon: Clock, order: 0 },
+  applied: { label: "Applied", color: "bg-blue-100 text-blue-800", icon: Clock, order: 1 },
+  screening: { label: "Screening", color: "bg-indigo-100 text-indigo-800", icon: AlertCircle, order: 2 },
+  interview: { label: "Interview", color: "bg-yellow-100 text-yellow-800", icon: AlertCircle, order: 3 },
+  assessment: { label: "Assessment", color: "bg-orange-100 text-orange-800", icon: AlertCircle, order: 4 },
+  final_round: { label: "Final Round", color: "bg-purple-100 text-purple-800", icon: AlertCircle, order: 5 },
+  offer: { label: "Offer", color: "bg-green-100 text-green-800", icon: CheckCircle, order: 6 },
+  accepted: { label: "Accepted", color: "bg-emerald-100 text-emerald-800", icon: CheckCircle, order: 7 },
+  rejected: { label: "Rejected", color: "bg-red-100 text-red-700", icon: X, order: 8 },
+  withdrawn: { label: "Withdrawn", color: "bg-gray-100 text-gray-600", icon: X, order: 9 },
+  no_response: { label: "No Response", color: "bg-gray-100 text-gray-500", icon: Clock, order: 10 },
 };
 
 const SG_JOB_PORTALS = [
@@ -1346,9 +1352,9 @@ function TrackerTab({ user, jobs, refreshJobs }) {
   const filtered = filterStatus === "all" ? jobs : jobs.filter((j) => j.status === filterStatus);
   const stats = {
     total: jobs.length,
-    applied: jobs.filter((j) => j.status === "applied").length,
-    interview: jobs.filter((j) => j.status === "interview").length,
-    offer: jobs.filter((j) => j.status === "offer").length,
+    active: jobs.filter((j) => ["applied", "screening", "interview", "assessment", "final_round"].includes(j.status)).length,
+    offers: jobs.filter((j) => ["offer", "accepted"].includes(j.status)).length,
+    closed: jobs.filter((j) => ["rejected", "withdrawn", "no_response"].includes(j.status)).length,
   };
 
   const isPro = user?.tier === "pro" || user?.tier === "admin";
@@ -1366,9 +1372,9 @@ function TrackerTab({ user, jobs, refreshJobs }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
           { label: "Total", value: stats.total, bg: "bg-gray-50" },
-          { label: "Applied", value: stats.applied, bg: "bg-blue-50" },
-          { label: "Interviews", value: stats.interview, bg: "bg-yellow-50" },
-          { label: "Offers", value: stats.offer, bg: "bg-green-50" },
+          { label: "Active", value: stats.active, bg: "bg-blue-50" },
+          { label: "Offers", value: stats.offers, bg: "bg-green-50" },
+          { label: "Closed", value: stats.closed, bg: "bg-gray-50" },
         ].map((s) => (
           <div key={s.label} className={`${s.bg} rounded-xl p-4 text-center`}>
             <div className="text-2xl font-bold text-gray-800">{s.value}</div>
