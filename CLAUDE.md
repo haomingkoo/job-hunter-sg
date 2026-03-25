@@ -102,23 +102,52 @@ Stage 6: Local (50ms)    -- Validation gates (fact preservation, hallucination d
 | POST /api/ai/review-all | Optional | Review all bullets at once |
 | POST /api/ai/integrate-keywords | Optional | Suggest keyword integration |
 
-### Tailoring Pipeline (new)
+### Tailoring Pipeline
 | Endpoint | Auth | Description |
 |----------|------|-------------|
 | POST /api/resume/tailor | Optional | Start pipeline: `{resume_text, job_id, intensity}` -> `{session_id}` |
 | GET /api/resume/tailor/{session_id}/status | No | Poll progress: stage, progress %, message |
-| GET /api/resume/tailor/{session_id}/result | No | Get result: tailored text, changes, before/after scores |
+| GET /api/resume/tailor/{session_id}/result | Optional | Get result + auto-save version if logged in |
 | GET /api/jobs/{job_id}/parsed | No | Get pre-parsed JD: skills, requirements, experience level |
+
+### Resume Versions
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| GET /api/resume/versions | Yes | List all saved resume versions |
+| POST /api/resume/versions | Yes | Save new version: `{label, resume_text, job_id?, is_master?}` |
+| GET /api/resume/versions/{id} | Yes | Load a specific version (full text + metadata) |
+| PUT /api/resume/versions/{id} | Yes | Update label, text, or master status |
+| DELETE /api/resume/versions/{id} | Yes | Soft-delete a version |
+
+### JD Enrichment (Admin)
+| Endpoint | Auth | Description |
+|----------|------|-------------|
+| POST /api/admin/backfill | Admin | Trigger JD enrichment: `{preview_only?, refresh_preview?, summary_limit?}` |
+| GET /api/admin/backfill/status | Admin | Coverage stats + live backfill progress/ETA |
+| GET /api/admin/jd-analysis | Admin | Flagged JDs, quality scores, duplicates: `?flag_type=injection\|red_flag\|duplicates` |
 
 ## Database
 
 ### Tables
 - `users` -- accounts with email, password hash, tier
-- `scraped_jobs` -- cached jobs from all sources. Has `parsed_jd` JSON column (auto-populated at scrape time).
+- `scraped_jobs` -- cached jobs from all sources
+  - `parsed_jd` JSON -- pre-parsed skills, experience, education, responsibilities, `_analysis` (quality score, red flags, content hash)
+  - `job_terms_preview` JSON -- cached 8 ATS skill labels for fast list rendering
+  - `jd_summary` -- AI-generated 2-4 sentence summary (SEA-LION 32B)
+  - `jd_summary_status` -- generating/model_name/unavailable/failed
 - `tracked_jobs` -- user's application tracker
-- `user_memories` -- persistent AI coaching memory per user (resume text, goals, strengths)
+- `user_memories` -- persistent AI coaching memory per user
 - `tailored_resumes` -- pipeline session tracking (structured resume snapshots, changes, scores)
+- `resume_versions` -- saved resume versions with labels, linked jobs, scores, master flag
 - `usage_logs` -- rate limiting and analytics
+
+### Backend files (new this session)
+| File | Purpose |
+|------|---------|
+| `jd_summary.py` | LLM summary generation via SEA-LION 32B |
+| `jd_analyzer.py` | Quality scoring, red flags, injection detection, duplicate hashing |
+| `job_enrichment.py` | Shared term computation utilities |
+| `backfill_enrichment.py` | CLI + admin endpoint for batch enrichment of all jobs |
 
 ## Environment Variables
 
