@@ -1,10 +1,16 @@
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react";
+import { useReactToPrint } from "react-to-print";
+import { useEditor, EditorContent } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import TiptapUnderline from "@tiptap/extension-underline";
+import TiptapLink from "@tiptap/extension-link";
 import {
   Search, Briefcase, Bell, FileText, Plus, X, ChevronRight, Clock,
   CheckCircle, AlertCircle, ExternalLink, Trash2, Edit3, Save, Filter,
   RefreshCw, Zap, Download, Copy, Star, MapPin, DollarSign, Building2,
   Loader2, User, LogOut, Mail,
-  RotateCcw, Sparkles, UploadCloud, BarChart2,
+  RotateCcw, Sparkles, UploadCloud, BarChart2, Printer,
+  Bold, Italic, Underline as UnderlineIcon, Link2,
 } from "lucide-react";
 
 // ─── API Config ────────────────────────────────────────────────────────────────
@@ -446,9 +452,9 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     if (expYearsFilter.size > 0) {
       r = r.filter((job) => {
         const raw = String(job.experienceYears || "").trim();
-        if (!raw) return false;
+        if (!raw) return true; // No experience stated = show (don't exclude)
         const minMatch = raw.match(/^(\d+)/);
-        if (!minMatch) return false;
+        if (!minMatch) return true;
         const minYrs = parseInt(minMatch[1], 10);
         for (const label of expYearsFilter) {
           if (label === "0-2 yrs" && minYrs >= 0 && minYrs <= 2) return true;
@@ -1950,6 +1956,46 @@ const DEFAULT_RESUME_TEMPLATES = [
     margins: 0.5,
     section_order: ["summary", "experience", "skills", "education", "certifications"],
   },
+  {
+    id: "executive",
+    name: "Executive",
+    description: "Large name, gray header bar for C-suite and VP roles.",
+    font: "Georgia",
+    body_size: 11,
+    name_size: 20,
+    margins: 1.0,
+    section_order: ["summary", "experience", "education", "skills", "certifications"],
+  },
+  {
+    id: "creative",
+    name: "Creative",
+    description: "Indigo accent with colored borders for design and marketing.",
+    font: "Calibri",
+    body_size: 10,
+    name_size: 16,
+    margins: 0.75,
+    section_order: ["summary", "experience", "projects", "skills", "education"],
+  },
+  {
+    id: "technical",
+    name: "Technical",
+    description: "Monospace headings, skills-first for engineering roles.",
+    font: "Calibri",
+    body_size: 10,
+    name_size: 14,
+    margins: 0.6,
+    section_order: ["summary", "skills", "experience", "projects", "education", "certifications"],
+  },
+  {
+    id: "minimal",
+    name: "Minimal",
+    description: "No borders, no backgrounds. Maximum ATS compatibility.",
+    font: "Calibri",
+    body_size: 11,
+    name_size: 15,
+    margins: 0.8,
+    section_order: ["summary", "experience", "education", "skills"],
+  },
 ];
 
 const RESUME_TEMPLATE_STYLES = {
@@ -2000,6 +2046,54 @@ const RESUME_TEMPLATE_STYLES = {
     headingClass: "mt-4 mb-1 border-b border-zinc-400 pb-1 font-bold uppercase tracking-[0.14em] text-zinc-950",
     nameClass: "font-bold tracking-[0.03em] text-zinc-950",
     subheadingClass: "mt-2 mb-0.5 text-zinc-700",
+  },
+  executive: {
+    pageClass: "text-gray-800",
+    fontFamily: "Georgia, \"Times New Roman\", serif",
+    bodySize: 11,
+    nameSize: 20,
+    margins: 1.0,
+    lineHeight: 1.4,
+    headingSize: 13,
+    headingClass: "mt-6 mb-2 border-b border-gray-300 pb-1 font-semibold uppercase tracking-[0.22em] text-gray-700",
+    nameClass: "font-bold tracking-[0.06em] text-gray-950",
+    subheadingClass: "mt-3 mb-1 text-gray-700",
+  },
+  creative: {
+    pageClass: "text-gray-800",
+    fontFamily: "Calibri, \"Segoe UI\", sans-serif",
+    bodySize: 10,
+    nameSize: 16,
+    margins: 0.75,
+    lineHeight: 1.35,
+    headingSize: 12,
+    headingClass: "mt-4 mb-1 border-l-4 border-indigo-500 pl-3 font-bold uppercase tracking-[0.14em] text-indigo-700",
+    nameClass: "font-bold tracking-[0.04em] text-indigo-900",
+    subheadingClass: "mt-2 mb-0.5 text-gray-700",
+  },
+  technical: {
+    pageClass: "text-slate-800",
+    fontFamily: "Calibri, \"Segoe UI\", sans-serif",
+    bodySize: 10,
+    nameSize: 14,
+    margins: 0.6,
+    lineHeight: 1.3,
+    headingSize: 11,
+    headingClass: "mt-3 mb-1 border-b border-slate-300 pb-0.5 font-bold uppercase tracking-[0.12em] text-slate-900 font-mono",
+    nameClass: "font-bold tracking-[0.03em] text-slate-950 font-mono",
+    subheadingClass: "mt-1.5 mb-0.5 text-slate-700",
+  },
+  minimal: {
+    pageClass: "text-gray-800",
+    fontFamily: "Calibri, \"Segoe UI\", sans-serif",
+    bodySize: 11,
+    nameSize: 15,
+    margins: 0.8,
+    lineHeight: 1.35,
+    headingSize: 12,
+    headingClass: "mt-5 mb-1 font-bold uppercase tracking-[0.16em] text-gray-900",
+    nameClass: "font-bold tracking-[0.04em] text-gray-950",
+    subheadingClass: "mt-2 mb-0.5 text-gray-700",
   },
 };
 
@@ -3397,6 +3491,109 @@ function renderHighlightedText(text, keywords) {
   });
 }
 
+// ─── Markdown / HTML helpers for inline rich text editing ──────────────────
+function markdownToHtml(md) {
+  if (!md) return "";
+  let html = md
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    .replace(/__(.+?)__/g, "<u>$1</u>")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  return `<p>${html}</p>`;
+}
+
+function htmlToMarkdown(html) {
+  if (!html) return "";
+  let md = html
+    .replace(/<p>/g, "").replace(/<\/p>/g, "")
+    .replace(/<br\s*\/?>/g, " ")
+    .replace(/<strong>(.*?)<\/strong>/g, "**$1**")
+    .replace(/<b>(.*?)<\/b>/g, "**$1**")
+    .replace(/<em>(.*?)<\/em>/g, "*$1*")
+    .replace(/<i>(.*?)<\/i>/g, "*$1*")
+    .replace(/<u>(.*?)<\/u>/g, "__$1__")
+    .replace(/<a[^>]+href="([^"]*)"[^>]*>(.*?)<\/a>/g, "[$2]($1)")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">").replace(/&nbsp;/g, " ");
+  return md.trim();
+}
+
+function textHasMarkdownFormatting(text) {
+  return /\*\*.+?\*\*|\*[^*]+\*|__.+?__|\[.+?\]\(.+?\)/.test(text);
+}
+
+function renderFormattedText(text, keywords) {
+  if (!textHasMarkdownFormatting(text)) return renderHighlightedText(text, keywords);
+  const tokenPattern = /(\*\*.*?\*\*|\*[^*]+?\*|__.*?__|\[.*?\]\(.*?\))/g;
+  const segments = text.split(tokenPattern);
+  return segments.map((seg, idx) => {
+    const bm = seg.match(/^\*\*(.+?)\*\*$/);
+    if (bm) return <strong key={idx}>{renderHighlightedText(bm[1], keywords)}</strong>;
+    const im = seg.match(/^\*([^*]+?)\*$/);
+    if (im) return <em key={idx}>{renderHighlightedText(im[1], keywords)}</em>;
+    const um = seg.match(/^__(.+?)__$/);
+    if (um) return <u key={idx}>{renderHighlightedText(um[1], keywords)}</u>;
+    const lm = seg.match(/^\[(.+?)\]\((.+?)\)$/);
+    if (lm) return <a key={idx} href={lm[2]} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline">{renderHighlightedText(lm[1], keywords)}</a>;
+    return <Fragment key={idx}>{renderHighlightedText(seg, keywords)}</Fragment>;
+  });
+}
+
+// ─── TipTap Inline Editor ──────────────────────────────────────────────────
+function TipTapBulletEditor({ initialValue, onCommit, onCancel, editorStyle }) {
+  const wrapperRef = useRef(null);
+  const committedRef = useRef(false);
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({ heading: false, blockquote: false, codeBlock: false, code: false, bulletList: false, orderedList: false, listItem: false, horizontalRule: false, hardBreak: false }),
+      TiptapUnderline,
+      TiptapLink.configure({ openOnClick: false, HTMLAttributes: { class: "text-indigo-600 underline" } }),
+    ],
+    content: markdownToHtml(initialValue),
+    editorProps: {
+      attributes: {
+        class: "w-full resize-none rounded-xl border border-indigo-200 bg-white px-3 py-2 text-inherit leading-relaxed text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-200",
+        style: `font-size:16px;line-height:${editorStyle?.lineHeight || "1.6"};font-family:${editorStyle?.fontFamily || "inherit"}`,
+      },
+    },
+    autofocus: "end",
+  });
+  const stableCommit = useCallback(() => {
+    if (committedRef.current) return;
+    committedRef.current = true;
+    if (!editor) { onCommit(initialValue); return; }
+    onCommit(htmlToMarkdown(editor.getHTML()));
+  }, [editor, onCommit, initialValue]);
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    const handleKey = (event) => {
+      if (event.key === "Escape") { event.preventDefault(); onCancel(); return; }
+      if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); stableCommit(); }
+    };
+    dom.addEventListener("keydown", handleKey);
+    return () => dom.removeEventListener("keydown", handleKey);
+  }, [editor, onCancel, stableCommit]);
+  const handleBlur = useCallback((event) => {
+    if (wrapperRef.current?.contains(event.relatedTarget)) return;
+    setTimeout(() => { if (!committedRef.current) stableCommit(); }, 150);
+  }, [stableCommit]);
+  if (!editor) return null;
+  return (
+    <div ref={wrapperRef} className="relative" onBlur={handleBlur}>
+      <div className="absolute -top-9 left-0 z-50 flex items-center gap-1 rounded-lg bg-gray-800 px-2 py-1 text-xs text-white shadow-lg" onMouseDown={(e) => e.preventDefault()}>
+        <button type="button" onClick={() => editor.chain().focus().toggleBold().run()} className={`rounded px-1.5 py-0.5 transition hover:bg-gray-600 ${editor.isActive("bold") ? "bg-gray-600" : ""}`} title="Bold (Ctrl+B)"><Bold size={13} /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleItalic().run()} className={`rounded px-1.5 py-0.5 transition hover:bg-gray-600 ${editor.isActive("italic") ? "bg-gray-600" : ""}`} title="Italic (Ctrl+I)"><Italic size={13} /></button>
+        <button type="button" onClick={() => editor.chain().focus().toggleUnderline().run()} className={`rounded px-1.5 py-0.5 transition hover:bg-gray-600 ${editor.isActive("underline") ? "bg-gray-600" : ""}`} title="Underline (Ctrl+U)"><UnderlineIcon size={13} /></button>
+        <div className="mx-0.5 h-4 w-px bg-gray-600" />
+        <button type="button" onClick={() => { if (editor.isActive("link")) { editor.chain().focus().unsetLink().run(); } else { const url = window.prompt("Enter URL:"); if (url) editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run(); } }} className={`rounded px-1.5 py-0.5 transition hover:bg-gray-600 ${editor.isActive("link") ? "bg-gray-600" : ""}`} title="Add link"><Link2 size={13} /></button>
+      </div>
+      <EditorContent editor={editor} />
+    </div>
+  );
+}
+
 function updateResumeLine(text, section, nextValue) {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const cleanValue = nextValue.replace(/\r/g, "").trim();
@@ -3858,6 +4055,29 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
   const initialScoredRef = useRef(false);
   const previousJobDescriptionRef = useRef("");
   const tailoringPollAttemptsRef = useRef(0);
+  const resumePrintRef = useRef(null);
+
+  const handlePrintPdf = useReactToPrint({
+    contentRef: resumePrintRef,
+    documentTitle: `Resume${profile.name ? ` - ${profile.name}` : ""}`,
+    pageStyle: `
+      @media print {
+        @page { size: A4; margin: 0.5in; }
+        body * { visibility: hidden !important; }
+        .resume-print-target, .resume-print-target * { visibility: visible !important; }
+        .resume-print-target {
+          position: absolute !important;
+          left: 0 !important;
+          top: 0 !important;
+          width: 100% !important;
+          box-shadow: none !important;
+          border: none !important;
+          border-radius: 0 !important;
+          margin: 0 !important;
+        }
+      }
+    `,
+  });
 
   const openMobileFeedbackPanel = useCallback((targetRef = scorePanelRef) => {
     if (typeof window === "undefined" || window.innerWidth >= 1024) return;
@@ -6991,7 +7211,8 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
             </div>
 
             <div
-              className={`mx-auto mt-5 bg-white shadow-[0_2px_20px_rgba(0,0,0,0.1)] border border-gray-200 ${templateStyles.pageClass}`}
+              ref={resumePrintRef}
+              className={`resume-print-target mx-auto mt-5 bg-white shadow-[0_2px_20px_rgba(0,0,0,0.1)] border border-gray-200 ${templateStyles.pageClass}`}
               style={templateStyles.pageStyle}
             >
               {resumeText.trim() ? (
@@ -7018,27 +7239,22 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                           : "border-l-[3px] border-transparent";
 
                       const lineContent = isEditing ? (
-                        <textarea
-                          autoFocus
-                          rows={section.type === "paragraph" ? 3 : 2}
-                          value={editingValue}
-                          onChange={(event) => setEditingValue(event.target.value)}
-                          onBlur={() => commitEdit(section)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") {
-                              setEditingNodeId(null);
-                              setEditingValue("");
-                            }
-                            if (event.key === "Enter" && !event.shiftKey) {
-                              event.preventDefault();
-                              commitEdit(section);
-                            }
-                          }}
-                          className="w-full resize-none rounded-xl border border-indigo-200 bg-white px-3 py-2 text-inherit leading-relaxed text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                          style={{
-                            fontSize: "16px",
+                        <TipTapBulletEditor
+                          initialValue={editingValue}
+                          editorStyle={{
                             lineHeight: templateStyles.bodyStyle.lineHeight,
                             fontFamily: templateStyles.bodyStyle.fontFamily,
+                          }}
+                          onCommit={(md) => {
+                            setEditingValue(md);
+                            const nextText = updateResumeLine(resumeText, section, md);
+                            setEditingNodeId(null);
+                            setEditingValue("");
+                            applyResumeText(nextText);
+                          }}
+                          onCancel={() => {
+                            setEditingNodeId(null);
+                            setEditingValue("");
                           }}
                         />
                       ) : (
@@ -7165,7 +7381,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                               <div className={`pt-1 text-gray-400 ${section.sectionKey === "education" ? "text-[0.85rem]" : "text-[1rem]"}`}>•</div>
                               <div className="flex-1">
                                 <p className={section.sectionKey === "education" ? "text-[0.88em] text-gray-500" : "text-gray-700"} style={templateStyles.bodyStyle}>
-                                  {renderHighlightedText(section.text, annotation?.keywordMatches || [])}
+                                  {renderFormattedText(section.text, annotation?.keywordMatches || [])}
                                 </p>
                                 {annotationsOn && annotation && (
                                   <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -7187,21 +7403,35 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                       );
 
                       return (
-                        <div id={`resume-section-${section.id}`} key={section.id} className={`rounded-2xl px-3 py-2 transition ${wrapperClasses}`}>
-                          {lineContent}
-                          {section.type === "heading" && section.sectionKey === "summary" && selectedJob && !isEditing && (
-                            <button
-                              type="button"
-                              onClick={handleRegenerateSummary}
-                              disabled={regeneratingSummary}
-                              className="mt-1 inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-40"
-                              title="Regenerate summary for the selected job"
-                            >
-                              {regeneratingSummary ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                              {regeneratingSummary ? "Regenerating..." : "Regenerate for JD"}
-                            </button>
+                        <Fragment key={section.id}>
+                          <div id={`resume-section-${section.id}`} className={`rounded-2xl px-3 py-2 transition ${wrapperClasses}`}>
+                            {lineContent}
+                            {section.type === "heading" && section.sectionKey === "summary" && selectedJob && !isEditing && (
+                              <button
+                                type="button"
+                                onClick={handleRegenerateSummary}
+                                disabled={regeneratingSummary}
+                                className="mt-1 inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-40"
+                                title="Regenerate summary for the selected job"
+                              >
+                                {regeneratingSummary ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                {regeneratingSummary ? "Regenerating..." : "Regenerate for JD"}
+                              </button>
+                            )}
+                          </div>
+                          {section.type === "bullet" && (
+                            <div className="group/insert flex justify-center -my-1 relative z-10">
+                              <button
+                                type="button"
+                                onClick={() => handleInsertBulletBelow(section)}
+                                className="opacity-0 group-hover/insert:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1 rounded-full border border-dashed border-indigo-300 bg-white px-2 py-0.5 text-[10px] font-medium text-indigo-500 hover:bg-indigo-50 hover:border-indigo-400"
+                                title="Insert bullet here"
+                              >
+                                <Plus size={10} />
+                              </button>
+                            </div>
                           )}
-                        </div>
+                        </Fragment>
                       );
                     })}
                     <div className="mt-3 rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/70 p-4">
@@ -7322,6 +7552,15 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
             >
               {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
               {downloading ? "Preparing..." : "Download DOCX"}
+            </button>
+            <button
+              type="button"
+              onClick={handlePrintPdf}
+              disabled={!resumeText.trim()}
+              className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-sky-700 disabled:opacity-40"
+            >
+              <Printer size={14} />
+              Download PDF
             </button>
           </div>
         </div>
