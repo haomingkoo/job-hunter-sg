@@ -67,6 +67,31 @@ _BULLET_CHAR_RE = re.compile(
     r"^[\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)]\s)",
 )
 
+# Education-specific patterns
+_DEGREE_PREFIX_RE = re.compile(
+    r"^(?:M\.?Sc|B\.?Sc|B\.?Eng|M\.?Eng|B\.?A|M\.?A|MBA|Ph\.?D|"
+    r"Doctorate|Diploma|Advanced Diploma|Associate|"
+    r"Graduate Cert(?:ificate)?|Certificate|Bachelor|Master)\b",
+    re.I,
+)
+_INSTITUTION_RE = re.compile(
+    r"\b(?:university|polytechnic|college|school|institute|academy|faculty|"
+    r"national university|nanyang|singapore management|"
+    r"nus|ntu|smu|sutd|sit|suss)\b",
+    re.I,
+)
+_GPA_RE = re.compile(
+    r"(?:gpa|cgpa|cap)\s*[:.]?\s*\d+\.?\d*\s*[/]?\s*\d*\.?\d*",
+    re.I,
+)
+_EDUCATION_DETAIL_RE = re.compile(
+    r"\b(?:gpa|cgpa|cap|exchange|capstone|thesis|dissertation|"
+    r"minor|major|focus|specializ|concentration|"
+    r"distinction|honou?r|magna|summa|cum laude|"
+    r"dean.?s list|first class|second class|merit)\b",
+    re.I,
+)
+
 # Sections that contain entries (role + bullets)
 _ENTRY_SECTIONS = {
     "experience", "projects", "activities", "education", "certifications",
@@ -157,6 +182,16 @@ def _is_section_heading(line: str) -> str | None:
         return None
 
     lower = stripped.lower().rstrip(":")
+
+    # Lines with GPA, dates, or numeric content are NOT headings
+    if _GPA_RE.search(stripped):
+        return None
+    if _EDUCATION_DETAIL_RE.search(stripped):
+        return None
+    # Lines that are mostly digits/symbols (e.g., "4.85 / 5.00") are not headings
+    letters_only = re.sub(r"[^A-Za-z]", "", stripped)
+    if len(letters_only) < 2:
+        return None
 
     # Exact match against known sections
     if lower in (s.lower() for s in STANDARD_SECTIONS):
@@ -279,6 +314,196 @@ def _parse_entry_heading(
         "title": title,
         "date_range": date_range,
     }
+
+
+# ── Education-specific entry builder ────────────────────────────────────────
+
+def _is_education_entry_start(line: str) -> bool:
+    """Check if a line starts a new education entry (degree or institution)."""
+    stripped = _clean_line(line)
+    if not stripped:
+        return False
+    if _DEGREE_PREFIX_RE.match(stripped):
+        return True
+    if _INSTITUTION_RE.search(stripped) and not _EDUCATION_DETAIL_RE.search(stripped):
+        return True
+    has_date = bool(_DATE_RANGE_RE.search(stripped)) or bool(
+        _SINGLE_DATE_RE.search(stripped)
+    )
+    has_separator = bool(_ROLE_SEPARATOR_RE.search(stripped))
+    if has_date or has_separator:
+        return True
+    is_caps = bool(_ALL_CAPS_HEADER_RE.match(stripped))
+    if is_caps and len(stripped.split()) <= 8:
+        return True
+    return False
+
+
+def _parse_education_entry(
+    lines: list[str],
+    entry_idx: int,
+) -> dict[str, Any]:
+    """Parse a group of education lines into structured fields."""
+    degree = ""
+    institution = ""
+    date_range = ""
+    gpa = ""
+    details: list[str] = []
+
+    for line in lines:
+        stripped = _clean_line(line)
+        if not stripped:
+            continue
+
+        # Extract date range from any line
+        date_match = _DATE_RANGE_RE.search(stripped)
+        single_date_match = _SINGLE_DATE_RE.search(stripped) if not date_match else None
+        line_date = ""
+        if date_match:
+            line_date = date_match.group(0).strip()
+        elif single_date_match:
+            line_date = single_date_match.group(0).strip()
+
+        if line_date and not date_range:
+            date_range = line_date
+
+        # Extract GPA
+        gpa_match = _GPA_RE.search(stripped)
+        if gpa_match and not gpa:
+            gpa = gpa_match.group(0).strip()
+
+        # Classify the line
+        text_no_date = _DATE_RANGE_RE.sub("", stripped).strip()
+        text_no_date = _SINGLE_DATE_RE.sub("", text_no_date).strip()
+        text_no_date = text_no_date.strip(",").strip()
+
+        is_degree_line = bool(_DEGREE_PREFIX_RE.match(stripped))
+        is_institution_line = bool(
+            _INSTITUTION_RE.search(stripped)
+            and not _EDUCATION_DETAIL_RE.search(stripped)
+        )
+        is_detail_line = bool(_EDUCATION_DETAIL_RE.search(stripped))
+
+        if is_degree_line and not degree:
+            # Remove date from degree text
+            degree = text_no_date or stripped
+        elif is_institution_line and not institution:
+            institution = text_no_date or stripped
+        elif is_detail_line:
+            # GPA is already extracted; add other details
+            if not gpa_match:
+                details.append(stripped)
+            elif stripped != gpa_match.group(0).strip():
+                # Line has more than just GPA
+                remaining = _GPA_RE.sub("", stripped).strip().strip(",").strip()
+                if remaining:
+                    details.append(remaining)
+        elif not degree and not institution:
+            # First line, could be institution or degree
+            if _DEGREE_PREFIX_RE.match(text_no_date):
+                degree = text_no_date
+            else:
+                institution = text_no_date or stripped
+        elif institution and not degree:
+            degree = text_no_date or stripped
+        elif degree and not institution:
+            institution = text_no_date or stripped
+        else:
+            # Extra line - treat as detail
+            if stripped not in (degree, institution, date_range, gpa):
+                details.append(stripped)
+
+    # Build heading/subheading for backward compatibility
+    heading = degree or institution
+    subheading_parts: list[str] = []
+    if degree and institution:
+        heading = degree
+        subheading_parts.append(institution)
+    if date_range:
+        subheading_parts.append(date_range)
+    subheading = " | ".join(subheading_parts) if subheading_parts else ""
+
+    entry_id = f"edu-{entry_idx}"
+    return {
+        "id": entry_id,
+        "heading": heading,
+        "subheading": subheading,
+        "company": institution,
+        "title": degree,
+        "date_range": date_range,
+        # Education-specific structured fields
+        "degree": degree,
+        "institution": institution,
+        "gpa": gpa,
+        "details": details,
+        "bullets": [],
+    }
+
+
+def _build_education_entries(
+    section_lines: list[str],
+) -> list[dict[str, Any]]:
+    """Parse education section into structured entries with rich fields."""
+    entries: list[dict[str, Any]] = []
+    current_lines: list[str] = []
+
+    def _flush() -> None:
+        nonlocal current_lines
+        if not current_lines:
+            return
+        entry = _parse_education_entry(current_lines, len(entries))
+        # Only add if there's meaningful content
+        if entry["heading"] or entry["degree"] or entry["institution"]:
+            entries.append(entry)
+        current_lines = []
+
+    for line in section_lines:
+        stripped = _clean_line(line)
+        if not stripped:
+            continue
+
+        # Strip bullet prefix for education lines
+        is_bullet = bool(_BULLET_CHAR_RE.match(line))
+        clean_text = _strip_bullet_prefix(line) if is_bullet else stripped
+
+        if _is_education_entry_start(line) and current_lines:
+            # Check if this line belongs to the current entry
+            # (e.g., degree line after institution line in the same entry)
+            has_degree = any(
+                _DEGREE_PREFIX_RE.match(_clean_line(ln))
+                for ln in current_lines
+            )
+            has_institution = any(
+                _INSTITUTION_RE.search(_clean_line(ln))
+                and not _EDUCATION_DETAIL_RE.search(_clean_line(ln))
+                for ln in current_lines
+            )
+            is_new_degree = bool(_DEGREE_PREFIX_RE.match(stripped))
+            is_new_institution = bool(
+                _INSTITUTION_RE.search(stripped)
+                and not _EDUCATION_DETAIL_RE.search(stripped)
+            )
+
+            # Start new entry if we already have both degree + institution,
+            # or if we see a second degree/institution
+            if (has_degree and is_new_degree) or (
+                has_institution and is_new_institution
+            ) or (has_degree and has_institution):
+                _flush()
+
+        if not current_lines and not _is_education_entry_start(line):
+            # Stray detail line before any entry; still collect it
+            if _EDUCATION_DETAIL_RE.search(stripped):
+                current_lines.append(line)
+                continue
+            # Otherwise start a new entry
+            current_lines = [line]
+            continue
+
+        current_lines.append(line)
+
+    _flush()
+    return entries
 
 
 def _build_entries(
@@ -501,7 +726,10 @@ def structure_resume(resume_text: str) -> dict[str, Any]:
             section_out["skill_list"] = _parse_skill_list(sec_lines)
 
         elif sec_type == "entries":
-            entries = _build_entries(sec_lines, key)
+            if key == "education":
+                entries = _build_education_entries(sec_lines)
+            else:
+                entries = _build_entries(sec_lines, key)
             section_out["entries"] = entries
 
             for entry in entries:
