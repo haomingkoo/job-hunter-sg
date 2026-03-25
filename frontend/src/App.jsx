@@ -3492,55 +3492,7 @@ function renderHighlightedText(text, keywords) {
 }
 
 // ─── Markdown / HTML helpers for inline rich text editing ──────────────────
-function markdownToHtml(md) {
-  if (!md) return "";
-  let html = md
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/__(.+?)__/g, "<u>$1</u>")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-  return `<p>${html}</p>`;
-}
-
-function htmlToMarkdown(html) {
-  if (!html) return "";
-  let md = html
-    .replace(/<p>/g, "").replace(/<\/p>/g, "")
-    .replace(/<br\s*\/?>/g, " ")
-    .replace(/<strong>(.*?)<\/strong>/g, "**$1**")
-    .replace(/<b>(.*?)<\/b>/g, "**$1**")
-    .replace(/<em>(.*?)<\/em>/g, "*$1*")
-    .replace(/<i>(.*?)<\/i>/g, "*$1*")
-    .replace(/<u>(.*?)<\/u>/g, "__$1__")
-    .replace(/<a[^>]+href="([^"]*)"[^>]*>(.*?)<\/a>/g, "[$2]($1)")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&").replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">").replace(/&nbsp;/g, " ");
-  return md.trim();
-}
-
-function textHasMarkdownFormatting(text) {
-  return /\*\*.+?\*\*|\*[^*]+\*|__.+?__|\[.+?\]\(.+?\)/.test(text);
-}
-
-function renderFormattedText(text, keywords) {
-  if (!textHasMarkdownFormatting(text)) return renderHighlightedText(text, keywords);
-  const tokenPattern = /(\*\*.*?\*\*|\*[^*]+?\*|__.*?__|\[.*?\]\(.*?\))/g;
-  const segments = text.split(tokenPattern);
-  return segments.map((seg, idx) => {
-    const bm = seg.match(/^\*\*(.+?)\*\*$/);
-    if (bm) return <strong key={idx}>{renderHighlightedText(bm[1], keywords)}</strong>;
-    const im = seg.match(/^\*([^*]+?)\*$/);
-    if (im) return <em key={idx}>{renderHighlightedText(im[1], keywords)}</em>;
-    const um = seg.match(/^__(.+?)__$/);
-    if (um) return <u key={idx}>{renderHighlightedText(um[1], keywords)}</u>;
-    const lm = seg.match(/^\[(.+?)\]\((.+?)\)$/);
-    if (lm) return <a key={idx} href={lm[2]} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline">{renderHighlightedText(lm[1], keywords)}</a>;
-    return <Fragment key={idx}>{renderHighlightedText(seg, keywords)}</Fragment>;
-  });
-}
-
-// ─── TipTap Inline Editor ──────────────────────────────────────────────────
+// ─── Resume Line Editing ───────────────────────────────────────────────────
 function updateResumeLine(text, section, nextValue) {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const cleanValue = nextValue.replace(/\r/g, "").trim();
@@ -7208,7 +7160,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 {section.headingText}
                               </h3>
                               <p className="mb-4 text-gray-700" style={templateStyles.bodyStyle}>
-                                {renderFormattedText(
+                                {renderHighlightedText(
                                   isShoutySummaryParagraph(section.bodyText, section.sectionKey)
                                     ? toSentenceCaseDisplayText(section.bodyText)
                                     : section.bodyText,
@@ -7284,7 +7236,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                                       <Fragment key={`${section.id}-segment-${index}`}>
                                         {index > 0 && <span className="text-gray-300">|</span>}
                                         <span className="font-medium text-gray-700">
-                                          {renderFormattedText(getDisplayInlineSegmentText(segment), section.keywordMatches || [])}
+                                          {renderHighlightedText(getDisplayInlineSegmentText(segment), section.keywordMatches || [])}
                                         </span>
                                       </Fragment>
                                     ))}
@@ -7295,7 +7247,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                               if (section.sectionKey === "education") {
                                 return (
                                   <p className="-mt-0.5 mb-2 ml-3 text-[0.88em] leading-snug text-gray-500" style={templateStyles.bodyStyle}>
-                                    {renderFormattedText(getDisplayParagraphText(section), section.keywordMatches || [])}
+                                    {renderHighlightedText(getDisplayParagraphText(section), section.keywordMatches || [])}
                                   </p>
                                 );
                               }
@@ -7305,7 +7257,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                                   className={`mb-4 text-gray-700 ${section.sectionKey === "summary" && isLikelySummaryLeadParagraph(section.text) && !isShoutySummaryParagraph(section.text, section.sectionKey) ? "font-semibold tracking-[0.03em] text-gray-900" : ""}`}
                                   style={templateStyles.bodyStyle}
                                 >
-                                  {renderFormattedText(getDisplayParagraphText(section), section.keywordMatches || [])}
+                                  {renderHighlightedText(getDisplayParagraphText(section), section.keywordMatches || [])}
                                 </p>
                               );
                             })()
@@ -7315,7 +7267,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                               <div className={`pt-1 text-gray-400 ${section.sectionKey === "education" ? "text-[0.85rem]" : "text-[1rem]"}`}>•</div>
                               <div className="flex-1">
                                 <p className={section.sectionKey === "education" ? "text-[0.88em] text-gray-500" : "text-gray-700"} style={templateStyles.bodyStyle}>
-                                  {renderFormattedText(section.text, annotation?.keywordMatches || [])}
+                                  {renderHighlightedText(section.text, annotation?.keywordMatches || [])}
                                 </p>
                                 {annotationsOn && annotation && (
                                   <div className="mt-2 flex flex-wrap items-center gap-2">
