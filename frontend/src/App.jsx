@@ -2,10 +2,9 @@ import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "rea
 import {
   Search, Briefcase, Bell, FileText, Plus, X, ChevronRight, Clock,
   CheckCircle, AlertCircle, ExternalLink, Trash2, Edit3, Save, Filter,
-  RefreshCw, Zap, Download, Copy, Star, MapPin, DollarSign, Building2,
+  RefreshCw, Zap, Download, Star, MapPin, DollarSign, Building2,
   Loader2, User, LogOut, Mail,
-  RotateCcw, Sparkles, UploadCloud, BarChart2, Printer,
-  Bold, Italic, Underline as UnderlineIcon, Link2,
+  Sparkles, UploadCloud, BarChart2, Printer,
 } from "lucide-react";
 
 // ─── API Config ────────────────────────────────────────────────────────────────
@@ -347,8 +346,8 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
   const [levelFilter, setLevelFilter] = useState("all");
   const [employmentFilter, setEmploymentFilter] = useState(new Set());
   const [expYearsFilter, setExpYearsFilter] = useState(new Set());
-  const [locationFilter, setLocationFilter] = useState("all");
   const [minSalaryFilter, setMinSalaryFilter] = useState("");
+  const [filterMeta, setFilterMeta] = useState({ sources: [], employment_types: [] });
   const [sortBy, setSortBy] = useState("newest");
   const [error, setError] = useState("");
   const [trackError, setTrackError] = useState("");
@@ -372,7 +371,6 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       const params = new URLSearchParams({ page: String(pageNum), per_page: "20" });
       const activeLevel = nextFilters.levelFilter ?? levelFilter;
       const activeEmployment = nextFilters.employmentFilter ?? employmentFilter;
-      const activeLocation = nextFilters.locationFilter ?? locationFilter;
       const activeMinSalary = nextFilters.minSalaryFilter ?? minSalaryFilter;
 
       if (normalizedQuery) params.set("q", normalizedQuery);
@@ -382,7 +380,6 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       } else if (typeof activeEmployment === "string" && activeEmployment !== "all") {
         params.set("employment_type", activeEmployment);
       }
-      if (activeLocation !== "all") params.set("location", activeLocation);
       if (String(activeMinSalary).trim()) params.set("min_salary", String(activeMinSalary).trim());
 
       const resp = await apiFetch(`/api/jobs?${params}`, { method: "GET" });
@@ -415,7 +412,6 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
         setFilterMeta({
           sources: Array.isArray(data.filter_meta.sources) ? data.filter_meta.sources : [],
           employment_types: Array.isArray(data.filter_meta.employment_types) ? data.filter_meta.employment_types : [],
-          locations: Array.isArray(data.filter_meta.locations) ? data.filter_meta.locations : [],
         });
       }
       setSubmittedQuery(normalizedQuery);
@@ -471,27 +467,11 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     return r;
   }, [results, sortBy, expYearsFilter]);
 
-  const [filterMeta, setFilterMeta] = useState({ sources: [], employment_types: [], locations: [] });
-
-  const sourceOptions = useMemo(
-    () => filterMeta.sources.length > 0
-      ? filterMeta.sources.map((s) => s.value)
-      : [...new Set(results.map((job) => job.source).filter(Boolean))].sort(),
-    [results, filterMeta.sources],
-  );
-
   const employmentTypeOptions = useMemo(
     () => filterMeta.employment_types.length > 0
       ? filterMeta.employment_types.map((t) => t.value)
       : [...new Set(results.map((job) => job.type).filter(Boolean))].sort(),
     [results, filterMeta.employment_types],
-  );
-
-  const locationOptions = useMemo(
-    () => filterMeta.locations.length > 0
-      ? filterMeta.locations.map((l) => l.value).slice(0, 20)
-      : [...new Set(results.map((job) => job.location).filter(Boolean))].sort().slice(0, 12),
-    [results, filterMeta.locations],
   );
 
   const trackJob = async (scrapedJob) => {
@@ -635,13 +615,11 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     setLevelFilter("all");
     setEmploymentFilter(new Set());
     setExpYearsFilter(new Set());
-    setLocationFilter("all");
     setMinSalaryFilter("");
     setExpandedJobId(null);
     loadJobs(activeSearchQuery, 1, {
       levelFilter: "all",
       employmentFilter: new Set(),
-      locationFilter: "all",
       minSalaryFilter: "",
     });
   };
@@ -698,7 +676,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
             </div>
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
             <select
               value={levelFilter}
               onChange={(e) => {
@@ -716,21 +694,6 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
               <option value="Mid-Senior">Mid-Senior</option>
               <option value="Senior">Senior</option>
               <option value="Director">Director+</option>
-            </select>
-
-            <select
-              value={locationFilter}
-              onChange={(e) => {
-                const value = e.target.value;
-                setLocationFilter(value);
-                loadJobs(activeSearchQuery, 1, { locationFilter: value });
-              }}
-              className="text-sm border border-gray-200 rounded-xl px-3 py-2.5 bg-white"
-            >
-              <option value="all">All locations</option>
-              {locationOptions.map((location) => (
-                <option key={location} value={location}>{location}</option>
-              ))}
             </select>
 
             <input
@@ -1573,7 +1536,6 @@ function AnalyticsTab() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [sourceFilter, setSourceFilter] = useState("");
   const [sectorFilter, setSectorFilter] = useState("");
   const [companyFilter, setCompanyFilter] = useState("");
   const [titleFilter, setTitleFilter] = useState("");
@@ -1585,7 +1547,6 @@ function AnalyticsTab() {
     setError("");
     try {
       const params = new URLSearchParams({ limit: "200" });
-      if (sourceFilter) params.set("source", sourceFilter);
       if (sectorFilter) params.set("sector", sectorFilter);
       if (companyFilter) params.set("company", companyFilter);
       if (titleFilter) params.set("title", titleFilter);
@@ -1596,7 +1557,7 @@ function AnalyticsTab() {
       setError(err.message);
     }
     setLoading(false);
-  }, [sourceFilter, sectorFilter, companyFilter, titleFilter]);
+  }, [sectorFilter, companyFilter, titleFilter]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -3491,7 +3452,6 @@ function renderHighlightedText(text, keywords) {
   });
 }
 
-// ─── Markdown / HTML helpers for inline rich text editing ──────────────────
 // ─── Resume Line Editing ───────────────────────────────────────────────────
 function updateResumeLine(text, section, nextValue) {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
@@ -4363,7 +4323,6 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
 
   // ── Resume Versions ──────────────────────────────────────────────────
   // Auto-load versions for logged-in users
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (user) fetchVersions(); }, [user]);
 
