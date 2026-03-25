@@ -154,7 +154,92 @@ async def lifespan(application: FastAPI):
     except Exception as e:
         log.warning(f"Admin account creation failed: {e}")
 
+    # Start idle summary filler in background
+    _idle_filler_stop = threading.Event()
+
+    def _idle_summary_filler() -> None:
+        """Generate JD summaries when LLM is idle. Yields to user requests."""
+        from database import SessionLocal as _SL
+        from ai_service import _limiter, get_ai_health
+        from jd_summary import summarize_job_description
+
+        log.info("[IDLE-FILL] Background summary filler started")
+        while not _idle_filler_stop.is_set():
+            try:
+                # Only run if AI is healthy and no queue pressure
+                if not get_ai_health()["is_healthy"]:
+                    _idle_filler_stop.wait(60)
+                    continue
+                if _limiter.queue_position > 0 or _limiter.wait_seconds > 2:
+                    # Users are active - back off
+                    _idle_filler_stop.wait(10)
+                    continue
+
+                db = _SL()
+                try:
+                    job = (
+                        db.query(ScrapedJob)
+                        .filter(
+                            ScrapedJob.description != "",
+                            ScrapedJob.parsed_jd.isnot(None),
+                            (ScrapedJob.jd_summary.is_(None)) | (ScrapedJob.jd_summary == ""),
+                            ScrapedJob.jd_summary_status.notin_(["unavailable", "generating"]),
+                        )
+                        .order_by(ScrapedJob.id.desc())
+                        .first()
+                    )
+                    if not job:
+                        # All done - check again in 5 min
+                        _idle_filler_stop.wait(300)
+                        continue
+
+                    # Double-check idle before making the API call
+                    if _limiter.queue_position > 0:
+                        _idle_filler_stop.wait(5)
+                        continue
+
+                    parsed = job.parsed_jd if isinstance(job.parsed_jd, dict) else {}
+                    job.jd_summary_status = "generating"
+                    db.commit()
+
+                    summary, model_used = summarize_job_description(
+                        job_title=job.title or "",
+                        description=job.description or "",
+                        parsed_jd=parsed,
+                    )
+
+                    now_iso = datetime.now(timezone.utc).isoformat()
+                    if summary:
+                        job.jd_summary = summary
+                        job.jd_summary_generated_at = now_iso
+                        job.jd_summary_status = model_used
+                    else:
+                        job.jd_summary_generated_at = now_iso
+                        job.jd_summary_status = "unavailable"
+                    db.commit()
+
+                except Exception as exc:
+                    log.warning(f"[IDLE-FILL] Summary failed: {exc}")
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                finally:
+                    db.close()
+
+                # Small pause between jobs to stay responsive
+                _idle_filler_stop.wait(2)
+
+            except Exception as exc:
+                log.warning(f"[IDLE-FILL] Loop error: {exc}")
+                _idle_filler_stop.wait(30)
+
+    _filler_thread = threading.Thread(target=_idle_summary_filler, daemon=True)
+    _filler_thread.start()
+
     yield  # App is running
+
+    _idle_filler_stop.set()
 
     # ── Shutdown ──
     log.info("Shutting down Job Hunter SG API")
