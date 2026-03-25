@@ -1701,6 +1701,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const showFeedbackPanels = isFeedbackView || mobilePanel === "feedback";
   const lowScoreWarning = scoreData && overallScore !== null && overallScore < 50;
   const setupVisible = showSetupPanel || !resumeText.trim();
+
+  // When navigating from Jobs tab with a selected job and resume already loaded, skip to editor
+  useEffect(() => {
+    if (selectedJob && resumeText.trim() && wizardStep === 1 && !showSetupPanel) {
+      setWizardStep(3);
+    }
+  }, [selectedJob]);
   const hasResume = resumeText.trim().length > 0;
   const canGoToStep = (step) => {
     if (step === 1) return true;
@@ -2425,21 +2432,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       {wizardStep === 3 && (<>
       <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-3 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="inline-flex rounded-2xl bg-[#BDDDFC]/10 p-1">
-            <button
-              type="button"
-              onClick={() => setWorkspaceView("feedback")}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${isFeedbackView ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7]"}`}
-            >
-              Resume Feedback
-            </button>
-            <button
-              type="button"
-              onClick={() => setWorkspaceView("editor")}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${isEditorView ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7]"}`}
-            >
-              Smart Editor
-            </button>
+          <div className="inline-flex items-center rounded-2xl bg-[#BDDDFC]/10 px-4 py-2">
+            <span className="text-sm font-semibold text-[#384959]">Resume Editor</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -2507,9 +2501,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         </div>
       </div>
 
-      <div className={`grid gap-6 ${isEditorView ? "lg:grid-cols-[minmax(0,65%)_minmax(320px,35%)]" : "lg:grid-cols-[minmax(320px,35%)_minmax(0,65%)]"}`}>
-        <aside className={`${mobilePanel === "feedback" ? "block max-h-[calc(100vh-10rem)] overflow-y-auto pr-1" : "hidden"} space-y-4 ${isEditorView ? "lg:order-2" : "lg:order-1"} lg:block lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto`}>
-          {isEditorView && (
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,65%)_minmax(320px,35%)]">
+        <aside className={`${mobilePanel === "feedback" ? "block max-h-[calc(100vh-10rem)] overflow-y-auto pr-1" : "hidden"} space-y-4 lg:order-2 lg:block lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto`}>
+          {(
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -3701,7 +3695,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           )}
         </aside>
 
-        <section className={`${mobilePanel === "edit" ? "block" : "hidden"} ${isEditorView ? "lg:order-1" : "lg:order-2"} lg:block`}>
+        <section className={`${mobilePanel === "edit" ? "block" : "hidden"} lg:order-1 lg:block`}>
           <div className="rounded-[2rem] border border-slate-200 bg-[#f3f5f8] p-4 shadow-sm sm:p-5">
             <div className="flex flex-col gap-3 border-b border-[#BDDDFC]/30/70 px-1 pb-4 sm:flex-row sm:items-center sm:justify-between">
               <div>

@@ -106,11 +106,11 @@ export default function HomePage({ onNavigate }) {
             {/* Left: copy */}
             <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
               <motion.p variants={fadeUp} custom={0} className="text-[13px] font-medium tracking-wide text-[#6A89A7]">
-                Singapore's career intelligence platform
+                AI-powered job search and resume tailoring for Singapore
               </motion.p>
 
               <motion.h1 variants={fadeUp} custom={1} className="font-display mt-6 text-[2.75rem] leading-[0.95] tracking-tight text-[#384959] sm:text-[3.5rem] lg:text-[4.25rem]">
-                Connecting<br />the right people<br />to the{" "}
+                Find purpose<br />that fits{" "}
                 <span className="relative inline-block">
                   <span className="relative z-10">right job</span>
                   <motion.svg
@@ -132,7 +132,7 @@ export default function HomePage({ onNavigate }) {
               </motion.h1>
 
               <motion.p variants={fadeUp} custom={2} className="mt-7 max-w-md text-[1.05rem] leading-relaxed text-[#6A89A7]">
-                {count ? `Search ${count}+ listings, build` : "Search thousands of listings, build"} a resume that tells your story, and go after the career you deserve.
+                Search smarter. Apply stronger. Land the role you deserve.
               </motion.p>
 
               <motion.div variants={fadeUp} custom={3} className="mt-9 flex flex-wrap items-center gap-3">
