@@ -6,8 +6,11 @@ import {
   CheckCircle, AlertCircle, Trash2, Edit3,
   RefreshCw, Zap, Download, Star,
   Loader2, Sparkles, UploadCloud, Printer,
-  Check, ArrowLeft, ArrowRight,
+  Check, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, List, Type, GripVertical,
 } from "lucide-react";
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 import { API_BASE, apiFetch, clearResumeDraftStorage } from "../lib/api.js";
 import { titleCase, extractKeywordLabel, getScoreTheme } from "../lib/helpers.js";
@@ -44,6 +47,12 @@ import {
   updateResumeLine,
   insertResumeLineAfter,
   removeResumeSectionBlock,
+  groupEducationSections,
+  promoteLineToPosition,
+  promoteLineToSection,
+  demoteLineToBullet,
+  moveResumeBullet,
+  moveSectionInText,
   getDownloadFilename,
   normalizeReviewSuggestion,
   summarizeTailoringChanges,
@@ -80,6 +89,32 @@ function TemplatePreview({ templateId }) {
         <div className="h-1.5 w-full rounded-full bg-gray-200" />
         <div className="h-1.5 w-10/12 rounded-full bg-gray-200" />
         <div className="h-1.5 w-4/5 rounded-full bg-gray-200" />
+      </div>
+    </div>
+  );
+}
+
+function SortableBulletItem({ id, children }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 10 : undefined,
+  };
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <div className="flex items-start">
+        <button
+          type="button"
+          {...listeners}
+          className="cursor-grab active:cursor-grabbing opacity-0 group-hover/section:opacity-60 transition-opacity mt-2 -ml-4 px-0.5 text-gray-300 hover:text-gray-500 shrink-0"
+          title="Drag to reorder"
+          tabIndex={-1}
+        >
+          <GripVertical size={12} />
+        </button>
+        <div className="flex-1 min-w-0">{children}</div>
       </div>
     </div>
   );
@@ -1271,7 +1306,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const openEditorForSection = (section) => {
     setSelectedSectionId(section.id);
     setEditingNodeId(section.id);
-    setEditingValue(section.text);
+    // For education entries, show raw multi-line text for editing
+    if (section.type === "education_entry") {
+      const lines = resumeText.replace(/\r\n?/g, "\n").split("\n");
+      const entryLines = section.lineIndices.map((idx) => lines[idx] || "").filter(Boolean);
+      setEditingValue(entryLines.join("\n"));
+    } else {
+      setEditingValue(section.text);
+    }
     if (section.type === "bullet") setSelectedBulletId(section.id);
     else setSelectedBulletId(null);
   };
@@ -1280,10 +1322,24 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     if (!section) return;
     if (editingNodeId !== section.id) return;
 
-    const nextText = updateResumeLine(resumeText, section, editingValue);
-    setEditingNodeId(null);
-    setEditingValue("");
-    applyResumeText(nextText);
+    if (section.type === "education_entry") {
+      // Replace all lines in the entry with edited content
+      const lines = resumeText.replace(/\r\n?/g, "\n").split("\n");
+      const newLines = editingValue.replace(/\r/g, "").split("\n");
+      const indices = section.lineIndices;
+      // Replace the range of lines
+      const startIdx = Math.min(...indices);
+      const endIdx = Math.max(...indices);
+      lines.splice(startIdx, endIdx - startIdx + 1, ...newLines);
+      setEditingNodeId(null);
+      setEditingValue("");
+      applyResumeText(lines.join("\n"));
+    } else {
+      const nextText = updateResumeLine(resumeText, section, editingValue);
+      setEditingNodeId(null);
+      setEditingValue("");
+      applyResumeText(nextText);
+    }
   };
 
   const wordCount = resumeText.split(/\s+/).filter(Boolean).length;
@@ -1412,7 +1468,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const displayHeaderLines = headerMeta.lines.length > 0 ? headerMeta.lines : fallbackHeaderLines;
   const displayContactLine = displayHeaderLines.slice(1).join(" | ");
   const bodySections = useMemo(
-    () => parsedSections.filter((section) => !headerMeta.lineIndices.includes(section.lineIndex)),
+    () => groupEducationSections(parsedSections.filter((section) => !headerMeta.lineIndices.includes(section.lineIndex))),
     [parsedSections, headerMeta.lineIndices],
   );
   const hasSummarySection = useMemo(
@@ -1692,6 +1748,37 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     });
   }, []);
 
+  // ─── Drag-and-Drop ─────────────────────────────────────────────────────────
+  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const bulletIds = useMemo(() => bodySections.filter((s) => s.type === "bullet").map((s) => s.id), [bodySections]);
+
+  const handleDragEnd = useCallback((event) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const activeSection = bodySections.find((s) => s.id === active.id);
+    const overSection = bodySections.find((s) => s.id === over.id);
+    if (!activeSection || !overSection) return;
+    if (activeSection.sectionKey !== overSection.sectionKey) return;
+
+    // Ensure they're in the same entry group (no heading/subheading separator between them)
+    const activeIdx = bodySections.indexOf(activeSection);
+    const overIdx = bodySections.indexOf(overSection);
+    const [minIdx, maxIdx] = [Math.min(activeIdx, overIdx), Math.max(activeIdx, overIdx)];
+    const hasSeparator = bodySections.slice(minIdx + 1, maxIdx).some((s) =>
+      s.type === "heading" || s.type === "subheading" || s.type === "education_entry",
+    );
+    if (hasSeparator) return;
+
+    const nextText = moveResumeBullet(resumeText, activeSection.lineIndex, overSection.lineIndex);
+    applyResumeText(nextText);
+  }, [bodySections, resumeText, applyResumeText]);
+
+  const handleMoveSection = useCallback((headingId, direction) => {
+    const nextText = moveSectionInText(resumeText, parsedSections, headingId, direction);
+    if (nextText !== resumeText) applyResumeText(nextText);
+  }, [resumeText, parsedSections, applyResumeText]);
+
   const handleInsertBulletBelow = useCallback((section) => {
     if (!section || section.type !== "bullet") return;
     const nextId = `line-${section.lineIndex + 1}`;
@@ -1700,6 +1787,30 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setEditingValue("");
     setSelectedBulletId(nextId);
     setSelectedSectionId(nextId);
+    applyResumeText(nextText);
+  }, [applyResumeText, resumeText]);
+
+  const handlePromoteToPosition = useCallback((section) => {
+    if (!section) return;
+    const nextText = promoteLineToPosition(resumeText, section);
+    setEditingNodeId(null);
+    setEditingValue("");
+    applyResumeText(nextText);
+  }, [applyResumeText, resumeText]);
+
+  const handlePromoteToSection = useCallback((section) => {
+    if (!section) return;
+    const nextText = promoteLineToSection(resumeText, section);
+    setEditingNodeId(null);
+    setEditingValue("");
+    applyResumeText(nextText);
+  }, [applyResumeText, resumeText]);
+
+  const handleDemoteToBullet = useCallback((section) => {
+    if (!section) return;
+    const nextText = demoteLineToBullet(resumeText, section);
+    setEditingNodeId(null);
+    setEditingValue("");
     applyResumeText(nextText);
   }, [applyResumeText, resumeText]);
 
@@ -3496,6 +3607,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   )}
 
                   <div style={templateStyles.bodyStyle}>
+                   <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <SortableContext items={bulletIds} strategy={verticalListSortingStrategy}>
                     {bodySections.map((section, sectionIndex) => {
                       if (section.type === "spacer") {
                         // Check if next non-spacer item starts a new section - show "Add Entry" button
@@ -3548,7 +3661,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                       const lineContent = isEditing ? (
                         <textarea
                           autoFocus
-                          rows={section.type === "paragraph" ? 3 : 2}
+                          rows={section.type === "education_entry" ? 5 : section.type === "paragraph" ? 3 : 2}
                           value={editingValue}
                           onChange={(event) => setEditingValue(event.target.value)}
                           onBlur={() => commitEdit(section)}
@@ -3593,6 +3706,43 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                   section.keywordMatches || [],
                                 )}
                               </p>
+                            </div>
+                          )}
+                          {section.type === "education_entry" && (
+                            <div className={`mb-2 rounded-lg border border-gray-100 bg-gray-50/40 px-4 py-3 ${templateStyles.subheadingClass}`}>
+                              <div className="flex items-baseline justify-between gap-4">
+                                <div className="font-semibold leading-snug text-gray-900">
+                                  {renderHighlightedText(
+                                    section.fields.degree || section.fields.institution || section.text,
+                                    section.keywordMatches || [],
+                                  )}
+                                </div>
+                                {section.fields.dateRange && (
+                                  <div className="shrink-0 text-[0.9em] text-gray-400 whitespace-nowrap">
+                                    {section.fields.dateRange}
+                                  </div>
+                                )}
+                              </div>
+                              {section.fields.degree && section.fields.institution && (
+                                <div className="mt-0.5 text-[0.93em] leading-snug text-gray-600">
+                                  {section.fields.institution}
+                                </div>
+                              )}
+                              {(section.fields.gpa || section.fields.honors.length > 0 || section.fields.details.length > 0) && (
+                                <div className="mt-1 text-[0.85em] text-gray-500">
+                                  {[section.fields.gpa, ...section.fields.honors, ...section.fields.details].filter(Boolean).join(" · ")}
+                                </div>
+                              )}
+                              {section.fields.bullets.length > 0 && (
+                                <div className="mt-1.5 space-y-0.5">
+                                  {section.fields.bullets.map((bullet) => (
+                                    <div key={bullet.id} className="flex gap-2 text-[0.88em] text-gray-600">
+                                      <span className="text-gray-400">•</span>
+                                      <span>{renderHighlightedText(bullet.text, section.keywordMatches || [])}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
                           {section.type === "subheading" && (
@@ -3714,10 +3864,71 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                         </button>
                       );
 
-                      return (
-                        <Fragment key={section.id}>
-                          <div id={`resume-section-${section.id}`} className={`rounded-xl px-3 py-0.5 transition ${wrapperClasses}`}>
+                      const actionButtons = !isEditing && (section.type === "bullet" || section.type === "subheading" || section.type === "paragraph") ? (
+                        <div className="flex gap-1 opacity-0 group-hover/section:opacity-100 transition-opacity -mt-0.5 mb-0.5 ml-1">
+                          {section.type === "bullet" && ["experience", "projects", "education", "certifications", "activities"].includes(section.sectionKey) && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handlePromoteToPosition(section); }}
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                              title="Convert to position/entry heading"
+                            >
+                              <ArrowUp size={9} />
+                              Make Position
+                            </button>
+                          )}
+                          {(section.type === "bullet" || section.type === "paragraph") && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handlePromoteToSection(section); }}
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition"
+                              title="Convert to section heading"
+                            >
+                              <Type size={9} />
+                              Make Section
+                            </button>
+                          )}
+                          {(section.type === "subheading" || section.type === "paragraph") && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleDemoteToBullet(section); }}
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition"
+                              title="Convert to bullet point"
+                            >
+                              <List size={9} />
+                              Make Bullet
+                            </button>
+                          )}
+                        </div>
+                      ) : null;
+
+                      const sectionMoveButtons = section.type === "heading" && !isEditing ? (
+                        <div className="flex gap-0.5 opacity-0 group-hover/section:opacity-100 transition-opacity float-right -mt-6 mr-0">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); handleMoveSection(section.id, -1); }}
+                            className="rounded p-0.5 text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition"
+                            title="Move section up"
+                          >
+                            <ArrowUp size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); handleMoveSection(section.id, 1); }}
+                            className="rounded p-0.5 text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition"
+                            title="Move section down"
+                          >
+                            <ArrowDown size={12} />
+                          </button>
+                        </div>
+                      ) : null;
+
+                      const sectionContent = (
+                        <>
+                          <div id={`resume-section-${section.id}`} className={`group/section rounded-xl px-3 py-0.5 transition ${wrapperClasses}`}>
                             {lineContent}
+                            {actionButtons}
+                            {sectionMoveButtons}
                             {section.type === "heading" && section.sectionKey === "summary" && selectedJob && !isEditing && (
                               <button
                                 type="button"
@@ -3743,9 +3954,26 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                               </button>
                             </div>
                           )}
+                        </>
+                      );
+
+                      // Wrap bullets in SortableBulletItem for drag-and-drop
+                      if (section.type === "bullet") {
+                        return (
+                          <SortableBulletItem key={section.id} id={section.id}>
+                            {sectionContent}
+                          </SortableBulletItem>
+                        );
+                      }
+
+                      return (
+                        <Fragment key={section.id}>
+                          {sectionContent}
                         </Fragment>
                       );
                     })}
+                    </SortableContext>
+                   </DndContext>
                     <div className="mt-3 rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/70 p-4">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>

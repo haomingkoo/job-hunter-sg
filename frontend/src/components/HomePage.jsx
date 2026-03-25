@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Search, FileText, BarChart2, ChevronDown, ChevronRight,
-  Shield, Eye, MapPin, ArrowRight, GraduationCap, Repeat, Award,
-  Target, Sparkles, TrendingUp,
+  Shield, Zap, MapPin, ArrowRight, GraduationCap, Repeat, Award,
+  Target, Sparkles, TrendingUp, CheckCircle,
 } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 
@@ -61,15 +61,15 @@ export default function HomePage({ onNavigate }) {
   const guideRef = useRef(null);
 
   useEffect(() => {
-    let c = false;
+    let cancelled = false;
     (async () => {
       try {
         const r = await apiFetch("/api/jobs?page=1&per_page=1");
         const d = await r.json();
-        if (!c && d.total) setJobCount(d.total);
+        if (!cancelled && d.total) setJobCount(d.total);
       } catch { /* fallback */ }
     })();
-    return () => { c = true; };
+    return () => { cancelled = true; };
   }, []);
 
   const count = jobCount ? jobCount.toLocaleString() : "70,000";
@@ -83,78 +83,95 @@ export default function HomePage({ onNavigate }) {
     <div className="font-body w-full bg-white">
 
       {/* ════════════════════════════════════════════════════════════════════
-          HERO - Full-bleed with background image
+          HERO - Full-bleed with background photo overlay
       ════════════════════════════════════════════════════════════════════ */}
-      <section className="hero-noise relative min-h-[520px] overflow-hidden bg-slate-900 sm:min-h-[560px]">
-        {/* Background photo */}
+      <section className="hero-noise relative min-h-[520px] overflow-hidden sm:min-h-[580px]">
+        {/* Background photo - Singapore professionals */}
         <div
           className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-          style={{ backgroundImage: "url('https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=1920&q=80&auto=format&fit=crop')" }}
+          style={{ backgroundImage: "url('https://images.unsplash.com/photo-1600880292203-757bb62b4baf?w=1920&q=80&auto=format&fit=crop')" }}
         />
-        {/* Overlay: left-to-right gradient so text is readable, image peeks on right */}
-        <div className="absolute inset-0 bg-gradient-to-r from-slate-900 via-slate-900/85 to-slate-900/40" />
+        {/* Gradient overlay - warm navy */}
+        <div className="absolute inset-0 bg-gradient-to-r from-[#1e293b] via-[#1e293b]/90 to-[#1e293b]/50" />
 
         <div className="relative mx-auto flex max-w-6xl items-center px-6 py-24 sm:py-32 lg:px-8">
           <div className="max-w-xl">
             <h1 className="font-display text-4xl leading-tight tracking-tight text-white sm:text-5xl lg:text-[3.5rem]">
-              Your career move,{" "}
-              <span className="bg-gradient-to-r from-sky-400 to-cyan-300 bg-clip-text text-transparent">optimized.</span>
+              Navigate your career{" "}
+              <span className="text-sky-400">with clarity.</span>
             </h1>
             <p className="mt-5 text-base leading-relaxed text-slate-300 sm:text-lg">
-              Search {count}+ Singapore jobs. Score your resume against real ATS systems. Tailor every bullet to the role you want.
+              Search {count}+ Singapore job listings. Score your resume against real ATS criteria. Tailor every bullet point to the role you want.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <button
                 type="button"
                 onClick={() => onNavigate("scraper")}
-                className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-sky-600/20 transition hover:bg-sky-500"
+                className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-6 py-3 text-sm font-semibold text-white shadow-md shadow-sky-900/20 transition hover:bg-sky-500"
               >
-                Search Jobs <ArrowRight size={15} />
+                Start Exploring <ArrowRight size={15} />
               </button>
               <button
                 type="button"
                 onClick={() => onNavigate("resume")}
-                className="rounded-lg border border-white/20 bg-white/5 px-5 py-2.5 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/15"
+                className="rounded-lg border border-white/20 bg-white/5 px-6 py-3 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/15"
               >
                 Score My Resume
               </button>
             </div>
-            <p className="mt-5 text-xs tracking-wide text-slate-500">No sign-up required to get started</p>
+            <p className="mt-5 text-xs tracking-wide text-slate-400">No sign-up required to get started</p>
           </div>
         </div>
       </section>
 
       {/* ════════════════════════════════════════════════════════════════════
-          ACTION CARDS - 3 cards (no tracker)
+          ACTION CARDS - Find a Job, Build Your Resume, Explore the Market
       ════════════════════════════════════════════════════════════════════ */}
       <section className="relative z-10 mx-auto -mt-12 max-w-5xl px-6">
         <Reveal>
           <div className="grid gap-4 sm:grid-cols-3">
             {[
-              { icon: Search, label: "Find a Job", desc: "Search and filter across Singapore's top job portals", tab: "scraper", accent: "sky" },
-              { icon: FileText, label: "Build Resume", desc: "Score, optimize, and tailor your resume for any role", tab: "resume", accent: "emerald" },
-              { icon: BarChart2, label: "Explore Market", desc: "Discover trending skills and in-demand roles by sector", tab: "analytics", accent: "violet" },
-            ].map((c) => {
-              const bg = { sky: "bg-sky-50 text-sky-600", emerald: "bg-emerald-50 text-emerald-600", violet: "bg-violet-50 text-violet-600" };
-              const hover = { sky: "hover:border-sky-200", emerald: "hover:border-emerald-200", violet: "hover:border-violet-200" };
-              return (
-                <button
-                  key={c.tab}
-                  type="button"
-                  onClick={() => onNavigate(c.tab)}
-                  className={`group flex flex-col items-start rounded-2xl border border-gray-200 bg-white p-6 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${hover[c.accent]}`}
-                >
-                  <div className={`rounded-lg p-2.5 ${bg[c.accent]}`}>
-                    <c.icon size={20} strokeWidth={1.8} />
-                  </div>
-                  <h3 className="mt-3 text-[15px] font-semibold text-gray-900">{c.label}</h3>
-                  <p className="mt-1 flex-1 text-sm leading-relaxed text-gray-500">{c.desc}</p>
-                  <span className="mt-3 flex items-center gap-1 text-xs font-medium text-gray-400 transition group-hover:text-sky-600">
-                    Get started <ChevronRight size={13} />
-                  </span>
-                </button>
-              );
-            })}
+              {
+                icon: Search,
+                label: "Find a Job",
+                desc: "Search and filter across Singapore's top job portals in one place.",
+                tab: "scraper",
+                iconBg: "bg-sky-50 text-sky-600",
+                hoverBorder: "hover:border-sky-200",
+              },
+              {
+                icon: FileText,
+                label: "Build Your Resume",
+                desc: "Score, optimize, and tailor your resume for any role you target.",
+                tab: "resume",
+                iconBg: "bg-teal-50 text-teal-600",
+                hoverBorder: "hover:border-teal-200",
+              },
+              {
+                icon: BarChart2,
+                label: "Explore the Market",
+                desc: "Discover trending skills, salary benchmarks, and in-demand roles.",
+                tab: "analytics",
+                iconBg: "bg-amber-50 text-amber-600",
+                hoverBorder: "hover:border-amber-200",
+              },
+            ].map((c) => (
+              <button
+                key={c.tab}
+                type="button"
+                onClick={() => onNavigate(c.tab)}
+                className={`group flex flex-col items-start rounded-2xl border border-gray-200 bg-white p-6 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${c.hoverBorder}`}
+              >
+                <div className={`rounded-lg p-2.5 ${c.iconBg}`}>
+                  <c.icon size={20} strokeWidth={1.8} />
+                </div>
+                <h3 className="mt-3 text-[15px] font-semibold text-[#1e293b]">{c.label}</h3>
+                <p className="mt-1 flex-1 text-sm leading-relaxed text-gray-500">{c.desc}</p>
+                <span className="mt-3 flex items-center gap-1 text-xs font-medium text-gray-400 transition group-hover:text-sky-600">
+                  Get started <ChevronRight size={13} />
+                </span>
+              </button>
+            ))}
           </div>
         </Reveal>
 
@@ -172,23 +189,23 @@ export default function HomePage({ onNavigate }) {
       </section>
 
       {/* ════════════════════════════════════════════════════════════════════
-          GUIDE - "How It Works" with product screenshots
+          HOW IT WORKS - 3 steps with product screenshot mockups
       ════════════════════════════════════════════════════════════════════ */}
       <section ref={guideRef} className="mt-24 scroll-mt-16">
         <div className="mx-auto max-w-5xl px-6">
           <Reveal>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-600">How it works</p>
-            <h2 className="font-display mt-2 text-3xl text-gray-900 sm:text-4xl">Three steps to a stronger application</h2>
+            <h2 className="font-display mt-2 text-3xl text-[#1e293b] sm:text-4xl">Three steps to a stronger application</h2>
           </Reveal>
 
-          {/* Step 1 */}
+          {/* Step 1 - Search with precision */}
           <Reveal className="mt-16">
             <div className="grid items-center gap-10 lg:grid-cols-2">
               <div>
                 <div className="inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
                   <Target size={13} /> Step 1
                 </div>
-                <h3 className="font-display mt-4 text-2xl text-gray-900">Search with precision</h3>
+                <h3 className="font-display mt-4 text-2xl text-[#1e293b]">Search with precision</h3>
                 <p className="mt-3 text-sm leading-relaxed text-gray-500">
                   Smart filters across {count}+ roles. Every listing is enriched with ATS-extracted skill requirements so you know exactly what employers are looking for before you apply.
                 </p>
@@ -214,7 +231,7 @@ export default function HomePage({ onNavigate }) {
                       <div className="mt-2 h-3 w-1/2 rounded bg-gray-100" />
                       <div className="mt-2 flex gap-1.5">
                         {["Python", "SQL", "AWS"].map((s) => (
-                          <span key={s} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-600">{s}</span>
+                          <span key={s} className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-medium text-sky-600">{s}</span>
                         ))}
                       </div>
                     </div>
@@ -224,7 +241,7 @@ export default function HomePage({ onNavigate }) {
             </div>
           </Reveal>
 
-          {/* Step 2 */}
+          {/* Step 2 - Know where you stand */}
           <Reveal className="mt-24">
             <div className="grid items-center gap-10 lg:grid-cols-2">
               <div className="order-2 lg:order-1">
@@ -236,7 +253,7 @@ export default function HomePage({ onNavigate }) {
                           <circle cx="18" cy="18" r="16" fill="none" stroke="#e5e7eb" strokeWidth="2.5" />
                           <circle cx="18" cy="18" r="16" fill="none" stroke="#0284c7" strokeWidth="2.5" strokeDasharray="87 100" strokeLinecap="round" />
                         </svg>
-                        <span className="absolute inset-0 flex items-center justify-center text-lg font-bold text-gray-900">87</span>
+                        <span className="absolute inset-0 flex items-center justify-center text-lg font-bold text-[#1e293b]">87</span>
                       </div>
                       <div className="mt-1 text-[10px] text-gray-400">ATS Score</div>
                     </div>
@@ -247,28 +264,28 @@ export default function HomePage({ onNavigate }) {
                       </div>
                       <div>
                         <div className="flex justify-between text-[10px]"><span className="text-gray-500">Presentation</span><span className="font-semibold text-gray-700">84%</span></div>
-                        <div className="mt-0.5 h-1.5 rounded-full bg-gray-100"><div className="h-1.5 w-[84%] rounded-full bg-emerald-500" /></div>
+                        <div className="mt-0.5 h-1.5 rounded-full bg-gray-100"><div className="h-1.5 w-[84%] rounded-full bg-teal-500" /></div>
                       </div>
                       <div>
                         <div className="flex justify-between text-[10px]"><span className="text-gray-500">Competencies</span><span className="font-semibold text-gray-700">80%</span></div>
-                        <div className="mt-0.5 h-1.5 rounded-full bg-gray-100"><div className="h-1.5 w-[80%] rounded-full bg-violet-500" /></div>
+                        <div className="mt-0.5 h-1.5 rounded-full bg-gray-100"><div className="h-1.5 w-[80%] rounded-full bg-amber-500" /></div>
                       </div>
                     </div>
                   </div>
                 </ScreenshotFrame>
               </div>
               <div className="order-1 lg:order-2">
-                <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                <div className="inline-flex items-center gap-2 rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-700">
                   <Sparkles size={13} /> Step 2
                 </div>
-                <h3 className="font-display mt-4 text-2xl text-gray-900">Know where you stand</h3>
+                <h3 className="font-display mt-4 text-2xl text-[#1e293b]">Know where you stand</h3>
                 <p className="mt-3 text-sm leading-relaxed text-gray-500">
                   Upload your resume and get an instant breakdown across Impact, Presentation, and Competencies. See matched keywords, missing gaps, and exactly where to improve.
                 </p>
                 <button
                   type="button"
                   onClick={() => onNavigate("resume")}
-                  className="mt-5 inline-flex items-center gap-1 text-sm font-semibold text-emerald-600 transition hover:text-emerald-500"
+                  className="mt-5 inline-flex items-center gap-1 text-sm font-semibold text-teal-600 transition hover:text-teal-500"
                 >
                   Score my resume <ArrowRight size={14} />
                 </button>
@@ -276,21 +293,21 @@ export default function HomePage({ onNavigate }) {
             </div>
           </Reveal>
 
-          {/* Step 3 */}
+          {/* Step 3 - Tailor with confidence */}
           <Reveal className="mt-24">
             <div className="grid items-center gap-10 lg:grid-cols-2">
               <div>
-                <div className="inline-flex items-center gap-2 rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
+                <div className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
                   <TrendingUp size={13} /> Step 3
                 </div>
-                <h3 className="font-display mt-4 text-2xl text-gray-900">Tailor with confidence</h3>
+                <h3 className="font-display mt-4 text-2xl text-[#1e293b]">Tailor with confidence</h3>
                 <p className="mt-3 text-sm leading-relaxed text-gray-500">
                   One click transforms your resume for any role. Every bullet optimized, every keyword placed. Download as PDF or DOCX and apply with confidence.
                 </p>
                 <button
                   type="button"
                   onClick={() => onNavigate("resume")}
-                  className="mt-5 inline-flex items-center gap-1 text-sm font-semibold text-violet-600 transition hover:text-violet-500"
+                  className="mt-5 inline-flex items-center gap-1 text-sm font-semibold text-amber-600 transition hover:text-amber-500"
                 >
                   Start tailoring <ArrowRight size={14} />
                 </button>
@@ -298,10 +315,10 @@ export default function HomePage({ onNavigate }) {
               <ScreenshotFrame title="Tailored Resume">
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">
-                    <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">MATCHED</span>
+                    <span className="rounded bg-teal-100 px-1.5 py-0.5 text-[9px] font-bold text-teal-700">MATCHED</span>
                     <div className="flex gap-1">
                       {["Python", "Agile", "SQL"].map((k) => (
-                        <span key={k} className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-600">{k}</span>
+                        <span key={k} className="rounded bg-teal-50 px-1.5 py-0.5 text-[10px] text-teal-600">{k}</span>
                       ))}
                     </div>
                   </div>
@@ -316,7 +333,7 @@ export default function HomePage({ onNavigate }) {
                   <div className="mt-1 rounded-lg border-l-2 border-sky-400 bg-sky-50/50 p-2.5 text-[11px] leading-relaxed text-gray-600">
                     Led the global Conversion Accelerator Program, integrating AI and automation to optimize fab yield, traceability and cycle-time across 4 fabs...
                   </div>
-                  <div className="rounded-lg border-l-2 border-emerald-400 bg-emerald-50/50 p-2.5 text-[11px] leading-relaxed text-gray-600">
+                  <div className="rounded-lg border-l-2 border-teal-400 bg-teal-50/50 p-2.5 text-[11px] leading-relaxed text-gray-600">
                     Developed and deployed a deep learning model (ResNet-50) for chamber and wafer misplacement detection...
                   </div>
                 </div>
@@ -327,48 +344,60 @@ export default function HomePage({ onNavigate }) {
       </section>
 
       {/* ════════════════════════════════════════════════════════════════════
-          PERSONAS - Who is this for
+          PERSONAS - Fresh Graduate, Career Switcher, Senior Professional
       ════════════════════════════════════════════════════════════════════ */}
       <Reveal className="mt-28">
         <section className="bg-slate-50 py-16">
           <div className="mx-auto max-w-5xl px-6">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-sky-600">Who is this for</p>
-            <h2 className="font-display mt-2 text-3xl text-gray-900">Built for every stage of your career</h2>
+            <h2 className="font-display mt-2 text-3xl text-[#1e293b]">Built for every stage of your career</h2>
             <div className="mt-10 grid gap-6 sm:grid-cols-3">
               {[
-                { icon: GraduationCap, title: "Fresh Graduates", desc: "Understand what employers look for. Get your first resume right and learn how ATS systems filter applications.", color: "sky" },
-                { icon: Repeat, title: "Career Switchers", desc: "See which of your skills transfer to a new industry. Identify the gaps you need to fill and where to upskill.", color: "emerald" },
-                { icon: Award, title: "Senior Professionals", desc: "Fine-tune every bullet point. Ensure your experience passes ATS filters at top companies and stands out.", color: "violet" },
-              ].map((p) => {
-                const accent = { sky: "bg-sky-100 text-sky-600", emerald: "bg-emerald-100 text-emerald-600", violet: "bg-violet-100 text-violet-600" };
-                return (
-                  <div key={p.title} className="rounded-2xl border border-gray-200 bg-white p-6">
-                    <div className={`inline-flex rounded-lg p-2 ${accent[p.color]}`}>
-                      <p.icon size={20} strokeWidth={1.8} />
-                    </div>
-                    <h4 className="mt-3 text-[15px] font-semibold text-gray-900">{p.title}</h4>
-                    <p className="mt-2 text-sm leading-relaxed text-gray-500">{p.desc}</p>
+                {
+                  icon: GraduationCap,
+                  title: "Fresh Graduate",
+                  desc: "Understand what employers look for. Get your first resume right and learn how ATS systems filter applications before yours reaches a recruiter.",
+                  iconBg: "bg-sky-100 text-sky-600",
+                },
+                {
+                  icon: Repeat,
+                  title: "Career Switcher",
+                  desc: "See which of your skills transfer to a new industry. Identify the gaps you need to fill, discover where to upskill, and reframe your experience.",
+                  iconBg: "bg-teal-100 text-teal-600",
+                },
+                {
+                  icon: Award,
+                  title: "Senior Professional",
+                  desc: "Fine-tune every bullet point for executive roles. Ensure your experience passes ATS filters at top companies and articulates real impact.",
+                  iconBg: "bg-amber-100 text-amber-600",
+                },
+              ].map((p) => (
+                <div key={p.title} className="rounded-2xl border border-gray-200 bg-white p-6">
+                  <div className={`inline-flex rounded-lg p-2 ${p.iconBg}`}>
+                    <p.icon size={20} strokeWidth={1.8} />
                   </div>
-                );
-              })}
+                  <h4 className="mt-3 text-[15px] font-semibold text-[#1e293b]">{p.title}</h4>
+                  <p className="mt-2 text-sm leading-relaxed text-gray-500">{p.desc}</p>
+                </div>
+              ))}
             </div>
           </div>
         </section>
       </Reveal>
 
       {/* ════════════════════════════════════════════════════════════════════
-          STATS
+          STATS - Dynamic job count, sources, skills tracked
       ════════════════════════════════════════════════════════════════════ */}
       <Reveal className="py-16">
         <div className="mx-auto grid max-w-4xl grid-cols-2 gap-8 px-6 sm:grid-cols-4">
           {[
             { value: countShort, label: "Job Listings" },
+            { value: "5", label: "Job Sources" },
             { value: "1,500+", label: "Skills Tracked" },
-            { value: "38", label: "Sectors Covered" },
             { value: "Nightly", label: "Data Refresh" },
           ].map((s) => (
             <div key={s.label} className="text-center">
-              <div className="font-display text-3xl text-gray-900">{s.value}</div>
+              <div className="font-display text-3xl text-[#1e293b]">{s.value}</div>
               <div className="mt-1 text-sm text-gray-400">{s.label}</div>
             </div>
           ))}
@@ -376,40 +405,77 @@ export default function HomePage({ onNavigate }) {
       </Reveal>
 
       {/* ════════════════════════════════════════════════════════════════════
-          TRUST + CTA
+          TRUST SIGNALS
       ════════════════════════════════════════════════════════════════════ */}
       <Reveal>
-        <section className="border-t border-gray-100 bg-white py-16">
+        <section className="border-t border-gray-100 bg-white py-14">
           <div className="mx-auto max-w-4xl px-6">
             <div className="grid gap-6 sm:grid-cols-3">
               {[
-                { icon: Eye, title: "No sign-up required", desc: "Browse jobs and score your resume without creating an account." },
-                { icon: Shield, title: "Resume stays private", desc: "Your data is never shared, sold, or used to train models." },
-                { icon: MapPin, title: "Built for Singapore", desc: "Skills taxonomy and resume conventions tailored to the SG job market." },
+                {
+                  icon: MapPin,
+                  title: "Built for Singapore job seekers",
+                  desc: "Skills taxonomy and resume conventions tailored to the SG job market.",
+                },
+                {
+                  icon: Zap,
+                  title: "AI-powered insights",
+                  desc: "Smart scoring, keyword extraction, and resume tailoring driven by machine learning.",
+                },
+                {
+                  icon: Shield,
+                  title: "Free to use",
+                  desc: "Browse jobs, score your resume, and explore market insights at no cost.",
+                },
               ].map((t) => (
                 <div key={t.title} className="flex items-start gap-3">
-                  <div className="flex-shrink-0 rounded-md bg-gray-100 p-2">
-                    <t.icon size={16} className="text-gray-500" />
+                  <div className="flex-shrink-0 rounded-md bg-sky-50 p-2">
+                    <t.icon size={16} className="text-sky-600" />
                   </div>
                   <div>
-                    <div className="text-sm font-semibold text-gray-900">{t.title}</div>
+                    <div className="text-sm font-semibold text-[#1e293b]">{t.title}</div>
                     <div className="mt-0.5 text-xs leading-relaxed text-gray-500">{t.desc}</div>
                   </div>
                 </div>
               ))}
             </div>
+          </div>
+        </section>
+      </Reveal>
 
-            {/* Final CTA */}
-            <div className="mt-14 text-center">
-              <h2 className="font-display text-2xl text-gray-900 sm:text-3xl">Ready to make your move?</h2>
-              <p className="mt-2 text-sm text-gray-500">Join job seekers across Singapore using smarter tools to stand out.</p>
+      {/* ════════════════════════════════════════════════════════════════════
+          CTA FOOTER - Final call to action
+      ════════════════════════════════════════════════════════════════════ */}
+      <Reveal>
+        <section className="bg-[#1e293b] py-20">
+          <div className="mx-auto max-w-3xl px-6 text-center">
+            <h2 className="font-display text-2xl text-white sm:text-3xl">Ready to make your next move?</h2>
+            <p className="mx-auto mt-3 max-w-lg text-sm leading-relaxed text-slate-400">
+              Join job seekers across Singapore using smarter tools to stand out in a competitive market.
+            </p>
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
               <button
                 type="button"
                 onClick={() => onNavigate("scraper")}
-                className="mt-6 inline-flex items-center gap-2 rounded-lg bg-sky-600 px-6 py-3 text-sm font-semibold text-white shadow-md shadow-sky-600/20 transition hover:bg-sky-500"
+                className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-6 py-3 text-sm font-semibold text-white shadow-md shadow-sky-900/30 transition hover:bg-sky-500"
               >
                 Get Started <ArrowRight size={15} />
               </button>
+              <button
+                type="button"
+                onClick={() => onNavigate("resume")}
+                className="rounded-lg border border-white/20 bg-white/5 px-6 py-3 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/15"
+              >
+                Score My Resume
+              </button>
+            </div>
+            <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs text-slate-500">
+              {["No sign-up required", "Resume stays private", "Singapore-focused"].map((item) => (
+                <span key={item} className="flex items-center gap-1.5">
+                  <CheckCircle size={12} className="text-sky-500" />
+                  {item}
+                </span>
+              ))}
             </div>
           </div>
         </section>
