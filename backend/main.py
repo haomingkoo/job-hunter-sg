@@ -2663,17 +2663,33 @@ def ai_rewrite_bullet(
     rewrite_focus = sanitize_user_input(body.rewrite_focus) if hasattr(body, "rewrite_focus") else ""
     focused_feedback = sanitize_user_input(body.focused_feedback) if hasattr(body, "focused_feedback") else ""
 
-    # Generate options, validate each, retry once if all fail
+    # Build structured JD context (parsed skills, not raw blob)
+    jd_context = job_description
+    if hasattr(body, "job_id") and body.job_id:
+        target_job = db.query(ScrapedJob).filter(ScrapedJob.id == body.job_id).first()
+        if target_job and isinstance(target_job.parsed_jd, dict):
+            parsed = target_job.parsed_jd
+            req = parsed.get("required_skills", [])[:6]
+            pref = parsed.get("preferred_skills", [])[:4]
+            jd_context = (
+                f"Target role: {target_job.title} at {target_job.company}. "
+                f"Key skills: {', '.join(req)}. "
+                f"Preferred: {', '.join(pref)}."
+            )
+        elif target_job:
+            jd_context = (target_job.description or "")[:500]
+
+    # Generate options, validate each, retry up to 3 times
     from validation_gates import validate_and_fix
 
-    max_attempts = 2
+    max_attempts = 3
     validated_options = []
 
     for attempt in range(max_attempts):
         result = rewrite_bullet(
             bullet,
             job_title=job_title,
-            context=job_description,
+            context=jd_context,
             used_verbs=used_verbs,
             rewrite_focus=rewrite_focus,
             focused_feedback=focused_feedback,
