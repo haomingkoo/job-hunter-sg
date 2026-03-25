@@ -229,12 +229,13 @@ def _is_entry_heading(line: str) -> bool:
     is_caps = bool(_ALL_CAPS_HEADER_RE.match(stripped))
     is_bullet = bool(_BULLET_CHAR_RE.match(line))
 
-    if is_bullet:
-        return False
-
-    # Lines with dates or separators are almost always entry headings
+    # Lines with dates or separators are almost always entry headings,
+    # even if they start with a bullet char (some resumes bullet job titles)
     if has_date or has_separator:
         return True
+
+    if is_bullet:
+        return False
 
     # ALL-CAPS short line inside a section (company name)
     if is_caps and len(stripped.split()) <= 8:
