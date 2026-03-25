@@ -32,7 +32,7 @@ function Reveal({ children, className = "", delay = 0 }) {
     <div
       ref={ref}
       className={className}
-      style={{ opacity: 0, transform: "translateY(32px)", transition: `opacity 0.8s cubic-bezier(0.16,1,0.3,1), transform 0.8s cubic-bezier(0.16,1,0.3,1)` }}
+      style={{ opacity: 0, transform: "translateY(20px)", transition: `opacity 0.5s cubic-bezier(0.23,1,0.32,1), transform 0.5s cubic-bezier(0.23,1,0.32,1)` }}
     >
       {children}
     </div>
@@ -142,7 +142,7 @@ export default function HomePage({ onNavigate }) {
             {/* Eyebrow */}
             <div
               className="inline-flex items-center gap-2 rounded-full border border-sky-400/20 bg-sky-400/[0.08] px-4 py-1.5 text-[11px] font-semibold uppercase tracking-[0.15em] text-sky-300 backdrop-blur-sm"
-              style={{ animation: "fadeSlideUp 0.6s ease-out both" }}
+              style={{ animation: "fadeSlideUp 0.5s cubic-bezier(0.23,1,0.32,1) both" }}
             >
               <MapPin size={12} /> Singapore Job Market Intelligence
             </div>
@@ -150,7 +150,7 @@ export default function HomePage({ onNavigate }) {
             {/* Headline with gradient shimmer */}
             <h1
               className="font-display mt-6 text-[2.75rem] leading-[1.1] tracking-tight text-white sm:text-[3.5rem] lg:text-[4rem]"
-              style={{ animation: "fadeSlideUp 0.8s ease-out 0.15s both" }}
+              style={{ animation: "fadeSlideUp 0.6s cubic-bezier(0.23,1,0.32,1) 0.12s both" }}
             >
               Your career move,{" "}
               <span
@@ -166,19 +166,19 @@ export default function HomePage({ onNavigate }) {
 
             <p
               className="mt-6 max-w-lg text-[1.05rem] leading-relaxed text-slate-300/90"
-              style={{ animation: "fadeSlideUp 0.8s ease-out 0.3s both" }}
+              style={{ animation: "fadeSlideUp 0.6s cubic-bezier(0.23,1,0.32,1) 0.24s both" }}
             >
               Search {count}+ Singapore jobs. Score your resume against real ATS systems. Tailor every bullet to the role you want.
             </p>
 
             <div
               className="mt-9 flex flex-wrap items-center gap-4"
-              style={{ animation: "fadeSlideUp 0.8s ease-out 0.45s both" }}
+              style={{ animation: "fadeSlideUp 0.6s cubic-bezier(0.23,1,0.32,1) 0.36s both" }}
             >
               <button
                 type="button"
                 onClick={() => onNavigate("scraper")}
-                className="group relative inline-flex items-center gap-2.5 overflow-hidden rounded-xl bg-sky-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-sky-500/25 transition-all duration-300 hover:bg-sky-400 hover:shadow-xl hover:shadow-sky-500/30 hover:-translate-y-0.5"
+                className="group relative inline-flex items-center gap-2.5 overflow-hidden rounded-xl bg-sky-500 px-7 py-3.5 text-sm font-semibold text-white shadow-lg shadow-sky-500/25 transition-all duration-200 hover:bg-sky-400 hover:shadow-xl hover:shadow-sky-500/30 hover:-translate-y-0.5 active:scale-[0.97] active:shadow-md"
               >
                 <span className="relative z-10 flex items-center gap-2.5">
                   Search Jobs <ArrowRight size={15} className="transition-transform group-hover:translate-x-0.5" />
@@ -187,7 +187,7 @@ export default function HomePage({ onNavigate }) {
               <button
                 type="button"
                 onClick={() => onNavigate("resume")}
-                className="rounded-xl border border-white/15 bg-white/[0.06] px-7 py-3.5 text-sm font-semibold text-white backdrop-blur-md transition-all duration-300 hover:bg-white/[0.12] hover:border-white/25 hover:-translate-y-0.5"
+                className="rounded-xl border border-white/15 bg-white/[0.06] px-7 py-3.5 text-sm font-semibold text-white backdrop-blur-md transition-all duration-200 hover:bg-white/[0.12] hover:border-white/25 hover:-translate-y-0.5 active:scale-[0.97]"
               >
                 Score My Resume
               </button>
@@ -195,7 +195,7 @@ export default function HomePage({ onNavigate }) {
 
             <p
               className="mt-6 text-[13px] tracking-wide text-slate-500"
-              style={{ animation: "fadeSlideUp 0.8s ease-out 0.6s both" }}
+              style={{ animation: "fadeSlideUp 0.6s cubic-bezier(0.23,1,0.32,1) 0.48s both" }}
             >
               No sign-up required to get started
             </p>
@@ -234,11 +234,11 @@ export default function HomePage({ onNavigate }) {
               amber: { iconBg: "bg-amber-500/10 text-amber-400", border: "hover:border-amber-400/30", glow: "group-hover:shadow-amber-500/10" },
             }[c.accent];
             return (
-              <Reveal key={c.tab} delay={i * 100}>
+              <Reveal key={c.tab} delay={i * 60}>
                 <button
                   type="button"
                   onClick={() => onNavigate(c.tab)}
-                  className={`group relative flex h-full flex-col items-start rounded-2xl border border-gray-200/80 bg-white p-7 text-left shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl ${colors.border} ${colors.glow}`}
+                  className={`group relative flex h-full flex-col items-start rounded-2xl border border-gray-200/80 bg-white p-7 text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-xl active:scale-[0.98] ${colors.border} ${colors.glow}`}
                 >
                   <div className={`rounded-xl p-3 ${colors.iconBg}`}>
                     <c.icon size={22} strokeWidth={1.7} />
@@ -477,8 +477,8 @@ export default function HomePage({ onNavigate }) {
                   gradient: "from-amber-500/10 to-amber-500/[0.02]", iconBg: "bg-amber-100 text-amber-600", borderHover: "hover:border-amber-200",
                 },
               ].map((p, i) => (
-                <Reveal key={p.title} delay={i * 120}>
-                  <div className={`group h-full rounded-2xl border border-gray-200 bg-gradient-to-b ${p.gradient} p-7 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg ${p.borderHover}`}>
+                <Reveal key={p.title} delay={i * 60}>
+                  <div className={`group h-full rounded-2xl border border-gray-200 bg-gradient-to-b ${p.gradient} p-7 transition-all duration-200 hover:-translate-y-1 hover:shadow-lg active:scale-[0.98] ${p.borderHover}`}>
                     <div className={`inline-flex rounded-xl p-3 ${p.iconBg} transition-transform group-hover:scale-110`}>
                       <p.icon size={22} strokeWidth={1.7} />
                     </div>
@@ -580,7 +580,7 @@ export default function HomePage({ onNavigate }) {
               <button
                 type="button"
                 onClick={() => onNavigate("resume")}
-                className="rounded-xl border border-white/15 bg-white/[0.06] px-8 py-4 text-sm font-semibold text-white backdrop-blur-md transition-all duration-300 hover:bg-white/[0.12] hover:border-white/25"
+                className="rounded-xl border border-white/15 bg-white/[0.06] px-8 py-4 text-sm font-semibold text-white backdrop-blur-md transition-all duration-200 hover:bg-white/[0.12] hover:border-white/25 active:scale-[0.97]"
               >
                 Score My Resume
               </button>
