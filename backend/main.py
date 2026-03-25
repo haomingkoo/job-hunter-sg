@@ -81,6 +81,7 @@ _CAREERSGOV_PATH_RE = re.compile(r"/en-US/PublicServiceCareers(/job/.+)$")
 _JD_ENRICHMENT_IN_FLIGHT: set[int] = set()
 _JD_ENRICHMENT_LOCK = threading.Lock()
 _JD_ENRICHMENT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3)
+_FAILED_RETRY_SECONDS = 300  # retry failed/unavailable summaries after 5 min
 
 
 from contextlib import asynccontextmanager
@@ -111,8 +112,8 @@ async def lifespan(application: FastAPI):
         log.warning(f"Stale job cleanup failed: {e}")
 
     # Backfill sortable posted timestamps for existing rows.
+    db_sort = SessionLocal()
     try:
-        db_sort = SessionLocal()
         jobs_missing_sort = (
             db_sort.query(ScrapedJob)
             .filter(or_(ScrapedJob.posted_at_sort.is_(None), ScrapedJob.posted_at_sort == ""))
@@ -123,9 +124,10 @@ async def lifespan(application: FastAPI):
                 job.posted_at_sort = _posted_sort_iso(job.posted_date, job.scraped_at)
             db_sort.commit()
             log.info("Backfilled posted_at_sort for %s jobs", len(jobs_missing_sort))
-        db_sort.close()
     except Exception as e:
         log.warning(f"posted_at_sort backfill failed: {e}")
+    finally:
+        db_sort.close()
 
     # Auto-create admin account if configured
     try:
@@ -700,9 +702,6 @@ def _enrich_job_background(job_id: int) -> None:
         db.close()
         with _JD_ENRICHMENT_LOCK:
             _JD_ENRICHMENT_IN_FLIGHT.discard(job_id)
-
-
-_FAILED_RETRY_SECONDS = 300  # retry failed summaries after 5 min
 
 
 def _should_queue_enrichment(job: ScrapedJob) -> bool:
