@@ -1915,14 +1915,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         })}
       </div>
 
-      {selectedJob && (
-        <div className="mb-4 rounded-3xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
+      {selectedJob && wizardStep === 3 && (
+        <div className="mb-4 rounded-3xl border border-[#BDDDFC]/30 bg-[#BDDDFC]/10 p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#384959]">Target Job Description</div>
             <button
               type="button"
               onClick={() => setActiveTab("scraper")}
-              className="text-xs font-semibold text-indigo-700 hover:text-indigo-900"
+              className="text-xs font-semibold text-[#88BDF2] hover:text-[#384959]"
             >
               Back to Jobs
             </button>
@@ -1936,7 +1936,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   {selectedJobCanonicalTerms.map((term, index) => {
                     const label = extractKeywordLabel(term);
                     return (
-                    <span key={`${label}-${index}`} className="rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700" title={term?.jd_context || ""}>
+                    <span key={`${label}-${index}`} className="rounded-full bg-[#BDDDFC]/25 px-2 py-0.5 text-[11px] font-medium text-[#384959]" title={term?.jd_context || ""}>
                       {label}
                     </span>
                   );})}
@@ -2371,7 +2371,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         <div className="flex items-center justify-between gap-4">
           <div>
             <div className="text-sm font-semibold text-[#384959]">Templates</div>
-            <div className="text-xs text-[#6A89A7]">Pick the export layout early so editing and download stay aligned.</div>
+            <div className="text-xs text-[#6A89A7]">Pick a layout to get started. You can change this anytime from the editor.</div>
           </div>
           <div className="hidden lg:flex items-center gap-2 rounded-full bg-[#BDDDFC]/10 px-3 py-1 text-xs font-medium text-[#6A89A7]">
             <span>{templateMeta?.name || "Modern"}</span>
