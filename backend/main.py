@@ -1387,6 +1387,7 @@ def admin_backfill_enrichment(
     preview_only = body.get("preview_only", False)
     summary_limit = body.get("summary_limit", 0)
     refresh_preview = body.get("refresh_preview", False)
+    reparse = body.get("reparse", False)
 
     def run_backfill() -> None:
         _update_backfill_progress(
@@ -1401,6 +1402,7 @@ def admin_backfill_enrichment(
             backfill_previews(
                 progress_callback=_update_backfill_progress,
                 refresh_preview=refresh_preview,
+                reparse=reparse,
             )
             if not preview_only:
                 _update_backfill_progress(phase="summary")

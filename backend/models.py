@@ -103,6 +103,11 @@ class TrackedJob(Base):
     scraped_job_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("scraped_jobs.id"), nullable=True
     )
+    resume_version_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("resume_versions.id"), nullable=True
+    )
+    # Stage history: [{stage, date, notes}] - tracks progression through hiring pipeline
+    stage_history: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 

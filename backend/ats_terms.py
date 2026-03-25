@@ -43,6 +43,20 @@ ATS_DISPLAY_EXCLUDE: set[str] = ATS_MULTIWORD_NOISE | {
     "loan processing",
     "subject matter expert",
     "basket weaving",
+    # CareersGov competency framework values (not ATS skills)
+    "curiosity and growth", "collaborative energy", "pragmatic leadership",
+    "lifecycle awareness", "explaining concepts", "practices for peers",
+    "debugging strategies", "product and design", "strategic alignment",
+    "ownership and accountabilities", "cultural and organisational influence",
+    "succession planning", "personal competencies", "skills and knowledge",
+    # Generic fragments from JD text
+    "clearances with", "both local", "authority of singapore",
+    "communications and planning", "industry partners", "international media",
+    "government policies", "design and space planning",
+    # Phrases that are too generic for ATS matching
+    "relevant experience", "strong understanding", "good knowledge",
+    "working experience", "years of experience", "related fields",
+    "related field", "relevant work", "work experience",
 }
 
 ATS_OUTLINE_NOISE: set[str] = {
@@ -281,7 +295,27 @@ def _is_noise_term(term: str, context: str = "") -> bool:
         return True
 
     # Starts with a verb - likely a responsibility phrase, not a skill
-    if word_count >= 3 and words[0] in _RESPONSIBILITY_VERBS:
+    if word_count >= 2 and words[0] in _RESPONSIBILITY_VERBS:
+        return True
+
+    # Starts with a preposition/article/pronoun - likely a JD fragment
+    _FRAGMENT_STARTERS = {
+        "a", "an", "the", "in", "on", "at", "to", "of", "for", "with",
+        "by", "from", "as", "both", "all", "any", "our", "their", "your",
+        "this", "that", "these", "those", "such", "some", "other",
+        "assist", "degree", "minimum", "strong", "good", "excellent",
+        "relevant", "preferred", "required", "able", "ability",
+    }
+    if word_count >= 2 and words[0] in _FRAGMENT_STARTERS:
+        return True
+
+    # Ends with a preposition (fragment like "clearances with", "reporting to")
+    _FRAGMENT_ENDERS = {"with", "to", "for", "in", "on", "of", "and", "or", "the"}
+    if word_count >= 2 and words[-1] in _FRAGMENT_ENDERS:
+        return True
+
+    # Contains "of singapore", "of the" - institutional phrases, not skills
+    if "of singapore" in lowered or "of the " in lowered:
         return True
 
     if _looks_like_study_area(lowered, context):
