@@ -804,6 +804,11 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
             </div>
           </div>
 
+          {expYearsFilter.size > 0 && (
+            <div className="mt-3 text-xs text-gray-500">
+              Showing jobs that match your experience range plus jobs that don't state a requirement. Only jobs that explicitly require a different range are hidden.
+            </div>
+          )}
           {minSalaryFilter && (
             <div className="mt-3 text-xs text-gray-500">
               Jobs that explicitly list pay below your floor are hidden. Jobs with no salary posted stay visible.
@@ -7350,7 +7355,7 @@ function ResumeTab({ selectedJob, user, setActiveTab }) {
                                       <Fragment key={`${section.id}-segment-${index}`}>
                                         {index > 0 && <span className="text-gray-300">|</span>}
                                         <span className="font-medium text-gray-700">
-                                          {renderHighlightedText(getDisplayInlineSegmentText(segment), section.keywordMatches || [])}
+                                          {renderFormattedText(getDisplayInlineSegmentText(segment), section.keywordMatches || [])}
                                         </span>
                                       </Fragment>
                                     ))}
