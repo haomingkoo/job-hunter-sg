@@ -7,6 +7,7 @@ import {
 import { apiFetch } from "../lib/api.js";
 import { todayStr } from "../lib/helpers.js";
 import { buildJobSkillDisplay, normalizeJobTermLabels } from "../lib/jobSkillHelpers.js";
+import JobCardSkeleton from "./JobCardSkeleton.jsx";
 
 export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, onSignIn }) {
   const [query, setQuery] = useState("");
@@ -593,12 +594,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           )}
 
           {/* Loading */}
-          {loading && (
-            <div className="text-center py-12">
-              <Loader2 size={32} className="animate-spin text-indigo-400 mx-auto" />
-              <p className="text-sm text-gray-500 mt-3">Loading jobs{query ? ` for "${query}"` : ""}...</p>
-            </div>
-          )}
+          {loading && <JobCardSkeleton count={5} />}
 
           {/* Error */}
           {!loading && error && (

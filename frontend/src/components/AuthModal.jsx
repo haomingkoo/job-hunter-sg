@@ -39,16 +39,16 @@ export default function AuthModal({ onAuth, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}>
       <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 relative">
-        {onClose && <button onClick={onClose} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><X size={20} /></button>}
+        {onClose && <button onClick={onClose} className="absolute top-4 right-4 text-[#6A89A7] hover:text-[#6A89A7]"><X size={20} /></button>}
         <div className="text-center mb-6">
           <div className="flex items-center justify-center gap-2 mb-2">
-            <Briefcase size={24} className="text-indigo-600" />
-            <h1 className="text-xl font-bold text-gray-800">Job Hunter SG</h1>
+            <Briefcase size={24} className="text-[#384959]" />
+            <h1 className="text-xl font-bold text-[#384959]">Job Hunter SG</h1>
           </div>
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-[#6A89A7]">
             {mode === "login" ? "Welcome back" : "Join with your @aisg.sg email"}
           </p>
-          <p className="text-xs text-gray-400 mt-1">Save your applications, get unlimited AI reviews, and track your progress</p>
+          <p className="text-xs text-[#6A89A7] mt-1">Save your applications, get unlimited AI reviews, and track your progress</p>
         </div>
 
         {error && (
@@ -62,36 +62,36 @@ export default function AuthModal({ onAuth, onClose }) {
             <input
               type="text" placeholder="Full Name" value={name}
               onChange={(e) => setName(e.target.value)} required
-              className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
+              className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
             />
           )}
           <input
             type="email" placeholder="Email" value={email}
             onChange={(e) => setEmail(e.target.value)} required
-            className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
+            className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
           />
           <input
             type="password" placeholder="Password" value={password}
             onChange={(e) => setPassword(e.target.value)} required minLength={8}
-            className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400"
+            className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
           />
           <button type="submit" disabled={loading}
-            className="w-full bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 transition flex items-center justify-center gap-2">
+            className="w-full bg-[#384959] text-white py-2.5 rounded-lg text-sm font-medium hover:bg-[#2d3a47] disabled:opacity-50 transition flex items-center justify-center gap-2">
             {loading && <Loader2 size={14} className="animate-spin" />}
             {mode === "login" ? "Sign In" : "Create Account"}
           </button>
         </form>
 
         {mode === "signup" && (
-          <p className="text-xs text-gray-400 text-center mt-3">
+          <p className="text-xs text-[#6A89A7] text-center mt-3">
             By signing up, you agree that we store your resume data solely to personalise your coaching experience. We never sell, share, or use your data for any other purpose.{" "}
-            <button onClick={() => window.open(`${API_BASE}/api/privacy`, "_blank")} className="text-indigo-500 hover:underline">Privacy Notice</button>
+            <button onClick={() => window.open(`${API_BASE}/api/privacy`, "_blank")} className="text-[#88BDF2] hover:underline">Privacy Notice</button>
           </p>
         )}
 
         <div className="text-center mt-4">
           <button onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); }}
-            className="text-sm text-indigo-600 hover:underline">
+            className="text-sm text-[#384959] hover:underline">
             {mode === "login" ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
           </button>
         </div>

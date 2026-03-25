@@ -77,18 +77,18 @@ function TemplatePreview({ templateId }) {
         : "bg-stone-700";
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-gradient-to-br from-white to-gray-50 p-3">
+    <div className="rounded-xl border border-[#BDDDFC]/30 bg-gradient-to-br from-white to-gray-50 p-3">
       <div className={`h-2 w-2/5 rounded-full ${accent}`} />
       <div className="mt-3 space-y-1.5">
-        <div className="h-1.5 w-full rounded-full bg-gray-200" />
-        <div className="h-1.5 w-11/12 rounded-full bg-gray-200" />
-        <div className="h-1.5 w-10/12 rounded-full bg-gray-200" />
+        <div className="h-1.5 w-full rounded-full bg-[#BDDDFC]/20" />
+        <div className="h-1.5 w-11/12 rounded-full bg-[#BDDDFC]/20" />
+        <div className="h-1.5 w-10/12 rounded-full bg-[#BDDDFC]/20" />
       </div>
       <div className="mt-4 space-y-1.5">
         <div className={`h-1.5 w-1/3 rounded-full ${accent} opacity-80`} />
-        <div className="h-1.5 w-full rounded-full bg-gray-200" />
-        <div className="h-1.5 w-10/12 rounded-full bg-gray-200" />
-        <div className="h-1.5 w-4/5 rounded-full bg-gray-200" />
+        <div className="h-1.5 w-full rounded-full bg-[#BDDDFC]/20" />
+        <div className="h-1.5 w-10/12 rounded-full bg-[#BDDDFC]/20" />
+        <div className="h-1.5 w-4/5 rounded-full bg-[#BDDDFC]/20" />
       </div>
     </div>
   );
@@ -110,7 +110,7 @@ const SortableBulletItem = memo(function SortableBulletItem({ id, children }) {
         <button
           type="button"
           {...listeners}
-          className="cursor-grab active:cursor-grabbing opacity-0 group-hover/section:opacity-60 transition-opacity mt-2 -ml-4 px-0.5 text-gray-300 hover:text-gray-500 shrink-0"
+          className="cursor-grab active:cursor-grabbing opacity-0 group-hover/section:opacity-60 transition-opacity mt-2 -ml-4 px-0.5 text-[#6A89A7]/60 hover:text-[#6A89A7] shrink-0"
           aria-label="Drag to reorder bullet"
           title="Drag to reorder"
         >
@@ -164,6 +164,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [saveVersionLabel, setSaveVersionLabel] = useState("");
   const [savingVersion, setSavingVersion] = useState(false);
+  const [renamingVersionId, setRenamingVersionId] = useState(null);
+  const [renamingVersionLabel, setRenamingVersionLabel] = useState("");
+  const [deletingVersionId, setDeletingVersionId] = useState(null);
   const [needsRescore, setNeedsRescore] = useState(false);
   const [aiStatus, setAiStatus] = useState(null);
   const [coachResponse, setCoachResponse] = useState(null);
@@ -739,6 +742,33 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       }
     } catch { /* ignore */ }
     setSavingVersion(false);
+  };
+
+  const renameVersion = async (versionId, newLabel) => {
+    if (!newLabel.trim()) {
+      setRenamingVersionId(null);
+      return;
+    }
+    try {
+      const resp = await apiFetch(`/api/resume/versions/${versionId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: newLabel.trim() }),
+      });
+      if (resp.ok) fetchVersions();
+    } catch { /* ignore */ }
+    setRenamingVersionId(null);
+    setRenamingVersionLabel("");
+  };
+
+  const deleteVersion = async (versionId) => {
+    try {
+      const resp = await apiFetch(`/api/resume/versions/${versionId}`, {
+        method: "DELETE",
+      });
+      if (resp.ok) fetchVersions();
+    } catch { /* ignore */ }
+    setDeletingVersionId(null);
   };
 
   const handleAIReview = async () => {
@@ -1356,7 +1386,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const wordCount = resumeText.split(/\s+/).filter(Boolean).length;
   const overallScore = Number.isFinite(scoreData?.overall_score) ? scoreData.overall_score : null;
   const scoreTheme = getScoreTheme(overallScore ?? 0);
-  const scorePillClass = scoreData ? scoreTheme.pill : "bg-gray-100 text-gray-600";
+  const scorePillClass = scoreData ? scoreTheme.pill : "bg-[#BDDDFC]/10 text-[#6A89A7]";
   const scoreDisplayValue = overallScore ?? "--";
   const matchedKeywords = scoreData?.keyword_match?.matched || [];
   const missingKeywords = scoreData?.keyword_match?.missing || [];
@@ -1865,10 +1895,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               }}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition ${
                 isActive
-                  ? "bg-blue-600 text-white"
+                  ? "bg-[#384959] text-white"
                   : isComplete
                     ? "bg-blue-100 text-blue-700 cursor-pointer hover:bg-blue-200"
-                    : "bg-gray-100 text-gray-400 cursor-default"
+                    : "bg-[#BDDDFC]/10 text-[#6A89A7] cursor-default"
               }`}
             >
               {isComplete ? <Check size={12} /> : <span>{step}</span>}
@@ -1881,7 +1911,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       {selectedJob && (
         <div className="mb-4 rounded-3xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-indigo-600">Target Job Description</div>
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#384959]">Target Job Description</div>
             <button
               type="button"
               onClick={() => setActiveTab("scraper")}
@@ -1920,8 +1950,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         <div className="mx-auto max-w-3xl space-y-6">
           {/* ── Entry Point Cards ─────────────────────────────────────── */}
           <div>
-            <h2 className="text-xl font-bold text-gray-900">How would you like to start?</h2>
-            <p className="mt-1 text-sm text-gray-500">Choose the option that fits your situation.</p>
+            <h2 className="text-xl font-bold text-[#384959]">How would you like to start?</h2>
+            <p className="mt-1 text-sm text-[#6A89A7]">Choose the option that fits your situation.</p>
           </div>
 
           <div className="grid gap-4 sm:grid-cols-3">
@@ -1933,16 +1963,16 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               onDragOver={(event) => { event.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
               className={`group text-left rounded-2xl border-2 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 ${
-                dragOver ? "border-blue-400 bg-blue-50" : "border-gray-200 hover:border-blue-300"
+                dragOver ? "border-blue-400 bg-blue-50" : "border-[#BDDDFC]/30 hover:border-blue-300"
               }`}
             >
               {uploading ? (
-                <Loader2 size={28} className="animate-spin text-blue-600" />
+                <Loader2 size={28} className="animate-spin text-[#88BDF2]" />
               ) : (
-                <UploadCloud size={28} className="text-blue-600" />
+                <UploadCloud size={28} className="text-[#88BDF2]" />
               )}
-              <h3 className="mt-3 text-base font-semibold text-gray-900">Upload Resume</h3>
-              <p className="mt-1.5 text-sm text-gray-500">
+              <h3 className="mt-3 text-base font-semibold text-[#384959]">Upload Resume</h3>
+              <p className="mt-1.5 text-sm text-[#6A89A7]">
                 {uploading ? "Extracting text..." : "Drop a PDF or DOCX, or click to browse"}
               </p>
             </button>
@@ -1954,11 +1984,11 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 const el = document.getElementById("resume-paste-area");
                 if (el) { el.classList.remove("hidden"); el.querySelector("textarea")?.focus(); }
               }}
-              className="group text-left rounded-2xl border-2 border-gray-200 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-emerald-300"
+              className="group text-left rounded-2xl border-2 border-[#BDDDFC]/30 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-emerald-300"
             >
               <FileText size={28} className="text-emerald-600" />
-              <h3 className="mt-3 text-base font-semibold text-gray-900">Paste Text</h3>
-              <p className="mt-1.5 text-sm text-gray-500">Copy-paste your resume from any source</p>
+              <h3 className="mt-3 text-base font-semibold text-[#384959]">Paste Text</h3>
+              <p className="mt-1.5 text-sm text-[#6A89A7]">Copy-paste your resume from any source</p>
             </button>
 
             {/* Start Fresh */}
@@ -1970,36 +2000,36 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 setShowSetupPanel(false);
                 setWizardStep(2);
               }}
-              className="group text-left rounded-2xl border-2 border-gray-200 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-violet-300"
+              className="group text-left rounded-2xl border-2 border-[#BDDDFC]/30 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-violet-300"
             >
               <Edit3 size={28} className="text-violet-600" />
-              <h3 className="mt-3 text-base font-semibold text-gray-900">Start Fresh</h3>
-              <p className="mt-1.5 text-sm text-gray-500">Build from scratch with a guided template</p>
+              <h3 className="mt-3 text-base font-semibold text-[#384959]">Start Fresh</h3>
+              <p className="mt-1.5 text-sm text-[#6A89A7]">Build from scratch with a guided template</p>
             </button>
           </div>
 
           {/* ── Paste Area (hidden by default, revealed on click) ──────── */}
-          <div id="resume-paste-area" className="hidden rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="text-sm font-semibold text-gray-800">Paste your resume text</div>
+          <div id="resume-paste-area" className="hidden rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-[#384959]">Paste your resume text</div>
             <textarea
               value={pastedText}
               onChange={(event) => setPastedText(event.target.value)}
               placeholder="Paste your resume content here..."
-              className="mt-3 min-h-[160px] w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+              className="mt-3 min-h-[160px] w-full resize-none rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-3 text-sm text-[#384959] focus:outline-none focus:ring-2 focus:ring-blue-200"
             />
             <div className="mt-3 flex gap-2">
               <button
                 type="button"
                 onClick={handlePasteResume}
                 disabled={!pastedText.trim()}
-                className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-40"
+                className="rounded-xl bg-[#384959] px-4 py-2 text-sm font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
               >
                 Use This Text
               </button>
               <button
                 type="button"
                 onClick={() => document.getElementById("resume-paste-area")?.classList.add("hidden")}
-                className="rounded-xl border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
+                className="rounded-xl border border-[#BDDDFC]/30 px-4 py-2 text-sm font-medium text-[#6A89A7] hover:bg-[#f0f4f8]"
               >
                 Cancel
               </button>
@@ -2008,33 +2038,106 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
           {/* ── Saved Versions (if logged in and has versions) ─────────── */}
           {user && resumeVersions.length > 0 && (
-            <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold text-gray-800">Your Saved Resumes</div>
-                <button type="button" onClick={fetchVersions} className="text-xs text-blue-600 hover:text-blue-800">
+                <div className="text-sm font-semibold text-[#384959]">Your Saved Resumes</div>
+                <button type="button" onClick={fetchVersions} className="text-xs text-[#88BDF2] hover:text-blue-800">
                   {versionsLoading ? "Loading..." : "Refresh"}
                 </button>
               </div>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {resumeVersions.slice(0, 4).map((v) => (
-                  <button
-                    key={v.id}
-                    type="button"
-                    onClick={() => loadVersion(v.id)}
-                    className="flex items-center justify-between rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-left text-sm hover:border-blue-300 hover:bg-blue-50 transition"
-                  >
-                    <div>
-                      <div className="font-medium text-gray-800">{v.label}</div>
-                      <div className="text-xs text-gray-500">
-                        {v.score ? `Score ${v.score}` : ""}{v.word_count ? ` · ${v.word_count}w` : ""}
+                  <div key={v.id} className="group/version relative">
+                    {/* Delete confirmation overlay */}
+                    {deletingVersionId === v.id && (
+                      <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white/95 px-3 backdrop-blur-sm">
+                        <span className="text-xs font-medium text-[#384959]">Delete this version?</span>
+                        <button
+                          type="button"
+                          onClick={() => deleteVersion(v.id)}
+                          className="rounded-lg bg-[#384959] px-3 py-1 text-xs font-medium text-white hover:bg-[#2a3744] transition"
+                        >
+                          Delete
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeletingVersionId(null)}
+                          className="rounded-lg border border-[#BDDDFC]/30 bg-white px-3 py-1 text-xs font-medium text-[#6A89A7] hover:bg-[#f0f4f8] transition"
+                        >
+                          Cancel
+                        </button>
                       </div>
-                    </div>
-                    <ChevronRight size={14} className="text-gray-400" />
-                  </button>
+                    )}
+                    {/* Inline rename form */}
+                    {renamingVersionId === v.id ? (
+                      <div className="flex items-center gap-2 rounded-xl border border-[#6A89A7] bg-white px-4 py-3">
+                        <input
+                          autoFocus
+                          value={renamingVersionLabel}
+                          onChange={(e) => setRenamingVersionLabel(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") renameVersion(v.id, renamingVersionLabel);
+                            if (e.key === "Escape") { setRenamingVersionId(null); setRenamingVersionLabel(""); }
+                          }}
+                          className="flex-1 rounded-lg border border-[#BDDDFC]/30 px-2 py-1 text-sm text-[#384959] focus:outline-none focus:ring-2 focus:ring-[#6A89A7]/30"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => renameVersion(v.id, renamingVersionLabel)}
+                          className="rounded-lg bg-[#384959] p-1.5 text-white hover:bg-[#2a3744] transition"
+                        >
+                          <Check size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setRenamingVersionId(null); setRenamingVersionLabel(""); }}
+                          className="rounded-lg border border-[#BDDDFC]/30 p-1.5 text-[#6A89A7] hover:text-[#6A89A7] transition"
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => loadVersion(v.id)}
+                        className="flex w-full items-center justify-between rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-3 text-left text-sm hover:border-blue-300 hover:bg-blue-50 transition"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="font-medium text-[#384959] truncate">{v.label}</div>
+                          <div className="text-xs text-[#6A89A7]">
+                            {v.score ? `Score ${v.score}` : ""}{v.word_count ? ` · ${v.word_count}w` : ""}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 ml-2">
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => { e.stopPropagation(); setRenamingVersionId(v.id); setRenamingVersionLabel(v.label); }}
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); setRenamingVersionId(v.id); setRenamingVersionLabel(v.label); } }}
+                            className="rounded p-1 text-[#6A89A7] opacity-0 group-hover/version:opacity-100 hover:text-[#384959] hover:bg-[#BDDDFC]/10 transition"
+                            title="Rename"
+                          >
+                            <Edit3 size={13} />
+                          </span>
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => { e.stopPropagation(); setDeletingVersionId(v.id); }}
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); setDeletingVersionId(v.id); } }}
+                            className="rounded p-1 text-[#6A89A7] opacity-0 group-hover/version:opacity-100 hover:text-rose-500 hover:bg-rose-50 transition"
+                            title="Delete"
+                          >
+                            <Trash2 size={13} />
+                          </span>
+                          <ChevronRight size={14} className="text-[#6A89A7]" />
+                        </div>
+                      </button>
+                    )}
+                  </div>
                 ))}
               </div>
               {resumeVersions.length > 4 && (
-                <button type="button" onClick={fetchVersions} className="mt-2 text-xs text-blue-600 hover:text-blue-800">
+                <button type="button" onClick={fetchVersions} className="mt-2 text-xs text-[#88BDF2] hover:text-blue-800">
                   View all {resumeVersions.length} versions
                 </button>
               )}
@@ -2042,9 +2145,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           )}
 
           {/* ── Profile Fields ─────────────────────────────────────────── */}
-          <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-            <div className="text-sm font-semibold text-gray-800">Your Details</div>
-            <p className="mt-1 text-xs text-gray-500">Used for the resume header. Auto-detected from uploaded files.</p>
+          <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
+            <div className="text-sm font-semibold text-[#384959]">Your Details</div>
+            <p className="mt-1 text-xs text-[#6A89A7]">Used for the resume header. Auto-detected from uploaded files.</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {[
                 { key: "name", label: "Name", value: profile.name, placeholder: "Full name" },
@@ -2052,13 +2155,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 { key: "phone", label: "Phone", value: profile.phone, placeholder: "Phone number" },
                 { key: "location", label: "Location", value: profile.location, placeholder: "Location" },
               ].map((field) => (
-                <label key={field.key} className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
-                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">{field.label}</div>
+                <label key={field.key} className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">{field.label}</div>
                   <input
                     value={field.value}
                     placeholder={field.placeholder}
                     onChange={(event) => handleProfileChange(field.key, event.target.value)}
-                    className="mt-3 w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    className="mt-3 w-full rounded-xl border border-[#BDDDFC]/30 px-3 py-2.5 text-sm text-[#384959] focus:outline-none focus:ring-2 focus:ring-[#BDDDFC]"
                   />
                 </label>
               ))}
@@ -2095,7 +2198,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               type="button"
               disabled={!hasResume}
               onClick={() => setWizardStep(2)}
-              className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Next: Pick Template
               <ArrowRight size={14} />
@@ -2106,14 +2209,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
       {/* ── Step 3: Setup Complete bar ──────────────────────────────── */}
       {wizardStep === 3 && !setupVisible && (
-        <div className="rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
+        <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
-              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Setup Complete</div>
-              <div className="mt-1 text-sm text-gray-700 truncate">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Setup Complete</div>
+              <div className="mt-1 text-sm text-[#384959] truncate">
                 {profile.name || "Resume loaded"}{profile.email ? ` • ${profile.email}` : ""}{profile.phone ? ` • ${profile.phone}` : ""}
               </div>
-              <div className="mt-1 text-xs text-gray-500">
+              <div className="mt-1 text-xs text-[#6A89A7]">
                 {wordCount} words • {scorePhaseLabel}
               </div>
             </div>
@@ -2124,18 +2227,18 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                     <button
                       type="button"
                       onClick={() => { setShowVersionDropdown((c) => !c); if (!resumeVersions.length) fetchVersions(); }}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-xs font-medium text-[#384959] hover:bg-[#f0f4f8]"
                     >
                       <Download size={13} />
                       Load Version
                       <ChevronRight size={12} className={`transition-transform ${showVersionDropdown ? "rotate-90" : ""}`} />
                     </button>
                     {showVersionDropdown && (
-                      <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
+                      <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-[#BDDDFC]/30 bg-white p-2 shadow-lg">
                         {versionsLoading ? (
-                          <div className="flex items-center gap-2 px-3 py-2 text-xs text-gray-500"><Loader2 size={12} className="animate-spin" />Loading...</div>
+                          <div className="flex items-center gap-2 px-3 py-2 text-xs text-[#6A89A7]"><Loader2 size={12} className="animate-spin" />Loading...</div>
                         ) : resumeVersions.length === 0 ? (
-                          <div className="px-3 py-2 text-xs text-gray-400">No saved versions yet.</div>
+                          <div className="px-3 py-2 text-xs text-[#6A89A7]">No saved versions yet.</div>
                         ) : (
                           <div className="max-h-48 overflow-y-auto space-y-0.5">
                             {resumeVersions.map((v) => (
@@ -2143,10 +2246,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 key={v.id}
                                 type="button"
                                 onClick={() => { loadVersion(v.id); setShowVersionDropdown(false); }}
-                                className="w-full text-left rounded-lg px-3 py-2 text-xs hover:bg-gray-50 transition"
+                                className="w-full text-left rounded-lg px-3 py-2 text-xs hover:bg-[#f0f4f8] transition"
                               >
-                                <div className="font-medium text-gray-800 truncate">{v.label}</div>
-                                <div className="text-gray-400 mt-0.5">
+                                <div className="font-medium text-[#384959] truncate">{v.label}</div>
+                                <div className="text-[#6A89A7] mt-0.5">
                                   {v.score ? `Score ${v.score}` : ""}{v.job_title ? ` • ${v.job_title}` : ""}
                                   {v.word_count ? ` • ${v.word_count}w` : ""}
                                 </div>
@@ -2157,7 +2260,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                       </div>
                     )}
                   </div>
-                  <div className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white p-1">
+                  <div className="inline-flex items-center gap-1 rounded-xl border border-[#BDDDFC]/30 bg-white p-1">
                     <input
                       type="text"
                       value={saveVersionLabel}
@@ -2170,7 +2273,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                       type="button"
                       onClick={saveCurrentVersion}
                       disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                      className="rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                      className="rounded-lg bg-[#384959] px-2.5 py-1 text-xs font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
                     >
                       {savingVersion ? "..." : "Save"}
                     </button>
@@ -2180,7 +2283,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               <button
                 type="button"
                 onClick={() => { setShowSetupPanel(true); setWizardStep(1); }}
-                className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-xs font-medium text-[#384959] hover:bg-[#f0f4f8]"
               >
                 <Edit3 size={13} />
                 Edit Setup
@@ -2188,7 +2291,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700"
+                className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-3 py-2 text-xs font-medium text-white hover:bg-[#2d3a47]"
               >
                 <UploadCloud size={13} />
                 Replace
@@ -2211,13 +2314,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
       {/* ── Step 2: Template ─────────────────────────────────────────── */}
       {wizardStep === 2 && (<>
-      <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <div className="text-sm font-semibold text-gray-800">Templates</div>
-            <div className="text-xs text-gray-500">Pick the export layout early so editing and download stay aligned.</div>
+            <div className="text-sm font-semibold text-[#384959]">Templates</div>
+            <div className="text-xs text-[#6A89A7]">Pick the export layout early so editing and download stay aligned.</div>
           </div>
-          <div className="hidden lg:flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+          <div className="hidden lg:flex items-center gap-2 rounded-full bg-[#BDDDFC]/10 px-3 py-1 text-xs font-medium text-[#6A89A7]">
             <span>{templateMeta?.name || "Modern"}</span>
           </div>
         </div>
@@ -2232,11 +2335,11 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 className={`rounded-2xl border p-3 text-left transition ${
                   selected
                     ? "border-indigo-400 bg-indigo-50 shadow-[0_10px_30px_rgba(79,70,229,0.12)] ring-2 ring-indigo-100"
-                    : "border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm"
+                    : "border-[#BDDDFC]/30 bg-white hover:border-[#BDDDFC]/30 hover:shadow-sm"
                 }`}
               >
                 <TemplatePreview templateId={template.id} />
-                <div className="mt-3 flex items-center gap-2 text-sm font-semibold text-gray-800">
+                <div className="mt-3 flex items-center gap-2 text-sm font-semibold text-[#384959]">
                   <span>{template.name}</span>
                   {template.id === "singapore" && (
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">
@@ -2244,7 +2347,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                     </span>
                   )}
                 </div>
-                <div className="mt-1 text-xs leading-relaxed text-gray-500">{template.description}</div>
+                <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{template.description}</div>
               </button>
             );
           })}
@@ -2256,7 +2359,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         <button
           type="button"
           onClick={() => { setShowSetupPanel(true); setWizardStep(1); }}
-          className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
         >
           <ArrowLeft size={14} />
           Back
@@ -2264,7 +2367,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         <button
           type="button"
           onClick={() => setWizardStep(3)}
-          className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
+          className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
         >
           Next: Review & Edit
           <ArrowRight size={14} />
@@ -2274,38 +2377,38 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
       {/* ── Step 3: Review & Edit ────────────────────────────────────── */}
       {wizardStep === 3 && (<>
-      <div className="rounded-3xl border border-gray-200 bg-white p-3 shadow-sm">
+      <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-3 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="inline-flex rounded-2xl bg-gray-100 p-1">
+          <div className="inline-flex rounded-2xl bg-[#BDDDFC]/10 p-1">
             <button
               type="button"
               onClick={() => setWorkspaceView("feedback")}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${isFeedbackView ? "bg-white text-gray-900 shadow-sm" : "text-gray-600"}`}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${isFeedbackView ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7]"}`}
             >
               Resume Feedback
             </button>
             <button
               type="button"
               onClick={() => setWorkspaceView("editor")}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${isEditorView ? "bg-white text-gray-900 shadow-sm" : "text-gray-600"}`}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${isEditorView ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7]"}`}
             >
               Smart Editor
             </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex items-center gap-2 rounded-2xl bg-gray-50 px-3 py-2 text-sm text-gray-600">
+            <div className="inline-flex items-center gap-2 rounded-2xl bg-[#f0f4f8] px-3 py-2 text-sm text-[#6A89A7]">
               <span className={`inline-flex h-8 min-w-8 items-center justify-center rounded-xl px-2 text-base font-bold ${scorePillClass}`}>
                 {scoreDisplayValue}
               </span>
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">Resume Score</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Resume Score</div>
                 <div className="text-xs">{scorePhaseLabel}</div>
               </div>
             </div>
 
             <div className="inline-flex items-center gap-2 rounded-2xl bg-indigo-50 px-3 py-2 text-sm text-indigo-700">
-              <span className="inline-flex h-8 min-w-8 items-center justify-center rounded-xl bg-indigo-600 px-2 text-sm font-bold text-white">
+              <span className="inline-flex h-8 min-w-8 items-center justify-center rounded-xl bg-[#384959] px-2 text-sm font-bold text-white">
                 {improvementCount}
               </span>
               <div>
@@ -2315,20 +2418,20 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
             </div>
 
             {user && (
-              <div className="inline-flex items-center gap-1.5 rounded-2xl border border-gray-200 bg-white px-2 py-1.5">
+              <div className="inline-flex items-center gap-1.5 rounded-2xl border border-[#BDDDFC]/30 bg-white px-2 py-1.5">
                 <input
                   type="text"
                   value={saveVersionLabel}
                   onChange={(e) => setSaveVersionLabel(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") saveCurrentVersion(); }}
                   placeholder="Name this version..."
-                  className="w-32 rounded-lg border border-gray-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                  className="w-32 rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300"
                 />
                 <button
                   type="button"
                   onClick={saveCurrentVersion}
                   disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                  className="rounded-lg bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                  className="rounded-lg bg-[#384959] px-3 py-1 text-xs font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
                 >
                   {savingVersion ? "..." : "Save Version"}
                 </button>
@@ -2340,18 +2443,18 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       </div>
 
       <div className="lg:hidden">
-        <div className="inline-flex rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
+        <div className="inline-flex rounded-2xl border border-[#BDDDFC]/30 bg-white p-1 shadow-sm">
           <button
             type="button"
             onClick={() => setMobilePanel("edit")}
-            className={`rounded-xl px-4 py-2 text-sm font-medium transition ${mobilePanel === "edit" ? "bg-gray-900 text-white" : "text-gray-600"}`}
+            className={`rounded-xl px-4 py-2 text-sm font-medium transition ${mobilePanel === "edit" ? "bg-gray-900 text-white" : "text-[#6A89A7]"}`}
           >
             Edit
           </button>
           <button
             type="button"
             onClick={() => openMobileFeedbackPanel()}
-            className={`rounded-xl px-4 py-2 text-sm font-medium transition ${mobilePanel === "feedback" ? "bg-gray-900 text-white" : "text-gray-600"}`}
+            className={`rounded-xl px-4 py-2 text-sm font-medium transition ${mobilePanel === "feedback" ? "bg-gray-900 text-white" : "text-[#6A89A7]"}`}
           >
             Feedback
           </button>
@@ -2361,13 +2464,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       <div className={`grid gap-6 ${isEditorView ? "lg:grid-cols-[minmax(0,65%)_minmax(320px,35%)]" : "lg:grid-cols-[minmax(320px,35%)_minmax(0,65%)]"}`}>
         <aside className={`${mobilePanel === "feedback" ? "block max-h-[calc(100vh-10rem)] overflow-y-auto pr-1" : "hidden"} space-y-4 ${isEditorView ? "lg:order-2" : "lg:order-1"} lg:block lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto`}>
           {isEditorView && (
-            <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-gray-800">Improvement Queue</div>
-                  <div className="mt-1 text-xs text-gray-500">Pick the next fix without leaving the document.</div>
+                  <div className="text-sm font-semibold text-[#384959]">Improvement Queue</div>
+                  <div className="mt-1 text-xs text-[#6A89A7]">Pick the next fix without leaving the document.</div>
                 </div>
-                <span className="inline-flex h-9 min-w-9 items-center justify-center rounded-2xl bg-indigo-600 px-2 text-sm font-bold text-white">
+                <span className="inline-flex h-9 min-w-9 items-center justify-center rounded-2xl bg-[#384959] px-2 text-sm font-bold text-white">
                   {improvementCount}
                 </span>
               </div>
@@ -2387,10 +2490,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <div className="text-sm font-semibold text-gray-800">{item.title}</div>
-                            <div className="mt-1 text-xs leading-relaxed text-gray-600">{item.detail}</div>
+                            <div className="text-sm font-semibold text-[#384959]">{item.title}</div>
+                            <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{item.detail}</div>
                           </div>
-                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-gray-600">
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6A89A7]">
                             {label}
                           </span>
                         </div>
@@ -2401,14 +2504,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   return (
                     <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
                       <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm font-semibold text-gray-800">{item.title}</div>
+                        <div className="text-sm font-semibold text-[#384959]">{item.title}</div>
                         {item.points > 0 && (
                           <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-indigo-700">
                             +{item.points}
                           </span>
                         )}
                       </div>
-                      <div className="mt-1 text-xs leading-relaxed text-gray-600">{item.detail}</div>
+                      <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{item.detail}</div>
                     </div>
                   );
                 }) : (
@@ -2419,15 +2522,15 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               </div>
             </div>
           )}
-          <div ref={scorePanelRef} className={`rounded-3xl border p-5 shadow-sm ${scoreData ? scoreTheme.panel : "border-gray-200 bg-white"}`}>
+          <div ref={scorePanelRef} className={`rounded-3xl border p-5 shadow-sm ${scoreData ? scoreTheme.panel : "border-[#BDDDFC]/30 bg-white"}`}>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Score</div>
-                <div className={`mt-2 text-4xl font-bold ${scoreData ? scoreTheme.text : "text-gray-500"}`}>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6A89A7]">Score</div>
+                <div className={`mt-2 text-4xl font-bold ${scoreData ? scoreTheme.text : "text-[#6A89A7]"}`}>
                   {scoring ? "..." : scoreDisplayValue}
-                  <span className="ml-1 text-base font-medium text-gray-400">{scoreData ? "/100" : ""}</span>
+                  <span className="ml-1 text-base font-medium text-[#6A89A7]">{scoreData ? "/100" : ""}</span>
                 </div>
-                <div className="mt-1 text-sm text-gray-600">
+                <div className="mt-1 text-sm text-[#6A89A7]">
                   {scoreData
                     ? "Guidance snapshot based on structure, phrasing, and evidence cues."
                     : scoreError
@@ -2443,15 +2546,15 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
             <div className="mt-4 grid grid-cols-3 gap-2">
               <div className="rounded-2xl bg-white/85 px-3 py-2">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500">Solid</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#6A89A7]">Solid</div>
                 <div className="mt-1 text-lg font-semibold text-emerald-700">{annotationCounts.emerald || 0}</div>
               </div>
               <div className="rounded-2xl bg-white/85 px-3 py-2">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500">Review</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#6A89A7]">Review</div>
                 <div className="mt-1 text-lg font-semibold text-amber-700">{annotationCounts.amber || 0}</div>
               </div>
               <div className="rounded-2xl bg-white/85 px-3 py-2">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500">Verb Check</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#6A89A7]">Verb Check</div>
                 <div className="mt-1 text-lg font-semibold text-rose-700">{annotationCounts.rose || 0}</div>
               </div>
             </div>
@@ -2476,19 +2579,19 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 );
                 const statusMeta = getStatusMeta(displayDimensionScore, dimension.max);
                 return (
-                  <details key={name} open className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm">
+                  <details key={name} open className="overflow-hidden rounded-3xl border border-[#BDDDFC]/30 bg-white shadow-sm">
                     <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4">
                       <div>
-                        <div className="text-sm font-semibold text-gray-800">{titleCase(name)}</div>
-                        <div className="text-xs text-gray-500">{displayDimensionScore}/{dimension.max}</div>
+                        <div className="text-sm font-semibold text-[#384959]">{titleCase(name)}</div>
+                        <div className="text-xs text-[#6A89A7]">{displayDimensionScore}/{dimension.max}</div>
                       </div>
                       <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${statusMeta.className}`}>
                         {statusMeta.icon}
                         {statusMeta.label}
                       </span>
                     </summary>
-                    <div className="border-t border-gray-100 px-5 py-4">
-                      <div className="mb-4 h-2 overflow-hidden rounded-full bg-gray-100">
+                    <div className="border-t border-[#BDDDFC]/20 px-5 py-4">
+                      <div className="mb-4 h-2 overflow-hidden rounded-full bg-[#BDDDFC]/10">
                         <div
                           className={`h-full rounded-full ${getScoreTheme(Math.round((displayDimensionScore / dimension.max) * 100)).bar}`}
                           style={{ width: `${dimension.max > 0 ? (displayDimensionScore / dimension.max) * 100 : 0}%` }}
@@ -2498,12 +2601,12 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                         {Object.entries(displayItems).map(([itemName, item]) => {
                           const itemStatus = getStatusMeta(item.score, item.max);
                           return (
-                            <details key={itemName} className="rounded-2xl bg-gray-50">
+                            <details key={itemName} className="rounded-2xl bg-[#f0f4f8]">
                               <summary className="cursor-pointer list-none p-3">
                                 <div className="flex items-start justify-between gap-2">
                                   <div>
-                                    <div className="text-sm font-medium text-gray-800">{titleCase(itemName)}</div>
-                                    <div className="mt-1 text-xs text-gray-500">{item.detail}</div>
+                                    <div className="text-sm font-medium text-[#384959]">{titleCase(itemName)}</div>
+                                    <div className="mt-1 text-xs text-[#6A89A7]">{item.detail}</div>
                                   </div>
                                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold ${itemStatus.className}`}>
                                     {itemStatus.icon}
@@ -2511,7 +2614,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                   </span>
                                 </div>
                                 {item.suggestions?.length > 0 && (
-                                  <div className="mt-2 text-xs leading-relaxed text-gray-600">
+                                  <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">
                                     {item.suggestions[0]}
                                   </div>
                                 )}
@@ -2531,10 +2634,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                   </div>
                                 )}
                               </summary>
-                              <div className="border-t border-gray-200 px-3 pb-3 pt-2">
+                              <div className="border-t border-[#BDDDFC]/30 px-3 pb-3 pt-2">
                                 {item.matched_keywords?.length > 0 && (
                                   <div className="mb-2">
-                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Matched</div>
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[#6A89A7] mb-1">Matched</div>
                                     <div className="flex flex-wrap gap-1">
                                       {item.matched_keywords.map((kw) => (
                                         <span key={kw} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">{kw}</span>
@@ -2544,7 +2647,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 )}
                                 {item.missing_keywords?.length > 0 && (
                                   <div>
-                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Try adding</div>
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[#6A89A7] mb-1">Try adding</div>
                                     <div className="flex flex-wrap gap-1">
                                       {item.missing_keywords.map((kw) => (
                                         <span key={kw} className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] text-rose-600">{kw}</span>
@@ -2566,12 +2669,12 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
           <div
             ref={selectedBullet ? selectedFeedbackRef : null}
-            className={`rounded-3xl border p-5 shadow-sm ${selectedBullet ? "border-indigo-200 bg-indigo-50" : "border-gray-200 bg-white"}`}
+            className={`rounded-3xl border p-5 shadow-sm ${selectedBullet ? "border-indigo-200 bg-indigo-50" : "border-[#BDDDFC]/30 bg-white"}`}
           >
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Selected Bullet</div>
-                <div className="mt-1 text-sm font-semibold text-gray-800">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6A89A7]">Selected Bullet</div>
+                <div className="mt-1 text-sm font-semibold text-[#384959]">
                   {selectedBullet ? "Focused feedback" : "Choose a highlighted bullet"}
                 </div>
               </div>
@@ -2585,7 +2688,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
             {selectedBullet ? (
               <div className="mt-4 space-y-4">
-                <div className="rounded-2xl border border-white/80 bg-white p-4 text-sm leading-relaxed text-gray-700 shadow-sm">
+                <div className="rounded-2xl border border-white/80 bg-white p-4 text-sm leading-relaxed text-[#384959] shadow-sm">
                   {selectedBullet.text}
                 </div>
                 {selectedBulletTabs.length > 0 && (
@@ -2597,7 +2700,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                         const toneClass = tab.status === "good"
                           ? selected
                             ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                            : "border-gray-200 bg-white text-gray-700"
+                            : "border-[#BDDDFC]/30 bg-white text-[#384959]"
                           : tab.tone === "amber"
                             ? selected
                               ? "border-amber-200 bg-amber-50 text-amber-800"
@@ -2626,8 +2729,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                       <div className="rounded-2xl border border-white/80 bg-white p-4 shadow-sm">
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <div className="text-sm font-semibold text-gray-800">{activeBulletTab.title}</div>
-                            <div className="mt-1 text-sm leading-relaxed text-gray-600">{activeBulletTab.summary}</div>
+                            <div className="text-sm font-semibold text-[#384959]">{activeBulletTab.title}</div>
+                            <div className="mt-1 text-sm leading-relaxed text-[#6A89A7]">{activeBulletTab.summary}</div>
                           </div>
                           <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
                             activeBulletTab.status === "good"
@@ -2671,7 +2774,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
                         {selectedBullet.annotation?.keywordMatches?.length > 0 && (
                           <div className="mt-4">
-                            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Matched Keywords</div>
+                            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Matched Keywords</div>
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {selectedBullet.annotation.keywordMatches.map((keyword) => (
                                 <span key={keyword} className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-700">
@@ -2694,7 +2797,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   {rewriteLoading[selectedBullet.id] ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
                   {rewriteLoading[selectedBullet.id] ? "Rewriting..." : getRewriteButtonLabel(activeBulletTab, selectedBullet)}
                 </button>
-                <div className="rounded-2xl bg-gray-50 px-3 py-3 text-xs leading-relaxed text-gray-600">
+                <div className="rounded-2xl bg-[#f0f4f8] px-3 py-3 text-xs leading-relaxed text-[#6A89A7]">
                   {activeBulletTab?.id === "bullet_length" && activeBulletTab.status === "issue"
                     ? "This will ask AI for a tighter bullet that keeps the existing facts, numbers, and scope but lands the result earlier."
                     : "Keep only claims, numbers, and scope that you can defend in interview. Treat rewrites as drafting help, not fact generation."}
@@ -2704,7 +2807,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   <button
                     type="button"
                     onClick={() => handleInsertBulletBelow(selectedBullet)}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] transition hover:bg-[#f0f4f8]"
                   >
                     <Plus size={14} />
                     Add Bullet Below
@@ -2721,7 +2824,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
                 {selectedRewrite && (
                   <div className="space-y-3 rounded-2xl border border-indigo-200 bg-white p-4">
-                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Suggested Rewrite</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Suggested Rewrite</div>
                     {selectedRewrite.no_change ? (
                       <>
                         <div className="rounded-xl bg-amber-50 p-3 text-sm leading-relaxed text-amber-900">
@@ -2730,7 +2833,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                         <button
                           type="button"
                           onClick={() => rejectRewrite(selectedBullet.id)}
-                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
                         >
                           <X size={14} />
                           Close
@@ -2744,14 +2847,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                               const optionEvaluation = evaluateRewriteOption(option, selectedBullet, resumeText, selectedRewrite.rewrite_focus);
                               const optionMeta = getRewriteOptionMeta(optionIndex, selectedRewrite.rewrite_focus, optionEvaluation);
                               return (
-                                <div key={`${selectedBullet.id}-rewrite-${optionIndex}`} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-                                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-gray-500">
+                                <div key={`${selectedBullet.id}-rewrite-${optionIndex}`} className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3">
+                                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">
                                     {optionMeta.label}
                                   </div>
-                                  <div className="mt-1 text-[11px] leading-relaxed text-gray-500">
+                                  <div className="mt-1 text-[11px] leading-relaxed text-[#6A89A7]">
                                     {optionMeta.detail}
                                   </div>
-                                  <div className="mt-2 text-sm leading-relaxed text-gray-700">{option}</div>
+                                  <div className="mt-2 text-sm leading-relaxed text-[#384959]">{option}</div>
                                   {optionEvaluation.unresolvedFocused.length > 0 && (
                                     <div className="mt-2 text-xs leading-relaxed text-amber-700">
                                       Still flags: {optionEvaluation.unresolvedFocused.map(getIssueLabel).join(", ")}.
@@ -2760,7 +2863,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                   <button
                                     type="button"
                                     onClick={() => acceptRewrite(selectedBullet, optionIndex)}
-                                    className="mt-3 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                                    className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#384959] px-3 py-2 text-sm font-medium text-white hover:bg-[#2d3a47]"
                                   >
                                     <CheckCircle size={14} />
                                     {optionMeta.cta}
@@ -2773,7 +2876,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                         <button
                           type="button"
                           onClick={() => rejectRewrite(selectedBullet.id)}
-                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
                         >
                           <X size={14} />
                           Dismiss
@@ -2784,27 +2887,27 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 )}
               </div>
             ) : (
-              <div className="mt-4 text-sm leading-relaxed text-gray-600">
+              <div className="mt-4 text-sm leading-relaxed text-[#6A89A7]">
                 Click a bullet in the document to review its annotation here, then rewrite it or edit the line directly on the page.
               </div>
             )}
           </div>
 
           {showFeedbackPanels && (
-          <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold text-gray-800">Benchmark Snapshot</div>
-            <div className="mt-1 text-xs text-gray-500">Compared against the NUS cues you shared with me.</div>
+          <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+            <div className="text-sm font-semibold text-[#384959]">Benchmark Snapshot</div>
+            <div className="mt-1 text-xs text-[#6A89A7]">Compared against the NUS cues you shared with me.</div>
             <div className="mt-4 space-y-2">
               {benchmarkRows.map((row) => (
-                <div key={row.label} className="rounded-2xl border border-gray-100 bg-gray-50 px-3 py-3">
+                <div key={row.label} className="rounded-2xl border border-[#BDDDFC]/20 bg-[#f0f4f8] px-3 py-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="text-sm font-semibold text-gray-800">{row.label}</div>
-                      <div className="mt-1 text-xs text-gray-500">{row.note}</div>
+                      <div className="text-sm font-semibold text-[#384959]">{row.label}</div>
+                      <div className="mt-1 text-xs text-[#6A89A7]">{row.note}</div>
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-semibold text-gray-900">{row.current}</div>
-                      <div className="text-[11px] text-gray-500">Target {row.target}</div>
+                      <div className="text-sm font-semibold text-[#384959]">{row.current}</div>
+                      <div className="text-[11px] text-[#6A89A7]">Target {row.target}</div>
                     </div>
                   </div>
                   <div className="mt-3">
@@ -2822,12 +2925,12 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           )}
 
           {showFeedbackPanels && (
-          <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold text-gray-800">Relevant Terms</div>
+          <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+            <div className="text-sm font-semibold text-[#384959]">Relevant Terms</div>
             {scoreData ? (
               <>
                 {relevantTermsMode === "no_job" && (
-                  <div className="mt-2 rounded-2xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm leading-relaxed text-gray-600">
+                  <div className="mt-2 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-[#6A89A7]">
                     Attach a job or open this workspace from a selected role to see matched and missing terms.
                   </div>
                 )}
@@ -2839,10 +2942,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 )}
                 {relevantTermsMode !== "no_job" && (
                   <>
-                    <div className="mt-2 text-sm text-gray-600">
+                    <div className="mt-2 text-sm text-[#6A89A7]">
                       Matched {relevantMatchedKeywords.length} term{relevantMatchedKeywords.length === 1 ? "" : "s"}{relevantTermTotal > 0 ? ` of ${relevantTermTotal}` : ""}.
                     </div>
-                    <div className="mt-2 text-xs leading-relaxed text-gray-500">
+                    <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">
                       {relevantTermsMode === "job_match"
                         ? "Using this job's canonical term list with job-specific match context."
                         : relevantTermsMode === "skills_fallback"
@@ -2854,7 +2957,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   </>
                 )}
                 {(relevantTermsMode === "empty" || relevantTermsMode === "match_error") && (
-                  <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 px-3 py-3 text-sm leading-relaxed text-gray-600">
+                  <div className="mt-3 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-[#6A89A7]">
                     {relevantTermsMode === "match_error"
                       ? (jobMatchError || "We couldn't load job-specific alignment terms right now.")
                       : "We couldn’t extract reliable alignment terms from this job yet. Try another role or rescore after the JD loads fully."}
@@ -2875,8 +2978,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 {relevantMissingKeywords.length > 0 && (
                   <>
                     <div className="mt-4 flex items-center gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Missing</span>
-                      <span className="text-[10px] text-gray-400">Click to insert</span>
+                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Missing</span>
+                      <span className="text-[10px] text-[#6A89A7]">Click to insert</span>
                     </div>
                     <div className="relative mt-2 flex flex-wrap gap-1.5">
                       {relevantMissingKeywords.slice(0, 12).map((keyword, idx) => {
@@ -2900,17 +3003,17 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                     </div>
                     {insertKeywordPopup && (
                       <div
-                        className="mt-2 rounded-2xl border border-gray-200 bg-white p-3 shadow-lg"
+                        className="mt-2 rounded-2xl border border-[#BDDDFC]/30 bg-white p-3 shadow-lg"
                         style={{ zIndex: 50 }}
                       >
                         <div className="flex items-center justify-between">
-                          <div className="text-xs font-semibold text-gray-800">
+                          <div className="text-xs font-semibold text-[#384959]">
                             Insert <span className="rounded bg-rose-100 px-1.5 py-0.5 text-rose-700">{insertKeywordPopup.keyword}</span> into:
                           </div>
                           <button
                             type="button"
                             onClick={() => setInsertKeywordPopup(null)}
-                            className="rounded-full p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                            className="rounded-full p-0.5 text-[#6A89A7] hover:bg-[#BDDDFC]/10 hover:text-[#6A89A7]"
                           >
                             <X size={12} />
                           </button>
@@ -2920,20 +3023,20 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                             {insertKeywordPopup.suggestions.map((bullet) => (
                               <div
                                 key={bullet.id}
-                                className="group flex items-start gap-2 rounded-xl border border-gray-100 bg-gray-50 px-2.5 py-2 transition hover:border-indigo-200 hover:bg-indigo-50"
+                                className="group flex items-start gap-2 rounded-xl border border-[#BDDDFC]/20 bg-[#f0f4f8] px-2.5 py-2 transition hover:border-indigo-200 hover:bg-indigo-50"
                               >
                                 <div className="min-w-0 flex-1">
-                                  <div className="text-[10px] font-medium uppercase tracking-wider text-gray-400">
+                                  <div className="text-[10px] font-medium uppercase tracking-wider text-[#6A89A7]">
                                     {bullet.sectionKey || "section"}
                                   </div>
-                                  <div className="mt-0.5 truncate text-xs text-gray-700" title={bullet.text}>
+                                  <div className="mt-0.5 truncate text-xs text-[#384959]" title={bullet.text}>
                                     {bullet.text.length > 80 ? `${bullet.text.slice(0, 80)}...` : bullet.text}
                                   </div>
                                 </div>
                                 <button
                                   type="button"
                                   onClick={() => handleInsertKeywordIntoBullet(bullet, insertKeywordPopup.keyword)}
-                                  className="shrink-0 rounded-lg bg-indigo-600 px-2 py-1 text-[10px] font-medium text-white transition hover:bg-indigo-700"
+                                  className="shrink-0 rounded-lg bg-[#384959] px-2 py-1 text-[10px] font-medium text-white transition hover:bg-[#2d3a47]"
                                 >
                                   Insert
                                 </button>
@@ -2941,7 +3044,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                             ))}
                           </div>
                         ) : (
-                          <div className="mt-2 text-xs text-gray-500">
+                          <div className="mt-2 text-xs text-[#6A89A7]">
                             No bullet points found. Add experience bullets to your resume first.
                           </div>
                         )}
@@ -2951,19 +3054,19 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 )}
               </>
             ) : (
-              <div className="mt-2 text-sm text-gray-500">Score the resume to see matched and missing keywords.</div>
+              <div className="mt-2 text-sm text-[#6A89A7]">Score the resume to see matched and missing keywords.</div>
             )}
           </div>
           )}
 
-          <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold text-gray-800">Action Buttons</div>
+          <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+            <div className="text-sm font-semibold text-[#384959]">Action Buttons</div>
             <div className="mt-4 space-y-2.5">
               <button
                 type="button"
                 onClick={handleFinalizeScore}
                 disabled={scoring || !resumeText.trim()}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-800 transition hover:bg-gray-50 disabled:opacity-40"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] transition hover:bg-[#f0f4f8] disabled:opacity-40"
               >
                 {scoring ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 {scoring ? "Scoring..." : "Finalize Score"}
@@ -2972,7 +3075,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 type="button"
                 onClick={handleAIFormat}
                 disabled={formatting || !resumeText.trim()}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#384959] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
               >
                 {formatting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
                 {formatting ? "Improving..." : "AI Improve All"}
@@ -3029,12 +3132,12 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               </div>
             )}
             {!jobDescription.trim() && (
-              <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+              <div className="mt-3 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-2 text-xs text-[#6A89A7]">
                 Select a job first if you want the full tailor run to rewrite bullets, sections, and the summary against a specific JD. Summary generation can still run without one.
               </div>
             )}
             {aiStatus && (
-              <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#BDDDFC]/10 px-3 py-1 text-xs font-medium text-[#6A89A7]">
                 <span className={`inline-block h-2 w-2 rounded-full ${aiStatus.status === "ready" ? "bg-emerald-500" : aiStatus.status === "busy" ? "bg-amber-500" : "bg-rose-500"}`} />
                 {aiStatus.status === "ready" ? "AI ready" : aiStatus.status === "busy" ? "AI busy" : `Wait about ${Math.round(aiStatus.wait_seconds || 0)}s`}
               </div>
@@ -3045,8 +3148,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
             <div className="rounded-3xl border border-violet-200 bg-violet-50 p-5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-gray-900">Full Tailor Run</div>
-                  <div className="mt-1 text-xs leading-relaxed text-gray-600">
+                  <div className="text-sm font-semibold text-[#384959]">Full Tailor Run</div>
+                  <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
                     This staged run works bullet-by-bullet, then checks section coherence, refreshes the summary, and validates the final draft against the attached JD.
                   </div>
                 </div>
@@ -3074,7 +3177,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                         ? "border-emerald-200 bg-emerald-50 text-emerald-800"
                         : isActive
                           ? "border-violet-200 bg-violet-50 text-violet-800"
-                          : "border-gray-200 bg-gray-50 text-gray-500";
+                          : "border-[#BDDDFC]/30 bg-[#f0f4f8] text-[#6A89A7]";
                       const activeLabel = stage.id === "bullet_rewrite" && tailoringStatus?.progress?.total
                         ? `${stage.label} ${tailoringStatus.progress.completed}/${tailoringStatus.progress.total}`
                         : stage.label;
@@ -3092,21 +3195,21 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   </div>
                   <div className="mt-4 flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Stage</div>
-                      <div className="mt-1 text-sm font-semibold text-gray-900">
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Stage</div>
+                      <div className="mt-1 text-sm font-semibold text-[#384959]">
                         {titleCase(String(tailoringStatus.stage || "queued").replace(/_/g, " "))}
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Progress</div>
-                      <div className="mt-1 text-sm font-semibold text-gray-900">
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Progress</div>
+                      <div className="mt-1 text-sm font-semibold text-[#384959]">
                         {tailoringStatus.progress?.total
                           ? `${tailoringStatus.progress.completed}/${tailoringStatus.progress.total}`
                           : `${Math.max((tailoringStatus.stage_number || 0) + 1, 1)}/${tailoringStatus.total_stages || TAILOR_STAGE_LABELS.length}`}
                       </div>
                     </div>
                   </div>
-                  <div className="mt-3 text-sm leading-relaxed text-gray-700">{tailoringStatus.message}</div>
+                  <div className="mt-3 text-sm leading-relaxed text-[#384959]">{tailoringStatus.message}</div>
                 </div>
               )}
 
@@ -3120,14 +3223,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="rounded-2xl border border-violet-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Score Lift</div>
-                      <div className="mt-2 text-sm leading-relaxed text-gray-700">
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Score Lift</div>
+                      <div className="mt-2 text-sm leading-relaxed text-[#384959]">
                         {Number.isFinite(tailoringResult?.score?.before) ? tailoringResult.score.before : "--"} → {Number.isFinite(tailoringResult?.score?.after) ? tailoringResult.score.after : "--"}
                       </div>
                     </div>
                     <div className="rounded-2xl border border-violet-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Tailor Changes</div>
-                      <div className="mt-2 text-sm leading-relaxed text-gray-700">
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Tailor Changes</div>
+                      <div className="mt-2 text-sm leading-relaxed text-[#384959]">
                         {tailoringResult.total_changes || 0} updates across bullets, sections, and summary.
                       </div>
                     </div>
@@ -3145,7 +3248,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
                   {Array.isArray(tailoringResult.pipeline_notes) && tailoringResult.pipeline_notes.length > 0 && (
                     <div className="space-y-2 rounded-2xl border border-amber-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Pipeline Notes</div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Pipeline Notes</div>
                       {tailoringResult.pipeline_notes.map((note, index) => (
                         <div key={`${note.type || "note"}-${index}`} className="rounded-xl bg-amber-50 px-3 py-2 text-sm leading-relaxed text-amber-900">
                           {note.message}
@@ -3156,8 +3259,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
                   {tailoringResult.skill_match && (
                     <div className="rounded-2xl border border-violet-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">JD Alignment Snapshot</div>
-                      <div className="mt-2 text-sm leading-relaxed text-gray-700">
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">JD Alignment Snapshot</div>
+                      <div className="mt-2 text-sm leading-relaxed text-[#384959]">
                         Matched {tailoringResult.skill_match.before} JD skill cue{tailoringResult.skill_match.before === 1 ? "" : "s"} before rewrite.
                         {tailoringResult.skill_match.injectable?.length > 0
                           ? ` ${tailoringResult.skill_match.injectable.length} missing cue${tailoringResult.skill_match.injectable.length === 1 ? "" : "s"} looked safe to weave into existing experience.`
@@ -3170,13 +3273,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                     <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-4">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Review Tailor Changes</div>
-                          <div className="mt-1 text-sm text-gray-700">Accept, reject, or edit each proposed change before applying them to the draft.</div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Review Tailor Changes</div>
+                          <div className="mt-1 text-sm text-[#384959]">Accept, reject, or edit each proposed change before applying them to the draft.</div>
                         </div>
                         <div className="flex flex-wrap gap-2 text-xs">
                           <span className="rounded-full bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-800">Accepted {tailoringAcceptedCount}</span>
                           <span className="rounded-full bg-rose-100 px-2.5 py-1 font-semibold text-rose-800">Rejected {tailoringRejectedCount}</span>
-                          <span className="rounded-full bg-gray-100 px-2.5 py-1 font-semibold text-gray-700">Pending {tailoringPendingCount}</span>
+                          <span className="rounded-full bg-[#BDDDFC]/10 px-2.5 py-1 font-semibold text-[#384959]">Pending {tailoringPendingCount}</span>
                         </div>
                       </div>
                       <div className="max-h-[34rem] space-y-3 overflow-y-auto pr-1">
@@ -3185,9 +3288,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                           const changeKey = bulletId || `${change.type}-${index}`;
                           const userStatus = change.user_status || "pending";
                           return (
-                            <div key={`${changeKey}-${index}`} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                            <div key={`${changeKey}-${index}`} className="rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
                               <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">
+                                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">
                                   {titleCase(String(change.type || "change").replace(/_/g, " "))}
                                 </div>
                                 <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
@@ -3201,9 +3304,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 </span>
                               </div>
                               <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                                <div className="rounded-xl border border-gray-200 bg-white p-3">
-                                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">Original</div>
-                                  <div className="mt-2 text-sm leading-relaxed text-gray-700">{change.original}</div>
+                                <div className="rounded-xl border border-[#BDDDFC]/30 bg-white p-3">
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Original</div>
+                                  <div className="mt-2 text-sm leading-relaxed text-[#384959]">{change.original}</div>
                                 </div>
                                 <div className="rounded-xl border border-violet-200 bg-violet-50 p-3">
                                   <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-700">Tailored</div>
@@ -3214,7 +3317,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 value={tailorEditedTexts[changeKey] || ""}
                                 onChange={(event) => setTailorEditedTexts((current) => ({ ...current, [changeKey]: event.target.value }))}
                                 rows={3}
-                                className="mt-3 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm leading-relaxed text-gray-700"
+                                className="mt-3 w-full rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm leading-relaxed text-[#384959]"
                                 placeholder="Optional: edit this tailored text before applying it"
                               />
                               <div className="mt-3 flex flex-wrap gap-2">
@@ -3256,26 +3359,26 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   {Array.isArray(tailoringResult.ats_gaps) && tailoringResult.ats_gaps.length > 0 && (
                     <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-4">
                       <div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">ATS Gap Report</div>
-                        <div className="mt-1 text-sm text-gray-700">These skills are still missing or underrepresented after the tailor run.</div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">ATS Gap Report</div>
+                        <div className="mt-1 text-sm text-[#384959]">These skills are still missing or underrepresented after the tailor run.</div>
                       </div>
                       <div className="space-y-3">
                         {tailoringResult.ats_gaps.map((gap, index) => {
                           const gapKey = getAtsGapKey(gap);
                           const gapDecision = atsGapDecisions[gapKey] || "";
                           return (
-                            <div key={`${gapKey}-${index}`} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                            <div key={`${gapKey}-${index}`} className="rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
                               <div className="flex flex-wrap items-center gap-2">
-                                <div className="text-sm font-semibold text-gray-900">{gap.skill}</div>
+                                <div className="text-sm font-semibold text-[#384959]">{gap.skill}</div>
                                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${gap.required ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>
                                   {gap.required ? "Required" : "Preferred"}
                                 </span>
                               </div>
-                              <div className="mt-2 text-sm leading-relaxed text-gray-600">
-                                Suggested placement: <span className="font-medium text-gray-800">{RESUME_SECTION_LABELS[gap.suggested_section] || titleCase(gap.suggested_section || "experience")}</span>
+                              <div className="mt-2 text-sm leading-relaxed text-[#6A89A7]">
+                                Suggested placement: <span className="font-medium text-[#384959]">{RESUME_SECTION_LABELS[gap.suggested_section] || titleCase(gap.suggested_section || "experience")}</span>
                               </div>
                               {gap.action && (
-                                <div className="mt-1 text-sm leading-relaxed text-gray-600">
+                                <div className="mt-1 text-sm leading-relaxed text-[#6A89A7]">
                                   Suggested action: {gap.action}
                                 </div>
                               )}
@@ -3285,7 +3388,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                   value={atsGapInputs[gapKey] || ""}
                                   onChange={(event) => setAtsGapInputs((current) => ({ ...current, [gapKey]: event.target.value }))}
                                   placeholder={`Add a real example or fact for ${gap.skill}`}
-                                  className="mt-3 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm leading-relaxed text-gray-700"
+                                  className="mt-3 w-full rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm leading-relaxed text-[#384959]"
                                 />
                               )}
                               <div className="mt-3 flex flex-wrap gap-2">
@@ -3308,13 +3411,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 <button
                                   type="button"
                                   onClick={() => handleAtsGapAction(gap, "skip")}
-                                  className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                                  className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
                                 >
                                   <X size={13} />
                                   Skip
                                 </button>
                                 {gapDecision && (
-                                  <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-[11px] font-semibold text-gray-700">
+                                  <span className="inline-flex items-center rounded-full bg-[#BDDDFC]/10 px-2.5 py-1 text-[11px] font-semibold text-[#384959]">
                                     {titleCase(gapDecision)}
                                   </span>
                                 )}
@@ -3357,7 +3460,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                         setAtsGapInputs({});
                         setAtsGapDecisions({});
                       }}
-                      className="inline-flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+                      className="inline-flex items-center gap-2 rounded-2xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] transition hover:bg-[#f0f4f8]"
                     >
                       <X size={14} />
                       Dismiss
@@ -3372,8 +3475,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
             <div className="rounded-3xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-gray-900">AI Improve All Review</div>
-                  <div className="mt-1 text-xs leading-relaxed text-gray-600">
+                  <div className="text-sm font-semibold text-[#384959]">AI Improve All Review</div>
+                  <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
                     {reviewAllSummary?.message || `${reviewAllSuggestions.length} bullet suggestions ready for review.`}
                   </div>
                 </div>
@@ -3384,7 +3487,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                     setReviewAllSummary(null);
                     setReviewDecisions({});
                   }}
-                  className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                  className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-[#6A89A7] hover:bg-[#f0f4f8]"
                 >
                   Close
                 </button>
@@ -3414,8 +3517,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                           <CheckCircle size={15} />
                           Keep
                         </div>
-                        <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Current bullet</div>
-                        <div className="mt-1 text-sm leading-relaxed text-gray-700">{suggestion.original}</div>
+                        <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Current bullet</div>
+                        <div className="mt-1 text-sm leading-relaxed text-[#384959]">{suggestion.original}</div>
                         {suggestion.reason && (
                           <div className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-800">
                             {suggestion.reason}
@@ -3432,18 +3535,18 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                         <Sparkles size={15} />
                         Improve
                       </div>
-                      <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Current bullet</div>
-                      <div className="mt-1 text-sm leading-relaxed text-gray-700">{suggestion.original}</div>
+                      <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Current bullet</div>
+                      <div className="mt-1 text-sm leading-relaxed text-[#384959]">{suggestion.original}</div>
                       {suggestion.issue && (
                         <>
-                          <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Issue</div>
+                          <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Issue</div>
                           <div className="mt-1 text-sm leading-relaxed text-amber-800">{suggestion.issue}</div>
                         </>
                       )}
                       {suggestion.suggested && (
                         <>
-                          <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-gray-500">Suggested rewrite</div>
-                          <div className="mt-1 text-sm leading-relaxed text-gray-900">{suggestion.suggested}</div>
+                          <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Suggested rewrite</div>
+                          <div className="mt-1 text-sm leading-relaxed text-[#384959]">{suggestion.suggested}</div>
                         </>
                       )}
                       {suggestion.reason && (
@@ -3470,7 +3573,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                           className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition ${
                             decision === "skip"
                               ? "bg-slate-700 text-white"
-                              : "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                              : "border border-[#BDDDFC]/30 bg-white text-[#384959] hover:bg-[#f0f4f8]"
                           }`}
                         >
                           <X size={14} />
@@ -3483,7 +3586,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               </div>
 
               <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-xs leading-relaxed text-gray-600">
+                <div className="text-xs leading-relaxed text-[#6A89A7]">
                   {pendingReviewCount > 0
                     ? `Review ${pendingReviewCount} more suggestion${pendingReviewCount === 1 ? "" : "s"} before applying accepted changes.`
                     : acceptedReviewCount > 0
@@ -3494,7 +3597,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   type="button"
                   onClick={applyAcceptedReviewChanges}
                   disabled={pendingReviewCount > 0}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#384959] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
                 >
                   <CheckCircle size={14} />
                   Apply All Accepted Changes
@@ -3504,15 +3607,15 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           )}
 
           {showFeedbackPanels && (
-          <div className="rounded-3xl border border-gray-200 bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold text-gray-800">Singapore Tips</div>
+          <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+            <div className="text-sm font-semibold text-[#384959]">Singapore Tips</div>
             <ul className="mt-3 space-y-2">
               {(scoreData?.sg_tips?.length ? scoreData.sg_tips : [
                 "Mention residency status if it meaningfully improves your fit.",
                 "List concrete tools and platforms. Skills-based matching matters.",
                 "Keep the final layout ATS-friendly and easy to scan on mobile.",
               ]).map((tip, index) => (
-                <li key={`${tip}-${index}`} className="flex items-start gap-2 text-sm leading-relaxed text-gray-600">
+                <li key={`${tip}-${index}`} className="flex items-start gap-2 text-sm leading-relaxed text-[#6A89A7]">
                   <ChevronRight size={14} className="mt-0.5 flex-shrink-0 text-indigo-500" />
                   <span>{tip}</span>
                 </li>
@@ -3537,7 +3640,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   </div>
                 ) : (
                   <>
-                    <div className="whitespace-pre-line rounded-2xl bg-white p-4 text-sm leading-relaxed text-gray-700">
+                    <div className="whitespace-pre-line rounded-2xl bg-white p-4 text-sm leading-relaxed text-[#384959]">
                       {coachResponse?.coaching}
                     </div>
                     {sessionId && (
@@ -3554,31 +3657,31 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
         <section className={`${mobilePanel === "edit" ? "block" : "hidden"} ${isEditorView ? "lg:order-1" : "lg:order-2"} lg:block`}>
           <div className="rounded-[2rem] border border-slate-200 bg-[#f3f5f8] p-4 shadow-sm sm:p-5">
-            <div className="flex flex-col gap-3 border-b border-gray-200/70 px-1 pb-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-b border-[#BDDDFC]/30/70 px-1 pb-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Document Preview</div>
-                <div className="mt-1 text-sm text-gray-600">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6A89A7]">Document Preview</div>
+                <div className="mt-1 text-sm text-[#6A89A7]">
                   {wordCount} words
                   {resumeText.trim() ? " • click any line to edit inline" : " • upload or paste a resume to begin"}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex items-center rounded-full border border-gray-200 bg-white">
+                <div className="inline-flex items-center rounded-full border border-[#BDDDFC]/30 bg-white">
                   <button
                     type="button"
                     onClick={handleUndo}
                     disabled={undoStackRef.current.length === 0}
-                    className="rounded-l-full px-2.5 py-1.5 text-xs text-gray-500 transition hover:text-gray-700 disabled:opacity-30"
+                    className="rounded-l-full px-2.5 py-1.5 text-xs text-[#6A89A7] transition hover:text-[#384959] disabled:opacity-30"
                     title="Undo (Ctrl+Z)"
                   >
                     <RefreshCw size={12} className="scale-x-[-1]" />
                   </button>
-                  <div className="h-4 w-px bg-gray-200" />
+                  <div className="h-4 w-px bg-[#BDDDFC]/20" />
                   <button
                     type="button"
                     onClick={handleRedo}
                     disabled={redoStackRef.current.length === 0}
-                    className="rounded-r-full px-2.5 py-1.5 text-xs text-gray-500 transition hover:text-gray-700 disabled:opacity-30"
+                    className="rounded-r-full px-2.5 py-1.5 text-xs text-[#6A89A7] transition hover:text-[#384959] disabled:opacity-30"
                     title="Redo (Ctrl+Shift+Z)"
                   >
                     <RefreshCw size={12} />
@@ -3587,7 +3690,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 <button
                   type="button"
                   onClick={() => setAnnotationsOn((current) => !current)}
-                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${annotationsOn ? "bg-gray-900 text-white" : "bg-white text-gray-600 ring-1 ring-gray-200"}`}
+                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${annotationsOn ? "bg-gray-900 text-white" : "bg-white text-[#6A89A7] ring-1 ring-gray-200"}`}
                 >
                   <Zap size={12} />
                   {annotationsOn ? "Annotations On" : "Annotations Off"}
@@ -3605,15 +3708,15 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
             <div
               ref={resumePrintRef}
-              className={`resume-print-target mx-auto mt-5 bg-white shadow-[0_2px_20px_rgba(0,0,0,0.1)] border border-gray-200 ${templateStyles.pageClass}`}
+              className={`resume-print-target mx-auto mt-5 bg-white shadow-[0_2px_20px_rgba(0,0,0,0.1)] border border-[#BDDDFC]/30 ${templateStyles.pageClass}`}
               style={templateStyles.pageStyle}
             >
               {resumeText.trim() ? (
                 <>
                   {displayHeaderLines.length > 0 && (
-                    <div className="mb-4 border-b border-gray-300 pb-2 text-center">
+                    <div className="mb-4 border-b border-[#BDDDFC]/30 pb-2 text-center">
                       <div className={templateStyles.nameClass} style={templateStyles.nameStyle}>{displayHeaderLines[0]}</div>
-                      {displayContactLine && <div className="mx-auto mt-0.5 max-w-[34rem] text-gray-600" style={templateStyles.contactStyle}>{displayContactLine}</div>}
+                      {displayContactLine && <div className="mx-auto mt-0.5 max-w-[34rem] text-[#6A89A7]" style={templateStyles.contactStyle}>{displayContactLine}</div>}
                     </div>
                   )}
 
@@ -3647,7 +3750,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                     lines.splice(insertAt, 0, "", ...template.split("\n"));
                                     applyResumeText(lines.join("\n"));
                                   }}
-                                  className="opacity-0 group-hover/addentry:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1.5 rounded-full border border-dashed border-blue-300 bg-white px-3 py-1 text-[11px] font-medium text-blue-600 hover:bg-blue-50"
+                                  className="opacity-0 group-hover/addentry:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1.5 rounded-full border border-dashed border-blue-300 bg-white px-3 py-1 text-[11px] font-medium text-[#88BDF2] hover:bg-blue-50"
                                 >
                                   <Plus size={11} />
                                   Add {prevItem.sectionKey === "experience" ? "Position" : prevItem.sectionKey === "education" ? "Education" : "Entry"}
@@ -3686,7 +3789,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                               commitEdit(section);
                             }
                           }}
-                          className="w-full resize-none rounded-xl border border-indigo-200 bg-white px-3 py-2 text-inherit leading-relaxed text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                          className="w-full resize-none rounded-xl border border-indigo-200 bg-white px-3 py-2 text-inherit leading-relaxed text-[#384959] focus:outline-none focus:ring-2 focus:ring-[#BDDDFC]"
                           style={{
                             fontSize: "16px",
                             lineHeight: templateStyles.bodyStyle.lineHeight,
@@ -3709,7 +3812,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                               <h3 className={templateStyles.headingClass} style={templateStyles.headingStyle}>
                                 {section.headingText}
                               </h3>
-                              <p className="mb-4 text-gray-700" style={templateStyles.bodyStyle}>
+                              <p className="mb-4 text-[#384959]" style={templateStyles.bodyStyle}>
                                 {renderHighlightedText(
                                   isShoutySummaryParagraph(section.bodyText, section.sectionKey)
                                     ? toSentenceCaseDisplayText(section.bodyText)
@@ -3720,35 +3823,35 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                             </div>
                           )}
                           {section.type === "education_entry" && (
-                            <div className={`mb-2 rounded-lg border border-gray-100 bg-gray-50/40 px-4 py-3 ${templateStyles.subheadingClass}`}>
+                            <div className={`mb-2 rounded-lg border border-[#BDDDFC]/20 bg-[#f0f4f8]/40 px-4 py-3 ${templateStyles.subheadingClass}`}>
                               <div className="flex items-baseline justify-between gap-4">
-                                <div className="font-semibold leading-snug text-gray-900">
+                                <div className="font-semibold leading-snug text-[#384959]">
                                   {renderHighlightedText(
                                     section.fields.degree || section.fields.institution || section.text,
                                     section.keywordMatches || [],
                                   )}
                                 </div>
                                 {section.fields.dateRange && (
-                                  <div className="shrink-0 text-[0.9em] text-gray-400 whitespace-nowrap">
+                                  <div className="shrink-0 text-[0.9em] text-[#6A89A7] whitespace-nowrap">
                                     {section.fields.dateRange}
                                   </div>
                                 )}
                               </div>
                               {section.fields.degree && section.fields.institution && (
-                                <div className="mt-0.5 text-[0.93em] leading-snug text-gray-600">
+                                <div className="mt-0.5 text-[0.93em] leading-snug text-[#6A89A7]">
                                   {section.fields.institution}
                                 </div>
                               )}
                               {(section.fields.gpa || section.fields.honors.length > 0 || section.fields.details.length > 0) && (
-                                <div className="mt-1 text-[0.85em] text-gray-500">
+                                <div className="mt-1 text-[0.85em] text-[#6A89A7]">
                                   {[section.fields.gpa, ...section.fields.honors, ...section.fields.details].filter(Boolean).join(" · ")}
                                 </div>
                               )}
                               {section.fields.bullets.length > 0 && (
                                 <div className="mt-1.5 space-y-0.5">
                                   {section.fields.bullets.map((bullet) => (
-                                    <div key={bullet.id} className="flex gap-2 text-[0.88em] text-gray-600">
-                                      <span className="text-gray-400">•</span>
+                                    <div key={bullet.id} className="flex gap-2 text-[0.88em] text-[#6A89A7]">
+                                      <span className="text-[#6A89A7]">•</span>
                                       <span>{renderHighlightedText(bullet.text, section.keywordMatches || [])}</span>
                                     </div>
                                   ))}
@@ -3758,7 +3861,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                           )}
                           {section.type === "subheading" && (
                             section.variant === "education_main" ? (
-                              <div className={`mb-1 rounded-lg border border-gray-100 bg-gray-50/40 px-3 py-2.5 ${templateStyles.subheadingClass}`}>
+                              <div className={`mb-1 rounded-lg border border-[#BDDDFC]/20 bg-[#f0f4f8]/40 px-3 py-2.5 ${templateStyles.subheadingClass}`}>
                                 {(() => {
                                   const meta = splitEducationMeta(
                                     getDisplaySubheadingText(section.right, section.sectionKey, section.variant),
@@ -3766,20 +3869,20 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                   return (
                                     <>
                                       <div className="flex items-baseline justify-between gap-4">
-                                        <div className="font-semibold leading-snug text-gray-900">
+                                        <div className="font-semibold leading-snug text-[#384959]">
                                           {renderHighlightedText(
                                             getDisplaySubheadingText(section.left, section.sectionKey, section.variant),
                                             section.keywordMatches || [],
                                           )}
                                         </div>
                                         {meta.secondary && (
-                                          <div className="shrink-0 text-[0.9em] text-gray-400 whitespace-nowrap">
+                                          <div className="shrink-0 text-[0.9em] text-[#6A89A7] whitespace-nowrap">
                                             {meta.secondary}
                                           </div>
                                         )}
                                       </div>
                                       {meta.primary && (
-                                        <div className="mt-0.5 text-[0.93em] leading-snug text-gray-600">
+                                        <div className="mt-0.5 text-[0.93em] leading-snug text-[#6A89A7]">
                                           {meta.primary}
                                         </div>
                                       )}
@@ -3788,7 +3891,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 })()}
                               </div>
                             ) : section.variant === "education_detail" ? (
-                              <div className="-mt-0.5 mb-2 ml-3 flex items-baseline justify-between gap-4 text-[0.88em] text-gray-500">
+                              <div className="-mt-0.5 mb-2 ml-3 flex items-baseline justify-between gap-4 text-[0.88em] text-[#6A89A7]">
                                 <div className="leading-snug">
                                   {renderHighlightedText(
                                     getDisplaySubheadingText(section.left, section.sectionKey, section.variant),
@@ -3801,13 +3904,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                               </div>
                             ) : (
                               <div className={`flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between ${templateStyles.subheadingClass}`}>
-                                <div className={section.variant === "dated" ? "font-semibold text-gray-900" : "font-normal text-gray-800"}>
+                                <div className={section.variant === "dated" ? "font-semibold text-[#384959]" : "font-normal text-[#384959]"}>
                                   {renderHighlightedText(
                                     getDisplaySubheadingText(section.left, section.sectionKey, section.variant),
                                     section.keywordMatches || [],
                                   )}
                                 </div>
-                                <div className="text-sm text-gray-500">
+                                <div className="text-sm text-[#6A89A7]">
                                   {getDisplaySubheadingText(section.right, section.sectionKey, section.variant)}
                                 </div>
                               </div>
@@ -3818,11 +3921,11 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                               const inlineSegments = getInlineResumeSegments(section);
                               if (inlineSegments) {
                                 return (
-                                  <div className="mb-4 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-gray-700" style={templateStyles.bodyStyle}>
+                                  <div className="mb-4 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[#384959]" style={templateStyles.bodyStyle}>
                                     {inlineSegments.map((segment, index) => (
                                       <Fragment key={`${section.id}-segment-${index}`}>
-                                        {index > 0 && <span className="text-gray-300">|</span>}
-                                        <span className="font-medium text-gray-700">
+                                        {index > 0 && <span className="text-[#6A89A7]/60">|</span>}
+                                        <span className="font-medium text-[#384959]">
                                           {renderHighlightedText(getDisplayInlineSegmentText(segment), section.keywordMatches || [])}
                                         </span>
                                       </Fragment>
@@ -3833,7 +3936,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
                               if (section.sectionKey === "education") {
                                 return (
-                                  <p className="-mt-0.5 mb-2 ml-3 text-[0.88em] leading-snug text-gray-500" style={templateStyles.bodyStyle}>
+                                  <p className="-mt-0.5 mb-2 ml-3 text-[0.88em] leading-snug text-[#6A89A7]" style={templateStyles.bodyStyle}>
                                     {renderHighlightedText(getDisplayParagraphText(section), section.keywordMatches || [])}
                                   </p>
                                 );
@@ -3841,7 +3944,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
                               return (
                                 <p
-                                  className={`mb-4 text-gray-700 ${section.sectionKey === "summary" && isLikelySummaryLeadParagraph(section.text) && !isShoutySummaryParagraph(section.text, section.sectionKey) ? "font-semibold tracking-[0.03em] text-gray-900" : ""}`}
+                                  className={`mb-4 text-[#384959] ${section.sectionKey === "summary" && isLikelySummaryLeadParagraph(section.text) && !isShoutySummaryParagraph(section.text, section.sectionKey) ? "font-semibold tracking-[0.03em] text-[#384959]" : ""}`}
                                   style={templateStyles.bodyStyle}
                                 >
                                   {renderHighlightedText(getDisplayParagraphText(section), section.keywordMatches || [])}
@@ -3851,9 +3954,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                           )}
                           {section.type === "bullet" && (
                             <div className={`flex gap-3 ${["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "ml-2" : ""}`}>
-                              <div className={`pt-1 text-gray-400 ${["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.85rem]" : "text-[1rem]"}`}>•</div>
+                              <div className={`pt-1 text-[#6A89A7] ${["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.85rem]" : "text-[1rem]"}`}>•</div>
                               <div className="flex-1">
-                                <p className={["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.88em] text-gray-500" : "text-gray-700"} style={templateStyles.bodyStyle}>
+                                <p className={["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.88em] text-[#6A89A7]" : "text-[#384959]"} style={templateStyles.bodyStyle}>
                                   {renderHighlightedText(section.text, annotation?.keywordMatches || [])}
                                 </p>
                                 {annotationsOn && annotation && (
@@ -3881,7 +3984,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handlePromoteToPosition(section); }}
-                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-[#6A89A7] hover:text-[#384959] hover:bg-indigo-50 transition"
                               title="Convert to position/entry heading"
                             >
                               <ArrowUp size={9} />
@@ -3892,7 +3995,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handlePromoteToSection(section); }}
-                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-gray-400 hover:text-violet-600 hover:bg-violet-50 transition"
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-[#6A89A7] hover:text-violet-600 hover:bg-violet-50 transition"
                               title="Convert to section heading"
                             >
                               <Type size={9} />
@@ -3903,7 +4006,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleDemoteToBullet(section); }}
-                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition"
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-[#6A89A7] hover:text-amber-600 hover:bg-amber-50 transition"
                               title="Convert to bullet point"
                             >
                               <List size={9} />
@@ -3918,7 +4021,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); handleMoveSection(section.id, -1); }}
-                            className="rounded p-0.5 text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition"
+                            className="rounded p-0.5 text-[#6A89A7]/60 hover:text-[#6A89A7] hover:bg-[#BDDDFC]/10 transition"
                             title="Move section up"
                           >
                             <ArrowUp size={12} />
@@ -3926,7 +4029,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); handleMoveSection(section.id, 1); }}
-                            className="rounded p-0.5 text-gray-300 hover:text-gray-600 hover:bg-gray-100 transition"
+                            className="rounded p-0.5 text-[#6A89A7]/60 hover:text-[#6A89A7] hover:bg-[#BDDDFC]/10 transition"
                             title="Move section down"
                           >
                             <ArrowDown size={12} />
@@ -4009,7 +4112,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                               key={option.id}
                               type="button"
                               onClick={() => handleAddSection(option)}
-                              className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-gray-200 hover:bg-gray-50"
+                              className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-gray-200 hover:bg-[#f0f4f8]"
                             >
                               <Plus size={13} />
                               {option.label}
@@ -4021,10 +4124,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   </div>
                 </>
               ) : (
-                <div className="flex min-h-[700px] flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-gray-200 bg-gray-50 px-8 text-center">
-                  <FileText size={36} className="text-gray-300" />
-                  <div className="mt-4 text-lg font-semibold text-gray-700">Your resume document will appear here</div>
-                  <p className="mt-2 max-w-md text-sm leading-relaxed text-gray-500">
+                <div className="flex min-h-[700px] flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-[#BDDDFC]/30 bg-[#f0f4f8] px-8 text-center">
+                  <FileText size={36} className="text-[#6A89A7]/60" />
+                  <div className="mt-4 text-lg font-semibold text-[#384959]">Your resume document will appear here</div>
+                  <p className="mt-2 max-w-md text-sm leading-relaxed text-[#6A89A7]">
                     Upload a PDF or DOCX, or paste your resume text above. Once it lands here, you’ll be able to edit line by line and review feedback beside it.
                   </p>
                 </div>
@@ -4035,7 +4138,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       </div>
 
       <div className="fixed inset-x-0 bottom-4 z-20 px-4">
-        <div className="mx-auto flex w-full items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white/95 px-4 py-3 shadow-[0_16px_40px_rgba(15,23,42,0.18)] backdrop-blur">
+        <div className="mx-auto flex w-full items-center justify-between gap-3 rounded-2xl border border-[#BDDDFC]/30 bg-white/95 px-4 py-3 shadow-[0_16px_40px_rgba(15,23,42,0.18)] backdrop-blur">
           <button
             type="button"
             onClick={jumpToScorePanel}
@@ -4046,11 +4149,11 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           </button>
 
           <div className="hidden lg:flex items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-gray-500">Template</span>
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Template</span>
             <select
               value={selectedTemplate}
               onChange={(event) => setSelectedTemplate(event.target.value)}
-              className="rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              className="rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm text-[#384959] focus:outline-none focus:ring-2 focus:ring-[#BDDDFC]"
             >
               {templates.map((template) => (
                 <option key={template.id} value={template.id}>{template.name}</option>
@@ -4069,14 +4172,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 type="button"
                 onClick={handleFinalizeScore}
                 disabled={scoring || !resumeText.trim()}
-                className="hidden sm:inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-40"
+                className="hidden sm:inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] transition hover:bg-[#f0f4f8] disabled:opacity-40"
               >
                 {scoring ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 {scoring ? "Scoring..." : "Finalize Score"}
               </button>
             )}
             {user && (
-              <div className="inline-flex items-center gap-1 rounded-xl border border-gray-200 bg-white px-1.5 py-1">
+              <div className="inline-flex items-center gap-1 rounded-xl border border-[#BDDDFC]/30 bg-white px-1.5 py-1">
                 <input
                   type="text"
                   value={saveVersionLabel}
@@ -4089,7 +4192,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   type="button"
                   onClick={saveCurrentVersion}
                   disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                  className="rounded-lg bg-[#384959] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
                 >
                   {savingVersion ? "..." : "Save"}
                 </button>
@@ -4098,7 +4201,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
             <button
               type="button"
               onClick={() => setWizardStep(2)}
-              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+              className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] transition hover:bg-[#f0f4f8]"
             >
               <ArrowLeft size={14} />
               Templates
@@ -4119,13 +4222,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       {/* ── Step 4: Export ────────────────────────────────────────────── */}
       {wizardStep === 4 && (
         <div className="mx-auto max-w-2xl space-y-6">
-          <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm text-center">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-gray-500">Final Score</div>
-            <div className={`mt-3 text-5xl font-bold ${scoreData ? scoreTheme.text : "text-gray-500"}`}>
+          <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-6 shadow-sm text-center">
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6A89A7]">Final Score</div>
+            <div className={`mt-3 text-5xl font-bold ${scoreData ? scoreTheme.text : "text-[#6A89A7]"}`}>
               {scoring ? "..." : scoreDisplayValue}
-              <span className="ml-1 text-lg font-medium text-gray-400">{scoreData ? "/100" : ""}</span>
+              <span className="ml-1 text-lg font-medium text-[#6A89A7]">{scoreData ? "/100" : ""}</span>
             </div>
-            <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-gray-100 mx-auto max-w-xs">
+            <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-[#BDDDFC]/10 mx-auto max-w-xs">
               <div className={`h-full rounded-full transition-all ${scoreTheme.bar}`} style={{ width: `${scoreData && overallScore !== null ? overallScore : 0}%` }} />
             </div>
             {needsRescore && (
@@ -4133,7 +4236,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 type="button"
                 onClick={handleFinalizeScore}
                 disabled={scoring}
-                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] disabled:opacity-40"
               >
                 {scoring ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 {scoring ? "Scoring..." : "Finalize Score"}
@@ -4146,10 +4249,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
             )}
           </div>
 
-          <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
-            <div className="text-sm font-semibold text-gray-800">Download Your Resume</div>
-            <p className="text-sm text-gray-500">
-              Template: <span className="font-medium text-gray-700">{templateMeta?.name || "Modern"}</span>
+          <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-6 shadow-sm space-y-4">
+            <div className="text-sm font-semibold text-[#384959]">Download Your Resume</div>
+            <p className="text-sm text-[#6A89A7]">
+              Template: <span className="font-medium text-[#384959]">{templateMeta?.name || "Modern"}</span>
             </p>
             <div className="flex flex-wrap gap-3">
               <button
@@ -4180,8 +4283,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           </div>
 
           {user && (
-            <div className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
-              <div className="text-sm font-semibold text-gray-800">Save This Version</div>
+            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-6 shadow-sm space-y-4">
+              <div className="text-sm font-semibold text-[#384959]">Save This Version</div>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
@@ -4189,13 +4292,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   onChange={(e) => setSaveVersionLabel(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && saveVersionLabel.trim()) saveCurrentVersion(); }}
                   placeholder="Name this version..."
-                  className="flex-1 rounded-xl border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC]"
                 />
                 <button
                   type="button"
                   onClick={saveCurrentVersion}
                   disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                  className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                  className="rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
                 >
                   {savingVersion ? "Saving..." : "Save Version"}
                 </button>
@@ -4214,7 +4317,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 <button
                   type="button"
                   onClick={() => setActiveTab("scraper")}
-                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700"
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#2d3a47]"
                 >
                   <Search size={14} />
                   Search Matching Jobs
@@ -4222,7 +4325,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 <button
                   type="button"
                   onClick={() => setActiveTab("tracker")}
-                  className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
                 >
                   <Plus size={14} />
                   Track This Application
@@ -4235,7 +4338,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
             <button
               type="button"
               onClick={() => setWizardStep(3)}
-              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
             >
               <ArrowLeft size={14} />
               Back to Editor
@@ -4249,7 +4352,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                 setDownloadReady(false);
                 setWizardStep(1);
               }}
-              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
             >
               <Plus size={14} />
               Start Another

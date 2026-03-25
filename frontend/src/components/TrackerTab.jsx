@@ -118,14 +118,14 @@ export default function TrackerTab({ user, jobs, refreshJobs }) {
       )}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
-          { label: "Total", value: stats.total, bg: "bg-gray-50" },
-          { label: "Active", value: stats.active, bg: "bg-blue-50" },
+          { label: "Total", value: stats.total, bg: "bg-[#f0f4f8]" },
+          { label: "Active", value: stats.active, bg: "bg-[#BDDDFC]/15" },
           { label: "Offers", value: stats.offers, bg: "bg-green-50" },
-          { label: "Closed", value: stats.closed, bg: "bg-gray-50" },
+          { label: "Closed", value: stats.closed, bg: "bg-[#f0f4f8]" },
         ].map((s) => (
           <div key={s.label} className={`${s.bg} rounded-xl p-4 text-center`}>
-            <div className="text-2xl font-bold text-gray-800">{s.value}</div>
-            <div className="text-xs text-gray-500 mt-1">{s.label}</div>
+            <div className="text-2xl font-bold text-[#384959]">{s.value}</div>
+            <div className="text-xs text-[#6A89A7] mt-1">{s.label}</div>
           </div>
         ))}
       </div>
@@ -139,58 +139,58 @@ export default function TrackerTab({ user, jobs, refreshJobs }) {
 
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2">
-          <Filter size={14} className="text-gray-400" />
-          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white">
+          <Filter size={14} className="text-[#6A89A7]" />
+          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="text-sm border border-[#BDDDFC]/30 rounded-lg px-3 py-1.5 bg-white">
             <option value="all">All statuses</option>
             {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </div>
         <div className="flex items-center gap-2">
           {isPro && (
-            <button onClick={handleExport} className="flex items-center gap-2 border border-gray-200 text-gray-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition">
+            <button onClick={handleExport} className="flex items-center gap-2 border border-[#BDDDFC]/30 text-[#6A89A7] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#f0f4f8] transition">
               <Download size={14} /> Export CSV
             </button>
           )}
-          <button onClick={() => refreshJobs()} className="flex items-center gap-2 border border-gray-200 text-gray-600 px-3 py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+          <button onClick={() => refreshJobs()} className="flex items-center gap-2 border border-[#BDDDFC]/30 text-[#6A89A7] px-3 py-2 rounded-lg text-sm hover:bg-[#f0f4f8] transition">
             <RefreshCw size={14} />
           </button>
           <button onClick={() => { resetForm(); setShowForm(true); }} disabled={atLimit}
-            className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition">
+            className="flex items-center gap-2 bg-[#384959] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2d3a47] disabled:opacity-40 transition">
             <Plus size={16} /> Add
           </button>
         </div>
       </div>
 
       {showForm && (
-        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4 shadow-sm">
+        <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5 space-y-4 shadow-sm">
           <div className="flex justify-between items-center">
-            <h3 className="font-semibold text-gray-800">{editingId ? "Edit" : "New"} Application</h3>
-            <button onClick={resetForm} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+            <h3 className="font-semibold text-[#384959]">{editingId ? "Edit" : "New"} Application</h3>
+            <button onClick={resetForm} className="text-[#6A89A7] hover:text-[#384959]"><X size={18} /></button>
           </div>
           {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">{error}</div>}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <input placeholder="Company *" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-            <input placeholder="Role *" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+            <input placeholder="Company *" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm" />
+            <input placeholder="Role *" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm" />
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Applied</label>
-              <input type="date" value={form.date_applied} onChange={(e) => setForm({ ...form, date_applied: e.target.value })} className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full" />
+              <label className="text-xs text-[#6A89A7] mb-1 block">Applied</label>
+              <input type="date" value={form.date_applied} onChange={(e) => setForm({ ...form, date_applied: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm w-full" />
             </div>
-            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="border border-gray-200 rounded-lg px-3 py-2 text-sm">
+            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm">
               {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
             </select>
-            <select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} className="border border-gray-200 rounded-lg px-3 py-2 text-sm">
+            <select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm">
               {SG_JOB_PORTALS.map((p) => <option key={p.key} value={p.name}>{p.name}</option>)}
               <option value="Referral">Referral</option>
               <option value="Other">Other</option>
             </select>
             <div>
-              <label className="text-xs text-gray-500 mb-1 block">Follow-up</label>
-              <input type="date" value={form.follow_up_date || ""} onChange={(e) => setForm({ ...form, follow_up_date: e.target.value })} className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full" />
+              <label className="text-xs text-[#6A89A7] mb-1 block">Follow-up</label>
+              <input type="date" value={form.follow_up_date || ""} onChange={(e) => setForm({ ...form, follow_up_date: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm w-full" />
             </div>
           </div>
-          <textarea placeholder="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full" rows={2} />
+          <textarea placeholder="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm w-full" rows={2} />
           <button onClick={handleSave} disabled={saving || !form.company || !form.role}
-            className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-40 transition">
+            className="flex items-center gap-2 bg-[#384959] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2d3a47] disabled:opacity-40 transition">
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
             {editingId ? "Update" : "Save"}
           </button>
@@ -198,9 +198,9 @@ export default function TrackerTab({ user, jobs, refreshJobs }) {
       )}
 
       {/* Desktop table */}
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden hidden sm:block">
+      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl overflow-hidden hidden sm:block">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50 text-gray-500 text-xs uppercase">
+          <thead className="bg-[#f0f4f8] text-[#6A89A7] text-xs uppercase">
             <tr>
               <th className="text-left px-4 py-3">Company</th>
               <th className="text-left px-4 py-3">Role</th>
@@ -211,21 +211,21 @@ export default function TrackerTab({ user, jobs, refreshJobs }) {
               <th className="text-right px-4 py-3">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody className="divide-y divide-[#BDDDFC]/15">
             {filtered.length === 0 && (
-              <tr><td colSpan={7} className="text-center py-8 text-gray-400">No applications yet</td></tr>
+              <tr><td colSpan={7} className="text-center py-8 text-[#6A89A7]">No applications yet</td></tr>
             )}
             {filtered.map((job) => (
-              <tr key={job.id} className="hover:bg-gray-50 transition">
-                <td className="px-4 py-3 font-medium text-gray-800">{job.company}</td>
-                <td className="px-4 py-3 text-gray-600">{job.role}</td>
-                <td className="px-4 py-3 text-gray-500">{job.date_applied}</td>
-                <td className="px-4 py-3 text-gray-500">{job.source}</td>
+              <tr key={job.id} className="hover:bg-[#f0f4f8] transition">
+                <td className="px-4 py-3 font-medium text-[#384959]">{job.company}</td>
+                <td className="px-4 py-3 text-[#6A89A7]">{job.role}</td>
+                <td className="px-4 py-3 text-[#6A89A7]">{job.date_applied}</td>
+                <td className="px-4 py-3 text-[#6A89A7]">{job.source}</td>
                 <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
-                <td className="px-4 py-3 text-gray-500">{daysBetween(job.date_applied, todayStr())}d</td>
+                <td className="px-4 py-3 text-[#6A89A7]">{daysBetween(job.date_applied, todayStr())}d</td>
                 <td className="px-4 py-3 text-right">
-                  <button onClick={() => handleEdit(job)} className="text-gray-400 hover:text-indigo-600 mr-2"><Edit3 size={14} /></button>
-                  <button onClick={() => handleDelete(job.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={14} /></button>
+                  <button onClick={() => handleEdit(job)} className="text-[#6A89A7] hover:text-[#384959] mr-2"><Edit3 size={14} /></button>
+                  <button onClick={() => handleDelete(job.id)} className="text-[#6A89A7] hover:text-red-500"><Trash2 size={14} /></button>
                 </td>
               </tr>
             ))}
@@ -236,25 +236,25 @@ export default function TrackerTab({ user, jobs, refreshJobs }) {
       {/* Mobile card layout */}
       <div className="sm:hidden space-y-3">
         {filtered.length === 0 && (
-          <div className="text-center py-8 text-gray-400 text-sm">No applications yet</div>
+          <div className="text-center py-8 text-[#6A89A7] text-sm">No applications yet</div>
         )}
         {filtered.map((job) => (
-          <div key={job.id} className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
+          <div key={job.id} className="bg-white border border-[#BDDDFC]/30 rounded-xl p-4 space-y-2">
             <div className="flex items-start justify-between">
               <div>
-                <div className="font-semibold text-gray-800 text-sm">{job.company}</div>
-                <div className="text-sm text-gray-600">{job.role}</div>
+                <div className="font-semibold text-[#384959] text-sm">{job.company}</div>
+                <div className="text-sm text-[#6A89A7]">{job.role}</div>
               </div>
               <StatusBadge status={job.status} />
             </div>
-            <div className="flex items-center gap-3 text-xs text-gray-500">
+            <div className="flex items-center gap-3 text-xs text-[#6A89A7]">
               <span>{job.date_applied}</span>
               <span>{job.source}</span>
               <span>{daysBetween(job.date_applied, todayStr())}d ago</span>
             </div>
-            {job.notes && <p className="text-xs text-gray-400">{job.notes}</p>}
+            {job.notes && <p className="text-xs text-[#6A89A7]">{job.notes}</p>}
             <div className="flex gap-2 pt-1">
-              <button onClick={() => handleEdit(job)} className="text-xs text-indigo-600 hover:underline flex items-center gap-1"><Edit3 size={12} /> Edit</button>
+              <button onClick={() => handleEdit(job)} className="text-xs text-[#384959] hover:underline flex items-center gap-1"><Edit3 size={12} /> Edit</button>
               <button onClick={() => handleDelete(job.id)} className="text-xs text-red-500 hover:underline flex items-center gap-1"><Trash2 size={12} /> Delete</button>
             </div>
           </div>

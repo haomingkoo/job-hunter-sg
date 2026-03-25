@@ -720,6 +720,33 @@ export function groupEducationSections(sections) {
   return result;
 }
 
+/**
+ * When a heading_paragraph (inline heading + body on same line) is followed by
+ * a separate paragraph in the same section, the body text shows twice.
+ * Demote the heading_paragraph to a plain heading so the standalone paragraph
+ * is the single source of truth.
+ */
+export function dedupeHeadingParagraphs(sections) {
+  return sections.map((section, index) => {
+    if (section.type !== "heading_paragraph") return section;
+
+    // Look ahead past spacers for a paragraph in the same section
+    let nextIndex = index + 1;
+    while (nextIndex < sections.length && sections[nextIndex].type === "spacer") nextIndex += 1;
+    const next = sections[nextIndex];
+    if (next && next.type === "paragraph" && next.sectionKey === section.sectionKey) {
+      // Convert to plain heading -- the following paragraph carries the content
+      return {
+        ...section,
+        type: "heading",
+        text: section.headingText,
+        keywordMatches: [],
+      };
+    }
+    return section;
+  });
+}
+
 export function mergeParsedParagraphRuns(sections) {
   const merged = [];
 
@@ -1308,7 +1335,7 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
   }
 
   return pruneEmptySectionGroups(
-    reorderParsedSections(mergeSummaryLeadParagraphs(mergeParsedParagraphRuns(parsed)), templateOrder),
+    reorderParsedSections(mergeSummaryLeadParagraphs(mergeParsedParagraphRuns(dedupeHeadingParagraphs(parsed))), templateOrder),
   );
 }
 
