@@ -360,7 +360,11 @@ class ResumeScorer:
                 continue
 
             # Method 1: explicit bullet character
+            # Skip skills/certifications/education sections — these are labels, not achievements
+            _non_bullet_sections = {"skills", "certifications", "education", "languages", "awards"}
             if _BULLET_RE.match(line):
+                if current_section in _non_bullet_sections:
+                    continue
                 cleaned = re.sub(
                     r"^[\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]"
                     r"|\d+[.)]\s)\s*",
