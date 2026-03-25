@@ -12,31 +12,18 @@ import re
 # Map of AI-sounding phrases -> simpler replacements
 # Keys are lowercase for case-insensitive matching.
 AI_PHRASE_REPLACEMENTS: dict[str, str] = {
-    # ── Overused AI action verbs ─────────────────────────────────────────
-    "spearheaded": "led",
-    "orchestrated": "coordinated",
-    "championed": "supported",
-    "pioneered": "introduced",
-    "revolutionized": "improved",
-    "architected": "designed",
+    # ── Truly AI-generated / cringeworthy verbs ─────────────────────────
+    # NOTE: "spearheaded", "orchestrated", "championed", "pioneered",
+    # "architected", "facilitated", "leveraged" are legitimate strong resume
+    # verbs that recruiters expect. Do NOT replace them.
     "synergized": "collaborated",
     "catalyzed": "started",
     "galvanized": "motivated",
     "masterminded": "planned",
-    "conceptualized": "designed",
-    "operationalized": "implemented",
-    "strategized": "planned",
     "instrumentalized": "used",
     "effectuated": "carried out",
     "endeavored": "worked",
-    "envisioned": "planned",
-    "cultivated": "built",
-    "leveraged": "used",
-    "maximized": "increased",
-    "facilitated": "helped",
-    "propelled": "drove",
     "galvanised": "motivated",
-    "helmed": "led",
     "ideated": "brainstormed",
 
     # ── Corporate buzzwords ──────────────────────────────────────────────
@@ -49,20 +36,16 @@ AI_PHRASE_REPLACEMENTS: dict[str, str] = {
     "bleeding-edge": "latest",
     "game-changing": "significant",
     "groundbreaking": "new",
-    "transformative": "major",
+    # NOTE: "transformative", "end-to-end", "thought leadership",
+    # "core competencies", "mission-critical" are legitimate professional
+    # terms used in real JDs. Do NOT replace them.
     "holistic approach": "broad approach",
-    "end-to-end": "full",
-    "thought leadership": "expertise",
-    "value proposition": "benefit",
-    "core competencies": "key skills",
-    "mission-critical": "essential",
     "actionable insights": "useful findings",
     "scalable solutions": "solutions",
     "robust framework": "framework",
     "strategic alignment": "alignment",
     "cross-functional synergies": "cross-team collaboration",
     "disruptive innovation": "new approach",
-    "digital transformation": "technology adoption",
     "north star metric": "key metric",
     "move the needle": "make an impact",
     "low-hanging fruit": "quick win",

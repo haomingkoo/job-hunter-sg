@@ -13,13 +13,16 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 # ── Auth ─────────────────────────────────────────────────────────────────────
 
 # Allowed email domains for signup (set via ALLOWED_EMAIL_DOMAINS env var)
-# Default: aisg.sg (AI Singapore). Comma-separated for multiple domains.
+# Default: * (open signup). Set to "aisg.sg" to restrict, or comma-separated for multiple.
 import os as _os
-_ALLOWED_DOMAINS = [
-    d.strip().lower()
-    for d in _os.environ.get("ALLOWED_EMAIL_DOMAINS", "aisg.sg").split(",")
-    if d.strip()
-]
+_raw_domains = _os.environ.get("ALLOWED_EMAIL_DOMAINS", "*").strip()
+_ALLOWED_DOMAINS: list[str] = []
+if _raw_domains and _raw_domains != "*":
+    _ALLOWED_DOMAINS = [
+        d.strip().lower()
+        for d in _raw_domains.split(",")
+        if d.strip()
+    ]
 
 
 class SignupRequest(BaseModel):
