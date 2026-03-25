@@ -391,6 +391,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
         posted: j.posted_date || "",
         skills: j.skills || [],
         jobTermsPreview: normalizeJobTermLabels(j.job_terms_preview || []),
+        jobTermsPreviewReady: Boolean(j.job_terms_preview_ready),
         description: j.description || "",
         jdSummary: j.jd_summary || "",
         jdSummaryStatus: j.jd_summary_status || "",
@@ -498,35 +499,34 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
     setExpandedJobId((current) => (current === jobId ? null : jobId));
   };
 
-  useEffect(() => {
-    if (!expandedJobId) return;
-
+  const fetchParsedJobMeta = useCallback(async (jobId) => {
+    if (!jobId) return false;
     let shouldFetch = false;
     setParsedJobMeta((current) => {
-      const existing = current[expandedJobId];
+      const existing = current[jobId];
       if (existing?.loaded || existing?.loading) return current;
       shouldFetch = true;
       return {
         ...current,
-        [expandedJobId]: {
+        [jobId]: {
           ...(existing || {}),
           loading: true,
           loaded: false,
           error: "",
+          stalled: false,
           startedAt: Date.now(),
         },
       };
     });
-    if (!shouldFetch) return;
+    if (!shouldFetch) return false;
 
-    const controller = new AbortController();
     const timeoutId = window.setTimeout(() => {
       setParsedJobMeta((current) => {
-        const existing = current[expandedJobId];
+        const existing = current[jobId];
         if (!existing?.loading) return current;
         return {
           ...current,
-          [expandedJobId]: {
+          [jobId]: {
             ...existing,
             stalled: true,
           },
@@ -534,56 +534,76 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
       });
     }, 4500);
 
-    apiFetch(`/api/jobs/${expandedJobId}/parsed`, { signal: controller.signal })
-      .then((resp) => resp.json())
-      .then((data) => {
-        const parsed = data?.parsed_jd && typeof data.parsed_jd === "object" ? data.parsed_jd : {};
-        const jobTerms = Array.isArray(data?.job_terms) ? data.job_terms : [];
-        const jobTermLabels = normalizeJobTermLabels(jobTerms);
-        const previewLabels = normalizeJobTermLabels(data?.job_terms_preview || []);
-        const extractedTerms = normalizeJobTermLabels([
-          ...(Array.isArray(parsed.required_skills) ? parsed.required_skills : []),
-          ...(Array.isArray(parsed.preferred_skills) ? parsed.preferred_skills : []),
-          ...(Array.isArray(parsed.single_word_skills) ? parsed.single_word_skills : []),
-        ]);
-        setParsedJobMeta((current) => ({
-          ...current,
-          [expandedJobId]: {
-            ...(current[expandedJobId] || {}),
-            loaded: true,
-            loading: false,
-            error: "",
-            parsed,
-            jobTerms,
-            jobTermLabels,
-            previewLabels,
-            extractedTerms,
-            jdSummary: data?.jd_summary || "",
-            jdSummaryStatus: data?.jd_summary_status || "",
-            stalled: false,
-            startedAt: current[expandedJobId]?.startedAt || Date.now(),
-          },
-        }));
-      })
-      .catch((err) => {
-        if (err?.name === "AbortError") return;
-        setParsedJobMeta((current) => ({
-          ...current,
-          [expandedJobId]: {
-            ...(current[expandedJobId] || {}),
-            loaded: true,
-            loading: false,
-            stalled: false,
-            error: err.message || "Failed to load parsed JD cues.",
-          },
-        }));
-      });
-
-    return () => {
+    try {
+      const resp = await apiFetch(`/api/jobs/${jobId}/parsed`);
+      const data = await resp.json();
+      const parsed = data?.parsed_jd && typeof data.parsed_jd === "object" ? data.parsed_jd : {};
+      const jobTerms = Array.isArray(data?.job_terms) ? data.job_terms : [];
+      const jobTermLabels = normalizeJobTermLabels(jobTerms);
+      const previewLabels = normalizeJobTermLabels(data?.job_terms_preview || []);
+      const extractedTerms = normalizeJobTermLabels([
+        ...(Array.isArray(parsed.required_skills) ? parsed.required_skills : []),
+        ...(Array.isArray(parsed.preferred_skills) ? parsed.preferred_skills : []),
+        ...(Array.isArray(parsed.single_word_skills) ? parsed.single_word_skills : []),
+      ]);
       window.clearTimeout(timeoutId);
-      controller.abort();
-    };
-  }, [expandedJobId]);
+      setParsedJobMeta((current) => ({
+        ...current,
+        [jobId]: {
+          ...(current[jobId] || {}),
+          loaded: true,
+          loading: false,
+          error: "",
+          parsed,
+          jobTerms,
+          jobTermLabels,
+          previewLabels,
+          previewReady: Boolean(data?.job_terms_preview_ready),
+          extractedTerms,
+          jdSummary: data?.jd_summary || "",
+          jdSummaryStatus: data?.jd_summary_status || "",
+          stalled: false,
+          startedAt: current[jobId]?.startedAt || Date.now(),
+        },
+      }));
+      return true;
+    } catch (err) {
+      window.clearTimeout(timeoutId);
+      setParsedJobMeta((current) => ({
+        ...current,
+        [jobId]: {
+          ...(current[jobId] || {}),
+          loaded: true,
+          loading: false,
+          stalled: false,
+          error: err.message || "Failed to load parsed JD cues.",
+        },
+      }));
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!expandedJobId) return;
+    fetchParsedJobMeta(expandedJobId);
+  }, [expandedJobId, fetchParsedJobMeta]);
+
+  useEffect(() => {
+    if (!results.length) return;
+    const candidates = results
+      .filter((job) => !job.jobTermsPreview?.length && (job.description || "").trim())
+      .slice(0, 4)
+      .map((job) => job.id);
+    if (!candidates.length) return;
+
+    const timeoutId = window.setTimeout(() => {
+      candidates.forEach((jobId) => {
+        fetchParsedJobMeta(jobId);
+      });
+    }, 250);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [results, fetchParsedJobMeta]);
 
   const clearFilters = () => {
     setLevelFilter("all");
@@ -783,6 +803,7 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
         const previewSkills = effectiveSkillDisplay.visibleSkills.slice(0, 6);
         const summaryText = (parsedMeta?.jdSummary || job.jdSummary || "").trim();
         const longCueLoad = Boolean(parsedMeta?.loading && parsedMeta?.stalled);
+        const cuesWereAlreadyChecked = Boolean(job.jobTermsPreviewReady || parsedMeta?.previewReady);
 
         return (
         <div
@@ -855,18 +876,22 @@ function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, 
                     </div>
                   )}
                 </>
-              ) : parsedMeta?.loading && !longCueLoad ? (
+              ) : parsedMeta?.loading && !longCueLoad && !cuesWereAlreadyChecked ? (
                 <div className="mt-2 flex items-center gap-2 text-sm text-gray-600">
                   <Loader2 size={14} className="animate-spin" />
                   Extracting skill cues from the job description...
                 </div>
-              ) : parsedMeta?.loading && longCueLoad ? (
+              ) : parsedMeta?.loading && longCueLoad && !cuesWereAlreadyChecked ? (
                 <div className="mt-2 text-sm text-gray-600">
                   Cue extraction is taking longer than expected. Collapse and reopen the card to retry, or use the full listing if you need the original JD immediately.
                 </div>
               ) : parsedMeta?.error ? (
                 <div className="mt-2 text-sm text-gray-600">
                   {parsedMeta.error}
+                </div>
+              ) : cuesWereAlreadyChecked ? (
+                <div className="mt-2 text-sm text-gray-600">
+                  We checked this posting for practical ATS cues but did not find enough trustworthy terms to surface yet.
                 </div>
               ) : job.skills.length > 0 ? (
                 <div className="mt-2 text-sm text-gray-600">
