@@ -1695,7 +1695,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     };
   }, [bulletSections, resumeText]);
   const issueBulletCount = bulletSections.filter((section) => section.annotation?.tone && section.annotation.tone !== "emerald").length;
-  const improvementCount = issueBulletCount + (scoreData?.top_suggestions?.length || 0) + Math.min(relevantMissingKeywords.length, 6);
+  const improvementCount = issueBulletCount + Math.min(scoreData?.top_suggestions?.length || 0, 3) + Math.min(relevantMissingKeywords.length, 6);
   const isFeedbackView = workspaceView === "feedback";
   const isEditorView = workspaceView === "editor";
   const showFeedbackPanels = isFeedbackView || mobilePanel === "feedback";
@@ -2242,18 +2242,64 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                         ) : (
                           <div className="max-h-48 overflow-y-auto space-y-0.5">
                             {resumeVersions.map((v) => (
-                              <button
-                                key={v.id}
-                                type="button"
-                                onClick={() => { loadVersion(v.id); setShowVersionDropdown(false); }}
-                                className="w-full text-left rounded-lg px-3 py-2 text-xs hover:bg-[#f0f4f8] transition"
-                              >
-                                <div className="font-medium text-[#384959] truncate">{v.label}</div>
-                                <div className="text-[#6A89A7] mt-0.5">
-                                  {v.score ? `Score ${v.score}` : ""}{v.job_title ? ` • ${v.job_title}` : ""}
-                                  {v.word_count ? ` • ${v.word_count}w` : ""}
-                                </div>
-                              </button>
+                              <div key={v.id} className="group/vdrop relative rounded-lg hover:bg-[#f0f4f8] transition">
+                                {deletingVersionId === v.id ? (
+                                  <div className="flex items-center justify-between gap-2 px-3 py-2">
+                                    <span className="text-xs font-medium text-[#384959]">Delete?</span>
+                                    <div className="flex gap-1">
+                                      <button type="button" onClick={() => { deleteVersion(v.id); }} className="rounded-md bg-[#384959] px-2 py-0.5 text-[10px] font-medium text-white hover:bg-[#2a3744]">Yes</button>
+                                      <button type="button" onClick={() => setDeletingVersionId(null)} className="rounded-md border border-[#BDDDFC]/30 px-2 py-0.5 text-[10px] font-medium text-[#6A89A7] hover:bg-white">No</button>
+                                    </div>
+                                  </div>
+                                ) : renamingVersionId === v.id ? (
+                                  <div className="flex items-center gap-1 px-2 py-1.5">
+                                    <input
+                                      autoFocus
+                                      value={renamingVersionLabel}
+                                      onChange={(e) => setRenamingVersionLabel(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") renameVersion(v.id, renamingVersionLabel);
+                                        if (e.key === "Escape") { setRenamingVersionId(null); setRenamingVersionLabel(""); }
+                                      }}
+                                      className="flex-1 min-w-0 rounded-md border border-[#BDDDFC]/30 px-2 py-0.5 text-xs text-[#384959] focus:outline-none focus:ring-1 focus:ring-[#6A89A7]/30"
+                                    />
+                                    <button type="button" onClick={() => renameVersion(v.id, renamingVersionLabel)} className="rounded-md bg-[#384959] p-1 text-white hover:bg-[#2a3744]"><Check size={10} /></button>
+                                    <button type="button" onClick={() => { setRenamingVersionId(null); setRenamingVersionLabel(""); }} className="rounded-md border border-[#BDDDFC]/30 p-1 text-[#6A89A7]"><X size={10} /></button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => { loadVersion(v.id); setShowVersionDropdown(false); }}
+                                      className="flex-1 min-w-0 text-left px-3 py-2 text-xs"
+                                    >
+                                      <div className="font-medium text-[#384959] truncate">{v.label}</div>
+                                      <div className="text-[#6A89A7] mt-0.5">
+                                        {v.score ? `Score ${v.score}` : ""}{v.job_title ? ` • ${v.job_title}` : ""}
+                                        {v.word_count ? ` • ${v.word_count}w` : ""}
+                                      </div>
+                                    </button>
+                                    <div className="flex items-center gap-0.5 pr-2 opacity-0 group-hover/vdrop:opacity-100 transition-opacity">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); setRenamingVersionId(v.id); setRenamingVersionLabel(v.label); }}
+                                        className="rounded p-1 text-[#6A89A7] hover:text-[#384959] hover:bg-[#BDDDFC]/10"
+                                        title="Rename"
+                                      >
+                                        <Edit3 size={11} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); setDeletingVersionId(v.id); }}
+                                        className="rounded p-1 text-[#6A89A7] hover:text-rose-500 hover:bg-rose-50"
+                                        title="Delete"
+                                      >
+                                        <Trash2 size={11} />
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             ))}
                           </div>
                         )}
@@ -2267,7 +2313,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                       onChange={(e) => setSaveVersionLabel(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") saveCurrentVersion(); }}
                       placeholder="Name this version..."
-                      className="w-32 rounded-lg bg-transparent px-2 py-1 text-xs focus:outline-none"
+                      className="w-28 rounded-lg bg-transparent px-2 py-1 text-xs focus:outline-none"
                     />
                     <button
                       type="button"
@@ -2418,22 +2464,22 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
             </div>
 
             {user && (
-              <div className="inline-flex items-center gap-1.5 rounded-2xl border border-[#BDDDFC]/30 bg-white px-2 py-1.5">
+              <div className="inline-flex items-center gap-1 rounded-xl border border-[#BDDDFC]/30 bg-white px-1.5 py-1">
                 <input
                   type="text"
                   value={saveVersionLabel}
                   onChange={(e) => setSaveVersionLabel(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") saveCurrentVersion(); }}
-                  placeholder="Name this version..."
-                  className="w-32 rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-300"
+                  placeholder="Version name..."
+                  className="w-24 rounded-lg bg-transparent px-2 py-1 text-xs focus:outline-none"
                 />
                 <button
                   type="button"
                   onClick={saveCurrentVersion}
                   disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                  className="rounded-lg bg-[#384959] px-3 py-1 text-xs font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
+                  className="rounded-lg bg-[#384959] px-2 py-1 text-xs font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
                 >
-                  {savingVersion ? "..." : "Save Version"}
+                  {savingVersion ? "..." : "Save"}
                 </button>
               </div>
             )}
@@ -3808,11 +3854,11 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                             </h3>
                           )}
                           {section.type === "heading_paragraph" && (
-                            <div>
+                            <div style={{ breakInside: "avoid", columnSpan: "all" }}>
                               <h3 className={templateStyles.headingClass} style={templateStyles.headingStyle}>
                                 {section.headingText}
                               </h3>
-                              <p className="mb-4 text-[#384959]" style={templateStyles.bodyStyle}>
+                              <p className="mb-4 text-[#384959]" style={{ ...templateStyles.bodyStyle, breakInside: "avoid" }}>
                                 {renderHighlightedText(
                                   isShoutySummaryParagraph(section.bodyText, section.sectionKey)
                                     ? toSentenceCaseDisplayText(section.bodyText)
@@ -3918,7 +3964,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                           )}
                           {section.type === "paragraph" && (
                             (() => {
-                              const inlineSegments = getInlineResumeSegments(section);
+                              // Summary/experience paragraphs always render full-width, never as inline segments
+                              const inlineSegments = !["summary", "experience"].includes(section.sectionKey) ? getInlineResumeSegments(section) : null;
                               if (inlineSegments) {
                                 return (
                                   <div className="mb-4 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[#384959]" style={templateStyles.bodyStyle}>
@@ -3945,7 +3992,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                               return (
                                 <p
                                   className={`mb-4 text-[#384959] ${section.sectionKey === "summary" && isLikelySummaryLeadParagraph(section.text) && !isShoutySummaryParagraph(section.text, section.sectionKey) ? "font-semibold tracking-[0.03em] text-[#384959]" : ""}`}
-                                  style={templateStyles.bodyStyle}
+                                  style={{ ...templateStyles.bodyStyle, breakInside: "avoid" }}
                                 >
                                   {renderHighlightedText(getDisplayParagraphText(section), section.keywordMatches || [])}
                                 </p>
@@ -4283,7 +4330,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           </div>
 
           {user && (
-            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-6 shadow-sm space-y-4">
+            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm space-y-3">
               <div className="text-sm font-semibold text-[#384959]">Save This Version</div>
               <div className="flex items-center gap-2">
                 <input
@@ -4292,15 +4339,15 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   onChange={(e) => setSaveVersionLabel(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && saveVersionLabel.trim()) saveCurrentVersion(); }}
                   placeholder="Name this version..."
-                  className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC]"
+                  className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC]"
                 />
                 <button
                   type="button"
                   onClick={saveCurrentVersion}
                   disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                  className="rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
+                  className="rounded-xl bg-[#384959] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
                 >
-                  {savingVersion ? "Saving..." : "Save Version"}
+                  {savingVersion ? "..." : "Save Version"}
                 </button>
               </div>
             </div>

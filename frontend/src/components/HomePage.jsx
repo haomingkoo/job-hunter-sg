@@ -306,14 +306,14 @@ export default function HomePage({ onNavigate }) {
                 className="group flex h-full flex-col rounded-2xl bg-white p-7 text-left transition-colors"
               >
                 <div className="flex items-center justify-between w-full">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#f0f4f8] text-[#6A89A7] transition-colors group-hover:bg-[#BDDDFC]/30 group-hover:text-[#384959]">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#384959] text-white transition-colors group-hover:bg-[#88BDF2]">
                     <c.icon size={20} strokeWidth={1.8} />
                   </div>
-                  <span className="text-[11px] font-bold text-[#BDDDFC]">{c.num}</span>
+                  <span className="text-[13px] font-bold text-[#384959]">{c.num}</span>
                 </div>
                 <h3 className="mt-5 text-xl font-bold text-[#384959]">{c.label}</h3>
                 <p className="mt-2 flex-1 text-[13px] leading-relaxed text-[#6A89A7]">{c.desc.replace("{count}", count || "thousands of")}</p>
-                <span className="mt-5 inline-flex items-center gap-1.5 text-xs font-semibold text-[#6A89A7] transition-colors group-hover:text-[#88BDF2]">
+                <span className="mt-5 inline-flex items-center gap-1.5 rounded-full bg-[#384959] px-4 py-2 text-xs font-semibold text-white transition-colors group-hover:bg-[#88BDF2] group-hover:text-[#1f2831]">
                   Get started <ArrowRight size={12} className="transition-transform group-hover:translate-x-1" />
                 </span>
               </motion.button>
