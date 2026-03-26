@@ -1478,53 +1478,7 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
   const parsed = [];
   let currentSectionKey = "";
 
-  // Pre-process: rejoin lines broken by PDF extraction
-  const rawLines = text.replace(/\r\n?/g, "\n").split("\n");
-  const lines = [];
-  for (let i = 0; i < rawLines.length; i += 1) {
-    const current = rawLines[i];
-    const trimmed = current.trim();
-
-    // Merge bullet marker on its own line with the next non-empty line
-    // e.g., "•\n" + "Business & Economic Analysis: ..." → "• Business & Economic Analysis: ..."
-    if (/^[•\-\*▪\u2022\u2023\u25E6\u2043\u2219]\s*$/.test(trimmed)) {
-      let nextIdx = i + 1;
-      while (nextIdx < rawLines.length && !rawLines[nextIdx].trim()) nextIdx += 1;
-      if (nextIdx < rawLines.length) {
-        lines.push(`${trimmed} ${rawLines[nextIdx].trim()}`);
-        i = nextIdx;
-        continue;
-      }
-    }
-
-    // Merge heading + "&" continuation (e.g., "CERTIFICATIONS\n& Career Development")
-    if (trimmed && isHeadingLine(stripResumeMarkdown(trimmed))) {
-      const nextLine = (rawLines[i + 1] || "").trim();
-      if (nextLine.startsWith("&") || nextLine.startsWith("and ")) {
-        lines.push(`${trimmed} ${nextLine}`);
-        i += 1;
-        continue;
-      }
-    }
-
-    // Merge pipe-prefixed continuations used in some extracted education/date lines
-    if (lines.length > 0 && trimmed.startsWith("|")) {
-      lines[lines.length - 1] = `${lines[lines.length - 1]} ${trimmed}`.replace(/\s+/g, " ").trim();
-      continue;
-    }
-
-    // Merge continuation lines that start with lowercase into previous line
-    if (lines.length > 0 && trimmed && /^[a-z]/.test(trimmed)) {
-      const prev = lines[lines.length - 1].trim();
-      // Only merge if previous line doesn't end with period (completed sentence)
-      if (prev && !prev.endsWith(".") && !prev.endsWith(":")) {
-        lines[lines.length - 1] = `${lines[lines.length - 1]} ${trimmed}`;
-        continue;
-      }
-    }
-
-    lines.push(current);
-  }
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
@@ -1569,17 +1523,6 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
     }
 
     const previousMeaningfulSection = [...parsed].reverse().find((section) => section.type !== "spacer");
-    if (!RESUME_BULLET_RE.test(line) && shouldMergeContinuationLine(line, currentSectionKey, previousMeaningfulSection)) {
-      previousMeaningfulSection.text = `${previousMeaningfulSection.text} ${normalizedLine}`.replace(/\s+/g, " ").trim();
-      previousMeaningfulSection.raw = `${previousMeaningfulSection.raw}\n${line}`;
-      previousMeaningfulSection.lineIndices = [...(previousMeaningfulSection.lineIndices || [previousMeaningfulSection.lineIndex]), lineIndex];
-      if (previousMeaningfulSection.type === "bullet") {
-        previousMeaningfulSection.annotation = annotateBullet(previousMeaningfulSection.text, keywords, text, currentSectionKey);
-      } else if (previousMeaningfulSection.type === "paragraph") {
-        previousMeaningfulSection.keywordMatches = collectKeywordMatches(previousMeaningfulSection.text, keywords);
-      }
-      continue;
-    }
 
     const bulletMatch = line.match(RESUME_BULLET_RE);
     // Auto-promote bullets whose content looks like an entry heading (e.g., "• Senior Engineer (2019-2020)")
@@ -1646,24 +1589,6 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
           annotation: annotateBullet(bulletText, keywords, text, currentSectionKey),
         });
       });
-      continue;
-    }
-
-    // Continuation line detection: if this line doesn't start with a capital
-    // letter after a period (new sentence start), or is short and follows a
-    // bullet/paragraph, merge it with the previous item instead of creating
-    // a new paragraph. This handles PDF line-wrapping artifacts.
-    const prevItem = [...parsed].reverse().find((s) => s.type !== "spacer");
-    const isContinuation = shouldMergeContinuationLine(line, currentSectionKey, prevItem);
-    if (isContinuation && prevItem) {
-      prevItem.text = `${prevItem.text} ${normalizedLine}`.replace(/\s+/g, " ").trim();
-      prevItem.raw = `${prevItem.raw}\n${line}`;
-      prevItem.lineIndices = [...(prevItem.lineIndices || [prevItem.lineIndex]), lineIndex];
-      if (prevItem.type === "bullet") {
-        prevItem.annotation = annotateBullet(prevItem.text, keywords, text, currentSectionKey);
-      } else if (prevItem.type === "paragraph") {
-        prevItem.keywordMatches = collectKeywordMatches(prevItem.text, keywords);
-      }
       continue;
     }
 
