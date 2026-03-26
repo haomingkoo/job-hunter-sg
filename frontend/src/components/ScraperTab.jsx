@@ -34,6 +34,14 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [locationFilter, setLocationFilter] = useState(new Set());
   const activeSearchQuery = submittedQuery;
 
+  // Cover letter state
+  const [coverLetterModal, setCoverLetterModal] = useState(null); // { job } or null
+  const [coverLetterDirection, setCoverLetterDirection] = useState("");
+  const [coverLetterText, setCoverLetterText] = useState("");
+  const [coverLetterLoading, setCoverLetterLoading] = useState(false);
+  const [coverLetterError, setCoverLetterError] = useState("");
+  const [coverLetterCopied, setCoverLetterCopied] = useState(false);
+
   // Load cached jobs on mount (browse mode)
   useEffect(() => {
     loadJobs("");
@@ -195,6 +203,83 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const generateResume = (scrapedJob) => {
     setSelectedJob(scrapedJob);
     setActiveTab("resume");
+  };
+
+  const openCoverLetterModal = (job) => {
+    setCoverLetterModal({ job });
+    setCoverLetterDirection("");
+    setCoverLetterText("");
+    setCoverLetterError("");
+    setCoverLetterCopied(false);
+  };
+
+  const closeCoverLetterModal = () => {
+    setCoverLetterModal(null);
+    setCoverLetterText("");
+    setCoverLetterDirection("");
+    setCoverLetterError("");
+    setCoverLetterLoading(false);
+    setCoverLetterCopied(false);
+  };
+
+  const generateCoverLetter = async () => {
+    const resumeText = sessionStorage.getItem("jh_resume_text") || "";
+    if (!resumeText || resumeText.length < 50) {
+      setCoverLetterError("Please upload or paste your resume in the Resume tab first (at least 50 characters).");
+      return;
+    }
+    const job = coverLetterModal?.job;
+    if (!job) return;
+
+    setCoverLetterLoading(true);
+    setCoverLetterError("");
+    setCoverLetterText("");
+    setCoverLetterCopied(false);
+
+    try {
+      const resp = await apiFetch("/api/ai/cover-letter", {
+        method: "POST",
+        body: JSON.stringify({
+          resume_text: resumeText,
+          job_id: job.id || null,
+          job_title: job.title || "",
+          job_company: job.company || "",
+          job_description: job.description || "",
+          user_direction: coverLetterDirection.trim() || null,
+        }),
+      });
+      const data = await resp.json();
+      setCoverLetterText(data.cover_letter || "");
+    } catch (err) {
+      setCoverLetterError(err.message || "Failed to generate cover letter. Please try again.");
+    } finally {
+      setCoverLetterLoading(false);
+    }
+  };
+
+  const copyCoverLetter = async () => {
+    try {
+      await navigator.clipboard.writeText(coverLetterText);
+      setCoverLetterCopied(true);
+      setTimeout(() => setCoverLetterCopied(false), 2000);
+    } catch {
+      setCoverLetterError("Failed to copy. Please select the text and copy manually.");
+    }
+  };
+
+  const downloadCoverLetter = () => {
+    const blob = new Blob([coverLetterText], { type: "text/plain;charset=utf-8" });
+    const jobTitle = coverLetterModal?.job?.title || "position";
+    const company = coverLetterModal?.job?.company || "company";
+    const filename = `Cover_Letter_${company.replace(/\s+/g, "_")}_${jobTitle.replace(/\s+/g, "_")}.txt`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const toggleExpandedJob = (jobId) => {
@@ -788,6 +873,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   <button onClick={(event) => { event.stopPropagation(); generateResume(job); }} className="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-emerald-700 transition">
                     <FileText size={12} /> Tailor Resume
                   </button>
+                  <button onClick={(event) => { event.stopPropagation(); openCoverLetterModal(job); }} className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-blue-700 transition">
+                    <FileText size={12} /> Cover Letter
+                  </button>
                   <button onClick={(event) => { event.stopPropagation(); trackJob(job); }} className="flex items-center gap-1.5 bg-[#384959] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#2d3a47] transition">
                     <Plus size={12} /> Track
                   </button>
@@ -819,6 +907,124 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           )}
         </div>
       </div>
+
+      {/* Cover Letter Modal */}
+      <AnimatePresence>
+        {coverLetterModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+            onClick={closeCoverLetterModal}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                <div>
+                  <h3 className="text-lg font-semibold text-[#384959]">Generate Cover Letter</h3>
+                  <p className="text-sm text-[#6A89A7] mt-0.5">
+                    {coverLetterModal.job?.title} at {coverLetterModal.job?.company}
+                  </p>
+                </div>
+                <button onClick={closeCoverLetterModal} className="p-1 hover:bg-gray-100 rounded-lg transition">
+                  <X size={20} className="text-[#6A89A7]" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                {!coverLetterText && !coverLetterLoading && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-medium text-[#384959] mb-1.5">
+                        Optional direction
+                      </label>
+                      <input
+                        type="text"
+                        value={coverLetterDirection}
+                        onChange={(e) => setCoverLetterDirection(e.target.value)}
+                        placeholder="e.g. 'emphasize leadership experience' or 'keep it concise'"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                        maxLength={500}
+                      />
+                    </div>
+                    {!sessionStorage.getItem("jh_resume_text") && (
+                      <p className="text-sm text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
+                        No resume found in this session. Upload or paste your resume in the Resume tab first.
+                      </p>
+                    )}
+                  </>
+                )}
+
+                {coverLetterError && (
+                  <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">
+                    <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                    {coverLetterError}
+                  </div>
+                )}
+
+                {coverLetterLoading && (
+                  <div className="flex flex-col items-center justify-center py-12 gap-3">
+                    <Loader2 size={28} className="animate-spin text-blue-600" />
+                    <p className="text-sm text-[#6A89A7]">Generating your cover letter...</p>
+                  </div>
+                )}
+
+                {coverLetterText && (
+                  <textarea
+                    value={coverLetterText}
+                    onChange={(e) => setCoverLetterText(e.target.value)}
+                    className="w-full h-80 px-4 py-3 border border-gray-200 rounded-lg text-sm leading-relaxed resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-[system-ui]"
+                  />
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 bg-gray-50">
+                {coverLetterText ? (
+                  <>
+                    <span className="text-xs text-[#6A89A7]">
+                      {coverLetterText.split(/\s+/).length} words
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={downloadCoverLetter}
+                        className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-[#384959] hover:bg-gray-100 transition"
+                      >
+                        Download .txt
+                      </button>
+                      <button
+                        onClick={copyCoverLetter}
+                        className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
+                      >
+                        {coverLetterCopied ? "Copied!" : "Copy"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div />
+                    <button
+                      onClick={generateCoverLetter}
+                      disabled={coverLetterLoading}
+                      className="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {coverLetterLoading ? "Generating..." : "Generate"}
+                    </button>
+                  </>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

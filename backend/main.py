@@ -49,6 +49,7 @@ from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
 from schemas import (
     AuthResponse,
     ContactRequest,
+    CoverLetterRequest,
     IntegrateKeywordsRequest,
     JobOut,
     LoginRequest,
@@ -3504,6 +3505,136 @@ Return ONLY the summary text, nothing else."""
         )
 
     return {"summary": summary}
+
+
+@app.post("/api/ai/cover-letter")
+def generate_cover_letter(
+    body: CoverLetterRequest,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Generate a professional cover letter from resume content,
+    optionally tailored to a specific job description.
+    """
+    check_rate_limit(user, "ai", db)
+    db.add(UsageLog(
+        user_id=user.id if user else None,
+        action="ai",
+        detail="cover_letter",
+    ))
+    db.commit()
+
+    resume_text = sanitize_resume_text(body.resume_text)
+
+    # Load parsed JD context if a job_id is provided
+    jd_context = ""
+    job_title = body.job_title
+    job_company = body.job_company
+    job_description = body.job_description
+
+    if body.job_id:
+        target_job = db.query(ScrapedJob).filter(
+            ScrapedJob.id == body.job_id,
+        ).first()
+        if target_job:
+            job_title = job_title or target_job.title or ""
+            job_company = job_company or target_job.company or ""
+            if isinstance(target_job.parsed_jd, dict):
+                parsed = target_job.parsed_jd
+                req = parsed.get("required_skills", [])[:8]
+                pref = parsed.get("preferred_skills", [])[:4]
+                resp_list = parsed.get("responsibilities", [])[:5]
+                exp = parsed.get("experience_years", "")
+                parts = []
+                if req:
+                    parts.append(f"Required skills: {', '.join(req)}")
+                if pref:
+                    parts.append(f"Preferred: {', '.join(pref)}")
+                if resp_list:
+                    parts.append(
+                        "Key responsibilities: "
+                        + "; ".join(resp_list),
+                    )
+                if exp:
+                    parts.append(f"Experience level: {exp}")
+                jd_context = ". ".join(parts) + "."
+            elif target_job.description:
+                jd_context = (target_job.description or "")[:1500]
+                job_description = job_description or jd_context
+
+    # Extract key bullets from resume (first 15 non-empty lines >15 chars)
+    bullet_lines = []
+    for line in resume_text.split("\n"):
+        stripped = line.strip()
+        if stripped and len(stripped) > 15:
+            bullet_lines.append(f"- {stripped}")
+        if len(bullet_lines) >= 15:
+            break
+
+    # Build the prompt
+    system = """You are an expert cover letter writer for the Singapore job market.
+
+Generate a professional cover letter (250-350 words) with this structure:
+1. Opening paragraph: A compelling hook referencing the specific role and why you're excited about it
+2. Body paragraph 1: Link 2-3 specific achievements from the resume to the job's key requirements
+3. Body paragraph 2: Highlight additional relevant experience and cultural/team fit
+4. Closing paragraph: Express enthusiasm, include a call to action for next steps
+
+CRITICAL RULES:
+- Address "Dear Hiring Team" unless a specific hiring manager is mentioned
+- NEVER invent achievements, numbers, skills, or experience not present in the resume
+- Reference specific, concrete accomplishments from the resume that match the JD
+- Sound professional but natural — avoid generic, AI-sounding phrases
+- Do NOT use phrases like "I am writing to express my interest" or "I believe I would be a great fit"
+- Keep the tone confident but not arrogant
+- If the company name is known, mention it naturally
+
+Return ONLY the cover letter text. No subject lines, no labels, no markdown formatting."""
+
+    user_msg = ""
+    if job_title:
+        user_msg += f"TARGET ROLE: {job_title}\n"
+    if job_company:
+        user_msg += f"COMPANY: {job_company}\n"
+    if jd_context:
+        user_msg += f"JOB REQUIREMENTS: {jd_context}\n"
+    elif job_description:
+        user_msg += (
+            f"JOB DESCRIPTION:\n{job_description[:1500]}\n"
+        )
+    if body.user_direction:
+        user_msg += f"\nUSER INSTRUCTION: {body.user_direction}\n"
+
+    user_msg += (
+        f"\nKEY CONTENT FROM RESUME:\n" + "\n".join(bullet_lines)
+    )
+
+    content = _call_sealion(
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        max_tokens=600,
+        model=SEALION_MODEL,
+        temperature=0.4,
+    )
+
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service unavailable — rate limit or API error. Try again shortly.",
+        )
+
+    cover_letter = content.strip().strip('"')
+    if len(cover_letter) < 100:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI returned an unusable cover letter. Please try again.",
+        )
+
+    word_count = len(cover_letter.split())
+    return {"cover_letter": cover_letter, "word_count": word_count}
 
 
 # ═════════════════════════════════════════════════════════════════════════════

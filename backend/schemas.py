@@ -193,3 +193,12 @@ class RegenerateSummaryRequest(BaseModel):
     resume_text: str = Field(..., min_length=50, max_length=10000)
     job_id: int | None = Field(None, description="Target job ID for JD context")
     user_direction: str | None = Field(None, max_length=500, description="User's custom instruction for summary style/focus")
+
+
+class CoverLetterRequest(BaseModel):
+    resume_text: str = Field(..., min_length=50, max_length=10000)
+    job_id: int | None = Field(None)
+    job_title: str = Field("", max_length=200)
+    job_company: str = Field("", max_length=200)
+    job_description: str = Field("", max_length=10000)
+    user_direction: str | None = Field(None, max_length=500, description="Custom instruction like 'emphasize leadership' or 'keep it concise'")
