@@ -78,6 +78,9 @@ class ScrapedJob(Base):
     # Cached skill term labels for fast list-page rendering (JSON array of strings)
     job_terms_preview: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
 
+    # RAG embedding vector (384-dim, all-MiniLM-L6-v2)
+    embedding_vector: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
+
     __table_args__ = (
         Index("ix_scraped_jobs_keyword", "search_keyword"),
         Index("ix_scraped_jobs_posted_sort", "posted_at_sort"),
@@ -135,6 +138,9 @@ class UserMemory(Base):
     preferred_industry: Mapped[str] = mapped_column(String(500), default="")
     years_experience: Mapped[str] = mapped_column(String(50), default="")
     education_level: Mapped[str] = mapped_column(String(200), default="")
+
+    # RAG embedding vector (384-dim, all-MiniLM-L6-v2)
+    resume_embedding: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
 
     # AI coaching memory — accumulated across sessions
     coaching_notes: Mapped[str] = mapped_column(Text, default="")      # AI summary of past sessions

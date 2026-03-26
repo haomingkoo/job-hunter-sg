@@ -58,6 +58,8 @@ def _apply_lightweight_migrations() -> None:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN jd_summary_status VARCHAR(100)")
     if "job_terms_preview" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN job_terms_preview JSON")
+    if "embedding_vector" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN embedding_vector JSON")
 
     # Add indexes if they don't exist (safe for Postgres and SQLite)
     existing_indexes = {idx["name"] for idx in inspector.get_indexes("scraped_jobs")}
@@ -79,6 +81,12 @@ def _apply_lightweight_migrations() -> None:
             statements.append("ALTER TABLE tracked_jobs ADD COLUMN resume_version_id INTEGER")
         if "stage_history" not in tracked_columns:
             statements.append("ALTER TABLE tracked_jobs ADD COLUMN stage_history JSON")
+
+    # user_memories: embedding vector for semantic matching
+    if "user_memories" in inspector.get_table_names():
+        memory_columns = {col["name"] for col in inspector.get_columns("user_memories")}
+        if "resume_embedding" not in memory_columns:
+            statements.append("ALTER TABLE user_memories ADD COLUMN resume_embedding JSON")
 
     # Widen jd_summary_status if it was created as VARCHAR(30) (too short for model names)
     if "jd_summary_status" in existing_columns:

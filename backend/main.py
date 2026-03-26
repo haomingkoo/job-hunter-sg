@@ -635,6 +635,11 @@ def _persist_resume_to_memory(user: Optional[User], db: Session, resume_text: st
         return
     mem.resume_text = sanitize_resume_text(resume_text)[:10000]
     _power_match_cache.pop(user.id, None)
+    try:
+        from embedding_service import encode_text
+        mem.resume_embedding = encode_text(resume_text[:3000])
+    except Exception:
+        pass
     db.flush()
 
 
@@ -1723,6 +1728,16 @@ def search_jobs(
             db.add(new_job)
             db.flush()
             clean["id"] = new_job.id
+            try:
+                from embedding_service import build_job_embed_text, encode_text, invalidate_matrix_cache
+                new_job.embedding_vector = encode_text(build_job_embed_text(
+                    clean.get("title", ""),
+                    clean.get("description", ""),
+                    clean.get("skills", []),
+                ))
+                invalidate_matrix_cache()
+            except Exception:
+                pass
 
         sanitized_jobs.append(clean)
 
@@ -2308,6 +2323,25 @@ def get_power_match(
         limit=200,
     )
 
+    # ── Semantic similarity (RAG) ─────────────────────────────────────────
+    semantic_scores: dict[int, float] = {}
+    try:
+        from embedding_service import encode_text as _embed_text, find_similar_jobs
+
+        # Get or compute resume embedding
+        resume_vector = mem.resume_embedding if mem and mem.resume_embedding else None
+        if not resume_vector:
+            resume_vector = _embed_text(resume_text[:3000])
+            if mem and resume_vector:
+                mem.resume_embedding = resume_vector
+                db.flush()
+
+        if resume_vector:
+            similar = find_similar_jobs(resume_vector, db, top_k=200)
+            semantic_scores = {job_id: sim for job_id, sim in similar}
+    except Exception:
+        pass
+
     # Precompute resume-side domain hits (same for every job)
     resume_domain_hits = _count_domain_hits(resume_skills, SEMICONDUCTOR_DOMAIN_TERMS)
     resume_hard_hits = _count_domain_hits(resume_skills, SEMICONDUCTOR_HARD_TERMS)
@@ -2370,6 +2404,8 @@ def get_power_match(
         )
         if low_level_role:
             level_penalty = max(level_penalty, 24)
+        semantic_sim = semantic_scores.get(job.id, 0.0)
+        semantic_bonus = semantic_sim * 20
         suitability_score = round(
             min(
                 98,
@@ -2380,6 +2416,7 @@ def get_power_match(
                     + description_bonus
                     + domain_bonus
                     + level_bonus
+                    + semantic_bonus
                     - domain_penalty
                     - level_penalty,
                 ),
@@ -2433,6 +2470,7 @@ def get_power_match(
             },
             "suitability_score": suitability_score,
             "suitability_label": suitability_label,
+            "semantic_score": round(semantic_sim * 100),
             "matched_skills": surfaced_matched_skills,
             "missing_skills": surfaced_missing_skills,
             "why": why,
