@@ -88,7 +88,7 @@ export default function HomePage({ onNavigate }) {
   }, []);
 
   const count = jobCount != null ? jobCount.toLocaleString() : null;
-  const countNum = jobCount || 70000;
+  const countNum = jobCount || 15000;
 
   return (
     <div className="font-body w-full bg-[#f0f4f8]">
@@ -291,7 +291,7 @@ export default function HomePage({ onNavigate }) {
             className="mt-14 grid gap-5 sm:grid-cols-3"
           >
             {[
-              { icon: Search, num: "01", label: "Discover", desc: "Search {count}+ roles from 5 Singapore portals. Every listing tagged with the skills employers want.", tab: "jobs" },
+              { icon: Search, num: "01", label: "Discover", desc: "Search {count}+ roles from MyCareersFuture and Careers@Gov. Every listing tagged with the skills employers want.", tab: "jobs" },
               { icon: FileText, num: "02", label: "Prepare", desc: "Score your resume against real ATS criteria. Get honest feedback and tailor every bullet to stand out.", tab: "resume" },
               { icon: BarChart2, num: "03", label: "Understand", desc: "See which skills are trending, which sectors are growing, and where your best opportunities lie.", tab: "analytics" },
             ].map((c, i) => (

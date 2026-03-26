@@ -68,7 +68,7 @@ export default function AnalyticsTab() {
       </div>
 
       <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-        <strong>Beta</strong> - This platform is in early access. AI features are rate-limited (free tier). Data refreshes nightly from MyCareersFuture and Careers@Gov.
+        <strong>Beta</strong> — Free to use with 500 AI requests/day to help fund hosting and API costs. Data refreshes nightly.
       </div>
 
       <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">

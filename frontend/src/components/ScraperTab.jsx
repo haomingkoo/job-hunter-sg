@@ -601,7 +601,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           </div>
           <div>
             <h2 className="font-bold text-[#384959] text-lg">Singapore Jobs</h2>
-            <p className="text-sm text-[#6A89A7]">Browse jobs from MyCareersFuture, Careers@Gov, and more.</p>
+            <p className="text-sm text-[#6A89A7]">Browse jobs from MyCareersFuture and Careers@Gov.</p>
           </div>
         </div>
         <div className="mt-4 rounded-lg border border-[#88BDF2]/20 bg-[#BDDDFC]/10 px-3 py-2 text-xs text-[#384959]">
