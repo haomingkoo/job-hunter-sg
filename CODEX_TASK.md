@@ -1,5 +1,27 @@
 # Codex Task: Validate & Fix Resume Parser
 
+## IMPORTANT: Recent Changes (2026-03-26)
+
+Claude Code made the following changes today. DO NOT revert these. Build on top of them:
+
+### Files changed by Claude Code today:
+- `frontend/src/lib/resumeHelpers.jsx` — Added pre-processing in `parseResumeToSections()`:
+  1. Merges bullet markers on own line (`•\n text` → `• text`)
+  2. Merges heading + `&` continuation (`CERTIFICATIONS\n& Career` → one heading)
+  3. Merges lowercase continuation lines with previous line
+  4. Post-parse: merges continuation paragraphs with previous bullet/paragraph
+- `frontend/src/lib/resumeConstants.js` — Now imports from `shared/resume-classification.json` for headings
+- `frontend/src/components/ResumeTab.jsx` — Added AI Summary custom prompt feature, various UI fixes
+- `backend/resume_structurer.py` — Bullet-priority fix, pipe-in-bullet fix, ALL-CAPS garbage filter, imports from shared_classification
+- `backend/resume_scorer.py` — Falls back to SHARED_KEY_MAP
+- `backend/main.py` — Embedding backfill endpoint, score returns detected_sections, summary hallucination guard
+- `backend/schemas.py` — Added template_id and user_direction fields
+- `shared/resume-classification.json` — Single source of truth for 68 headings and key mappings
+- `backend/shared_classification.py` — Python loader for shared config
+
+### What still needs fixing (your job):
+The pre-processing and continuation merging helps but doesn't fully solve the rendering issues. Focus on making the FRONTEND parser produce clean output for all 13 fixtures.
+
 ## Overview
 
 The resume parser has two implementations (frontend JS + backend Python) that
