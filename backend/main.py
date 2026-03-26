@@ -3126,7 +3126,7 @@ def ai_rewrite_bullet(
         result = rewrite_bullet(
             bullet,
             job_title=job_title,
-            context=jd_context,
+            job_description=jd_context,
             used_verbs=used_verbs,
             rewrite_focus=rewrite_focus,
             focused_feedback=focused_feedback,

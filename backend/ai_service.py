@@ -374,6 +374,7 @@ Keep it conversational — like you're sitting across from them at a coffee shop
 def rewrite_bullet(
     bullet: str,
     job_title: str = "",
+    job_description: str = "",
     context: str = "",
     used_verbs: str = "",
     rewrite_focus: str = "",
@@ -433,6 +434,8 @@ Return EXACTLY this format (3 lines, nothing else):
     user_msg = f"Rewrite this resume bullet:\n\"{bullet}\""
     if job_title:
         user_msg += f"\n\nThis is for a {job_title} role."
+    if job_description:
+        user_msg += f"\n\nKey job requirements:\n{job_description[:1500]}"
     if context:
         user_msg += f"\nContext: {context}"
     if focused_feedback:
