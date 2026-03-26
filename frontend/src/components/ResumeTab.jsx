@@ -2179,7 +2179,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                     } catch (err) {
                       setChatMessages((prev) => [...prev, {
                         role: "assistant",
-                        content: "Sorry, something went wrong. Please try sending your message again.",
+                        content: err.message?.includes("429")
+                          ? "I'm a bit busy right now — too many AI requests at once. Please wait a moment and try again."
+                          : "Sorry, something went wrong. Please try sending your message again.",
                       }]);
                     } finally {
                       setChatLoading(false);
