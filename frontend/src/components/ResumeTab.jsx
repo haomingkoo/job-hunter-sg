@@ -2166,7 +2166,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                     setChatLoading(true);
 
                     // Scroll to bottom after adding user message
-                    setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+                    setTimeout(() => { if (chatEndRef.current) chatEndRef.current.parentElement.scrollTop = chatEndRef.current.parentElement.scrollHeight; }, 50);
 
                     try {
                       const resp = await apiFetch("/api/ai/resume-chat", {
@@ -2183,7 +2183,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                       }]);
                     } finally {
                       setChatLoading(false);
-                      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+                      setTimeout(() => { if (chatEndRef.current) chatEndRef.current.parentElement.scrollTop = chatEndRef.current.parentElement.scrollHeight; }, 50);
                     }
                   }}
                   className="flex gap-2"

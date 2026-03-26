@@ -652,6 +652,8 @@ const EDUCATION_HONORS_RE = /\b(?:first class|second class|distinction|honou?rs?
 function isEducationEntryStart(item) {
   if (item.type === "subheading" && (item.variant === "education_main" || item.variant === "dated")) return true;
   if (item.type === "paragraph" && (startsNewEducationEntry(item.text) || (looksLikeEducationMain(item.text) && !looksLikeEducationDetail(item.text)))) return true;
+  // Also detect degree patterns in any text type (handles chat-generated resumes)
+  if ((item.type === "paragraph" || item.type === "bullet") && DEGREE_START_RE.test(stripResumeMarkdown(item.text || ""))) return true;
   return false;
 }
 
@@ -1413,7 +1415,7 @@ function shouldMergeContinuationLine(line, currentSectionKey, previousItem) {
   const startsLowercase = /^[a-z(]/.test(trimmed);
   const definiteNewEntry = looksLikeDateOnlyText(trimmed)
     || looksLikeResumeTitleLine(trimmed)
-    || (currentSectionKey === "education" && startsNewEducationEntry(trimmed));
+    || (currentSectionKey === "education" && (startsNewEducationEntry(trimmed) || RESUME_DEGREE_RE.test(trimmed)));
 
   if (previousItem.type === "bullet") {
     if (!previousEndsSentence && !definiteNewEntry) return true;
