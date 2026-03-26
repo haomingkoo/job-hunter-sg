@@ -3765,40 +3765,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                     <SortableContext items={bulletIds} strategy={verticalListSortingStrategy}>
                     {bodySections.map((section, sectionIndex) => {
                       if (section.type === "spacer") {
-                        // Check if next non-spacer item starts a new section - show "Add Entry" button
-                        const prevItem = bodySections.slice(0, sectionIndex).reverse().find((s) => s.type !== "spacer");
-                        const nextItem = bodySections.slice(sectionIndex + 1).find((s) => s.type !== "spacer");
-                        const isEndOfEntrySection = prevItem && nextItem
-                          && nextItem.type === "heading"
-                          && ["experience", "education", "certifications", "projects"].includes(prevItem.sectionKey);
-                        if (isEndOfEntrySection) {
-                          const templates = {
-                            experience: "Company Name | Job Title | Start - End\n- Describe your key achievement",
-                            education: "Degree Name\nUniversity Name, Year",
-                            certifications: "- Certification Name (Year)",
-                            projects: "Project Name | Year\n- Describe the project and your role",
-                          };
-                          const template = templates[prevItem.sectionKey];
-                          if (template) {
-                            return (
-                              <div key={section.id} className="group/addentry flex justify-center py-1">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const lines = resumeText.replace(/\r\n?/g, "\n").split("\n");
-                                    const insertAt = (prevItem.lineIndices?.[prevItem.lineIndices.length - 1] ?? prevItem.lineIndex) + 1;
-                                    lines.splice(insertAt, 0, "", ...template.split("\n"));
-                                    applyResumeText(lines.join("\n"));
-                                  }}
-                                  className="opacity-0 group-hover/addentry:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1.5 rounded-full border border-dashed border-blue-300 bg-white px-3 py-1 text-[11px] font-medium text-[#88BDF2] hover:bg-blue-50"
-                                >
-                                  <Plus size={11} />
-                                  Add {prevItem.sectionKey === "experience" ? "Position" : prevItem.sectionKey === "education" ? "Education" : "Entry"}
-                                </button>
-                              </div>
-                            );
-                          }
-                        }
                         return <div key={section.id} className="h-1.5" />;
                       }
 
@@ -4054,6 +4020,17 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                               Make Bullet
                             </button>
                           )}
+                          {(section.type === "subheading" || section.type === "education_entry") && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleDeleteSection(section); }}
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-[#6A89A7] hover:text-rose-600 hover:bg-rose-50 transition"
+                              title={section.type === "education_entry" ? "Delete education entry" : "Delete entry and its bullets"}
+                            >
+                              <Trash2 size={9} />
+                              Delete
+                            </button>
+                          )}
                         </div>
                       ) : null;
 
@@ -4074,6 +4051,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                             title="Move section down"
                           >
                             <ArrowDown size={12} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); handleDeleteSection(section); }}
+                            className="rounded p-0.5 text-[#6A89A7]/60 hover:text-rose-500 hover:bg-rose-50 transition"
+                            title="Delete entire section"
+                          >
+                            <Trash2 size={12} />
                           </button>
                         </div>
                       ) : null;
@@ -4112,11 +4097,68 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                         </>
                       );
 
+                      // ── End-of-block buttons: Add Bullet / Add Entry ────────
+                      const nextNonSpacer = bodySections.slice(sectionIndex + 1).find((s) => s.type !== "spacer");
+                      const isAtEntryBoundary = !nextNonSpacer
+                        || nextNonSpacer.type === "heading"
+                        || nextNonSpacer.type === "subheading"
+                        || nextNonSpacer.type === "education_entry";
+
+                      // "Add Bullet" at end of each position/entry block
+                      const addBulletButton = section.type === "bullet"
+                        && isAtEntryBoundary
+                        && ["experience", "projects", "activities", "certifications"].includes(section.sectionKey) ? (
+                          <div className="group/addbullet flex justify-center py-1">
+                            <button
+                              type="button"
+                              onClick={() => handleInsertBulletBelow(section)}
+                              className="opacity-0 group-hover/addbullet:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1.5 rounded-full border border-dashed border-indigo-300 bg-white px-3 py-1 text-[11px] font-medium text-indigo-500 hover:bg-indigo-50 hover:border-indigo-400"
+                            >
+                              <Plus size={11} />
+                              Add Bullet
+                            </button>
+                          </div>
+                        ) : null;
+
+                      // "Add Entry" at end of an entry section (before next heading or end of doc)
+                      const isAtSectionEnd = !nextNonSpacer || nextNonSpacer.type === "heading";
+                      const entryTemplates = {
+                        experience: { text: "Company Name | Job Title | Start – End\n• Describe your key achievement", label: "Add Position" },
+                        education: { text: "Degree Name\nUniversity Name, Year", label: "Add Education" },
+                        certifications: { text: "• Certification Name (Year)", label: "Add Entry" },
+                        projects: { text: "Project Name | Year\n• Describe the project and your role", label: "Add Project" },
+                      };
+                      const addEntryButton = isAtSectionEnd
+                        && section.type !== "heading"
+                        && section.type !== "spacer"
+                        && entryTemplates[section.sectionKey] ? (() => {
+                          const tmpl = entryTemplates[section.sectionKey];
+                          return (
+                            <div className="group/addentry flex justify-center py-1.5">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const lines = resumeText.replace(/\r\n?/g, "\n").split("\n");
+                                  const insertAt = (section.lineIndices?.[section.lineIndices.length - 1] ?? section.lineIndex) + 1;
+                                  lines.splice(insertAt, 0, "", ...tmpl.text.split("\n"));
+                                  applyResumeText(lines.join("\n"));
+                                }}
+                                className="opacity-0 group-hover/addentry:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1.5 rounded-full border border-dashed border-blue-300 bg-white px-3 py-1 text-[11px] font-medium text-[#88BDF2] hover:bg-blue-50"
+                              >
+                                <Plus size={11} />
+                                {tmpl.label}
+                              </button>
+                            </div>
+                          );
+                        })() : null;
+
                       // Wrap bullets in SortableBulletItem for drag-and-drop
                       if (section.type === "bullet") {
                         return (
                           <SortableBulletItem key={section.id} id={section.id}>
                             {sectionContent}
+                            {addBulletButton}
+                            {addEntryButton}
                           </SortableBulletItem>
                         );
                       }
@@ -4124,6 +4166,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                       return (
                         <Fragment key={section.id}>
                           {sectionContent}
+                          {addBulletButton}
+                          {addEntryButton}
                         </Fragment>
                       );
                     })}

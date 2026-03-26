@@ -1571,18 +1571,49 @@ export function removeResumeLine(text, section) {
 }
 
 export function removeResumeSectionBlock(text, section, parsedSections = []) {
-  if (!section || !["heading", "heading_paragraph"].includes(section.type)) {
-    return removeResumeLine(text, section);
+  if (!section) return text;
+
+  // Heading/heading_paragraph: delete entire section to next heading
+  if (["heading", "heading_paragraph"].includes(section.type)) {
+    const lines = text.replace(/\r\n?/g, "\n").split("\n");
+    const startIndex = section.lineIndex;
+    const nextHeading = parsedSections.find(
+      (candidate) => candidate.lineIndex > startIndex && ["heading", "heading_paragraph"].includes(candidate.type),
+    );
+    const endIndexExclusive = nextHeading ? nextHeading.lineIndex : lines.length;
+    lines.splice(startIndex, Math.max(endIndexExclusive - startIndex, 1));
+    return _cleanSplicedLines(lines);
   }
 
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const startIndex = section.lineIndex;
-  const nextHeading = parsedSections.find(
-    (candidate) => candidate.lineIndex > startIndex && ["heading", "heading_paragraph"].includes(candidate.type),
-  );
-  const endIndexExclusive = nextHeading ? nextHeading.lineIndex : lines.length;
-  lines.splice(startIndex, Math.max(endIndexExclusive - startIndex, 1));
+  // Subheading (position/entry): delete entry heading + its bullets until next boundary
+  if (section.type === "subheading") {
+    const lines = text.replace(/\r\n?/g, "\n").split("\n");
+    const indices = section.lineIndices?.length ? section.lineIndices : [section.lineIndex];
+    const startIndex = Math.min(...indices);
+    const maxIndex = Math.max(...indices);
+    const nextBoundary = parsedSections.find(
+      (candidate) => candidate.lineIndex > maxIndex
+        && ["heading", "heading_paragraph", "subheading", "education_entry"].includes(candidate.type),
+    );
+    const endIndexExclusive = nextBoundary ? nextBoundary.lineIndex : lines.length;
+    lines.splice(startIndex, Math.max(endIndexExclusive - startIndex, 1));
+    return _cleanSplicedLines(lines);
+  }
 
+  // Education entry: delete all lines belonging to the entry
+  if (section.type === "education_entry" && section.lineIndices?.length > 1) {
+    const lines = text.replace(/\r\n?/g, "\n").split("\n");
+    const sorted = [...section.lineIndices].sort((a, b) => b - a);
+    for (const idx of sorted) {
+      if (idx >= 0 && idx < lines.length) lines.splice(idx, 1);
+    }
+    return _cleanSplicedLines(lines);
+  }
+
+  return removeResumeLine(text, section);
+}
+
+function _cleanSplicedLines(lines) {
   const cleanedLines = [];
   lines.forEach((line) => {
     if (!stripResumeMarkdown(line) && !cleanedLines[cleanedLines.length - 1]?.trim()) {
@@ -1590,7 +1621,6 @@ export function removeResumeSectionBlock(text, section, parsedSections = []) {
     }
     cleanedLines.push(line);
   });
-
   return cleanedLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
