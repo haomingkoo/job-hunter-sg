@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 1200px;
+    height: 630px;
+    background: linear-gradient(135deg, #f0f4f8 0%, #e8eef5 50%, #dce6f0 100%);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 60px;
+  }
+  .container {
+    display: flex;
+    align-items: center;
+    gap: 60px;
+    width: 100%;
+  }
+  .left {
+    flex: 1;
+  }
+  .badge {
+    display: inline-block;
+    background: #384959;
+    color: white;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    margin-bottom: 24px;
+  }
+  h1 {
+    font-size: 52px;
+    font-weight: 700;
+    color: #384959;
+    line-height: 1.15;
+    margin-bottom: 16px;
+  }
+  h1 span {
+    color: #6A89A7;
+  }
+  p {
+    font-size: 20px;
+    color: #6A89A7;
+    line-height: 1.5;
+    max-width: 500px;
+  }
+  .stats {
+    display: flex;
+    gap: 32px;
+    margin-top: 28px;
+  }
+  .stat {
+    text-align: center;
+  }
+  .stat-num {
+    font-size: 28px;
+    font-weight: 700;
+    color: #384959;
+  }
+  .stat-label {
+    font-size: 13px;
+    color: #6A89A7;
+    margin-top: 2px;
+  }
+  .right {
+    width: 320px;
+    height: 420px;
+    background: white;
+    border-radius: 20px;
+    box-shadow: 0 8px 40px rgba(56,73,89,0.12);
+    padding: 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .card-header {
+    font-size: 16px;
+    font-weight: 700;
+    color: #384959;
+  }
+  .card-sub {
+    font-size: 12px;
+    color: #6A89A7;
+  }
+  .score-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #dcfce7;
+    color: #166534;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .bar {
+    height: 6px;
+    border-radius: 3px;
+    background: #BDDDFC;
+    opacity: 0.4;
+  }
+  .skill-tag {
+    display: inline-block;
+    background: rgba(189,221,252,0.2);
+    color: #384959;
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="left">
+      <div class="badge">Free &middot; No sign-up needed</div>
+      <h1>Job Hunter <span>SG</span></h1>
+      <p>AI-powered job search and resume tailoring for Singapore</p>
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-num">72K+</div>
+          <div class="stat-label">Jobs</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num">5</div>
+          <div class="stat-label">Sources</div>
+        </div>
+        <div class="stat">
+          <div class="stat-num">AI</div>
+          <div class="stat-label">Resume Coach</div>
+        </div>
+      </div>
+    </div>
+    <div class="right">
+      <div class="card-header">Sarah Chen</div>
+      <div class="card-sub">Software Engineer</div>
+      <div class="score-badge">ATS Score: 92%</div>
+      <div style="margin-top:8px;font-size:11px;font-weight:600;color:#6A89A7;text-transform:uppercase;letter-spacing:1px;">Experience</div>
+      <div style="font-size:13px;font-weight:600;color:#384959;">Senior Engineer &middot; DBS Bank</div>
+      <div class="bar" style="width:85%"></div>
+      <div class="bar" style="width:70%"></div>
+      <div style="font-size:13px;font-weight:600;color:#384959;">Engineer &middot; GovTech</div>
+      <div class="bar" style="width:90%"></div>
+      <div class="bar" style="width:65%"></div>
+      <div style="margin-top:8px;font-size:11px;font-weight:600;color:#6A89A7;text-transform:uppercase;letter-spacing:1px;">Skills</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <span class="skill-tag">Python</span>
+        <span class="skill-tag">AWS</span>
+        <span class="skill-tag">React</span>
+        <span class="skill-tag">SQL</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1712,9 +1712,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const lowScoreWarning = scoreData && overallScore !== null && overallScore < 50;
   const setupVisible = showSetupPanel || !resumeText.trim();
 
-  // When navigating from Jobs tab with a selected job and resume already loaded, skip to editor
+  // When a new job is selected, always go to step 1 (Upload) so user can choose their resume
   useEffect(() => {
-    if (selectedJob && resumeText.trim() && wizardStep === 1 && !showSetupPanel) {
+    if (selectedJob) {
+      setWizardStep(1);
       setShowSetupPanel(true);
     }
   }, [selectedJob]);
