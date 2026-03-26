@@ -2203,7 +2203,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                     }}
                     placeholder="Type your answer... (Shift+Enter for new line)"
                     disabled={chatLoading}
+                    autoFocus
                     rows={2}
+                    ref={(el) => { if (el && !chatLoading) el.focus(); }}
                     className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2.5 text-sm text-[#384959] placeholder-[#6A89A7]/60 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:opacity-50 resize-none"
                   />
                   <button
