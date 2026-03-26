@@ -1,0 +1,86 @@
+Haoming Koo
+Singaporean | haomingkoo@gmail.com | +65 9634 9516 | linkedin.com/in/haomingkoo
+Professional Summary
+Data & AI transformation leader with 7+ years’ experience driving analytics innovation, digital
+platforms, and high-value AI initiatives across manufacturing and technology sectors. Over 3 years
+leading high-performing teams and owning data products from concept to deployment. Proven track
+record in unifying siloed systems, building insight-ready data platforms, and translating complex
+analytics into actionable intelligence for senior leadership. Technically fluent in Python, SQL, R, and
+cloud-native solutions (AWS Lambda, S3) with hands-on experience in AI/GenAI projects. Passionate
+about applying advanced analytics to solve complex, real-world problems and create scalable impact in
+finance and public-facing sectors.
+Professional Experience
+Micron Technology – Singapore / Japan / Taiwan / USA
+Manager, Strategic Operations & Transformation | Aug 2022 – Jan 2025
+• Led Micron’s global Accelerator Program across four countries to uncover hidden
+bottlenecks in engineering conversions; journey mapping and data wrangling revealed
+untracked handover delays of 2–3 weeks.
+• Built custom performance metrics (handover time, conversion turns) and deployed Python +
+SQL dashboards with drift detection alerts, improving conversion throughput and delivering
+$50M in revenue upside by cutting cycle times from three weeks to one.
+• Product owner for key global conversion platforms (C3 and PIP), leading end-to-end
+deployment: stakeholder alignment, agile development, vendor management, adoption audits,
+and user training. Platforms became the single source of truth for 3,000+ engineers globally.
+• Unified siloed IT/OT systems, standardising 80% of workflows while preserving site
+flexibility for 20%, enabling faster cross-site knowledge transfer.
+• Piloted GenAI assistants and workflow automation to improve reporting speed and
+consistency, reducing administrative work for engineering teams by 30%.
+• Managed and coached a team of 6–9 analysts and engineers delivering recurring executive
+dashboards, publications, and ad hoc analytics requests for senior leadership.
+Senior Process & Equipment Engineer – Uniformity | Nov 2021 – Aug 2022
+• Built a ResNet-50-based computer vision model to detect wafer centering drift from TEL
+WISecam images, preventing recurring yield loss events.
+• Developed multimodal anomaly detection using Python and metrology signals and integrated
+it into SPC systems, improving inline process monitoring and response time.
+Senior Process & Equipment Engineer – Wet Process | Nov 2019 – Nov 2021
+• Created a digital twin for TEL Wet Tools using ML models to optimise wafer profile control
+with 95% predictive accuracy, cutting recipe tuning by two weeks and reducing chemical
+usage by 60%.
+• Project earned company-wide innovation award for measurable cost and sustainability impact.
+Process & Equipment Engineer – Wet Process | Mar 2018 – Oct 2019
+• Coordinated tool qualification and reuse across fabs, saving $7.5M while ensuring consistent
+engineering standards.
+• Supported Hiroshima fab ramp-up via knowledge transfer and remote collaboration.
+Career Break & Upskilling
+| Jan 2025 – Present
+• Completed PMP coursework and currently undergoing Full Stack Development with AI
+(NUS x Emeritus).
+• Built personal portfolio dashboards and applications using Python, ReactJS, and SQL.
+• Gained hands-on experience in AWS (Lambda, S3) for analytics model deployment.
+Education
+MSc, Smart Industries & Digital Transformation – National University of Singapore | GPA: 4.85 /
+5.00
+• Graduate Certificates: Data Analytics, Intelligent Sensing, IoT Systems
+• Capstone: Partnered with MPA and Tagvance to analyse marina mooring data; developed and
+deployed a clustering solution (geo-correction + K-means) on AWS Lambda & S3,
+influencing ~$2M in potential annual revenue across four ports.
+BSc (Hons), Chemistry (Minor: Nanoscience) – National University of Singapore | GPA: 4.46 / 5.00
+| Distinction
+• Exchange: Simon Fraser University, Canada
+Certifications
+• PMP (Expected 2025)
+• Full Stack Development with AI – NUS x Emeritus (2025)
+• ISO 9001 Internal Audit & Risk Practices (Micron)
+• Scrum Product Owner (Planned)
+AI & GenAI Projects Portfolio
+• GenAI Assistant for Smart Search: Worked with in-house Data Science team to train internal
+LLM-powered models for onboarding and audit purposes.
+• Computer Vision for Yield Protection: Trained and deployed ResNet-50 model for wafer
+centring drift detection, preventing recurring multi-million-dollar yield excursions.
+• Digital Twin for Wet Process Optimisation: Built ML-driven predictive models to shorten
+recipe tuning cycles by two weeks and reduce resource usage by 60%.
+• AWS-based Marina Analytics (Capstone): Designed and deployed a geo-corrected clustering
+model on AWS Lambda and S3 to detect mooring misuse, influencing ~$2M revenue.
+• Drift Detection Dashboards: Deployed Python/SQL anomaly detection for SPC trace data and
+integrated alerts into fab monitoring systems.
+Skills & Tools
+Analytics & Coding: Python, R, SQL, Tableau, ReactJS
+Cloud & Data Engineering: AWS Lambda, S3, API integration
+Data Science & AI: GenAI applications, CNN transfer learning, anomaly detection, clustering
+Leadership & Product: Agile/Scrum, stakeholder engagement, vendor management, cross-functional
+team leadership
+Data Ops: Data cleaning, wrangling, statistical modelling, dashboard governance, forecasting
+Research Methods: Journey mapping, power walks, qualitative interviews, quantitative analytics
+Languages & Mobility
+English (Native), Mandarin (Fluent), Japanese (Elementary)
+Singapore Citizen | Open to regional assignments

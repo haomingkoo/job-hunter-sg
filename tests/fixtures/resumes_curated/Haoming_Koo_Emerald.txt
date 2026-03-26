@@ -1,0 +1,81 @@
+Haoming Koo
+AI Strategy & Semiconductor Specialist | Driving Sustainable Industrial Innovation Through
+Deep Tech, AI & Operational Excellence
+Singapore | haomingkoo@gmail.com | www.linkedin.com/in/haomingkoo
+Professional Summary
+Tech transformation leader with 7 years of experience improving semiconductor yield,
+accelerating conversion timelines, and scaling AI-integrated process innovation across fabs
+in the U.S., Japan, Taiwan, and Singapore. Led Micron’s LPDDR5X and HBM3E yield ramps—
+powering the iPhone 16 Pro Max and NVIDIA’s H200 GPU—by resolving complex
+manufacturing bottlenecks and enabling faster time-to-market for advanced products.
+Architected a 5-year roadmap for autonomous conversions and developed systems that
+enable process engineers to update the bill of materials (BoM) during conversions—
+enhancing visibility into material usage, greenhouse gas (GHG) emissions, and sustainability
+metrics. Singaporean with 2 years of cumulative international work travel aligning cross-site
+teams, suppliers, and global strategy.
+Core Skills & Technical Proficiencies
+• Industrial IT & AI: Python, TensorFlow, Scikit-learn, NumPy, OpenCV, SEMulator3D,
+Digital Twin, SPC automation, Computer Vision, LLM enablement
+• Full Stack Tech: React, Node.js, Flask, HTML/CSS/JS, MongoDB, MySQL, Git, Snowflake
+• Cloud & Analytics: AWS, GCP, Tableau, Jupyter, GitHub, SQL, KPI dashboarding
+• Project Tools & Methodologies: Jira, Confluence, Agile, Lean Six Sigma, PMP (in
+progress)
+• Sustainability & ESG: BoM-linked tracking of GHG emissions, waste, water, and
+energy; ESG-driven conversion metrics and initiatives
+Experience
+Micron Technology – Singapore
+Manager, Front End Central Process Integration Engineering
+Aug 2022 – Jan 2025
+• Led AI-enabled conversion strategy across 4 global sites; pulled in yield maturity for
+LPDDR5X DRAM (iPhone 16 Pro Max) by 7 months, unlocking 9-figure USD revenue.
+• Co-Led HBM3E yield program—Micron’s first successful HBM market entry—driving
+>$500M upside vs. business plan for NVIDIA’s H200 GPU.
+• Spearheaded Micron’s Accelerator Program to standardize conversions; introduced
+autonomous flow leveraging SPC automation, digital twins, and LLM-powered
+knowledge reuse.
+• Developed KPIs including headcount per wafer move, time to convert (TTC), SPC alert
+rate, and GHG emissions per wafer.
+• Led SEMulator3D rollout; accelerated validation by 2 weeks, generating >$10M in
+time-to-market gains and reducing silicon/resource use in R&D; negotiated tiered
+licensing to mitigate sunk cost risk.
+• Partnered with sustainability and procurement teams to drive wafer lifecycle impact
+awareness through BoM integration—enabling traceability of material changes and
+improved emissions tracking.
+Senior Process & Equipment Engineer – Uniformity
+Nov 2021 – Aug 2022
+• Named Micron Culture Champion for reducing scanner rejects to <0.5% and MA
+impact <0.1%.
+• Developed predictive ML model preventing >2% yield loss and enabling smarter
+diagnostics.
+• Created robust inline datasets for advanced manufacturing feature engineering.
+Senior Process & Equipment Engineer – Wet Process
+Nov 2019 – Nov 2021
+• Generated >$7M in cost and sustainability gains by building a digital twin of TEL
+Celesta; optimized etch rates and reduced chemical usage by 60% using ML-driven
+DoE modeling.
+• Qualified >10 alternate chemistries during COVID to maintain business continuity.
+Projects & Strategic Initiatives
+• Conversion Systems: Designed and implemented systems enabling process engineers
+to update BoM during conversions—ensuring better tracking of environmental
+impact.
+• Sustainability Integration: Created tracking infrastructure for GHGs, water, and waste
+through automated BoM-linked analysis.
+• Industry Engagements: Partnered with LAM Research, Silvaco, Synopsys to evaluate
+simulation platforms; drove co-development and adoption.
+Education
+• MSc, Smart Industries & Digital Transformation – National University of Singapore
+CAP: 4.85/5.00 | Graduate Certificates in IoT & Intelligent Sensing Systems
+• BSc (Hons), Chemistry (Minor in NanoScience) – National University of Singapore
+Student Exchange: Simon Fraser University, Canada
+Certifications (Ongoing)
+• Full Stack Development with AI – NUS x Emeritus (2025)
+• PMP Certification (in progress)
+Languages
+• English (Native)
+• Chinese (Native)
+• Japanese (Elementary)
+Location & Availability
+• Singapore Citizen, based in Singapore.
+• Cumulatively 2 years of on-site travel across Japan, Taiwan, and global tech hubs for
+program launches, vendor evaluations, and executive engagements.
+• Open to international/regional travel as needed.

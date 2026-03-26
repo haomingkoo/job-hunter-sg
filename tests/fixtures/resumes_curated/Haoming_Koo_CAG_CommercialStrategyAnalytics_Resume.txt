@@ -1,0 +1,68 @@
+Haoming Koo
+Singaporean | haomingkoo@gmail.com | +65 9634 9516 | linkedin.com/in/haomingkoo
+Professional Summary
+Commercial Strategy and Analytics professional with 7+ years of experience delivering
+data-driven insights, strategic planning, and business transformation across global
+operations. Skilled in SQL, Python, and Tableau to analyze business-critical data and build
+dashboards that inform multi-million-dollar decisions. Proven record of framing strategy,
+shaping narratives for C-suite, and translating complex analytics into actionable commercial
+insights. Passionate about applying analytics to consumer segmentation, spend behavior,
+and digital engagement to drive growth.
+Professional Experience
+Micron Technology — Singapore / Japan / Taiwan / USA
+Manager, Strategic Ops & Transformation | Aug 2022 – Jan 2025
+• Designed and executed a 5-year transformation roadmap across 4 global sites, aligning
+stakeholders and systems to deliver $600M+ in realized revenue impact.
+• Built SQL- and Tableau-based dashboards to track yield, cycle time, and conversion
+metrics, providing real-time insights tied to revenue growth and business performance.
+• Conducted survey-driven workshops with 3,000+ engineers and system users, aligning
+competing priorities into unified roadmaps for business-critical outcomes.
+• Presented GenAI adoption mock-ups to C-suite, translating technical opportunities into
+strategic narratives and actionable investment proposals.
+• Mentored a global team of 6 engineers, embedding data-driven problem solving and
+continuous improvement into day-to-day operations.
+Senior Process & Equipment Engineer – Uniformity | Nov 2021 – Aug 2022
+• Advanced Micron Singapore’s Great Place to Work ranking from 7th → 3rd nationally
+through data-driven engagement strategies
+• Led analysis of employee survey data, raising participation from 60% (2021) to 78.5%
+(2022), and developed actionable recommendations for leadership.
+• Facilitated workshops and presented findings to senior leaders, linking data to cultural
+and organizational strategy.
+Senior Process & Equipment Engineer – Wet Process | Nov 2019 – Nov 2021
+• Implemented a digital twin project delivering $7M+ in savings; used predictive models
+to analyze process performance and recommend improvements.
+• Built and maintained dashboards to monitor wafer cycle times and yield improvement
+programs, enabling data-driven decision-making across operations.
+Process & Equipment Engineer – Wet Process | Mar 2018 – Oct 2019
+• Designed analytics frameworks to track fab ramp-up progress, onboarding efficiency,
+and tool reuse performance.
+• Achieved $7.5M in capital savings by leading cross-site qualification analysis and
+balancing stakeholder needs.
+Career Break & Upskilling | Jan 2025 – Present
+• Completed Full Stack Development with AI (NUS x Emeritus, 2025), applying Python,
+SQL, and React to build data-driven applications.
+• Currently pursuing PMP coursework; preparing for certification in 2025.
+• Developed personal projects in consumer analytics: applied Bayesian averages and
+recommender system techniques to customer-item datasets; web-scraped e-commerce
+platforms to analyze product categories and price comparisons.
+• Explored sustainability, digital ecosystems, and strategic planning through public sector
+case studies.
+Education
+MSc, Smart Industries & Digital Transformation | National University of Singapore
+GPA: 4.85 / 5.00
+Graduate Certificates: IoT Systems, Intelligent Sensing, Data Analytics
+BSc (Hons), Chemistry (Minor: Nanoscience) | National University of Singapore
+GPA: 4.46 / 5.00 | Distinction
+Exchange: Simon Fraser University, Canada
+Certifications
+• PMP (In Progress – Expected 2025)
+• Full Stack Development with AI – NUS x Emeritus (2025)
+• ISO 9001 Internal Audit & Risk Practices
+• Scrum Product Owner (Planned)
+Skills & Tools
+Data Analytics (SQL, Python, Tableau, ReactJS), Business Strategy, Market Research,
+Consumer Behavior Analytics, Dashboard Development, Stakeholder Engagement,
+Programme Management, Storytelling & Influence, GenAI Integration, Agile Practices
+Languages & Mobility
+• English (Native), Mandarin (Fluent), Japanese (Elementary)
+• Singapore Citizen | Open to job rotations and regional assignments

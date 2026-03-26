@@ -1,0 +1,76 @@
+Haoming Koo
+Singapore | haomingkoo@gmail.com | linkedin.com/in/haomingkoo
+Singaporean | Open to regional or international relocation
+Professional Summary
+Program and transformation professional with extensive experience leading digital delivery,
+AI adoption, and process modernization across global manufacturing and enterprise
+operations. Skilled in coordinating cross-functional teams, managing Agile programs, and
+supporting the delivery and adoption of new digital platforms. Combines technical fluency
+(Python, SQL, APIs, AI/ML integration) with strong stakeholder engagement and governance
+capabilities. Passionate about enabling technology-driven change that improves collaboration,
+quality, and business outcomes.
+Core Skills
+Digital Transformation | Program & Project Delivery | Agile & Scrum | Product Rollouts |
+Stakeholder Engagement | Change Management | AI & Automation | Data Governance |
+Cloud Integration (GCP/AWS) | Cross-Market Coordination | Continuous Improvement
+Professional Experience
+Micron Technology - Singapore / Japan / Taiwan / USA
+Manager, Strategic Operations & Transformation | Aug 2022 - Jan 2025
+• Led multi-site digital transformation and AI adoption programs that improved
+collaboration, yield learning, and operational efficiency across global fabs.
+• Coordinated delivery roadmaps, sprint planning, and release governance under the
+Conversion Accelerator Program, identifying over USD 600M in potential value and
+realizing USD 50M during execution.
+• Co-led Front-End New Product Introduction (NPI) for HBM3E (NVIDIA Blackwell/H200)
+and served as part-type owner for LPDDR5X (Apple iPhone 16 Pro Max), reducing Time
+to Mature Cumulative Yield by 30%.
+• Managed 6 direct and 9 indirect reports, including process integration engineers and
+part-type owners, ensuring cross-market alignment and delivery execution.
+• Scaled RPA and Generative AI assistants to over 3,000 engineers, improving
+onboarding efficiency and SOP access by up to 90%.
+• Developed a five-year transformation roadmap (“Metrics to Methods to Mindset”)
+unifying process improvement and AI initiatives under a single governance model.
+• Facilitated SteerCo sessions and compliance reviews (RACB, ISO 9001) and managed
+an annual travel budget of USD 9M supporting node ramps and NPI readiness.
+Senior Process & Equipment Engineer - Uniformity | Nov 2021 - Aug 2022
+• Developed and deployed a deep learning model (ResNet-50) for chamber and wafer
+misplacement detection integrated with process control systems; received Micron
+Innovation Award.
+• Built anomaly detection dashboards that improved early drift identification and
+increased tool uptime and process stability.
+• Collaborated with integration and equipment teams to align ML deployments with SPC
+and reliability frameworks.
+Senior Process & Equipment Engineer - Wet Process | Nov 2019 - Nov 2021
+• Designed a digital twin for etch process optimization, reducing validation time by over
+40 hours per week and shortening qualification cycles.
+• Directed cross-site qualification of alternate chemistries during global shortages,
+mitigating more than USD 100M in potential losses and maintaining fab continuity.
+• Standardized documentation and reuse protocols, improving cross-fab alignment and
+audit compliance.
+Process & Equipment Engineer - Wet Process | Mar 2018 - Oct 2019
+• Designed and implemented a tool-reuse qualification framework adopted across
+global fabs, achieving USD 7.5M in capital savings.
+• Supported early technology node transfers and alignment across Singapore, Japan,
+Taiwan, and the U.S.
+Career Break & Professional Development | Jan 2025 - Present
+• Completed Full Stack Development with AI (National University of Singapore x
+Emeritus, 2025): Python, SQL, APIs, React, ML integration, and dashboard
+development.
+• Currently pursuing Generative AI (GA100, WSQ) at Heicoders Academy, focusing on
+prompt engineering, AI workflow automation (n8n), AI agents, RAG, and MCP-based
+risk controls.
+• Preparing for PMP certification (target completion 2025).
+Education
+M.Sc. Smart Industries & Digital Transformation
+National University of Singapore | GPA: 4.85 / 5.00
+Graduate Certificates: Internet of Things, Intelligent Sensing Systems
+B.Sc. (Hons, Distinction) Chemistry with Minor in Nanoscience
+National University of Singapore | GPA: 4.46 / 5.00
+Exchange Program: Simon Fraser University (Canada)
+Certifications
+Full Stack Development with AI (NUS x Emeritus, 2025)
+GA100 – Generative AI (Heicoders Academy, WSQ, 2025)
+PMP Certification (In Progress, Target 2025)
+Additional Information
+Languages: English, Mandarin (Fluent); Japanese (Elementary)
+Mobility: Open to relocation within APAC or U.S.

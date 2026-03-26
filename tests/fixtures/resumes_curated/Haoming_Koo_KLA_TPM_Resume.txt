@@ -1,0 +1,70 @@
+Haoming Koo
+haomingkoo@gmail.com | +65 9634 9516 | LinkedIn: linkedin.com/in/haomingkoo
+PROFESSIONAL SUMMARY
+7+ years of global experience in driving strategic yield improvement programs and
+system innovation for DRAM, NAND, and logic nodes. Specialist in defect inspection,
+backend pathfinding, and process integration. Known for cross-site program delivery,
+tool adoption leadership, and building factory-ready solutions through strategic
+alignment and hands-on collaboration with R&D, integration, and manufacturing teams.
+PROFESSIONAL EXPERIENCE
+Micron Technology, Singapore
+Manager, Front End Central Process Integration Engineering (CPIE)
+2022 –2025
+• Led the Accelerator Program, unifying 3 legacy systems (C3, PIP, iConS) into
+a strategic conversion platform. Drove cross-site workshops across
+Singapore, Boise, Manassas, and Japan, aligning stakeholders and surfacing
+$800M+ in opportunities as part of a 5-year roadmap, with $50M+ to mid-9-
+figure value unlocked.
+• Served as Part Type Owner (PTO) for LPDDR5X (iPhone 16 Pro Max) and
+HBM3E (NVIDIA H200) — led yield and inline health strategies across fabs,
+ensured readiness for high-volume ramp, and aligned integration, process
+control, and probe reliability initiatives.
+• Supported DRAM and NAND excursions across global fabs, collaborating on
+inline and backside defect resolution with local and HQ teams
+• Led cross-site RegE and Backside Program involving KLA Surfscan SP7 and
+CIRCL for optimizing wafer backside, edge bevel, and photo module in MFG.
+• Managed yield-critical excursions, implementing inspection-based responses
+and collaborating with TD and RDA teams for shift-left strategies.
+• Conducted use case studies across multiple KLA platforms (Voyager, CIRCL,
+SP7), defining tool roles in clean optimization and failure prevention.
+• Initiated and aligned forward-looking NPI strategies with TD teams, including
+the use of CIRCL in Head-to-Head comparisons for backside polish (TEL vs
+DNS).
+• Provided spec definitions and integration input for metrology and inspection
+platforms in new fab setups.
+Senior Process & Equipment Engineer - Uniformity & Photolithography
+2021 – 2022
+• Drove key programs targeting critical uniformity and edge exclusion
+improvement across wet etch processes, improving yield baseline across sites.
+• Acted as site lead on advanced process control projects involving inline signal
+monitoring and pattern matching to proactively address variation.
+Senior Process & Equipment Engineer – Wet Process
+2018 – 2021
+• Served as primary owner for backend-of-line wet process integration, including
+Lithography, thin-film module interactions, and electroplating modules
+• Engaged with TEL Wafter Intelligent Scanner (WIS), KLA’s CIRCL and
+Surfscan tools for OQC, edge yield monitors, and backside excursion
+prevention.
+EDUCATION
+MSc, Smart Industries & Digital Transformation
+National University of Singapore (NUS), 2020–2021
+• Capstone with Maritime Port Authority – Explored smart port innovation, sensor
+adoption, and digital twins.
+BSc (Hons), Chemistry with Minor in Nanoscience
+National University of Singapore, 2013–2017
+• Student Exchange: Simon Fraser University, Canada
+CORE COMPETENCIES
+• Defect Inspection & Metrology (KLA Surfscan, CIRCL, Voyager)
+• Semiconductor Yield & Reliability
+• Cross-Functional Program Management
+• New Product Introduction (NPI) Strategy
+• Escalation Handling & Excursion Containment
+• Integration of Wet, Etch, and Backside Process
+• TD/HVM Collaboration & Shift-Left Engineering
+• Factory Readiness & Fab Tool Spec Definition
+TOOLS & SYSTEMS
+KLA CIRCL, Surfscan SP7, Voyager 1035 | SEMulator3D | JMP | Spotfire | Python |
+SQL | SAP | JIRA | Confluence
+CERTIFICATIONS
+Project Management Professional (PMP) [In Progress]
+Full Stack Development with AI (NUS Emeritus, 2025)

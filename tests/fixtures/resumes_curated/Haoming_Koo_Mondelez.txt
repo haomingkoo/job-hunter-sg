@@ -1,0 +1,105 @@
+Haoming Koo
+Industrial AI & Process Transformation | Quality Systems, Sustainability, and Scalable
+Innovation
+Singapore | haomingkoo@gmail.com | +65 9634 9516 | linkedin.com/in/haomingkoo
+Professional Summary
+Experienced transformation leader with 7+ years in manufacturing, process innovation,
+and quality systems. Led Micron’s LPDDR5X and HBM3E yield programs, delivering
+$600M+ value via faster yield maturity and strategic ramp. Revitalized the Accelerator
+Program to enable faster, quality-assured conversions—shortening cycle time by 2
+quarters and empowering engineers through system and business process
+improvements. Specialized in predictive quality frameworks, IT/OT integration, and
+sustainability-linked metrics (GHG, water, waste, energy) to advance Industry 4.0 adoption
+at scale
+Core Skills & Technical Proficiencies
+• Industrial IT & AI: Python, TensorFlow, Scikit-learn, NumPy, OpenCV,
+SEMulator3D, Digital Twin, SPC automation, LLM knowledge systems, Computer
+Vision
+• Full Stack & Cloud: React, Node.js, Flask, HTML/CSS/JS, MongoDB, MySQL, Git,
+Snowflake, GCP, AWS, Tableau, Power BI
+• Project Tools & Methods: Jira, Confluence, Agile, Lean Six Sigma, PMP (in
+progress), MS Project, SharePoint
+• QMS & Compliance: EQMS, LIMS, SPC, GDMS (Global Deviation Management),
+CAPA, QMS workflows, ISO 9001
+• Domain Expertise: Wafer and DRAM packaging, yield engineering, vision-based
+monitoring, IT/OT integration, automation readiness
+Professional Experience
+Manager, Front End Central Process Integration Engineering
+Micron Technology | Aug 2022 – Jan 2025
+• Led Micron’s Accelerator Program to scale Industry 4.0 pilots and accelerate
+quality-assured conversions—delivered $50M in realized savings and projected
+mid-9-figure revenue gains.
+• Built a global innovation ecosystem by aligning internal teams, tech partners, and
+vendors to deploy digital roadmaps and pilot solutions.
+• Drove digital adoption and capability-building workshops across four global fabs,
+enabling faster learning cycles and tool standardization.
+• Achieved LPDDR5X yield maturity 7 months early—supported iPhone 16 Pro Max
+launch, unlocking $100M+ in revenue.
+• Co-led HBM3E ramp for NVIDIA’s H200 GPU—Micron’s HBM debut—generating
+$500M+ upside.
+• Deployed LAM SEMulator3D for waferless DoEs—cut validation time by 2 weeks
+and accelerated $10M in revenue.
+• Digitized QMS workflows via SPC, recipe simulations, and digital twins—cut
+learning cycle time by 14%.
+• Integrated EQMS for BoM-driven traceability and sustainability tracking (GHG,
+water, waste, energy).
+• Embedded CAPA, 5 Whys, and Fishbone RCA into GDMS workflows—boosted
+audit readiness and proactive quality.
+• Won Micron Innovation Award for developing CNN-based vision system calibrated
+to tool optics—enabled edge defect detection and $2M/node uplift.
+• Partnered with equipment teams to optimize workflows using industrial control
+feedback systems (TEL, AMAT, LAM).
+• Broad exposure to wafer process and packaging equipment for DRAM, NAND, and
+HBM.
+• Managed 6 direct and 3 indirect reports across Boise, Manassas, Hiroshima, and
+Singapore.
+Senior Process & Equipment Engineer – Uniformity & Lithography
+Micron Technology – Singapore | Nov 2021 – Aug 2022
+• Reduced scanner wafer rejects to <0.5% and MA impact to <0.1%; awarded
+Micron Culture Champion.
+• Deployed OCR-based AI model into production—enabled 4–5% yield gains
+through predictive detection.
+• Built cross-site predictive monitoring pipelines to improve response time and issue
+prevention
+Senior Process & Equipment Engineer – Wet Process
+Micron Technology – Singapore | Nov 2019 – Nov 2021
+• Built digital twin for TEL Celesta; reduced recipe costs by 60%, saving $7M+ via
+ML-optimized DoEs.
+• Optimized automated workflows with feedback control loops from tool sensors
+(TEL, AMAT, LAM).
+• Qualified 10+ alternate chemistries to ensure continuity during COVID.
+• Co-authored 7 technical papers; awarded “Idea of the Quarter” for smart
+manufacturing innovations
+Process & Equipment Engineer – Wet Process
+Micron Technology – Singapore | Mar 2018 – Oct 2019
+• Delivered $7.5M in CAPEX savings via equipment reuse and streamlined
+integration.
+• Led process alignment for Micron Hiroshima ramp-up and launched internal
+upskilling initiative (MAXout).
+Projects & Strategic Initiatives
+• Autonomous Conversion Roadmap: Developed 5-year global plan with global
+stakeholders; captured $50M in realized value with mid-9-figure projected impact
+through faster ramp, system integration, and predictive workflows.
+• EQMS & Sustainability Metrics: Integrated quality system enhancements to trace
+environmental metrics; co-developed platform to auto-generate GHG, water,
+waste, and energy footprints per wafer.
+• Cross-site Powerwalks & RCA Workshops: Conducted root cause sessions, digital
+maturity surveys, and time-motion analysis with teams across four regions.
+• Computer Vision for Yield: Applied CNN with calibrated optics to detect edge
+defect signals—enabled early stop triggers and saved >$2M per node.
+Education
+• MSc, Smart Industries & Digital Transformation
+National University of Singapore | Jan 2020 – Dec 2021
+CAP: 4.85/5.00 | Graduate Certificates in IoT & Intelligent Sensing Systems
+• BSc (Hons), Chemistry (Minor in NanoScience)
+National University of Singapore | Aug 2013 – May 2017
+Student Exchange: Simon Fraser University, Canada
+Certifications (Ongoing)
+• Full Stack Development with AI – NUS x Emeritus (2025)
+• PMP Certification – In Progress
+Languages & Availability
+• Languages: English (Native), Chinese (Native), Japanese (Elementary)
+• Singapore Citizen based in Singapore
+• 2 years of cumulative international work travel across Japan, Taiwan, and global
+hubs for program rollouts and vendor collaboration
+• Open to global assignments and regional travel

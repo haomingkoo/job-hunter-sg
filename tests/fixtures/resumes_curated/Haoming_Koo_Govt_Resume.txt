@@ -1,0 +1,82 @@
+Haoming Koo
+Singaporean | haomingkoo@gmail.com | +65 9634 9516 | linkedin.com/in/haomingkoo
+Professional Summary
+Strategic transformation leader with 7+ years of experience leading digital initiatives across
+semiconductors and tech, now pivoting to drive public impact. Led Micron’s global
+Accelerator Program, empowering 3,000+ engineers through AI-integrated platforms and
+unified systems—realizing $600M+ in business value. Proven record in cross-agency
+collaboration, quality assurance, agile project delivery, and dashboard-based governance.
+Adept at translating complexity into structured outcomes, aligning stakeholders, and delivering
+resilient systems that scale.
+Professional Experience
+Micron Technology — Singapore / Japan / Taiwan / USA
+Manager, Strategic Ops & Transformation | Aug 2022 – Jan 2025
+• Designed and implemented a 5-year autonomous conversion roadmap aligned with the
+3M strategy (Method, Metrics, Mindset), structuring digital transformation efforts
+across 4 global sites.
+• Unified siloed platforms (iConS, C3, PIP) into a centralized ecosystem
+supporting >3,000 engineers. Standardized 80% of workflows while preserving 20%
+for site-specific needs—balancing flexibility with global alignment.
+• Led strategic yield initiatives for LPDDR5X (iPhone 16 Pro Max) and HBM3E
+(NVIDIA H200), accelerating time-to-ramp and contributing to $600M+ in realized
+revenue.
+• Developed real-time dashboards using SQL, Tableau, and Python to monitor time-to-
+convert, handover lags, and UAT completion—improving visibility and enabling
+leadership prioritization.
+• Translated user pain points into actionable system requirements via structured
+interviews and collaborative workshops, gaining leadership buy-in through data-driven
+before/after storytelling.
+• Conducted red-team-style UAT simulations to identify loopholes and validate readiness
+before go-live, reducing post-rollout incidents by 25%.
+• Chaired steering committees and sprint planning sessions; reduced onboarding time by
+~30% and cut sprint release lag by 10%.
+• Piloted GenAI copilots to summarize Zoom calls and auto-generate action logs,
+improving alignment and reducing follow-up cycles.
+• Mentored and coached 6–9 engineers, embedding quality KPIs and continuous
+improvement into performance plans.
+Senior Process & Equipment Engineer – Uniformity | Nov 2021 – Aug 2022
+• Deployed an AI-driven inline monitoring model for scanner performance and defect
+prediction, improving early detection and yielding a 4–5% improvement.
+• Built traceable defect escalation workflows integrated with MES systems to improve
+response time and operational continuity.
+• Awarded Micron’s Culture Champion for cross-functional leadership and
+communication effectiveness.
+Senior Process & Equipment Engineer – Wet Process | Nov 2019 – Nov 2021
+• Designed a digital twin of the TEL Celesta etcher, reducing recipe costs by 60% and
+saving $7M+ in process optimization.
+• Led virtual deployment readiness and knowledge-sharing initiatives during COVID-19
+to maintain fab uptime across sites.
+• Co-authored 7 technical whitepapers on yield analytics, defect detection, and
+automation for system scaling.
+Process & Equipment Engineer – Wet Process | Mar 2018 – Oct 2019
+• Drove $7.5M in capital savings through tool reuse qualification across fabs, aligning
+integration and procurement needs.
+• Facilitated the Hiroshima fab ramp-up through onboarding programs, process
+harmonization, and tool validation support.
+Career Break & Upskilling
+| Jan 2025 – Present
+• Completed PMP coursework, began GMAT prep, and enrolled in Full Stack
+Development with AI (NUS Emeritus).
+• Developed portfolio dashboards using Python, React, and SQL.
+• Studied GovTech frameworks, policy alignment strategies, and digital public service
+case studies.
+• Designed mock workshops simulating public agency pain points—practiced
+stakeholder facilitation and design thinking.
+Education
+MSc, Smart Industries & Digital Transformation
+National University of Singapore | GPA: 4.85 / 5.00
+Graduate Certificates: IoT Systems, Intelligent Sensing, Data Analytics
+BSc (Hons), Chemistry (Minor: Nanoscience)
+National University of Singapore | Distinction | GPA: 4.46 / 5.00
+Exchange: Simon Fraser University, Canada
+Certifications
+• PMP (In Progress – Expected 2025)
+• Full Stack Development with AI – NUS x Emeritus (2025)
+• ISO 9001 Internal Audit & Risk Practices (Micron-led implementations)
+• Scrum Product Owner (Planned)
+Skills & Tools
+Python, SQL, Tableau, ReactJS, Jira, Confluence, Agile, Scrum, UAT planning, EQMS,
+SPC, ISO 9001, SEMulator3D, dashboard governance, GenAI integration, system unification
+Languages & Mobility
+• English (Native), Mandarin (Fluent), Japanese (Elementary)
+• Singapore Citizen | Open to public sector rotation and regional assignments

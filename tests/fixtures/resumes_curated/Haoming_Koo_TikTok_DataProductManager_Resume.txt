@@ -1,0 +1,76 @@
+Haoming Koo
+Singapore | +65 9634 9516 | haomingkoo@gmail.com | linkedin.com/in/haomingkoo
+Summary
+Data Product Manager with 7+ years of experience building and scaling data-driven
+platforms across global operations. Proven track record of launching 0→1 data products,
+connecting insights to business value chains, and delivering $600M+ realized impact.
+Skilled in PRD writing, data product roadmaps, user research, SQL/Python analytics, and
+AI/ML applications. Adept at bridging business and technical teams to drive adoption,
+improve user satisfaction, and ensure data products deliver measurable outcomes.
+Professional Experience
+Manager, Strategic Ops & Transformation (Data Products & AI Platforms)
+Micron Technology — Singapore / Japan / Taiwan / USA
+Aug 2022 – Jan 2025
+• Led 0→1 development of the Process Integration Package (PIP): a data platform
+standardizing risk/conversion decisions across 4 global sites; enabled evidence-based
+workflows and removed subjective judgment.
+• Partnered with engineers, quality teams, and data scientists to co-design frameworks
+and dashboards; piloted with site reps before scaling globally.
+• Enabled inline conversions up to 60% faster, accelerating cycle learning while
+safeguarding product quality.
+• Built Yield Projection Dashboards providing accurate yield forecasts; empowered
+business units to commit sales targets confidently.
+• Designed Conversion Cycle Time Dashboards to track and accelerate yield learning
+cycles; directly contributed to $600M+ in realized revenue impact.
+• Collaborated across business and technical teams to define metrics and build
+storyboards; trained stakeholders on shared language, improving alignment and
+adoption.
+• Developed real-time monitoring dashboards and alert systems for ML pipelines,
+reducing downtime from monthly outages to near-zero, enabling 24/7 operations.
+• Authored PRDs and managed iterative launches (UAT, fan-out rollouts, rollback
+safeguards); incorporated user research and feedback into product iterations.
+Senior Process & Equipment Engineer – Uniformity (Data Science Applications)
+Micron Technology — Singapore
+Nov 2021 – Aug 2022
+• Applied computer vision transfer learning (ResNet-50) to detect wafer misplacement
+defects in CVD chambers; improved detection robustness and reduced cycle time.
+• Recognized with the Micron Innovation Award for pioneering analytics solution that
+scaled across fabs.
+• Advanced site’s Great Place to Work ranking from 7th → 3rd nationally by embedding
+survey-driven feedback loops and engagement dashboards.
+Senior Process & Equipment Engineer – Wet Process
+Micron Technology — Singapore
+Nov 2019 – Nov 2021
+• Built a digital twin simulation platform for wafer etch profiles, saving 40+ manhours
+weekly and reducing physical validation requirements.
+• Qualified alternate chemistry vendors during COVID shortages, preventing potential
+losses exceeding $100M.
+Process Engineer – Wet Process
+Micron Technology — Singapore
+Mar 2018 – Oct 2019
+• Drove $7.5M in capital savings through tool reuse qualification across fabs;
+standardized data for cross-site decision-making.
+• Supported fab ramp-up via process harmonization and onboarding data systems.
+Career Break & Upskilling | Jan 2025 – Present
+• Completed Full Stack Development with AI (NUS x Emeritus, 2025) – projects in
+recommender systems, consumer analytics, and platform monitoring.
+• Currently pursuing PMP certification (expected 2025).
+• Built personal projects using Python, SQL, React, Tableau for portfolio dashboards and
+data-driven apps.
+Education
+• MSc, Smart Industries & Digital Transformation | National University of Singapore
+| GPA: 4.85/5.0
+• BSc (Hons, Distinction), Chemistry + Minor in Nanoscience | National University
+of Singapore | GPA: 4.46/5.0
+Exchange: Simon Fraser University, Canada
+Key Skills
+• Data Product Management: PRD Writing, Product Roadmaps, KPI Definition, User
+Research, Feedback Loops, Agile Delivery
+• Data & Analytics: Python, SQL, Tableau, Power BI, AWS, GCP, Azure, Forecasting,
+Anomaly Detection, Computer Vision (ResNet-50)
+• AI/LLM Applications: Prompt Engineering, Knowledge Assistants, RACB Access
+Controls, GenAI Workflow Integration
+• Cross-Functional Leadership: Business–Tech Alignment, Storyboarding, Workshop
+Facilitation, Global Stakeholder Management
+• Industry Strengths: Operations Optimization, Yield & Cycle-Time Analytics,
+Risk/Governance Frameworks

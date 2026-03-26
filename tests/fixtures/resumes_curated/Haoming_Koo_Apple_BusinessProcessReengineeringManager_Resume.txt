@@ -1,0 +1,85 @@
+Haoming Koo
+Singaporean | +65 9634 9516 | haomingkoo@gmail.com | linkedin.com/in/haomingkoo
+Summary
+Program & Process Transformation leader with 7+ years at Micron driving cross-functional
+delivery across manufacturing ops, data/AI, and business process re-engineering. Blend of
+portfolio/program leadership (global SteerCos, governance, capex & resource planning) and hands-
+on build (Python/SQL, dashboards, RPA, GenAI). Led multi-site initiatives that cut cycle time 30–
+40%, enabled 3k engineers with LLM assistants, standardized release/governance, and delivered
+US$600M+ realized business impact. Eager to apply for the Apple’s Pacific Operations BPR
+portfolio.
+Core Strengths
+• Portfolio & Governance: Global SteerCos, RAID/risk control, roadmap & OKRs, audit
+readiness, cross-region orchestration (US/JP/TW/SG).
+• Ops Re-engineering: Standardize → automate → AI/GenAI; KPI design; process mapping;
+change management & adoption at scale.
+• Data & Automation: Python/SQL, GCP/Snowflake, RPA (Power Automate/UiPath),
+Tableau/Power BI, API integrations, monitoring/alerts.
+• Team Leadership: Lead/coach PMs & engineers (6 direct, 9 indirect), establish PM standards,
+sprint cadence, UAT to go-live.
+Experience
+Micron Technology — Singapore / Japan / Taiwan / USA
+Manager, Strategic Ops & Transformation | Aug 2022 – Jan 2025
+• Owned a global BPR/AI portfolio supporting upstream fulfilment for tier-1 smartphone
+flagship ramps; aligned fab to assembly handoffs to hit GB-out milestones; built
+contingencies for supply risk.
+• Led 6 direct and 9 indirect (project/program managers & engineers); instituted program
+management playbook (charters, RAID, release gates, UAT sign-offs) and sprint cadence;
+drove cross-time-zone delivery (US/JP/TW/SG).
+• GenAI SOP Assistant (internal “smart search”): prompt packs + retrieval on audited SOPs;
+80–90% answer relevance; ~15 min/query lookup deflection; ~2 weeks faster onboarding;
+scaled to ~3,000 users.
+• RPA at scale (Power Automate/UiPath) for “targeting lot” workflow (lot sourcing →
+attribute checks → tagging → metrology → data read-back); 100% adoption; mentored
+~30 engineers under guardrails.
+• Reliability/observability: pipeline health dashboards & alerts; canary/shadow runs and
+rollback runbooks resulting in near-zero ML-pipeline outages.
+• Conversion 3Ms governance (“Metrics→Methods→Mindset”): unified KPIs (cycle-time,
+throughput, yield learning); Tableau/Power BI for exec decisions; contributed to 30–40%
+cycle-time improvement and US$600M+ realized impact.
+• Budgeting & resourcing: managed US$9M travel/ops portfolio for a full technology node;
+headcount models tied to ramp complexity.
+• Compliance & controls: RACB access, audit trails, release evidence packs; chaired
+conversion SteerCo; monthly executive updates.
+Senior Process & Equipment Engineer – Uniformity (Data Science Applications)
+Nov 2021 – Aug 2022
+• Deployed ResNet-50 transfer learning to detect chamber/wafer misplacement (shadow-
+ring) resulting in yield loss prevention & cycle-time gains (Micron Innovation Award).
+• Tightened annotation rigor; anomaly/OOF monitors with alerting; partnered with
+integration & equipment for rapid corrective actions.
+Senior Process & Equipment Engineer – Wet Process
+Nov 2019 – Nov 2021
+• Built a digital twin for etch profiles; 40+ hrs/week validation effort saved; fewer physical
+trials. (Micron Idea of the Quarter Award)
+• Qualified alternate chemistries during shortages, mitigating >$100M potential loss;
+stabilized ramps across sites.
+Process & Equipment Engineer – Wet Process
+Mar 2018 – Oct 2019
+• Global tool-reuse qualification standard; US$7.5M capex savings; documented ramp
+methods/playbooks.
+• SAP (material master/product codes) exposure; routine exception handling and cross-team
+coordination.
+Career Break & Upskilling — Jan 2025 – Present
+• Full Stack Development with AI (NUS x Emeritus, 2025): Python, SQL, APIs, React basics;
+built analytics dashboards & CV/recs projects.
+• PMP (in progress, target 2025); refreshed ISO 9001 internal audit & risk practices.
+Education
+MSc, Smart Industries & Digital Transformation, National University of Singapore (NUS)| 2022
+GPA 4.85/5.00
+BSc (Hons, Distinction), Chemistry (Minor: Nanoscience), National University of Singapore (NUS)
+— 2013–2017
+GPA 4.46/5.00
+Exchange: Simon Fraser University (Canada)
+Certifications
+• Full Stack Development with AI (NUS x Emeritus, 2025)
+• ISO 9001 Internal Audit & Risk Practices
+• PMP (in progress, target 2025)
+Skills & Tools
+• Program/Portfolio: SteerCo, OKRs/roadmaps, RAID, change/release governance, UAT,
+rollout & comms, audit evidence packs.
+• Data/Automation: Python, SQL; GCP, Snowflake; RPA (Power Automate, UiPath);
+Tableau, Power BI; REST APIs; monitoring/alerts.
+• Process & Ops: Process mapping (isio), A/B & staged rollouts, rollback playbooks,
+stress/load testing, cross-region orchestration.
+• Platforms (exposure): SAP (material master/products), JIRA/Confluence.
+• Languages: English, Mandarin.

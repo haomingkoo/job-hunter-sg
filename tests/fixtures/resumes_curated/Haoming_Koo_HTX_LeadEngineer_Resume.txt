@@ -1,0 +1,68 @@
+Haoming Koo
+Singapore | haomingkoo@gmail.com | +65 9634 9516 | linkedin.com/in/haomingkoo
+Professional Summary
+Quality-focused engineering leader with 7+ years of cross-functional experience in
+quality assurance, digital transformation, and program management. Recognized as
+Micron’s 2024 Quality Champion for leading ISO 9001-aligned initiatives, red-team
+simulations, and predictive analytics that improved operational continuity and reduced
+fab misprocessing. Spearheaded global system unification under the Accelerator
+Program, streamlining conversion processes across 3,000+ engineers and capturing
+$50M realized value with mid-9-figure upside. Proven ability to independently lead
+end-to-end rollouts, drive data-informed decisions, and implement scalable quality
+frameworks across international teams.
+Key Skills Summary
+ISO 9001 Quality Management, Quality Audits, SPC, EQMS, Root Cause Analysis,
+Risk & Compliance Management, Agile & Traditional PM, JIRA, Confluence, UAT/Test
+Plans, Change Management, KPI Tracking, Data Visualization (Tableau), SQL,
+Python, Process Improvement, Operational Readiness, Stakeholder Communication,
+Cross-Functional Collaboration, GenAI/AI Integration, Red Teaming, Global Rollouts
+Professional Experience
+Micron Technology – Singapore / Japan / USA / Taiwan
+Manager, Strategic Operations & Transformation | Aug 2022 – Jan 2025
+• Championed ISO 9001-aligned quality frameworks across global sites under
+the Accelerator Program, improving traceability and audit readiness.
+• Partnered with Micron’s global quality teams to build systems that unify defect
+tracking, issue escalation, and fab checklists, supporting $50M+ in realized
+gains with projected mid-9-figure impact.
+• Designed and led red-team simulations to test system robustness—proactively
+identifying loopholes, surfacing edge-case risks, and ensuring business
+continuity across critical operations.
+• Enabled data-driven decision-making with SQL- and Python-powered
+dashboards tracking wait time, conversion lag, and training completion rates.
+• Co-led LPDDR5X (iPhone 16 Pro Max) and HBM3E (NVIDIA H200) yield ramp-
+up efforts, contributing to over $600M in combined business value.
+• Conducted stakeholder workshops, steering committee reviews, and phased
+rollouts, maintaining project velocity while navigating complex compliance
+constraints.
+• Mentored 6–9 engineers, embedding quality KPIs in performance goals and
+supporting their professional growth.
+Senior Process & Equipment Engineer – Uniformity | Nov 2021 – Aug 2022
+• Implemented AI-driven inline monitoring models, enabling early detection of
+process anomalies and a 4–5% yield improvement.
+• Recognized with the Micron Culture Champion Award for cross-functional
+leadership and communication effectiveness.
+• Built traceable defect escalation tools that reduced recurring errors across
+back-end modules.
+Senior Process & Equipment Engineer – Wet Process | Nov 2019 – Nov 2021
+• Developed a digital twin for TEL Celesta tool, cutting recipe cost by 60% and
+saving over $7M in process optimization.
+• Drove knowledge-sharing initiatives and led fab readiness efforts during
+COVID-19 disruptions.
+• Co-authored 7 technical papers and initiated best practices in automation.
+Process & Equipment Engineer – Wet Process | Mar 2018 – Oct 2019
+• Delivered $7.5M in capital savings through equipment reuse programs.
+• Supported knowledge transfer for Micron Hiroshima site ramp-up.
+Education
+MSc, Smart Industries & Digital Transformation
+National University of Singapore
+GPA: 4.85 / 5.00 | Certificates in IoT & Intelligent Sensing Systems
+BSc (Hons), Chemistry | Minor in Nanoscience
+National University of Singapore
+Exchange Program: Simon Fraser University, Canada
+Certifications
+• PMP (In Progress)
+• Full Stack Development with AI – NUS x Emeritus (2025)
+• ISO 9001 practices through hands-on implementation and audits
+Languages & Mobility
+• English (Native), Mandarin (Fluent), Japanese (Elementary)
+• Singapore Citizen | Open to domestic and regional travel

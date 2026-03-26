@@ -1,0 +1,75 @@
+Haoming Koo
+Singapore | haomingkoo@gmail.com | linkedin.com/in/haomingkoo | +65 96349516
+Programme Manager | Digital Transformation | AI-Driven Manufacturing | Global
+Strategy Execution
+Experienced transformation leader with 7+ years of global program management
+experience across semiconductors, AI-driven platforms, and Industry 4.0. Former manager
+at Micron Technology, spearheaded cross-functional initiatives spanning product ramp,
+manufacturing innovation, and global systems. Adept at navigating engineering
+organizations, driving organizational alignment, and delivering impact through digital
+solutions, quality systems, and operational change. Strong communicator who thrives at
+the intersection of product, process, and people.
+PROFESSIONAL EXPERIENCE
+Micron Technology – Singapore / Japan / Taiwan / US
+Manager, Central Engineering | Process Integration & Systems Transformation
+2022 – 2025
+• Led company-wide transformation through the revitalization of the Accelerator
+Program, enabling 3,000+ engineers across four global fabs to perform faster,
+quality-assured technology conversions.
+• Delivered $50M in cost savings with projected mid-9-figure ROI, aligning digital
+platforms, process governance, and quality control.
+• Co-led LPDDR5X yield ramp for iPhone 16 Pro Max, achieving maturity 7
+months ahead of schedule and unlocking $100M+ upside.
+• Co-led HBM3E ramp for NVIDIA H200 (Blackwell) – Micron's first HBM
+product, driving $500M+ above plan.
+• Rolled out virtual DoEs via LAM SEMulator3D, reducing validation cycles by 2
+weeks and gaining $10M in early revenue.
+• Digitized QMS workflows, integrated EQMS with ESG metrics (GHG, water,
+energy), and automated SPC feedback to fab.
+• Led 6 direct and 3 indirect reports globally; facilitated stakeholder workshops in
+Boise, Hiroshima, Taichung, and Singapore.
+Senior Engineer, RegE Process & Equipment Engineer
+2021 – 2022
+• Scaled AI-based vision systems (ResNet-50 transfer learning model) from PoC to
+production to detect wafer scribe issues.
+• Reduced scanner-related wafer reject rates to <0.5% and MA excursion impact to
+<0.1%.
+• Developed predictive detection pipelines for real-time quality control and yield
+protection; awarded Micron Culture Champion.
+Senior Engineer, Wet Process & Equipment
+2019– 2021
+• Built digital twins for TEL etch tools; ran ML-guided DoEs to optimize recipes,
+cutting cost by 60% and saving $7M+.
+• Qualified >10 alternate chemistries during COVID to ensure production continuity.
+• Co-authored 7 technical papers and received internal awards for manufacturing
+innovation.
+Engineer, Wet Process & Equipment
+2018
+• Delivered $7.5M in CAPEX savings via tool reuse and process alignment for
+Hiroshima fab startup.
+• Launched MAXout onboarding program to accelerate new engineer productivity.
+PROJECT EXPERIENCE
+Smart Maritime Analytics | IoT + Machine Learning Project (NUS & MPA)
+• Developed smart buoy sensor system with AWS pipeline for anomaly detection.
+• Built Tableau dashboards for port authority usage and operational insights.
+Bio-Lasing R&D (Dr. Derrick Yong)
+• Prototyped biological laser devices and automated lab testing via MATLAB.
+Hydrogen Catalyst Research (Prof. Jason Yeo)
+• First to identify sulfur as active catalytic site in amorphous MoSx.
+• Conducted operando spectroscopy and synthesized insights for fuel cell R&D.
+EDUCATION
+National University of Singapore
+MSc in Smart Industries & Digital Transformation (Engineering track)
+Focus: AI Systems, Smart Manufacturing, Data Analytics, IoT
+National University of Singapore
+Bachelor of Science (Honours) in Chemistry – Distinction
+Minor in Nanoscience
+CERTIFICATIONS & UPSKILLING
+• Full Stack AI Development Program (Emeritus x NUS) – In Progress
+• PMP Certification – In Progress
+• GMAT Prep for Strategy Consulting Track
+KEY SKILLS Program Management • Engineering Strategy • CTO Office Execution •
+AI/ML Deployment • Industry 4.0 • Systems Thinking • Digital Twins • Quality Systems
+(QMS, EQMS, GDMS) • Cross-Functional Leadership • Sustainability (GHG, ESG metrics)
+• Tableau & Data Visualization • Semiconductor Manufacturing • Process Optimization •
+Yield Ramp

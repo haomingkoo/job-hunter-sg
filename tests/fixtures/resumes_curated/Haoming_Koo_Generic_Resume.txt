@@ -1,0 +1,67 @@
+Haoming Koo
+Singapore | haomingkoo@gmail.com | +65 9634 9516 | linkedin.com/in/haomingkoo
+Professional Summary
+Strategic program and transformation leader with 7+ years of experience driving operational
+excellence and digital innovation in semiconductor manufacturing and enterprise systems.
+Proven success in integrating AI/ML into defect diagnostics, streamlining cross-functional
+business processes, and managing global stakeholder alignment. Skilled in SQL, data analysis,
+system implementation, and managing $50M+ impact projects. Currently upskilling with Full
+Stack AI Development and PMP to pivot into data-centric and transformation leadership roles.
+Core Skills
+• Program & Project Management (Agile/Waterfall, PMP in progress)
+• Digital Transformation & Industry 4.0
+• Business Process Re-engineering
+• Data Analytics & Visualization (SQL, Tableau, Python basics)
+• AI/ML Application in Manufacturing & Ops
+• IT/OT Systems Integration
+• JIRA, Confluence, ServiceNow, Dashboarding Tools
+• Stakeholder Engagement & Change Enablement
+• Smart Factory Strategy & KPI Governance
+Professional Experience
+Micron Technology – Singapore
+Manager, Engineering Strategy & Systems (2022–2025)
+• Revitalized global Accelerator Program unifying 3 siloed tools (C3, iConS, PIP),
+boosting traceability and reducing cycle times across 4 fabs; $500M+ strategic impact.
+• Orchestrated digital platform rollouts with UI/UX simplification and data governance
+frameworks; ensured test environments, sprint cadence, and fab readiness.
+• Led yield ramps for LPDDR5X (iPhone 16 Pro Max) and HBM3E (NVIDIA H200),
+achieving early maturity through simulation and fab alignment.
+• Standardized planning processes across sites, improving predictability, reducing risk,
+and increasing visibility.
+• Managed 6–9 direct reports and international collaborators across Japan, Taiwan, and
+Singapore.
+Senior Engineer, RegE Process & Equipment (2020–2022)
+• Implemented CNN models to classify wafer defects, speeding root cause analysis and
+cutting detection time.
+• Conducted integration simulations to address stress-related failures and improve
+product reliability.
+Senior Engineer, Wet Process Integration (2019–2020)
+• Built AI-guided TEL etch cost model; saved $7M+ and reduced costs by 60%.
+• Qualified alternate chemistries and tools, improving supply chain resilience.
+Engineer, Wet Process (2017–2019)
+• Saved $7.5M via tool reuse and smart ramp planning in Hiroshima.
+• Created “MAXout” onboarding framework, improving training effectiveness and team
+productivity.
+Key Projects
+• HBM3E & LPDDR5X Ramp: Model-based validation and coordination
+yielded >$500M improvement.
+• ESG-Integrated Dashboards: Embedded GHG/water/energy metrics in SPC and QA
+flows.
+• MPA-NUS Maritime Dashboard: Real-time IoT analytics for Singapore port traffic.
+Education
+MSc, Smart Industries & Digital Transformation
+National University of Singapore (NUS), 2020–2021
+Capstone: Smart port IoT and sensor-based logistics with Maritime Port Authority
+BSc (Hons), Chemistry with Minor in Nanoscience - Distinction
+National University of Singapore (NUS), 2013–2017
+Exchange: Simon Fraser University, Canada
+Certifications
+• Full Stack AI Development – NUS x Emeritus (2025)
+• PMP Certification – In Progress
+• Lean Six Sigma (Green Belt Equivalent)
+• Data Analytics & Machine Learning – LinkedIn/NUS
+Other Information
+• Languages: English, Mandarin (Fluent), Japanese (Elementary)
+• Citizenship: Singapore
+• Open to roles in APAC / Global Hybrid or Remote Settings
+• 2 years of cross-site experience in Taiwan & Japan
