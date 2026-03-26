@@ -1472,6 +1472,30 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
       continue;
     }
 
+    // Continuation line detection: if this line doesn't start with a capital
+    // letter after a period (new sentence start), or is short and follows a
+    // bullet/paragraph, merge it with the previous item instead of creating
+    // a new paragraph. This handles PDF line-wrapping artifacts.
+    const prevItem = [...parsed].reverse().find((s) => s.type !== "spacer");
+    const startsLowercase = /^[a-z]/.test(normalizedLine);
+    const isContinuation = prevItem
+      && (prevItem.type === "bullet" || prevItem.type === "paragraph")
+      && (
+        startsLowercase
+        || (normalizedLine.length < 60 && !isHeadingLine(normalizedLine) && !normalizedLine.includes("|") && !hasDateHint(normalizedLine))
+      );
+    if (isContinuation && prevItem) {
+      prevItem.text = `${prevItem.text} ${normalizedLine}`;
+      prevItem.lineIndices = [...(prevItem.lineIndices || [prevItem.lineIndex]), lineIndex];
+      if (prevItem.type === "bullet" && prevItem.annotation) {
+        prevItem.annotation = annotateBullet(prevItem.text, keywords, text, currentSectionKey);
+      }
+      if (prevItem.type === "paragraph") {
+        prevItem.keywordMatches = collectKeywordMatches(prevItem.text, keywords);
+      }
+      continue;
+    }
+
     parsed.push({
       ...base,
       type: "paragraph",
