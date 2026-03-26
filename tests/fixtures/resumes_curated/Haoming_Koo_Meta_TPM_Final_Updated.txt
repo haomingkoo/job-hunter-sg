@@ -1,0 +1,55 @@
+Haoming Koo
+Technical Program Manager | AI, Digital Transformation, and Scalable Innovation
+Singapore | haomingkoo@gmail.com | linkedin.com/in/haomingkoo
+Professional Summary
+Technical program leader with 7+ years of experience delivering large-scale digital platforms and driving transformation in advanced manufacturing and AI-driven systems. Led the end-to-end productization of Micron’s unified conversion stack (C3, iConS, PIP), aligning product, engineering, and quality teams across global sites to deliver $50M in value and a projected mid-9-figure ROI. Drove strategic yield ramp programs (LPDDR5X, HBM3E) supporting $600M+ in business impact. Skilled in system thinking, stakeholder alignment, and fast, iterative delivery across matrixed teams. Platforms scaled to empower 3,000–5,000 engineers across four Mega Fabs. Combines platform thinking, user-centric design, and rapid iteration to deliver systems that scale across global organizations.
+Core Competencies
+• Technical Program Leadership: AI systems, enterprise tooling, platform integration, stakeholder alignment
+• Productization & Systems Architecture: C3, iConS, PIP; latency tuning, cost-performance optimization
+• AI/ML Delivery: Computer vision (CNN), predictive diagnostics, SEMulator3D simulation
+• Data Engineering: Python, SQL, Tableau, Plotly, AWS, data unification and visualization
+• Risk Mitigation & Resilience: Business continuity planning, failure mode analysis, platform uptime
+• Executive Communication: Strategic updates to senior management across U.S., Japan, Taiwan, and Singapore
+• Agile Program Execution: Jira, Confluence, Git, Agile frameworks
+• Global Collaboration: Cross-site matrix teams, multicultural engineering execution
+Professional Experience
+Manager, Front End Central Process Integration Engineering
+Micron Technology | Aug 2022 – Jan 2025 | Singapore
+• Unified and productized C3 (Conversion Checker), iConS (Integrated Conversion System), and PIP (Process Integration Package) into a single digital platform—transforming siloed tools into a centralized stack and aligning with company-wide product vision. Led end-to-end productization, from scoping to delivery and global rollout across 4 mega fabs, delivering $50M+ in value with a projected mid-9-figure ROI.
+• Empowered 3,000–5,000 engineers to perform faster, quality-assured conversions through frictionless system adoption. Aligned product, engineering, IT, and quality teams across Micron’s global sites to ensure platform usability, feature clarity, and long-term scale.
+• Defined platform architecture with engineers—setting data retention, query latency, and access policies based on frontline user needs. Instituted monthly feedback cycles, reducing feature release cycles by 10%
+• Led strategic yield ramps for LPDDR5X (iPhone 16 Pro Max) and HBM3E (NVIDIA H200), achieving $600M+ impact. Influenced post-wafer innovation initiatives in Singapore, supporting local adoption and scaling of strategic R&D programs.
+• Partnered with SMAI (Smart Manufacturing & AI) to deliver ML-enabled platforms, including LAM SEMulator3D (waferless DoE simulation) and CNN-based computer vision calibrated to fab optics—cutting validation time by 2 weeks and improving edge defect detection, generating $2M/node uplift.
+• Architected platform specifications with engineering teams—defining data retention, retrieval latency, and system cost policies. Integrated user-centric design and feedback to ensure functional clarity and cost-effectiveness.
+• Integrated EQMS with innovation and sustainability metrics (GHG, water, waste, energy, awards, publications), enhancing traceability, ESG visibility, and digital quality governance across engineering flows.
+• Delivered executive-level strategy updates to VPs and cross-org sponsors. Mentored 6 direct and 3 indirect reports across Boise, Hiroshima, Taichung, and Singapore—fostering platform thinking and agile mindset across the team.
+Senior Process & Equipment Engineer – Uniformity & Lithography
+Micron Technology | Nov 2021 – Aug 2022 | Singapore
+• Reduced scanner reject rate to <0.5% and MA issues to <0.1%.
+• Scaled enterprise ML model for inline OCR error prediction, yielding 4–5% gain.
+• Built predictive pipelines and ensured cross-site deployment of best practices.
+Senior Process & Equipment Engineer – Wet Process
+Micron Technology | Nov 2019 – Nov 2021 | Singapore
+• Developed digital twin for TEL Celesta, cutting recipe cost by 60% and saving $7M+.
+• Enabled sensor-driven feedback control across TEL, AMAT, and LAM tools.
+• Qualified 10+ alternate chemistries amid global disruptions.
+Process & Equipment Engineer – Wet Process
+Micron Technology | Mar 2018 – Oct 2019 | Singapore
+• Achieved $7.5M in CAPEX savings through reuse and lean integration.
+• Led cross-site ramp collaboration with Micron Hiroshima; initiated training series.
+Education
+• MSc, Smart Industries & Digital Transformation – National University of Singapore (2020 – 2021)
+• Capstone: Partnered with Marine Port Authority (MPA) and Tagvance to deploy AWS-based IoT tracking for smart logistics
+• Graduate Certificates: IoT, Machine Learning, Wireless Networks
+• BSc (Hons), Chemistry with Minor in NanoScience – National University of Singapore (2013 – 2017)
+• Exchange: Simon Fraser University, Canada
+Certifications & Training
+• PMP Certification (in progress)
+• Full Stack Development with AI – NUS x Emeritus (2025)
+• Lean Six Sigma Green Belt
+• Skillsoft: PMBOK, Leadership, Data Analytics
+Global Experience
+• 2+ years cumulative international experience across Japan, Taiwan, and the U.S.—leading cross-cultural projects
+Languages & Nationality
+• English (Native), Chinese (Native), Japanese (Elementary)
+• Singapore Citizen | Based in Singapore | Open to travel
