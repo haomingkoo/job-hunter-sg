@@ -128,24 +128,34 @@ export default function AccountTab({ user, onLogout }) {
                 <td className="px-4 py-3 text-center text-[#384959] font-medium">Unlimited</td>
               </tr>
               <tr>
-                <td className="px-4 py-3 text-[#384959]">AI Reviews / day</td>
-                <td className="px-4 py-3 text-center text-[#6A89A7]">3</td>
-                <td className="px-4 py-3 text-center text-[#384959] font-medium">50</td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3 text-[#384959]">Tracked jobs</td>
-                <td className="px-4 py-3 text-center text-[#6A89A7]">Upgrade required</td>
+                <td className="px-4 py-3 text-[#384959]">AI Requests / day</td>
+                <td className="px-4 py-3 text-center text-[#6A89A7]">500</td>
                 <td className="px-4 py-3 text-center text-[#384959] font-medium">Unlimited</td>
               </tr>
               <tr>
-                <td className="px-4 py-3 text-[#384959]">CSV Export</td>
-                <td className="px-4 py-3 text-center text-[#6A89A7]"><X size={14} className="mx-auto" /></td>
+                <td className="px-4 py-3 text-[#384959]">Resume Builder Chat</td>
+                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
                 <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
               </tr>
               <tr>
-                <td className="px-4 py-3 text-[#384959]">ATS Checker</td>
-                <td className="px-4 py-3 text-center text-[#6A89A7]">Basic</td>
-                <td className="px-4 py-3 text-center text-[#384959] font-medium">Full</td>
+                <td className="px-4 py-3 text-[#384959]">Cover Letter Generator</td>
+                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
+                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3 text-[#384959]">Smart Match (RAG)</td>
+                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
+                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3 text-[#384959]">Tracked Jobs</td>
+                <td className="px-4 py-3 text-center text-[#6A89A7]">Sign in required</td>
+                <td className="px-4 py-3 text-center text-[#384959] font-medium">Unlimited</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-3 text-[#384959]">ATS Scoring</td>
+                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
+                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
               </tr>
             </tbody>
           </table>
@@ -158,7 +168,7 @@ export default function AccountTab({ user, onLogout }) {
               <h4 className="font-semibold text-[#384959]">Upgrade to AISG Tier</h4>
             </div>
             <p className="text-sm text-[#6A89A7] mb-3">
-              Upgrade to get 50 AI reviews/day, unlimited tracked jobs, CSV export, and full ATS analysis.
+              Sign in with an AISG account for unlimited AI requests, job tracking, and saved resume versions.
             </p>
             <p className="text-sm text-[#6A89A7]">
               Have questions? Send us a message below or reach out directly.
