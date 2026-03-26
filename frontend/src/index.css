@@ -26,20 +26,13 @@ html { scroll-behavior: smooth; }
   columns: auto !important;
 }
 
-/* Force all resume section wrappers to be block-level and full-width.
-   Prevents <button> inline-block default from causing side-by-side rendering
-   when consecutive paragraphs don't fill the full width. */
+/* Force section wrappers and buttons to be block-level and full-width.
+   Do NOT override display on inner divs — they may use flex for bullet layout. */
 .resume-print-target .group\/section {
   display: block !important;
   width: 100% !important;
 }
 .resume-print-target .group\/section > button {
-  display: block !important;
-  width: 100% !important;
-}
-.resume-print-target .group\/section > button > p,
-.resume-print-target .group\/section > button > div,
-.resume-print-target .group\/section > button > h3 {
   display: block !important;
   width: 100% !important;
 }
