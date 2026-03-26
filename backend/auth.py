@@ -40,7 +40,7 @@ if not SECRET_KEY:
     )
 
 # Configurable via env vars — tune from Railway dashboard, no redeploy needed
-_FREE_AI = int(os.environ.get("FREE_AI_PER_DAY", "999999"))
+_FREE_AI = int(os.environ.get("FREE_AI_PER_DAY", "20"))
 _PRO_AI = int(os.environ.get("PRO_AI_PER_DAY", "999999"))
 _PRO_DOMAINS = [
     d.strip().lower()
