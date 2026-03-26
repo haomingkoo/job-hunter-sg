@@ -4054,7 +4054,7 @@ CERTIFICATIONS
                           {section.type === "education_entry" && (
                             <div className={`mb-2 rounded-lg border border-[#BDDDFC]/20 bg-[#f0f4f8]/40 px-4 py-3 ${templateStyles.subheadingClass}`}>
                               <div className="flex items-baseline justify-between gap-4">
-                                <div className="font-semibold leading-snug text-[#384959]">
+                                <div className="flex-1 min-w-0 font-semibold leading-snug text-[#384959]">
                                   {renderHighlightedText(
                                     section.fields.degree || section.fields.institution || section.text,
                                     section.keywordMatches || [],
