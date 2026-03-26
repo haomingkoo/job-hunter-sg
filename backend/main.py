@@ -3662,27 +3662,34 @@ def resume_chat_step(
     if body.action == "generate":
         # ── Generate structured resume from conversation ──────────────
         system_prompt = (
-            "You are an expert resume writer. Based on the conversation below, "
-            "generate a complete resume in plain text with these sections:\n\n"
+            "You are an expert resume writer. Based ONLY on information the user explicitly "
+            "shared in the conversation below, generate a complete resume in plain text.\n\n"
+            "FORMAT (follow this exactly):\n\n"
             "[Full Name]\n"
-            "[Email / Phone / Location — on one line]\n\n"
+            "[Location] | [Email] | [Phone]\n\n"
             "PROFESSIONAL SUMMARY\n"
-            "[2-3 sentence summary highlighting strengths and experience]\n\n"
+            "[2-3 sentence summary. Use the user's own words and numbers. Do NOT add anything they didn't say.]\n\n"
             "PROFESSIONAL EXPERIENCE\n"
-            "[Company | Location | Start Date - End Date]\n"
             "[Job Title]\n"
-            "• [Achievement bullet with metrics]\n"
-            "• [Achievement bullet with metrics]\n\n"
-            "(Repeat for each role)\n\n"
+            "[Company] | [Location] | [Start Date] – [End Date]\n"
+            "• [Achievement bullet starting with action verb]\n"
+            "• [Achievement bullet with specific metrics if user provided them]\n"
+            "• [Achievement bullet]\n\n"
+            "(Repeat for each role the user mentioned)\n\n"
             "EDUCATION\n"
-            "[Degree — University (Year)]\n\n"
+            "[Degree] – [University] ([Year])\n\n"
             "SKILLS\n"
-            "[Comma-separated skills]\n\n"
-            "CRITICAL RULES:\n"
-            "- Only include information the user explicitly shared. NEVER invent.\n"
-            "- Use action verbs and quantified achievements where the user provided numbers.\n"
-            "- Keep bullets concise (one line each).\n"
-            "- Return ONLY the resume text, no commentary or markdown formatting."
+            "[Comma-separated list of skills the user mentioned]\n\n"
+            "CRITICAL RULES — READ CAREFULLY:\n"
+            "- ONLY include facts the user explicitly stated. If they didn't mention it, DO NOT add it.\n"
+            "- NEVER invent company names, job titles, dates, numbers, or achievements.\n"
+            "- NEVER add skills the user didn't mention.\n"
+            "- If the user said approximate numbers ('about 10 people'), use their words ('~10 team members').\n"
+            "- Each bullet must start with a strong action verb (Led, Developed, Managed, Built, etc.)\n"
+            "- Keep bullets to 1-2 lines max.\n"
+            "- If information is missing (e.g., no phone number), leave it out entirely.\n"
+            "- Do NOT wrap output in markdown code blocks.\n"
+            "- Return ONLY the resume text."
         )
 
         llm_messages = [{"role": "system", "content": system_prompt}]
@@ -3710,6 +3717,38 @@ def resume_chat_step(
         return {"resume_text": resume_text, "word_count": word_count}
 
     # ── Chat mode: guide user through resume building ─────────────────
+
+    # Find trending skills from job database relevant to what user mentioned
+    trending_skills_hint = ""
+    user_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "user").lower()
+    if user_text and len(user_text) > 20:
+        try:
+            from collections import Counter
+            skill_counts: Counter = Counter()
+            # Search jobs matching user's keywords
+            keywords = [w for w in user_text.split() if len(w) >= 4][:5]
+            if keywords:
+                sample_jobs = (
+                    db.query(ScrapedJob.job_terms_preview)
+                    .filter(ScrapedJob.job_terms_preview.isnot(None))
+                    .filter(or_(*[ScrapedJob.title.ilike(f"%{kw}%") for kw in keywords]))
+                    .limit(100)
+                    .all()
+                )
+                for (preview,) in sample_jobs:
+                    if isinstance(preview, list):
+                        for skill in preview:
+                            if isinstance(skill, str) and len(skill) >= 3:
+                                skill_counts[skill.lower()] += 1
+                top_skills = [s for s, c in skill_counts.most_common(10) if c >= 3]
+                if top_skills:
+                    trending_skills_hint = (
+                        f"\n\nTRENDING SKILLS FROM JOB MARKET (suggest these if relevant to the user's experience): "
+                        f"{', '.join(top_skills)}"
+                    )
+        except Exception:
+            pass  # Non-critical, don't break the chat
+
     system_prompt = (
         "You are a friendly, expert resume coach helping someone build their resume "
         "from scratch through a conversation. Ask questions ONE AT A TIME in this order:\n\n"
@@ -3720,17 +3759,20 @@ def resume_chat_step(
         "Like how many people you managed, what % improvement, or revenue impact?')\n"
         "5. Ask if they have previous jobs; if yes, repeat steps 3-4\n"
         "6. Education: degree, university/institution, graduation year\n"
-        "7. Skills and certifications\n"
+        "7. Skills and certifications — suggest trending skills from the job market "
+        "that match their experience\n"
         "8. Anything else they want to include\n\n"
         "RULES:\n"
         "- Ask only ONE question at a time. Keep responses short (2-3 sentences max).\n"
         "- After each user answer, briefly acknowledge what they said, then ask the next question.\n"
         "- Coach them to add metrics and numbers to achievements.\n"
         "- If their answer is vague, gently ask for specifics.\n"
+        "- When suggesting skills, mention which ones are in-demand based on the job market data.\n"
         "- When you have collected at least: name, 1 job with achievements, and education, "
         "end your message with the exact tag [READY] on its own line.\n"
         "- Do NOT generate the resume yourself. Just gather information.\n"
         "- Be encouraging and professional."
+        f"{trending_skills_hint}"
     )
 
     llm_messages = [{"role": "system", "content": system_prompt}]
