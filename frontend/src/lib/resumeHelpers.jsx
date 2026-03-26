@@ -57,6 +57,10 @@ export function buildResumeTemplateStyles(templateMeta, templateId) {
       overflowWrap: "break-word",
       wordBreak: "break-word",
       overflow: "hidden",
+      columnCount: 1,
+      columnWidth: "auto",
+      columnGap: "normal",
+      columnFill: "auto",
     },
     headingClass: fallback.headingClass,
     headingStyle: {
@@ -80,6 +84,12 @@ export function buildResumeTemplateStyles(templateMeta, templateId) {
       fontFamily,
       fontSize: `${bodySize}pt`,
       lineHeight: String(lineHeight),
+      display: "block",
+      width: "100%",
+      maxWidth: "100%",
+      columnCount: 1,
+      columnWidth: "auto",
+      columnGap: "normal",
     },
   };
 }
