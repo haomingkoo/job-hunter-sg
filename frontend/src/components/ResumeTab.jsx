@@ -2713,27 +2713,12 @@ CERTIFICATIONS
         </div>
       </div>
 
-      <div className="lg:hidden">
-        <div className="inline-flex rounded-2xl border border-[#BDDDFC]/30 bg-white p-1 shadow-sm">
-          <button
-            type="button"
-            onClick={() => setMobilePanel("edit")}
-            className={`rounded-xl px-4 py-2 text-sm font-medium transition ${mobilePanel === "edit" ? "bg-gray-900 text-white" : "text-[#6A89A7]"}`}
-          >
-            Edit
-          </button>
-          <button
-            type="button"
-            onClick={() => openMobileFeedbackPanel()}
-            className={`rounded-xl px-4 py-2 text-sm font-medium transition ${mobilePanel === "feedback" ? "bg-gray-900 text-white" : "text-[#6A89A7]"}`}
-          >
-            Feedback
-          </button>
-        </div>
+      <div className="lg:hidden rounded-xl bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
+        Tap any colored bullet for AI feedback. For the full editing experience, use a desktop browser.
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,65%)_minmax(320px,35%)]">
-        <aside className={`${mobilePanel === "feedback" ? "block max-h-[calc(100vh-10rem)] overflow-y-auto pr-1" : "hidden"} space-y-4 lg:order-2 lg:block lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto`}>
+        <aside className="hidden space-y-4 lg:order-2 lg:block lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto">
           {(
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
@@ -3926,7 +3911,7 @@ CERTIFICATIONS
           )}
         </aside>
 
-        <section className={`${mobilePanel === "edit" ? "block" : "hidden"} lg:order-1 lg:block`}>
+        <section className="lg:order-1 lg:block">
           <div className="rounded-[2rem] border border-slate-200 bg-[#f3f5f8] p-4 shadow-sm sm:p-5">
             <div className="flex flex-col gap-3 border-b border-[#BDDDFC]/30/70 px-1 pb-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
