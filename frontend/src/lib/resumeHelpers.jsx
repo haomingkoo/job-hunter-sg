@@ -131,6 +131,21 @@ export function splitInlineHeadingContent(value) {
     };
   }
 
+  // Fallback: check if line STARTS with a known heading followed by content (no separator)
+  // e.g., "KEY SKILLS Program Management • Engineering Strategy • ..."
+  for (const heading of headingCandidates) {
+    if (cleaned.toLowerCase().startsWith(heading.toLowerCase() + " ")) {
+      const bodyText = cleaned.substring(heading.length).trim();
+      if (bodyText && bodyText.length > 10) {
+        return {
+          headingText: cleaned.substring(0, heading.length),
+          bodyText,
+          sectionKey: getResumeSectionKey(heading),
+        };
+      }
+    }
+  }
+
   return null;
 }
 
@@ -149,6 +164,7 @@ export function getResumeSectionKey(value) {
     if (normalized.includes("co-curricular") || normalized.includes("extra-curricular") || normalized.includes("volunteer") || normalized.includes("activities")) {
       return "activities";
     }
+    if (normalized.includes("project")) return "projects";
     return "experience";
   }
   if (
@@ -176,7 +192,9 @@ export function isAllCapsHeading(line) {
   const words = trimmed.split(/\s+/);
   if (words.length > 4) return false;
   if (/^[•\-*]/.test(trimmed)) return false;
-  if (/certification|in progress|target|completed|accredited/i.test(trimmed.toLowerCase())) return false;
+  // Removed certification/in-progress filter: ALL-CAPS lines (2-4 words) are section headings,
+  // not entry content. Mixed-case entries like "AWS Certified Solutions Architect" are already
+  // filtered by the trimmed !== trimmed.toUpperCase() check above.
   if (trimmed.endsWith(".")) return false;
   if (/\(.*\)/.test(trimmed)) return false;
   return true;
@@ -1122,6 +1140,22 @@ export function parseSubheadingParts(line, sectionKey = "") {
     return { left: trimmed, right: "", variant: "dated" };
   }
 
+  // Detect position-like titles in entry sections (no date, no separator)
+  // e.g., "Senior Engineer, RegE Process & Equipment Engineer"
+  // e.g., "Bio-Lasing R&D (Dr. Derrick Yong)"
+  if (["experience", "projects", "activities"].includes(sectionKey)) {
+    const words = trimmed.split(/\s+/);
+    const wordCount = words.length;
+    if (wordCount >= 2 && wordCount <= 12 && !startsLineWithResumeActionVerb(trimmed)) {
+      const TITLE_PATTERNS = /\b(?:engineer|manager|director|analyst|lead|head|officer|coordinator|specialist|consultant|architect|developer|designer|executive|associate|intern|supervisor|principal|scientist|researcher|professor|advisor|strategist)\b/i;
+      const hasComma = trimmed.includes(",");
+      const hasParens = /\(.*\)/.test(trimmed);
+      if (TITLE_PATTERNS.test(trimmed) || (hasComma && wordCount <= 10) || hasParens) {
+        return { left: trimmed, right: "", variant: "company" };
+      }
+    }
+  }
+
   return null;
 }
 
@@ -1341,6 +1375,22 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
     }
     if (subheadingParts) {
       const displayText = bulletMatch ? stripResumeMarkdown(bulletMatch[2]) : normalizedLine;
+      // Check if this is a standalone date line that should merge with previous entry
+      // e.g., "2022 – 2025" on its own line after "Manager, Central Engineering | ..."
+      const isStandaloneDateLine = subheadingParts.variant === "dated"
+        && !subheadingParts.right
+        && hasDateHint(displayText)
+        && displayText.replace(/[\d\s\u2013\u2014\-\/]/g, "").length < 5;
+      if (isStandaloneDateLine && parsed.length > 0) {
+        const prev = [...parsed].reverse().find((s) => s.type !== "spacer");
+        if (prev && prev.type === "subheading" && !hasDateHint(prev.right || "")) {
+          prev.right = prev.right ? `${prev.right} | ${displayText}` : displayText;
+          prev.lineIndices = [...(prev.lineIndices || [prev.lineIndex]), lineIndex];
+          prev.text = `${prev.left} | ${prev.right}`;
+          prev.variant = "dated";
+          continue;
+        }
+      }
       parsed.push({
         ...base,
         type: "subheading",
