@@ -651,9 +651,13 @@ const EDUCATION_HONORS_RE = /\b(?:first class|second class|distinction|honou?rs?
 
 function isEducationEntryStart(item) {
   if (item.type === "subheading" && (item.variant === "education_main" || item.variant === "dated")) return true;
+  // Subheading with degree pattern but wrong variant (e.g., "Bachelor of Science – Distinction" parsed as variant=company)
+  if (item.type === "subheading" && DEGREE_START_RE.test(stripResumeMarkdown(item.left || item.text || ""))) return true;
   if (item.type === "paragraph" && (startsNewEducationEntry(item.text) || (looksLikeEducationMain(item.text) && !looksLikeEducationDetail(item.text)))) return true;
-  // Also detect degree patterns in any text type (handles chat-generated resumes)
+  // Detect degree patterns even in "detail" lines (BSc with Honours/Distinction)
   if ((item.type === "paragraph" || item.type === "bullet") && DEGREE_START_RE.test(stripResumeMarkdown(item.text || ""))) return true;
+  // Detect institution names as entry boundaries (second NUS = new entry)
+  if (item.type === "paragraph" && looksLikeEducationInstitution(item.text) && !looksLikeEducationDetail(item.text)) return true;
   return false;
 }
 
