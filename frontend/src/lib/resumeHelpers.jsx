@@ -1501,6 +1501,12 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
       }
     }
 
+    // Merge pipe-prefixed continuations used in some extracted education/date lines
+    if (lines.length > 0 && trimmed.startsWith("|")) {
+      lines[lines.length - 1] = `${lines[lines.length - 1]} ${trimmed}`.replace(/\s+/g, " ").trim();
+      continue;
+    }
+
     // Merge continuation lines that start with lowercase into previous line
     if (lines.length > 0 && trimmed && /^[a-z]/.test(trimmed)) {
       const prev = lines[lines.length - 1].trim();
