@@ -253,6 +253,19 @@ async def lifespan(application: FastAPI):
     _filler_thread = threading.Thread(target=_idle_summary_filler, daemon=True)
     _filler_thread.start()
 
+    # Pre-warm analytics cache on startup so first page load is instant
+    def _warm_analytics():
+        import time as _time
+        _time.sleep(5)  # let the app finish starting
+        try:
+            import requests as _req
+            _req.get("http://localhost:8080/api/analytics/skills?limit=50", timeout=30)
+            log.info("[STARTUP] Analytics cache warmed")
+        except Exception as exc:
+            log.warning(f"[STARTUP] Analytics warm failed: {exc}")
+
+    threading.Thread(target=_warm_analytics, daemon=True).start()
+
     yield  # App is running
 
     _idle_filler_stop.set()
