@@ -1,140 +1,153 @@
 # Job Hunter SG
 
-A free job aggregator and AI-powered resume coach built for job seekers in Singapore.
+AI-powered job search, resume tailoring, and career tools for Singapore.
 
-Search across multiple SG job portals in one place, get your resume scored and improved by AI, and track your applications — all in one app.
+Browse 72,000+ jobs from 5 portals. Build, score, and tailor your resume with AI. Generate cover letters. Match semantically with RAG.
+
+**[Try it live](https://job.kooexperience.com)** | **[Portfolio](https://kooexperience.com)**
+
+![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
+![Jobs](https://img.shields.io/badge/jobs-72%2C000%2B-green)
+![AI](https://img.shields.io/badge/AI-SEA--LION-purple)
+
+![Job Hunter SG](docs/screenshots/homepage.png)
+
+---
 
 ## Features
 
-**Job Search**
-- Search across MyCareersFuture, Careers@Gov, Adzuna, Jooble, and more simultaneously
-- Pre-cached job database refreshed daily
-- Similar job recommendations
-- Salary data where available
+### Job Search
+- Aggregates from MyCareersFuture, CareersGov, NodeFlair, Indeed, JobStreet
+- 72,000+ listings refreshed nightly
+- Filter by seniority, job type, salary, skills
+- ATS skill tags on every listing
 
-**AI Resume Coach** (powered by SEA-LION, AI Singapore)
-- Upload your resume (PDF or DOCX)
-- Get a 100-point score across Impact, Presentation, and Competencies
-- AI-powered coaching with specific, actionable feedback
-- Rewrite individual bullets with stronger action verbs and validation gates
-- Multi-pass tailoring pipeline: tailor your resume for a specific job with one click
-- ATS gap report: see which keywords you're missing and where to add them
-- Download as DOCX in 4 template styles (Classic, Modern, Singapore Professional, Compact)
+### Resume Builder
+- Upload PDF/DOCX or build from scratch with AI chat
+- 8 professional templates (Classic, Modern, SG Pro, Compact, Executive, Creative, Technical, Minimal)
+- Inline click-to-edit with drag-and-drop bullet reordering
+- Add/delete sections, entries, bullets with one click
+- Download as DOCX
 
-**Application Tracker** (requires sign-in)
-- Track all your job applications in one place
-- Follow-up reminders so nothing falls through the cracks
-- Export to CSV
-- Status tracking: Applied → Interview → Offer
+### AI Resume Coach (SEA-LION)
+- ATS scoring (0-100) across Impact, Presentation, Competencies
+- Per-bullet feedback with annotations (Solid Impact, Review, Verb Check)
+- AI rewrite with 3 options per bullet
+- Full 7-stage tailoring pipeline for specific job descriptions
+- Custom summary generation with user prompts
+- Template-aware section detection
 
-**Privacy First**
-- Free to use without signing in
-- Resume data stored solely for AI coaching memory
-- Never sold, shared, or used for training
-- Delete your data anytime
+### AI Resume Chat Builder
+- ChatGPT-like conversation that builds your resume from scratch
+- Coaches you to add metrics and quantified achievements
+- Suggests trending skills from the job database
+- Generates structured resume dropped into the editor
+
+### Cover Letter Generator
+- Generate from resume + job description
+- Custom direction ("emphasize leadership", "keep it concise")
+- Edit inline, copy, or download
+
+### Smart Match (RAG)
+- Semantic job matching using sentence-transformers embeddings
+- Hybrid scoring: keyword overlap + cosine similarity
+- Suitability scores, gap analysis, bridge paths
+- Pre-embedded 72K jobs for instant matching
+
+### Application Tracker
+- Track applications: Applied, Interview, Offer
+- Follow-up reminders
+- Status tracking per job
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Backend | FastAPI + SQLAlchemy + SQLite/Postgres |
+| Frontend | React 19 + Vite + Tailwind CSS |
+| AI | SEA-LION (AI Singapore) — 32B + 70B models |
+| Embeddings | sentence-transformers/all-MiniLM-L6-v2 |
+| Deploy | Railway (Docker) |
+| Auth | JWT + bcrypt |
+
+---
 
 ## Quick Start
 
-### Prerequisites
-- Python 3.12+
-- Node.js 18+
-
-### Backend
 ```bash
+# Backend
 cd backend
-python -m venv .venv
-source .venv/bin/activate
 pip install -r requirements.txt
+python main.py  # starts on :8000
 
-# Copy and fill in your env vars
-cp .env.example .env
-# Edit .env with your API keys (see "API Keys" section below)
-
-# Seed the job database
-python seed_jobs.py --quick    # ~15 seconds, 5 keywords
-python seed_jobs.py            # ~3 minutes, 20 keywords
-
-# Start the server
-python main.py
-```
-
-### Frontend
-```bash
+# Frontend
 cd frontend
 npm install
-npm run dev
+npm run dev     # starts on :5173, proxies /api to :8000
 ```
 
-Open **http://localhost:5173** in your browser.
+---
 
-## API Keys
+## Testing
 
-All API keys go in the `.env` file. See `.env.example` for the full list.
+```bash
+# Backend (143 tests)
+cd backend && python -m pytest tests/test_resume_structurer_comprehensive.py -v
 
-| Key | Where to get it | Cost | Required? |
-|-----|----------------|------|-----------|
-| `JWT_SECRET` | Generate: `python -c "import secrets; print(secrets.token_hex(32))"` | Free | Yes (for auth) |
-| `SKILLSFUTURE_CLIENTID` + `SKILLSFUTURE_SECRET` | [SSG Developer Portal](https://developer.ssg-wsg.sg) | Free | Optional (skills enrichment) |
-| `sealion_api` | [SEA-LION](https://sea-lion.ai) by AI Singapore | Free (10 req/min) | Optional (AI features) |
-| `ADZUNA_APP_ID` + `ADZUNA_APP_KEY` | [Adzuna Developer](https://developer.adzuna.com) | Free tier | Optional (more job sources) |
-| `JOOBLE_API_KEY` | [Jooble API](https://jooble.org/api/about) | Free | Optional (more job sources) |
-| `ADMIN_EMAIL` + `ADMIN_PASSWORD` | You choose | - | Optional (admin account) |
+# Frontend (98 tests)
+cd frontend && npm test
+```
 
-**The app works with zero API keys** — MCF and CareersGov don't require authentication. API keys add more job sources and AI features.
+---
 
 ## Architecture
 
 ```
-frontend/          React + Vite + Tailwind CSS
-backend/
-  main.py                FastAPI app (40+ endpoints)
-  scraper.py             7 job sources (MCF, CareersGov, Adzuna, Jooble, NodeFlair, Indeed, JobStreet)
-  ai_service.py          SEA-LION AI client (70B reasoning + 32B fast) with rate-limited round-robin
-  tailoring_pipeline.py  7-stage resume tailoring pipeline (strategy, rewrite, polish, validate)
-  validation_gates.py    5 gates on every AI rewrite (fact preservation, hallucination, etc.)
-  jd_preparser.py        Pre-parse job descriptions at scrape time (no LLM, ~50ms)
-  resume_structurer.py   Parse resume into structured sections/entries/bullets
-  ai_phrases.py          107 AI-sounding phrase replacements
-  resume_scorer.py       100-point scoring engine (Impact/Presentation/Competencies)
-  resume_parser.py       PDF + DOCX text extraction
-  resume_templates.py    4 ATS-friendly DOCX templates
-  skill_extractor.py     200+ multi-word skill phrase extractor
-  auth.py                JWT auth
-  models.py              SQLAlchemy ORM (User, ScrapedJob, TrackedJob, UserMemory, TailoredResume)
-  database.py            SQLite (local) / PostgreSQL (production)
-  sanitizer.py           Input sanitization
-  seed_jobs.py           Pre-populate job database
+shared/resume-classification.json  <- Single source of truth
+    |                    |
+backend/                 frontend/src/lib/
+resume_structurer.py     resumeHelpers.jsx
+resume_scorer.py         resumeConstants.js
+ai_service.py            ResumeTab.jsx
+embedding_service.py     ScraperTab.jsx
+    |                        |
+AI pipeline, scoring     Visual preview, editing
 ```
 
-## Deployment (Railway)
+---
 
-See [DEPLOY.md](DEPLOY.md) for full Railway deployment instructions.
+## API Highlights
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/jobs` | Browse cached jobs |
+| `POST /api/resume/score` | Score resume (0-100) |
+| `POST /api/resume/upload` | Upload PDF/DOCX |
+| `POST /api/ai/rewrite` | AI bullet rewrite (3 options) |
+| `POST /api/ai/cover-letter` | Generate cover letter |
+| `POST /api/ai/resume-chat` | AI chat resume builder |
+| `GET /api/jobs/power-match` | Smart Match with RAG |
+| `POST /api/resume/tailor` | 7-stage tailoring pipeline |
+
+---
+
+## Environment Variables
 
 ```bash
-# Quick deploy
-railway login
-railway init
-railway add -p postgresql
-cd backend && railway up
-cd ../frontend && railway up
+DATABASE_URL=sqlite:///./jobhunter.db
+JWT_SECRET=your-secret
+sealion_api=your-sealion-key
+ALLOWED_EMAIL_DOMAINS=*  # or comma-separated domains
 ```
 
-## Tiers
+See `.env.example` for full list.
 
-| Feature | Free (no login) | AISG (@aisg.sg) |
-|---------|----------------|-----------------|
-| Job search | Unlimited | Unlimited |
-| ATS resume scoring | Unlimited | Unlimited |
-| AI resume review | 3 sessions/day | 50/day |
-| AI bullet rewrite | Unlimited in session | Unlimited in session |
-| Save tracked jobs | No | Yes |
-| Resume profile memory | No | Yes |
-| CSV export | No | Yes |
-
-## Contributing
-
-This project is built to help job seekers in Singapore. If you have ideas or want to contribute, open an issue or reach out.
+---
 
 ## License
 
-MIT
+[AGPL-3.0](LICENSE) — Free to use and modify. Must share changes if deployed as a service. Attribution required.
+
+Built by [Haoming Koo](https://kooexperience.com).
