@@ -4083,16 +4083,18 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 </div>
                               </div>
                             ) : (
-                              <div className={`flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between ${templateStyles.subheadingClass}`}>
+                              <div className={`${templateStyles.subheadingClass}`}>
                                 <div className={section.variant === "dated" ? "font-semibold text-[#384959]" : "font-normal text-[#384959]"}>
                                   {renderHighlightedText(
                                     getDisplaySubheadingText(section.left, section.sectionKey, section.variant),
                                     section.keywordMatches || [],
                                   )}
                                 </div>
-                                <div className={`text-sm text-[#6A89A7] ${looksLikeDateOnlyText(section.right || "") ? "shrink-0 whitespace-nowrap" : ""}`}>
-                                  {getDisplaySubheadingText(section.right, section.sectionKey, section.variant)}
-                                </div>
+                                {section.right && (
+                                  <div className="text-sm text-[#6A89A7] mt-0.5">
+                                    {getDisplaySubheadingText(section.right, section.sectionKey, section.variant)}
+                                  </div>
+                                )}
                               </div>
                             )
                           )}
