@@ -1404,12 +1404,20 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
         && displayText.replace(/[\d\s\u2013\u2014\-\/]/g, "").length < 5;
       if (isStandaloneDateLine && parsed.length > 0) {
         const prev = [...parsed].reverse().find((s) => s.type !== "spacer");
-        if (prev && prev.type === "subheading" && !hasDateHint(prev.right || "")) {
-          prev.right = prev.right ? `${prev.right} | ${displayText}` : displayText;
-          prev.lineIndices = [...(prev.lineIndices || [prev.lineIndex]), lineIndex];
-          prev.text = `${prev.left} | ${prev.right}`;
-          prev.variant = "dated";
-          continue;
+        if (prev && prev.type === "subheading") {
+          const prevRight = prev.right || "";
+          const prevHasDate = hasDateHint(prevRight);
+          // Allow merge if: (a) prev has no date yet, or (b) prev's right is ONLY a date
+          // (handles PDF-split ranges like "2022" on one line then "2025" on the next)
+          const prevRightIsOnlyDate = prevHasDate && prevRight.replace(/[\d\s\u2013\u2014\-\/,a-zA-Z]*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)?[\d\s\u2013\u2014\-\/]*/gi, "").trim().length < 3;
+          if (!prevHasDate || prevRightIsOnlyDate) {
+            const separator = prevRightIsOnlyDate ? " – " : (prev.right ? " | " : "");
+            prev.right = prev.right ? `${prev.right}${separator}${displayText}` : displayText;
+            prev.lineIndices = [...(prev.lineIndices || [prev.lineIndex]), lineIndex];
+            prev.text = `${prev.left} | ${prev.right}`;
+            prev.variant = "dated";
+            continue;
+          }
         }
       }
       parsed.push({

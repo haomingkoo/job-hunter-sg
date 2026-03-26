@@ -4078,7 +4078,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                 title="Regenerate summary for the selected job"
                               >
                                 {regeneratingSummary ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                                {regeneratingSummary ? "Regenerating..." : "Regenerate for JD"}
+                                {regeneratingSummary ? "Regenerating..." : "Regenerate Summary"}
                               </button>
                             )}
                           </div>
