@@ -5,6 +5,7 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN if [ -f package-lock.json ]; then npm ci --legacy-peer-deps; else npm install --legacy-peer-deps; fi
 COPY frontend/ .
+COPY shared/ ../shared/
 RUN npm run build
 
 # Stage 2: Python backend + serve frontend static files
@@ -24,6 +25,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 
 COPY backend/ .
+COPY shared/ ../shared/
 
 # Copy built frontend into /app/static
 COPY --from=frontend-build /app/frontend/dist ./static
