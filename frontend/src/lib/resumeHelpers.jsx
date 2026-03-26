@@ -24,6 +24,7 @@ import {
   RESUME_DISPLAY_ACRONYMS,
   RESUME_SMALL_TITLE_WORDS,
   RESUME_SECTION_LABELS,
+  RESUME_SECTION_KEY_MAP,
   BULLET_ACTION_SUGGESTIONS,
   KEYWORD_INSERT_PREFERRED_SECTIONS,
 } from "./resumeConstants.js";
@@ -153,6 +154,11 @@ export function splitInlineHeadingContent(value) {
 export function getResumeSectionKey(value) {
   const normalized = normalizeHeadingLabel(value);
   if (!normalized) return "";
+
+  // Check the shared config map first (single source of truth)
+  if (RESUME_SECTION_KEY_MAP[normalized]) return RESUME_SECTION_KEY_MAP[normalized];
+
+  // Fallback: fuzzy heuristic matching for headings not in the map
   if (normalized.includes("academic qualification") || normalized.includes("academic qualifications")) return "education";
   if (
     normalized.includes("summary")

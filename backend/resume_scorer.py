@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+from shared_classification import SHARED_KEY_MAP
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
 ACTION_VERBS = {
@@ -252,7 +254,7 @@ def _is_noise_line(text: str) -> bool:
 
 def _section_key(line: str) -> str:
     lower = _clean_line(line).lower().rstrip(":")
-    return _NORMALIZED_SECTION_KEYS.get(lower, lower)
+    return _NORMALIZED_SECTION_KEYS.get(lower, SHARED_KEY_MAP.get(lower, lower))
 
 
 def _split_inline_heading_line(line: str) -> list[str]:

@@ -2869,6 +2869,10 @@ def score_resume(
     )
     analyze_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
 
+    # Expose the backend's detected sections so the frontend can use
+    # them directly instead of re-parsing (avoids mismatch).
+    result["detected_sections"] = _scorer._extract_sections(resume_text)
+
     # Enhance with canonical ATS term matching.
     if jd_text.strip():
         parsed_jd = preparse_jd(jd_text, db_session=db)

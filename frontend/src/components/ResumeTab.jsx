@@ -1620,11 +1620,17 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     }
 
     const core = new Set(["summary", "objective", "experience", "education", "skills", "certifications"]);
-    const matchedSections = [...new Set(
-      parsedSections
-        .filter((section) => (section.type === "heading" || section.type === "heading_paragraph") && core.has(section.sectionKey))
-        .map((section) => section.sectionKey),
-    )];
+
+    // Prefer backend-detected sections when available (from scoreData.detected_sections)
+    // to avoid mismatches between what the AI scored and what the frontend displays.
+    const backendSections = scoreData?.detected_sections;
+    const matchedSections = backendSections
+      ? [...new Set(backendSections.filter((s) => core.has(s)))]
+      : [...new Set(
+          parsedSections
+            .filter((section) => (section.type === "heading" || section.type === "heading_paragraph") && core.has(section.sectionKey))
+            .map((section) => section.sectionKey),
+        )];
     const sectionCount = matchedSections.length;
     const sectionScore = sectionCount >= 4 ? 5 : sectionCount >= 3 ? 3 : sectionCount >= 2 ? 2 : 1;
     const missingSections = [...core].filter((sectionKey) => !matchedSections.includes(sectionKey));
@@ -1647,7 +1653,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         suggestions: sectionSuggestions,
       },
     };
-  }, [bulletSections, parsedSections]);
+  }, [bulletSections, parsedSections, scoreData?.detected_sections]);
   const liveImpactOverrides = useMemo(() => {
     const liveBulletCount = bulletSections.length;
     const bulletAnalyses = bulletSections.map((section) => analyzeBulletFeedback(section.text, resumeText, section.sectionKey));

@@ -163,9 +163,9 @@ describe("getResumeSectionKey", () => {
     expect(getResumeSectionKey("Certifications")).toBe("certifications");
   });
 
-  it("returns skills for Certifications & Upskilling (skill substring matches first)", () => {
-    // "upskilling" contains "skill" which matches the skills branch before certifications
-    expect(getResumeSectionKey("Certifications & Upskilling")).toBe("skills");
+  it("returns certifications for Certifications & Upskilling (shared config exact match)", () => {
+    // Shared classification config maps this heading explicitly to certifications
+    expect(getResumeSectionKey("Certifications & Upskilling")).toBe("certifications");
   });
 
   it("returns summary for Professional Summary", () => {

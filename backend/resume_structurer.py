@@ -23,6 +23,7 @@ from resume_scorer import (
     _section_key,
     _starts_with_action_verb,
 )
+from shared_classification import SHARED_HEADINGS, SHARED_KEY_MAP
 
 log = logging.getLogger("jobhunter.structurer")
 
@@ -95,6 +96,7 @@ _EDUCATION_DETAIL_RE = re.compile(
 # Sections that contain entries (role + bullets)
 _ENTRY_SECTIONS = {
     "experience", "projects", "activities", "education", "certifications",
+    "career_break",
 }
 # Sections rendered as plain text blocks
 _TEXT_SECTIONS = {"summary", "objective"}
@@ -113,7 +115,7 @@ def _extract_contact(lines: list[str]) -> dict[str, str]:
     location = ""
     linkedin = ""
 
-    section_headers_lower = {s.lower() for s in STANDARD_SECTIONS}
+    section_headers_lower = {s.lower() for s in STANDARD_SECTIONS} | SHARED_HEADINGS
 
     for line in header_lines:
         cleaned = _clean_line(line)
@@ -147,7 +149,7 @@ def _extract_contact(lines: list[str]) -> dict[str, str]:
         lower = cleaned.lower().rstrip(":")
         if lower in section_headers_lower:
             continue
-        if lower in _NORMALIZED_SECTION_KEYS:
+        if lower in SHARED_KEY_MAP:
             continue
         if "@" in cleaned or "http" in cleaned.lower():
             continue
@@ -193,8 +195,8 @@ def _is_section_heading(line: str) -> str | None:
     if len(letters_only) < 2:
         return None
 
-    # Exact match against known sections
-    if lower in (s.lower() for s in STANDARD_SECTIONS):
+    # Exact match against known sections (shared headings + legacy list)
+    if lower in SHARED_HEADINGS or lower in (s.lower() for s in STANDARD_SECTIONS):
         return _section_key(stripped)
 
     # ALL-CAPS short line with at least one letter

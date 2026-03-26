@@ -1,5 +1,7 @@
 // Resume-related constants extracted from App.jsx (Phase 3)
 
+import sharedConfig from "../../../shared/resume-classification.json";
+
 export const DEFAULT_RESUME_TEMPLATES = [
   {
     id: "classic",
@@ -205,65 +207,8 @@ export const NUS_RESUME_BENCHMARKS = [
   },
 ];
 
-export const RESUME_HEADINGS = new Set([
-  "summary",
-  "professional summary",
-  "executive summary",
-  "career summary",
-  "professional profile",
-  "profile",
-  "summary of qualifications",
-  "qualifications",
-  "experience",
-  "professional experience",
-  "work experience",
-  "employment history",
-  "career history",
-  "work and internship experience",
-  "work and internship experiences",
-  "internship and work experience",
-  "education",
-  "academic background",
-  "skills",
-  "skills & interests",
-  "skills and interests",
-  "core skills",
-  "key skills",
-  "technical skills",
-  "technical proficiencies",
-  "core competencies",
-  "competencies",
-  "projects",
-  "selected projects",
-  "project experience",
-  "leadership",
-  "activities",
-  "activities & leadership",
-  "certifications",
-  "certification",
-  "licenses",
-  "licenses & certifications",
-  "certifications & technical upskilling",
-  "certifications & upskilling",
-  "awards",
-  "volunteer",
-  "volunteering",
-  "interests",
-  "languages",
-  "languages & work authorization",
-  "additional information",
-  "co-curricular experience",
-  "extra-curriculars",
-  "personal",
-  "personal particulars",
-  "core strengths",
-  "key skills summary",
-  "career objective",
-  "key achievements",
-  "career break & upskilling",
-  "selected highlights",
-  "career break",
-]);
+export const RESUME_HEADINGS = new Set(sharedConfig.section_headings);
+export const RESUME_SECTION_KEY_MAP = sharedConfig.section_key_map;
 
 export const RESUME_TEMPLATE_SECTION_ORDER = {
   classic: ["summary", "education", "experience", "skills", "certifications"],
