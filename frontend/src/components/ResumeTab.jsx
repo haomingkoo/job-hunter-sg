@@ -1719,7 +1719,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const isEditorView = workspaceView === "editor";
   const showFeedbackPanels = isFeedbackView || mobilePanel === "feedback";
   const lowScoreWarning = scoreData && overallScore !== null && overallScore < 50;
-  const setupVisible = showSetupPanel || !resumeText.trim();
+  const setupVisible = showSetupPanel || !resumeText.trim() || wizardStep === 1;
 
   // When a new job is selected, always go to step 1 (Upload) so user can choose their resume
   useEffect(() => {
