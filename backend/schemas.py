@@ -202,3 +202,8 @@ class CoverLetterRequest(BaseModel):
     job_company: str = Field("", max_length=200)
     job_description: str = Field("", max_length=10000)
     user_direction: str | None = Field(None, max_length=500, description="Custom instruction like 'emphasize leadership' or 'keep it concise'")
+
+
+class ResumeChatRequest(BaseModel):
+    messages: list = Field(..., description="Chat history: [{role: 'user'|'assistant', content: '...'}]")
+    action: str = Field("chat", description="'chat' for next question, 'generate' to produce resume")

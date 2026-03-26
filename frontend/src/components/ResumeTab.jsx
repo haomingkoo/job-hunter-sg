@@ -7,6 +7,7 @@ import {
   RefreshCw, Zap, Download, Star,
   Loader2, Sparkles, UploadCloud, Printer,
   Check, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, List, Type, GripVertical,
+  Send,
 } from "lucide-react";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
@@ -236,6 +237,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const resumePrintRef = useRef(null);
 
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+
+  // ── Resume Chat Builder state ──────────────────────────────────
+  const [showResumeChat, setShowResumeChat] = useState(false);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatReady, setChatReady] = useState(false);
+  const chatEndRef = useRef(null);
 
   const openMobileFeedbackPanel = useCallback((targetRef = scorePanelRef) => {
     if (typeof window === "undefined" || window.innerWidth >= 1024) return;
@@ -2009,20 +2018,21 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               <p className="mt-1.5 text-sm text-[#6A89A7]">Copy-paste your resume from any source</p>
             </button>
 
-            {/* Start Fresh */}
+            {/* Start Fresh — opens AI chat builder */}
             <button
               type="button"
               onClick={() => {
-                const starter = `PROFESSIONAL SUMMARY\nAdd a concise summary of your experience and goals.\n\nPROFESSIONAL EXPERIENCE\nCompany Name | Job Title | Start Date - End Date\n- Describe your key achievement or responsibility\n- Include metrics where possible (%, $, team size)\n\nEDUCATION\nDegree Name\nUniversity Name, Graduation Year\n\nSKILLS\nList your technical and professional skills here`;
-                applyResumeText(starter, { rescore: false });
-                setShowSetupPanel(false);
-                setWizardStep(2);
+                setShowResumeChat(true);
+                setChatMessages([{
+                  role: "assistant",
+                  content: "Hi! I'll help you build your resume step by step. Let's start \u2014 what's your full name?",
+                }]);
               }}
               className="group text-left rounded-2xl border-2 border-[#BDDDFC]/30 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-violet-300"
             >
-              <Edit3 size={28} className="text-violet-600" />
+              <Sparkles size={28} className="text-violet-600" />
               <h3 className="mt-3 text-base font-semibold text-[#384959]">Start Fresh</h3>
-              <p className="mt-1.5 text-sm text-[#6A89A7]">Build from scratch with a guided template</p>
+              <p className="mt-1.5 text-sm text-[#6A89A7]">Build from scratch with AI-guided chat</p>
             </button>
           </div>
 
@@ -2053,6 +2063,151 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               </button>
             </div>
           </div>
+
+          {/* ── AI Resume Chat Builder ─────────────────────────────────── */}
+          {showResumeChat && (
+            <div className="rounded-2xl border border-violet-200 bg-white shadow-sm overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-violet-100 bg-gradient-to-r from-violet-50 to-white px-5 py-3">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={18} className="text-violet-600" />
+                  <span className="text-sm font-semibold text-[#384959]">AI Resume Builder</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setShowResumeChat(false); setChatMessages([]); setChatReady(false); }}
+                  className="rounded-lg p-1 text-[#6A89A7] hover:bg-[#f0f4f8] transition"
+                  aria-label="Close chat"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Messages */}
+              <div className="h-[360px] overflow-y-auto px-5 py-4 space-y-3">
+                {chatMessages.map((msg, i) => (
+                  <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                    {msg.role === "assistant" && (
+                      <div className="mr-2 mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-100">
+                        <Sparkles size={14} className="text-violet-600" />
+                      </div>
+                    )}
+                    <div
+                      className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                        msg.role === "user"
+                          ? "bg-[#384959] text-white"
+                          : "bg-[#f0f4f8] text-[#384959]"
+                      }`}
+                    >
+                      {msg.content}
+                    </div>
+                  </div>
+                ))}
+                {chatLoading && (
+                  <div className="flex justify-start">
+                    <div className="mr-2 mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-100">
+                      <Sparkles size={14} className="text-violet-600" />
+                    </div>
+                    <div className="rounded-2xl bg-[#f0f4f8] px-4 py-2.5 text-sm text-[#6A89A7]">
+                      <Loader2 size={16} className="inline animate-spin mr-1.5" />
+                      Thinking...
+                    </div>
+                  </div>
+                )}
+                <div ref={chatEndRef} />
+              </div>
+
+              {/* Input */}
+              <div className="border-t border-[#BDDDFC]/20 px-4 py-3">
+                {chatReady && (
+                  <button
+                    type="button"
+                    disabled={chatLoading}
+                    onClick={async () => {
+                      setChatLoading(true);
+                      try {
+                        const resp = await apiFetch("/api/ai/resume-chat", {
+                          method: "POST",
+                          body: JSON.stringify({ messages: chatMessages, action: "generate" }),
+                        });
+                        const data = await resp.json();
+                        if (data.resume_text) {
+                          applyResumeText(data.resume_text, { rescore: true, clearRewrites: true });
+                          setShowResumeChat(false);
+                          setChatMessages([]);
+                          setChatReady(false);
+                          setShowSetupPanel(false);
+                          setWizardStep(2);
+                        }
+                      } catch (err) {
+                        setChatMessages((prev) => [...prev, {
+                          role: "assistant",
+                          content: "Sorry, I couldn't generate the resume right now. Please try again.",
+                        }]);
+                      } finally {
+                        setChatLoading(false);
+                      }
+                    }}
+                    className="mb-3 w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 transition flex items-center justify-center gap-2"
+                  >
+                    <Sparkles size={16} />
+                    Generate My Resume
+                  </button>
+                )}
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const text = chatInput.trim();
+                    if (!text || chatLoading) return;
+
+                    const nextMessages = [...chatMessages, { role: "user", content: text }];
+                    setChatMessages(nextMessages);
+                    setChatInput("");
+                    setChatLoading(true);
+
+                    // Scroll to bottom after adding user message
+                    setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+
+                    try {
+                      const resp = await apiFetch("/api/ai/resume-chat", {
+                        method: "POST",
+                        body: JSON.stringify({ messages: nextMessages, action: "chat" }),
+                      });
+                      const data = await resp.json();
+                      setChatMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+                      if (data.ready_to_generate) setChatReady(true);
+                    } catch (err) {
+                      setChatMessages((prev) => [...prev, {
+                        role: "assistant",
+                        content: "Sorry, something went wrong. Please try sending your message again.",
+                      }]);
+                    } finally {
+                      setChatLoading(false);
+                      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+                    }
+                  }}
+                  className="flex gap-2"
+                >
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Type your answer..."
+                    disabled={chatLoading}
+                    className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2.5 text-sm text-[#384959] placeholder-[#6A89A7]/60 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:opacity-50"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!chatInput.trim() || chatLoading}
+                    className="rounded-xl bg-[#384959] px-4 py-2.5 text-white hover:bg-[#2d3a47] disabled:opacity-40 transition"
+                    aria-label="Send message"
+                  >
+                    <Send size={16} />
+                  </button>
+                </form>
+              </div>
+            </div>
+          )}
 
           {/* ── Saved Versions (if logged in and has versions) ─────────── */}
           {user && resumeVersions.length > 0 && (

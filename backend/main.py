@@ -51,6 +51,7 @@ from schemas import (
     ContactRequest,
     CoverLetterRequest,
     IntegrateKeywordsRequest,
+    ResumeChatRequest,
     JobOut,
     LoginRequest,
     RegenerateSummaryRequest,
@@ -3635,6 +3636,150 @@ Return ONLY the cover letter text. No subject lines, no labels, no markdown form
 
     word_count = len(cover_letter.split())
     return {"cover_letter": cover_letter, "word_count": word_count}
+
+
+@app.post("/api/ai/resume-chat")
+def resume_chat_step(
+    body: ResumeChatRequest,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Agentic conversational resume builder.
+    action='chat'  -> returns next AI question + stage metadata.
+    action='generate' -> returns structured resume text from conversation.
+    """
+    check_rate_limit(user, "ai", db)
+    db.add(UsageLog(
+        user_id=user.id if user else None,
+        action="ai",
+        detail=f"resume_chat_{body.action}",
+    ))
+    db.commit()
+
+    messages = body.messages or []
+
+    if body.action == "generate":
+        # ── Generate structured resume from conversation ──────────────
+        system_prompt = (
+            "You are an expert resume writer. Based on the conversation below, "
+            "generate a complete resume in plain text with these sections:\n\n"
+            "[Full Name]\n"
+            "[Email / Phone / Location — on one line]\n\n"
+            "PROFESSIONAL SUMMARY\n"
+            "[2-3 sentence summary highlighting strengths and experience]\n\n"
+            "PROFESSIONAL EXPERIENCE\n"
+            "[Company | Location | Start Date - End Date]\n"
+            "[Job Title]\n"
+            "• [Achievement bullet with metrics]\n"
+            "• [Achievement bullet with metrics]\n\n"
+            "(Repeat for each role)\n\n"
+            "EDUCATION\n"
+            "[Degree — University (Year)]\n\n"
+            "SKILLS\n"
+            "[Comma-separated skills]\n\n"
+            "CRITICAL RULES:\n"
+            "- Only include information the user explicitly shared. NEVER invent.\n"
+            "- Use action verbs and quantified achievements where the user provided numbers.\n"
+            "- Keep bullets concise (one line each).\n"
+            "- Return ONLY the resume text, no commentary or markdown formatting."
+        )
+
+        llm_messages = [{"role": "system", "content": system_prompt}]
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if role in ("user", "assistant") and content:
+                llm_messages.append({"role": role, "content": content})
+
+        content = _call_sealion(
+            messages=llm_messages,
+            max_tokens=1500,
+            model=SEALION_MODEL,
+            temperature=0.3,
+        )
+
+        if not content:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI service unavailable — rate limit or API error. Try again shortly.",
+            )
+
+        resume_text = content.strip()
+        word_count = len(resume_text.split())
+        return {"resume_text": resume_text, "word_count": word_count}
+
+    # ── Chat mode: guide user through resume building ─────────────────
+    system_prompt = (
+        "You are a friendly, expert resume coach helping someone build their resume "
+        "from scratch through a conversation. Ask questions ONE AT A TIME in this order:\n\n"
+        "1. Full name and contact info (email, phone, location)\n"
+        "2. Professional summary — what kind of role they are looking for, years of experience\n"
+        "3. Most recent job: title, company, dates, location\n"
+        "4. Key achievements in that role (coach them: 'Can you add a number? "
+        "Like how many people you managed, what % improvement, or revenue impact?')\n"
+        "5. Ask if they have previous jobs; if yes, repeat steps 3-4\n"
+        "6. Education: degree, university/institution, graduation year\n"
+        "7. Skills and certifications\n"
+        "8. Anything else they want to include\n\n"
+        "RULES:\n"
+        "- Ask only ONE question at a time. Keep responses short (2-3 sentences max).\n"
+        "- After each user answer, briefly acknowledge what they said, then ask the next question.\n"
+        "- Coach them to add metrics and numbers to achievements.\n"
+        "- If their answer is vague, gently ask for specifics.\n"
+        "- When you have collected at least: name, 1 job with achievements, and education, "
+        "end your message with the exact tag [READY] on its own line.\n"
+        "- Do NOT generate the resume yourself. Just gather information.\n"
+        "- Be encouraging and professional."
+    )
+
+    llm_messages = [{"role": "system", "content": system_prompt}]
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if role in ("user", "assistant") and content:
+            llm_messages.append({"role": role, "content": content})
+
+    content = _call_sealion(
+        messages=llm_messages,
+        max_tokens=300,
+        model=SEALION_MODEL,
+        temperature=0.5,
+    )
+
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service unavailable — rate limit or API error. Try again shortly.",
+        )
+
+    reply = content.strip()
+    ready_to_generate = "[READY]" in reply
+    # Strip the tag from the visible reply
+    reply_clean = reply.replace("[READY]", "").strip()
+
+    # Determine conversation stage from message count
+    user_msg_count = sum(1 for m in messages if m.get("role") == "user")
+    if user_msg_count <= 1:
+        stage = "contact"
+    elif user_msg_count <= 2:
+        stage = "summary"
+    elif user_msg_count <= 4:
+        stage = "experience_1"
+    elif user_msg_count <= 6:
+        stage = "experience_2"
+    elif user_msg_count <= 7:
+        stage = "education"
+    elif user_msg_count <= 8:
+        stage = "skills"
+    else:
+        stage = "done"
+
+    return {
+        "reply": reply_clean,
+        "stage": stage,
+        "ready_to_generate": ready_to_generate,
+    }
 
 
 # ═════════════════════════════════════════════════════════════════════════════
