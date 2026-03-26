@@ -3501,15 +3501,10 @@ async def upload_resume(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Smart Format: run LLM pass to clean up extracted text structure
-    from ai_service import smart_format_resume_text
-    formatted = smart_format_resume_text(result["text"])
-    if formatted:
-        result["text"] = formatted
-        result["smart_formatted"] = True
-        result["word_count"] = len(formatted.split())
-    else:
-        result["smart_formatted"] = False
+    # Smart Format disabled — regex parser handles most cases well enough,
+    # and the LLM was splitting bullets mid-sentence causing rendering issues.
+    # TODO: revisit with a better prompt or a structured JSON output approach.
+    result["smart_formatted"] = False
 
     db.add(UsageLog(
         user_id=user.id if user else None,
