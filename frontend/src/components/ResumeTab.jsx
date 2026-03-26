@@ -2254,11 +2254,12 @@ CERTIFICATIONS
                         if (chatInput.trim() && !chatLoading) e.target.form.requestSubmit();
                       }
                     }}
-                    placeholder="Type your answer... (Shift+Enter for new line)"
+                    placeholder="Type your answer..."
                     disabled={chatLoading}
-                    autoFocus
-                    rows={2}
-                    ref={(el) => { if (el && !chatLoading) el.focus(); }}
+                    rows={1}
+                    onFocus={(e) => {
+                      setTimeout(() => e.target.closest('[class*="rounded-2xl"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+                    }}
                     className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2.5 text-sm text-[#384959] placeholder-[#6A89A7]/60 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:opacity-50 resize-none"
                   />
                   <button
