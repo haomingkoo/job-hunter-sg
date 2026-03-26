@@ -241,13 +241,27 @@ _DEGREE_RE = re.compile(
 )
 
 
+_TITLE_RE = re.compile(
+    r"\b(?:engineer|manager|director|analyst|developer|architect|lead|head|"
+    r"officer|coordinator|specialist|consultant|designer|executive|associate|"
+    r"intern|supervisor|principal|scientist|researcher|advisor|strategist)\b",
+    re.I,
+)
+
 def _is_entry_heading_line(line: str) -> bool:
-    """Detect if a line is an entry heading (company/role/date)."""
+    """Detect if a line is an entry heading (company/role/date/title)."""
     has_date = bool(_DATE_HINT_RE.search(line))
     has_separator = bool(_SEPARATOR_RE.search(line))
     is_caps = line == line.upper() and len(line.split()) <= 8 and re.search(r"[A-Z]", line)
     has_degree = bool(_DEGREE_RE.match(line))
-    return has_date or has_separator or bool(is_caps) or has_degree
+    # Detect job titles (short lines with title keywords, not bullets)
+    words = line.split()
+    has_title = (
+        _TITLE_RE.search(line)
+        and len(words) <= 10
+        and not line.startswith(("-", "•", "*"))
+    )
+    return has_date or has_separator or bool(is_caps) or has_degree or bool(has_title)
 
 
 def _is_education_detail(line: str) -> bool:
