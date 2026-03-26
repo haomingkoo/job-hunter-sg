@@ -4182,6 +4182,9 @@ def start_tailoring(
         check_rate_limit(user, "ai", db)
         db.add(UsageLog(user_id=user.id, action="ai", detail="tailor_pipeline"))
         db.commit()
+    else:
+        # Rate-limit anonymous users too to prevent LLM abuse
+        check_rate_limit(None, "ai", db)
 
     state = run_pipeline(
         resume_text=resume_text,
@@ -4229,7 +4232,7 @@ def get_tailoring_result(
     # Auto-save as a resume version on first complete fetch
     result = state.result
     if user and not result.get("_version_saved"):
-        from models import ResumeVersion
+        from models import ResumeVersion, TailoredResume
         tailored_text = result.get("tailored_text", "")
         job_title = ""
         job_company = ""
