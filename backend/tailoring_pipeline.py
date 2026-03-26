@@ -663,7 +663,11 @@ Generate a compelling professional summary (2-4 sentences, ~40-60 words) that:
 3. Mentions a quantified achievement if possible
 4. Sounds natural, not AI-generated
 
-CRITICAL: Only reference achievements and skills that appear in the bullet points below. Do NOT invent.
+CRITICAL RULES:
+- Only reference achievements and skills that appear in the bullet points below. Do NOT invent.
+- NEVER change numbers, years of experience, dollar amounts, or metrics from the original resume.
+  If the resume says "7+ years", keep "7+ years". Do NOT calculate or infer different numbers.
+- Preserve all factual claims exactly as stated in the resume.
 
 Return ONLY the summary text, nothing else."""
 
