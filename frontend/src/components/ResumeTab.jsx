@@ -1705,7 +1705,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   // When navigating from Jobs tab with a selected job and resume already loaded, skip to editor
   useEffect(() => {
     if (selectedJob && resumeText.trim() && wizardStep === 1 && !showSetupPanel) {
-      setWizardStep(3);
+      setShowSetupPanel(true);
     }
   }, [selectedJob]);
   const hasResume = resumeText.trim().length > 0;
@@ -1915,7 +1915,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         })}
       </div>
 
-      {selectedJob && wizardStep === 3 && (
+      {selectedJob && (
         <div className="mb-4 rounded-3xl border border-[#BDDDFC]/30 bg-[#BDDDFC]/10 p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#384959]">Target Job Description</div>
