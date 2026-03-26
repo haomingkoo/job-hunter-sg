@@ -3659,13 +3659,16 @@ def resume_chat_step(
 
     messages = body.messages or []
 
-    # Security: limit context size to prevent abuse
+    # Security: sanitize all user messages, limit context size
     if len(messages) > 30:
-        messages = messages[-30:]  # keep last 30 messages
-    # Truncate any single message over 3000 chars
+        messages = messages[-30:]
     for msg in messages:
-        if isinstance(msg.get("content"), str) and len(msg["content"]) > 3000:
-            msg["content"] = msg["content"][:3000] + "..."
+        if isinstance(msg.get("content"), str):
+            # Sanitize HTML from user messages
+            msg["content"] = sanitize_user_input(msg["content"])[:3000]
+        # Only allow user/assistant roles
+        if msg.get("role") not in ("user", "assistant"):
+            msg["role"] = "user"
 
     if body.action == "generate":
         # ── Generate structured resume from conversation ──────────────
