@@ -1524,6 +1524,76 @@ def admin_backfill_enrichment(
     }
 
 
+_embedding_backfill_progress: dict = {"running": False, "done": 0, "total": 0, "phase": "idle"}
+
+@app.post("/api/admin/backfill-embeddings")
+def admin_backfill_embeddings(
+    body: dict | None = None,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Trigger embedding backfill for all jobs. Protected by ADMIN_API_KEY."""
+    token = ""
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+    if _embedding_backfill_progress.get("running"):
+        return {"status": "already_running", **_embedding_backfill_progress}
+
+    force = (body or {}).get("force", False)
+    batch_size = (body or {}).get("batch_size", 64)
+
+    def run_backfill() -> None:
+        _embedding_backfill_progress.update(running=True, done=0, total=0, phase="embedding")
+        try:
+            from embedding_service import build_job_embed_text, encode_texts, invalidate_matrix_cache
+            db = SessionLocal()
+            try:
+                query = db.query(ScrapedJob)
+                if not force:
+                    query = query.filter(ScrapedJob.embedding_vector.is_(None))
+                jobs = query.all()
+                _embedding_backfill_progress["total"] = len(jobs)
+                log.info("[EmbedBackfill] Starting: %d jobs", len(jobs))
+
+                for i in range(0, len(jobs), batch_size):
+                    batch = jobs[i:i + batch_size]
+                    texts = [
+                        build_job_embed_text(
+                            title=j.title or "",
+                            description=j.description or "",
+                            skills=j.skills,
+                        )
+                        for j in batch
+                    ]
+                    vectors = encode_texts(texts, batch_size=batch_size)
+                    for j, vec in zip(batch, vectors):
+                        j.embedding_vector = vec
+                    db.commit()
+                    _embedding_backfill_progress["done"] = min(i + batch_size, len(jobs))
+                    log.info("[EmbedBackfill] %d/%d", _embedding_backfill_progress["done"], len(jobs))
+
+                invalidate_matrix_cache()
+            finally:
+                db.close()
+        except Exception as e:
+            log.error("[EmbedBackfill] Failed: %s", e, exc_info=True)
+        finally:
+            _embedding_backfill_progress.update(running=False, phase="done")
+
+    threading.Thread(target=run_backfill, daemon=True).start()
+    return {"status": "started", "force": force}
+
+
+@app.get("/api/admin/backfill-embeddings/status")
+def admin_backfill_embeddings_status() -> dict:
+    """Check embedding backfill progress."""
+    return dict(_embedding_backfill_progress)
+
+
 @app.post("/api/admin/rebuild-skills-taxonomy")
 def admin_rebuild_skills_taxonomy(
     body: dict | None = None,
