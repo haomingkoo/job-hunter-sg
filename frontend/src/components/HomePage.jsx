@@ -88,7 +88,7 @@ export default function HomePage({ onNavigate }) {
   }, []);
 
   const count = jobCount != null ? jobCount.toLocaleString() : null;
-  const countNum = jobCount || 15000;
+  const countNum = jobCount || 72000;
 
   return (
     <div className="font-body w-full bg-[#f0f4f8]">
