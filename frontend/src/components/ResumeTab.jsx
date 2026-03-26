@@ -2188,13 +2188,21 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                   }}
                   className="flex gap-2"
                 >
-                  <input
-                    type="text"
+                  <textarea
                     value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="Type your answer..."
+                    onChange={(e) => {
+                      if (e.target.value.length <= 2000) setChatInput(e.target.value);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        if (chatInput.trim() && !chatLoading) e.target.form.requestSubmit();
+                      }
+                    }}
+                    placeholder="Type your answer... (Shift+Enter for new line)"
                     disabled={chatLoading}
-                    className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2.5 text-sm text-[#384959] placeholder-[#6A89A7]/60 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:opacity-50"
+                    rows={2}
+                    className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2.5 text-sm text-[#384959] placeholder-[#6A89A7]/60 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:opacity-50 resize-none"
                   />
                   <button
                     type="submit"

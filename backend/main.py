@@ -3659,6 +3659,14 @@ def resume_chat_step(
 
     messages = body.messages or []
 
+    # Security: limit context size to prevent abuse
+    if len(messages) > 30:
+        messages = messages[-30:]  # keep last 30 messages
+    # Truncate any single message over 3000 chars
+    for msg in messages:
+        if isinstance(msg.get("content"), str) and len(msg["content"]) > 3000:
+            msg["content"] = msg["content"][:3000] + "..."
+
     if body.action == "generate":
         # ── Generate structured resume from conversation ──────────────
         system_prompt = (
@@ -3771,7 +3779,11 @@ def resume_chat_step(
         "- When you have collected at least: name, 1 job with achievements, and education, "
         "end your message with the exact tag [READY] on its own line.\n"
         "- Do NOT generate the resume yourself. Just gather information.\n"
-        "- Be encouraging and professional."
+        "- Be encouraging and professional.\n"
+        "- IMPORTANT: If the user pastes a large block of text (like an existing resume or "
+        "job description), acknowledge it, summarize what you found, ask what's missing or "
+        "what they want to improve, and continue from there. Don't force them to repeat info "
+        "they already gave you."
         f"{trending_skills_hint}"
     )
 
