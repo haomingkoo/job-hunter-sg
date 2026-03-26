@@ -29,7 +29,7 @@ Searches MyCareersFuture and Careers@Gov in one interface. Scores your resume, r
 
 ### Job Search
 - Aggregates MyCareersFuture (~12K jobs) and Careers@Gov (~3K jobs) via public APIs
-- Admin-triggered crawl with full pagination; extensible `SOURCE_MAP` supports 5 additional scrapers
+- Nightly crawl via Railway cron (22:00 UTC); extensible `SOURCE_MAP` supports 5 additional scrapers
 - Filter by seniority, job type, salary range, skills
 - ATS skill tags extracted at scrape time (413 known skills, ~50ms/job)
 
