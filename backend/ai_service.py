@@ -303,6 +303,93 @@ def get_ai_status() -> dict:
 
 # ── Public AI Features ──────────────────────────────────────────────────────
 
+
+def smart_format_resume_text(raw_text: str) -> Optional[str]:
+    """Reformat extracted resume text for better structure.
+
+    Uses LLM to fix line breaks, separate headings, and add bullet
+    markers — WITHOUT changing any content. Returns formatted text
+    or None on failure.
+    """
+    if not raw_text or len(raw_text.strip()) < 50:
+        return None
+
+    original_words = raw_text.split()
+    original_word_count = len(original_words)
+
+    # Skip very long resumes to avoid token limits
+    if original_word_count > 2000:
+        log.info("[SmartFormat] Skipping — resume too long (%d words)", original_word_count)
+        return None
+
+    system = """You are a resume text formatter. You take raw text extracted from a PDF and fix ONLY the line structure. You MUST NOT change any words.
+
+FORMAT RULES:
+- Section headings (EXPERIENCE, EDUCATION, SKILLS, SUMMARY, CERTIFICATIONS, etc.) go on their own line in UPPERCASE
+- Company name goes on its own line
+- Job title goes on its own line (or combined with company using " | ")
+- Date range goes on the same line as the job title, separated by " | " (e.g., "Manager, Engineering | Aug 2022 – Jan 2025")
+- Each bullet point starts on its own line with "• "
+- One blank line between sections
+- Contact info (email, phone, LinkedIn) stays on one line separated by " | "
+
+STRICT CONSTRAINTS:
+- Do NOT change, add, or remove any words, numbers, dates, or punctuation
+- Do NOT rephrase anything
+- Do NOT add section headings that don't exist in the original
+- Do NOT wrap output in code blocks, markdown, or JSON
+- Return ONLY the reformatted plain text"""
+
+    user_msg = f"Reformat this resume text:\n\n{raw_text[:6000]}"
+
+    result = _call_sealion(
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+        max_tokens=3000,
+        model=SEALION_MODEL,
+        temperature=0.1,
+    )
+
+    if not result:
+        log.warning("[SmartFormat] LLM returned empty response")
+        return None
+
+    # Strip code block wrappers if present
+    formatted = result.strip()
+    if formatted.startswith("```"):
+        formatted = "\n".join(formatted.split("\n")[1:])
+    if formatted.endswith("```"):
+        formatted = "\n".join(formatted.split("\n")[:-1])
+    formatted = formatted.strip()
+
+    if not formatted:
+        log.warning("[SmartFormat] Empty after cleanup")
+        return None
+
+    # Validate: word count should be within 15% of original
+    formatted_word_count = len(formatted.split())
+    ratio = formatted_word_count / max(original_word_count, 1)
+    if ratio < 0.85 or ratio > 1.15:
+        log.warning(
+            "[SmartFormat] Rejected — word count drift %.0f%% (%d → %d)",
+            (ratio - 1) * 100, original_word_count, formatted_word_count,
+        )
+        return None
+
+    # Spot-check: first 3 significant words must appear in output
+    sig_words = [w for w in original_words if len(w) >= 4][:5]
+    formatted_lower = formatted.lower()
+    missing = [w for w in sig_words if w.lower() not in formatted_lower]
+    if len(missing) >= 2:
+        log.warning("[SmartFormat] Rejected — content mismatch: %s", missing)
+        return None
+
+    log.info("[SmartFormat] Applied (%d → %d words)", original_word_count, formatted_word_count)
+    return formatted
+
+
 def coach_resume(resume_text: str, job_description: str = "") -> Optional[dict]:
     """
     AI-powered resume coaching.
