@@ -1101,8 +1101,6 @@ def _select_power_match_candidates(
         conditions.extend(
             [
                 ScrapedJob.title.ilike(pattern),
-                ScrapedJob.company.ilike(pattern),
-                ScrapedJob.description.ilike(pattern),
                 ScrapedJob.search_keyword.ilike(pattern),
                 cast(ScrapedJob.skills, String).ilike(pattern),
             ]
@@ -2307,12 +2305,22 @@ def get_power_match(
         db=db,
         resume_text=resume_text,
         resume_skills=resume_skills,
-        limit=500,
+        limit=200,
     )
+
+    # Precompute resume-side domain hits (same for every job)
+    resume_domain_hits = _count_domain_hits(resume_skills, SEMICONDUCTOR_DOMAIN_TERMS)
+    resume_hard_hits = _count_domain_hits(resume_skills, SEMICONDUCTOR_HARD_TERMS)
 
     recommendations: list[dict] = []
     for job in candidate_jobs:
-        job_skills = _extract_job_match_skills(job, db)
+        # Use cached job_terms_preview when available (fast path),
+        # fall back to full extraction only when needed
+        preview = job.job_terms_preview
+        if isinstance(preview, list) and preview:
+            job_skills = [str(s) for s in preview if s]
+        else:
+            job_skills = _extract_job_match_skills(job, db)
         matched_skills = [
             skill for skill in job_skills
             if skill.lower() in resume_skill_lookup or skill.lower() in lower_resume
@@ -2323,10 +2331,8 @@ def get_power_match(
         ]
         title_terms = _extract_title_terms(job.title)
         title_hits = [term for term in title_terms if term in lower_resume]
-        resume_domain_hits = _count_domain_hits(resume_skills, SEMICONDUCTOR_DOMAIN_TERMS)
         job_domain_hits = _count_domain_hits(job_skills + title_terms, SEMICONDUCTOR_DOMAIN_TERMS)
         matched_domain_hits = _count_domain_hits(matched_skills + title_hits, SEMICONDUCTOR_DOMAIN_TERMS)
-        resume_hard_hits = _count_domain_hits(resume_skills, SEMICONDUCTOR_HARD_TERMS)
         job_hard_hits = _count_domain_hits(job_skills + title_terms, SEMICONDUCTOR_HARD_TERMS)
         matched_hard_hits = _count_domain_hits(matched_skills + title_hits, SEMICONDUCTOR_HARD_TERMS)
         job_level = _infer_job_level(job)
@@ -2340,7 +2346,7 @@ def get_power_match(
         description_bonus = min(
             10,
             sum(1 for skill in matched_skills[:4] if skill.lower() in (job.description or "").lower()) * 3,
-        )
+        ) if matched_skills else 0
         domain_bonus = 0
         domain_penalty = 0
         level_bonus = 0
