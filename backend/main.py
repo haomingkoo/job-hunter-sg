@@ -1550,6 +1550,7 @@ def admin_backfill_embeddings(
         _embedding_backfill_progress.update(running=True, done=0, total=0, phase="embedding")
         try:
             from embedding_service import build_job_embed_text, encode_texts, invalidate_matrix_cache
+            from database import SessionLocal
             db = SessionLocal()
             try:
                 query = db.query(ScrapedJob)
