@@ -4054,19 +4054,17 @@ CERTIFICATIONS
                           )}
                           {section.type === "education_entry" && (
                             <div className={`mb-2 rounded-lg border border-[#BDDDFC]/20 bg-[#f0f4f8]/40 px-4 py-3 ${templateStyles.subheadingClass}`}>
-                              <div className="flex items-baseline justify-between gap-4">
-                                <div className="flex-1 min-w-0 font-semibold leading-snug text-[#384959]">
-                                  {renderHighlightedText(
-                                    section.fields.degree || section.fields.institution || section.text,
-                                    section.keywordMatches || [],
-                                  )}
-                                </div>
-                                {section.fields.dateRange && (
-                                  <div className="shrink-0 text-[0.9em] text-[#6A89A7] whitespace-nowrap">
-                                    {section.fields.dateRange}
-                                  </div>
+                              <div className="font-semibold leading-snug text-[#384959]">
+                                {renderHighlightedText(
+                                  section.fields.degree || section.fields.institution || section.text,
+                                  section.keywordMatches || [],
                                 )}
                               </div>
+                              {section.fields.dateRange && (
+                                <div className="mt-0.5 text-[0.9em] text-[#6A89A7]">
+                                  {section.fields.dateRange}
+                                </div>
+                              )}
                               {section.fields.degree && section.fields.institution && (
                                 <div className="mt-0.5 text-[0.93em] leading-snug text-[#6A89A7]">
                                   {section.fields.institution}
