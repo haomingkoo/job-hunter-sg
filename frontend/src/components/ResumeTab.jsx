@@ -2051,8 +2051,8 @@ Senior Software Engineer
 DBS Bank | Singapore | Jan 2022 – Present
 • Led microservices migration for core banking platform, serving 5M+ users across APAC
 • Reduced API response time by 45% through Redis caching and query optimization
-• Mentored team of 4 junior engineers, conducting weekly code reviews and pair programming
-• Implemented CI/CD pipeline with GitHub Actions, cutting deployment time from 2 hours to 15 minutes
+• Responsible for mentoring junior engineers and doing code reviews
+• Helped with CI/CD pipeline improvements and deployment automation
 
 Software Engineer
 GovTech Singapore | Singapore | Jul 2019 – Dec 2021
