@@ -18,6 +18,14 @@
 /* Smooth scroll for anchor links */
 html { scroll-behavior: smooth; }
 
+/* Force single-column layout on resume preview — prevents any inherited
+   or injected multi-column styles from splitting paragraph text */
+.resume-print-target,
+.resume-print-target * {
+  column-count: 1 !important;
+  columns: auto !important;
+}
+
 /* Noise texture overlay for hero */
 .hero-noise::after {
   content: '';
