@@ -138,7 +138,7 @@ export default function HomePage({ onNavigate }) {
               <motion.div variants={fadeUp} custom={3} className="mt-9 flex flex-wrap items-center gap-3">
                 <motion.button
                   type="button"
-                  onClick={() => onNavigate("scraper")}
+                  onClick={() => onNavigate("jobs")}
                   whileHover={{ scale: 1.03, boxShadow: "0 8px 30px rgba(56,73,89,0.2)" }}
                   whileTap={{ scale: 0.97 }}
                   className="inline-flex items-center gap-2.5 rounded-full bg-[#384959] px-7 py-3.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[#2d3a47]"
@@ -291,7 +291,7 @@ export default function HomePage({ onNavigate }) {
             className="mt-14 grid gap-5 sm:grid-cols-3"
           >
             {[
-              { icon: Search, num: "01", label: "Discover", desc: "Search {count}+ roles from 5 Singapore portals. Every listing tagged with the skills employers want.", tab: "scraper" },
+              { icon: Search, num: "01", label: "Discover", desc: "Search {count}+ roles from 5 Singapore portals. Every listing tagged with the skills employers want.", tab: "jobs" },
               { icon: FileText, num: "02", label: "Prepare", desc: "Score your resume against real ATS criteria. Get honest feedback and tailor every bullet to stand out.", tab: "resume" },
               { icon: BarChart2, num: "03", label: "Understand", desc: "See which skills are trending, which sectors are growing, and where your best opportunities lie.", tab: "analytics" },
             ].map((c, i) => (
@@ -341,7 +341,7 @@ export default function HomePage({ onNavigate }) {
                 Browse {count ? `${count}+` : "thousands of"} roles across Singapore's top job portals. Every listing shows what employers actually care about.
               </p>
               <motion.button
-                type="button" onClick={() => onNavigate("scraper")}
+                type="button" onClick={() => onNavigate("jobs")}
                 whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}
                 className="mt-5 inline-flex items-center gap-2 rounded-full bg-[#384959] px-5 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-[#2d3a47]"
               >
@@ -567,7 +567,7 @@ export default function HomePage({ onNavigate }) {
           </motion.p>
           <motion.div variants={fadeUp} custom={2} className="mt-10 flex flex-wrap items-center justify-center gap-4">
             <motion.button
-              type="button" onClick={() => onNavigate("scraper")}
+              type="button" onClick={() => onNavigate("jobs")}
               whileHover={{ scale: 1.03, boxShadow: "0 8px 30px rgba(136,189,242,0.3)" }}
               whileTap={{ scale: 0.97 }}
               className="group inline-flex items-center gap-2.5 rounded-full bg-[#88BDF2] px-8 py-4 text-sm font-bold text-[#1f2831] transition-colors hover:bg-[#BDDDFC]"

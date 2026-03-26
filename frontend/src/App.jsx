@@ -236,7 +236,7 @@ export default function JobHunterSG() {
               transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
               className="mx-auto max-w-7xl p-4 sm:p-6"
             >
-              {activeTab === "scraper" && (
+              {activeTab === "jobs" && (
                 <ScraperTab
                   user={user}
                   trackedJobs={trackedJobs}

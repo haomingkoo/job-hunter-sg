@@ -6,7 +6,7 @@ import {
 
 export default function Nav({ active, setActive }) {
   const tabs = [
-    { id: "scraper", label: "Jobs", icon: Search },
+    { id: "jobs", label: "Jobs", icon: Search },
     { id: "resume", label: "Resume", icon: FileText },
     { id: "tracker", label: "Applications", icon: Briefcase },
     { id: "analytics", label: "Market Insights", icon: BarChart2 },
