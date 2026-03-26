@@ -20,6 +20,7 @@ import {
   RESUME_DEGREE_RE,
   DEGREE_START_RE,
   RESUME_EDUCATION_DETAIL_RE,
+  RESUME_TITLE_HINT_RE,
   RESUME_OVERUSED_IGNORE,
   RESUME_DISPLAY_ACRONYMS,
   RESUME_SMALL_TITLE_WORDS,
@@ -200,6 +201,8 @@ export function isAllCapsHeading(line) {
   const words = trimmed.split(/\s+/);
   if (words.length > 4) return false;
   if (/^[•\-*]/.test(trimmed)) return false;
+  if (/\d/.test(trimmed)) return false;
+  if (looksLikeEducationDetail(trimmed)) return false;
   // Removed certification/in-progress filter: ALL-CAPS lines (2-4 words) are section headings,
   // not entry content. Mixed-case entries like "AWS Certified Solutions Architect" are already
   // filtered by the trimmed !== trimmed.toUpperCase() check above.
@@ -298,6 +301,56 @@ export function splitEducationMeta(value) {
   }
 
   return { primary: trimmed, secondary: "" };
+}
+
+const ENTRY_SUBHEADING_SECTIONS = new Set(["experience", "projects", "activities", "career_break"]);
+const STRUCTURED_SUBHEADING_SECTIONS = new Set([...ENTRY_SUBHEADING_SECTIONS, "education", "certifications"]);
+const DATE_ONLY_TEXT_RE = /^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+(?:19|20)\d{2}|(?:19|20)\d{2}|(?:present|current)|\d{1,2}\/(?:19|20)\d{2})(?:\s*[–—-]\s*(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+(?:19|20)\d{2}|(?:19|20)\d{2}|(?:present|current)|\d{1,2}\/(?:19|20)\d{2}))?$/i;
+const COMPANY_OR_LOCATION_RE = /\b(?:technology|technologies|corp(?:oration)?|inc|ltd|pte|limited|group|bank|systems|solutions|services|manufacturing|semiconductor|micron|dyson|apple|meta|tiktok|kla|mondelez|singapore|japan|taiwan|usa|us|boise|hiroshima|taichung|manassas|global|regional|apac|emea|americas)\b/i;
+
+export function isStructuredSubheadingSection(sectionKey = "") {
+  return STRUCTURED_SUBHEADING_SECTIONS.has(sectionKey);
+}
+
+export function looksLikeDateOnlyText(value) {
+  const trimmed = stripResumeMarkdown(value).replace(/[(),]/g, "").replace(/\s+/g, " ").trim();
+  if (!trimmed) return false;
+  return DATE_ONLY_TEXT_RE.test(trimmed);
+}
+
+export function looksLikeResumeTitleLine(value) {
+  const trimmed = stripResumeMarkdown(value).replace(/^[|•]\s*/, "").trim();
+  if (!trimmed || looksLikeDateOnlyText(trimmed)) return false;
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length > 12) return false;
+  if (startsLineWithResumeActionVerb(trimmed) && words.length > 4) return false;
+  return RESUME_TITLE_HINT_RE.test(trimmed)
+    || (
+      words.length <= 8
+      && /\(.*\)/.test(trimmed)
+      && !/[.!?]$/.test(trimmed)
+    );
+}
+
+export function looksLikeResumeCompanyLine(value) {
+  const trimmed = stripResumeMarkdown(value).replace(/^[|•]\s*/, "").trim();
+  if (!trimmed || looksLikeDateOnlyText(trimmed) || looksLikeResumeTitleLine(trimmed)) return false;
+  if (looksLikeEducationText(trimmed) || looksLikeCertificationText(trimmed)) return false;
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length > 12) return false;
+  return COMPANY_OR_LOCATION_RE.test(trimmed)
+    || /^[A-Z][A-Za-z0-9&.,'()/+-]*(?:\s+[A-Z][A-Za-z0-9&.,'()/+-]*){0,7}$/.test(trimmed)
+    || trimmed.includes("/");
+}
+
+function buildSubheadingLabel(left = "", right = "") {
+  return [left, right].filter(Boolean).join(" | ").trim();
+}
+
+function mergeSectionMetadata(target, source) {
+  target.raw = [target.raw, source.raw].filter(Boolean).join("\n");
+  target.lineIndices = [...new Set([...(target.lineIndices || [target.lineIndex]), ...(source.lineIndices || [source.lineIndex])])];
+  target.keywordMatches = [...new Set([...(target.keywordMatches || []), ...(source.keywordMatches || [])])];
 }
 
 export function getInlineResumeSegments(section) {
@@ -1045,18 +1098,22 @@ export function mergeSummaryLeadParagraphs(sections) {
 export function parseSubheadingParts(line, sectionKey = "") {
   const trimmed = stripResumeMarkdown(line);
   if (!trimmed) return null;
+  const entrySection = ENTRY_SUBHEADING_SECTIONS.has(sectionKey);
+  if (!isStructuredSubheadingSection(sectionKey)) return null;
 
   if (trimmed.includes("|")) {
     const parts = trimmed.split("|").map((part) => part.trim()).filter(Boolean);
     const lastPart = parts[parts.length - 1] || "";
     const hasDateOnRight = hasDateHint(lastPart);
-    const hasEducationSignal = parts.some((part) => looksLikeEducationText(part) || RESUME_DEGREE_RE.test(part));
+    const datePartIndex = parts.findIndex((part) => looksLikeDateOnlyText(part) || hasDateHint(part));
     const denseSkillList = looksLikeDenseSkillList(parts)
       || ((sectionKey === "skills" || sectionKey === "certifications") && parts.length >= 2 && !hasDateOnRight);
 
     if (denseSkillList) return null;
 
-    if (sectionKey === "education" && parts.length >= 2 && (hasDateOnRight || hasEducationSignal)) {
+    if (sectionKey === "education" && parts.length >= 2) {
+      const hasEducationSignal = parts.some((part) => looksLikeEducationText(part) || RESUME_DEGREE_RE.test(part));
+      if (!hasDateOnRight && !hasEducationSignal) return null;
       if (parts.length === 2) {
         return {
           left: parts[0],
@@ -1071,20 +1128,19 @@ export function parseSubheadingParts(line, sectionKey = "") {
       };
     }
 
-    if (parts.length === 2 || hasDateOnRight) {
+    if ((entrySection || sectionKey === "certifications") && datePartIndex >= 0) {
+      const datePart = parts[datePartIndex];
+      const otherParts = parts.filter((_, index) => index !== datePartIndex);
+      return {
+        left: otherParts[0] || datePart,
+        right: buildSubheadingLabel(otherParts.slice(1).join(" | "), datePart),
+        variant: "dated",
+      };
+    }
+
+    if (parts.length === 2 || (entrySection && hasDateOnRight) || (sectionKey === "certifications" && hasDateOnRight)) {
       const right = parts.pop();
       const leftJoined = parts.join(" | ");
-      const looksEducation = hasEducationSignal
-        || looksLikeEducationText(leftJoined)
-        || looksLikeEducationText(right)
-        || RESUME_DEGREE_RE.test(leftJoined);
-      if (looksEducation) {
-        return {
-          left: leftJoined,
-          right,
-          variant: looksLikeEducationDetail(leftJoined) || looksLikeEducationDetail(right) ? "education_detail" : "education_main",
-        };
-      }
       return {
         left: leftJoined,
         right,
@@ -1097,7 +1153,6 @@ export function parseSubheadingParts(line, sectionKey = "") {
   if (separatorMatch) {
     const left = separatorMatch[1].trim();
     const right = separatorMatch[2].trim();
-    if ((sectionKey === "skills" || sectionKey === "certifications") && !hasDateHint(right)) return null;
     if (sectionKey === "education") {
       return {
         left,
@@ -1105,11 +1160,16 @@ export function parseSubheadingParts(line, sectionKey = "") {
         variant: looksLikeEducationDetail(left) || looksLikeEducationDetail(right) ? "education_detail" : "education_main",
       };
     }
+    if (!entrySection && !(sectionKey === "certifications" && hasDateHint(right))) return null;
     return {
       left,
       right,
       variant: hasDateHint(right) || hasDateHint(trimmed) ? "dated" : "company",
     };
+  }
+
+  if (entrySection && startsLineWithResumeActionVerb(trimmed) && trimmed.split(/\s+/).filter(Boolean).length > 4) {
+    return null;
   }
 
   // Detect "Title, Department (YYYY-YYYY)" or "Title (YYYY-YYYY)" pattern
@@ -1135,6 +1195,7 @@ export function parseSubheadingParts(line, sectionKey = "") {
         return { left, right, variant: "dated" };
       }
     }
+    if (!(entrySection || sectionKey === "education" || sectionKey === "certifications")) return null;
     // No comma but has date - entire line is a heading
     return { left: trimmed, right: "", variant: "dated" };
   }
@@ -1142,21 +1203,20 @@ export function parseSubheadingParts(line, sectionKey = "") {
   // Detect position-like titles in entry sections (no date, no separator)
   // e.g., "Senior Engineer, RegE Process & Equipment Engineer"
   // e.g., "Bio-Lasing R&D (Dr. Derrick Yong)"
-  if (["experience", "projects", "activities"].includes(sectionKey)) {
+  if (entrySection) {
     const words = trimmed.split(/\s+/);
     const wordCount = words.length;
     if (wordCount >= 2 && wordCount <= 12 && (!startsLineWithResumeActionVerb(trimmed) || wordCount <= 8)) {
-      const TITLE_PATTERNS = /\b(?:engineer|manager|director|analyst|lead|head|officer|coordinator|specialist|consultant|architect|developer|designer|executive|associate|intern|supervisor|principal|scientist|researcher|professor|advisor|strategist)\b/i;
       const hasComma = trimmed.includes(",");
       const hasParens = /\(.*\)/.test(trimmed);
-      if (TITLE_PATTERNS.test(trimmed) || (!startsLineWithResumeActionVerb(trimmed) && (hasComma && wordCount <= 10) || hasParens)) {
+      if (looksLikeResumeTitleLine(trimmed) || (!startsLineWithResumeActionVerb(trimmed) && ((hasComma && wordCount <= 10) || hasParens))) {
         return { left: trimmed, right: "", variant: "company" };
       }
     }
   }
 
   // Detect company + location lines: "Company Name, City" or "Company Name, City / Country"
-  if (["experience", "projects", "activities"].includes(sectionKey)) {
+  if (entrySection) {
     const commaIdx = trimmed.indexOf(",");
     if (commaIdx > 0 && commaIdx < trimmed.length - 1) {
       const beforeComma = trimmed.substring(0, commaIdx).trim();
@@ -1171,6 +1231,10 @@ export function parseSubheadingParts(line, sectionKey = "") {
           return { left: trimmed, right: "", variant: "company" };
         }
       }
+    }
+
+    if (looksLikeResumeCompanyLine(trimmed)) {
+      return { left: trimmed, right: "", variant: "company" };
     }
   }
 
@@ -1334,6 +1398,76 @@ export function annotateBullet(text, keywords, resumeText = "", sectionKey = "")
   };
 }
 
+function shouldMergeContinuationLine(line, currentSectionKey, previousItem) {
+  const trimmed = stripResumeMarkdown(line);
+  if (!trimmed || !previousItem || previousItem.sectionKey !== currentSectionKey) return false;
+  if (!["bullet", "paragraph"].includes(previousItem.type)) return false;
+  if (RESUME_BULLET_RE.test(line) || isHeadingLine(trimmed) || splitInlineHeadingContent(trimmed)) return false;
+
+  const previousText = stripResumeMarkdown(previousItem.text || "");
+  const previousEndsSentence = /[.!?]$/.test(previousText);
+  const startsLowercase = /^[a-z(]/.test(trimmed);
+  const definiteNewEntry = looksLikeDateOnlyText(trimmed)
+    || looksLikeResumeTitleLine(trimmed)
+    || (currentSectionKey === "education" && startsNewEducationEntry(trimmed));
+
+  if (previousItem.type === "bullet") {
+    if (!previousEndsSentence && !definiteNewEntry) return true;
+    return startsLowercase && !definiteNewEntry;
+  }
+
+  if (startsLowercase && !definiteNewEntry) return true;
+  return !previousEndsSentence && !definiteNewEntry && trimmed.length <= 90 && !hasDateHint(trimmed);
+}
+
+function tryMergeSubheadingWithPrevious(parsed, section) {
+  if (!ENTRY_SUBHEADING_SECTIONS.has(section.sectionKey)) return false;
+
+  const recentItems = [...parsed].reverse().filter((item) => item.type !== "spacer").slice(0, 5);
+  const previousSubheading = recentItems.find((item) => item.type === "subheading" && item.sectionKey === section.sectionKey);
+  if (!previousSubheading) return false;
+
+  const currentText = looksLikeDateOnlyText(section.text)
+    ? section.text
+    : buildSubheadingLabel(section.left, section.right) || section.text;
+  const previousText = buildSubheadingLabel(previousSubheading.left, previousSubheading.right) || previousSubheading.text;
+
+  if (looksLikeDateOnlyText(currentText)) {
+    previousSubheading.right = buildSubheadingLabel(previousSubheading.right, currentText);
+    previousSubheading.variant = "dated";
+    previousSubheading.text = buildSubheadingLabel(previousSubheading.left, previousSubheading.right);
+    mergeSectionMetadata(previousSubheading, section);
+    return true;
+  }
+
+  if (recentItems[0] !== previousSubheading) return false;
+
+  const previousTitleLike = looksLikeResumeTitleLine(previousSubheading.left || previousText);
+  const previousCompanyLike = looksLikeResumeCompanyLine(previousText);
+  const currentTitleLike = looksLikeResumeTitleLine(section.left || currentText);
+  const currentCompanyLike = looksLikeResumeCompanyLine(currentText);
+
+  if (previousCompanyLike && (currentTitleLike || section.variant === "dated")) {
+    previousSubheading.left = section.left || currentText;
+    previousSubheading.right = buildSubheadingLabel(previousText, section.right || (section.left ? "" : currentText));
+    previousSubheading.variant = section.variant === "dated" || hasDateHint(previousSubheading.right) ? "dated" : "company";
+    previousSubheading.text = buildSubheadingLabel(previousSubheading.left, previousSubheading.right);
+    mergeSectionMetadata(previousSubheading, section);
+    return true;
+  }
+
+  if (previousTitleLike && (currentCompanyLike || section.variant === "dated")) {
+    previousSubheading.left = previousText;
+    previousSubheading.right = currentText;
+    previousSubheading.variant = section.variant === "dated" || hasDateHint(currentText) ? "dated" : "company";
+    previousSubheading.text = buildSubheadingLabel(previousSubheading.left, previousSubheading.right);
+    mergeSectionMetadata(previousSubheading, section);
+    return true;
+  }
+
+  return false;
+}
+
 export function parseResumeToSections(text, keywords, templateOrder = []) {
   const parsed = [];
   let currentSectionKey = "";
@@ -1422,52 +1556,42 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
       continue;
     }
 
+    const previousMeaningfulSection = [...parsed].reverse().find((section) => section.type !== "spacer");
+    if (!RESUME_BULLET_RE.test(line) && shouldMergeContinuationLine(line, currentSectionKey, previousMeaningfulSection)) {
+      previousMeaningfulSection.text = `${previousMeaningfulSection.text} ${normalizedLine}`.replace(/\s+/g, " ").trim();
+      previousMeaningfulSection.raw = `${previousMeaningfulSection.raw}\n${line}`;
+      previousMeaningfulSection.lineIndices = [...(previousMeaningfulSection.lineIndices || [previousMeaningfulSection.lineIndex]), lineIndex];
+      if (previousMeaningfulSection.type === "bullet") {
+        previousMeaningfulSection.annotation = annotateBullet(previousMeaningfulSection.text, keywords, text, currentSectionKey);
+      } else if (previousMeaningfulSection.type === "paragraph") {
+        previousMeaningfulSection.keywordMatches = collectKeywordMatches(previousMeaningfulSection.text, keywords);
+      }
+      continue;
+    }
+
     const bulletMatch = line.match(RESUME_BULLET_RE);
     // Auto-promote bullets whose content looks like an entry heading (e.g., "• Senior Engineer (2019-2020)")
     let subheadingParts;
     if (bulletMatch) {
+      const canPromoteBulletHeading = ENTRY_SUBHEADING_SECTIONS.has(currentSectionKey) || currentSectionKey === "education";
       const bulletText = stripResumeMarkdown(bulletMatch[2]);
-      const promoted = parseSubheadingParts(bulletText, currentSectionKey);
+      const promoted = canPromoteBulletHeading ? parseSubheadingParts(bulletText, currentSectionKey) : null;
       subheadingParts = promoted && (promoted.variant === "dated" || promoted.variant.startsWith("education")) ? promoted : null;
     } else {
       subheadingParts = parseSubheadingParts(normalizedLine, currentSectionKey);
     }
     if (subheadingParts) {
       const displayText = bulletMatch ? stripResumeMarkdown(bulletMatch[2]) : normalizedLine;
-      // Check if this is a standalone date line that should merge with previous entry
-      // e.g., "2022 – 2025" on its own line after "Manager, Central Engineering | ..."
-      const isStandaloneDateLine = subheadingParts.variant === "dated"
-        && !subheadingParts.right
-        && hasDateHint(displayText)
-        && displayText.replace(/[\d\s\u2013\u2014\-\/]/g, "").length < 5;
-      if (isStandaloneDateLine && parsed.length > 0) {
-        // Find the nearest subheading to merge with — skip past spacers AND paragraphs
-        // (paragraphs between a title and its date are common in multi-line entries)
-        const recentItems = [...parsed].reverse().slice(0, 5);
-        const prev = recentItems.find((s) => s.type === "subheading")
-          || recentItems.find((s) => s.type !== "spacer");
-        if (prev && prev.type === "subheading") {
-          const prevRight = prev.right || "";
-          const prevHasDate = hasDateHint(prevRight);
-          const prevRightIsOnlyDate = prevHasDate && prevRight.replace(/[\d\s\u2013\u2014\-\/,a-zA-Z]*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)?[\d\s\u2013\u2014\-\/]*/gi, "").trim().length < 3;
-          if (!prevHasDate || prevRightIsOnlyDate) {
-            const separator = prevRightIsOnlyDate ? " – " : (prev.right ? " | " : "");
-            prev.right = prev.right ? `${prev.right}${separator}${displayText}` : displayText;
-            prev.lineIndices = [...(prev.lineIndices || [prev.lineIndex]), lineIndex];
-            prev.text = `${prev.left} | ${prev.right}`;
-            prev.variant = "dated";
-            continue;
-          }
-        }
-      }
-      parsed.push({
+      const subheadingSection = {
         ...base,
         type: "subheading",
         ...subheadingParts,
         text: displayText,
         sectionKey: currentSectionKey,
         keywordMatches: collectKeywordMatches(displayText, keywords),
-      });
+      };
+      if (tryMergeSubheadingWithPrevious(parsed, subheadingSection)) continue;
+      parsed.push(subheadingSection);
       continue;
     }
 
@@ -1496,8 +1620,8 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
       continue;
     }
 
-    const previousMeaningfulSection = [...parsed].reverse().find((section) => section.type !== "spacer");
-    const inferredBullets = inferWordBulletLines(normalizedLine, currentSectionKey, previousMeaningfulSection);
+    const previousParsedSection = [...parsed].reverse().find((section) => section.type !== "spacer");
+    const inferredBullets = inferWordBulletLines(normalizedLine, currentSectionKey, previousParsedSection);
     if (inferredBullets) {
       inferredBullets.forEach((bulletText, inferredIndex) => {
         parsed.push({
@@ -1518,20 +1642,14 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
     // bullet/paragraph, merge it with the previous item instead of creating
     // a new paragraph. This handles PDF line-wrapping artifacts.
     const prevItem = [...parsed].reverse().find((s) => s.type !== "spacer");
-    const startsLowercase = /^[a-z]/.test(normalizedLine);
-    const isContinuation = prevItem
-      && (prevItem.type === "bullet" || prevItem.type === "paragraph")
-      && (
-        startsLowercase
-        || (normalizedLine.length < 60 && !isHeadingLine(normalizedLine) && !normalizedLine.includes("|") && !hasDateHint(normalizedLine))
-      );
+    const isContinuation = shouldMergeContinuationLine(line, currentSectionKey, prevItem);
     if (isContinuation && prevItem) {
-      prevItem.text = `${prevItem.text} ${normalizedLine}`;
+      prevItem.text = `${prevItem.text} ${normalizedLine}`.replace(/\s+/g, " ").trim();
+      prevItem.raw = `${prevItem.raw}\n${line}`;
       prevItem.lineIndices = [...(prevItem.lineIndices || [prevItem.lineIndex]), lineIndex];
-      if (prevItem.type === "bullet" && prevItem.annotation) {
+      if (prevItem.type === "bullet") {
         prevItem.annotation = annotateBullet(prevItem.text, keywords, text, currentSectionKey);
-      }
-      if (prevItem.type === "paragraph") {
+      } else if (prevItem.type === "paragraph") {
         prevItem.keywordMatches = collectKeywordMatches(prevItem.text, keywords);
       }
       continue;

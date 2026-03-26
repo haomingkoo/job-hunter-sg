@@ -10,6 +10,8 @@ import logging
 import re
 from typing import Optional
 
+from shared_classification import SHARED_HEADINGS
+
 log = logging.getLogger("jobhunter.parser")
 
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
@@ -31,7 +33,7 @@ SECTION_HEADER_ALIASES = {
     "certifications", "certification", "licenses", "licenses & certifications",
     "certifications & technical upskilling", "additional information",
     "languages", "interests", "awards", "publications", "personal", "personal particulars",
-}
+} | set(SHARED_HEADINGS)
 
 DOCX_BULLET_STYLE_TOKENS = (
     "list bullet",

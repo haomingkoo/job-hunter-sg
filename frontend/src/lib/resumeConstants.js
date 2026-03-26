@@ -282,13 +282,15 @@ export const RESUME_SCALE_CUE_PATTERNS = [
   /\b\d+\s+(?:reports?|engineers?|specialists?|operators?|owners?|stakeholders?|people|users?|clients?|projects?|systems?|hours?|weeks?|months?|years?|sites?|fabs?|fab\s+lines?|lines?|plants?|dashboards?|sensors?|parameters?|countries?|regions?|modules?|tools?)\b/gi,
   /\b(?:across|over|under|up to|more than|less than|nearly|almost)\s+\d+(?:\.\d+)?\s+(?:sites?|fabs?|fab\s+lines?|lines?|plants?|regions?|countries?|teams?|people|users?|projects?|systems?|clients?|engineers?|specialists?|reports?|hours?|weeks?|months?|years?|dashboards?|sensors?|parameters?)\b/gi,
 ];
-export const RESUME_DATE_HINT_RE = /\b(?:19|20)\d{2}\b|present|current|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i;
+export const RESUME_DATE_HINT_RE = /\b(?:19|20)\d{2}\b|\b(?:present|current)\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+(?:19|20)\d{2}\b|\b\d{1,2}\/(?:19|20)\d{2}\b/i;
 export const RESUME_CERTIFICATION_RE = /certification|certifications|certificate|certified|pmp|wsq|skillsfuture|accredited|in progress|target|gmat|upskilling|emeritus|heicoders|completed.*course|full stack development|generative ai|currently pursuing/i;
 export const RESUME_EDUCATION_RE = /\b(?:university|polytechnic|college|school|institute|academy|faculty|gpa|degree|diploma|bachelor|master|ph\.?d|exchange|graduated|major|minor|focus|capstone|national university|nanyang|singapore management|nus|ntu|smu|sutd|sit|suss)\b/i;
 export const RESUME_EDUCATION_INSTITUTION_RE = /\b(?:university|polytechnic|college|school|institute|academy|faculty|national university|nanyang|singapore management|nus|ntu|smu|sutd|sit|suss|temasek poly|ngee ann|republic poly|singapore poly|nyp|ite college|kaplan|lasalle|nafa|sim global|psb academy|james cook university|curtin university|monash university|eth zurich|university of melbourne|university of sydney|unsw|hku|tsinghua|peking university)\b/i;
 export const RESUME_DEGREE_RE = /\b(?:b\.?sc|m\.?sc|b\.?eng|m\.?eng|b\.?a|m\.?a|bachelor|master|ph\.?d|doctorate|diploma|advanced diploma|associate|degree|mba|certificate|cert)\b/i;
 export const DEGREE_START_RE = /^(M\.?Sc|B\.?Sc|B\.?Eng|MBA|M\.?Eng|Ph\.?D|B\.?A|M\.?A|Diploma|Advanced Diploma|Associate|Graduate Cert(?:ificate)?|Certificate|Cert)/i;
 export const RESUME_EDUCATION_DETAIL_RE = /gpa|exchange|focus|capstone|graduate certificate|graduate certificates|minor|major|distinction|honou?r/i;
+const ESCAPED_TITLE_PATTERNS = sharedConfig.title_patterns.map((pattern) => pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+export const RESUME_TITLE_HINT_RE = new RegExp(`\\b(?:${ESCAPED_TITLE_PATTERNS.join("|")})\\b`, "i");
 export const RESUME_OVERUSED_IGNORE = new Set([
   "automation", "digital", "transformation", "program", "manager", "management",
   "yield", "data", "analytics", "analysis", "operations", "engineering",

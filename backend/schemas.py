@@ -192,3 +192,4 @@ class IntegrateKeywordsRequest(BaseModel):
 class RegenerateSummaryRequest(BaseModel):
     resume_text: str = Field(..., min_length=50, max_length=10000)
     job_id: int | None = Field(None, description="Target job ID for JD context")
+    user_direction: str | None = Field(None, max_length=500, description="User's custom instruction for summary style/focus")

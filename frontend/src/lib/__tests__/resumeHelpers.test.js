@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import {
   parseResumeToSections,
+  groupEducationSections,
   stripResumeMarkdown,
   isHeadingLine,
   getResumeSectionKey,
@@ -20,6 +21,10 @@ const fixtures = fixtureFiles.map((filename) => ({
   name: filename.replace(".txt", ""),
   text: fs.readFileSync(path.join(FIXTURES_DIR, filename), "utf-8"),
 }));
+
+function getFixtureText(filename) {
+  return fs.readFileSync(path.join(FIXTURES_DIR, filename), "utf-8");
+}
 
 // ── Property tests: parseResumeToSections ───────────────────────────────────
 
@@ -201,5 +206,60 @@ describe("parseSubheadingParts", () => {
   it("returns null for empty input", () => {
     expect(parseSubheadingParts("", "experience")).toBeNull();
     expect(parseSubheadingParts(null, "experience")).toBeNull();
+  });
+
+  it("does not mistake innovation text for a dated summary subheading", () => {
+    const line = "7+ years of global experience in driving strategic yield improvement programs and system innovation for DRAM, NAND, and logic nodes.";
+    expect(parseSubheadingParts(line, "summary")).toBeNull();
+  });
+
+  it("does not mistake decisions text for a dated experience heading", () => {
+    const line = "Led 0→1 development of the Process Integration Package (PIP): a data platform standardizing risk/conversion decisions across 4 global sites.";
+    expect(parseSubheadingParts(line, "experience")).toBeNull();
+  });
+});
+
+describe("parseResumeToSections - fixture regressions", () => {
+  it("groups Dyson company, title, and standalone date into one experience subheading", () => {
+    const sections = parseResumeToSections(getFixtureText("Haoming_Koo_Dyson_Resume.txt"), []);
+    const experienceSubheadings = sections.filter((section) => section.type === "subheading" && section.sectionKey === "experience");
+    expect(experienceSubheadings.some((section) => (
+      String(section.left || "").includes("Manager, Central Engineering")
+      && String(section.right || "").includes("Micron Technology")
+      && String(section.right || "").includes("2022 – 2025")
+    ))).toBe(true);
+    expect(experienceSubheadings.some((section) => String(section.text || "").trim() === "2022 – 2025")).toBe(false);
+
+    const acceleratorBullet = sections.find((section) => section.type === "bullet" && section.sectionKey === "experience" && section.text.includes("Accelerator Program"));
+    expect(acceleratorBullet?.text).toContain("3,000+ engineers across four global fabs");
+  });
+
+  it("recognizes Apple skills heading and keeps GPA lines out of headings", () => {
+    const sections = parseResumeToSections(getFixtureText("Haoming_Koo_Apple_BusinessProcessReengineeringManager_Resume.txt"), []);
+    const headings = sections.filter((section) => section.type === "heading");
+    expect(headings.some((section) => section.sectionKey === "skills" && section.text === "Skills & Tools")).toBe(true);
+    expect(headings.some((section) => String(section.text || "").includes("GPA"))).toBe(false);
+  });
+
+  it("keeps Mondelez experience entries close to the expected count", () => {
+    const sections = parseResumeToSections(getFixtureText("Haoming_Koo_Mondelez.txt"), []);
+    const experienceSubheadings = sections.filter((section) => section.type === "subheading" && section.sectionKey === "experience");
+    expect(experienceSubheadings.length).toBeLessThanOrEqual(5);
+  });
+
+  it("keeps TikTok education GPA text inside education entries instead of heading fragments", () => {
+    const parsed = parseResumeToSections(getFixtureText("Haoming_Koo_TikTok_DataProductManager_Resume.txt"), []);
+    const headings = parsed.filter((section) => section.type === "heading");
+    expect(headings.some((section) => String(section.text || "").includes("GPA"))).toBe(false);
+
+    const grouped = groupEducationSections(parsed);
+    const educationEntries = grouped.filter((section) => section.type === "education_entry");
+    expect(educationEntries.length).toBe(2);
+  });
+
+  it("maps KLA tools and systems heading into the skills section", () => {
+    const sections = parseResumeToSections(getFixtureText("Haoming_Koo_KLA_TPM_Resume.txt"), []);
+    const headings = sections.filter((section) => section.type === "heading" && section.sectionKey === "skills");
+    expect(headings.some((section) => section.text === "TOOLS & SYSTEMS")).toBe(true);
   });
 });

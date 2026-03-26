@@ -24,6 +24,10 @@ _fixture_files = sorted(FIXTURES_DIR.glob("*.txt"))
 _fixture_ids = [f.stem for f in _fixture_files]
 
 
+def _load_fixture(name: str) -> str:
+    return (FIXTURES_DIR / name).read_text(encoding="utf-8")
+
+
 @pytest.fixture(params=_fixture_files, ids=_fixture_ids)
 def resume_result(request: pytest.FixtureRequest) -> dict:
     """Parse a resume fixture and return the structured result."""
@@ -149,3 +153,42 @@ def test_education_section_detected(resume_result: dict) -> None:
     assert "education" in keys, (
         f"no 'education' section found; keys={keys}"
     )
+
+
+def test_dyson_groups_company_title_and_date_into_one_entry() -> None:
+    result = structure_resume(_load_fixture("Haoming_Koo_Dyson_Resume.txt"))
+    experience_sections = [section for section in result["sections"] if section["key"] == "experience"]
+    assert len(experience_sections) == 1
+
+    entries = experience_sections[0]["entries"]
+    manager_entry = next(
+        entry for entry in entries if "Manager, Central Engineering" in (entry.get("title") or entry.get("heading") or "")
+    )
+    assert "Micron Technology" in (manager_entry.get("company") or "")
+    assert manager_entry.get("date_range") == "2022 – 2025"
+
+
+def test_kla_keeps_company_location_with_first_experience_entry() -> None:
+    result = structure_resume(_load_fixture("Haoming_Koo_KLA_TPM_Resume.txt"))
+    experience = next(section for section in result["sections"] if section["key"] == "experience")
+    first_entry = experience["entries"][0]
+
+    assert "Manager, Front End Central Process Integration Engineering" in (first_entry.get("title") or first_entry.get("heading") or "")
+    assert "Micron Technology" in (first_entry.get("company") or "")
+    assert "Singapore" in (first_entry.get("company") or "")
+    assert first_entry.get("date_range") == "2022 –2025"
+
+
+def test_mondelez_experience_count_stays_near_expected() -> None:
+    result = structure_resume(_load_fixture("Haoming_Koo_Mondelez.txt"))
+    experience = next(section for section in result["sections"] if section["key"] == "experience")
+    assert len(experience["entries"]) == 4
+
+
+def test_mondelez_education_entries_keep_degree_school_and_dates() -> None:
+    result = structure_resume(_load_fixture("Haoming_Koo_Mondelez.txt"))
+    education = next(section for section in result["sections"] if section["key"] == "education")
+    assert len(education["entries"]) == 2
+    assert all(entry.get("degree") for entry in education["entries"])
+    assert all(entry.get("institution") for entry in education["entries"])
+    assert all(entry.get("date_range") for entry in education["entries"])

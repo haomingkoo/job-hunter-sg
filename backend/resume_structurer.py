@@ -23,7 +23,8 @@ from resume_scorer import (
     _section_key,
     _starts_with_action_verb,
 )
-from shared_classification import SHARED_HEADINGS, SHARED_KEY_MAP
+from resume_parser import _join_broken_lines
+from shared_classification import SHARED_HEADINGS, SHARED_KEY_MAP, SHARED_TITLE_PATTERNS
 
 log = logging.getLogger("jobhunter.structurer")
 
@@ -67,6 +68,18 @@ _ALL_CAPS_HEADER_RE = re.compile(r"^[A-Z][A-Z &/\-]{2,}$")
 _BULLET_CHAR_RE = re.compile(
     r"^[\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|o\s|\d+[.)]\s)",
 )
+_TITLE_LINE_RE = re.compile(
+    r"\b(?:"
+    + "|".join(re.escape(pattern) for pattern in SHARED_TITLE_PATTERNS)
+    + r")\b",
+    re.I,
+)
+_COMPANY_LINE_RE = re.compile(
+    r"\b(?:technology|technologies|corp(?:oration)?|inc|ltd|pte|limited|group|bank|systems|solutions|services|manufacturing|semiconductor|"
+    r"micron|dyson|apple|meta|tiktok|kla|mondelez|singapore|japan|taiwan|usa|us|boise|hiroshima|taichung|manassas|global|regional|apac|emea|americas)\b",
+    re.I,
+)
+_YEAR_ONLY_RE = re.compile(r"^(?:19|20)\d{2}$")
 
 # Education-specific patterns
 _DEGREE_PREFIX_RE = re.compile(
@@ -258,6 +271,58 @@ def _strip_bullet_prefix(line: str) -> str:
     ).strip()
 
 
+def _is_date_only_line(line: str) -> bool:
+    stripped = _clean_line(line)
+    if not stripped:
+        return False
+
+    normalized = stripped.replace("—", "-").replace("–", "-").strip()
+    if _YEAR_ONLY_RE.fullmatch(normalized):
+        return True
+    if _DATE_RANGE_RE.fullmatch(normalized):
+        return True
+    if _SINGLE_DATE_RE.fullmatch(normalized):
+        return True
+    return False
+
+
+def _looks_like_title_line(line: str) -> bool:
+    stripped = _clean_line(line)
+    if not stripped or _is_date_only_line(stripped):
+        return False
+    words = stripped.split()
+    if len(words) > 12:
+        return False
+    if _starts_with_action_verb(stripped) and len(words) > 4:
+        return False
+    return bool(_TITLE_LINE_RE.search(stripped)) or (
+        len(words) <= 8 and "(" in stripped and not stripped.endswith(".")
+    )
+
+
+def _looks_like_company_line(line: str) -> bool:
+    stripped = _clean_line(line)
+    if not stripped or _is_date_only_line(stripped) or _looks_like_title_line(stripped):
+        return False
+    words = stripped.split()
+    if len(words) > 12:
+        return False
+    return bool(_COMPANY_LINE_RE.search(stripped)) or "/" in stripped
+
+
+def _merge_date_parts(parts: list[str]) -> str:
+    unique_parts = [part for index, part in enumerate(parts) if part and part not in parts[:index]]
+    if not unique_parts:
+        return ""
+    if (
+        len(unique_parts) == 2
+        and all(_is_date_only_line(part) for part in unique_parts)
+        and not any("-" in part or "–" in part or "—" in part for part in unique_parts)
+    ):
+        return f"{unique_parts[0]} – {unique_parts[1]}"
+    return unique_parts[0]
+
+
 def _is_entry_heading(line: str) -> bool:
     """Heuristic: is this line an entry heading (company/role/date)?"""
     stripped = _clean_line(line)
@@ -318,31 +383,85 @@ def _parse_entry_heading(
     heading_lines: list[str],
 ) -> dict[str, str]:
     """Extract company, title, and date_range from heading lines."""
-    combined = " ".join(
-        _clean_line(ln) for ln in heading_lines if _clean_line(ln)
-    )
-
-    date_range = ""
-    date_match = _DATE_RANGE_RE.search(combined)
-    if date_match:
-        date_range = date_match.group(0).strip()
-
-    # Remove date from the text to isolate company/title
-    text_no_date = _DATE_RANGE_RE.sub("", combined).strip()
-    text_no_date = _SINGLE_DATE_RE.sub("", text_no_date).strip()
-
-    # Split on separators (|, em-dash, en-dash)
-    parts = _ROLE_SEPARATOR_RE.split(text_no_date)
-    parts = [p.strip().strip(",").strip() for p in parts if p.strip()]
-
     company = ""
     title = ""
+    date_parts: list[str] = []
+    info_lines: list[str] = []
 
-    if len(parts) >= 2:
-        company = parts[0]
-        title = parts[1]
-    elif len(parts) == 1:
-        company = parts[0]
+    for raw_line in heading_lines:
+        stripped = _clean_line(raw_line)
+        if not stripped:
+            continue
+
+        if _is_date_only_line(stripped):
+            date_parts.append(stripped)
+            continue
+
+        line_date = ""
+        date_match = _DATE_RANGE_RE.search(stripped)
+        single_date_match = _SINGLE_DATE_RE.search(stripped) if not date_match else None
+        year_match = _YEAR_ONLY_RE.search(stripped) if not date_match and not single_date_match else None
+        if date_match:
+            line_date = date_match.group(0).strip()
+        elif single_date_match:
+            line_date = single_date_match.group(0).strip()
+        elif year_match:
+            line_date = year_match.group(0).strip()
+
+        if line_date:
+            date_parts.append(line_date)
+            stripped = _DATE_RANGE_RE.sub("", stripped).strip()
+            stripped = _SINGLE_DATE_RE.sub("", stripped).strip()
+            stripped = re.sub(r"\b(?:19|20)\d{2}\b", "", stripped).strip()
+
+        cleaned = stripped.strip().strip(",").strip("|").strip("-").strip()
+        if cleaned:
+            info_lines.append(cleaned)
+
+    expanded_info_lines: list[str] = []
+    for info_line in info_lines:
+        title_match = _TITLE_LINE_RE.search(info_line)
+        if title_match and title_match.start() > 0:
+            prefix = info_line[:title_match.start()].strip(" |,-–—")
+            suffix = info_line[title_match.start():].strip()
+            if prefix and suffix and _looks_like_company_line(prefix):
+                expanded_info_lines.extend([prefix, suffix])
+                continue
+        expanded_info_lines.append(info_line)
+    info_lines = expanded_info_lines
+
+    date_range = _merge_date_parts(date_parts)
+
+    title_candidates = [line for line in info_lines if _looks_like_title_line(line)]
+    company_candidates = [
+        line for line in info_lines
+        if line not in title_candidates and _looks_like_company_line(line)
+    ]
+
+    if title_candidates:
+        title = title_candidates[0]
+    if company_candidates:
+        company = company_candidates[0]
+
+    if not title and info_lines:
+        if len(info_lines) >= 2:
+            first, second = info_lines[0], info_lines[1]
+            if _looks_like_company_line(first) and _looks_like_title_line(second):
+                company, title = first, second
+            elif _looks_like_title_line(first):
+                title = first
+                company = second
+            else:
+                company, title = first, second
+        elif _looks_like_title_line(info_lines[0]):
+            title = info_lines[0]
+
+    if not company:
+        remaining = [line for line in info_lines if line != title]
+        if remaining:
+            company = remaining[0]
+        elif info_lines and not title:
+            company = info_lines[0]
 
     return {
         "company": company,
@@ -355,8 +474,10 @@ def _parse_entry_heading(
 
 def _is_education_entry_start(line: str) -> bool:
     """Check if a line starts a new education entry (degree or institution)."""
-    stripped = _clean_line(line)
+    stripped = _strip_bullet_prefix(_clean_line(line))
     if not stripped:
+        return False
+    if _EDUCATION_DETAIL_RE.search(stripped) and not _DEGREE_PREFIX_RE.match(stripped):
         return False
     if _DEGREE_PREFIX_RE.match(stripped):
         return True
@@ -386,18 +507,21 @@ def _parse_education_entry(
     details: list[str] = []
 
     for line in lines:
-        stripped = _clean_line(line)
+        stripped = _strip_bullet_prefix(_clean_line(line))
         if not stripped:
             continue
 
         # Extract date range from any line
         date_match = _DATE_RANGE_RE.search(stripped)
         single_date_match = _SINGLE_DATE_RE.search(stripped) if not date_match else None
+        year_match = _YEAR_ONLY_RE.search(stripped) if not date_match and not single_date_match else None
         line_date = ""
         if date_match:
             line_date = date_match.group(0).strip()
         elif single_date_match:
             line_date = single_date_match.group(0).strip()
+        elif year_match:
+            line_date = year_match.group(0).strip()
 
         if line_date and not date_range:
             date_range = line_date
@@ -410,6 +534,7 @@ def _parse_education_entry(
         # Classify the line
         text_no_date = _DATE_RANGE_RE.sub("", stripped).strip()
         text_no_date = _SINGLE_DATE_RE.sub("", text_no_date).strip()
+        text_no_date = re.sub(r"\b(?:19|20)\d{2}\b", "", text_no_date).strip()
         text_no_date = text_no_date.strip(",").strip()
 
         is_degree_line = bool(_DEGREE_PREFIX_RE.match(stripped))
@@ -501,22 +626,22 @@ def _build_education_entries(
         is_bullet = bool(_BULLET_CHAR_RE.match(line))
         clean_text = _strip_bullet_prefix(line) if is_bullet else stripped
 
-        if _is_education_entry_start(line) and current_lines:
+        if _is_education_entry_start(clean_text) and current_lines:
             # Check if this line belongs to the current entry
             # (e.g., degree line after institution line in the same entry)
             has_degree = any(
-                _DEGREE_PREFIX_RE.match(_clean_line(ln))
+                _DEGREE_PREFIX_RE.match(_strip_bullet_prefix(_clean_line(ln)))
                 for ln in current_lines
             )
             has_institution = any(
-                _INSTITUTION_RE.search(_clean_line(ln))
-                and not _EDUCATION_DETAIL_RE.search(_clean_line(ln))
+                _INSTITUTION_RE.search(_strip_bullet_prefix(_clean_line(ln)))
+                and not _EDUCATION_DETAIL_RE.search(_strip_bullet_prefix(_clean_line(ln)))
                 for ln in current_lines
             )
-            is_new_degree = bool(_DEGREE_PREFIX_RE.match(stripped))
+            is_new_degree = bool(_DEGREE_PREFIX_RE.match(clean_text))
             is_new_institution = bool(
-                _INSTITUTION_RE.search(stripped)
-                and not _EDUCATION_DETAIL_RE.search(stripped)
+                _INSTITUTION_RE.search(clean_text)
+                and not _EDUCATION_DETAIL_RE.search(clean_text)
             )
 
             # Start new entry if we already have both degree + institution,
@@ -526,19 +651,49 @@ def _build_education_entries(
             ) or (has_degree and has_institution):
                 _flush()
 
-        if not current_lines and not _is_education_entry_start(line):
+        if not current_lines and not _is_education_entry_start(clean_text):
             # Stray detail line before any entry; still collect it
-            if _EDUCATION_DETAIL_RE.search(stripped):
-                current_lines.append(line)
+            if _EDUCATION_DETAIL_RE.search(clean_text):
+                current_lines.append(clean_text)
                 continue
             # Otherwise start a new entry
-            current_lines = [line]
+            current_lines = [clean_text]
             continue
 
-        current_lines.append(line)
+        current_lines.append(clean_text)
 
     _flush()
     return entries
+
+
+def _should_append_heading_line(
+    current_heading_lines: list[str],
+    line: str,
+    section_key_str: str,
+) -> bool:
+    if section_key_str not in {"experience", "projects", "activities", "career_break"}:
+        return False
+    if not current_heading_lines:
+        return False
+
+    candidate = _clean_line(line)
+    if not candidate:
+        return False
+
+    existing = [_clean_line(item) for item in current_heading_lines if _clean_line(item)]
+    if not existing:
+        return False
+    if len(existing) >= 3 and not _is_date_only_line(candidate):
+        return False
+    if _is_date_only_line(candidate):
+        return True
+    if any(_is_date_only_line(item) for item in existing):
+        return False
+    if not any(_looks_like_title_line(item) for item in existing) and _looks_like_title_line(candidate):
+        return True
+    if not any(_looks_like_company_line(item) for item in existing) and _looks_like_company_line(candidate):
+        return True
+    return len(existing) == 1
 
 
 def _build_entries(
@@ -558,14 +713,14 @@ def _build_entries(
         entry_id = f"{prefix}-{idx}"
         parsed = _parse_entry_heading(current_heading_lines)
 
-        heading = parsed["company"] or (
+        heading = parsed["title"] or parsed["company"] or (
             _clean_line(current_heading_lines[0])
             if current_heading_lines
             else ""
         )
         subheading_parts: list[str] = []
-        if parsed["title"]:
-            subheading_parts.append(parsed["title"])
+        if parsed["company"]:
+            subheading_parts.append(parsed["company"])
         if parsed["date_range"]:
             subheading_parts.append(parsed["date_range"])
         subheading = (
@@ -619,16 +774,23 @@ def _build_entries(
                 continue
 
         if is_heading:
-            _flush()
-            current_heading_lines = [line]
-            current_bullets = []
+            if current_heading_lines and not current_bullets and _should_append_heading_line(
+                current_heading_lines, line, section_key_str,
+            ):
+                current_heading_lines.append(line)
+            else:
+                _flush()
+                current_heading_lines = [line]
+                current_bullets = []
         elif (
             _starts_with_action_verb(stripped)
             and len(stripped.split()) >= 5
         ):
             # Implicit bullet (no marker but starts with action verb)
             current_bullets.append(stripped)
-        elif current_heading_lines and not current_bullets:
+        elif current_heading_lines and not current_bullets and _should_append_heading_line(
+            current_heading_lines, line, section_key_str,
+        ):
             # Second heading line (title on separate line from company)
             current_heading_lines.append(line)
         elif current_bullets:
@@ -743,7 +905,8 @@ def structure_resume(resume_text: str) -> dict[str, Any]:
             },
         }
 
-    all_lines = _iter_resume_lines(text)
+    normalized_text = _join_broken_lines(text)
+    all_lines = _iter_resume_lines(normalized_text)
 
     # 1. Extract contact info from raw lines (before noise filtering)
     contact = _extract_contact(text.split("\n"))

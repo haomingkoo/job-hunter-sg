@@ -3453,6 +3453,9 @@ Return ONLY the summary text, nothing else."""
     if jd_text and not parsed_jd:
         user_msg += f"TARGET JOB DESCRIPTION (excerpt):\n{jd_text[:1500]}\n\n"
 
+    if body.user_direction:
+        user_msg += f"USER INSTRUCTION: {body.user_direction}\n\n"
+
     user_msg += f"KEY CONTENT FROM RESUME:\n" + "\n".join(bullet_lines)
 
     content = _call_sealion(

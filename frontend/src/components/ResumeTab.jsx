@@ -189,6 +189,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [downloadError, setDownloadError] = useState("");
   const [downloadReady, setDownloadReady] = useState(false);
   const [regeneratingSummary, setRegeneratingSummary] = useState(false);
+  const [summaryDirection, setSummaryDirection] = useState("");
+  const [showSummaryPrompt, setShowSummaryPrompt] = useState(false);
   const [showSetupPanel, setShowSetupPanel] = useState(() => !resumeText.trim());
   const [workspaceView, setWorkspaceView] = useState("feedback");
   const [mobilePanel, setMobilePanel] = useState("edit");
@@ -1183,6 +1185,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         body: JSON.stringify({
           resume_text: resumeText,
           job_id: selectedJob?.id || null,
+          user_direction: summaryDirection.trim() || null,
         }),
       });
       const data = await resp.json();
@@ -4075,17 +4078,40 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                             {lineContent}
                             {actionButtons}
                             {sectionMoveButtons}
-                            {section.type === "heading" && section.sectionKey === "summary" && selectedJob && !isEditing && (
-                              <button
-                                type="button"
-                                onClick={handleRegenerateSummary}
-                                disabled={regeneratingSummary}
-                                className="mt-1 inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100 disabled:opacity-40"
-                                title="Regenerate summary for the selected job"
-                              >
-                                {regeneratingSummary ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                                {regeneratingSummary ? "Regenerating..." : "Regenerate Summary"}
-                              </button>
+                            {section.type === "heading" && section.sectionKey === "summary" && !isEditing && (
+                              <div className="mt-1 space-y-1.5">
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowSummaryPrompt((v) => !v)}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100"
+                                  >
+                                    <Sparkles size={12} />
+                                    {showSummaryPrompt ? "Hide" : "AI Summary"}
+                                  </button>
+                                </div>
+                                {showSummaryPrompt && (
+                                  <div className="flex gap-1.5">
+                                    <input
+                                      type="text"
+                                      value={summaryDirection}
+                                      onChange={(e) => setSummaryDirection(e.target.value)}
+                                      onKeyDown={(e) => { if (e.key === "Enter") handleRegenerateSummary(); }}
+                                      placeholder="e.g., emphasize AI leadership, keep it concise..."
+                                      className="flex-1 rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-[11px] text-[#384959] placeholder:text-[#6A89A7]/50 focus:outline-none focus:ring-2 focus:ring-violet-300"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={handleRegenerateSummary}
+                                      disabled={regeneratingSummary}
+                                      className="inline-flex items-center gap-1 rounded-lg bg-violet-600 px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-violet-700 disabled:opacity-40"
+                                    >
+                                      {regeneratingSummary ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                      {regeneratingSummary ? "..." : "Generate"}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
                             )}
                           </div>
                           {section.type === "bullet" && (
