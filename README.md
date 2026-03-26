@@ -2,7 +2,7 @@
 
 AI-powered job search, resume tailoring, and career tools for Singapore.
 
-Browse 72,000+ jobs from 5 portals. Build, score, and tailor your resume with AI. Generate cover letters. Match semantically with RAG.
+Browse 72,000+ jobs from MyCareersFuture and CareersGov. Build, score, and tailor your resume with AI. Generate cover letters. Match semantically with RAG.
 
 **[Try it live](https://job.kooexperience.com)** | **[Portfolio](https://kooexperience.com)**
 
@@ -28,7 +28,7 @@ Browse 72,000+ jobs from 5 portals. Build, score, and tailor your resume with AI
 ## Features
 
 ### Job Search
-- Aggregates from MyCareersFuture, CareersGov, NodeFlair, Indeed, JobStreet
+- Aggregates from MyCareersFuture and CareersGov
 - 72,000+ listings refreshed nightly
 - Filter by seniority, job type, salary, skills
 - ATS skill tags on every listing
