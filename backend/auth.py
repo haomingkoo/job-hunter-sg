@@ -40,7 +40,7 @@ if not SECRET_KEY:
     )
 
 # Configurable via env vars — tune from Railway dashboard, no redeploy needed
-_FREE_AI = int(os.environ.get("FREE_AI_PER_DAY", "1000"))
+_FREE_AI = int(os.environ.get("FREE_AI_PER_DAY", "500"))
 _PRO_AI = int(os.environ.get("PRO_AI_PER_DAY", "999999"))
 _PRO_DOMAINS = [
     d.strip().lower()
@@ -256,7 +256,11 @@ def check_rate_limit(user: Optional[User], action: str, db: Session) -> None:
     if count >= max_allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limit exceeded: {max_allowed} {action}(es) per day for {tier} tier",
+            detail=(
+                f"You've used all {max_allowed} AI requests for today. "
+                f"Your limit resets at midnight UTC. "
+                f"For unlimited access, contact haomingkoo@gmail.com."
+            ),
         )
 
 
