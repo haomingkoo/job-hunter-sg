@@ -2070,28 +2070,24 @@ export function getRewriteOptionMeta(optionIndex, rewriteFocus = "", optionEvalu
         ? `Closest match, but still needs work on ${optionEvaluation.unresolvedFocused.map(getIssueLabel).join(" and ")}.`
         : `Best fit for ${focusLabel}.`;
     return {
-      label: optionEvaluation?.clearsFocusedIssue ? "Recommended Rewrite" : "Closest Rewrite",
+      label: "Option 1",
       detail,
-      cta: optionEvaluation?.clearsFocusedIssue ? "Use Recommended Rewrite" : "Use Closest Rewrite",
+      cta: "Use Option 1",
     };
   }
 
   if (optionIndex === 1) {
     return {
-      label: focus.has("bullet_length") || focus.has("overused_avoided") ? "More Concise Rewrite" : "Alternative Rewrite",
-      detail: focus.has("bullet_length") || focus.has("overused_avoided")
-        ? "Leans shorter and faster to scan."
-        : "A different phrasing with the same evidence.",
-      cta: focus.has("bullet_length") || focus.has("overused_avoided") ? "Use Concise Rewrite" : "Use Alternative Rewrite",
+      label: "Option 2",
+      detail: "A different phrasing with the same evidence.",
+      cta: "Use Option 2",
     };
   }
 
   return {
-    label: focus.has("action_oriented") || focus.has("specifics") ? "Stronger Rewrite" : "Alternative Rewrite",
-    detail: focus.has("action_oriented") || focus.has("specifics")
-      ? "Pushes harder on impact, verbs, or evidence."
-      : "Another viable way to phrase the same point.",
-    cta: focus.has("action_oriented") || focus.has("specifics") ? "Use Stronger Rewrite" : "Use Alternative Rewrite",
+    label: "Option 3",
+    detail: "Another viable way to phrase the same point.",
+    cta: "Use Option 3",
   };
 }
 
