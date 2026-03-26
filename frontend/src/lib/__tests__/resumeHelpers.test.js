@@ -8,6 +8,7 @@ import {
   isHeadingLine,
   getResumeSectionKey,
   parseSubheadingParts,
+  getDisplaySubheadingText,
 } from "../resumeHelpers.jsx";
 
 // ── Load curated resume fixtures ────────────────────────────────────────────
@@ -216,6 +217,12 @@ describe("parseSubheadingParts", () => {
   it("does not mistake decisions text for a dated experience heading", () => {
     const line = "Led 0→1 development of the Process Integration Package (PIP): a data platform standardizing risk/conversion decisions across 4 global sites.";
     expect(parseSubheadingParts(line, "experience")).toBeNull();
+  });
+});
+
+describe("getDisplaySubheadingText", () => {
+  it("keeps standalone date ranges on one visual line", () => {
+    expect(getDisplaySubheadingText("2022 – 2025", "experience", "dated")).toBe("2022\u00A0–\u00A02025");
   });
 });
 

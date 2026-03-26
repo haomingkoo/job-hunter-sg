@@ -40,6 +40,7 @@ import {
   getDisplayParagraphText,
   getDisplayInlineSegmentText,
   getDisplaySubheadingText,
+  looksLikeDateOnlyText,
   analyzeBulletFeedback,
   parseResumeToSections,
   extractResumeHeaderMeta,
@@ -3925,7 +3926,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
                                     section.keywordMatches || [],
                                   )}
                                 </div>
-                                <div className="text-sm text-[#6A89A7]">
+                                <div className={`text-sm text-[#6A89A7] ${looksLikeDateOnlyText(section.right || "") ? "shrink-0 whitespace-nowrap" : ""}`}>
                                   {getDisplaySubheadingText(section.right, section.sectionKey, section.variant)}
                                 </div>
                               </div>

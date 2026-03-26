@@ -1057,10 +1057,14 @@ export function getDisplayInlineSegmentText(value) {
 
 export function getDisplaySubheadingText(value, sectionKey = "", variant = "") {
   if (!value) return "";
+  let displayValue = value;
   if (isMostlyAllCapsContent(value) && (sectionKey === "certifications" || sectionKey === "skills" || variant.startsWith("education"))) {
-    return toTitleCaseDisplayText(value);
+    displayValue = toTitleCaseDisplayText(value);
   }
-  return value;
+  if (looksLikeDateOnlyText(displayValue)) {
+    return displayValue.replace(/\s*([–—-])\s*/g, "\u00A0$1\u00A0");
+  }
+  return displayValue;
 }
 
 export function mergeSummaryLeadParagraphs(sections) {
