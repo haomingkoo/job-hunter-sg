@@ -4415,11 +4415,24 @@ def get_usage(
         .scalar()
         or 0
     )
+    ai_today = (
+        db.query(func.count(UsageLog.id))
+        .filter(
+            UsageLog.user_id == user.id,
+            UsageLog.action == "ai",
+            UsageLog.created_at >= today_start,
+        )
+        .scalar()
+        or 0
+    )
     limits = TIER_LIMITS.get(user.tier, TIER_LIMITS["free"])
     return {
         "tier": user.tier,
         "searches_today": searches_today,
         "searches_limit": limits["searches_per_day"],
+        "ai_today": ai_today,
+        "ai_limit": limits["ai_per_day"],
+        "ai_remaining": max(0, limits["ai_per_day"] - ai_today),
         "tracked_jobs": tracked_count,
         "tracked_limit": limits["max_tracked_jobs"],
         "can_export": limits["can_export"],

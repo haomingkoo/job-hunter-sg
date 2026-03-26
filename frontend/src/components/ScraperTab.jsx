@@ -605,7 +605,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           </div>
         </div>
         <div className="mt-4 rounded-lg border border-[#88BDF2]/20 bg-[#BDDDFC]/10 px-3 py-2 text-xs text-[#384959]">
-          <strong>Beta</strong> -- Early access. AI features are rate-limited (free tier). Data refreshes nightly.
+          <strong>Beta</strong> -- Free to use with 500 AI requests/day to help fund hosting and API costs. Data refreshes nightly.
         </div>
       </div>
 

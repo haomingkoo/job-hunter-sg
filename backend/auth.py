@@ -259,7 +259,7 @@ def check_rate_limit(user: Optional[User], action: str, db: Session) -> None:
             detail=(
                 f"You've used all {max_allowed} AI requests for today. "
                 f"Your limit resets at midnight UTC. "
-                f"For unlimited access, contact haomingkoo@gmail.com."
+                f"For more access, contact haomingkoo@gmail.com."
             ),
         )
 
