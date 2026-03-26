@@ -4703,7 +4703,7 @@ CERTIFICATIONS
             onClick={() => setMobileBulletSheet(null)}
           />
           {/* Sheet */}
-          <div className="absolute bottom-0 left-0 right-0 rounded-t-3xl bg-white shadow-2xl max-h-[80vh] overflow-y-auto animate-slide-up">
+          <div className="absolute bottom-0 left-0 right-0 rounded-t-3xl bg-white shadow-2xl max-h-[80vh] overflow-y-auto animate-slide-up" onClick={(e) => e.stopPropagation()}>
             {/* Handle */}
             <div className="flex justify-center pt-3 pb-2">
               <div className="h-1 w-10 rounded-full bg-gray-300" />
