@@ -1981,7 +1981,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
             <p className="mt-1 text-sm text-[#6A89A7]">Choose the option that fits your situation.</p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
             {/* Upload */}
             <button
               type="button"
