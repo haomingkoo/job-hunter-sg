@@ -198,11 +198,16 @@ def _is_section_heading(line: str) -> str | None:
         return _section_key(stripped)
 
     # ALL-CAPS short line with at least one letter
+    # Exclude lines ending with period/comma (sentence fragments like "HBM." or "DNS.")
+    # Exclude very short lines (< 4 chars) that are likely abbreviations
     if (
-        len(stripped) >= 2
+        len(stripped) >= 4
         and stripped == stripped.upper()
         and re.search(r"[A-Z]", stripped)
         and len(stripped.split()) <= 6
+        and not stripped.endswith(".")
+        and not stripped.endswith(",")
+        and not stripped.endswith(")")
     ):
         return _section_key(stripped)
 
@@ -260,13 +265,41 @@ def _is_entry_heading(line: str) -> bool:
     has_date = bool(_DATE_RANGE_RE.search(stripped)) or bool(
         _SINGLE_DATE_RE.search(stripped)
     )
-    has_separator = bool(_ROLE_SEPARATOR_RE.search(stripped))
     is_caps = bool(_ALL_CAPS_HEADER_RE.match(stripped))
     is_bullet = bool(_BULLET_CHAR_RE.match(line))
 
-    # Lines with dates or separators are almost always entry headings,
-    # even if they start with a bullet char (some resumes bullet job titles)
-    if has_date or has_separator:
+    # Check for pipe separator, but exclude pipes inside number ranges
+    # like "6 | 9 engineers" or "80 | 90% answer relevance"
+    has_separator = False
+    if _ROLE_SEPARATOR_RE.search(stripped):
+        # Only count as separator if at least one side looks like a
+        # role/company/location (not a number or sentence fragment)
+        parts = re.split(r"\s*[|\u2014\u2013]\s*", stripped)
+        if len(parts) >= 2:
+            left = parts[0].strip()
+            right = parts[-1].strip()
+            words = stripped.split()
+            # Reject if pipe is between numbers: "6 | 9", "80 | 90%"
+            left_is_number = bool(re.match(r"^[\d,.%$+><=~]+$", left.split()[-1] if left else ""))
+            right_is_number = bool(re.match(r"^[\d,.%$+><=~]+", right.split()[0] if right else ""))
+            # Reject if line is too long to be a heading (likely a sentence)
+            if left_is_number and right_is_number:
+                has_separator = False
+            elif len(words) > 15:
+                has_separator = False
+            else:
+                has_separator = True
+
+    # Lines with dates AND separators are entry headings
+    if has_date and has_separator:
+        return True
+
+    # Lines with ONLY a date range (no long sentence) are entry headings
+    if has_date and not is_bullet and len(stripped.split()) <= 10:
+        return True
+
+    # Lines with separators but no date — only if short enough to be a heading
+    if has_separator and len(stripped.split()) <= 12:
         return True
 
     if is_bullet:
@@ -560,14 +593,33 @@ def _build_entries(
         if not stripped:
             continue
 
-        if _is_entry_heading(line):
-            _flush()
-            current_heading_lines = [line]
-            current_bullets = []
-        elif _BULLET_CHAR_RE.match(line):
+        is_bullet_line = bool(_BULLET_CHAR_RE.match(line))
+
+        # Bullets ALWAYS take priority — a line starting with •/-/* is a bullet,
+        # even if it contains pipes or dates
+        if is_bullet_line:
             bullet_text = _strip_bullet_prefix(line)
             if bullet_text:
                 current_bullets.append(bullet_text)
+            continue
+
+        is_heading = _is_entry_heading(line)
+
+        # When we're inside a bullet list, only break for a new entry
+        # if the line has a clear date or is ALL-CAPS (not just a pipe)
+        if is_heading and current_bullets:
+            has_date = bool(_DATE_RANGE_RE.search(stripped)) or bool(
+                _SINGLE_DATE_RE.search(stripped)
+            )
+            is_caps = bool(_ALL_CAPS_HEADER_RE.match(stripped))
+            if not has_date and not is_caps:
+                current_bullets[-1] += " " + stripped
+                continue
+
+        if is_heading:
+            _flush()
+            current_heading_lines = [line]
+            current_bullets = []
         elif (
             _starts_with_action_verb(stripped)
             and len(stripped.split()) >= 5
