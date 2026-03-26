@@ -595,6 +595,7 @@ class ResumeScorer:
         text: str,
         bullets: list[str],
         sections: list[str],
+        template_sections: list[str] | None = None,
     ) -> dict:
         """Score the Presentation dimension (30 pts)."""
         items: dict[str, dict] = {}
@@ -657,30 +658,37 @@ class ResumeScorer:
         }
 
         # section_count (5)
-        core = {"summary", "objective", "experience", "education", "skills", "certifications"}
-        matched_sections = [s for s in sections if s in core]
+        # Use template's expected sections when available, else generic core
+        if template_sections:
+            expected = set(template_sections)
+        else:
+            expected = {"summary", "objective", "experience", "education", "skills", "certifications"}
+        matched_sections = [s for s in sections if s in expected]
         sc_count = len(matched_sections)
-        if sc_count >= 4:
+        expected_count = len(expected)
+        if sc_count >= min(4, expected_count):
             sc_score = 5
-        elif sc_count >= 3:
+        elif sc_count >= min(3, expected_count - 1):
             sc_score = 3
         elif sc_count >= 2:
             sc_score = 2
         else:
             sc_score = 1
-        missing = core - set(matched_sections)
+        missing = expected - set(matched_sections)
         sc_suggestions: list[str] = []
         if missing:
-            examples = sorted(missing)[:3]
+            examples = sorted(missing)[:4]
+            prefix = "Your template expects" if template_sections else "Consider adding"
             sc_suggestions.append(
-                f"Consider adding sections: {', '.join(examples)}"
+                f"{prefix} sections: {', '.join(examples)}"
             )
+        detail_label = "template" if template_sections else "standard"
         items["section_count"] = {
             "score": sc_score,
             "max": 5,
             "status": _status(sc_score, 5),
             "detail": (
-                f"{sc_count} standard sections found: "
+                f"{sc_count}/{expected_count} {detail_label} sections found: "
                 f"{', '.join(matched_sections) or 'none'}"
             ),
             "suggestions": sc_suggestions,
@@ -945,6 +953,7 @@ class ResumeScorer:
         resume_text: str,
         job_description: str = "",
         parsed_jd: dict | None = None,
+        template_sections: list[str] | None = None,
     ) -> dict:
         """Score a resume and return a structured report.
 
@@ -958,7 +967,7 @@ class ResumeScorer:
 
         impact = self._score_impact(text, bullets)
         presentation = self._score_presentation(
-            text, bullets, sections,
+            text, bullets, sections, template_sections,
         )
         competencies = self._score_competencies(text)
 

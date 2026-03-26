@@ -116,6 +116,12 @@ TEMPLATES = {
 }
 
 
+def get_template_sections(template_id: str) -> list[str] | None:
+    """Return the section_order for a template, or None if not found."""
+    tmpl = TEMPLATES.get(template_id)
+    return list(tmpl["section_order"]) if tmpl else None
+
+
 def list_templates() -> list[dict]:
     """Return available templates for frontend display — includes section_order and styling info."""
     return [

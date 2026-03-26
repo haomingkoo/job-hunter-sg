@@ -394,7 +394,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     try {
       const response = await apiFetch("/api/resume/score", {
         method: "POST",
-        body: JSON.stringify({ resume_text: text, job_description: jd }),
+        body: JSON.stringify({ resume_text: text, job_description: jd, template_id: selectedTemplate }),
       });
       const data = await response.json();
       const normalized = normalizeScoreData(data);
@@ -410,7 +410,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     } finally {
       setScoring(false);
     }
-  }, [jobDescription, scoreData]);
+  }, [jobDescription, scoreData, selectedTemplate]);
 
   useEffect(() => {
     if (!initialScoredRef.current && resumeText.trim().length >= 50) {

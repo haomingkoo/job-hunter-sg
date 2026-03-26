@@ -2747,10 +2747,17 @@ def score_resume(
         body.job_id,
         user.id if user else "anon",
     )
+    # Resolve template sections for section-completeness scoring
+    template_sections: list[str] | None = None
+    if body.template_id:
+        from resume_templates import get_template_sections
+        template_sections = get_template_sections(body.template_id)
+
     result = _scorer.analyze(
         resume_text=resume_text,
         job_description=jd_text,
         parsed_jd=scored_parsed_jd,
+        template_sections=template_sections,
     )
     analyze_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
 
