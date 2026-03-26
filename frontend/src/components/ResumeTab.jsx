@@ -2066,7 +2066,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
           {/* ── AI Resume Chat Builder ─────────────────────────────────── */}
           {showResumeChat && (
-            <div className="rounded-2xl border border-violet-200 bg-white shadow-sm overflow-hidden">
+            <div className="rounded-2xl border border-violet-200 bg-white shadow-sm overflow-hidden flex flex-col" style={{ maxHeight: "520px" }}>
               {/* Header */}
               <div className="flex items-center justify-between border-b border-violet-100 bg-gradient-to-r from-violet-50 to-white px-5 py-3">
                 <div className="flex items-center gap-2">
@@ -2084,7 +2084,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               </div>
 
               {/* Messages */}
-              <div className="h-[360px] overflow-y-auto px-5 py-4 space-y-3">
+              <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 min-h-[200px] max-h-[360px]">
                 {chatMessages.map((msg, i) => (
                   <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                     {msg.role === "assistant" && (
