@@ -1337,7 +1337,48 @@ export function annotateBullet(text, keywords, resumeText = "", sectionKey = "")
 export function parseResumeToSections(text, keywords, templateOrder = []) {
   const parsed = [];
   let currentSectionKey = "";
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+
+  // Pre-process: rejoin lines broken by PDF extraction
+  const rawLines = text.replace(/\r\n?/g, "\n").split("\n");
+  const lines = [];
+  for (let i = 0; i < rawLines.length; i += 1) {
+    const current = rawLines[i];
+    const trimmed = current.trim();
+
+    // Merge bullet marker on its own line with the next non-empty line
+    // e.g., "•\n" + "Business & Economic Analysis: ..." → "• Business & Economic Analysis: ..."
+    if (/^[•\-\*▪\u2022\u2023\u25E6\u2043\u2219]\s*$/.test(trimmed)) {
+      let nextIdx = i + 1;
+      while (nextIdx < rawLines.length && !rawLines[nextIdx].trim()) nextIdx += 1;
+      if (nextIdx < rawLines.length) {
+        lines.push(`${trimmed} ${rawLines[nextIdx].trim()}`);
+        i = nextIdx;
+        continue;
+      }
+    }
+
+    // Merge heading + "&" continuation (e.g., "CERTIFICATIONS\n& Career Development")
+    if (trimmed && isHeadingLine(stripResumeMarkdown(trimmed))) {
+      const nextLine = (rawLines[i + 1] || "").trim();
+      if (nextLine.startsWith("&") || nextLine.startsWith("and ")) {
+        lines.push(`${trimmed} ${nextLine}`);
+        i += 1;
+        continue;
+      }
+    }
+
+    // Merge continuation lines that start with lowercase into previous line
+    if (lines.length > 0 && trimmed && /^[a-z]/.test(trimmed)) {
+      const prev = lines[lines.length - 1].trim();
+      // Only merge if previous line doesn't end with period (completed sentence)
+      if (prev && !prev.endsWith(".") && !prev.endsWith(":")) {
+        lines[lines.length - 1] = `${lines[lines.length - 1]} ${trimmed}`;
+        continue;
+      }
+    }
+
+    lines.push(current);
+  }
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
