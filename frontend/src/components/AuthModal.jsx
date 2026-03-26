@@ -46,7 +46,7 @@ export default function AuthModal({ onAuth, onClose }) {
             <h1 className="text-xl font-bold text-[#384959]">Job Hunter SG</h1>
           </div>
           <p className="text-sm text-[#6A89A7]">
-            {mode === "login" ? "Welcome back" : "Join with your @aisg.sg email"}
+            {mode === "login" ? "Welcome back" : "Create your free account"}
           </p>
           <p className="text-xs text-[#6A89A7] mt-1">Save your applications, get unlimited AI reviews, and track your progress</p>
         </div>
