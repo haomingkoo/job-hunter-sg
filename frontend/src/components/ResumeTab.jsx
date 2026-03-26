@@ -2034,6 +2034,58 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               <h3 className="mt-3 text-base font-semibold text-[#384959]">Start Fresh</h3>
               <p className="mt-1.5 text-sm text-[#6A89A7]">Build from scratch with AI-guided chat</p>
             </button>
+
+            {/* Try Demo */}
+            <button
+              type="button"
+              onClick={() => {
+                const demoResume = `Sarah Chen
+Singapore | sarah.chen@email.com | +65 9123 4567 | linkedin.com/in/sarahchen
+
+PROFESSIONAL SUMMARY
+Results-driven software engineer with 5+ years of experience building scalable web applications and cloud infrastructure. Led migration of legacy systems to microservices architecture, reducing deployment time by 70%. Passionate about clean code, developer experience, and mentoring junior engineers.
+
+PROFESSIONAL EXPERIENCE
+Senior Software Engineer
+DBS Bank | Singapore | Jan 2022 – Present
+• Led microservices migration for core banking platform, serving 5M+ users across APAC
+• Reduced API response time by 45% through Redis caching and query optimization
+• Mentored team of 4 junior engineers, conducting weekly code reviews and pair programming
+• Implemented CI/CD pipeline with GitHub Actions, cutting deployment time from 2 hours to 15 minutes
+
+Software Engineer
+GovTech Singapore | Singapore | Jul 2019 – Dec 2021
+• Built citizen-facing web applications using React and Node.js, serving 500K+ monthly users
+• Designed and implemented RESTful APIs for national digital identity platform
+• Collaborated with UX team to improve accessibility compliance to WCAG 2.1 AA standards
+• Reduced infrastructure costs by 30% through AWS resource optimization
+
+Junior Developer
+Shopee | Singapore | Jan 2018 – Jun 2019
+• Developed seller dashboard features using Vue.js and Python Flask
+• Wrote automated test suites achieving 85% code coverage
+• Participated in on-call rotation, resolving production incidents within SLA
+
+EDUCATION
+B.Sc. Computer Science – National University of Singapore (2017)
+Dean's List 2016, 2017
+
+SKILLS
+Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, PostgreSQL, Redis, CI/CD, Agile
+
+CERTIFICATIONS
+• AWS Solutions Architect Associate (2023)
+• Certified Kubernetes Administrator (2022)`;
+                applyResumeText(demoResume, { rescore: true });
+                setShowSetupPanel(false);
+                setWizardStep(3);
+              }}
+              className="group text-left rounded-2xl border-2 border-[#BDDDFC]/30 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-emerald-300"
+            >
+              <Star size={28} className="text-emerald-500" />
+              <h3 className="mt-3 text-base font-semibold text-[#384959]">Try Demo</h3>
+              <p className="mt-1.5 text-sm text-[#6A89A7]">Load a sample resume to explore features</p>
+            </button>
           </div>
 
           {/* ── Paste Area (hidden by default, revealed on click) ──────── */}
