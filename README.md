@@ -10,7 +10,18 @@ Browse 72,000+ jobs from 5 portals. Build, score, and tailor your resume with AI
 ![Jobs](https://img.shields.io/badge/jobs-72%2C000%2B-green)
 ![AI](https://img.shields.io/badge/AI-SEA--LION-purple)
 
-![Job Hunter SG](docs/screenshots/homepage.png)
+## Screenshots
+
+| | |
+|---|---|
+| ![Jobs Search](docs/screenshots/jobs-search.jpeg) | ![Upload Options](docs/screenshots/upload-options.jpeg) |
+| **Job Search** — 72K+ listings with filters | **Upload** — PDF, paste, AI chat, or demo |
+| ![Templates](docs/screenshots/templates.jpeg) | ![Bullet Feedback](docs/screenshots/bullet-feedback.jpeg) |
+| **Templates** — 8 professional styles | **AI Feedback** — per-bullet coaching |
+| ![AI Rewrite](docs/screenshots/ai-rewrite.jpeg) | ![Market Insights](docs/screenshots/market-insights.jpeg) |
+| **AI Rewrite** — 3 options per bullet | **Market Insights** — sector & skill trends |
+| ![Smart Match](docs/screenshots/smart-match.jpeg) | ![Export](docs/screenshots/export.jpeg) |
+| **Smart Match** — RAG-powered job matching | **Export** — DOCX/PDF with final score |
 
 ---
 
