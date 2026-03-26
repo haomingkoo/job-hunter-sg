@@ -198,6 +198,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [mobilePanel, setMobilePanel] = useState("edit");
   const [showVersionDropdown, setShowVersionDropdown] = useState(false);
   const [selectedBulletId, setSelectedBulletId] = useState(null);
+  const [mobileBulletSheet, setMobileBulletSheet] = useState(null);
   const [selectedSectionId, setSelectedSectionId] = useState(null);
   const [editingNodeId, setEditingNodeId] = useState(null);
   const [editingValue, setEditingValue] = useState("");
@@ -4035,7 +4036,14 @@ CERTIFICATIONS
                       ) : (
                         <button
                           type="button"
-                          onClick={() => openEditorForSection(section)}
+                          onClick={() => {
+                            if (window.innerWidth < 1024 && section.type === "bullet" && section.annotation?.tone && section.annotation.tone !== "emerald") {
+                              setMobileBulletSheet(section);
+                              setSelectedBulletId(section.id);
+                            } else {
+                              openEditorForSection(section);
+                            }
+                          }}
                           className="w-full text-left"
                         >
                           {section.type === "heading" && (
@@ -4697,6 +4705,80 @@ CERTIFICATIONS
               <Plus size={14} />
               Start Another
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Bullet Feedback Sheet */}
+      {mobileBulletSheet && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          {/* Backdrop */}
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => setMobileBulletSheet(null)}
+          />
+          {/* Sheet */}
+          <div className="absolute bottom-0 left-0 right-0 rounded-t-3xl bg-white shadow-2xl max-h-[80vh] overflow-y-auto animate-slide-up">
+            {/* Handle */}
+            <div className="flex justify-center pt-3 pb-2">
+              <div className="h-1 w-10 rounded-full bg-gray-300" />
+            </div>
+
+            {/* Content */}
+            <div className="px-5 pb-8 space-y-4">
+              {/* Annotation badge */}
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${mobileBulletSheet.annotation?.pillClass || "bg-gray-100"}`}>
+                  {mobileBulletSheet.annotation?.icon}
+                  {mobileBulletSheet.annotation?.label}
+                </span>
+              </div>
+
+              {/* Issue description */}
+              <p className="text-sm text-[#6A89A7] leading-relaxed">
+                {mobileBulletSheet.annotation?.message || "Review this bullet for improvements."}
+              </p>
+
+              {/* Current bullet text */}
+              <div className="rounded-xl bg-[#f0f4f8] p-4">
+                <div className="text-xs font-semibold uppercase tracking-wider text-[#6A89A7] mb-2">Current Bullet</div>
+                <p className="text-sm text-[#384959] leading-relaxed">{mobileBulletSheet.text}</p>
+              </div>
+
+              {/* Action buttons */}
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleBulletRewrite(mobileBulletSheet);
+                    setMobileBulletSheet(null);
+                    setMobilePanel("feedback");
+                  }}
+                  className="flex-1 rounded-xl bg-[#384959] min-h-[44px] py-3 text-sm font-medium text-white hover:bg-[#2d3a47] transition"
+                >
+                  AI Rewrite
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    openEditorForSection(mobileBulletSheet);
+                    setMobileBulletSheet(null);
+                  }}
+                  className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-white min-h-[44px] py-3 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] transition"
+                >
+                  Edit Manually
+                </button>
+              </div>
+
+              {/* Dismiss */}
+              <button
+                type="button"
+                onClick={() => setMobileBulletSheet(null)}
+                className="w-full rounded-xl border border-[#BDDDFC]/30 min-h-[44px] py-2.5 text-sm text-[#6A89A7] hover:bg-[#f0f4f8] transition"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         </div>
       )}
