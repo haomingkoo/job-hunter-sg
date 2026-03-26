@@ -1118,15 +1118,6 @@ export function parseSubheadingParts(line, sectionKey = "") {
   if (dateParenMatch) {
     const mainText = dateParenMatch[1].trim();
     const dateText = trimmed.match(/\(.*\)$/)?.[0]?.replace(/[()]/g, "").trim() || "";
-    // Split on last comma to separate title from department/company
-    const lastComma = mainText.lastIndexOf(",");
-    if (lastComma > 0) {
-      return {
-        left: mainText,
-        right: dateText,
-        variant: "dated",
-      };
-    }
     return {
       left: mainText,
       right: dateText,

@@ -5,8 +5,9 @@ Singapore job aggregator + AI resume coach with multi-user support.
 ## Architecture
 
 - **Backend**: FastAPI + SQLAlchemy + SQLite (Postgres on Railway)
-- **Frontend**: React + Vite + Tailwind CSS (single file: `App.jsx`)
-- **Scraping**: requests + BeautifulSoup (MCF, CareersGov, NodeFlair, Indeed, JobStreet)
+- **Frontend**: React + Vite + Tailwind CSS
+- **Scraping**: requests + BeautifulSoup (MCF, CareersGov, NodeFlair, Indeed, JobStreet, Adzuna, Jooble)
+- **Embeddings**: sentence-transformers/all-MiniLM-L6-v2 (384-dim) for semantic job matching (`embedding_service.py`)
 - **AI**: SEA-LION API (OpenAI-compatible, by AI Singapore). Free tier, 10 req/min/key, 5 keys = 50 req/min.
 - **Auth**: JWT + bcrypt
 - **Deploy**: Railway (Docker)
@@ -67,6 +68,32 @@ Stage 6: Local (50ms)    -- Validation gates (fact preservation, hallucination d
 | `tailoring_pipeline.py` | 7-stage orchestrator. Runs in background thread. `PipelineState` tracks progress for polling. |
 | `resume_scorer.py` | Scores resume 0-100 across Impact/Presentation/Competencies. Existing, not new. |
 | `ai_service.py` | SEA-LION client with rate limiting, round-robin keys, progressive retry (`call_sealion_json`). |
+
+### Shared config
+
+- `shared/resume-classification.json` — Single source of truth for section heading synonyms, bullet markers, and classification rules. Used by both backend (`resume_structurer.py`) and frontend (`resumeHelpers.jsx`).
+
+### Embedding service
+
+- `embedding_service.py` — RAG semantic search using sentence-transformers/all-MiniLM-L6-v2 (384-dim, normalized). Lazy-loaded singleton model. Encodes job descriptions and resumes for cosine similarity matching.
+
+### Tests
+
+~218 tests across backend modules. Run with:
+```bash
+cd backend && python -m pytest tests/ -q
+```
+
+Key test files:
+- `tests/test_resume_structurer_comprehensive.py` — comprehensive resume parsing tests
+- `tests/test_resume_scorer.py` — scoring logic
+- `tests/test_validation_gates.py` — AI rewrite validation
+- `tests/test_jd_preparser.py` — JD parsing
+
+Frontend tests via Vitest:
+```bash
+cd frontend && npx vitest run
+```
 
 ### Key design decisions
 
@@ -141,13 +168,14 @@ Stage 6: Local (50ms)    -- Validation gates (fact preservation, hallucination d
 - `resume_versions` -- saved resume versions with labels, linked jobs, scores, master flag
 - `usage_logs` -- rate limiting and analytics
 
-### Backend files (new this session)
+### Backend files (enrichment & search)
 | File | Purpose |
 |------|---------|
 | `jd_summary.py` | LLM summary generation via SEA-LION 32B |
 | `jd_analyzer.py` | Quality scoring, red flags, injection detection, duplicate hashing |
 | `job_enrichment.py` | Shared term computation utilities |
 | `backfill_enrichment.py` | CLI + admin endpoint for batch enrichment of all jobs |
+| `embedding_service.py` | RAG embeddings for semantic job-resume matching (MiniLM-L6-v2) |
 
 ## Environment Variables
 
