@@ -1915,7 +1915,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         })}
       </div>
 
-      {selectedJob && (
+      {selectedJob && (wizardStep === 1 || wizardStep === 3) && (
         <div className="mb-4 rounded-3xl border border-[#BDDDFC]/30 bg-[#BDDDFC]/10 p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#384959]">Target Job Description</div>
