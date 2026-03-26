@@ -109,10 +109,10 @@ export default function HomePage({ onNavigate }) {
                 AI-powered job search and resume tailoring for Singapore
               </motion.p>
 
-              <motion.h1 variants={fadeUp} custom={1} className="font-display mt-6 text-[2.75rem] leading-[0.95] tracking-tight text-[#384959] sm:text-[3.5rem] lg:text-[4.25rem]">
-                Find purpose<br />that fits{" "}
+              <motion.h1 variants={fadeUp} custom={1} className="font-display mt-6 text-[2.75rem] leading-[1.15] tracking-tight text-[#384959] sm:text-[3.5rem] lg:text-[4.25rem]">
+                Find the role<br />that fits{" "}
                 <span className="relative inline-block">
-                  <span className="relative z-10">right job</span>
+                  <span className="relative z-10">you best</span>
                   <motion.svg
                     className="absolute -bottom-1 left-0 w-full z-0"
                     height="8" viewBox="0 0 200 8" preserveAspectRatio="none"
@@ -205,7 +205,7 @@ export default function HomePage({ onNavigate }) {
               <motion.div
                 animate={{ y: [0, -8, 0] }}
                 transition={{ duration: 6, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
-                className="absolute top-12 right-[140px] w-[240px] rounded-xl border border-[#BDDDFC]/35 bg-white p-5 shadow-lg opacity-75"
+                className="absolute top-16 right-[200px] w-[240px] rounded-xl border border-[#BDDDFC]/35 bg-white p-5 shadow-lg opacity-75"
                 style={{ transform: "rotateY(-15deg) rotateX(3deg) translateZ(-40px)", zIndex: 2 }}
               >
                 <div className="flex gap-3 border-b border-[#BDDDFC]/25 pb-3 mb-3">
@@ -224,7 +224,7 @@ export default function HomePage({ onNavigate }) {
               <motion.div
                 animate={{ y: [0, -6, 0] }}
                 transition={{ duration: 7, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-                className="absolute top-20 right-[260px] w-[220px] rounded-xl border border-[#BDDDFC]/25 bg-white p-4 shadow-md opacity-45"
+                className="absolute top-28 right-[370px] w-[220px] rounded-xl border border-[#BDDDFC]/25 bg-white p-4 shadow-md opacity-45"
                 style={{ transform: "rotateY(-22deg) rotateX(4deg) translateZ(-80px)", zIndex: 1 }}
               >
                 <div className="text-[11px] font-bold text-[#384959] mb-2">Aisha Rahman</div>
@@ -244,7 +244,7 @@ export default function HomePage({ onNavigate }) {
                 <div className="text-lg font-bold text-[#88BDF2]">92%</div>
               </motion.div>
 
-              <div className="h-[340px] sm:h-[380px]" />
+              <div className="h-[380px] w-[560px]" />
             </motion.div>
           </div>
         </motion.div>
