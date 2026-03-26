@@ -98,6 +98,7 @@ export function stripResumeMarkdown(line) {
   return String(line || "")
     .replace(/\*\*(.*?)\*\*/g, "$1")
     .replace(/__(.*?)__/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
     .trim();
 }
 
@@ -183,6 +184,7 @@ export function getResumeSectionKey(value) {
   if (normalized.includes("additional information")) return "personal";
   if (normalized.includes("language")) return "personal";
   if (normalized === "personal" || normalized.includes("personal information")) return "personal";
+  if (normalized.includes("award") || normalized.includes("honor") || normalized.includes("publication")) return "awards";
   return "";
 }
 
@@ -1146,12 +1148,31 @@ export function parseSubheadingParts(line, sectionKey = "") {
   if (["experience", "projects", "activities"].includes(sectionKey)) {
     const words = trimmed.split(/\s+/);
     const wordCount = words.length;
-    if (wordCount >= 2 && wordCount <= 12 && !startsLineWithResumeActionVerb(trimmed)) {
+    if (wordCount >= 2 && wordCount <= 12 && (!startsLineWithResumeActionVerb(trimmed) || wordCount <= 8)) {
       const TITLE_PATTERNS = /\b(?:engineer|manager|director|analyst|lead|head|officer|coordinator|specialist|consultant|architect|developer|designer|executive|associate|intern|supervisor|principal|scientist|researcher|professor|advisor|strategist)\b/i;
       const hasComma = trimmed.includes(",");
       const hasParens = /\(.*\)/.test(trimmed);
-      if (TITLE_PATTERNS.test(trimmed) || (hasComma && wordCount <= 10) || hasParens) {
+      if (TITLE_PATTERNS.test(trimmed) || (!startsLineWithResumeActionVerb(trimmed) && (hasComma && wordCount <= 10) || hasParens)) {
         return { left: trimmed, right: "", variant: "company" };
+      }
+    }
+  }
+
+  // Detect company + location lines: "Company Name, City" or "Company Name, City / Country"
+  if (["experience", "projects", "activities"].includes(sectionKey)) {
+    const commaIdx = trimmed.indexOf(",");
+    if (commaIdx > 0 && commaIdx < trimmed.length - 1) {
+      const beforeComma = trimmed.substring(0, commaIdx).trim();
+      const afterComma = trimmed.substring(commaIdx + 1).trim();
+      const words = trimmed.split(/\s+/);
+      // Short line with comma, not a sentence (no period, not starting with action verb)
+      if (words.length <= 8 && !trimmed.endsWith(".") && !startsLineWithResumeActionVerb(trimmed)) {
+        // Check it looks like a company name (capitalized, contains known location patterns or org words)
+        const LOCATION_RE = /\b(?:singapore|japan|taiwan|usa|us|uk|china|india|australia|germany|france|korea|malaysia|indonesia|thailand|vietnam|hong kong|global|regional|asia|apac|emea|americas|boise|hiroshima|taichung|manassas|arizona)\b/i;
+        const ORG_RE = /\b(?:technology|technologies|corporation|corp|inc|ltd|pte|limited|group|bank|financial|consulting|services|solutions|systems|networks|semiconductor|manufacturing)\b/i;
+        if (LOCATION_RE.test(afterComma) || ORG_RE.test(beforeComma)) {
+          return { left: trimmed, right: "", variant: "company" };
+        }
       }
     }
   }
@@ -1478,6 +1499,7 @@ export function extractResumeHeaderMeta(text) {
 }
 
 export function renderHighlightedText(text, keywords) {
+  if (!text) return text || "";
   if (!keywords.length) return text;
   const sorted = [...keywords].sort((a, b) => b.length - a.length);
   const pattern = new RegExp(`(${sorted.map((keyword) => escapeRegExp(keyword)).join("|")})`, "ig");

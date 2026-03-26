@@ -44,7 +44,7 @@ _DATE_RANGE_RE = re.compile(
     r"|\d{1,2}/\d{4}"
     r"|\d{4}"
     r")"
-    r"\s*[-\u2013\u2014]\s*"
+    r"\s*[-\u2013\u2014]{1,2}\s*"
     r"("
     r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}"
     r"|\d{1,2}/\d{4}"
@@ -64,7 +64,7 @@ _SINGLE_DATE_RE = re.compile(
 _ROLE_SEPARATOR_RE = re.compile(r"\s*[|\u2014\u2013]\s*")
 _ALL_CAPS_HEADER_RE = re.compile(r"^[A-Z][A-Z &/\-]{2,}$")
 _BULLET_CHAR_RE = re.compile(
-    r"^[\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)]\s)",
+    r"^[\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|o\s|\d+[.)]\s)",
 )
 
 # Education-specific patterns
@@ -642,7 +642,7 @@ def _parse_skill_list(lines: list[str]) -> list[str]:
         return []
 
     # Split on commas, semicolons, bullet chars, pipes, or newlines
-    tokens = re.split(r"[,;|\u2022\u2023\u25E6\u2043\u2219\n]+", raw)
+    tokens = re.split(r"[,;|\u2022\u2023\u25E6\u2043\u2219\u00B7\n]+", raw)
     skills: list[str] = []
     for token in tokens:
         cleaned = token.strip().strip("-").strip("*").strip()
