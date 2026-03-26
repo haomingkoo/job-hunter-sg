@@ -4,27 +4,23 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <title>Job Hunter SG - AI Resume Coach & Singapore Job Aggregator</title>
-    <meta name="description" content="AI-powered resume tailoring and job search for Singapore. Aggregate listings from MyCareersFuture, CareersGov, NodeFlair, and more. Score, rewrite, and optimize your resume for ATS systems." />
-    <meta name="keywords" content="Singapore jobs, resume builder, ATS optimization, MyCareersFuture, CareersGov, AI resume, job search Singapore" />
+    <meta name="description" content="AI-powered resume tailoring and job search for Singapore. Aggregate listings from MyCareersFuture and Careers@Gov. Score, rewrite, and optimize your resume with 5 validation gates to prevent AI hallucination." />
+    <meta name="keywords" content="Singapore jobs, resume builder, ATS optimization, MyCareersFuture, CareersGov, AI resume, job search Singapore, SEA-LION" />
     <meta name="author" content="Haoming Koo" />
     <link rel="canonical" href="https://job.kooexperience.com/" />
 
     <!-- Open Graph -->
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Job Hunter SG - AI Resume Coach" />
-    <meta property="og:description" content="AI-powered resume tailoring and job aggregation for Singapore. Score your resume, extract ATS keywords, and tailor for specific roles." />
+    <meta property="og:description" content="AI-powered resume tailoring and job aggregation for Singapore. Score your resume, extract ATS keywords, and tailor for specific roles with validation gates." />
     <meta property="og:url" content="https://job.kooexperience.com/" />
     <meta property="og:site_name" content="Job Hunter SG" />
-    <meta property="og:image" content="https://job.kooexperience.com/og-image.png" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
     <meta property="og:locale" content="en_SG" />
 
     <!-- Twitter Card -->
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content="Job Hunter SG - AI Resume Coach" />
     <meta name="twitter:description" content="AI-powered resume tailoring and job aggregation for Singapore." />
-    <meta name="twitter:image" content="https://job.kooexperience.com/og-image.png" />
 
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💼</text></svg>" />
@@ -40,7 +36,7 @@
       "@context": "https://schema.org",
       "@type": "WebApplication",
       "name": "Job Hunter SG",
-      "description": "AI-powered resume tailoring and job search aggregator for Singapore. Browse 72,000+ listings from MyCareersFuture, CareersGov, NodeFlair, and more. Score, rewrite, and optimize your resume for ATS systems.",
+      "description": "AI-powered resume tailoring and job search aggregator for Singapore. Browse listings from MyCareersFuture and Careers@Gov. Score, rewrite, and optimize your resume with SEA-LION AI and 5 validation gates.",
       "url": "https://job.kooexperience.com/",
       "applicationCategory": "BusinessApplication",
       "operatingSystem": "Web",
@@ -53,11 +49,6 @@
         "@type": "Person",
         "name": "Haoming Koo",
         "url": "https://kooexperience.com"
-      },
-      "aggregateRating": {
-        "@type": "AggregateRating",
-        "ratingValue": "4.8",
-        "ratingCount": "1"
       }
     }
     </script>
@@ -71,7 +62,7 @@
           "name": "How does Job Hunter SG work?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Job Hunter SG aggregates job listings from MyCareersFuture, CareersGov, NodeFlair, Indeed, and JobStreet. Upload your resume, get an ATS score, and use AI to tailor it for specific job descriptions."
+            "text": "Job Hunter SG aggregates job listings from MyCareersFuture and Careers@Gov. Upload your resume, get an ATS score (0-100), and use AI to tailor it for specific job descriptions through a 7-stage pipeline with 5 validation gates."
           }
         },
         {
@@ -116,14 +107,14 @@
     <div id="root">
       <!-- SEO: Pre-render content for crawlers that don't execute JS -->
       <noscript>
-        <h1>Job Hunter SG — AI Resume Coach & Singapore Job Aggregator</h1>
-        <p>Browse 72,000+ Singapore job listings from MyCareersFuture, CareersGov, NodeFlair, Indeed, and JobStreet. Upload your resume, get an instant ATS score, and use AI to tailor it for specific roles.</p>
+        <h1>Job Hunter SG - AI Resume Coach & Singapore Job Aggregator</h1>
+        <p>Browse Singapore job listings from MyCareersFuture and Careers@Gov. Upload your resume, get an instant ATS score, and use AI to tailor it for specific roles with 5 validation gates to prevent hallucination.</p>
         <h2>Features</h2>
         <ul>
-          <li>Multi-source job aggregation across 5+ Singapore job portals</li>
-          <li>AI-powered resume scoring and ATS keyword optimization</li>
-          <li>Smart Match — semantic job-resume matching with AI</li>
-          <li>One-click resume tailoring with SEA-LION AI</li>
+          <li>Job aggregation from MyCareersFuture and Careers@Gov APIs</li>
+          <li>AI-powered resume scoring (0-100) and ATS keyword optimization</li>
+          <li>7-stage tailoring pipeline with SEA-LION AI (70B + 32B models)</li>
+          <li>Smart Match - semantic job-resume matching with sentence-transformers</li>
           <li>Professional DOCX export with 8 templates</li>
         </ul>
         <p>Free to use. No sign-up needed. Built by <a href="https://kooexperience.com">Haoming Koo</a>.</p>
