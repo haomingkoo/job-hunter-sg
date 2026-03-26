@@ -4737,12 +4737,11 @@ CERTIFICATIONS
                   type="button"
                   onClick={() => {
                     handleBulletRewrite(mobileBulletSheet);
-                    setMobileBulletSheet(null);
-                    setMobilePanel("feedback");
                   }}
-                  className="flex-1 rounded-xl bg-[#384959] min-h-[44px] py-3 text-sm font-medium text-white hover:bg-[#2d3a47] transition"
+                  disabled={rewriteLoading[mobileBulletSheet?.id]}
+                  className="flex-1 rounded-xl bg-[#384959] min-h-[44px] py-3 text-sm font-medium text-white hover:bg-[#2d3a47] transition disabled:opacity-50"
                 >
-                  AI Rewrite
+                  {rewriteLoading[mobileBulletSheet?.id] ? "Rewriting..." : "AI Rewrite"}
                 </button>
                 <button
                   type="button"
@@ -4755,6 +4754,26 @@ CERTIFICATIONS
                   Edit Manually
                 </button>
               </div>
+
+              {/* Rewrite results */}
+              {mobileBulletSheet && rewriteResults[mobileBulletSheet.id] && (
+                <div className="space-y-2">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-[#6A89A7]">Pick a rewrite</div>
+                  {rewriteResults[mobileBulletSheet.id].options.map((option, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        acceptRewrite(mobileBulletSheet, idx);
+                        setMobileBulletSheet(null);
+                      }}
+                      className="w-full text-left rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3 text-sm text-[#384959] hover:bg-blue-50 hover:border-blue-300 transition"
+                    >
+                      {typeof option === "string" ? option : option.text || option}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {/* Dismiss */}
               <button
