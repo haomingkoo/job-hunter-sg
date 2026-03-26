@@ -1633,6 +1633,28 @@ def admin_rebuild_skills_taxonomy(
     }
 
 
+# ── SEO: Sitemap ─────────────────────────────────────────────────────────────
+
+@app.get("/sitemap.xml")
+def sitemap_xml() -> Response:
+    """Dynamic sitemap for search engines."""
+    from fastapi.responses import Response
+    pages = [
+        {"loc": "https://job.kooexperience.com/", "priority": "1.0", "changefreq": "daily"},
+        {"loc": "https://job.kooexperience.com/#jobs", "priority": "0.9", "changefreq": "daily"},
+        {"loc": "https://job.kooexperience.com/#resume", "priority": "0.8", "changefreq": "weekly"},
+    ]
+    urls = "\n".join(
+        f"  <url>\n    <loc>{p['loc']}</loc>\n    <changefreq>{p['changefreq']}</changefreq>\n    <priority>{p['priority']}</priority>\n  </url>"
+        for p in pages
+    )
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{urls}
+</urlset>"""
+    return Response(content=xml, media_type="application/xml")
+
+
 # ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")

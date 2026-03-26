@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /api/admin/
+
+Sitemap: https://job.kooexperience.com/sitemap.xml
