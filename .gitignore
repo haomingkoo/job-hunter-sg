@@ -37,5 +37,7 @@ frontend/dist/
 !.env.example
 !backend/.env.example
 !backend/data/onet_extracted.json
+!shared/resume-classification.json
+!skills-lock.json
 backend/data/*.xlsx
 backend/data/learned_skills.json
