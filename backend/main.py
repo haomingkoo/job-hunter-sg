@@ -1266,6 +1266,7 @@ def admin_seed_jobs(
         def run_cgov():
             from scraper import CareersGovScraper
             from dataclasses import asdict
+            from database import SessionLocal
             db = SessionLocal()
             try:
                 cgov = CareersGovScraper()
