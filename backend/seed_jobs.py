@@ -301,6 +301,13 @@ def crawl_all_jobs() -> dict:
     try:
         cgov_jobs = cgov.fetch_all()
 
+        # Health check: ensure data is fresh and reasonable
+        if len(cgov_jobs) < 500:
+            log.warning(f"[CareersGov] Only {len(cgov_jobs)} jobs — data may be stale or incomplete, skipping")
+            cgov_jobs = []
+        else:
+            log.info(f"[CareersGov] Health check passed: {len(cgov_jobs)} jobs")
+
         # Clean slate: remove old CareersGov entries to avoid duplicates
         # (old Workday URLs won't match new OpenGovSG dedup_keys)
         old_count = db.query(ScrapedJob).filter(ScrapedJob.source == "Careers@Gov").count()
@@ -316,6 +323,12 @@ def crawl_all_jobs() -> dict:
             clean["search_keyword"] = "all"
             clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
 
+            # Pre-parse JD at insert time
+            if preparse_job_description and clean.get("description"):
+                clean["parsed_jd"] = preparse_job_description(
+                    clean["description"], clean.get("title", "")
+                )
+
             try:
                 existing = db.query(ScrapedJob).filter(
                     ScrapedJob.dedup_key == clean["dedup_key"]
@@ -324,10 +337,13 @@ def crawl_all_jobs() -> dict:
                     for key, val in clean.items():
                         if key != "id":
                             setattr(existing, key, val)
+                    _build_term_preview(existing, db)
                     stats["updated"] += 1
                 else:
-                    db.add(ScrapedJob(**clean))
+                    job_row = ScrapedJob(**clean)
+                    db.add(job_row)
                     db.flush()
+                    _build_term_preview(job_row, db)
                     stats["new"] += 1
             except Exception:
                 db.rollback()

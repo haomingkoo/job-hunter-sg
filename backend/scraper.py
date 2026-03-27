@@ -214,7 +214,19 @@ class CareersGovScraper:
         resp.raise_for_status()
         cls._cached_jobs = resp.json()
         cls._cache_time = time.time()
-        log.info(f"[Careers@Gov] Loaded {len(cls._cached_jobs)} jobs")
+        # Check data freshness via GitHub commits API
+        try:
+            commits_resp = SESSION.get(
+                "https://api.github.com/repos/opengovsg/careersgovsg-jobs-data/commits?path=data/job-listings.json&per_page=1",
+                timeout=10,
+            )
+            if commits_resp.ok:
+                last_update = commits_resp.json()[0]["commit"]["committer"]["date"]
+                log.info(f"[Careers@Gov] Loaded {len(cls._cached_jobs)} jobs (last updated: {last_update})")
+            else:
+                log.info(f"[Careers@Gov] Loaded {len(cls._cached_jobs)} jobs")
+        except Exception:
+            log.info(f"[Careers@Gov] Loaded {len(cls._cached_jobs)} jobs")
         return cls._cached_jobs
 
     @staticmethod
