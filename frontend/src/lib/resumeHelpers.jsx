@@ -266,6 +266,8 @@ export function looksLikeEducationDetail(value) {
 export function looksLikeEducationMain(value) {
   const trimmed = stripResumeMarkdown(value);
   if (!trimmed) return false;
+  // Degree-starting lines are always main, even if they contain detail keywords like "Distinction"
+  if (DEGREE_START_RE.test(trimmed)) return true;
   return !looksLikeEducationDetail(trimmed)
     && (
       looksLikeEducationText(trimmed)
@@ -629,7 +631,8 @@ export function buildEducationPair(lines, lineIndex, currentSectionKey, keywords
 
   const currentIsEducationDetail = looksLikeEducationDetail(current);
   const nextIsEducationDetail = looksLikeEducationDetail(next);
-  if (currentIsEducationDetail && nextIsEducationDetail) {
+  // Don't pair if next line is actually a degree line (it should start its own entry)
+  if (currentIsEducationDetail && nextIsEducationDetail && !DEGREE_START_RE.test(next)) {
     return {
       type: "subheading",
       left: current,
@@ -650,7 +653,16 @@ const EDUCATION_GPA_RE = /(?:gpa|cgpa|cap)\s*[:.]?\s*\d+\.?\d*\s*[/]?\s*\d*\.?\d
 const EDUCATION_HONORS_RE = /\b(?:first class|second class|distinction|honou?rs?|magna|summa|cum laude|dean.?s list|merit|with distinction|valedictorian)\b/i;
 
 function isEducationEntryStart(item) {
-  if (item.type === "subheading" && (item.variant === "education_main" || item.variant === "dated")) return true;
+  if (item.type === "subheading" && item.variant === "education_main") return true;
+  // Dated subheadings only start new entries if they have substantive education content
+  // (prevents "Singapore (2017)" from becoming its own entry)
+  if (item.type === "subheading" && item.variant === "dated") {
+    const leftText = stripResumeMarkdown(item.left || item.text || "");
+    if (DEGREE_START_RE.test(leftText) || RESUME_DEGREE_RE.test(leftText)
+      || looksLikeEducationInstitution(leftText) || looksLikeEducationText(leftText)
+      || leftText.split(/\s+/).length >= 4) return true;
+    return false;
+  }
   // Subheading with degree pattern but wrong variant (e.g., "Bachelor of Science – Distinction" parsed as variant=company)
   if (item.type === "subheading" && DEGREE_START_RE.test(stripResumeMarkdown(item.left || item.text || ""))) return true;
   if (item.type === "paragraph" && (startsNewEducationEntry(item.text) || (looksLikeEducationMain(item.text) && !looksLikeEducationDetail(item.text)))) return true;
@@ -677,10 +689,22 @@ function extractEducationFields(items) {
     if (!dateRange) {
       if (item.type === "subheading" && item.right && hasDateHint(item.right)) {
         const meta = splitEducationMeta(item.right);
-        dateRange = meta.secondary || item.right;
+        if (meta.secondary) {
+          dateRange = meta.secondary;
+        } else {
+          // Try year in parentheses (e.g., "National University of Singapore (2022)")
+          const parenYear = item.right.match(/\((\d{4})\)\s*$/);
+          if (parenYear) dateRange = parenYear[1];
+        }
       } else {
         const dateMatch = text.match(/(?:19|20)\d{2}\s*[–—-]\s*(?:(?:19|20)\d{2}|[Pp]resent)/);
-        if (dateMatch) dateRange = dateMatch[0];
+        if (dateMatch) {
+          dateRange = dateMatch[0];
+        } else {
+          // Standalone year at start of text (e.g., "2022 GPA 4.85/5.00")
+          const yearStartMatch = text.match(/^((?:19|20)\d{2})\b/);
+          if (yearStartMatch) dateRange = yearStartMatch[1];
+        }
       }
     }
 
@@ -705,14 +729,27 @@ function extractEducationFields(items) {
       const right = item.right || "";
 
       if (item.variant === "education_main" || item.variant === "dated") {
-        if (!degree && (RESUME_DEGREE_RE.test(left) || DEGREE_START_RE.test(left))) {
-          degree = left;
-        } else if (!institution && looksLikeEducationInstitution(left)) {
-          institution = left;
+        // Strip parenthesized year from left for classification (but extract it as dateRange)
+        const cleanLeft = left.replace(/\s*\(\d{4}\)\s*$/, "").trim();
+        const leftYearMatch = left.match(/\((\d{4})\)\s*$/);
+        if (leftYearMatch && !dateRange) dateRange = leftYearMatch[1];
+
+        if (!degree && (RESUME_DEGREE_RE.test(cleanLeft) || DEGREE_START_RE.test(cleanLeft))) {
+          degree = cleanLeft;
+        } else if (!institution && looksLikeEducationInstitution(cleanLeft)) {
+          institution = cleanLeft;
         } else if (!degree) {
-          degree = left;
+          degree = cleanLeft;
+        } else if (institution && /\b(?:of|in|at|for)$/i.test(institution.trim()) && cleanLeft && cleanLeft.split(/\s+/).length <= 3) {
+          // Institution continuation (e.g., "Singapore" after "National University of")
+          institution = `${institution} ${cleanLeft}`;
+        } else if (cleanLeft) {
+          details.push(cleanLeft);
         }
-        const rightMeta = splitEducationMeta(right);
+        const rightClean = right.replace(/\s*\(\d{4}\)\s*$/, "").trim();
+        const rightYearMatch = right.match(/\((\d{4})\)\s*$/);
+        if (rightYearMatch && !dateRange) dateRange = rightYearMatch[1];
+        const rightMeta = splitEducationMeta(rightClean);
         if (rightMeta.secondary && !dateRange) dateRange = rightMeta.secondary;
         if (rightMeta.primary) {
           if (!institution && looksLikeEducationInstitution(rightMeta.primary)) institution = rightMeta.primary;
@@ -723,11 +760,10 @@ function extractEducationFields(items) {
         const combined = [left, right].filter(Boolean).join(", ");
         if (!gpa && EDUCATION_GPA_RE.test(combined)) {
           gpa = combined.match(EDUCATION_GPA_RE)?.[0] || "";
-          const remaining = combined.replace(EDUCATION_GPA_RE, "").replace(/^[,|\s]+|[,|\s]+$/g, "").trim();
-          if (remaining) details.push(remaining);
-        } else {
-          details.push(combined);
         }
+        // Always strip GPA from detail text (it's already captured in gpa field)
+        const remaining = combined.replace(EDUCATION_GPA_RE, "").replace(/^[,·|\s]+|[,·|\s]+$/g, "").trim();
+        if (remaining) details.push(remaining);
       }
       continue;
     }
@@ -736,11 +772,10 @@ function extractEducationFields(items) {
     if (looksLikeEducationDetail(text)) {
       if (!gpa && EDUCATION_GPA_RE.test(text)) {
         gpa = text.match(EDUCATION_GPA_RE)?.[0] || "";
-        const remaining = text.replace(EDUCATION_GPA_RE, "").replace(/^[,|\s]+|[,|\s]+$/g, "").trim();
-        if (remaining) details.push(remaining);
-      } else {
-        details.push(text);
       }
+      // Always strip GPA from detail text
+      const remaining = text.replace(EDUCATION_GPA_RE, "").replace(/^[,·|\s]+|[,·|\s]+$/g, "").trim();
+      if (remaining) details.push(remaining);
     } else if (!degree && (RESUME_DEGREE_RE.test(text) || DEGREE_START_RE.test(text))) {
       degree = text.replace(/(?:19|20)\d{2}\s*[–—-]\s*(?:(?:19|20)\d{2}|[Pp]resent)/, "").trim().replace(/[,\s]+$/, "");
     } else if (!institution && looksLikeEducationInstitution(text)) {
@@ -754,7 +789,31 @@ function extractEducationFields(items) {
     }
   }
 
-  return { degree, institution, dateRange, gpa, honors, details, bullets };
+  // Merge location continuations into institution (handles PDF line wrapping
+  // e.g., "National University of" + "Singapore" on separate lines)
+  if (institution && /\b(?:of|in|at|for)$/i.test(institution.trim()) && details.length > 0) {
+    const candidate = details[0];
+    if (candidate.split(/\s+/).length <= 3
+      && !EDUCATION_GPA_RE.test(candidate)
+      && !EDUCATION_HONORS_RE.test(candidate)
+      && !hasDateHint(candidate)) {
+      institution = `${institution} ${details.shift()}`;
+    }
+  }
+
+  // Remove honors that already appear in degree text (redundant)
+  const filteredHonors = honors.filter((h) => !(degree && degree.toLowerCase().includes(h.toLowerCase())));
+
+  // Deduplicate details
+  const uniqueDetails = [...new Set(details)].filter((d) => {
+    if (!d.trim()) return false;
+    const dLower = d.toLowerCase().trim();
+    if (degree && degree.toLowerCase() === dLower) return false;
+    if (institution && institution.toLowerCase() === dLower) return false;
+    return true;
+  });
+
+  return { degree, institution, dateRange, gpa, honors: filteredHonors, details: uniqueDetails, bullets };
 }
 
 /**
@@ -1128,7 +1187,9 @@ export function parseSubheadingParts(line, sectionKey = "") {
         return {
           left: parts[0],
           right: parts[1],
-          variant: looksLikeEducationDetail(parts[0]) || looksLikeEducationDetail(parts[1]) ? "education_detail" : "education_main",
+          variant: DEGREE_START_RE.test(parts[0])
+            ? "education_main"
+            : (looksLikeEducationDetail(parts[0]) || looksLikeEducationDetail(parts[1]) ? "education_detail" : "education_main"),
         };
       }
       return {
@@ -1159,7 +1220,16 @@ export function parseSubheadingParts(line, sectionKey = "") {
     }
   }
 
-  const separatorMatch = trimmed.match(/^(.*?)(?:\s+[–—-]\s+)(.*)$/);
+  // Try em dash first (prioritize over hyphen to avoid matching "Hons - Distinction" before "— NUS")
+  let separatorMatch = trimmed.match(/^(.*?)(?:\s+—\s+)(.*)$/);
+  // Fall back to en dash/hyphen (require space on both sides)
+  if (!separatorMatch) {
+    separatorMatch = trimmed.match(/^(.*?)(?:\s+[–-]\s+)(.*)$/);
+  }
+  // For education, also handle em dash without preceding space (e.g., "Degree— University")
+  if (!separatorMatch && sectionKey === "education") {
+    separatorMatch = trimmed.match(/^(.*?)(?:—\s+)(.*)$/);
+  }
   if (separatorMatch) {
     const left = separatorMatch[1].trim();
     const right = separatorMatch[2].trim();
@@ -1167,7 +1237,9 @@ export function parseSubheadingParts(line, sectionKey = "") {
       return {
         left,
         right,
-        variant: looksLikeEducationDetail(left) || looksLikeEducationDetail(right) ? "education_detail" : "education_main",
+        variant: DEGREE_START_RE.test(left)
+          ? "education_main"
+          : (looksLikeEducationDetail(left) || looksLikeEducationDetail(right) ? "education_detail" : "education_main"),
       };
     }
     if (!entrySection && !(sectionKey === "certifications" && hasDateHint(right))) return null;

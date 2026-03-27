@@ -28,7 +28,7 @@ Searches MyCareersFuture and Careers@Gov in one interface. Scores your resume, r
 ## Features
 
 ### Job Search
-- Aggregates MyCareersFuture (~12K jobs) and Careers@Gov (~3K jobs) via public APIs
+- Aggregates MyCareersFuture (~12K jobs) and Careers@Gov (~2K jobs) — CareersGov data via [OpenGovSG](https://github.com/opengovsg/careersgovsg-jobs-data) (credit: Alwyn Tan @ OGP)
 - Nightly crawl via Railway cron (22:00 UTC); extensible `SOURCE_MAP` supports 5 additional scrapers
 - Filter by seniority, job type, salary range, skills
 - ATS skill tags extracted at scrape time (413 known skills, ~50ms/job)

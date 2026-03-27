@@ -4,11 +4,14 @@ SG Job Scraper — Singapore Job Aggregator
 ==========================================
 Scrapes / queries multiple Singapore job portals:
   1. MyCareersFuture  (MCF public API)
-  2. Careers@Gov 2.0  (Workday-powered backend)
+  2. Careers@Gov      (via OpenGovSG pre-parsed JSON dump)
   3. SSG-WSG Skills Framework API (job roles + skills data)
   4. NodeFlair        (HTML scrape)
   5. Indeed SG        (HTML scrape)
   6. JobStreet SG     (HTML scrape)
+
+Careers@Gov data courtesy of Alwyn Tan @ Open Government Products:
+  https://github.com/opengovsg/careersgovsg-jobs-data
 
 Features:
   - Uses APIs where available, falls back to scraping
@@ -187,121 +190,105 @@ class MyCareersFutureScraper:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SOURCE 2: Careers@Gov 2.0 (Workday backend)
+# SOURCE 2: Careers@Gov (via OpenGovSG pre-parsed JSON)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class CareersGovScraper:
     """
-    Careers@Gov 2.0 is powered by Workday (sggovterp.wd102.myworkdayjobs.com).
-    We can hit Workday's public job search endpoint.
+    Careers@Gov data sourced from OpenGovSG's pre-parsed JSON dump.
+    https://github.com/opengovsg/careersgovsg-jobs-data
+    Credit: Alwyn Tan @ Open Government Products
     """
-    BASE_URL = "https://sggovterp.wd102.myworkdayjobs.com/wday/cxs/sggovterp/PublicServiceCareers/jobs"
+    DATA_URL = "https://raw.githubusercontent.com/opengovsg/careersgovsg-jobs-data/main/data/job-listings.json"
+
+    _cached_jobs: list[dict] | None = None
+    _cache_time: float = 0
+
+    @classmethod
+    def _fetch_data(cls) -> list[dict]:
+        """Fetch and cache the full JSON (cache for 1 hour)."""
+        if cls._cached_jobs is not None and (time.time() - cls._cache_time) < 3600:
+            return cls._cached_jobs
+        log.info("[Careers@Gov] Fetching from OpenGovSG JSON dump...")
+        resp = SESSION.get(cls.DATA_URL, timeout=30)
+        resp.raise_for_status()
+        cls._cached_jobs = resp.json()
+        cls._cache_time = time.time()
+        log.info(f"[Careers@Gov] Loaded {len(cls._cached_jobs)} jobs")
+        return cls._cached_jobs
 
     @staticmethod
-    def _extract_skills_from_detail(detail: dict) -> list[str]:
-        skills: list[str] = []
-        for tag_section in detail.get("skillTags", []):
-            if isinstance(tag_section, str):
-                skills.append(tag_section)
-            elif isinstance(tag_section, dict):
-                value = tag_section.get("name", "")
-                if value:
-                    skills.append(value)
-        if not skills:
-            tag_line = detail.get("tagLine", "")
-            if tag_line:
-                skills = [s.strip() for s in tag_line.split(",") if s.strip()]
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for skill in skills:
-            normalized = re.sub(r"\s+", " ", (skill or "").strip())
-            lowered = normalized.lower()
-            if not normalized or lowered in seen:
-                continue
-            seen.add(lowered)
-            deduped.append(normalized)
-        return deduped
+    def _build_url(item: dict) -> str:
+        job_id = item.get("jobId", "")
+        posting_no = item.get("postingNo", "")
+        if job_id and posting_no:
+            return f"https://jobs.careers.gov.sg/jobs/hrp/{job_id}/{posting_no}"
+        return ""
+
+    @staticmethod
+    def _build_description(item: dict) -> str:
+        parts = [
+            item.get("jobDescription", ""),
+            item.get("jobResponsibilities", ""),
+            item.get("jobRequirements", ""),
+        ]
+        combined = "\n\n".join(p.strip() for p in parts if p.strip())
+        return _clean_html(combined) if "<" in combined else combined
+
+    @staticmethod
+    def _closing_date_text(item: dict) -> str:
+        ts = item.get("closingDate", "")
+        if ts:
+            try:
+                dt = datetime.fromtimestamp(int(ts) / 1000)
+                return dt.strftime("%Y-%m-%d")
+            except (ValueError, OSError):
+                pass
+        return item.get("closingDateText", "")
+
+    def _to_job(self, item: dict) -> Job:
+        return Job(
+            title=(item.get("jobTitle") or "").strip(),
+            company="Singapore Public Service",
+            location=(item.get("location") or "Singapore").strip(),
+            salary="",
+            source="Careers@Gov",
+            url=self._build_url(item),
+            posted_date=self._closing_date_text(item),
+            employment_type=(item.get("workArrangement") or item.get("employmentType") or "Full-time").strip(),
+            seniority=item.get("experienceRequired", ""),
+            description=self._build_description(item),
+            skills=[],
+            agency=(item.get("agency") or "").strip(),
+        )
 
     def search(self, keyword: str, limit: int = 20, offset: int = 0) -> list[Job]:
-        log.info(f"[Careers@Gov] Searching for '{keyword}' (limit={limit})...")
-        jobs = []
+        log.info(f"[Careers@Gov] Searching for '{keyword}' (limit={limit}, offset={offset})...")
         try:
-            payload = {
-                "appliedFacets": {},
-                "limit": min(limit, 20),
-                "offset": offset,
-                "searchText": keyword,
-            }
-            headers = {
-                **HEADERS,
-                "Content-Type": "application/json",
-            }
-            resp = SESSION.post(self.BASE_URL, json=payload, headers=headers, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-
-            results = data.get("jobPostings", [])
-            total = data.get("total", 0)
-            log.info(f"[Careers@Gov] Got {len(results)} results (total: {total})")
-
-            for item in results:
-                title = item.get("title", "")
-                external_path = item.get("externalPath", "")
-                url = f"https://sggovterp.wd102.myworkdayjobs.com/en-US/PublicServiceCareers{external_path}" if external_path else ""
-
-                # Workday API fields:
-                # - locationsText: actual office location (e.g. "Paya Lebar Quarter")
-                # - postedOn: posted date string (e.g. "Posted 30+ Days Ago")
-                # - bulletFields: just the job requisition ID
-                location = item.get("locationsText", "") or "Singapore"
-                posted = item.get("postedOn", "")
-                description = ""
-                skills: list[str] = []
-                agency = location
-
-                if external_path:
-                    detail = self.get_job_detail(external_path)
-                    if detail:
-                        description = _clean_html(detail.get("jobDescription", ""))
-                        skills = self._extract_skills_from_detail(detail)
-                        company_name = detail.get("companyName", "") or detail.get("company", "")
-                        if company_name:
-                            agency = company_name
-
-                job = Job(
-                    title=title,
-                    company="Singapore Public Service",
-                    location=location,
-                    salary="",
-                    source="Careers@Gov",
-                    url=url,
-                    posted_date=posted,
-                    employment_type="Full-time",
-                    seniority="",
-                    description=description,
-                    skills=skills,
-                    agency=agency,
-                )
-                jobs.append(job)
-
-        except requests.exceptions.RequestException as e:
-            log.warning(f"[Careers@Gov] Request failed: {e}")
-        except (KeyError, ValueError, TypeError) as e:
-            log.warning(f"[Careers@Gov] Parse error: {e}")
-
-        return jobs
-
-    def get_job_detail(self, external_path: str) -> dict:
-        """Fetch full job details from individual job page."""
-        try:
-            url = f"https://sggovterp.wd102.myworkdayjobs.com/wday/cxs/sggovterp/PublicServiceCareers{external_path}"
-            resp = SESSION.get(url, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("jobPostingInfo", {})
+            data = self._fetch_data()
         except Exception as e:
-            log.warning(f"[Careers@Gov] Detail fetch failed: {e}")
-            return {}
+            log.warning(f"[Careers@Gov] Failed to fetch data: {e}")
+            return []
+
+        if keyword:
+            kw = keyword.lower()
+            data = [j for j in data if kw in (j.get("jobTitle") or "").lower()
+                    or kw in (j.get("agency") or "").lower()
+                    or kw in (j.get("jobDescription") or "").lower()]
+
+        page = data[offset:offset + limit]
+        log.info(f"[Careers@Gov] Got {len(page)} results (total matched: {len(data)})")
+        return [self._to_job(item) for item in page]
+
+    def fetch_all(self) -> list[Job]:
+        """Fetch all jobs in a single call (for full crawl)."""
+        try:
+            data = self._fetch_data()
+        except Exception as e:
+            log.warning(f"[Careers@Gov] Failed to fetch data: {e}")
+            return []
+        log.info(f"[Careers@Gov] Converting {len(data)} jobs...")
+        return [self._to_job(item) for item in data]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

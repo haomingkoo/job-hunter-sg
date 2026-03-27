@@ -289,64 +289,49 @@ def crawl_all_jobs() -> dict:
             page += 1
             time.sleep(1)
 
-    # ── CareersGov: paginate through all jobs ───────────────────────
+    # ── CareersGov: single JSON fetch via OpenGovSG ─────────────────
     from scraper import CareersGovScraper
     cgov = CareersGovScraper()
 
     log.info("")
     log.info("=" * 60)
-    log.info("FULL CRAWL: Careers@Gov")
+    log.info("FULL CRAWL: Careers@Gov (via OpenGovSG)")
     log.info("=" * 60)
 
-    offset = 0
-    while True:
-        try:
-            jobs = cgov.search("", limit=20, offset=offset)
-            if not jobs:
-                log.info(f"[CareersGov] Offset {offset}: no results, stopping")
-                break
+    try:
+        cgov_jobs = cgov.fetch_all()
+        for job in cgov_jobs:
+            raw = asdict(job)
+            raw["dedup_key"] = job.dedup_key
+            clean = sanitize_job(raw)
+            clean["search_keyword"] = "all"
+            clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
 
-            for job in jobs:
-                raw = asdict(job)
-                raw["dedup_key"] = job.dedup_key
-                clean = sanitize_job(raw)
-                clean["search_keyword"] = "all"
-                clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
-
-                try:
-                    existing = db.query(ScrapedJob).filter(
-                        ScrapedJob.dedup_key == clean["dedup_key"]
-                    ).first()
-                    if existing:
-                        for key, val in clean.items():
-                            if key != "id":
-                                setattr(existing, key, val)
-                        stats["updated"] += 1
-                    else:
-                        db.add(ScrapedJob(**clean))
-                        db.flush()
-                        stats["new"] += 1
-                except Exception:
-                    db.rollback()
+            try:
+                existing = db.query(ScrapedJob).filter(
+                    ScrapedJob.dedup_key == clean["dedup_key"]
+                ).first()
+                if existing:
+                    for key, val in clean.items():
+                        if key != "id":
+                            setattr(existing, key, val)
                     stats["updated"] += 1
+                else:
+                    db.add(ScrapedJob(**clean))
+                    db.flush()
+                    stats["new"] += 1
+            except Exception:
+                db.rollback()
+                stats["updated"] += 1
 
-            db.commit()
-            stats["pages"] += 1
-            log.info(f"[CareersGov] Offset {offset}: {len(jobs)} jobs (new: {stats['new']}, updated: {stats['updated']})")
+        db.commit()
+        stats["pages"] += 1
+        log.info(f"[CareersGov] Loaded {len(cgov_jobs)} jobs (new: {stats['new']}, updated: {stats['updated']})")
 
-            offset += 20
-            time.sleep(0.3)
-
-            if offset >= 10000:
-                log.info("[CareersGov] Hit 10,000 offset limit, stopping")
-                break
-
-        except Exception as e:
-            log.error(f"[CareersGov] Offset {offset} failed: {e}")
-            stats["errors"] += 1
-            db.rollback()
-            offset += 20
-            time.sleep(2)
+    except Exception as e:
+        log.error(f"[CareersGov] Fetch failed: {e}")
+        stats["errors"] += 1
+        db.rollback()
 
     duration = round(time.time() - start, 1)
     total_in_db = db.query(ScrapedJob).count()
