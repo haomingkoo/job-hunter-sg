@@ -248,17 +248,21 @@ class CareersGovScraper:
         return _clean_html(combined) if "<" in combined else combined
 
     @staticmethod
-    def _closing_date_text(item: dict) -> str:
-        ts = item.get("closingDate", "")
+    def _parse_timestamp(item: dict, field: str) -> str:
+        ts = item.get(field, "")
         if ts:
             try:
                 dt = datetime.fromtimestamp(int(ts) / 1000)
                 return dt.strftime("%Y-%m-%d")
             except (ValueError, OSError):
                 pass
-        return item.get("closingDateText", "")
+        return ""
 
     def _to_job(self, item: dict) -> Job:
+        # Use startDate for posted_date (when job was listed), not closingDate
+        posted = self._parse_timestamp(item, "startDate")
+        if not posted:
+            posted = self._parse_timestamp(item, "closingDate")
         return Job(
             title=(item.get("jobTitle") or "").strip(),
             company="Singapore Public Service",
@@ -266,7 +270,7 @@ class CareersGovScraper:
             salary="",
             source="Careers@Gov",
             url=self._build_url(item),
-            posted_date=self._closing_date_text(item),
+            posted_date=posted,
             employment_type=(item.get("workArrangement") or item.get("employmentType") or "Full-time").strip(),
             seniority=item.get("experienceRequired", ""),
             description=self._build_description(item),
