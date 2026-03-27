@@ -88,8 +88,9 @@ class Job:
 
     @property
     def dedup_key(self) -> str:
-        """Generate a key for deduplication based on title + company."""
-        raw = f"{self.title.lower().strip()}|{self.company.lower().strip()}"
+        """Generate a key for deduplication based on title + company + agency."""
+        agency_part = f"|{self.agency.lower().strip()}" if self.agency else ""
+        raw = f"{self.title.lower().strip()}|{self.company.lower().strip()}{agency_part}"
         return hashlib.md5(raw.encode()).hexdigest()
 
 
