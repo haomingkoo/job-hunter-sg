@@ -1284,6 +1284,9 @@ def admin_seed_jobs(
                     new_keys.add(raw["dedup_key"])
                     clean = sanitize_job(raw)
                     clean["search_keyword"] = "all"
+                    clean["posted_at_sort"] = _parse_job_posted_at(
+                        clean.get("posted_date", ""), clean.get("scraped_at", "")
+                    ).isoformat()
                     if preparse_jd and clean.get("description"):
                         clean["parsed_jd"] = preparse_jd(clean["description"], clean.get("title", ""))
                     existing = db.query(ScrapedJob).filter(ScrapedJob.dedup_key == clean["dedup_key"]).first()
@@ -1295,6 +1298,8 @@ def admin_seed_jobs(
                     else:
                         db.add(ScrapedJob(**clean))
                         new_count += 1
+                # Commit upserts first so stale-deletion rollback can't wipe them
+                db.commit()
                 # Delete stale CareersGov entries not in new data (skip FK-referenced ones)
                 stale = db.query(ScrapedJob).filter(
                     ScrapedJob.source == "Careers@Gov",
@@ -1307,7 +1312,7 @@ def admin_seed_jobs(
                         db.flush()
                         deleted += 1
                     except Exception:
-                        db.rollback()  # skip FK-referenced jobs
+                        db.rollback()  # skip this one FK-referenced job only
                 db.commit()
                 log.info(f"[CareersGov] Refreshed: {new_count} new, {updated_count} updated, {deleted} stale removed")
             except Exception as e:

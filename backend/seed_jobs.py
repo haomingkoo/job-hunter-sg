@@ -323,25 +323,21 @@ def crawl_all_jobs() -> dict:
                     clean["description"], clean.get("title", "")
                 )
 
-            try:
-                existing = db.query(ScrapedJob).filter(
-                    ScrapedJob.dedup_key == clean["dedup_key"]
-                ).first()
-                if existing:
-                    for key, val in clean.items():
-                        if key != "id":
-                            setattr(existing, key, val)
-                    _build_term_preview(existing, db)
-                    stats["updated"] += 1
-                else:
-                    job_row = ScrapedJob(**clean)
-                    db.add(job_row)
-                    db.flush()
-                    _build_term_preview(job_row, db)
-                    stats["new"] += 1
-            except Exception:
-                db.rollback()
+            existing = db.query(ScrapedJob).filter(
+                ScrapedJob.dedup_key == clean["dedup_key"]
+            ).first()
+            if existing:
+                for key, val in clean.items():
+                    if key != "id":
+                        setattr(existing, key, val)
+                _build_term_preview(existing, db)
                 stats["updated"] += 1
+            else:
+                job_row = ScrapedJob(**clean)
+                db.add(job_row)
+                db.flush()
+                _build_term_preview(job_row, db)
+                stats["new"] += 1
 
         db.commit()
         stats["pages"] += 1
