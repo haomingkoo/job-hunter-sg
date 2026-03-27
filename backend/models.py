@@ -79,6 +79,9 @@ class ScrapedJob(Base):
     # Cached skill term labels for fast list-page rendering (JSON array of strings)
     job_terms_preview: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
 
+    # Hidden from listings (stale duplicate kept for FK references)
+    hidden: Mapped[bool] = mapped_column(Integer, default=0)
+
     # RAG embedding vector (384-dim, all-MiniLM-L6-v2)
     embedding_vector: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
 

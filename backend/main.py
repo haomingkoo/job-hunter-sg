@@ -1303,21 +1303,14 @@ def admin_seed_jobs(
                         new_count += 1
                 # Commit upserts first so stale-deletion rollback can't wipe them
                 db.commit()
-                # Delete stale CareersGov entries not in new data (skip FK-referenced ones)
-                stale = db.query(ScrapedJob).filter(
+                # Hide stale CareersGov entries not in new data
+                hidden_count = db.query(ScrapedJob).filter(
                     ScrapedJob.source == "Careers@Gov",
+                    ScrapedJob.hidden == 0,
                     ~ScrapedJob.dedup_key.in_(new_keys),
-                ).all()
-                deleted = 0
-                for job in stale:
-                    try:
-                        db.delete(job)
-                        db.flush()
-                        deleted += 1
-                    except Exception:
-                        db.rollback()  # skip this one FK-referenced job only
+                ).update({"hidden": 1}, synchronize_session=False)
                 db.commit()
-                log.info(f"[CareersGov] Refreshed: {new_count} new, {updated_count} updated, {deleted} stale removed")
+                log.info(f"[CareersGov] Refreshed: {new_count} new, {updated_count} updated, {hidden_count} stale hidden")
             except Exception as e:
                 db.rollback()
                 log.error(f"[CareersGov] Refresh failed, rolled back: {e}")
@@ -2206,7 +2199,7 @@ def list_cached_jobs(
         numbers = [int(part.replace(",", "")) for part in re.findall(r"\d[\d,]*", value or "")]
         return numbers[0] if numbers else 0
 
-    query = db.query(ScrapedJob).options(
+    query = db.query(ScrapedJob).filter(ScrapedJob.hidden == 0).options(
         load_only(
             ScrapedJob.id,
             ScrapedJob.title,
