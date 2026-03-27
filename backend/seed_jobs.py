@@ -313,8 +313,8 @@ def crawl_all_jobs() -> dict:
         old_count = db.query(ScrapedJob).filter(ScrapedJob.source == "Careers@Gov").count()
         if cgov_jobs and old_count > 0:
             db.query(ScrapedJob).filter(ScrapedJob.source == "Careers@Gov").delete()
-            db.commit()
-            log.info(f"[CareersGov] Cleared {old_count} old entries before fresh insert")
+            # Don't commit yet — delete + inserts in one transaction
+            log.info(f"[CareersGov] Marked {old_count} old entries for replacement")
 
         for job in cgov_jobs:
             raw = asdict(job)

@@ -1274,7 +1274,8 @@ def admin_seed_jobs(
                     log.warning(f"[CareersGov] Only {len(jobs)} jobs, skipping")
                     return
                 db.query(ScrapedJob).filter(ScrapedJob.source == "Careers@Gov").delete()
-                db.commit()
+                # Don't commit yet — delete + inserts in one transaction
+                # so if inserts fail, delete is rolled back too
                 new = 0
                 for job in jobs:
                     raw = asdict(job)
@@ -1285,8 +1286,11 @@ def admin_seed_jobs(
                         clean["parsed_jd"] = preparse_jd(clean["description"], clean.get("title", ""))
                     db.add(ScrapedJob(**clean))
                     new += 1
-                db.commit()
+                db.commit()  # Atomic: delete + inserts committed together
                 log.info(f"[CareersGov] Refreshed {new} jobs")
+            except Exception as e:
+                db.rollback()
+                log.error(f"[CareersGov] Refresh failed, rolled back: {e}")
             finally:
                 db.close()
         threading.Thread(target=run_cgov, daemon=True).start()
