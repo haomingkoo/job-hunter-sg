@@ -309,10 +309,13 @@ def crawl_all_jobs() -> dict:
             log.info(f"[CareersGov] Health check passed: {len(cgov_jobs)} jobs")
 
         # Upsert approach (can't DELETE all — resume_versions has FK refs)
-
+        seen_keys: set[str] = set()
         for job in cgov_jobs:
             raw = asdict(job)
             raw["dedup_key"] = job.dedup_key
+            if raw["dedup_key"] in seen_keys:
+                continue  # skip duplicate titles in same batch
+            seen_keys.add(raw["dedup_key"])
             clean = sanitize_job(raw)
             clean["search_keyword"] = "all"
             clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))

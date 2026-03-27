@@ -1281,6 +1281,8 @@ def admin_seed_jobs(
                 for job in jobs:
                     raw = asdict(job)
                     raw["dedup_key"] = job.dedup_key
+                    if raw["dedup_key"] in new_keys:
+                        continue  # skip duplicate titles in same batch
                     new_keys.add(raw["dedup_key"])
                     clean = sanitize_job(raw)
                     clean["search_keyword"] = "all"
@@ -1297,6 +1299,7 @@ def admin_seed_jobs(
                         updated_count += 1
                     else:
                         db.add(ScrapedJob(**clean))
+                        db.flush()  # make visible to subsequent queries
                         new_count += 1
                 # Commit upserts first so stale-deletion rollback can't wipe them
                 db.commit()
