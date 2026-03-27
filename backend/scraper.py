@@ -83,6 +83,7 @@ class Job:
     description: str = ""
     skills: list = field(default_factory=list)
     agency: str = ""  # For gov jobs
+    closing_date: str = ""
     scraped_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     @property
@@ -259,10 +260,10 @@ class CareersGovScraper:
         return ""
 
     def _to_job(self, item: dict) -> Job:
-        # Use startDate for posted_date (when job was listed), not closingDate
         posted = self._parse_timestamp(item, "startDate")
         if not posted:
             posted = self._parse_timestamp(item, "closingDate")
+        closing = self._parse_timestamp(item, "closingDate")
         return Job(
             title=(item.get("jobTitle") or "").strip(),
             company="Singapore Public Service",
@@ -276,6 +277,7 @@ class CareersGovScraper:
             description=self._build_description(item),
             skills=[],
             agency=(item.get("agency") or "").strip(),
+            closing_date=closing,
         )
 
     def search(self, keyword: str, limit: int = 20, offset: int = 0) -> list[Job]:

@@ -60,6 +60,8 @@ def _apply_lightweight_migrations() -> None:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN job_terms_preview JSON")
     if "embedding_vector" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN embedding_vector JSON")
+    if "closing_date" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN closing_date VARCHAR(100) DEFAULT ''")
 
     # Add indexes if they don't exist (safe for Postgres and SQLite)
     existing_indexes = {idx["name"] for idx in inspector.get_indexes("scraped_jobs")}

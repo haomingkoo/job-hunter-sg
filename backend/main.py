@@ -2332,6 +2332,7 @@ def list_cached_jobs(
                 "jd_summary_status": j.jd_summary_status or "",
                 "experience_years": (j.parsed_jd or {}).get("experience_years", "") if isinstance(j.parsed_jd, dict) else "",
                 "agency": j.agency, "scraped_at": j.scraped_at,
+                "closing_date": getattr(j, "closing_date", "") or "",
             }
             for j in jobs
         ],
@@ -2609,6 +2610,7 @@ def get_power_match(
                 "skills": job.skills or [],
                 "agency": job.agency,
                 "scraped_at": job.scraped_at,
+                "closing_date": getattr(job, "closing_date", "") or "",
             },
             "suitability_score": suitability_score,
             "suitability_label": suitability_label,

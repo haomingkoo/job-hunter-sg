@@ -59,6 +59,7 @@ class ScrapedJob(Base):
     source: Mapped[str] = mapped_column(String(200), default="")
     url: Mapped[str] = mapped_column(Text, default="")
     posted_date: Mapped[str] = mapped_column(String(100), default="")
+    closing_date: Mapped[str] = mapped_column(String(100), default="")
     employment_type: Mapped[str] = mapped_column(String(100), default="")
     seniority: Mapped[str] = mapped_column(String(100), default="")
     description: Mapped[str] = mapped_column(Text, default="")
