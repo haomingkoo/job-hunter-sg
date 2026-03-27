@@ -320,7 +320,7 @@ def crawl_all_jobs() -> dict:
             # Pre-parse JD at insert time
             if preparse_job_description and clean.get("description"):
                 clean["parsed_jd"] = preparse_job_description(
-                    clean["description"], clean.get("title", "")
+                    clean["description"], job_title=clean.get("title", "")
                 )
 
             existing = db.query(ScrapedJob).filter(

@@ -1288,7 +1288,7 @@ def admin_seed_jobs(
                         clean.get("posted_date", ""), clean.get("scraped_at", "")
                     ).isoformat()
                     if preparse_jd and clean.get("description"):
-                        clean["parsed_jd"] = preparse_jd(clean["description"], clean.get("title", ""))
+                        clean["parsed_jd"] = preparse_jd(clean["description"], job_title=clean.get("title", ""))
                     existing = db.query(ScrapedJob).filter(ScrapedJob.dedup_key == clean["dedup_key"]).first()
                     if existing:
                         for key, val in clean.items():
@@ -2225,6 +2225,7 @@ def list_cached_jobs(
             ScrapedJob.jd_summary_status,
             ScrapedJob.jd_summary_generated_at,
             ScrapedJob.job_terms_preview,
+            ScrapedJob.closing_date,
         )
     )
     if q:
