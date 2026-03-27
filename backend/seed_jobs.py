@@ -300,6 +300,15 @@ def crawl_all_jobs() -> dict:
 
     try:
         cgov_jobs = cgov.fetch_all()
+
+        # Clean slate: remove old CareersGov entries to avoid duplicates
+        # (old Workday URLs won't match new OpenGovSG dedup_keys)
+        old_count = db.query(ScrapedJob).filter(ScrapedJob.source == "Careers@Gov").count()
+        if cgov_jobs and old_count > 0:
+            db.query(ScrapedJob).filter(ScrapedJob.source == "Careers@Gov").delete()
+            db.commit()
+            log.info(f"[CareersGov] Cleared {old_count} old entries before fresh insert")
+
         for job in cgov_jobs:
             raw = asdict(job)
             raw["dedup_key"] = job.dedup_key
