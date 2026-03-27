@@ -1274,21 +1274,42 @@ def admin_seed_jobs(
                 if len(jobs) < 500:
                     log.warning(f"[CareersGov] Only {len(jobs)} jobs, skipping")
                     return
-                db.query(ScrapedJob).filter(ScrapedJob.source == "Careers@Gov").delete()
-                # Don't commit yet — delete + inserts in one transaction
-                # so if inserts fail, delete is rolled back too
-                new = 0
+                # Upsert: update existing by dedup_key, insert new ones
+                # (can't DELETE all — resume_versions has foreign key refs)
+                new_count, updated_count = 0, 0
+                new_keys: set[str] = set()
                 for job in jobs:
                     raw = asdict(job)
                     raw["dedup_key"] = job.dedup_key
+                    new_keys.add(raw["dedup_key"])
                     clean = sanitize_job(raw)
                     clean["search_keyword"] = "all"
                     if preparse_jd and clean.get("description"):
                         clean["parsed_jd"] = preparse_jd(clean["description"], clean.get("title", ""))
-                    db.add(ScrapedJob(**clean))
-                    new += 1
-                db.commit()  # Atomic: delete + inserts committed together
-                log.info(f"[CareersGov] Refreshed {new} jobs")
+                    existing = db.query(ScrapedJob).filter(ScrapedJob.dedup_key == clean["dedup_key"]).first()
+                    if existing:
+                        for key, val in clean.items():
+                            if key != "id":
+                                setattr(existing, key, val)
+                        updated_count += 1
+                    else:
+                        db.add(ScrapedJob(**clean))
+                        new_count += 1
+                # Delete stale CareersGov entries not in new data (skip FK-referenced ones)
+                stale = db.query(ScrapedJob).filter(
+                    ScrapedJob.source == "Careers@Gov",
+                    ~ScrapedJob.dedup_key.in_(new_keys),
+                ).all()
+                deleted = 0
+                for job in stale:
+                    try:
+                        db.delete(job)
+                        db.flush()
+                        deleted += 1
+                    except Exception:
+                        db.rollback()  # skip FK-referenced jobs
+                db.commit()
+                log.info(f"[CareersGov] Refreshed: {new_count} new, {updated_count} updated, {deleted} stale removed")
             except Exception as e:
                 db.rollback()
                 log.error(f"[CareersGov] Refresh failed, rolled back: {e}")

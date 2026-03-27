@@ -308,13 +308,7 @@ def crawl_all_jobs() -> dict:
         else:
             log.info(f"[CareersGov] Health check passed: {len(cgov_jobs)} jobs")
 
-        # Clean slate: remove old CareersGov entries to avoid duplicates
-        # (old Workday URLs won't match new OpenGovSG dedup_keys)
-        old_count = db.query(ScrapedJob).filter(ScrapedJob.source == "Careers@Gov").count()
-        if cgov_jobs and old_count > 0:
-            db.query(ScrapedJob).filter(ScrapedJob.source == "Careers@Gov").delete()
-            # Don't commit yet — delete + inserts in one transaction
-            log.info(f"[CareersGov] Marked {old_count} old entries for replacement")
+        # Upsert approach (can't DELETE all — resume_versions has FK refs)
 
         for job in cgov_jobs:
             raw = asdict(job)
