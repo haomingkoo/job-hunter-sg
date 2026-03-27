@@ -1261,6 +1261,36 @@ def admin_seed_jobs(
         # Run full crawl in background thread
         threading.Thread(target=crawl_all_jobs, daemon=True).start()
         return {"status": "started", "mode": "full_crawl", "message": "Full crawl started in background"}
+    elif body.get("careersgov_only"):
+        # Quick refresh: CareersGov only via OpenGovSG JSON (~3 seconds)
+        def run_cgov():
+            from scraper import CareersGovScraper
+            from dataclasses import asdict
+            db = SessionLocal()
+            try:
+                cgov = CareersGovScraper()
+                jobs = cgov.fetch_all()
+                if len(jobs) < 500:
+                    log.warning(f"[CareersGov] Only {len(jobs)} jobs, skipping")
+                    return
+                db.query(ScrapedJob).filter(ScrapedJob.source == "Careers@Gov").delete()
+                db.commit()
+                new = 0
+                for job in jobs:
+                    raw = asdict(job)
+                    raw["dedup_key"] = job.dedup_key
+                    clean = sanitize_job(raw)
+                    clean["search_keyword"] = "all"
+                    if preparse_jd and clean.get("description"):
+                        clean["parsed_jd"] = preparse_jd(clean["description"], clean.get("title", ""))
+                    db.add(ScrapedJob(**clean))
+                    new += 1
+                db.commit()
+                log.info(f"[CareersGov] Refreshed {new} jobs")
+            finally:
+                db.close()
+        threading.Thread(target=run_cgov, daemon=True).start()
+        return {"status": "started", "mode": "careersgov_only", "message": "CareersGov refresh started (~3s)"}
     else:
         sources = body.get("sources", "mcf,careersgov").split(",")
         limit = body.get("limit", 20)
