@@ -3895,9 +3895,9 @@ def resume_chat_step(
         )
 
     reply = content.strip()
-    ready_to_generate = "[READY]" in reply
-    # Strip the tag from the visible reply
-    reply_clean = reply.replace("[READY]", "").strip()
+    ready_to_generate = "[READY]" in reply.upper()
+    # Strip the tag from the visible reply (case-insensitive)
+    reply_clean = re.sub(r"\[READY\]", "", reply, flags=re.IGNORECASE).strip()
 
     # Determine conversation stage from message count
     user_msg_count = sum(1 for m in messages if m.get("role") == "user")
@@ -3915,6 +3915,11 @@ def resume_chat_step(
         stage = "skills"
     else:
         stage = "done"
+
+    # Fallback: if user has answered 5+ questions, allow generation even if
+    # the LLM forgot to include [READY] (covers name + role + 1 job + achievements + education)
+    if not ready_to_generate and user_msg_count >= 5:
+        ready_to_generate = True
 
     return {
         "reply": reply_clean,
