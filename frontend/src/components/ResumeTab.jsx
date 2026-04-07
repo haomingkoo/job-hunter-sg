@@ -2276,31 +2276,13 @@ CERTIFICATIONS
 
               {/* Input */}
               <div className="border-t border-[#BDDDFC]/20 px-4 py-3">
-                <div className="mb-3 rounded-2xl border border-violet-200 bg-violet-50/60 px-4 py-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-violet-700">
-                      {chatStageMeta.label}
-                    </div>
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                      chatReady ? "bg-emerald-100 text-emerald-700" : "bg-white text-violet-700"
-                    }`}>
-                      {chatReady ? "Generate unlocked" : "Still gathering details"}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm leading-relaxed text-violet-900">
-                    {chatStageMeta.description}
-                  </p>
-                  {chatStageMeta.remaining.length > 0 && (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {chatStageMeta.remaining.map((item) => (
-                        <span
-                          key={item}
-                          className="rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-medium text-violet-700"
-                        >
-                          {item}
-                        </span>
-                      ))}
-                    </div>
+                <div className="mb-2 flex items-center gap-2 text-[11px]">
+                  <span className="font-semibold uppercase tracking-wide text-violet-600">{chatStageMeta.label}</span>
+                  <span className="text-[#BDDDFC]">/</span>
+                  {chatStageMeta.remaining.length > 0 ? (
+                    <span className="text-[#6A89A7]">Next: {chatStageMeta.remaining.join(", ")}</span>
+                  ) : (
+                    <span className="font-semibold text-emerald-600">Ready to generate</span>
                   )}
                 </div>
 
