@@ -2311,7 +2311,7 @@ CERTIFICATIONS
                 )}
 
                 {chatReady ? (
-                  <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                  <div className="mb-3 space-y-2">
                     <button
                       type="button"
                       disabled={chatLoading}
@@ -2350,7 +2350,7 @@ CERTIFICATIONS
                           setChatLoading(false);
                         }
                       }}
-                      className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 transition flex items-center justify-center gap-2"
+                      className="w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 transition flex items-center justify-center gap-2"
                     >
                       <Sparkles size={16} />
                       Generate My Resume
@@ -2359,12 +2359,12 @@ CERTIFICATIONS
                       type="button"
                       disabled={chatLoading}
                       onClick={startBlankResumeFlow}
-                      className="rounded-xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-semibold text-violet-700 hover:bg-violet-50 disabled:opacity-50 transition"
+                      className="text-xs text-[#6A89A7] hover:text-[#384959] underline underline-offset-2 transition disabled:opacity-50"
                     >
-                      Use Blank Starter Instead
+                      or skip to a blank resume
                     </button>
                   </div>
-                ) : (
+                ) : chatMessages.filter((m) => m.role === "user").length === 0 ? (
                   <button
                     type="button"
                     disabled={chatLoading}
@@ -2372,6 +2372,15 @@ CERTIFICATIONS
                     className="mb-3 w-full rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] disabled:opacity-50 transition"
                   >
                     Skip the interview and start from a blank resume
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={chatLoading}
+                    onClick={startBlankResumeFlow}
+                    className="mb-3 text-xs text-[#6A89A7] hover:text-[#384959] underline underline-offset-2 transition disabled:opacity-50"
+                  >
+                    or skip to a blank resume
                   </button>
                 )}
                 <form
