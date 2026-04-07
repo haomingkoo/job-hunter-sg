@@ -13,6 +13,7 @@ and caches the results in the database.
 from __future__ import annotations
 
 import argparse
+import gc
 import logging
 import os
 import sys
@@ -189,6 +190,7 @@ def seed_jobs(
                 stats["total_cached"] += 1
 
             db.commit()
+            db.expunge_all()  # Release ORM objects to free memory
 
         except Exception as e:
             log.error(f"  Error searching '{keyword}': {e}")
@@ -272,11 +274,17 @@ def crawl_all_jobs() -> dict:
                     stats["updated"] += 1  # Likely a dupe
 
             db.commit()
+            db.expunge_all()  # Release ORM objects from session to free memory
             stats["pages"] += 1
             log.info(f"[MCF] Page {page}: {len(jobs)} jobs (new: {stats['new']}, updated: {stats['updated']})")
 
             page += 1
             time.sleep(0.3)
+
+            # Periodic GC to reclaim memory from expelled ORM objects
+            if page % 50 == 0:
+                gc.collect()
+                log.info(f"[MCF] GC at page {page}")
 
             if page >= 1000:
                 log.info("[MCF] Hit 1000 page limit, stopping")
@@ -338,11 +346,11 @@ def crawl_all_jobs() -> dict:
             else:
                 job_row = ScrapedJob(**clean)
                 db.add(job_row)
-                db.flush()
                 _build_term_preview(job_row, db)
                 stats["new"] += 1
 
         db.commit()
+        db.expunge_all()
         stats["pages"] += 1
         log.info(f"[CareersGov] Loaded {len(cgov_jobs)} jobs (new: {stats['new']}, updated: {stats['updated']})")
 

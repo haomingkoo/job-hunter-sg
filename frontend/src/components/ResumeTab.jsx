@@ -96,6 +96,77 @@ function TemplatePreview({ templateId }) {
   );
 }
 
+const RESUME_CHAT_STAGE_META = {
+  contact: {
+    label: "Contact details",
+    description: "Share your name and the best email, phone, or location details for the header.",
+    remaining: ["Name", "Email / phone", "Location"],
+  },
+  summary: {
+    label: "Target role",
+    description: "Tell us what role you want and roughly how many years of experience you have.",
+    remaining: ["Target role", "Years of experience"],
+  },
+  experience_1: {
+    label: "Recent experience",
+    description: "We still need at least one role with concrete achievements before we can draft the resume.",
+    remaining: ["Latest job", "2-3 achievements", "Metrics or scope"],
+  },
+  experience_2: {
+    label: "More experience",
+    description: "Add another role if relevant, or tell the coach you are done with work history.",
+    remaining: ["Another role or 'done'"],
+  },
+  education: {
+    label: "Education",
+    description: "A degree, school, and graduation year are enough to keep moving.",
+    remaining: ["Degree", "School", "Year"],
+  },
+  skills: {
+    label: "Skills",
+    description: "List your tools, strengths, certifications, or domain skills so the draft feels complete.",
+    remaining: ["Skills", "Certifications"],
+  },
+  done: {
+    label: "Ready to draft",
+    description: "You have shared enough for a first draft. Generate it now or switch to a blank starter.",
+    remaining: [],
+  },
+};
+
+function getResumeChatStageMeta(stage, readyToGenerate) {
+  if (readyToGenerate) return RESUME_CHAT_STAGE_META.done;
+  return RESUME_CHAT_STAGE_META[stage] || RESUME_CHAT_STAGE_META.contact;
+}
+
+function buildBlankResumeStarter(profile = {}) {
+  const name = String(profile.name || "").trim() || "Your Name";
+  const contactLine = [profile.email, profile.phone, profile.location]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" | ");
+
+  return [
+    name,
+    contactLine,
+    "",
+    "PROFESSIONAL SUMMARY",
+    "Add a 2-3 sentence summary of your background, strengths, and target role.",
+    "",
+    "PROFESSIONAL EXPERIENCE",
+    "Job Title",
+    "Company | Location | Start – End",
+    "• Add a measurable achievement.",
+    "• Add a project, scope, or business outcome.",
+    "",
+    "EDUCATION",
+    "Degree – School (Year)",
+    "",
+    "SKILLS",
+    "Skill 1, Skill 2, Skill 3",
+  ].join("\n");
+}
+
 const POINTER_SENSOR_CONFIG = { activationConstraint: { distance: 5 } };
 
 const SortableBulletItem = memo(function SortableBulletItem({ id, children }) {
@@ -245,6 +316,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [chatReady, setChatReady] = useState(false);
+  const [chatStage, setChatStage] = useState("contact");
+  const [chatError, setChatError] = useState("");
   const chatEndRef = useRef(null);
 
   const openMobileFeedbackPanel = useCallback((targetRef = scorePanelRef) => {
@@ -255,6 +328,16 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         targetRef?.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       });
     });
+  }, []);
+
+  const resetResumeChat = useCallback(() => {
+    setShowResumeChat(false);
+    setChatMessages([]);
+    setChatInput("");
+    setChatLoading(false);
+    setChatReady(false);
+    setChatStage("contact");
+    setChatError("");
   }, []);
 
   useEffect(() => {
@@ -591,6 +674,19 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       if (nextText.trim()) setScorePhase("editing");
     }
   }, [jobDescription, runScore, resumeText]);
+
+  const startBlankResumeFlow = useCallback(() => {
+    const starterResume = buildBlankResumeStarter(profile);
+    setSelectedBulletId(null);
+    setEditingNodeId(null);
+    setCoachResponse(null);
+    setCoachError("");
+    setSessionId("");
+    setShowSetupPanel(false);
+    setWizardStep(2);
+    resetResumeChat();
+    applyResumeText(starterResume, { clearRewrites: true });
+  }, [applyResumeText, profile, resetResumeChat]);
 
   const handleUndo = useCallback(() => {
     if (undoStackRef.current.length === 0) return;
@@ -1721,6 +1817,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const showFeedbackPanels = isFeedbackView || mobilePanel === "feedback";
   const lowScoreWarning = scoreData && overallScore !== null && overallScore < 50;
   const setupVisible = showSetupPanel || !resumeText.trim() || wizardStep === 1;
+  const chatStageMeta = useMemo(
+    () => getResumeChatStageMeta(chatStage, chatReady),
+    [chatReady, chatStage],
+  );
 
   // When a new job is selected, always go to step 1 (Upload) so user can choose their resume
   useEffect(() => {
@@ -2024,6 +2124,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               type="button"
               onClick={() => {
                 setShowResumeChat(true);
+                setChatInput("");
+                setChatReady(false);
+                setChatStage("contact");
+                setChatError("");
                 setChatMessages([{
                   role: "assistant",
                   content: "Hi! I'll help you build your resume step by step. Let's start \u2014 what's your full name?",
@@ -2033,7 +2137,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
             >
               <Sparkles size={28} className="text-violet-600" />
               <h3 className="mt-3 text-base font-semibold text-[#384959]">Start Fresh</h3>
-              <p className="mt-1.5 text-sm text-[#6A89A7]">Build from scratch with AI-guided chat</p>
+              <p className="mt-1.5 text-sm text-[#6A89A7]">Build from scratch with AI-guided chat, or switch to a blank starter if you want to move faster</p>
             </button>
 
             {/* Try Demo */}
@@ -2128,7 +2232,7 @@ CERTIFICATIONS
                 </div>
                 <button
                   type="button"
-                  onClick={() => { setShowResumeChat(false); setChatMessages([]); setChatReady(false); }}
+                  onClick={resetResumeChat}
                   className="rounded-lg p-1 text-[#6A89A7] hover:bg-[#f0f4f8] transition"
                   aria-label="Close chat"
                 >
@@ -2172,39 +2276,102 @@ CERTIFICATIONS
 
               {/* Input */}
               <div className="border-t border-[#BDDDFC]/20 px-4 py-3">
-                {chatReady && (
+                <div className="mb-3 rounded-2xl border border-violet-200 bg-violet-50/60 px-4 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-violet-700">
+                      {chatStageMeta.label}
+                    </div>
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      chatReady ? "bg-emerald-100 text-emerald-700" : "bg-white text-violet-700"
+                    }`}>
+                      {chatReady ? "Generate unlocked" : "Still gathering details"}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm leading-relaxed text-violet-900">
+                    {chatStageMeta.description}
+                  </p>
+                  {chatStageMeta.remaining.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {chatStageMeta.remaining.map((item) => (
+                        <span
+                          key={item}
+                          className="rounded-full border border-violet-200 bg-white px-2.5 py-1 text-[11px] font-medium text-violet-700"
+                        >
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {chatError && (
+                  <div className="mb-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                    {chatError}
+                  </div>
+                )}
+
+                {chatReady ? (
+                  <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      disabled={chatLoading}
+                      onClick={async () => {
+                        setChatLoading(true);
+                        setChatError("");
+                        try {
+                          const resp = await apiFetch("/api/ai/resume-chat", {
+                            method: "POST",
+                            body: JSON.stringify({ messages: chatMessages, action: "generate" }),
+                          });
+                          const data = await resp.json();
+                          if (data.resume_text) {
+                            applyResumeText(data.resume_text, { rescore: true, clearRewrites: true });
+                            resetResumeChat();
+                            setShowSetupPanel(false);
+                            setWizardStep(2);
+                          } else {
+                            setChatMessages((prev) => [...prev, {
+                              role: "assistant",
+                              content: "I couldn't generate the resume from our conversation yet. Could you share a bit more about your work experience and achievements? That will help me create a stronger resume for you.",
+                            }]);
+                            setChatError("We still need a bit more concrete experience detail before the draft can be generated.");
+                          }
+                        } catch (err) {
+                          setChatMessages((prev) => [...prev, {
+                            role: "assistant",
+                            content: "Sorry, I couldn't generate the resume right now. Please try again or use the blank starter below.",
+                          }]);
+                          setChatError(
+                            err.message?.includes("429")
+                              ? "The AI coach is busy right now. You can wait a moment, try again, or jump to a blank starter."
+                              : "We couldn't generate the draft just now. You can try again or continue with a blank starter.",
+                          );
+                        } finally {
+                          setChatLoading(false);
+                        }
+                      }}
+                      className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 transition flex items-center justify-center gap-2"
+                    >
+                      <Sparkles size={16} />
+                      Generate My Resume
+                    </button>
+                    <button
+                      type="button"
+                      disabled={chatLoading}
+                      onClick={startBlankResumeFlow}
+                      className="rounded-xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-semibold text-violet-700 hover:bg-violet-50 disabled:opacity-50 transition"
+                    >
+                      Use Blank Starter Instead
+                    </button>
+                  </div>
+                ) : (
                   <button
                     type="button"
                     disabled={chatLoading}
-                    onClick={async () => {
-                      setChatLoading(true);
-                      try {
-                        const resp = await apiFetch("/api/ai/resume-chat", {
-                          method: "POST",
-                          body: JSON.stringify({ messages: chatMessages, action: "generate" }),
-                        });
-                        const data = await resp.json();
-                        if (data.resume_text) {
-                          applyResumeText(data.resume_text, { rescore: true, clearRewrites: true });
-                          setShowResumeChat(false);
-                          setChatMessages([]);
-                          setChatReady(false);
-                          setShowSetupPanel(false);
-                          setWizardStep(2);
-                        }
-                      } catch (err) {
-                        setChatMessages((prev) => [...prev, {
-                          role: "assistant",
-                          content: "Sorry, I couldn't generate the resume right now. Please try again.",
-                        }]);
-                      } finally {
-                        setChatLoading(false);
-                      }
-                    }}
-                    className="mb-3 w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 transition flex items-center justify-center gap-2"
+                    onClick={startBlankResumeFlow}
+                    className="mb-3 w-full rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] disabled:opacity-50 transition"
                   >
-                    <Sparkles size={16} />
-                    Generate My Resume
+                    Skip the interview and start from a blank resume
                   </button>
                 )}
                 <form
@@ -2217,6 +2384,7 @@ CERTIFICATIONS
                     setChatMessages(nextMessages);
                     setChatInput("");
                     setChatLoading(true);
+                    setChatError("");
 
                     // Scroll to bottom after adding user message
                     setTimeout(() => { if (chatEndRef.current) chatEndRef.current.parentElement.scrollTop = chatEndRef.current.parentElement.scrollHeight; }, 50);
@@ -2228,8 +2396,14 @@ CERTIFICATIONS
                       });
                       const data = await resp.json();
                       setChatMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
+                      if (data.stage) setChatStage(data.stage);
                       if (data.ready_to_generate) setChatReady(true);
                     } catch (err) {
+                      setChatError(
+                        err.message?.includes("429")
+                          ? "The AI coach is busy right now. You can wait a moment, try again, or start from a blank resume."
+                          : "The guided builder hit a snag. You can retry your answer or move on with a blank starter.",
+                      );
                       setChatMessages((prev) => [...prev, {
                         role: "assistant",
                         content: err.message?.includes("429")
