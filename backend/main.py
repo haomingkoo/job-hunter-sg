@@ -1233,6 +1233,215 @@ def _build_bridge_plan(missing_skills: list[str]) -> list[dict]:
 _ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
 
 
+def _require_admin(authorization: Optional[str]) -> None:
+    """Verify admin API key from Authorization header."""
+    token = ""
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            token = parts[1]
+    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Invalid admin API key")
+
+
+@app.get("/api/admin/stats")
+def admin_stats(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Dashboard stats: users, resumes, AI usage, jobs, traffic.
+    Protected by ADMIN_API_KEY.
+    """
+    _require_admin(authorization)
+
+    from models import ResumeVersion, TailoredResume
+
+    now = datetime.now(timezone.utc)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_ago = now - timedelta(days=7)
+    month_ago = now - timedelta(days=30)
+
+    # ── Users ──────────────────────────────────────────────────────
+    total_users = db.query(func.count(User.id)).scalar() or 0
+    users_this_week = (
+        db.query(func.count(User.id))
+        .filter(User.created_at >= week_ago)
+        .scalar() or 0
+    )
+    users_this_month = (
+        db.query(func.count(User.id))
+        .filter(User.created_at >= month_ago)
+        .scalar() or 0
+    )
+    active_this_week = (
+        db.query(func.count(func.distinct(UsageLog.user_id)))
+        .filter(UsageLog.created_at >= week_ago, UsageLog.user_id.isnot(None))
+        .scalar() or 0
+    )
+
+    # ── Resumes ────────────────────────────────────────────────────
+    total_resume_versions = (
+        db.query(func.count(ResumeVersion.id))
+        .filter(ResumeVersion.is_active == True)
+        .scalar() or 0
+    )
+    total_tailored = db.query(func.count(TailoredResume.id)).scalar() or 0
+    tailored_this_week = (
+        db.query(func.count(TailoredResume.id))
+        .filter(TailoredResume.created_at >= week_ago)
+        .scalar() or 0
+    )
+
+    # Resume uploads
+    uploads_total = (
+        db.query(func.count(UsageLog.id))
+        .filter(UsageLog.action == "resume_upload")
+        .scalar() or 0
+    )
+    uploads_this_week = (
+        db.query(func.count(UsageLog.id))
+        .filter(UsageLog.action == "resume_upload", UsageLog.created_at >= week_ago)
+        .scalar() or 0
+    )
+
+    # Resume downloads
+    downloads_total = (
+        db.query(func.count(UsageLog.id))
+        .filter(UsageLog.action.in_(["resume_download", "resume_download_pdf"]))
+        .scalar() or 0
+    )
+
+    # Resume scores
+    scores_total = (
+        db.query(func.count(UsageLog.id))
+        .filter(UsageLog.action == "resume_score")
+        .scalar() or 0
+    )
+
+    # Chat-built resumes
+    chat_generates = (
+        db.query(func.count(UsageLog.id))
+        .filter(UsageLog.detail == "resume_chat_generate")
+        .scalar() or 0
+    )
+
+    # ── AI usage ───────────────────────────────────────────────────
+    ai_today = (
+        db.query(func.count(UsageLog.id))
+        .filter(UsageLog.action.in_(["ai", "ai_rewrite", "ai_integrate"]), UsageLog.created_at >= today)
+        .scalar() or 0
+    )
+    ai_this_week = (
+        db.query(func.count(UsageLog.id))
+        .filter(UsageLog.action.in_(["ai", "ai_rewrite", "ai_integrate"]), UsageLog.created_at >= week_ago)
+        .scalar() or 0
+    )
+    ai_total = (
+        db.query(func.count(UsageLog.id))
+        .filter(UsageLog.action.in_(["ai", "ai_rewrite", "ai_integrate"]))
+        .scalar() or 0
+    )
+
+    # ── AI breakdown (last 7 days) ─────────────────────────────────
+    ai_breakdown_rows = (
+        db.query(UsageLog.detail, func.count(UsageLog.id))
+        .filter(
+            UsageLog.action.in_(["ai", "ai_rewrite", "ai_integrate"]),
+            UsageLog.created_at >= week_ago,
+        )
+        .group_by(UsageLog.detail)
+        .all()
+    )
+    ai_breakdown = {detail or "unknown": count for detail, count in ai_breakdown_rows}
+
+    # ── Searches ───────────────────────────────────────────────────
+    searches_today = (
+        db.query(func.count(UsageLog.id))
+        .filter(UsageLog.action == "search", UsageLog.created_at >= today)
+        .scalar() or 0
+    )
+    searches_this_week = (
+        db.query(func.count(UsageLog.id))
+        .filter(UsageLog.action == "search", UsageLog.created_at >= week_ago)
+        .scalar() or 0
+    )
+
+    # ── Jobs ───────────────────────────────────────────────────────
+    total_jobs = db.query(func.count(ScrapedJob.id)).filter(ScrapedJob.hidden == 0).scalar() or 0
+    jobs_with_summary = (
+        db.query(func.count(ScrapedJob.id))
+        .filter(ScrapedJob.hidden == 0, ScrapedJob.jd_summary != "")
+        .scalar() or 0
+    )
+
+    # ── Tracked jobs ───────────────────────────────────────────────
+    total_tracked = db.query(func.count(TrackedJob.id)).scalar() or 0
+    tracked_this_week = (
+        db.query(func.count(TrackedJob.id))
+        .filter(TrackedJob.created_at >= week_ago)
+        .scalar() or 0
+    )
+
+    # ── Daily active users (last 7 days) ───────────────────────────
+    daily_active = []
+    for days_back in range(6, -1, -1):
+        day_start = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        dau = (
+            db.query(func.count(func.distinct(UsageLog.user_id)))
+            .filter(
+                UsageLog.created_at >= day_start,
+                UsageLog.created_at < day_end,
+                UsageLog.user_id.isnot(None),
+            )
+            .scalar() or 0
+        )
+        daily_active.append({
+            "date": day_start.strftime("%Y-%m-%d"),
+            "users": dau,
+        })
+
+    return {
+        "generated_at": now.isoformat(),
+        "users": {
+            "total": total_users,
+            "new_this_week": users_this_week,
+            "new_this_month": users_this_month,
+            "active_this_week": active_this_week,
+            "daily_active": daily_active,
+        },
+        "resumes": {
+            "saved_versions": total_resume_versions,
+            "tailoring_sessions": total_tailored,
+            "tailored_this_week": tailored_this_week,
+            "uploads_total": uploads_total,
+            "uploads_this_week": uploads_this_week,
+            "downloads_total": downloads_total,
+            "scores_total": scores_total,
+            "chat_built": chat_generates,
+        },
+        "ai": {
+            "calls_today": ai_today,
+            "calls_this_week": ai_this_week,
+            "calls_total": ai_total,
+            "breakdown_this_week": ai_breakdown,
+        },
+        "searches": {
+            "today": searches_today,
+            "this_week": searches_this_week,
+        },
+        "jobs": {
+            "total_visible": total_jobs,
+            "with_summary": jobs_with_summary,
+        },
+        "tracked_jobs": {
+            "total": total_tracked,
+            "this_week": tracked_this_week,
+        },
+    }
+
+
 @app.post("/api/admin/seed")
 def admin_seed_jobs(
     body: dict,
@@ -4470,6 +4679,237 @@ def contact(body: ContactRequest, db: Session = Depends(get_db)) -> dict:
     db.add(usage)
     db.commit()
     return {"message": "Thanks! We'll get back to you soon."}
+
+
+@app.get("/api/admin/metrics")
+def get_admin_metrics(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Site-wide metrics for admins."""
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    from models import ResumeVersion, TailoredResume
+
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    since_7d = today_start - timedelta(days=6)
+    since_14d = today_start - timedelta(days=13)
+    since_30d = today_start - timedelta(days=29)
+
+    def _scalar(query) -> int:
+        return int(query.scalar() or 0)
+
+    def _to_day_key(value: datetime | None) -> str | None:
+        if not value:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        else:
+            value = value.astimezone(timezone.utc)
+        return value.date().isoformat()
+
+    def _bucket_recent(rows: list[tuple[datetime | None, ...]]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for offset in range(13, -1, -1):
+            day = (today_start - timedelta(days=offset)).date().isoformat()
+            counts[day] = 0
+        for row in rows:
+            key = _to_day_key(row[0] if row else None)
+            if key in counts:
+                counts[key] += 1
+        return counts
+
+    total_users = _scalar(db.query(func.count(User.id)))
+    signups_today = _scalar(
+        db.query(func.count(User.id)).filter(User.created_at >= today_start)
+    )
+    signups_7d = _scalar(
+        db.query(func.count(User.id)).filter(User.created_at >= since_7d)
+    )
+    signups_30d = _scalar(
+        db.query(func.count(User.id)).filter(User.created_at >= since_30d)
+    )
+
+    usage_user_ids_7d = {
+        user_id
+        for (user_id,) in (
+            db.query(UsageLog.user_id)
+            .filter(UsageLog.user_id.isnot(None), UsageLog.created_at >= since_7d)
+            .distinct()
+            .all()
+        )
+        if user_id is not None
+    }
+    login_user_ids_7d = {
+        user_id
+        for (user_id,) in (
+            db.query(User.id)
+            .filter(User.last_login.isnot(None), User.last_login >= since_7d)
+            .all()
+        )
+    }
+    usage_user_ids_30d = {
+        user_id
+        for (user_id,) in (
+            db.query(UsageLog.user_id)
+            .filter(UsageLog.user_id.isnot(None), UsageLog.created_at >= since_30d)
+            .distinct()
+            .all()
+        )
+        if user_id is not None
+    }
+    login_user_ids_30d = {
+        user_id
+        for (user_id,) in (
+            db.query(User.id)
+            .filter(User.last_login.isnot(None), User.last_login >= since_30d)
+            .all()
+        )
+    }
+
+    total_saved_resumes = _scalar(
+        db.query(func.count(ResumeVersion.id)).filter(ResumeVersion.is_active == True)
+    )
+    saved_resumes_7d = _scalar(
+        db.query(func.count(ResumeVersion.id)).filter(
+            ResumeVersion.is_active == True,
+            ResumeVersion.created_at >= since_7d,
+        )
+    )
+    tailored_resumes_total = _scalar(db.query(func.count(TailoredResume.id)))
+    tailored_resumes_7d = _scalar(
+        db.query(func.count(TailoredResume.id)).filter(TailoredResume.created_at >= since_7d)
+    )
+    tracked_jobs_total = _scalar(db.query(func.count(TrackedJob.id)))
+    tracked_jobs_7d = _scalar(
+        db.query(func.count(TrackedJob.id)).filter(TrackedJob.created_at >= since_7d)
+    )
+
+    users_with_saved_resume = _scalar(
+        db.query(func.count(func.distinct(ResumeVersion.user_id))).filter(
+            ResumeVersion.is_active == True
+        )
+    )
+    users_with_tailored_resume = _scalar(
+        db.query(func.count(func.distinct(TailoredResume.user_id)))
+    )
+    users_with_tracked_jobs = _scalar(
+        db.query(func.count(func.distinct(TrackedJob.user_id)))
+    )
+
+    searches_today = _scalar(
+        db.query(func.count(UsageLog.id)).filter(
+            UsageLog.action == "search",
+            UsageLog.created_at >= today_start,
+        )
+    )
+    ai_today = _scalar(
+        db.query(func.count(UsageLog.id)).filter(
+            UsageLog.action == "ai",
+            UsageLog.created_at >= today_start,
+        )
+    )
+    anonymous_ai_today = _scalar(
+        db.query(func.count(UsageLog.id)).filter(
+            UsageLog.action == "ai",
+            UsageLog.user_id.is_(None),
+            UsageLog.created_at >= today_start,
+        )
+    )
+    resume_uploads_7d = _scalar(
+        db.query(func.count(UsageLog.id)).filter(
+            UsageLog.action == "resume_upload",
+            UsageLog.created_at >= since_7d,
+        )
+    )
+    resume_scores_7d = _scalar(
+        db.query(func.count(UsageLog.id)).filter(
+            UsageLog.action == "resume_score",
+            UsageLog.created_at >= since_7d,
+        )
+    )
+    resume_downloads_7d = _scalar(
+        db.query(func.count(UsageLog.id)).filter(
+            UsageLog.action.in_(("resume_download", "resume_download_pdf")),
+            UsageLog.created_at >= since_7d,
+        )
+    )
+    resume_chat_starts_7d = _scalar(
+        db.query(func.count(UsageLog.id)).filter(
+            UsageLog.action == "ai",
+            UsageLog.detail == "resume_chat_chat",
+            UsageLog.created_at >= since_7d,
+        )
+    )
+    resume_chat_generates_7d = _scalar(
+        db.query(func.count(UsageLog.id)).filter(
+            UsageLog.action == "ai",
+            UsageLog.detail == "resume_chat_generate",
+            UsageLog.created_at >= since_7d,
+        )
+    )
+
+    signup_counts = _bucket_recent(
+        db.query(User.created_at).filter(User.created_at >= since_14d).all()
+    )
+    resume_save_counts = _bucket_recent(
+        db.query(ResumeVersion.created_at)
+        .filter(ResumeVersion.is_active == True, ResumeVersion.created_at >= since_14d)
+        .all()
+    )
+    download_counts = _bucket_recent(
+        db.query(UsageLog.created_at)
+        .filter(
+            UsageLog.action.in_(("resume_download", "resume_download_pdf")),
+            UsageLog.created_at >= since_14d,
+        )
+        .all()
+    )
+
+    daily = [
+        {
+            "date": day,
+            "signups": signup_counts.get(day, 0),
+            "resumes_saved": resume_save_counts.get(day, 0),
+            "downloads": download_counts.get(day, 0),
+        }
+        for day in signup_counts.keys()
+    ]
+
+    return {
+        "overview": {
+            "total_users": total_users,
+            "signups_today": signups_today,
+            "signups_7d": signups_7d,
+            "signups_30d": signups_30d,
+            "active_users_7d": len(usage_user_ids_7d | login_user_ids_7d),
+            "active_users_30d": len(usage_user_ids_30d | login_user_ids_30d),
+            "total_saved_resumes": total_saved_resumes,
+            "saved_resumes_7d": saved_resumes_7d,
+            "tailored_resumes_total": tailored_resumes_total,
+            "tailored_resumes_7d": tailored_resumes_7d,
+            "tracked_jobs_total": tracked_jobs_total,
+            "tracked_jobs_7d": tracked_jobs_7d,
+        },
+        "activity": {
+            "searches_today": searches_today,
+            "ai_today": ai_today,
+            "anonymous_ai_today": anonymous_ai_today,
+            "resume_uploads_7d": resume_uploads_7d,
+            "resume_scores_7d": resume_scores_7d,
+            "resume_downloads_7d": resume_downloads_7d,
+            "resume_chat_starts_7d": resume_chat_starts_7d,
+            "resume_chat_generates_7d": resume_chat_generates_7d,
+        },
+        "funnel": {
+            "users_with_saved_resume": users_with_saved_resume,
+            "users_with_tailored_resume": users_with_tailored_resume,
+            "users_with_tracked_jobs": users_with_tracked_jobs,
+        },
+        "daily": daily,
+    }
 
 
 @app.get("/api/usage")
