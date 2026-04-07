@@ -109,43 +109,66 @@ from contextlib import asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup and shutdown lifecycle for the app."""
     # ── Startup ──
+    log.info("[STARTUP] Initializing database...")
     init_db()
+    log.info("[STARTUP] Database initialized")
     from database import SessionLocal
 
-    # Auto-cleanup jobs older than 30 days
-    try:
-        db = SessionLocal()
-        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-        stale = db.query(ScrapedJob).filter(
-            ScrapedJob.scraped_at < cutoff.isoformat()
-        ).count()
-        if stale > 0:
-            db.query(ScrapedJob).filter(
+    # Auto-cleanup jobs older than 30 days (run in background to not block health check)
+    def _startup_maintenance() -> None:
+        try:
+            db = SessionLocal()
+            cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+            stale = db.query(ScrapedJob).filter(
                 ScrapedJob.scraped_at < cutoff.isoformat()
-            ).delete()
-            db.commit()
-            log.info(f"Cleaned up {stale} stale jobs (older than 30 days)")
-        db.close()
-    except Exception as e:
-        log.warning(f"Stale job cleanup failed: {e}")
+            ).count()
+            if stale > 0:
+                log.info(f"[STARTUP] Cleaning up {stale} stale jobs...")
+                db.query(ScrapedJob).filter(
+                    ScrapedJob.scraped_at < cutoff.isoformat()
+                ).delete()
+                db.commit()
+                log.info(f"[STARTUP] Cleaned up {stale} stale jobs")
+            db.close()
+        except Exception as e:
+            log.warning(f"[STARTUP] Stale job cleanup failed: {e}")
 
-    # Backfill sortable posted timestamps for existing rows.
-    db_sort = SessionLocal()
-    try:
-        jobs_missing_sort = (
-            db_sort.query(ScrapedJob)
-            .filter(or_(ScrapedJob.posted_at_sort.is_(None), ScrapedJob.posted_at_sort == ""))
-            .all()
-        )
-        if jobs_missing_sort:
-            for job in jobs_missing_sort:
-                job.posted_at_sort = _posted_sort_iso(job.posted_date, job.scraped_at)
-            db_sort.commit()
-            log.info("Backfilled posted_at_sort for %s jobs", len(jobs_missing_sort))
-    except Exception as e:
-        log.warning(f"posted_at_sort backfill failed: {e}")
-    finally:
-        db_sort.close()
+        # Backfill sortable posted timestamps for existing rows
+        db_sort = SessionLocal()
+        try:
+            missing_count = (
+                db_sort.query(func.count(ScrapedJob.id))
+                .filter(or_(ScrapedJob.posted_at_sort.is_(None), ScrapedJob.posted_at_sort == ""))
+                .scalar() or 0
+            )
+            if missing_count > 0:
+                log.info(f"[STARTUP] Backfilling posted_at_sort for {missing_count} jobs...")
+                # Process in batches to avoid loading all into memory
+                batch_size = 500
+                offset = 0
+                while True:
+                    batch = (
+                        db_sort.query(ScrapedJob)
+                        .filter(or_(ScrapedJob.posted_at_sort.is_(None), ScrapedJob.posted_at_sort == ""))
+                        .limit(batch_size)
+                        .all()
+                    )
+                    if not batch:
+                        break
+                    for job in batch:
+                        job.posted_at_sort = _posted_sort_iso(job.posted_date, job.scraped_at)
+                    db_sort.commit()
+                    db_sort.expunge_all()
+                    offset += len(batch)
+                    log.info(f"[STARTUP] Backfilled {offset}/{missing_count} jobs")
+                log.info(f"[STARTUP] posted_at_sort backfill complete")
+        except Exception as e:
+            log.warning(f"[STARTUP] posted_at_sort backfill failed: {e}")
+        finally:
+            db_sort.close()
+
+    import threading
+    threading.Thread(target=_startup_maintenance, daemon=True).start()
 
     # Auto-create admin account if configured
     try:
