@@ -688,6 +688,32 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     applyResumeText(starterResume, { clearRewrites: true });
   }, [applyResumeText, profile, resetResumeChat]);
 
+  const generateWithWhatWeHave = useCallback(async () => {
+    setChatLoading(true);
+    setChatError("");
+    try {
+      const resp = await apiFetch("/api/ai/resume-chat", {
+        method: "POST",
+        body: JSON.stringify({ messages: chatMessages, action: "generate" }),
+      });
+      const data = await resp.json();
+      if (data.resume_text) {
+        applyResumeText(data.resume_text, { rescore: true, clearRewrites: true });
+        resetResumeChat();
+        setShowSetupPanel(false);
+        setWizardStep(2);
+      } else {
+        // AI couldn't produce anything useful, fall back to blank
+        startBlankResumeFlow();
+      }
+    } catch {
+      // API failed, fall back to blank
+      startBlankResumeFlow();
+    } finally {
+      setChatLoading(false);
+    }
+  }, [chatMessages, applyResumeText, resetResumeChat, startBlankResumeFlow]);
+
   const handleUndo = useCallback(() => {
     if (undoStackRef.current.length === 0) return;
     const prev = undoStackRef.current.pop();
@@ -2340,10 +2366,10 @@ CERTIFICATIONS
                     <button
                       type="button"
                       disabled={chatLoading}
-                      onClick={startBlankResumeFlow}
+                      onClick={generateWithWhatWeHave}
                       className="text-xs text-[#6A89A7] hover:text-[#384959] underline underline-offset-2 transition disabled:opacity-50"
                     >
-                      or skip to a blank resume
+                      or just draft with what I have
                     </button>
                   </div>
                 ) : chatMessages.filter((m) => m.role === "user").length === 0 ? (
@@ -2359,10 +2385,10 @@ CERTIFICATIONS
                   <button
                     type="button"
                     disabled={chatLoading}
-                    onClick={startBlankResumeFlow}
+                    onClick={generateWithWhatWeHave}
                     className="mb-3 text-xs text-[#6A89A7] hover:text-[#384959] underline underline-offset-2 transition disabled:opacity-50"
                   >
-                    or skip to a blank resume
+                    or just draft with what I have
                   </button>
                 )}
                 <form
