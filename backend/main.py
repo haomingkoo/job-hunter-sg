@@ -3141,6 +3141,265 @@ def export_tracked(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# INTERVIEW STORY BANK
+# ═════════════════════════════════════════════════════════════════════════════
+
+STORY_TAGS = [
+    "motivation", "proactiveness", "ambiguity", "perseverance",
+    "conflict_resolution", "empathy", "growth", "communication",
+]
+
+
+@app.get("/api/stories")
+def list_stories(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """List all active stories for the current user."""
+    from models import InterviewStory
+    stories = (
+        db.query(InterviewStory)
+        .filter(InterviewStory.user_id == user.id, InterviewStory.is_active == 1)
+        .order_by(InterviewStory.updated_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": s.id,
+            "title": s.title,
+            "project_name": s.project_name,
+            "situation": s.situation,
+            "task": s.task,
+            "action": s.action,
+            "result": s.result,
+            "reflection": s.reflection,
+            "tags": s.tags or [],
+            "seniority": s.seniority,
+            "created_at": s.created_at.isoformat() if s.created_at else "",
+            "updated_at": s.updated_at.isoformat() if s.updated_at else "",
+        }
+        for s in stories
+    ]
+
+
+@app.post("/api/stories", status_code=201)
+def create_story(
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Create a new STAR+R story."""
+    from models import InterviewStory
+
+    title = sanitize_user_input(body.get("title", "")).strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+
+    # Validate tags
+    tags = body.get("tags", [])
+    if not isinstance(tags, list):
+        tags = []
+    tags = [t for t in tags if t in STORY_TAGS]
+
+    seniority = body.get("seniority", "mid")
+    if seniority not in ("junior", "mid", "senior", "staff"):
+        seniority = "mid"
+
+    story = InterviewStory(
+        user_id=user.id,
+        title=title,
+        project_name=sanitize_user_input(body.get("project_name", "")),
+        situation=sanitize_user_input(body.get("situation", "")),
+        task=sanitize_user_input(body.get("task", "")),
+        action=sanitize_user_input(body.get("action", "")),
+        result=sanitize_user_input(body.get("result", "")),
+        reflection=sanitize_user_input(body.get("reflection", "")),
+        tags=tags,
+        seniority=seniority,
+    )
+    db.add(story)
+    db.commit()
+    db.refresh(story)
+
+    return {"id": story.id, "message": "Story created"}
+
+
+@app.put("/api/stories/{story_id}")
+def update_story(
+    story_id: int,
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Update an existing story."""
+    from models import InterviewStory
+
+    story = (
+        db.query(InterviewStory)
+        .filter(InterviewStory.id == story_id, InterviewStory.user_id == user.id, InterviewStory.is_active == 1)
+        .first()
+    )
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+
+    updatable = ("title", "project_name", "situation", "task", "action", "result", "reflection")
+    for field in updatable:
+        if field in body:
+            setattr(story, field, sanitize_user_input(body[field]))
+
+    if "tags" in body:
+        tags = body["tags"]
+        if isinstance(tags, list):
+            story.tags = [t for t in tags if t in STORY_TAGS]
+
+    if "seniority" in body and body["seniority"] in ("junior", "mid", "senior", "staff"):
+        story.seniority = body["seniority"]
+
+    db.commit()
+    return {"id": story.id, "message": "Story updated"}
+
+
+@app.delete("/api/stories/{story_id}")
+def delete_story(
+    story_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Soft-delete a story."""
+    from models import InterviewStory
+
+    story = (
+        db.query(InterviewStory)
+        .filter(InterviewStory.id == story_id, InterviewStory.user_id == user.id, InterviewStory.is_active == 1)
+        .first()
+    )
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+
+    story.is_active = 0
+    db.commit()
+    return {"message": "Story deleted"}
+
+
+@app.get("/api/stories/suggest/{job_id}")
+def suggest_stories_for_job(
+    job_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Suggest which stories to prep based on a job description's behavioral signals."""
+    from models import InterviewStory
+
+    job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    stories = (
+        db.query(InterviewStory)
+        .filter(InterviewStory.user_id == user.id, InterviewStory.is_active == 1)
+        .all()
+    )
+    if not stories:
+        return {"suggestions": [], "detected_tags": [], "message": "No stories yet. Create some first!"}
+
+    # Detect behavioral signals from JD
+    jd_text = (job.description or "").lower()
+    tag_keywords = {
+        "motivation": ["passion", "driven", "motivated", "mission", "purpose", "impact"],
+        "proactiveness": ["initiative", "proactive", "self-starter", "ownership", "autonomous"],
+        "ambiguity": ["ambiguous", "unstructured", "fast-paced", "startup", "greenfield", "undefined"],
+        "perseverance": ["resilient", "challenge", "obstacle", "pressure", "deadline", "persist"],
+        "conflict_resolution": ["conflict", "stakeholder", "negotiate", "disagree", "alignment", "cross-functional"],
+        "empathy": ["empathy", "user-centric", "customer", "inclusive", "diversity", "mentor"],
+        "growth": ["learn", "grow", "feedback", "continuous improvement", "adapt", "mentor"],
+        "communication": ["communicate", "present", "write", "collaborate", "cross-functional", "influence"],
+    }
+
+    detected_tags: list[str] = []
+    for tag, keywords in tag_keywords.items():
+        if any(kw in jd_text for kw in keywords):
+            detected_tags.append(tag)
+
+    # Rank stories by tag overlap
+    suggestions = []
+    for story in stories:
+        story_tags = set(story.tags or [])
+        overlap = story_tags & set(detected_tags)
+        if overlap:
+            suggestions.append({
+                "story_id": story.id,
+                "title": story.title,
+                "project_name": story.project_name,
+                "matching_tags": sorted(overlap),
+                "match_count": len(overlap),
+                "tags": story.tags or [],
+            })
+
+    suggestions.sort(key=lambda s: s["match_count"], reverse=True)
+
+    # Also suggest unmatched stories if user has few
+    unmatched = [
+        {"story_id": s.id, "title": s.title, "project_name": s.project_name, "tags": s.tags or [], "matching_tags": [], "match_count": 0}
+        for s in stories
+        if not (set(s.tags or []) & set(detected_tags))
+    ]
+
+    return {
+        "suggestions": suggestions,
+        "other_stories": unmatched,
+        "detected_tags": detected_tags,
+        "job_title": job.title,
+    }
+
+
+@app.post("/api/stories/{story_id}/use")
+def record_story_usage(
+    story_id: int,
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Record that a story was used for a specific job interview."""
+    from models import InterviewStory, StoryUsage
+
+    story = (
+        db.query(InterviewStory)
+        .filter(InterviewStory.id == story_id, InterviewStory.user_id == user.id, InterviewStory.is_active == 1)
+        .first()
+    )
+    if not story:
+        raise HTTPException(status_code=404, detail="Story not found")
+
+    usage = StoryUsage(
+        story_id=story_id,
+        job_id=body.get("job_id"),
+        user_id=user.id,
+        question_asked=sanitize_user_input(body.get("question_asked", "")),
+        notes=sanitize_user_input(body.get("notes", "")),
+    )
+    db.add(usage)
+    db.commit()
+    return {"message": "Usage recorded"}
+
+
+@app.get("/api/stories/tags")
+def get_story_tags() -> dict:
+    """Return available behavioral tags with descriptions."""
+    return {
+        "tags": [
+            {"id": "motivation", "label": "Motivation", "description": "What drives you, passion for impact"},
+            {"id": "proactiveness", "label": "Proactiveness", "description": "Taking initiative without being told"},
+            {"id": "ambiguity", "label": "Ambiguity", "description": "Owning unstructured problems"},
+            {"id": "perseverance", "label": "Perseverance", "description": "Pushing through blockers and setbacks"},
+            {"id": "conflict_resolution", "label": "Conflict Resolution", "description": "Handling difficult people or situations"},
+            {"id": "empathy", "label": "Empathy", "description": "Understanding others' perspectives"},
+            {"id": "growth", "label": "Growth", "description": "Learning from mistakes, self-awareness"},
+            {"id": "communication", "label": "Communication", "description": "Clarity, cross-functional collaboration"},
+        ]
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # RESUME SCORING
 # ═════════════════════════════════════════════════════════════════════════════
 

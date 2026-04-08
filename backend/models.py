@@ -226,6 +226,59 @@ class ResumeVersion(Base):
     )
 
 
+class InterviewStory(Base):
+    """
+    STAR+R story bank for interview prep.
+    Users build reusable stories tagged with behavioral categories.
+    """
+    __tablename__ = "interview_stories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+
+    # Identity
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    project_name: Mapped[str] = mapped_column(String(300), default="")
+
+    # STAR+R fields
+    situation: Mapped[str] = mapped_column(Text, default="")
+    task: Mapped[str] = mapped_column(Text, default="")
+    action: Mapped[str] = mapped_column(Text, default="")
+    result: Mapped[str] = mapped_column(Text, default="")
+    reflection: Mapped[str] = mapped_column(Text, default="")
+
+    # Tagging — JSON array from 8 behavioral categories:
+    # motivation, proactiveness, ambiguity, perseverance,
+    # conflict_resolution, empathy, growth, communication
+    tags: Mapped[list | None] = mapped_column(JSON, default=list)
+
+    # Target seniority level
+    seniority: Mapped[str] = mapped_column(String(20), default="mid")  # junior|mid|senior|staff
+
+    # Soft delete
+    is_active: Mapped[bool] = mapped_column(Integer, default=1)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    __table_args__ = (
+        Index("ix_interview_stories_user", "user_id"),
+    )
+
+
+class StoryUsage(Base):
+    """Tracks which stories were used for which job interviews."""
+    __tablename__ = "story_usages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    story_id: Mapped[int] = mapped_column(Integer, ForeignKey("interview_stories.id"), nullable=False)
+    job_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("scraped_jobs.id"), nullable=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    question_asked: Mapped[str] = mapped_column(Text, default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
 class UsageLog(Base):
     __tablename__ = "usage_logs"
 
