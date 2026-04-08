@@ -4030,6 +4030,11 @@ def resume_chat_step(
 
         resume_text = content.strip()
         word_count = len(resume_text.split())
+
+        # Reject if the LLM returned a follow-up question instead of a resume
+        if word_count < 40:
+            return {"resume_text": "", "word_count": 0}
+
         return {"resume_text": resume_text, "word_count": word_count}
 
     # ── Chat mode: guide user through resume building ─────────────────
@@ -4148,9 +4153,9 @@ def resume_chat_step(
     else:
         stage = "done"
 
-    # Fallback: if user has answered 5+ questions, allow generation even if
-    # the LLM forgot to include [READY] (covers name + role + 1 job + achievements + education)
-    if not ready_to_generate and user_msg_count >= 5:
+    # Fallback: if user has answered 8+ questions, allow generation even if
+    # the LLM forgot to include [READY] (by message 8 they're past education/skills)
+    if not ready_to_generate and user_msg_count >= 8:
         ready_to_generate = True
 
     return {
