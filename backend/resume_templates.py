@@ -32,6 +32,57 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 log = logging.getLogger("jobhunter.docx")
 
 
+# ── ATS Unicode Normalization ─────────────────────────────────────────────────
+# Many ATS systems (Workday, Taleo, Greenhouse) only handle basic ASCII.
+# Smart quotes, em dashes, non-breaking spaces, and zero-width characters
+# cause garbled text or failed keyword matching in these systems.
+
+_ATS_REPLACEMENTS: list[tuple[str, str]] = [
+    # Dashes
+    ("\u2013", "-"),   # en dash
+    ("\u2014", "-"),   # em dash
+    ("\u2015", "-"),   # horizontal bar
+    ("\u2212", "-"),   # minus sign
+    # Quotes
+    ("\u2018", "'"),   # left single quote
+    ("\u2019", "'"),   # right single quote / apostrophe
+    ("\u201A", "'"),   # single low-9 quote
+    ("\u201C", '"'),   # left double quote
+    ("\u201D", '"'),   # right double quote
+    ("\u201E", '"'),   # double low-9 quote
+    ("\u2039", "'"),   # single left angle quote
+    ("\u203A", "'"),   # single right angle quote
+    ("\u00AB", '"'),   # left double angle quote
+    ("\u00BB", '"'),   # right double angle quote
+    # Spaces
+    ("\u00A0", " "),   # non-breaking space
+    ("\u2002", " "),   # en space
+    ("\u2003", " "),   # em space
+    ("\u2009", " "),   # thin space
+    # Bullets / symbols
+    ("\u2022", "-"),   # bullet (replaced with hyphen for plain-text ATS)
+    ("\u2023", "-"),   # triangular bullet
+    ("\u25CF", "-"),   # black circle
+    ("\u25CB", "-"),   # white circle
+    ("\u25AA", "-"),   # black small square
+    # Ellipsis
+    ("\u2026", "..."), # horizontal ellipsis
+]
+
+# Zero-width / invisible characters to strip entirely
+_ATS_STRIP_RE = re.compile(
+    "[\u200B\u200C\u200D\u200E\u200F\uFEFF\u00AD\u2060\u034F]"
+)
+
+
+def normalize_for_ats(text: str) -> str:
+    """Replace Unicode characters that break ATS keyword matching with safe ASCII."""
+    for unicode_char, ascii_char in _ATS_REPLACEMENTS:
+        text = text.replace(unicode_char, ascii_char)
+    text = _ATS_STRIP_RE.sub("", text)
+    return text
+
+
 TEMPLATES = {
     "classic": {
         "name": "Classic",
@@ -433,6 +484,9 @@ def generate_docx(
     config = TEMPLATES.get(template_id, TEMPLATES["modern"])
     doc = Document()
     _setup_styles(doc, config)
+
+    # Normalize Unicode for ATS compatibility before processing
+    resume_text = normalize_for_ats(resume_text)
 
     # Parse resume into sections early so we can infer header details
     sections = _parse_sections(resume_text)

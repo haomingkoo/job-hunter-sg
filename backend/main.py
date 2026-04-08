@@ -4510,7 +4510,8 @@ def download_resume_pdf(
 
 def _parse_sections_for_pdf(text: str) -> list[dict]:
     """Parse resume text into sections for HTML rendering."""
-    from resume_templates import _parse_sections
+    from resume_templates import _parse_sections, normalize_for_ats
+    text = normalize_for_ats(text)
     raw = _parse_sections(text)
     result = []
     for key, content in raw.items():
