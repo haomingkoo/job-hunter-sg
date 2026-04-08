@@ -2363,14 +2363,6 @@ CERTIFICATIONS
                       <Sparkles size={16} />
                       Generate My Resume
                     </button>
-                    <button
-                      type="button"
-                      disabled={chatLoading}
-                      onClick={generateWithWhatWeHave}
-                      className="text-xs text-[#6A89A7] hover:text-[#384959] underline underline-offset-2 transition disabled:opacity-50"
-                    >
-                      or just draft with what I have
-                    </button>
                   </div>
                 ) : chatMessages.filter((m) => m.role === "user").length === 0 ? (
                   <button
