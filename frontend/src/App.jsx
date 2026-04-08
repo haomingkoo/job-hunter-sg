@@ -14,6 +14,7 @@ import TrackerTab from "./components/TrackerTab.jsx";
 import AnalyticsTab from "./components/AnalyticsTab.jsx";
 import RemindersTab from "./components/RemindersTab.jsx";
 import AccountTab from "./components/AccountTab.jsx";
+import StoriesTab from "./components/StoriesTab.jsx";
 import TierBadge from "./components/TierBadge.jsx";
 import ResumeTab from "./components/ResumeTab.jsx";
 
@@ -269,6 +270,13 @@ export default function JobHunterSG() {
                 )
               )}
               {activeTab === "resume" && <ResumeTab selectedJob={selectedJob} user={user} setActiveTab={navigateTo} />}
+              {activeTab === "stories" && (
+                user ? (
+                  <StoriesTab user={user} />
+                ) : (
+                  <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Interview Story Bank" />
+                )
+              )}
               {activeTab === "account" && (
                 user ? (
                   <AccountTab user={user} onLogout={handleLogout} />
