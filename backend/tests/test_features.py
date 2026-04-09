@@ -316,6 +316,25 @@ class TestResumeParser:
         assert lines[0].strip() == "EXECUTIVE SUMMARY"
         assert lines[1].startswith("Transformation leader")
 
+    def test_extract_text_from_chars_clusters_nearby_tops_into_one_line(self):
+        """Small top offsets on the same visual line should not split the line."""
+        from resume_parser import _extract_text_from_chars
+
+        page = SimpleNamespace(chars=[
+            {"text": "Bachelor", "x0": 0.0, "x1": 8.0, "top": 251.29},
+            {"text": "of", "x0": 10.0, "x1": 12.0, "top": 251.29},
+            {"text": "Science,", "x0": 14.0, "x1": 21.0, "top": 249.27},
+            {"text": "Aug", "x0": 40.0, "x1": 43.0, "top": 249.27},
+            {"text": "2018", "x0": 45.0, "x1": 49.0, "top": 249.27},
+            {"text": "Major", "x0": 0.0, "x1": 5.0, "top": 261.22},
+        ])
+
+        result = _extract_text_from_chars(page)
+        lines = result.splitlines()
+
+        assert lines[0] == "Bachelor of Science, Aug 2018"
+        assert lines[1] == "Major"
+
     def test_name_detection(self):
         """parse_resume metadata should extract a name from the first lines."""
         from resume_parser import parse_resume

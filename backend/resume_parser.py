@@ -235,6 +235,37 @@ def _has_missing_spaces(text: str) -> bool:
     return long_words > len(words) * 0.15
 
 
+def _cluster_items_into_lines(items: list[dict], tolerance: float = 3.0) -> list[tuple[float, list[dict]]]:
+    """Group positioned PDF items into visual lines using a top-position tolerance.
+
+    Some PDFs render parts of the same line a couple of points apart vertically
+    (for example a degree title and its right-aligned date). Rounding `top`
+    values can split those into separate lines, so we cluster nearby positions
+    instead.
+    """
+    clusters: list[dict] = []
+    for item in sorted(items, key=lambda current: float(current["top"])):
+        top = float(item["top"])
+        best_cluster = None
+        best_diff = None
+
+        for cluster in clusters:
+            diff = abs(top - cluster["top"])
+            if diff <= tolerance and (best_diff is None or diff < best_diff):
+                best_cluster = cluster
+                best_diff = diff
+
+        if best_cluster is None:
+            clusters.append({"top": top, "items": [item]})
+            continue
+
+        best_cluster["items"].append(item)
+        count = len(best_cluster["items"])
+        best_cluster["top"] = ((best_cluster["top"] * (count - 1)) + top) / count
+
+    return [(cluster["top"], cluster["items"]) for cluster in clusters]
+
+
 def _extract_text_from_chars(page) -> str:
     """Reconstruct text from character-level positions when extract_text() fails.
 
@@ -246,12 +277,6 @@ def _extract_text_from_chars(page) -> str:
     if not chars:
         return ""
 
-    # Group chars into lines by top position (within 3pt tolerance)
-    lines: dict[float, list] = {}
-    for c in chars:
-        top = round(float(c["top"]) / 3) * 3  # bucket by ~3pt
-        lines.setdefault(top, []).append(c)
-
     # Determine typical character width for space threshold.
     # Use 15% of avg char width (not 35%) to catch tight LaTeX word spacing
     # (typically 1.5-3pt gaps). Within-word char gaps are ~0pt, so 15% is safe.
@@ -260,13 +285,13 @@ def _extract_text_from_chars(page) -> str:
     space_threshold = avg_width * 0.15  # gap > 15% of avg char width = space
 
     result_lines = []
-    for top in sorted(lines.keys()):
-        line_chars = sorted(lines[top], key=lambda c: float(c["x0"]))
+    for _, line_items in sorted(_cluster_items_into_lines(chars), key=lambda line: line[0]):
+        line_chars = sorted(line_items, key=lambda c: float(c["x0"]))
         text = ""
-        prev_x1 = 0.0
+        prev_x1 = None
         for c in line_chars:
-            gap = float(c["x0"]) - prev_x1
-            if prev_x1 > 0 and gap > space_threshold:
+            gap = float(c["x0"]) - prev_x1 if prev_x1 is not None else 0.0
+            if prev_x1 is not None and gap > space_threshold:
                 text += " "
             text += c["text"]
             prev_x1 = float(c["x1"])
