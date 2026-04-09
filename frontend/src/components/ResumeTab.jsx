@@ -561,6 +561,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   }, [bulletSections, selectedBulletId]);
 
   useEffect(() => {
+    setSelectedInjectKeyword(null);
+  }, [selectedBulletId, selectedJob?.id]);
+
+  useEffect(() => {
     if (selectedSectionId && !parsedSections.some((section) => section.id === selectedSectionId)) {
       setSelectedSectionId(null);
     }
@@ -571,6 +575,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       selectedFeedbackRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }, [selectedBullet]);
+
+  useEffect(() => {
+    setActiveSuggestionHint(null);
+  }, [selectedJob?.id]);
 
   // Close keyword insert popup when resume text changes or job changes
   useEffect(() => {
@@ -2985,6 +2993,7 @@ CERTIFICATIONS
                       key={item.id}
                       type="button"
                       onClick={() => {
+                        setSelectedInjectKeyword(null);
                         setActiveSuggestionHint(isActive ? null : item);
                         setMobilePanel("feedback");
                       }}
@@ -3351,7 +3360,10 @@ CERTIFICATIONS
                               key={label}
                               type="button"
                               title={label}
-                              onClick={() => setSelectedInjectKeyword(active ? null : label)}
+                              onClick={() => {
+                                setActiveSuggestionHint(null);
+                                setSelectedInjectKeyword(active ? null : label);
+                              }}
                               className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
                                 active
                                   ? "border-indigo-400 bg-indigo-600 text-white"
@@ -5055,7 +5067,7 @@ CERTIFICATIONS
                 <button
                   type="button"
                   onClick={() => {
-                    handleBulletRewrite(mobileBulletSheet);
+                    handleBulletRewrite(mobileBulletSheet, undefined, activeSuggestionHint);
                   }}
                   disabled={rewriteLoading[mobileBulletSheet?.id]}
                   className="flex-1 rounded-xl bg-[#384959] min-h-[44px] py-3 text-sm font-medium text-white hover:bg-[#2d3a47] transition disabled:opacity-50"
