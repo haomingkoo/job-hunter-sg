@@ -318,6 +318,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [chatReady, setChatReady] = useState(false);
   const [chatStage, setChatStage] = useState("contact");
   const [chatError, setChatError] = useState("");
+  const [activeSuggestionHint, setActiveSuggestionHint] = useState(null);
   const chatEndRef = useRef(null);
 
   const openMobileFeedbackPanel = useCallback((targetRef = scorePanelRef) => {
@@ -1023,7 +1024,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     }
   };
 
-  const handleBulletRewrite = async (section, activeTabId = selectedBulletTab) => {
+  const handleBulletRewrite = async (section, activeTabId = selectedBulletTab, suggestionHint = null) => {
     if (!section?.text) return;
 
     setRewriteLoading((current) => ({ ...current, [section.id]: true }));
@@ -1032,6 +1033,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     const activeFocusTab = sectionTabs.find((tab) => tab.id === activeTabId) || sectionTabs.find((tab) => tab.status === "issue") || sectionTabs[0] || null;
     const rewriteFocus = getBulletRewriteFocus(section, resumeText, activeTabId);
     const focusedFeedback = buildFocusedFeedbackContext(activeFocusTab, sectionTabs);
+    const hintContext = suggestionHint
+      ? `\nSUGGESTION TO INCORPORATE: ${suggestionHint.title}. ${suggestionHint.detail || ""} Naturally weave in relevant keywords or competencies from this suggestion if they fit the bullet's context.`
+      : "";
     const usedVerbs = bulletSections
       .filter((candidate) => candidate.id !== section.id && candidate.type === "bullet")
       .map((candidate) => candidate.text.split(/\s+/)[0]?.toLowerCase().replace(/[,:;.]$/, ""))
@@ -1048,7 +1052,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           session_id: sessionId,
           used_verbs: usedVerbs,
           rewrite_focus: rewriteFocus,
-          focused_feedback: focusedFeedback,
+          focused_feedback: focusedFeedback + hintContext,
         }),
       });
       const data = await response.json();
@@ -1065,6 +1069,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           focused_feedback: focusedFeedback,
         },
       }));
+      if (suggestionHint) setActiveSuggestionHint(null);
       openMobileFeedbackPanel(selectedFeedbackRef);
     } catch (err) {
       setCoachError(
@@ -2401,7 +2406,7 @@ CERTIFICATIONS
                     try {
                       const resp = await apiFetch("/api/ai/resume-chat", {
                         method: "POST",
-                        body: JSON.stringify({ messages: nextMessages, action: "chat" }),
+                        body: JSON.stringify({ messages: nextMessages, action: chatReady ? "refine" : "chat" }),
                       });
                       const data = await resp.json();
                       setChatMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
@@ -2941,18 +2946,28 @@ CERTIFICATIONS
                     );
                   }
 
+                  const isActive = activeSuggestionHint?.id === item.id;
                   return (
-                    <div key={item.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveSuggestionHint(isActive ? null : item);
+                        setMobilePanel("feedback");
+                      }}
+                      className={`w-full rounded-2xl border px-3 py-3 text-left transition hover:shadow-sm ${isActive ? "border-indigo-300 bg-indigo-50" : "border-slate-200 bg-slate-50 hover:border-indigo-200 hover:bg-indigo-50/50"}`}
+                    >
                       <div className="flex items-center justify-between gap-3">
                         <div className="text-sm font-semibold text-[#384959]">{item.title}</div>
                         {item.points > 0 && (
-                          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-indigo-700">
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${isActive ? "bg-indigo-600 text-white" : "bg-indigo-100 text-indigo-700"}`}>
                             +{item.points}
                           </span>
                         )}
                       </div>
                       <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{item.detail}</div>
-                    </div>
+                      {isActive && <div className="mt-2 text-[10px] font-medium text-indigo-600">Active - select a bullet and rewrite to apply</div>}
+                    </button>
                   );
                 }) : (
                   <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
@@ -3279,9 +3294,18 @@ CERTIFICATIONS
                     )}
                   </>
                 )}
+                {activeSuggestionHint && (
+                  <div className="flex items-start justify-between gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-3">
+                    <div>
+                      <div className="text-xs font-semibold text-indigo-700">Hint active: {activeSuggestionHint.title}</div>
+                      <div className="mt-0.5 text-xs leading-relaxed text-indigo-600">{activeSuggestionHint.detail}</div>
+                    </div>
+                    <button type="button" onClick={() => setActiveSuggestionHint(null)} className="shrink-0 text-indigo-400 hover:text-indigo-600">✕</button>
+                  </div>
+                )}
                 <button
                   type="button"
-                  onClick={() => handleBulletRewrite(selectedBullet, activeBulletTab?.id)}
+                  onClick={() => handleBulletRewrite(selectedBullet, activeBulletTab?.id, activeSuggestionHint)}
                   disabled={rewriteLoading[selectedBullet.id]}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-black disabled:opacity-50"
                 >

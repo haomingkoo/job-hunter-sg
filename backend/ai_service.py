@@ -152,6 +152,46 @@ def _track_success() -> None:
         _failure_count = 0
 
 
+# ── UK/Singapore English post-processing ──────────────────────────────────────
+
+_UK_SPELLING_MAP: dict[str, str] = {
+    "optimized": "optimised", "organized": "organised", "recognized": "recognised",
+    "specialized": "specialised", "customized": "customised", "utilized": "utilised",
+    "analyzed": "analysed", "prioritized": "prioritised", "standardized": "standardised",
+    "minimized": "minimised", "maximized": "maximised", "mobilized": "mobilised",
+    "modernized": "modernised", "synchronized": "synchronised", "categorized": "categorised",
+    "emphasized": "emphasised", "initialized": "initialised", "finalized": "finalised",
+    "centralized": "centralised", "authorized": "authorised", "stabilized": "stabilised",
+    "localized": "localised", "formalized": "formalised", "generalized": "generalised",
+    "optimizing": "optimising", "organizing": "organising", "utilizing": "utilising",
+    "analyzing": "analysing", "prioritizing": "prioritising", "synchronizing": "synchronising",
+    "emphasizing": "emphasising", "finalizing": "finalising", "authorizing": "authorising",
+    "optimization": "optimisation", "organization": "organisation", "recognition": "recognition",
+    "specialization": "specialisation", "customization": "customisation",
+    "utilization": "utilisation", "analysis": "analysis",  # same
+    "behavior": "behaviour", "behaviors": "behaviours",
+    "fulfillment": "fulfilment", "enrollment": "enrolment",
+}
+
+import re as _re_uk
+
+
+def _replace_preserving_case(text: str, american: str, british: str) -> str:
+    def replacer(m: "_re_uk.Match") -> str:
+        word = m.group(0)
+        if word[0].isupper():
+            return british[0].upper() + british[1:]
+        return british
+    return _re_uk.sub(r"\b" + _re_uk.escape(american) + r"\b", replacer, text, flags=_re_uk.IGNORECASE)
+
+
+def apply_uk_spelling(text: str) -> str:
+    """Convert American English spelling to British/Singapore English in AI-generated text."""
+    for american, british in _UK_SPELLING_MAP.items():
+        text = _replace_preserving_case(text, american, british)
+    return text
+
+
 def get_ai_health() -> dict:
     """Internal health status for monitoring."""
     return {
@@ -452,7 +492,7 @@ Keep it conversational — like you're sitting across from them at a coffee shop
         return None
 
     return {
-        "coaching": content,
+        "coaching": apply_uk_spelling(content),
         "model": "AI",
         "provider": "AI Singapore",
     }
@@ -552,7 +592,7 @@ Return EXACTLY this format (3 lines, nothing else):
         if cleaned and len(cleaned) > 10:
             options.append(cleaned)
 
-    return options[:3] if options else [content.strip()]
+    return [apply_uk_spelling(o) for o in (options[:3] if options else [content.strip()])]
 
 
 def prep_interview(resume_text: str, job_description: str) -> Optional[str]:
