@@ -490,7 +490,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     try {
       const response = await apiFetch("/api/resume/score", {
         method: "POST",
-        body: JSON.stringify({ resume_text: text, job_description: jd, template_id: selectedTemplate }),
+        body: JSON.stringify({ resume_text: text, job_description: (jd || "").slice(0, 8000), template_id: selectedTemplate }),
       });
       const data = await response.json();
       const normalized = normalizeScoreData(data);
