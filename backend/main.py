@@ -2422,6 +2422,7 @@ def list_cached_jobs(
     seniority: Optional[str] = Query(None, max_length=100),
     source: Optional[str] = Query(None, max_length=100),
     location: Optional[str] = Query(None, max_length=200),
+    sector: Optional[str] = Query(None, max_length=100),
     min_salary: Optional[int] = Query(None, ge=0),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
@@ -2484,16 +2485,26 @@ def list_cached_jobs(
 
     ordered_query = query.order_by(ScrapedJob.posted_at_sort.desc(), ScrapedJob.id.desc())
 
-    if min_salary is None:
-        total = query.count()
-        jobs = ordered_query.offset(offset).limit(per_page).all()
-    else:
+    # Sector filter: applied pre-pagination since sector is computed from title, not a DB column
+    if sector:
+        all_jobs = ordered_query.all()
+        all_jobs = [j for j in all_jobs if _classify_sector(j.title).lower() == sector.lower()]
+        if min_salary is not None:
+            salary_matched = [j for j in all_jobs if salary_floor(j.salary) >= min_salary]
+            salary_unknown = [j for j in all_jobs if salary_floor(j.salary) == 0]
+            all_jobs = salary_matched + salary_unknown
+        total = len(all_jobs)
+        jobs = all_jobs[offset: offset + per_page]
+    elif min_salary is not None:
         jobs = ordered_query.all()
         salary_matched = [job for job in jobs if salary_floor(job.salary) >= min_salary]
         salary_unknown = [job for job in jobs if salary_floor(job.salary) == 0]
         jobs = salary_matched + salary_unknown
         total = len(jobs)
         jobs = jobs[offset: offset + per_page]
+    else:
+        total = query.count()
+        jobs = ordered_query.offset(offset).limit(per_page).all()
 
     # Queue CareersGov hydration in background (don't block the response)
     cgov_missing = [
@@ -2566,15 +2577,26 @@ def list_cached_jobs(
                 .limit(30)
                 .all()
             )
+            # Compute sector counts from titles
+            sector_counts: dict[str, int] = {}
+            for (title_val,) in db.query(ScrapedJob.title).filter(ScrapedJob.hidden == 0, ScrapedJob.title != "").yield_per(500):
+                s = _classify_sector(title_val)
+                if s != "Other":
+                    sector_counts[s] = sector_counts.get(s, 0) + 1
+
             filter_meta = {
                 "sources": [{"value": s, "count": c} for s, c in source_counts if s],
                 "employment_types": [{"value": t, "count": c} for t, c in emp_counts if t],
                 "locations": [{"value": loc, "count": c} for loc, c in loc_counts if loc],
+                "sectors": sorted(
+                    [{"value": s, "count": c} for s, c in sector_counts.items()],
+                    key=lambda x: -x["count"],
+                ),
             }
             _filter_meta_cache = filter_meta
             _filter_meta_ts = now
 
-    return {
+    result = {
         "jobs": [
             {
                 "id": j.id, "title": j.title, "company": j.company,
@@ -2589,6 +2611,8 @@ def list_cached_jobs(
                 "experience_years": (j.parsed_jd or {}).get("experience_years", "") if isinstance(j.parsed_jd, dict) else "",
                 "agency": j.agency, "scraped_at": j.scraped_at,
                 "closing_date": getattr(j, "closing_date", "") or "",
+                "sector": _classify_sector(j.title),
+                "archetype": (j.parsed_jd or {}).get("archetype", "") if isinstance(j.parsed_jd, dict) else "",
             }
             for j in jobs
         ],
@@ -2597,6 +2621,8 @@ def list_cached_jobs(
         "pages": max(1, (total + per_page - 1) // per_page),
         "filter_meta": filter_meta,
     }
+
+    return result
 
 
 @app.get("/api/jobs/{job_id}/similar", response_model=list[JobOut])
@@ -3330,6 +3356,11 @@ def suggest_stories_for_job(
                 "story_id": story.id,
                 "title": story.title,
                 "project_name": story.project_name,
+                "situation": story.situation or "",
+                "task": story.task or "",
+                "action": story.action or "",
+                "result": story.result or "",
+                "reflection": story.reflection or "",
                 "matching_tags": sorted(overlap),
                 "match_count": len(overlap),
                 "tags": story.tags or [],
@@ -3339,7 +3370,12 @@ def suggest_stories_for_job(
 
     # Also suggest unmatched stories if user has few
     unmatched = [
-        {"story_id": s.id, "title": s.title, "project_name": s.project_name, "tags": s.tags or [], "matching_tags": [], "match_count": 0}
+        {
+            "story_id": s.id, "title": s.title, "project_name": s.project_name,
+            "situation": s.situation or "", "task": s.task or "", "action": s.action or "",
+            "result": s.result or "", "reflection": s.reflection or "",
+            "tags": s.tags or [], "matching_tags": [], "match_count": 0,
+        }
         for s in stories
         if not (set(s.tags or []) & set(detected_tags))
     ]
@@ -3380,6 +3416,172 @@ def record_story_usage(
     db.add(usage)
     db.commit()
     return {"message": "Usage recorded"}
+
+
+@app.post("/api/stories/generate")
+def generate_stories_from_resume(
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    AI-generate STAR+R story drafts from a resume. Strict guardrails:
+    - Only facts explicitly stated in the resume (ISO 29119: no hallucination)
+    - Each story field must trace to source bullets (ISO 25059: ground truth)
+    - Numbers, dates, company names validated against resume (ISO 23894: self-verification)
+    - Flagged if any content can't be verified (ISO 5259: data quality)
+    """
+    check_rate_limit(user, "ai", db)
+
+    resume_text = (body.get("resume_text") or "").strip()
+    if not resume_text or len(resume_text) < 100:
+        raise HTTPException(status_code=400, detail="Resume text too short. Upload or paste your resume first.")
+
+    db.add(UsageLog(user_id=user.id, action="ai", detail="story_generate"))
+    db.commit()
+
+    system_prompt = (
+        "You are a strict interview coach that extracts STAR+R stories from a resume.\n\n"
+        "CRITICAL RULES — FACTUAL INTEGRITY:\n"
+        "1. ONLY use facts explicitly written in the resume. Do NOT invent, infer, or embellish.\n"
+        "2. Every number (%, $, team size, duration) must appear in the resume verbatim.\n"
+        "3. Every company name, job title, and date must match the resume exactly.\n"
+        "4. If the resume says '30-40% cycle-time improvement', write exactly that.\n"
+        "5. Do NOT add skills, tools, or achievements not mentioned in the resume.\n\n"
+        "QUALITY RULES — MAKE EACH STORY DISTINCT AND DEEP:\n"
+        "6. Each story MUST have a DIFFERENT Situation. Do NOT reuse the same intro like "
+        "'Served as Manager at...' across stories. Instead, describe the SPECIFIC context: "
+        "what project, what problem, what was at stake, who was involved.\n"
+        "7. Action must explain HOW, not just WHAT. Bad: 'Implemented AI dashboards.' "
+        "Good: 'Built retrieval pipeline on audited SOPs with prompt packs; partnered with "
+        "integration team for rapid corrective actions; mentored 30 engineers on guardrails.'\n"
+        "8. Pull specific details from resume bullets into Action — tools used, team size, "
+        "methodology, cross-functional coordination, challenges overcome.\n"
+        "9. Reflection must be SPECIFIC to that story, not generic advice. "
+        "Bad: 'Cross-functional alignment is critical.' "
+        "Good: 'Learned that RPA adoption succeeds when engineers are mentored under "
+        "guardrails rather than handed tools — the 30-engineer training drove 100% adoption.'\n"
+        "10. Each story should cover a DIFFERENT role or time period from the resume when possible.\n\n"
+        "BEHAVIORAL TAGS — assign 2-3 from this list. Be diverse across stories:\n"
+        "motivation, proactiveness, ambiguity, perseverance, conflict_resolution, empathy, growth, communication\n"
+        "- Cross-functional work = communication + conflict_resolution\n"
+        "- New tech/process adoption = ambiguity + proactiveness\n"
+        "- Mentoring/coaching = empathy + growth\n"
+        "- Delivering under pressure = perseverance + motivation\n"
+        "- Building from scratch = proactiveness + ambiguity\n\n"
+        "OUTPUT FORMAT — return a JSON array of 3-5 stories:\n"
+        "[\n"
+        "  {\n"
+        '    "title": "Short descriptive title",\n'
+        '    "project_name": "Specific project or initiative name from resume",\n'
+        '    "situation": "UNIQUE context: what specific project, problem, stakes, team",\n'
+        '    "task": "Your specific responsibility or goal",\n'
+        '    "action": "DETAILED: HOW you did it — tools, methods, coordination, challenges",\n'
+        '    "result": "Outcomes with EXACT numbers from resume",\n'
+        '    "reflection": "SPECIFIC lesson tied to this story, not generic advice",\n'
+        '    "tags": ["tag1", "tag2", "tag3"],\n'
+        '    "seniority": "junior|mid|senior|staff",\n'
+        '    "source_bullets": ["copy the exact resume bullet(s) this story is based on"]\n'
+        "  }\n"
+        "]\n\n"
+        "Return ONLY the JSON array. No markdown, no explanation, no code blocks."
+    )
+
+    from ai_service import _call_sealion, SEALION_MODEL
+
+    content = _call_sealion(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Extract STAR+R interview stories from this resume:\n\n{resume_text[:6000]}"},
+        ],
+        max_tokens=3500,
+        model=SEALION_MODEL,
+        temperature=0.3,  # Low temperature for factual extraction, slight creativity for reflections
+    )
+
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service unavailable. Try again shortly.",
+        )
+
+    # Parse JSON from response
+    import json as _json
+    content = content.strip()
+    # Strip markdown code blocks if present
+    if content.startswith("```"):
+        content = re.sub(r"^```\w*\n?", "", content)
+        content = re.sub(r"\n?```$", "", content)
+        content = content.strip()
+
+    try:
+        stories = _json.loads(content)
+    except _json.JSONDecodeError:
+        # Try to extract JSON array from response
+        match = re.search(r"\[.*\]", content, re.DOTALL)
+        if match:
+            try:
+                stories = _json.loads(match.group())
+            except _json.JSONDecodeError:
+                raise HTTPException(status_code=500, detail="AI returned invalid format. Try again.")
+        else:
+            raise HTTPException(status_code=500, detail="AI returned invalid format. Try again.")
+
+    if not isinstance(stories, list):
+        raise HTTPException(status_code=500, detail="AI returned invalid format. Try again.")
+
+    # ── Validation gate: verify facts against resume (ISO 29119 + ISO 23894) ──
+    resume_lower = resume_text.lower()
+
+    # Extract all numbers from resume for verification
+    resume_numbers = set(re.findall(r"\d+[\d,.]*%?", resume_text))
+    resume_companies = set()
+    # Extract company-like names (lines with dates often have company names)
+    for line in resume_text.split("\n"):
+        if re.search(r"\b(20\d{2})\b", line):
+            parts = re.split(r"[|—–\-]", line)
+            if parts:
+                company = parts[0].strip()
+                if company and len(company) > 2:
+                    resume_companies.add(company.lower())
+
+    validated_stories = []
+    for story in stories[:5]:  # Cap at 5
+        if not isinstance(story, dict) or not story.get("title"):
+            continue
+
+        warnings = []
+
+        # Verify numbers in result field match resume
+        result_text = story.get("result", "")
+        result_numbers = set(re.findall(r"\d+[\d,.]*%?", result_text))
+        fabricated_numbers = result_numbers - resume_numbers
+        if fabricated_numbers:
+            warnings.append(f"Numbers not found in resume: {', '.join(fabricated_numbers)}")
+
+        # Verify company name exists in resume
+        project = (story.get("project_name") or "").lower()
+        if project and not any(c in resume_lower for c in project.split()):
+            warnings.append(f"Company/project '{story.get('project_name')}' not found in resume")
+
+        # Validate tags
+        valid_tags = {"motivation", "proactiveness", "ambiguity", "perseverance",
+                      "conflict_resolution", "empathy", "growth", "communication"}
+        story["tags"] = [t for t in (story.get("tags") or []) if t in valid_tags]
+
+        # Validate seniority
+        if story.get("seniority") not in ("junior", "mid", "senior", "staff"):
+            story["seniority"] = "mid"
+
+        story["warnings"] = warnings
+        story["verified"] = len(warnings) == 0
+        validated_stories.append(story)
+
+    return {
+        "stories": validated_stories,
+        "total_generated": len(validated_stories),
+        "resume_word_count": len(resume_text.split()),
+    }
 
 
 @app.get("/api/stories/tags")

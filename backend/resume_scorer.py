@@ -890,6 +890,255 @@ class ResumeScorer:
         suggestions.sort(key=lambda s: -s["points"])
         return suggestions[:5]
 
+    # ── Evaluation blocks ────────────────────────────────────────────────
+
+    @staticmethod
+    def _build_evaluation_blocks(
+        dimensions: dict,
+        ats_match: dict | None,
+        parsed_jd: dict | None,
+        quality_score: int,
+    ) -> list[dict]:
+        """Generate actionable evaluation blocks beyond the 0-100 score.
+
+        Returns a list of block dicts, each with type, title, icon,
+        and items (list of {label, detail, action_type}).
+        """
+        blocks: list[dict] = []
+
+        # ── a) Role Fit Assessment ──────────────────────────────────────
+        role_fit_items: list[dict] = []
+        impact_score = dimensions.get("impact", {}).get("score", 0)
+        impact_max = dimensions.get("impact", {}).get("max", 40)
+        comp_score = dimensions.get("competencies", {}).get("score", 0)
+        comp_max = dimensions.get("competencies", {}).get("max", 30)
+        pres_score = dimensions.get("presentation", {}).get("score", 0)
+        pres_max = dimensions.get("presentation", {}).get("max", 30)
+
+        if impact_score > 30:
+            role_fit_items.append({
+                "label": "Strong impact",
+                "detail": (
+                    "Strong quantitative storytelling - your bullets "
+                    "show measurable results"
+                ),
+                "action_type": "positive",
+            })
+        elif impact_score < 20:
+            role_fit_items.append({
+                "label": "Impact needs work",
+                "detail": (
+                    "Impact needs strengthening - add metrics "
+                    "to more bullets"
+                ),
+                "action_type": "reframe",
+            })
+
+        if comp_score > 20:
+            role_fit_items.append({
+                "label": "Strong competencies",
+                "detail": (
+                    "Competency signals are strong for this "
+                    "role type"
+                ),
+                "action_type": "positive",
+            })
+        elif comp_score < 15:
+            role_fit_items.append({
+                "label": "Thin competencies",
+                "detail": (
+                    "Competency keywords are thin - review the "
+                    "missing keywords below"
+                ),
+                "action_type": "add_skill",
+            })
+
+        if pres_score > 25:
+            role_fit_items.append({
+                "label": "Well organized",
+                "detail": (
+                    "Resume is well-organized and polished"
+                ),
+                "action_type": "positive",
+            })
+        elif pres_score < 15:
+            role_fit_items.append({
+                "label": "Formatting attention",
+                "detail": (
+                    "Formatting needs attention - check section "
+                    "structure and consistency"
+                ),
+                "action_type": "reframe",
+            })
+
+        if role_fit_items:
+            blocks.append({
+                "type": "role_fit",
+                "title": "Role Fit Assessment",
+                "icon": "target",
+                "items": role_fit_items,
+            })
+
+        # ── b) Skill Gap Analysis ───────────────────────────────────────
+        if ats_match and ats_match.get("missing_terms"):
+            matched_set = {
+                t.lower() for t in ats_match.get("matched_terms", [])
+            }
+            skill_gap_items: list[dict] = []
+            _tool_keywords = {
+                "python", "java", "javascript", "typescript", "react",
+                "node", "sql", "aws", "azure", "gcp", "docker",
+                "kubernetes", "git", "jira", "figma", "tableau",
+                "excel", "power bi", "terraform", "linux", "matlab",
+                "r", "sas", "spark", "hadoop", "mongodb", "redis",
+                "kafka", "elasticsearch", "jenkins", "ci/cd",
+                "graphql", "rest", "api", "html", "css", "sass",
+                "vue", "angular", "svelte", "django", "flask",
+                "fastapi", "spring", "rails", "laravel", "php",
+                "swift", "kotlin", "go", "rust", "c++", "c#",
+                ".net", "pytorch", "tensorflow", "pandas", "numpy",
+                "scikit-learn", "airflow", "dbt", "snowflake",
+                "bigquery", "redshift", "postman", "cypress",
+                "selenium", "playwright",
+            }
+            _soft_keywords = {
+                "communication", "collaboration", "teamwork",
+                "leadership", "problem-solving", "critical thinking",
+                "adaptability", "time management", "negotiation",
+                "presentation", "mentoring", "coaching",
+                "stakeholder management", "conflict resolution",
+                "decision making", "strategic thinking",
+                "interpersonal", "empathy", "creativity",
+                "self-motivated", "detail-oriented", "proactive",
+                "initiative", "accountability",
+            }
+
+            for missing in ats_match["missing_terms"][:5]:
+                missing_lower = missing.lower()
+
+                # Strategy 1: semantically similar matched term
+                similar = None
+                for m in matched_set:
+                    if (
+                        missing_lower in m
+                        or m in missing_lower
+                        or (
+                            len(missing_lower) > 3
+                            and len(m) > 3
+                            and missing_lower[:4] == m[:4]
+                        )
+                    ):
+                        similar = m
+                        break
+
+                if similar:
+                    skill_gap_items.append({
+                        "label": missing,
+                        "detail": (
+                            f"You have '{similar}'. Reframe a "
+                            f"bullet to also mention '{missing}'."
+                        ),
+                        "action_type": "reframe",
+                    })
+                elif missing_lower in _tool_keywords:
+                    skill_gap_items.append({
+                        "label": missing,
+                        "detail": (
+                            "Consider adding this to your Skills "
+                            "section if you have experience."
+                        ),
+                        "action_type": "add_skill",
+                    })
+                elif missing_lower in _soft_keywords:
+                    skill_gap_items.append({
+                        "label": missing,
+                        "detail": (
+                            "Weave this into an achievement bullet "
+                            "rather than listing it standalone."
+                        ),
+                        "action_type": "weave_in",
+                    })
+                else:
+                    # Default: classify as add_skill for tools/tech
+                    # patterns, weave_in otherwise
+                    words = missing_lower.split()
+                    looks_technical = (
+                        len(words) <= 2
+                        and not any(
+                            w in _soft_keywords for w in words
+                        )
+                    )
+                    if looks_technical:
+                        skill_gap_items.append({
+                            "label": missing,
+                            "detail": (
+                                "Consider adding this to your "
+                                "Skills section if you have "
+                                "experience."
+                            ),
+                            "action_type": "add_skill",
+                        })
+                    else:
+                        skill_gap_items.append({
+                            "label": missing,
+                            "detail": (
+                                "Weave this into an achievement "
+                                "bullet rather than listing it "
+                                "standalone."
+                            ),
+                            "action_type": "weave_in",
+                        })
+
+            if skill_gap_items:
+                blocks.append({
+                    "type": "skill_gaps",
+                    "title": "Skill Gap Analysis",
+                    "icon": "puzzle",
+                    "items": skill_gap_items,
+                })
+
+        # ── c) Interview Prep Angles ────────────────────────────────────
+        if parsed_jd:
+            interview_items: list[dict] = []
+            comp_signals = parsed_jd.get("competency_signals", {})
+            if isinstance(comp_signals, dict):
+                for comp_name, signal_kws in comp_signals.items():
+                    if isinstance(signal_kws, list) and len(signal_kws) >= 2:
+                        kw_sample = ", ".join(signal_kws[:4])
+                        interview_items.append({
+                            "label": comp_name.replace("_", " ").title(),
+                            "detail": (
+                                f"They'll likely ask about "
+                                f"{comp_name}. Prepare a story "
+                                f"showing {kw_sample}."
+                            ),
+                            "action_type": "weave_in",
+                        })
+
+            exp_years = str(
+                parsed_jd.get("experience_years", "")
+            ).strip()
+            if exp_years:
+                interview_items.append({
+                    "label": "Seniority alignment",
+                    "detail": (
+                        f"JD asks for {exp_years} experience. "
+                        f"Ensure your resume highlights relevant "
+                        f"tenure and progression."
+                    ),
+                    "action_type": "reframe",
+                })
+
+            if interview_items:
+                blocks.append({
+                    "type": "interview_angles",
+                    "title": "Interview Prep Angles",
+                    "icon": "lightbulb",
+                    "items": interview_items,
+                })
+
+        return blocks
+
     # ── ATS keyword match against parsed JD ─────────────────────────────
 
     @staticmethod
@@ -1016,5 +1265,9 @@ class ResumeScorer:
         }
         if ats_match is not None:
             result["ats_match"] = ats_match
+
+        result["evaluation_blocks"] = self._build_evaluation_blocks(
+            dimensions, ats_match, parsed_jd, quality_score,
+        )
 
         return result

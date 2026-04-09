@@ -4,12 +4,21 @@ import {
   Search, Plus, ChevronRight, Clock, AlertCircle,
   ExternalLink, Filter, Loader2, FileText,
   MapPin, DollarSign, Building2, X, SlidersHorizontal,
-  PanelLeftClose, PanelLeftOpen,
+  PanelLeftClose, PanelLeftOpen, CheckCircle2,
 } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 import { todayStr } from "../lib/helpers.js";
 import { buildJobSkillDisplay, normalizeJobTermLabels } from "../lib/jobSkillHelpers.js";
 import JobCardSkeleton from "./JobCardSkeleton.jsx";
+import InterviewPrep from "./InterviewPrep.jsx";
+
+const ARCHETYPE_COLORS = {
+  Builder: "bg-amber-50 text-amber-700 border-amber-200",
+  Scaler: "bg-blue-50 text-blue-700 border-blue-200",
+  Operator: "bg-slate-100 text-slate-700 border-slate-200",
+  Specialist: "bg-purple-50 text-purple-700 border-purple-200",
+  Leader: "bg-emerald-50 text-emerald-700 border-emerald-200",
+};
 
 export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, onSignIn }) {
   const [query, setQuery] = useState("");
@@ -32,7 +41,19 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [locationFilter, setLocationFilter] = useState(new Set());
+  const [sectorFilter, setSectorFilter] = useState("");
   const activeSearchQuery = submittedQuery;
+
+  // Track which jobs are already tracked (Feature 3)
+  const trackedJobIds = useMemo(() => {
+    const ids = new Set();
+    for (const tj of (trackedJobs || [])) {
+      if (tj.scraped_job_id) ids.add(tj.scraped_job_id);
+      // Also match by title+company for jobs tracked without ID
+      if (tj.company && tj.role) ids.add(`${tj.role}|${tj.company}`.toLowerCase());
+    }
+    return ids;
+  }, [trackedJobs]);
 
   // Cover letter state
   const [coverLetterModal, setCoverLetterModal] = useState(null); // { job } or null
@@ -65,6 +86,8 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         params.set("employment_type", activeEmployment);
       }
       if (String(activeMinSalary).trim()) params.set("min_salary", String(activeMinSalary).trim());
+      const activeSector = nextFilters.sectorFilter ?? sectorFilter;
+      if (activeSector) params.set("sector", activeSector);
 
       const resp = await apiFetch(`/api/jobs?${params}`, { method: "GET" });
       const data = await resp.json();
@@ -90,12 +113,15 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         level: j.seniority || "",
         url: j.url || "",
         experienceYears: j.experience_years || "",
+        sector: j.sector || "",
+        archetype: j.archetype || "",
       }));
       setResults(mapped);
       if (pageNum === 1 && data.filter_meta && typeof data.filter_meta === "object") {
         setFilterMeta({
           sources: Array.isArray(data.filter_meta.sources) ? data.filter_meta.sources : [],
           employment_types: Array.isArray(data.filter_meta.employment_types) ? data.filter_meta.employment_types : [],
+          sectors: Array.isArray(data.filter_meta.sectors) ? data.filter_meta.sectors : [],
         });
       }
       setSubmittedQuery(normalizedQuery);
@@ -397,6 +423,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     expYearsFilter.size > 0,
     locationFilter.size > 0,
     String(minSalaryFilter).trim() !== "",
+    sectorFilter !== "",
   ].filter(Boolean).length;
 
   const clearFilters = () => {
@@ -405,11 +432,13 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     setExpYearsFilter(new Set());
     setLocationFilter(new Set());
     setMinSalaryFilter("");
+    setSectorFilter("");
     setExpandedJobId(null);
     loadJobs(activeSearchQuery, 1, {
       levelFilter: "all",
       employmentFilter: new Set(),
       minSalaryFilter: "",
+      sectorFilter: "",
     });
   };
 
@@ -504,6 +533,30 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 </label>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Sector / Industry */}
+      {(filterMeta.sectors || []).length > 0 && (
+        <div>
+          <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Industry</label>
+          <div className="space-y-0.5">
+            <label
+              className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${!sectorFilter ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+            >
+              <input type="radio" name="sector" checked={!sectorFilter} onChange={() => { setSectorFilter(""); loadJobs(activeSearchQuery, 1, { sectorFilter: "" }); }} className="w-3.5 h-3.5 accent-[#384959]" />
+              All Industries
+            </label>
+            {filterMeta.sectors.slice(0, 12).map((s) => (
+              <label
+                key={s.value}
+                className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${sectorFilter === s.value ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+              >
+                <input type="radio" name="sector" checked={sectorFilter === s.value} onChange={() => { setSectorFilter(s.value); loadJobs(activeSearchQuery, 1, { sectorFilter: s.value }); }} className="w-3.5 h-3.5 accent-[#384959]" />
+                {s.value}
+              </label>
+            ))}
           </div>
         </div>
       )}
@@ -764,6 +817,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   <div className="flex items-center gap-2 mb-1">
                     <h3 className="font-semibold text-[#384959]">{job.title}</h3>
                     {job.level && <span className="text-[10px] bg-[#f0f4f8] text-[#6A89A7] px-2 py-0.5 rounded-full">{job.level}</span>}
+                    {job.sector && job.sector !== "Other" && <span className="text-[10px] bg-violet-50 text-violet-700 border border-violet-200 px-2 py-0.5 rounded-full">{job.sector}</span>}
+                    {job.archetype && job.archetype !== "Generalist" && <span className={`text-[10px] border px-2 py-0.5 rounded-full ${ARCHETYPE_COLORS[job.archetype] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{job.archetype}</span>}
+                    {(trackedJobIds.has(job.id) || trackedJobIds.has(`${job.title}|${job.company}`.toLowerCase())) && <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><CheckCircle2 size={10} />Tracked</span>}
                     <ChevronRight size={14} className={`ml-auto text-[#6A89A7] transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                   </div>
                   <div className="flex items-center gap-4 text-sm text-[#6A89A7] mb-2 flex-wrap">
@@ -869,6 +925,13 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   {job.posted && <span>{job.posted}</span>}
                   {job.type && <span>{job.type}</span>}
                 </div>
+                {/* Interview Prep suggestions */}
+                {user && isExpanded && (
+                  <div className="mb-3" onClick={(e) => e.stopPropagation()}>
+                    <InterviewPrep jobId={job.id} user={user} onNavigateToStories={() => setActiveTab("stories")} />
+                  </div>
+                )}
+
                 <div className="flex flex-wrap gap-2">
                   <button onClick={(event) => { event.stopPropagation(); generateResume(job); }} className="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-emerald-700 transition">
                     <FileText size={12} /> Tailor Resume
@@ -876,9 +939,15 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   <button onClick={(event) => { event.stopPropagation(); openCoverLetterModal(job); }} className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-blue-700 transition">
                     <FileText size={12} /> Cover Letter
                   </button>
-                  <button onClick={(event) => { event.stopPropagation(); trackJob(job); }} className="flex items-center gap-1.5 bg-[#384959] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#2d3a47] transition">
-                    <Plus size={12} /> Track
-                  </button>
+                  {(trackedJobIds.has(job.id) || trackedJobIds.has(`${job.title}|${job.company}`.toLowerCase())) ? (
+                    <span className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-medium">
+                      <CheckCircle2 size={12} /> Tracked
+                    </span>
+                  ) : (
+                    <button onClick={(event) => { event.stopPropagation(); trackJob(job); }} className="flex items-center gap-1.5 bg-[#384959] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#2d3a47] transition">
+                      <Plus size={12} /> Track
+                    </button>
+                  )}
                   {job.url && (
                     <a href={job.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}
                       className="flex items-center gap-1.5 border border-[#BDDDFC]/30 text-[#6A89A7] px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#f0f4f8] transition">

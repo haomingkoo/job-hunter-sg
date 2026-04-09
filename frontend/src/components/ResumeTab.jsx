@@ -3107,6 +3107,57 @@ CERTIFICATIONS
             </div>
           )}
 
+          {scoreData?.evaluation_blocks?.length > 0 && (
+            <div className="space-y-3">
+              {scoreData.evaluation_blocks.map((block) => {
+                const blockIcon = block.icon === "target" ? "🎯"
+                  : block.icon === "puzzle" ? "🧩"
+                  : block.icon === "lightbulb" ? "💡"
+                  : "📋";
+                return (
+                  <details key={block.type} className="overflow-hidden rounded-2xl border border-[#BDDDFC]/30 bg-white shadow-sm">
+                    <summary className="flex cursor-pointer list-none items-center gap-3 px-5 py-4">
+                      <span className="text-base">{blockIcon}</span>
+                      <div className="text-sm font-semibold text-[#384959]">{block.title}</div>
+                      <span className="ml-auto rounded-full bg-[#BDDDFC]/15 px-2.5 py-0.5 text-[11px] font-medium text-[#6A89A7]">
+                        {block.items.length} {block.items.length === 1 ? "item" : "items"}
+                      </span>
+                    </summary>
+                    <div className="border-t border-[#BDDDFC]/20 px-5 py-4">
+                      <div className="space-y-2.5">
+                        {block.items.map((item, idx) => {
+                          const accentClass = item.action_type === "reframe"
+                            ? "border-l-blue-400 bg-blue-50/60"
+                            : item.action_type === "add_skill"
+                              ? "border-l-emerald-400 bg-emerald-50/60"
+                              : item.action_type === "weave_in"
+                                ? "border-l-violet-400 bg-violet-50/60"
+                                : "border-l-[#BDDDFC]/50 bg-[#f0f4f8]";
+                          const labelColor = item.action_type === "reframe"
+                            ? "text-blue-700"
+                            : item.action_type === "add_skill"
+                              ? "text-emerald-700"
+                              : item.action_type === "weave_in"
+                                ? "text-violet-700"
+                                : "text-[#384959]";
+                          return (
+                            <div
+                              key={`${block.type}-${idx}`}
+                              className={`rounded-xl border-l-[3px] px-3.5 py-2.5 ${accentClass}`}
+                            >
+                              <div className={`text-sm font-medium ${labelColor}`}>{item.label}</div>
+                              <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{item.detail}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </details>
+                );
+              })}
+            </div>
+          )}
+
           <div
             ref={selectedBullet ? selectedFeedbackRef : null}
             className={`rounded-3xl border p-5 shadow-sm ${selectedBullet ? "border-indigo-200 bg-indigo-50" : "border-[#BDDDFC]/30 bg-white"}`}

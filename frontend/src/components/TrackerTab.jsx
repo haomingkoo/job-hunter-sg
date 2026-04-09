@@ -2,13 +2,14 @@ import { useState } from "react";
 import {
   Plus, X, AlertCircle, Filter, RefreshCw,
   Download, Loader2, Edit3, Save, Trash2,
+  Briefcase, Search,
 } from "lucide-react";
 import { API_BASE, apiFetch } from "../lib/api.js";
 import { STATUS_CONFIG, SG_JOB_PORTALS } from "../lib/constants.js";
 import { todayStr, daysBetween } from "../lib/helpers.js";
 import StatusBadge from "./StatusBadge.jsx";
 
-export default function TrackerTab({ user, jobs, refreshJobs }) {
+export default function TrackerTab({ user, jobs, refreshJobs, setActiveTab }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [filterStatus, setFilterStatus] = useState("all");
@@ -107,6 +108,38 @@ export default function TrackerTab({ user, jobs, refreshJobs }) {
   const isPro = user?.tier === "pro" || user?.tier === "admin";
   const isFree = user?.tier === "free";
   const atLimit = isFree;
+
+  // Show onboarding empty state when no jobs tracked at all
+  if (jobs.length === 0 && !showForm) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 px-4">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#f0f4f8] mb-6">
+          <Briefcase size={32} className="text-[#6A89A7]" />
+        </div>
+        <h2 className="text-xl font-bold text-[#384959] text-center">Start Tracking Your Applications</h2>
+        <p className="mt-2 max-w-md text-center text-sm text-[#6A89A7] leading-relaxed">
+          When you find a job you like in the Jobs tab, click Track to add it here.
+          You can monitor your pipeline, set follow-up dates, and track your progress.
+        </p>
+        <div className="mt-6 flex gap-3">
+          {setActiveTab && (
+            <button
+              onClick={() => setActiveTab("jobs")}
+              className="flex items-center gap-2 rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#2d3a47] transition"
+            >
+              <Search size={16} /> Browse Jobs
+            </button>
+          )}
+          <button
+            onClick={() => setShowForm(true)}
+            className="flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 px-5 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] transition"
+          >
+            <Plus size={16} /> Add Manually
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -213,7 +246,7 @@ export default function TrackerTab({ user, jobs, refreshJobs }) {
           </thead>
           <tbody className="divide-y divide-[#BDDDFC]/15">
             {filtered.length === 0 && (
-              <tr><td colSpan={7} className="text-center py-8 text-[#6A89A7]">No applications yet</td></tr>
+              <tr><td colSpan={7} className="text-center py-8 text-[#6A89A7]">No applications tracked yet. Browse jobs and click Track to get started!</td></tr>
             )}
             {filtered.map((job) => (
               <tr key={job.id} className="hover:bg-[#f0f4f8] transition">
@@ -236,7 +269,7 @@ export default function TrackerTab({ user, jobs, refreshJobs }) {
       {/* Mobile card layout */}
       <div className="sm:hidden space-y-3">
         {filtered.length === 0 && (
-          <div className="text-center py-8 text-[#6A89A7] text-sm">No applications yet</div>
+          <div className="text-center py-8 text-[#6A89A7] text-sm">No applications tracked yet. Browse jobs and click Track to get started!</div>
         )}
         {filtered.map((job) => (
           <div key={job.id} className="bg-white border border-[#BDDDFC]/30 rounded-xl p-4 space-y-2">

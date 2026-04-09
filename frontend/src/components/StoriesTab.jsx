@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   BookOpen, Plus, ChevronLeft, Trash2, Pencil,
   User, Trophy, Handshake, Sparkles, Save,
+  Wand2, AlertTriangle, Loader2, FileText,
 } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 import {
@@ -22,7 +23,7 @@ function TagPill({ tagId, small }) {
   );
 }
 
-function EmptyState({ onStart }) {
+function EmptyState({ onStart, onGenerate, generating }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 px-4">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-100 mb-6">
@@ -31,10 +32,27 @@ function EmptyState({ onStart }) {
       <h2 className="text-xl font-bold text-[#384959] text-center">Build Your Interview Story Bank</h2>
       <p className="mt-2 max-w-md text-center text-sm text-[#6A89A7] leading-relaxed">
         Create reusable STAR+R stories that flex across any behavioral interview.
-        Start with the Big Three, then expand as you prep for more roles.
+        Generate from your resume or start with the Big Three.
       </p>
 
-      <div className="mt-8 grid gap-4 sm:grid-cols-3 max-w-2xl w-full">
+      {/* Generate from resume */}
+      <button
+        onClick={onGenerate}
+        disabled={generating}
+        className="mt-6 flex items-center gap-2 rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 transition"
+      >
+        {generating ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
+        {generating ? "Extracting stories from resume..." : "Generate from My Resume"}
+      </button>
+      <p className="mt-2 text-[10px] text-[#6A89A7]">Uses only facts from your uploaded resume. No hallucination.</p>
+
+      <div className="mt-6 flex items-center gap-3 text-xs text-[#6A89A7]">
+        <div className="h-px flex-1 bg-[#BDDDFC]/30" />
+        or start manually
+        <div className="h-px flex-1 bg-[#BDDDFC]/30" />
+      </div>
+
+      <div className="mt-6 grid gap-4 sm:grid-cols-3 max-w-2xl w-full">
         {BIG_THREE_PROMPTS.map((prompt) => {
           const Icon = PROMPT_ICONS[prompt.icon] || Sparkles;
           return (
@@ -53,6 +71,63 @@ function EmptyState({ onStart }) {
             </motion.button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+function GeneratedStoryCard({ story, onAccept, onDiscard }) {
+  return (
+    <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 space-y-3">
+      <div className="flex items-start justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-[#384959]">{story.title}</h3>
+          {story.project_name && <p className="text-xs text-[#6A89A7]">{story.project_name}</p>}
+        </div>
+        {!story.verified && (
+          <span className="text-[10px] rounded-full bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 flex items-center gap-1">
+            <AlertTriangle size={10} /> Review needed
+          </span>
+        )}
+      </div>
+
+      {(story.warnings || []).length > 0 && (
+        <div className="rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+          {story.warnings.map((w, i) => <div key={i}>{w}</div>)}
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-1">
+        {(story.tags || []).map((t) => <TagPill key={t} tagId={t} small />)}
+      </div>
+
+      {STAR_FIELDS.map((field) => {
+        const val = story[field.key];
+        if (!val) return null;
+        return (
+          <div key={field.key}>
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-[#6A89A7]">{field.label}</div>
+            <p className="text-xs text-[#384959] leading-relaxed">{val}</p>
+          </div>
+        );
+      })}
+
+      {story.source_bullets?.length > 0 && (
+        <details className="text-[10px] text-[#6A89A7]">
+          <summary className="cursor-pointer hover:text-[#384959]">Source bullets from resume</summary>
+          <ul className="mt-1 space-y-0.5 pl-3 list-disc">
+            {story.source_bullets.map((b, i) => <li key={i}>{b}</li>)}
+          </ul>
+        </details>
+      )}
+
+      <div className="flex gap-2 pt-1">
+        <button onClick={onAccept} className="flex items-center gap-1.5 rounded-lg bg-[#384959] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#2d3a47] transition">
+          <Save size={12} /> Save & Edit
+        </button>
+        <button onClick={onDiscard} className="rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs font-medium text-[#6A89A7] hover:bg-[#f0f4f8] transition">
+          Discard
+        </button>
       </div>
     </div>
   );
@@ -98,7 +173,7 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
             <input
               value={form.title}
               onChange={(e) => setField("title", e.target.value)}
-              placeholder="e.g. Led Fab Yield Turnaround"
+              placeholder="e.g. Led Platform Migration"
               className="w-full rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm text-[#384959] focus:outline-none focus:ring-2 focus:ring-violet-200"
             />
           </div>
@@ -107,7 +182,7 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
             <input
               value={form.project_name}
               onChange={(e) => setField("project_name", e.target.value)}
-              placeholder="e.g. Micron Fab 10N"
+              placeholder="e.g. Project Alpha at Company X"
               className="w-full rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm text-[#384959] focus:outline-none focus:ring-2 focus:ring-violet-200"
             />
           </div>
@@ -252,6 +327,9 @@ export default function StoriesTab() {
   const [editing, setEditing] = useState(null); // null = list, object = editor
   const [saving, setSaving] = useState(false);
   const [filterTag, setFilterTag] = useState("all");
+  const [generating, setGenerating] = useState(false);
+  const [generatedDrafts, setGeneratedDrafts] = useState(null); // null = not generated, array = review mode
+  const [generateError, setGenerateError] = useState("");
 
   const fetchStories = useCallback(async () => {
     try {
@@ -315,6 +393,56 @@ export default function StoriesTab() {
     });
   };
 
+  const handleGenerate = async () => {
+    const resumeText = sessionStorage.getItem("jh_resume_text") || "";
+    if (!resumeText || resumeText.length < 100) {
+      setGenerateError("Upload or paste your resume in the Resume tab first, then come back here.");
+      return;
+    }
+    setGenerating(true);
+    setGenerateError("");
+    try {
+      const resp = await apiFetch("/api/stories/generate", {
+        method: "POST",
+        body: JSON.stringify({ resume_text: resumeText }),
+      });
+      const data = await resp.json();
+      if (data.stories?.length > 0) {
+        setGeneratedDrafts(data.stories);
+      } else {
+        setGenerateError("Could not extract stories. Try adding more detail to your resume.");
+      }
+    } catch (err) {
+      setGenerateError(err.message?.includes("429")
+        ? "AI is busy right now. Wait a moment and try again."
+        : "Failed to generate stories. Try again.");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const acceptDraft = (draft) => {
+    setEditing({
+      title: draft.title || "",
+      project_name: draft.project_name || "",
+      situation: draft.situation || "",
+      task: draft.task || "",
+      action: draft.action || "",
+      result: draft.result || "",
+      reflection: draft.reflection || "",
+      tags: draft.tags || [],
+      seniority: draft.seniority || "mid",
+    });
+    setGeneratedDrafts((prev) => prev.filter((d) => d !== draft));
+  };
+
+  const discardDraft = (draft) => {
+    setGeneratedDrafts((prev) => {
+      const next = prev.filter((d) => d !== draft);
+      return next.length === 0 ? null : next;
+    });
+  };
+
   const filtered = filterTag === "all"
     ? stories
     : stories.filter((s) => (s.tags || []).includes(filterTag));
@@ -346,13 +474,49 @@ export default function StoriesTab() {
               saving={saving}
             />
           </motion.div>
+        ) : generatedDrafts?.length > 0 ? (
+          <motion.div
+            key="review"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+          >
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-lg font-bold text-[#384959]">Review Generated Stories</h2>
+                <p className="text-xs text-[#6A89A7]">
+                  {generatedDrafts.length} {generatedDrafts.length === 1 ? "story" : "stories"} extracted from your resume. Review, edit, or discard each one.
+                </p>
+              </div>
+              <button
+                onClick={() => setGeneratedDrafts(null)}
+                className="text-xs text-[#6A89A7] hover:text-[#384959] underline transition"
+              >
+                Done reviewing
+              </button>
+            </div>
+            <div className="space-y-4">
+              {generatedDrafts.map((draft, i) => (
+                <GeneratedStoryCard
+                  key={i}
+                  story={draft}
+                  onAccept={() => acceptDraft(draft)}
+                  onDiscard={() => discardDraft(draft)}
+                />
+              ))}
+            </div>
+          </motion.div>
         ) : stories.length === 0 ? (
           <motion.div
             key="empty"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
           >
-            <EmptyState onStart={startFromPrompt} />
+            <EmptyState onStart={startFromPrompt} onGenerate={handleGenerate} generating={generating} />
+            {generateError && (
+              <div className="mt-4 mx-auto max-w-md rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 text-center">
+                {generateError}
+              </div>
+            )}
           </motion.div>
         ) : (
           <motion.div
@@ -368,12 +532,22 @@ export default function StoriesTab() {
                 <h2 className="text-lg font-bold text-[#384959]">Interview Story Bank</h2>
                 <p className="text-xs text-[#6A89A7]">{stories.length} {stories.length === 1 ? "story" : "stories"} ready for interviews</p>
               </div>
-              <button
-                onClick={() => setEditing({ tags: [], seniority: "mid" })}
-                className="flex items-center gap-1.5 rounded-xl bg-[#384959] px-4 py-2 text-sm font-medium text-white hover:bg-[#2d3a47] transition"
-              >
-                <Plus size={16} /> New Story
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleGenerate}
+                  disabled={generating}
+                  className="flex items-center gap-1.5 rounded-xl border border-violet-200 px-3 py-2 text-xs font-medium text-violet-700 hover:bg-violet-50 disabled:opacity-50 transition"
+                >
+                  {generating ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                  Generate More
+                </button>
+                <button
+                  onClick={() => setEditing({ tags: [], seniority: "mid" })}
+                  className="flex items-center gap-1.5 rounded-xl bg-[#384959] px-4 py-2 text-sm font-medium text-white hover:bg-[#2d3a47] transition"
+                >
+                  <Plus size={16} /> New Story
+                </button>
+              </div>
             </div>
 
             {/* Tag filters */}

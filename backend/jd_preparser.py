@@ -302,6 +302,49 @@ def _extract_competency_signals(
     return signals
 
 
+# ── Archetype classifier ──────────────────────────────────────────────────
+
+_ARCHETYPE_SIGNALS: dict[str, list[str]] = {
+    "Builder": [
+        "build", "create", "greenfield", "from scratch", "0 to 1",
+        "zero to one", "new product", "mvp", "prototype", "founding",
+        "early stage", "startup", "launch", "establish",
+    ],
+    "Scaler": [
+        "scale", "growth", "optimize", "performance", "throughput",
+        "high-volume", "expand", "reliability", "sre", "platform",
+        "migrate", "infrastructure", "distributed",
+    ],
+    "Operator": [
+        "maintain", "operate", "support", "monitor", "incident",
+        "compliance", "audit", "process", "sop", "governance",
+        "itil", "run the", "day-to-day",
+    ],
+    "Specialist": [
+        "expert", "specialist", "deep", "domain", "research",
+        "phd", "principal", "staff engineer", "architecture",
+        "niche", "subject matter",
+    ],
+    "Leader": [
+        "lead", "manage", "director", "head of", "vp ",
+        "strategy", "vision", "stakeholder", "executive",
+        "team of", "report to", "direct reports", "mentor",
+    ],
+}
+
+
+def classify_archetype(
+    description: str, title: str = "", competency_signals: dict | None = None,
+) -> str:
+    """Classify a job into an archetype based on JD signals."""
+    text_lower = f" {(description + ' ' + title).lower()} "
+    scores: dict[str, int] = {}
+    for archetype, keywords in _ARCHETYPE_SIGNALS.items():
+        scores[archetype] = sum(1 for kw in keywords if kw in text_lower)
+    best = max(scores, key=scores.get)
+    return best if scores[best] >= 2 else "Generalist"
+
+
 # ── Main function ───────────────────────────────────────────────────────────
 
 def preparse_job_description(
@@ -419,6 +462,7 @@ def preparse_job_description(
         "experience_years": experience_years,
         "education_level": education_level,
         "key_responsibilities": key_responsibilities,
+        "archetype": classify_archetype(description, job_title, competency_signals),
         "parsed_at": datetime.now(timezone.utc).isoformat(),
     }
 

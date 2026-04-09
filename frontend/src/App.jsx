@@ -256,7 +256,7 @@ export default function JobHunterSG() {
               )}
               {activeTab === "tracker" && (
                 user ? (
-                  <TrackerTab user={user} jobs={trackedJobs} refreshJobs={refreshJobs} />
+                  <TrackerTab user={user} jobs={trackedJobs} refreshJobs={refreshJobs} setActiveTab={navigateTo} />
                 ) : (
                   <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Application Tracker" />
                 )
