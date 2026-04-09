@@ -319,6 +319,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [chatStage, setChatStage] = useState("contact");
   const [chatError, setChatError] = useState("");
   const [activeSuggestionHint, setActiveSuggestionHint] = useState(null);
+  const [selectedInjectKeyword, setSelectedInjectKeyword] = useState(null);
   const chatEndRef = useRef(null);
 
   const openMobileFeedbackPanel = useCallback((targetRef = scorePanelRef) => {
@@ -1024,6 +1025,29 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     }
   };
 
+  const getRankedKeywordsForBullet = useCallback((bulletSection) => {
+    if (!relevantMissingKeywords.length || !bulletSection?.text) return [];
+    // Find nearest heading/subheading above this bullet in parsedSections
+    const idx = parsedSections.findIndex((s) => s.id === bulletSection.id);
+    const headingText = idx > 0
+      ? parsedSections.slice(0, idx).reverse()
+          .find((s) => s.type === "subheading" || s.type === "heading")?.text || ""
+      : "";
+    const ctx = (bulletSection.text + " " + headingText).toLowerCase();
+    return relevantMissingKeywords
+      .map((kw) => {
+        const label = extractKeywordLabel(kw);
+        const score = label.toLowerCase().split(/\W+/)
+          .filter((t) => t.length >= 3)
+          .filter((t) => ctx.includes(t)).length;
+        return { label, score };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 2)
+      .map((item) => item.label);
+  }, [parsedSections, relevantMissingKeywords]);
+
   const handleBulletRewrite = async (section, activeTabId = selectedBulletTab, suggestionHint = null) => {
     if (!section?.text) return;
 
@@ -1035,7 +1059,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     const focusedFeedback = buildFocusedFeedbackContext(activeFocusTab, sectionTabs);
     const hintContext = suggestionHint
       ? `\nSUGGESTION TO INCORPORATE: ${suggestionHint.title}. ${suggestionHint.detail || ""} Naturally weave in relevant keywords or competencies from this suggestion if they fit the bullet's context.`
-      : "";
+      : selectedInjectKeyword
+        ? `\nKEYWORD TO WEAVE IN: "${selectedInjectKeyword}". If it fits naturally in this bullet's context, incorporate it once. If it doesn't fit, ignore it entirely — do NOT force it.`
+        : "";
     const usedVerbs = bulletSections
       .filter((candidate) => candidate.id !== section.id && candidate.type === "bullet")
       .map((candidate) => candidate.text.split(/\s+/)[0]?.toLowerCase().replace(/[,:;.]$/, ""))
@@ -1070,6 +1096,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         },
       }));
       if (suggestionHint) setActiveSuggestionHint(null);
+      setSelectedInjectKeyword(null);
       openMobileFeedbackPanel(selectedFeedbackRef);
     } catch (err) {
       setCoachError(
@@ -1901,6 +1928,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const focusBullet = useCallback((sectionId) => {
     setSelectedBulletId(sectionId);
     setSelectedSectionId(sectionId);
+    setSelectedInjectKeyword(null);
     setMobilePanel("feedback");
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
@@ -3303,6 +3331,34 @@ CERTIFICATIONS
                     <button type="button" onClick={() => setActiveSuggestionHint(null)} className="shrink-0 text-indigo-400 hover:text-indigo-600">✕</button>
                   </div>
                 )}
+                {(() => {
+                  const ranked = getRankedKeywordsForBullet(selectedBullet);
+                  if (!ranked.length || activeSuggestionHint) return null;
+                  return (
+                    <div>
+                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6A89A7]">Inject keyword</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {ranked.map((label) => {
+                          const active = selectedInjectKeyword === label;
+                          return (
+                            <button
+                              key={label}
+                              type="button"
+                              onClick={() => setSelectedInjectKeyword(active ? null : label)}
+                              className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
+                                active
+                                  ? "border-indigo-400 bg-indigo-600 text-white"
+                                  : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                              }`}
+                            >
+                              {active ? "✓ " : "+ "}{label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
                 <button
                   type="button"
                   onClick={() => handleBulletRewrite(selectedBullet, activeBulletTab?.id, activeSuggestionHint)}
