@@ -1618,9 +1618,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     return relevantMissingKeywords
       .map((kw) => {
         const label = extractKeywordLabel(kw);
-        const score = label.toLowerCase().split(/\W+/)
-          .filter((t) => t.length >= 3)
-          .filter((t) => ctx.includes(t)).length;
+        const tokens = label.toLowerCase().split(/\W+/).filter((t) => t.length >= 3);
+        // Skip garbled/multi-word phrases — real ATS keywords are 1-3 words
+        if (tokens.length > 3) return { label, score: -1 };
+        const score = tokens.filter((t) => ctx.includes(t)).length;
         return { label, score };
       })
       .filter((item) => item.score > 0)
@@ -1937,8 +1938,12 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           block: "center",
         });
       });
+      // After re-render attaches selectedFeedbackRef, scroll the sidebar to the feedback panel
+      setTimeout(() => {
+        selectedFeedbackRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }, 80);
     }
-  }, []);
+  }, [selectedFeedbackRef]);
 
   const handleMissingKeywordClick = useCallback((keyword, event) => {
     const label = extractKeywordLabel(keyword);
@@ -3340,10 +3345,12 @@ CERTIFICATIONS
                       <div className="flex flex-wrap gap-1.5">
                         {ranked.map((label) => {
                           const active = selectedInjectKeyword === label;
+                          const display = label.length > 26 ? label.slice(0, 26) + "…" : label;
                           return (
                             <button
                               key={label}
                               type="button"
+                              title={label}
                               onClick={() => setSelectedInjectKeyword(active ? null : label)}
                               className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
                                 active
@@ -3351,7 +3358,7 @@ CERTIFICATIONS
                                   : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
                               }`}
                             >
-                              {active ? "✓ " : "+ "}{label}
+                              {active ? "✓ " : "+ "}{display}
                             </button>
                           );
                         })}
