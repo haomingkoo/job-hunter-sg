@@ -242,6 +242,52 @@ class TestSkillExtractor:
         assert "\n- First item" in cleaned
         assert "\n- Second item" in cleaned
 
+    def test_ats_terms_exclude_benefits_bullets_but_keep_real_skills(self):
+        from ats_terms import build_job_ats_terms
+
+        jd = (
+            "Benefits:\n"
+            "• Generous PTO\n"
+            "• Health Benefits\n"
+            "• Emotional Health Resources\n"
+            "• HeyGen Offers\n\n"
+            "Requirements:\n"
+            "• Machine Learning\n"
+            "• Computer Vision\n"
+            "• Python\n"
+        )
+
+        terms = build_job_ats_terms(
+            jd_text=jd,
+            job_skills=[],
+            parsed_jd={"required_skills": [], "preferred_skills": [], "single_word_skills": ["python"]},
+            job_title="ML Engineer",
+        )
+        labels = {item["skill"].lower() for item in terms}
+
+        assert "machine learning" in labels
+        assert "computer vision" in labels
+        assert "python" in labels
+        assert "generous pto" not in labels
+        assert "health benefits" not in labels
+        assert "emotional health resources" not in labels
+        assert "heygen offers" not in labels
+
+    def test_ats_terms_drop_or_fragment_but_keep_individual_skills(self):
+        from ats_terms import build_job_ats_terms
+
+        terms = build_job_ats_terms(
+            jd_text="Requirements: Python or C++",
+            job_skills=[],
+            parsed_jd={"required_skills": [], "preferred_skills": [], "single_word_skills": ["python", "c++"]},
+            job_title="Software Engineer",
+        )
+        labels = {item["skill"].lower() for item in terms}
+
+        assert "python" in labels
+        assert "c++" in labels
+        assert "python or c++" not in labels
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. Resume Parser
@@ -642,3 +688,254 @@ class TestAPIEndpoints:
         resp = client.get("/")
         # 200 if static dir exists, 404 if not (local dev without build)
         assert resp.status_code in (200, 307, 404)
+
+
+class TestBackfillProgress:
+    def test_preview_backfill_reports_live_rate_and_eta(self, monkeypatch):
+        from backfill_enrichment import backfill_previews
+
+        jobs = [
+            SimpleNamespace(
+                id=1,
+                title="Data Scientist",
+                description="Build Python pipelines.",
+                skills=["Python"],
+                parsed_jd=None,
+                job_terms_preview=None,
+                salary="",
+                company="AISG",
+                agency="",
+            ),
+            SimpleNamespace(
+                id=2,
+                title="ML Engineer",
+                description="Deploy ML systems.",
+                skills=["Machine Learning"],
+                parsed_jd=None,
+                job_terms_preview=None,
+                salary="",
+                company="AISG",
+                agency="",
+            ),
+            SimpleNamespace(
+                id=3,
+                title="Analytics Engineer",
+                description="Model analytics data.",
+                skills=["SQL"],
+                parsed_jd=None,
+                job_terms_preview=None,
+                salary="",
+                company="AISG",
+                agency="",
+            ),
+        ]
+
+        class FakeQuery:
+            def __init__(self, items, start=0, size=None):
+                self.items = items
+                self.start = start
+                self.size = size
+
+            def filter(self, *_args, **_kwargs):
+                return self
+
+            def order_by(self, *_args, **_kwargs):
+                return self
+
+            def count(self):
+                return len(self.items)
+
+            def offset(self, amount):
+                return FakeQuery(self.items, start=amount, size=self.size)
+
+            def limit(self, amount):
+                return FakeQuery(self.items, start=self.start, size=amount)
+
+            def all(self):
+                items = self.items[self.start:]
+                if self.size is not None:
+                    items = items[:self.size]
+                return items
+
+        class FakeDB:
+            def __init__(self, items):
+                self.items = items
+                self.closed = False
+                self.commits = 0
+
+            def query(self, _model):
+                return FakeQuery(self.items)
+
+            def commit(self):
+                self.commits += 1
+
+            def close(self):
+                self.closed = True
+
+        fake_db = FakeDB(jobs)
+        progress_updates = []
+        timeline = iter([0, 60, 120, 180, 180])
+
+        monkeypatch.setattr("backfill_enrichment.SessionLocal", lambda: fake_db)
+        monkeypatch.setattr("backfill_enrichment.preparse_jd", lambda *args, **kwargs: {"required_skills": []})
+        monkeypatch.setattr("backfill_enrichment.build_job_ats_terms", lambda **kwargs: [{"skill": "python"}])
+        monkeypatch.setattr("backfill_enrichment.analyze_job_description", lambda **kwargs: {"fit": "good"})
+        monkeypatch.setattr("backfill_enrichment.time.time", lambda: next(timeline))
+
+        processed = backfill_previews(
+            batch_size=1,
+            progress_callback=lambda **kwargs: progress_updates.append(kwargs),
+            refresh_preview=True,
+        )
+
+        assert processed == 3
+        assert fake_db.closed is True
+        assert fake_db.commits == 3
+        assert progress_updates[0]["preview_total"] == 3
+        assert progress_updates[0]["rate_per_min"] == 0.0
+        assert progress_updates[0]["eta_minutes"] == 0.0
+
+        live_updates = [
+            update
+            for update in progress_updates
+            if 0 < update.get("preview_done", 0) < update.get("preview_total", 0)
+        ]
+        assert live_updates
+        assert all(update["rate_per_min"] > 0 for update in live_updates)
+        assert all(update["eta_minutes"] > 0 for update in live_updates)
+
+        assert progress_updates[-1]["preview_done"] == 3
+        assert progress_updates[-1]["preview_total"] == 3
+        assert progress_updates[-1]["eta_minutes"] == 0.0
+        assert all(job.job_terms_preview == ["Python"] for job in jobs)
+
+    def test_backfill_cli_passes_reparse_flag_to_preview_phase(self, monkeypatch):
+        import argparse
+        import backfill_enrichment
+
+        captured = {}
+
+        monkeypatch.setattr(
+            argparse.ArgumentParser,
+            "parse_args",
+            lambda self: SimpleNamespace(
+                preview_only=True,
+                summary_only=False,
+                summary_limit=0,
+                batch_size=50,
+                refresh_preview=True,
+                reparse=True,
+            ),
+        )
+        monkeypatch.setattr(backfill_enrichment, "init_db", lambda: None)
+        def fake_backfill_previews(**kwargs):
+            captured["preview"] = kwargs
+            return 0
+        monkeypatch.setattr(
+            backfill_enrichment,
+            "backfill_previews",
+            fake_backfill_previews,
+        )
+        monkeypatch.setattr(
+            backfill_enrichment,
+            "backfill_summaries",
+            lambda **kwargs: pytest.fail("summary phase should not run when preview_only=True"),
+        )
+
+        backfill_enrichment.main()
+
+        assert captured["preview"]["batch_size"] == 50
+        assert captured["preview"]["refresh_preview"] is True
+        assert captured["preview"]["reparse"] is True
+
+    def test_refresh_preview_uses_stable_ordered_pagination(self, monkeypatch):
+        from backfill_enrichment import backfill_previews
+
+        jobs = [
+            SimpleNamespace(id=1, title="One", description="Desc 1", skills=[], parsed_jd=None, job_terms_preview=None, salary="", company="", agency=""),
+            SimpleNamespace(id=2, title="Two", description="Desc 2", skills=[], parsed_jd=None, job_terms_preview=None, salary="", company="", agency=""),
+            SimpleNamespace(id=3, title="Three", description="Desc 3", skills=[], parsed_jd=None, job_terms_preview=None, salary="", company="", agency=""),
+            SimpleNamespace(id=4, title="Four", description="Desc 4", skills=[], parsed_jd=None, job_terms_preview=None, salary="", company="", agency=""),
+        ]
+
+        class FakeQuery:
+            def __init__(self, items, start=0, size=None, ordered=False, order_calls=None, all_calls=None):
+                self.items = items
+                self.start = start
+                self.size = size
+                self.ordered = ordered
+                self.order_calls = order_calls if order_calls is not None else {"count": 0}
+                self.all_calls = all_calls if all_calls is not None else {"count": 0}
+
+            def filter(self, *_args, **_kwargs):
+                return self
+
+            def count(self):
+                return len(self.items)
+
+            def order_by(self, *_args, **_kwargs):
+                self.order_calls["count"] += 1
+                return FakeQuery(
+                    self.items,
+                    start=self.start,
+                    size=self.size,
+                    ordered=True,
+                    order_calls=self.order_calls,
+                    all_calls=self.all_calls,
+                )
+
+            def offset(self, amount):
+                return FakeQuery(
+                    self.items,
+                    start=amount,
+                    size=self.size,
+                    ordered=self.ordered,
+                    order_calls=self.order_calls,
+                    all_calls=self.all_calls,
+                )
+
+            def limit(self, amount):
+                return FakeQuery(
+                    self.items,
+                    start=self.start,
+                    size=amount,
+                    ordered=self.ordered,
+                    order_calls=self.order_calls,
+                    all_calls=self.all_calls,
+                )
+
+            def all(self):
+                self.all_calls["count"] += 1
+                if self.ordered:
+                    items = sorted(self.items, key=lambda item: item.id)
+                else:
+                    # Simulate unstable DB row order when no ORDER BY is present.
+                    items = list(reversed(self.items)) if self.all_calls["count"] % 2 == 0 else list(self.items)
+                items = items[self.start:]
+                if self.size is not None:
+                    items = items[:self.size]
+                return items
+
+        class FakeDB:
+            def __init__(self, items):
+                self.items = items
+
+            def query(self, _model):
+                return FakeQuery(self.items)
+
+            def commit(self):
+                pass
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("backfill_enrichment.SessionLocal", lambda: FakeDB(jobs))
+        monkeypatch.setattr("backfill_enrichment.preparse_jd", lambda *args, **kwargs: {"required_skills": []})
+        monkeypatch.setattr("backfill_enrichment.build_job_ats_terms", lambda **kwargs: [{"skill": f"skill-{kwargs['job_title']}"}])
+        monkeypatch.setattr("backfill_enrichment.analyze_job_description", lambda **kwargs: {"fit": "good"})
+
+        processed = backfill_previews(batch_size=2, refresh_preview=True)
+
+        assert processed == 4
+        assert all(job.parsed_jd is not None for job in jobs)
+        assert all(job.job_terms_preview is not None for job in jobs)

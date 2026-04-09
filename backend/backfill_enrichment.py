@@ -110,6 +110,7 @@ def backfill_previews(
     """
     db = SessionLocal()
     total_done = 0
+    start_time = time.time()
     try:
         has_desc = (
             db.query(ScrapedJob)
@@ -124,7 +125,12 @@ def backfill_previews(
             ).count()
         log.info(f"Need preview backfill: {total_need} (refresh={refresh_preview})")
         if progress_callback:
-            progress_callback(preview_total=total_need, preview_done=0)
+            progress_callback(
+                preview_total=total_need,
+                preview_done=0,
+                rate_per_min=0.0,
+                eta_minutes=0.0,
+            )
 
         offset = 0
         while True:
@@ -135,7 +141,9 @@ def backfill_previews(
                     | (ScrapedJob.job_terms_preview.is_(None))
                 )
             else:
-                query = query.offset(offset)
+                # Refresh/reparse walks a fixed snapshot of all described jobs, so
+                # pagination must be deterministic to avoid skipping/duplicating rows.
+                query = query.order_by(ScrapedJob.id.asc()).offset(offset)
             jobs = query.limit(batch_size).all()
             if not jobs:
                 break
@@ -184,13 +192,33 @@ def backfill_previews(
 
             db.commit()
             total_done += len(jobs)
-            log.info(f"Preview backfill: {total_done}/{total_need}")
+            elapsed = time.time() - start_time
+            rate_per_min = total_done / max(1, elapsed) * 60
+            remaining = max(0, total_need - total_done)
+            eta_min = remaining / max(0.1, rate_per_min) if remaining else 0.0
+            log.info(
+                f"Preview backfill: {total_done}/{total_need} "
+                f"| {rate_per_min:.1f}/min | ETA {eta_min:.0f}min"
+            )
             if progress_callback:
-                progress_callback(preview_done=total_done, preview_total=total_need)
+                progress_callback(
+                    preview_done=total_done,
+                    preview_total=total_need,
+                    rate_per_min=round(rate_per_min, 1),
+                    eta_minutes=round(eta_min, 1),
+                )
 
     finally:
         db.close()
 
+    elapsed = time.time() - start_time
+    if progress_callback:
+        progress_callback(
+            preview_done=total_done,
+            preview_total=total_need,
+            rate_per_min=round(total_done / max(1, elapsed) * 60, 1) if total_done else 0.0,
+            eta_minutes=0.0,
+        )
     return total_done
 
 
@@ -337,7 +365,11 @@ def main() -> None:
     if not args.summary_only:
         log.info("=== Phase 1: Backfill parsed_jd + job_terms_preview ===")
         start = time.time()
-        count = backfill_previews(batch_size=args.batch_size, refresh_preview=args.refresh_preview)
+        count = backfill_previews(
+            batch_size=args.batch_size,
+            refresh_preview=args.refresh_preview,
+            reparse=args.reparse,
+        )
         elapsed = time.time() - start
         log.info(f"Phase 1 done: {count} jobs in {elapsed:.1f}s ({count / max(1, elapsed):.1f} jobs/s)")
 
