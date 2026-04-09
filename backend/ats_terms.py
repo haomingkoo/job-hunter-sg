@@ -118,6 +118,21 @@ ATS_DISPLAY_EXCLUDE: set[str] = ATS_MULTIWORD_NOISE | {
     # Round 8: truly generic soft skills (not ATS-searchable)
     "teamwork", "multitasking", "multi-tasking",
     "good communication", "oral communication",
+    # Benefits / perks / company culture (not ATS skills)
+    "generous pto", "unlimited pto", "paid time off", "paid leave",
+    "annual leave", "medical leave", "sick leave", "maternity leave",
+    "health benefits", "dental benefits", "vision benefits", "medical benefits",
+    "health insurance", "dental insurance", "vision insurance",
+    "emotional health", "mental health", "mental wellness", "employee wellness",
+    "health resources", "emotional health resources",
+    "flexible work", "flexible hours", "flexible working",
+    "work life balance", "work-life balance",
+    "remote work", "work from home", "hybrid work", "hybrid working",
+    "team outings", "team building", "company events", "company culture",
+    "learning opportunities", "career growth", "career opportunities",
+    "competitive salary", "competitive package", "attractive package",
+    "equity options", "stock options", "employee stock",
+    "internal equity", "internal eq",
 }
 
 ATS_OUTLINE_NOISE: set[str] = {
@@ -300,6 +315,15 @@ def _extract_outline_terms(text: str) -> list[str]:
             for word in words
         )
         if title_like:
+            # Skip lines that are benefits/perks/about-section content
+            _OUTLINE_SKIP_WORDS = {
+                "pto", "leave", "insurance", "wellness", "perks", "benefits",
+                "equity", "bonus", "salary", "package", "compensation",
+                "culture", "events", "outings", "outing", "diversity",
+                "inclusion", "offers", "providing", "enjoy",
+            }
+            if any(w.lower() in _OUTLINE_SKIP_WORDS for w in words):
+                continue
             candidates.append(stripped)
 
     deduped: list[str] = []
@@ -429,6 +453,20 @@ def _is_noise_term(term: str, context: str = "") -> bool:
     # Generic adjective + noun patterns that aren't real skills
     _GENERIC_ADJ = {"new", "various", "multiple", "effective", "appropriate"}
     if word_count >= 2 and words[0] in _GENERIC_ADJ:
+        return True
+
+    # Contains apostrophe — JD fragment like "candidate's work experience"
+    if "'" in lowered or "\u2019" in lowered:
+        return True
+
+    # Contains " or " connector — alternatives like "python or c++"
+    # (these belong split, not as a combined ATS term)
+    if " or " in lowered:
+        return True
+
+    # Ends with a perks/company phrase indicator
+    _PERKS_ENDERS = {"offers", "provides", "perks", "benefits", "inc", "ltd", "pte"}
+    if word_count >= 2 and words[-1] in _PERKS_ENDERS:
         return True
 
     return False
