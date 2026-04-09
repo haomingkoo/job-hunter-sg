@@ -1025,29 +1025,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     }
   };
 
-  const getRankedKeywordsForBullet = useCallback((bulletSection) => {
-    if (!relevantMissingKeywords.length || !bulletSection?.text) return [];
-    // Find nearest heading/subheading above this bullet in parsedSections
-    const idx = parsedSections.findIndex((s) => s.id === bulletSection.id);
-    const headingText = idx > 0
-      ? parsedSections.slice(0, idx).reverse()
-          .find((s) => s.type === "subheading" || s.type === "heading")?.text || ""
-      : "";
-    const ctx = (bulletSection.text + " " + headingText).toLowerCase();
-    return relevantMissingKeywords
-      .map((kw) => {
-        const label = extractKeywordLabel(kw);
-        const score = label.toLowerCase().split(/\W+/)
-          .filter((t) => t.length >= 3)
-          .filter((t) => ctx.includes(t)).length;
-        return { label, score };
-      })
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 2)
-      .map((item) => item.label);
-  }, [parsedSections, relevantMissingKeywords]);
-
   const handleBulletRewrite = async (section, activeTabId = selectedBulletTab, suggestionHint = null) => {
     if (!section?.text) return;
 
@@ -1629,6 +1606,29 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   ]);
   const relevantMatchedKeywords = canonicalJobMatchSets.matched;
   const relevantMissingKeywords = canonicalJobMatchSets.missing;
+
+  const getRankedKeywordsForBullet = useCallback((bulletSection) => {
+    if (!relevantMissingKeywords.length || !bulletSection?.text) return [];
+    const idx = parsedSections.findIndex((s) => s.id === bulletSection.id);
+    const headingText = idx > 0
+      ? parsedSections.slice(0, idx).reverse()
+          .find((s) => s.type === "subheading" || s.type === "heading")?.text || ""
+      : "";
+    const ctx = (bulletSection.text + " " + headingText).toLowerCase();
+    return relevantMissingKeywords
+      .map((kw) => {
+        const label = extractKeywordLabel(kw);
+        const score = label.toLowerCase().split(/\W+/)
+          .filter((t) => t.length >= 3)
+          .filter((t) => ctx.includes(t)).length;
+        return { label, score };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 2)
+      .map((item) => item.label);
+  }, [parsedSections, relevantMissingKeywords]);
+
   const relevantTermTotal = selectedJobCanonicalTerms.length;
   const relevantTermsMode = !jobDescription.trim()
     ? "no_job"
