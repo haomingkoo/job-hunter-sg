@@ -214,8 +214,62 @@ def _append_text_lines(target: list[str], value: str) -> None:
             target.append(cleaned)
 
 
+def _has_missing_spaces(text: str) -> bool:
+    """Detect if extracted text has space-stripping (common in LaTeX PDFs).
+
+    Heuristic: if many 'words' are >40 chars, spaces were likely stripped."""
+    words = text.split()
+    if not words:
+        return False
+    long_words = sum(1 for w in words if len(w) > 40)
+    return long_words > len(words) * 0.15
+
+
+def _extract_text_from_chars(page) -> str:
+    """Reconstruct text from character-level positions when extract_text() fails.
+
+    LaTeX PDFs often have correct character positions but missing space
+    characters. This function detects gaps between characters and inserts
+    spaces where the visual layout implies them.
+    """
+    chars = page.chars
+    if not chars:
+        return ""
+
+    # Group chars into lines by top position (within 3pt tolerance)
+    lines: dict[float, list] = {}
+    for c in chars:
+        top = round(float(c["top"]) / 3) * 3  # bucket by ~3pt
+        lines.setdefault(top, []).append(c)
+
+    # Determine typical character width for space threshold
+    all_widths = [float(c["x1"]) - float(c["x0"]) for c in chars if c["text"].strip()]
+    avg_width = sum(all_widths) / len(all_widths) if all_widths else 5.0
+    space_threshold = avg_width * 0.35  # gap > 35% of avg char width = space
+
+    result_lines = []
+    for top in sorted(lines.keys()):
+        line_chars = sorted(lines[top], key=lambda c: float(c["x0"]))
+        text = ""
+        prev_x1 = 0.0
+        for c in line_chars:
+            gap = float(c["x0"]) - prev_x1
+            if prev_x1 > 0 and gap > space_threshold:
+                text += " "
+            text += c["text"]
+            prev_x1 = float(c["x1"])
+        if text.strip():
+            result_lines.append(text.strip())
+
+    return "\n".join(result_lines)
+
+
 def extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Extract full text from a PDF file. No truncation."""
+    """Extract full text from a PDF file. No truncation.
+
+    Uses standard extraction first, then falls back to character-level
+    reconstruction for LaTeX PDFs with missing spaces.
+    """
     import pdfplumber
 
     text_parts = []
@@ -224,6 +278,12 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
             for page in pdf.pages:
                 page_text = page.extract_text()
                 if page_text:
+                    # Detect LaTeX space-stripping and fall back to char-level
+                    if _has_missing_spaces(page_text):
+                        char_text = _extract_text_from_chars(page)
+                        if char_text and not _has_missing_spaces(char_text):
+                            log.info("PDF page %d: LaTeX space fix applied", page.page_number)
+                            page_text = char_text
                     text_parts.append(page_text)
     except Exception as e:
         log.warning(f"PDF extraction failed: {e}")
