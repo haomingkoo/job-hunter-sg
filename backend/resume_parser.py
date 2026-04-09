@@ -217,10 +217,20 @@ def _append_text_lines(target: list[str], value: str) -> None:
 def _has_missing_spaces(text: str) -> bool:
     """Detect if extracted text has space-stripping (common in LaTeX PDFs).
 
-    Heuristic: if many 'words' are >40 chars, spaces were likely stripped."""
+    Two signals:
+    1. CamelCase merges: lowercase immediately followed by uppercase (e.g. 'hJ' in
+       'VikneshJayaKumar') - reliable indicator of merged words.
+    2. Very long tokens: words >40 chars that span multiple merged words.
+    Either signal affecting >10% of tokens triggers the fix.
+    """
+    import re
     words = text.split()
     if not words:
         return False
+    camel_merge = re.compile(r"[a-z][A-Z]")
+    merged = sum(1 for w in words if camel_merge.search(w))
+    if merged > len(words) * 0.10:
+        return True
     long_words = sum(1 for w in words if len(w) > 40)
     return long_words > len(words) * 0.15
 
@@ -242,10 +252,12 @@ def _extract_text_from_chars(page) -> str:
         top = round(float(c["top"]) / 3) * 3  # bucket by ~3pt
         lines.setdefault(top, []).append(c)
 
-    # Determine typical character width for space threshold
+    # Determine typical character width for space threshold.
+    # Use 15% of avg char width (not 35%) to catch tight LaTeX word spacing
+    # (typically 1.5-3pt gaps). Within-word char gaps are ~0pt, so 15% is safe.
     all_widths = [float(c["x1"]) - float(c["x0"]) for c in chars if c["text"].strip()]
     avg_width = sum(all_widths) / len(all_widths) if all_widths else 5.0
-    space_threshold = avg_width * 0.35  # gap > 35% of avg char width = space
+    space_threshold = avg_width * 0.15  # gap > 15% of avg char width = space
 
     result_lines = []
     for top in sorted(lines.keys()):
