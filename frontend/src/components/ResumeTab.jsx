@@ -2228,7 +2228,7 @@ PROFESSIONAL EXPERIENCE
 Senior Software Engineer
 DBS Bank | Singapore | Jan 2022 – Present
 • Led microservices migration for core banking platform, serving 5M+ users across APAC
-• Reduced API response time by 45% through Redis caching and query optimization
+• Reduced API response time by 45% through Redis caching and query optimisation
 • Responsible for mentoring junior engineers and doing code reviews
 • Helped with CI/CD pipeline improvements and deployment automation
 
@@ -2237,7 +2237,7 @@ GovTech Singapore | Singapore | Jul 2019 – Dec 2021
 • Built citizen-facing web applications using React and Node.js, serving 500K+ monthly users
 • Designed and implemented RESTful APIs for national digital identity platform
 • Collaborated with UX team to improve accessibility compliance to WCAG 2.1 AA standards
-• Reduced infrastructure costs by 30% through AWS resource optimization
+• Reduced infrastructure costs by 30% through AWS resource optimisation
 
 Junior Developer
 Shopee | Singapore | Jan 2018 – Jun 2019
@@ -3692,7 +3692,7 @@ CERTIFICATIONS
                   className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-medium text-violet-800 transition hover:bg-violet-100 disabled:opacity-40"
                 >
                   {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                  {hasSummarySection ? "Optimize Summary" : "Generate Summary"}
+                  {hasSummarySection ? "Optimise Summary" : "Generate Summary"}
                 </button>
               )}
               {selectedSection && ["heading", "heading_paragraph"].includes(selectedSection.type) && (

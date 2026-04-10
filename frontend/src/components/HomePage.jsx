@@ -432,7 +432,7 @@ export default function HomePage({ onNavigate }) {
               <div className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-[13px] font-bold text-emerald-700">3</div>
               <h3 className="font-display mt-4 text-[1.5rem] text-[#384959]">Apply with confidence</h3>
               <p className="mt-3 text-[15px] leading-relaxed text-[#6A89A7]">
-                Tailor your resume for each role. Every bullet optimized, every keyword placed. Download and submit knowing you put your best foot forward.
+                Tailor your resume for each role. Every bullet optimised, every keyword placed. Download and submit knowing you put your best foot forward.
               </p>
               <motion.button
                 type="button" onClick={() => onNavigate("resume")}
@@ -454,7 +454,7 @@ export default function HomePage({ onNavigate }) {
                 </div>
                 <div className="space-y-2">
                   <div className="rounded-xl border-l-[3px] border-[#88BDF2] bg-[#BDDDFC]/10 p-3 text-[11px] leading-relaxed text-[#384959]">
-                    Led global Conversion Accelerator Program, integrating <strong className="text-[#384959]">automation</strong> to optimize fab yield across 4 fabs...
+                    Led global Conversion Accelerator Program, integrating <strong className="text-[#384959]">automation</strong> to optimise fab yield across 4 fabs...
                   </div>
                   <div className="rounded-xl border-l-[3px] border-emerald-400 bg-emerald-50/30 p-3 text-[11px] leading-relaxed text-[#384959]">
                     Deployed <strong className="text-emerald-700">deep learning</strong> model (ResNet-50) for wafer misplacement detection, reducing downtime 40%...

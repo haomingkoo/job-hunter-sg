@@ -2020,7 +2020,7 @@ export function getBulletFeedbackTabs(section, resumeText) {
       chips: [...analysis.avoidedMatches, ...analysis.overusedWords].slice(0, 5),
       tip: analysis.overusedIssue
         ? "Swap repeated terms for more specific language, and remove filler phrases unless they add real meaning."
-        : "Keep favoring concrete nouns and verbs over generic phrasing.",
+        : "Keep favouring concrete nouns and verbs over generic phrasing.",
     },
     {
       id: "bullet_length",
