@@ -3795,7 +3795,8 @@ CERTIFICATIONS
                   {/* Active stage label + progress */}
                   <div className="mt-3 flex items-baseline justify-between gap-2">
                     <div className="text-sm font-semibold text-[#384959]">
-                      {titleCase(String(tailoringStatus.stage || "queued").replace(/_/g, " "))}
+                      {TAILOR_STAGE_LABELS.find((s) => s.id === tailoringStatus.stage)?.label
+                        || titleCase(String(tailoringStatus.stage || "Queued").replace(/_/g, " "))}
                       {tailoringStatus.progress?.total ? (
                         <span className="ml-2 text-xs font-normal text-[#6A89A7]">
                           {tailoringStatus.progress.completed}/{tailoringStatus.progress.total} bullets
