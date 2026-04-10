@@ -3763,48 +3763,48 @@ CERTIFICATIONS
 
               {tailoringStatus && (
                 <div className="mt-4 rounded-2xl border border-violet-200 bg-white p-4">
-                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-7">
+                  {/* Step track */}
+                  <div className="flex items-center">
                     {TAILOR_STAGE_LABELS.map((stage, stageIndex) => {
                       const currentStageNumber = Number.isFinite(tailoringStatus?.stage_number) ? tailoringStatus.stage_number : 0;
                       const isComplete = tailoringResult ? true : currentStageNumber > stageIndex;
                       const isActive = !tailoringResult && tailoringStatus?.stage === stage.id;
-                      const pillClass = isComplete
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                        : isActive
-                          ? "border-violet-200 bg-violet-50 text-violet-800"
-                          : "border-[#BDDDFC]/30 bg-[#f0f4f8] text-[#6A89A7]";
-                      const activeLabel = stage.id === "bullet_rewrite" && tailoringStatus?.progress?.total
-                        ? `${stage.label} ${tailoringStatus.progress.completed}/${tailoringStatus.progress.total}`
-                        : stage.label;
                       return (
-                        <div key={stage.id} className={`rounded-xl border px-3 py-2 text-xs font-semibold ${pillClass}`}>
-                          <div className="flex items-center gap-2">
-                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-[11px] font-bold">
-                              {isComplete ? "✓" : isActive ? "●" : stageIndex + 1}
-                            </span>
-                            <span>{isActive ? activeLabel : stage.label}</span>
+                        <div key={stage.id} className="flex flex-1 items-center">
+                          <div
+                            title={stage.label}
+                            className={`relative flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold transition-all ${
+                              isComplete
+                                ? "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300"
+                                : isActive
+                                  ? "bg-violet-600 text-white shadow-sm shadow-violet-200 ring-2 ring-violet-300 ring-offset-1"
+                                  : "bg-[#f0f4f8] text-[#6A89A7] ring-1 ring-[#BDDDFC]/40"
+                            }`}
+                          >
+                            {isComplete ? "✓" : stageIndex + 1}
                           </div>
+                          {stageIndex < TAILOR_STAGE_LABELS.length - 1 && (
+                            <div className={`h-px flex-1 transition-all ${isComplete ? "bg-emerald-300" : "bg-[#BDDDFC]/40"}`} />
+                          )}
                         </div>
                       );
                     })}
                   </div>
-                  <div className="mt-4 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Stage</div>
-                      <div className="mt-1 text-sm font-semibold text-[#384959]">
-                        {titleCase(String(tailoringStatus.stage || "queued").replace(/_/g, " "))}
-                      </div>
+                  {/* Active stage label + progress */}
+                  <div className="mt-3 flex items-baseline justify-between gap-2">
+                    <div className="text-sm font-semibold text-[#384959]">
+                      {titleCase(String(tailoringStatus.stage || "queued").replace(/_/g, " "))}
+                      {tailoringStatus.progress?.total ? (
+                        <span className="ml-2 text-xs font-normal text-[#6A89A7]">
+                          {tailoringStatus.progress.completed}/{tailoringStatus.progress.total} bullets
+                        </span>
+                      ) : null}
                     </div>
-                    <div className="text-right">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Progress</div>
-                      <div className="mt-1 text-sm font-semibold text-[#384959]">
-                        {tailoringStatus.progress?.total
-                          ? `${tailoringStatus.progress.completed}/${tailoringStatus.progress.total}`
-                          : `${Math.max((tailoringStatus.stage_number || 0) + 1, 1)}/${tailoringStatus.total_stages || TAILOR_STAGE_LABELS.length}`}
-                      </div>
+                    <div className="shrink-0 text-xs text-[#6A89A7]">
+                      {`${Math.max((tailoringStatus.stage_number || 0) + 1, 1)} / ${tailoringStatus.total_stages || TAILOR_STAGE_LABELS.length}`}
                     </div>
                   </div>
-                  <div className="mt-3 text-sm leading-relaxed text-[#384959]">{tailoringStatus.message}</div>
+                  <div className="mt-1 text-sm leading-relaxed text-[#6A89A7]">{tailoringStatus.message}</div>
                 </div>
               )}
 
