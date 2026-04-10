@@ -2366,6 +2366,9 @@ CERTIFICATIONS
 
                 {chatReady ? (
                   <div className="mb-3 space-y-2">
+                    <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-800">
+                      <span className="font-semibold">Your resume is ready to generate.</span> Click the button below — you can refine it further after.
+                    </div>
                     <button
                       type="button"
                       disabled={chatLoading}
