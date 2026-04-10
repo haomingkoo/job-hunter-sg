@@ -3801,7 +3801,13 @@ CERTIFICATIONS
                       ) : null}
                     </div>
                     <div className="shrink-0 text-xs text-[#6A89A7]">
-                      {`${Math.max((tailoringStatus.stage_number || 0) + 1, 1)} / ${tailoringStatus.total_stages || TAILOR_STAGE_LABELS.length}`}
+                      {(() => {
+                        const total = tailoringStatus.total_stages || TAILOR_STAGE_LABELS.length;
+                        const current = tailoringResult
+                          ? total
+                          : Math.min(Math.max((tailoringStatus.stage_number || 0) + 1, 1), total);
+                        return `${current} / ${total}`;
+                      })()}
                     </div>
                   </div>
                   <div className="mt-1 text-sm leading-relaxed text-[#6A89A7]">{tailoringStatus.message}</div>
