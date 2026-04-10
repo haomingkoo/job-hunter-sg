@@ -3666,15 +3666,17 @@ CERTIFICATIONS
                 {scoring ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 {scoring ? "Scoring..." : "Finalize Score"}
               </button>
-              <button
-                type="button"
-                onClick={handleAIFormat}
-                disabled={formatting || !resumeText.trim()}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#384959] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
-              >
-                {formatting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                {formatting ? "Improving..." : "AI Improve All"}
-              </button>
+              {!jobDescription.trim() && (
+                <button
+                  type="button"
+                  onClick={handleAIFormat}
+                  disabled={formatting || !resumeText.trim()}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#384959] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
+                >
+                  {formatting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  {formatting ? "Polishing..." : "Quick Polish"}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handleFullTailorRun}
