@@ -1622,7 +1622,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       ? parsedSections.slice(0, idx).reverse()
           .find((s) => s.type === "subheading" || s.type === "heading")?.text || ""
       : "";
-    const ctx = (bulletSection.text + " " + headingText).toLowerCase();
+    // Skip the first word (action verb) — "Designed" matching "api design" is a false positive
+    const bulletWithoutVerb = bulletSection.text.split(/\s+/).slice(1).join(" ");
+    const ctx = (bulletWithoutVerb + " " + headingText).toLowerCase();
     return relevantMissingKeywords
       .map((kw) => {
         const label = extractKeywordLabel(kw);
