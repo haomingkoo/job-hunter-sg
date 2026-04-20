@@ -63,6 +63,7 @@ class PipelineState:
         self.error: str | None = None
         self.result: dict | None = None
         self._lock = threading.Lock()
+        self._created_at = time.monotonic()
 
     def advance(self, message: str = "") -> None:
         with self._lock:
@@ -81,6 +82,7 @@ class PipelineState:
         with self._lock:
             self.error = error
             self.message = f"Error: {error}"
+            self._completed_at = time.monotonic()
 
     def set_result(self, result: dict) -> None:
         with self._lock:
@@ -118,14 +120,16 @@ def get_pipeline_state(session_id: str) -> PipelineState | None:
 
 
 def _cleanup_expired_pipelines() -> None:
-    """Remove completed pipelines older than TTL. Called periodically."""
+    """Remove pipelines older than TTL, whether completed, errored, or stuck mid-run.
+
+    Uses _completed_at when set (normal completion or error); otherwise falls back
+    to _created_at so genuinely-stuck-in-progress sessions still get evicted.
+    """
     now = time.monotonic()
     with _pipelines_lock:
         expired = [
             sid for sid, state in _active_pipelines.items()
-            if state.stage_name == "complete"
-            and hasattr(state, "_completed_at")
-            and (now - state._completed_at) > _PIPELINE_TTL_SECONDS
+            if now - getattr(state, "_completed_at", state._created_at) > _PIPELINE_TTL_SECONDS
         ]
         for sid in expired:
             del _active_pipelines[sid]
@@ -926,6 +930,10 @@ def run_pipeline(
         session_id = secrets.token_hex(16)
 
     state = PipelineState(session_id)
+
+    # Sweep before inserting so the dict can't grow without bound even if
+    # nobody polls get_pipeline_state (the only other cleanup trigger).
+    _cleanup_expired_pipelines()
 
     with _pipelines_lock:
         _active_pipelines[session_id] = state
