@@ -386,14 +386,37 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   }, [resumeText, wizardStep]);
 
   useEffect(() => {
+    let interval = null;
+
     const fetchStatus = () => fetch(`${API_BASE}/api/ai/status`)
       .then((response) => response.json())
       .then(setAiStatus)
       .catch(() => {});
 
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 10000);
-    return () => clearInterval(interval);
+    const start = () => {
+      if (interval) return;
+      fetchStatus();
+      interval = setInterval(fetchStatus, 60000);
+    };
+
+    const stop = () => {
+      if (!interval) return;
+      clearInterval(interval);
+      interval = null;
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden) stop();
+      else start();
+    };
+
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
   }, []);
 
   useEffect(() => {
