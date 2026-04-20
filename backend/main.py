@@ -2721,8 +2721,18 @@ def get_power_match(
     Power-match cached jobs against the logged-in user's latest resume.
     Returns suitability, gaps, and bridge suggestions.
     """
+    now = time.monotonic()
+    # Sweep expired entries to bound cache growth (unbounded before — grew one
+    # entry per user forever, only overwritten on cache hit).
+    expired_uids = [
+        uid for uid, entry in _power_match_cache.items()
+        if now - entry["_ts"] >= _POWER_MATCH_CACHE_TTL
+    ]
+    for uid in expired_uids:
+        _power_match_cache.pop(uid, None)
+
     cached = _power_match_cache.get(user.id)
-    if cached and time.monotonic() - cached["_ts"] < _POWER_MATCH_CACHE_TTL:
+    if cached and now - cached["_ts"] < _POWER_MATCH_CACHE_TTL:
         return cached["data"]
 
     mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()

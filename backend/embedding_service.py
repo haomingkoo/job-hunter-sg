@@ -83,7 +83,7 @@ _job_matrix: np.ndarray | None = None
 _job_ids: list[int] = []
 _matrix_lock = threading.Lock()
 _matrix_ts: float = 0.0
-_MATRIX_TTL = 300  # 5 minutes
+_MATRIX_TTL = 86400  # 24 hours — scrapes call invalidate_matrix_cache() on new data
 
 
 def invalidate_matrix_cache() -> None:
@@ -109,33 +109,31 @@ def _refresh_matrix_if_stale(db_session: Session) -> None:
 
         from models import ScrapedJob
 
-        rows = (
+        # Release the old matrix before loading new data so peak memory
+        # stays ~1× matrix size instead of ~3× (old + vectors list + new).
+        _job_matrix = None
+        _job_ids = []
+
+        ids: list[int] = []
+        vectors: list[list[float]] = []
+        query = (
             db_session.query(ScrapedJob.id, ScrapedJob.embedding_vector)
             .filter(ScrapedJob.embedding_vector.isnot(None))
-            .all()
+            .yield_per(500)
         )
-
-        if not rows:
-            _job_matrix = None
-            _job_ids = []
-            _matrix_ts = time.monotonic()
-            return
-
-        ids = []
-        vectors = []
-        for job_id, vec in rows:
+        for job_id, vec in query:
             if vec and isinstance(vec, list) and len(vec) > 0:
                 ids.append(job_id)
                 vectors.append(vec)
 
         if not vectors:
-            _job_matrix = None
-            _job_ids = []
             _matrix_ts = time.monotonic()
             return
 
+        matrix = np.array(vectors, dtype=np.float32)
+        vectors.clear()  # free Python list memory before publishing matrix
         _job_ids = ids
-        _job_matrix = np.array(vectors, dtype=np.float32)
+        _job_matrix = matrix
         _matrix_ts = time.monotonic()
 
 
