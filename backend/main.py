@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import random
+import sys
 import time
 import concurrent.futures
 import re
@@ -75,6 +76,17 @@ from scraper import CareersGovScraper, JobAggregator, SSGSkillsFrameworkAPI, _cl
 from tailoring_pipeline import get_pipeline_state, run_pipeline
 from jd_preparser import preparse_job_description as preparse_jd
 from jd_summary import summarize_job_description
+
+# Route Python logs to stdout so Railway tags them [inf] instead of [err].
+# force=True overrides any basicConfig set at import time by CLI modules
+# (scraper.py, seed_jobs.py, etc.) that default to stderr.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+    stream=sys.stdout,
+    force=True,
+)
 
 log = logging.getLogger("jobhunter")
 
