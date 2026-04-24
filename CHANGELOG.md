@@ -25,6 +25,7 @@ Notable changes to Job Hunter SG are tracked here.
 - All eight resume DOCX templates are covered by export tests.
 - Filtered Market Insights no longer caches empty over-indexing output before the market baseline cache is ready.
 - Power Match no longer pads candidate pools with newest jobs when too few skill-filtered roles are found.
+- The legacy jobs recommendation endpoint now uses the trusted skill extractor instead of capitalised-word matching.
 
 ## 2026-04-24
 

@@ -3450,33 +3450,15 @@ def get_recommended_jobs(
             detail="resume_text is required for recommendations. No fallback list is returned.",
         )
 
-    # Extract likely skill keywords from the resume (capitalized words, tech terms)
-    # Find capitalized multi-letter words and common tech terms
-    words = set(re.findall(r'\b[A-Z][a-zA-Z+#.]{2,}\b', resume_text))
-    # Also grab common tech keywords
-    tech_terms = {"python", "java", "react", "node", "sql", "aws", "docker", "kubernetes",
-                  "typescript", "javascript", "golang", "rust", "pytorch", "tensorflow",
-                  "data", "machine learning", "devops", "cloud", "agile", "scrum"}
-    lower_text = resume_text.lower()
-    for term in tech_terms:
-        if term in lower_text:
-            words.add(term)
-
-    if not words:
+    resume_skills, _resume_signal_mode = _extract_resume_skills(resume_text, db)
+    if not resume_skills:
         return []
 
-    # Search for jobs matching these keywords
-    conditions = []
-    for word in list(words)[:10]:  # Top 10 keywords
-        conditions.append(ScrapedJob.title.ilike(f"%{word}%"))
-        conditions.append(ScrapedJob.description.ilike(f"%{word}%"))
-
-    results = (
-        db.query(ScrapedJob)
-        .filter(or_(*conditions))
-        .order_by(ScrapedJob.id.desc())
-        .limit(limit)
-        .all()
+    results = _select_power_match_candidates(
+        db=db,
+        resume_text=resume_text,
+        resume_skills=resume_skills,
+        limit=max(limit * 3, limit),
     )
 
     # Deduplicate by dedup_key (in case the same job matched multiple keywords)
