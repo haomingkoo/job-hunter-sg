@@ -39,7 +39,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit, urlunsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -69,6 +69,46 @@ SESSION.headers.update(HEADERS)
 
 # ─── Data Model ─────────────────────────────────────────────────────────────────
 
+def _normalize_key_part(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def _canonical_job_url(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        parsed = urlsplit(value.strip())
+    except ValueError:
+        return value.strip().lower()
+    path = re.sub(r"/+$", "", parsed.path or "")
+    return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), path, "", ""))
+
+
+def _source_id_from_url(url: str) -> str:
+    canonical = _canonical_job_url(url)
+    return canonical.rsplit("/", 1)[-1] if canonical else ""
+
+
+def _extract_openings(item: dict) -> int:
+    for key in (
+        "numberOfVacancies",
+        "number_of_vacancies",
+        "vacancies",
+        "noOfVacancies",
+        "numberOfOpenings",
+        "openings",
+    ):
+        value = item.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            return min(parsed, 10000)
+    return 1
+
 @dataclass
 class Job:
     title: str
@@ -84,13 +124,36 @@ class Job:
     skills: list = field(default_factory=list)
     agency: str = ""  # For gov jobs
     closing_date: str = ""
+    source_posting_id: str = ""
+    openings: int = 1
     scraped_at: str = field(default_factory=lambda: datetime.now().isoformat())
 
     @property
     def dedup_key(self) -> str:
-        """Generate a key for deduplication based on title + company + agency."""
-        agency_part = f"|{self.agency.lower().strip()}" if self.agency else ""
-        raw = f"{self.title.lower().strip()}|{self.company.lower().strip()}{agency_part}"
+        """Generate a source-aware key that preserves distinct real postings."""
+        source = _normalize_key_part(self.source)
+        source_id = _normalize_key_part(self.source_posting_id)
+        if source and source_id:
+            raw = f"source-id|{source}|{source_id}"
+            return hashlib.md5(raw.encode()).hexdigest()
+
+        url = _canonical_job_url(self.url)
+        if source and url:
+            raw = f"url|{source}|{url}"
+            return hashlib.md5(raw.encode()).hexdigest()
+
+        raw = "|".join(
+            [
+                "listing",
+                source,
+                _normalize_key_part(self.title),
+                _normalize_key_part(self.company),
+                _normalize_key_part(self.agency),
+                _normalize_key_part(self.location),
+                _normalize_key_part(self.posted_date),
+                _normalize_key_part(self.closing_date),
+            ]
+        )
         return hashlib.md5(raw.encode()).hexdigest()
 
 
@@ -180,6 +243,8 @@ class MyCareersFutureScraper:
                     seniority=seniority,
                     description=_clean_html(item.get("description", "")),
                     skills=skills,
+                    source_posting_id=uuid,
+                    openings=_extract_openings(item),
                 )
                 jobs.append(job)
 
@@ -265,6 +330,8 @@ class CareersGovScraper:
         if not posted:
             posted = self._parse_timestamp(item, "closingDate")
         closing = self._parse_timestamp(item, "closingDate")
+        job_id = str(item.get("jobId") or "").strip()
+        posting_no = str(item.get("postingNo") or "").strip()
         return Job(
             title=(item.get("jobTitle") or "").strip(),
             company="Singapore Public Service",
@@ -279,6 +346,8 @@ class CareersGovScraper:
             skills=[],
             agency=(item.get("agency") or "").strip(),
             closing_date=closing,
+            source_posting_id=":".join(part for part in (job_id, posting_no) if part),
+            openings=_extract_openings(item),
         )
 
     def search(self, keyword: str, limit: int = 20, offset: int = 0) -> list[Job]:
@@ -502,6 +571,7 @@ class NodeFlairScraper:
                         salary=salary,
                         source="NodeFlair",
                         url=url,
+                        source_posting_id=_source_id_from_url(url),
                     )
                     if job.title:
                         jobs.append(job)
@@ -557,6 +627,7 @@ class IndeedSGScraper:
                     link_el = card.select_one("h2 a, .jobTitle a, a[data-jk]")
                     href = link_el.get("href", "") if link_el else ""
                     url = f"https://sg.indeed.com{href}" if href and not href.startswith("http") else href
+                    posting_id = card.get("data-jk", "") or _source_id_from_url(url)
 
                     snippet_el = card.select_one(".job-snippet, [class*='snippet']")
                     desc = snippet_el.get_text(strip=True) if snippet_el else ""
@@ -570,6 +641,7 @@ class IndeedSGScraper:
                             source="Indeed SG",
                             url=url,
                             description=desc,
+                            source_posting_id=posting_id,
                         ))
                 except Exception:
                     continue
@@ -640,6 +712,7 @@ class JobStreetScraper:
                             salary=salary,
                             source="JobStreet",
                             url=full_url,
+                            source_posting_id=_source_id_from_url(full_url),
                         ))
                 except Exception:
                     continue
@@ -665,6 +738,7 @@ class JobStreetScraper:
                                 salary=item.get("salary", ""),
                                 source="JobStreet",
                                 url=item.get("url", item.get("jobUrl", "")),
+                                source_posting_id=str(item.get("id") or item.get("jobId") or ""),
                             ))
                 elif isinstance(val, dict):
                     self._extract_from_json(val, jobs, limit, _depth + 1)
@@ -728,6 +802,8 @@ class AdzunaScraper:
                     description=item.get("description", "").replace("<strong>", "").replace("</strong>", ""),
                     employment_type=item.get("contract_type", ""),
                     seniority=cat_label,
+                    source_posting_id=str(item.get("id") or ""),
+                    openings=_extract_openings(item),
                 ))
 
         except requests.exceptions.RequestException as e:
@@ -774,6 +850,8 @@ class JoobleScraper:
                     posted_date=item.get("updated", ""),
                     description=item.get("snippet", ""),
                     employment_type=item.get("type", ""),
+                    source_posting_id=str(item.get("id") or item.get("link") or ""),
+                    openings=_extract_openings(item),
                 ))
 
         except requests.exceptions.RequestException as e:
@@ -909,7 +987,8 @@ def export_csv(results: dict, filepath: str):
     fields = [
         "title", "company", "location", "salary", "source", "url",
         "posted_date", "employment_type", "seniority", "skills",
-        "description", "agency", "scraped_at",
+        "description", "agency", "closing_date", "source_posting_id",
+        "openings", "scraped_at",
     ]
     with open(filepath, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields)

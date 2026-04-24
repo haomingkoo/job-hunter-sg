@@ -40,4 +40,5 @@ frontend/dist/
 !shared/resume-classification.json
 !skills-lock.json
 backend/data/*.xlsx
+backend/data/company_ssic_cache.json
 backend/data/learned_skills.json

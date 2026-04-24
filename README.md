@@ -48,7 +48,8 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 - Nightly crawl via Railway cron (22:00 UTC); extensible `SOURCE_MAP` supports 5 additional scrapers
 - Filter by seniority, job type, salary range, skills
 - ATS skill tags extracted at scrape time (413 known skills, ~50ms/job)
-- Precomputed sector, salary floor, and skill-search fields keep filters fast without loading full job tables
+- Source-aware dedupe uses official posting IDs or canonical source URLs, so repeated keyword hits collapse without merging distinct postings from the same employer
+- Precomputed sector, salary floor, official SSIC fields, and skill-search fields keep filters fast without loading full job tables
 
 ### Resume Builder
 - Upload PDF/DOCX or build from scratch with AI chat
@@ -87,11 +88,12 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 - "Close the Gap" course recommendations map repeated missing skills to official MySkillsFuture courses, ranked by relevance, rating, career impact, and response count
 
 ### Market Insights
-- Sector, title, company, salary, freshness, and seniority breakdowns across the cached job corpus
-- Drill down by source, sector, title, or company/department to inspect Careers@Gov, MyCareersFuture, civil-service demand, and hiring concentration
+- Industry/sector, title, company, salary, freshness, and seniority breakdowns across the cached job corpus
+- Official company industry uses ACRA corporate entity data from data.gov.sg when an employer maps to SSIC; otherwise the app keeps the sector explicitly labelled as inferred or unavailable
+- Drill down by source, industry/sector, title, or company/department to inspect Careers@Gov, MyCareersFuture, civil-service demand, and hiring concentration
 - Directional market movers compare last-30-day dated postings against older postings in the same slice; persisted daily snapshots are the next step for true trend charts
 - Salary views show advertised floor plus midpoint when range data is available
-- Sector inference uses precomputed title and extracted-skill signals to avoid slow request-time classification
+- Sector inference uses precomputed title and extracted-skill signals only as the fallback when official ACRA/SSIC mapping is unavailable
 
 ### Application Tracker
 - Track applications: Applied, Interview, Offer
@@ -169,7 +171,8 @@ scrapers (MCF, CareersGov, +5 pluggable)
 jd_preparser.py (50ms/job → skills, exp, education)
     ↓
 scraped_jobs table (parsed_jd JSON, ATS terms, JD summary,
-sector, salary_floor, skills_flat)
+sector, company_ssic_code, company_ssic_description,
+company_ssic_source, salary_floor, skills_flat)
     ↓
 embedding_service.py (MiniLM-L6-v2, 384-dim vectors)
 
@@ -221,6 +224,13 @@ JWT_SECRET=your-secret
 sealion_api=your-sealion-key          # supports sealion_api2 through sealion_api5
 ALLOWED_EMAIL_DOMAINS=*               # or comma-separated domains
 ALLOWED_ORIGINS=http://localhost:5173  # CORS
+
+# ACRA SSIC company taxonomy
+# Default: local backend/data/company_ssic_cache.json only; no live lookup on user requests.
+# Backfill top companies explicitly with:
+#   cd backend && python backfill_company_ssic.py --limit 200 --live
+# COMPANY_SSIC_CACHE_PATH=/absolute/path/company_ssic_cache.json
+ACRA_LIVE_LOOKUP=0
 ```
 
 See `.env.example` for full list.

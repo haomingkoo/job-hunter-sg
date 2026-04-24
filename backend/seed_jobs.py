@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from database import init_db, SessionLocal
 from job_precompute import apply_job_precomputes
+from job_store import find_existing_scraped_job
 from models import ScrapedJob
 from sanitizer import sanitize_job
 from scraper import JobAggregator
@@ -159,11 +160,7 @@ def seed_jobs(
                 clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
                 apply_job_precomputes(clean)
 
-                existing = (
-                    db.query(ScrapedJob)
-                    .filter(ScrapedJob.dedup_key == clean["dedup_key"])
-                    .first()
-                )
+                existing = find_existing_scraped_job(db, clean)
                 if existing:
                     for key, val in clean.items():
                         if key != "id":
@@ -260,9 +257,7 @@ def crawl_all_jobs() -> dict:
                 apply_job_precomputes(clean)
 
                 try:
-                    existing = db.query(ScrapedJob).filter(
-                        ScrapedJob.dedup_key == clean["dedup_key"]
-                    ).first()
+                    existing = find_existing_scraped_job(db, clean)
                     if existing:
                         for key, val in clean.items():
                             if key != "id":
@@ -325,7 +320,7 @@ def crawl_all_jobs() -> dict:
             raw = asdict(job)
             raw["dedup_key"] = job.dedup_key
             if raw["dedup_key"] in seen_keys:
-                continue  # skip duplicate titles in same batch
+                continue  # skip duplicate source postings in same batch
             seen_keys.add(raw["dedup_key"])
             clean = sanitize_job(raw)
             clean["search_keyword"] = "all"
@@ -338,9 +333,7 @@ def crawl_all_jobs() -> dict:
                     clean["description"], job_title=clean.get("title", "")
                 )
 
-            existing = db.query(ScrapedJob).filter(
-                ScrapedJob.dedup_key == clean["dedup_key"]
-            ).first()
+            existing = find_existing_scraped_job(db, clean)
             if existing:
                 for key, val in clean.items():
                     if key != "id":

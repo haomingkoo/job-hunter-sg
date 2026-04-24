@@ -47,11 +47,9 @@ from auth import (
 from database import SessionLocal, get_db, init_db
 from job_precompute import (
     apply_job_precomputes as _apply_job_precomputes,
-    classify_sector as _classify_sector,
     salary_bounds_from_text as _salary_bounds_from_text,
-    salary_floor_from_text as _salary_floor_from_text,
-    skills_flat_text as _skills_flat_text,
 )
+from job_store import find_existing_scraped_job
 from models import PowerMatchSnapshot, ScrapedJob, TrackedJob, UsageLog, User, UserMemory
 from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
 from schemas import (
@@ -1733,7 +1731,7 @@ def admin_seed_jobs(
                     _apply_job_precomputes(clean)
                     if preparse_jd and clean.get("description"):
                         clean["parsed_jd"] = preparse_jd(clean["description"], job_title=clean.get("title", ""))
-                    existing = db.query(ScrapedJob).filter(ScrapedJob.dedup_key == clean["dedup_key"]).first()
+                    existing = find_existing_scraped_job(db, clean)
                     if existing:
                         for key, val in clean.items():
                             if key != "id":
@@ -2334,7 +2332,16 @@ def search_jobs(
     # Sanitize and cache jobs
     sanitized_jobs: list[dict] = []
     analytics_dirty = False
-    analytics_fields = {"source", "title", "company", "sector", "job_terms_preview"}
+    analytics_fields = {
+        "source",
+        "title",
+        "company",
+        "sector",
+        "company_ssic_code",
+        "company_ssic_description",
+        "company_ssic_source",
+        "job_terms_preview",
+    }
     for job in results["jobs"]:
         raw = asdict(job)
         raw["dedup_key"] = job.dedup_key  # Property not included by asdict()
@@ -2344,11 +2351,7 @@ def search_jobs(
         _apply_job_precomputes(clean)
 
         # Upsert into scraped_jobs by dedup_key
-        existing = (
-            db.query(ScrapedJob)
-            .filter(ScrapedJob.dedup_key == clean["dedup_key"])
-            .first()
-        )
+        existing = find_existing_scraped_job(db, clean)
         if existing:
             contributes_to_analytics = bool(existing.job_terms_preview)
             for key, val in clean.items():
@@ -2408,7 +2411,7 @@ def trending_skills(
     return get_trending_skills(db, limit=limit)
 
 
-_JOB_PRECOMPUTE_MARKER = "sector_v2"
+_JOB_PRECOMPUTE_MARKER = "sector_ssic_v1"
 
 
 def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
@@ -2436,7 +2439,11 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
                         ScrapedJob.salary,
                         ScrapedJob.skills,
                         ScrapedJob.description,
+                        ScrapedJob.company,
                         ScrapedJob.sector,
+                        ScrapedJob.company_ssic_code,
+                        ScrapedJob.company_ssic_description,
+                        ScrapedJob.company_ssic_source,
                         ScrapedJob.salary_floor,
                         ScrapedJob.skills_flat,
                     )
@@ -2451,9 +2458,24 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
 
             for job in jobs:
                 last_id = max(last_id, job.id)
-                job.sector = _classify_sector(job.title or "", job.skills, job.description or "")
-                job.salary_floor = _salary_floor_from_text(job.salary or "")
-                job.skills_flat = _skills_flat_text(job.skills)
+                data = {
+                    "title": job.title or "",
+                    "company": job.company or "",
+                    "salary": job.salary or "",
+                    "skills": job.skills,
+                    "description": job.description or "",
+                    "sector": job.sector or "",
+                    "company_ssic_code": job.company_ssic_code or "",
+                    "company_ssic_description": job.company_ssic_description or "",
+                    "company_ssic_source": job.company_ssic_source or "",
+                }
+                _apply_job_precomputes(data)
+                job.sector = data["sector"]
+                job.company_ssic_code = data.get("company_ssic_code", "")
+                job.company_ssic_description = data.get("company_ssic_description", "")
+                job.company_ssic_source = data.get("company_ssic_source", "")
+                job.salary_floor = data["salary_floor"]
+                job.skills_flat = data["skills_flat"]
 
             db.commit()
             total_done += len(jobs)
@@ -2475,7 +2497,11 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
                     ScrapedJob.salary,
                     ScrapedJob.skills,
                     ScrapedJob.description,
+                    ScrapedJob.company,
                     ScrapedJob.sector,
+                    ScrapedJob.company_ssic_code,
+                    ScrapedJob.company_ssic_description,
+                    ScrapedJob.company_ssic_source,
                     ScrapedJob.salary_floor,
                     ScrapedJob.skills_flat,
                 )
@@ -2484,6 +2510,8 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
                 or_(
                     ScrapedJob.sector.is_(None),
                     ScrapedJob.sector == "",
+                    ScrapedJob.company_ssic_source.is_(None),
+                    ScrapedJob.company_ssic_source == "",
                     ScrapedJob.salary_floor.is_(None),
                     ScrapedJob.skills_flat.is_(None),
                 )
@@ -2495,9 +2523,24 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
             break
 
         for job in jobs:
-            job.sector = _classify_sector(job.title or "", job.skills, job.description or "")
-            job.salary_floor = _salary_floor_from_text(job.salary or "")
-            job.skills_flat = _skills_flat_text(job.skills)
+            data = {
+                "title": job.title or "",
+                "company": job.company or "",
+                "salary": job.salary or "",
+                "skills": job.skills,
+                "description": job.description or "",
+                "sector": job.sector or "",
+                "company_ssic_code": job.company_ssic_code or "",
+                "company_ssic_description": job.company_ssic_description or "",
+                "company_ssic_source": job.company_ssic_source or "",
+            }
+            _apply_job_precomputes(data)
+            job.sector = data["sector"]
+            job.company_ssic_code = data.get("company_ssic_code", "")
+            job.company_ssic_description = data.get("company_ssic_description", "")
+            job.company_ssic_source = data.get("company_ssic_source", "")
+            job.salary_floor = data["salary_floor"]
+            job.skills_flat = data["skills_flat"]
 
         db.commit()
         total_done += len(jobs)
@@ -2872,6 +2915,8 @@ def analytics_skills(
             "salary_insights": cached.get("salary_insights", {}),
             "freshness": cached.get("freshness", {}),
             "seniority_mix": cached.get("seniority_mix", []),
+            "ssic_coverage": cached.get("ssic_coverage", {}),
+            "sector_source_mix": cached.get("sector_source_mix", []),
         }
         _store_analytics_query_cache(query_cache_key, now, result, cache_generation)
         return result
@@ -2896,6 +2941,7 @@ def analytics_skills(
             ScrapedJob.company,
             ScrapedJob.salary,
             ScrapedJob.sector,
+            ScrapedJob.company_ssic_source,
             ScrapedJob.skills_flat,
             ScrapedJob.salary_floor,
             ScrapedJob.posted_at_sort,
@@ -2924,6 +2970,7 @@ def analytics_skills(
     sector_counts: dict[str, int] = {}
     company_counts: dict[str, int] = {}
     seniority_counts: dict[str, int] = {}
+    sector_source_counts: dict[str, int] = {}
     salary_floors: list[int] = []
     salary_midpoints: list[int] = []
     salary_ceilings: list[int] = []
@@ -2949,9 +2996,13 @@ def analytics_skills(
 
         raw_title = (job.title or "").strip()
         job_sector = _analytics_sector_label(job.sector)
+        sector_source = (job.company_ssic_source or "").strip().lower() or "unavailable"
+        if sector_source not in {"acra", "inferred", "unavailable"}:
+            sector_source = "unavailable"
         norm_title = _normalize_title(raw_title) if raw_title else ""
 
         total_jobs += 1
+        sector_source_counts[sector_source] = sector_source_counts.get(sector_source, 0) + 1
 
         src = _analytics_source_label(job.source)
         source_counts[src] = source_counts.get(src, 0) + 1
@@ -3119,6 +3170,27 @@ def analytics_skills(
             key=lambda item: (-item[1], seniority_order.get(item[0], 99)),
         )
     ]
+    sector_source_labels = {
+        "acra": "Official ACRA SSIC",
+        "inferred": "Inferred fallback",
+        "unavailable": "Unavailable",
+    }
+    sector_source_mix = [
+        {
+            "source": key,
+            "label": sector_source_labels[key],
+            "count": sector_source_counts.get(key, 0),
+            "percent": round((sector_source_counts.get(key, 0) / total_jobs) * 100, 1) if total_jobs else 0,
+        }
+        for key in ("acra", "inferred", "unavailable")
+        if sector_source_counts.get(key, 0)
+    ]
+    ssic_coverage = {
+        "official_count": sector_source_counts.get("acra", 0),
+        "official_percent": round((sector_source_counts.get("acra", 0) / total_jobs) * 100, 1) if total_jobs else 0,
+        "inferred_count": sector_source_counts.get("inferred", 0),
+        "unavailable_count": sector_source_counts.get("unavailable", 0),
+    }
 
     # Cache the full result when no filters active
     cache_payload = None
@@ -3141,6 +3213,8 @@ def analytics_skills(
             "salary_insights": salary_insights,
             "freshness": freshness,
             "seniority_mix": seniority_mix,
+            "ssic_coverage": ssic_coverage,
+            "sector_source_mix": sector_source_mix,
         }
 
     # Apply skill search filter if provided
@@ -3168,6 +3242,8 @@ def analytics_skills(
         "salary_insights": salary_insights,
         "freshness": freshness,
         "seniority_mix": seniority_mix,
+        "ssic_coverage": ssic_coverage,
+        "sector_source_mix": sector_source_mix,
     }
     if cache_payload is not None:
         with _ANALYTICS_CACHE_LOCK:
@@ -3207,6 +3283,8 @@ def list_cached_jobs(
             ScrapedJob.description,
             ScrapedJob.skills,
             ScrapedJob.agency,
+            ScrapedJob.source_posting_id,
+            ScrapedJob.openings,
             ScrapedJob.scraped_at,
             ScrapedJob.posted_at_sort,
             ScrapedJob.parsed_jd,
@@ -3216,6 +3294,9 @@ def list_cached_jobs(
             ScrapedJob.job_terms_preview,
             ScrapedJob.closing_date,
             ScrapedJob.sector,
+            ScrapedJob.company_ssic_code,
+            ScrapedJob.company_ssic_description,
+            ScrapedJob.company_ssic_source,
             ScrapedJob.salary_floor,
             ScrapedJob.skills_flat,
         )
@@ -3389,8 +3470,13 @@ def list_cached_jobs(
                 "jd_summary_status": j.jd_summary_status or "",
                 "experience_years": (j.parsed_jd or {}).get("experience_years", "") if isinstance(j.parsed_jd, dict) else "",
                 "agency": j.agency, "scraped_at": j.scraped_at,
+                "source_posting_id": j.source_posting_id or "",
+                "openings": int(j.openings or 1),
                 "closing_date": getattr(j, "closing_date", "") or "",
                 "sector": _analytics_sector_label(j.sector),
+                "company_ssic_code": j.company_ssic_code or "",
+                "company_ssic_description": j.company_ssic_description or "",
+                "company_ssic_source": j.company_ssic_source or "",
                 "archetype": (j.parsed_jd or {}).get("archetype", "") if isinstance(j.parsed_jd, dict) else "",
             }
             for j in jobs

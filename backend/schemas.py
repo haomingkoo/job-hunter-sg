@@ -92,6 +92,12 @@ class JobOut(BaseModel):
     description: str
     skills: Any
     agency: str
+    source_posting_id: str = ""
+    openings: int = 1
+    sector: str = ""
+    company_ssic_code: str = ""
+    company_ssic_description: str = ""
+    company_ssic_source: str = ""
     scraped_at: str
 
 

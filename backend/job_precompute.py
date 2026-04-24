@@ -7,6 +7,8 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from company_taxonomy import apply_company_taxonomy
+
 
 SECTOR_KEYWORDS: dict[str, list[str]] = {
     "Data & AI": [
@@ -213,4 +215,5 @@ def apply_job_precomputes(job_data: dict) -> dict:
     )
     job_data["salary_floor"] = salary_floor_from_text(job_data.get("salary", "") or "")
     job_data["skills_flat"] = skills_flat_text(job_data.get("skills"))
+    apply_company_taxonomy(job_data)
     return job_data

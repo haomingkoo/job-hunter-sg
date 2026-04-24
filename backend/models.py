@@ -66,9 +66,14 @@ class ScrapedJob(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     skills: Mapped[dict | list | None] = mapped_column(JSON, default=list)
     agency: Mapped[str] = mapped_column(String(300), default="")
+    source_posting_id: Mapped[str] = mapped_column(String(300), default="")
+    openings: Mapped[int] = mapped_column(Integer, default=1)
     dedup_key: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     search_keyword: Mapped[str] = mapped_column(String(300), default="")
     sector: Mapped[str] = mapped_column(String(100), default="")
+    company_ssic_code: Mapped[str] = mapped_column(String(10), default="")
+    company_ssic_description: Mapped[str] = mapped_column(String(300), default="")
+    company_ssic_source: Mapped[str] = mapped_column(String(30), default="")
     skills_flat: Mapped[str] = mapped_column(Text, default="")
     scraped_at: Mapped[str] = mapped_column(String(50), default="")
     posted_at_sort: Mapped[str] = mapped_column(String(50), default="")
@@ -96,6 +101,9 @@ class ScrapedJob(Base):
         Index("ix_scraped_jobs_seniority", "seniority"),
         Index("ix_scraped_jobs_emp_type", "employment_type"),
         Index("ix_scraped_jobs_sector", "sector"),
+        Index("ix_scraped_jobs_source_posting", "source", "source_posting_id"),
+        Index("ix_scraped_jobs_ssic_code", "company_ssic_code"),
+        Index("ix_scraped_jobs_ssic_source", "company_ssic_source"),
         Index("ix_scraped_jobs_salary_floor", "salary_floor"),
     )
 

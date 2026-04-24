@@ -62,7 +62,18 @@ def sanitize_url(url: str) -> str:
 def sanitize_job(job_dict: dict) -> dict:
     """Sanitize scraped job fields. Returns a new dict."""
     sanitized = dict(job_dict)
-    for field in ("title", "company", "location", "salary"):
+    for field in (
+        "title",
+        "company",
+        "location",
+        "salary",
+        "source",
+        "agency",
+        "source_posting_id",
+        "company_ssic_code",
+        "company_ssic_description",
+        "company_ssic_source",
+    ):
         if field in sanitized and isinstance(sanitized[field], str):
             sanitized[field] = sanitize_html(sanitized[field])
     if "description" in sanitized and isinstance(sanitized["description"], str):
@@ -70,6 +81,10 @@ def sanitize_job(job_dict: dict) -> dict:
         sanitized["description"] = desc[:MAX_DESCRIPTION_LEN]
     if "url" in sanitized:
         sanitized["url"] = sanitize_url(sanitized.get("url", ""))
+    try:
+        sanitized["openings"] = max(1, min(int(sanitized.get("openings") or 1), 10000))
+    except (TypeError, ValueError):
+        sanitized["openings"] = 1
     return sanitized
 
 

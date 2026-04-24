@@ -137,6 +137,8 @@ export default function AnalyticsTab() {
   const salary = data?.salary_insights || {};
   const freshness = data?.freshness || {};
   const movers = data?.market_movers || {};
+  const ssicCoverage = data?.ssic_coverage || {};
+  const sectorSourceMix = data?.sector_source_mix || [];
 
   const chartColors = ["bg-[#88BDF2]", "bg-emerald-500", "bg-violet-500", "bg-amber-500", "bg-rose-500", "bg-cyan-500"];
 
@@ -152,10 +154,11 @@ export default function AnalyticsTab() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile icon={Briefcase} label="Analysed roles" value={data?.total_jobs_with_terms ? formatNumber(data.total_jobs_with_terms) : "..."} />
         <StatTile icon={Tags} label="Unique ATS terms" value={data?.skill_signal_count ? formatNumber(data.skill_signal_count) : "..."} />
         <StatTile icon={Building2} label="Companies" value={data?.company_count ? formatNumber(data.company_count) : "..."} />
+        <StatTile icon={ShieldCheck} label="Official SSIC" value={`${ssicCoverage.official_percent || 0}%`} />
       </div>
 
       <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
@@ -164,7 +167,7 @@ export default function AnalyticsTab() {
             {activeFilters.length > 0 ? (
               <>Filtered by <span className="font-semibold text-[#384959]">{activeFilters.join(" + ")}</span></>
             ) : (
-              <>Click a source, sector, or title to drill into skill demand.</>
+              <>Click a source, industry/sector, or title to drill into skill demand.</>
             )}
           </div>
           {(sourceFilter || sectorFilter || titleFilter || companyFilter) && (
@@ -178,6 +181,13 @@ export default function AnalyticsTab() {
           )}
         </div>
       </div>
+
+      {!loading && !error && sectorSourceMix.length > 0 && (
+        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 text-xs leading-relaxed text-[#6A89A7] shadow-sm">
+          Industry source: {sectorSourceMix.map((item) => `${formatNumber(item.count)} ${item.label}`).join(" / ")}.
+          ACRA SSIC is used when an official company match exists; otherwise the sector is labelled as inferred or unavailable.
+        </div>
+      )}
 
       {!loading && !error && data && (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -203,7 +213,7 @@ export default function AnalyticsTab() {
             icon={ShieldCheck}
             label="ATS read"
             value={data.overindexed_skills?.length ? "Niche signals found" : "Market baseline"}
-            detail={data.overindexed_skills?.length ? "These terms appear unusually often in the selected slice." : "Filter by sector or title to see what over-indexes."}
+            detail={data.overindexed_skills?.length ? "These terms appear unusually often in the selected slice." : "Filter by industry/sector or title to see what over-indexes."}
           />
         </div>
       )}
@@ -214,7 +224,7 @@ export default function AnalyticsTab() {
             <div>
               <div className="text-sm font-semibold text-[#384959]">Drill Down</div>
               <div className="text-xs leading-relaxed text-[#6A89A7]">
-                Pick a source, sector, or job title here to refresh the ATS skills, salary, freshness, and seniority signals above.
+                Pick a source, industry/sector, or job title here to refresh the ATS skills, salary, freshness, and seniority signals above.
               </div>
             </div>
             {(sourceFilter || sectorFilter || titleFilter || companyFilter) && (
@@ -245,11 +255,11 @@ export default function AnalyticsTab() {
                 ))}
               </div>
               <div className="mt-2 text-[11px] leading-relaxed text-[#6A89A7]">
-                Use this to isolate a job source before checking departments, sectors, and skills.
+                Use this to isolate a job source before checking departments, industries, and skills.
               </div>
             </div>
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Inferred Sectors</div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Industry / Sector</div>
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
                 {(data.sectors || []).slice(0, 8).map((item, index) => (
                   <BarRow
@@ -266,7 +276,7 @@ export default function AnalyticsTab() {
               </div>
               {(data.sectors || []).some((item) => item.sector === "Other") && (
                 <div className="mt-2 text-[11px] leading-relaxed text-[#6A89A7]">
-                  Other means the title and extracted skill terms do not map cleanly to a known sector yet.
+                  Other means there is no official ACRA SSIC match and the inferred fallback did not map cleanly.
                 </div>
               )}
             </div>
@@ -405,7 +415,7 @@ export default function AnalyticsTab() {
               </div>
             ) : (
               <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-[#6A89A7]">
-                Pick a sector or job title to reveal skills that appear unusually often compared with the overall market.
+                Pick an industry/sector or job title to reveal skills that appear unusually often compared with the overall market.
               </div>
             )}
           </div>
@@ -432,7 +442,7 @@ export default function AnalyticsTab() {
 
       {!loading && !error && data?.salary_insights?.by_sector?.length > 0 && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-          <div className="mb-4 text-sm font-semibold text-[#384959]">Listed Salary by Inferred Sector</div>
+          <div className="mb-4 text-sm font-semibold text-[#384959]">Listed Salary by Industry / Sector</div>
           <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
             {data.salary_insights.by_sector.map((item) => (
               <div key={item.sector} className="flex items-center justify-between gap-3 rounded-xl bg-[#f0f4f8] px-3 py-2">
@@ -472,7 +482,7 @@ export default function AnalyticsTab() {
       {!loading && !error && data?.sectors?.length > 0 && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
-            <div className="text-sm font-semibold text-[#384959]">Inferred Sector Demand</div>
+            <div className="text-sm font-semibold text-[#384959]">Industry / Sector Demand</div>
             {sectorFilter && (
               <button type="button" onClick={() => setSectorFilter("")} className="text-xs text-[#88BDF2] hover:text-[#384959]">
                 Clear sector

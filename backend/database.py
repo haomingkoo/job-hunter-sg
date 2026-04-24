@@ -62,10 +62,20 @@ def _apply_lightweight_migrations() -> None:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN embedding_vector JSON")
     if "closing_date" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN closing_date VARCHAR(100) DEFAULT ''")
+    if "source_posting_id" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN source_posting_id VARCHAR(300) DEFAULT ''")
+    if "openings" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN openings INTEGER DEFAULT 1")
     if "hidden" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN hidden INTEGER DEFAULT 0")
     if "sector" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN sector VARCHAR(100) DEFAULT ''")
+    if "company_ssic_code" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN company_ssic_code VARCHAR(10) DEFAULT ''")
+    if "company_ssic_description" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN company_ssic_description VARCHAR(300) DEFAULT ''")
+    if "company_ssic_source" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN company_ssic_source VARCHAR(30) DEFAULT ''")
     if "salary_floor" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN salary_floor INTEGER DEFAULT 0")
     if "skills_flat" not in existing_columns:
@@ -80,6 +90,9 @@ def _apply_lightweight_migrations() -> None:
         "ix_scraped_jobs_seniority": "CREATE INDEX ix_scraped_jobs_seniority ON scraped_jobs (seniority)",
         "ix_scraped_jobs_emp_type": "CREATE INDEX ix_scraped_jobs_emp_type ON scraped_jobs (employment_type)",
         "ix_scraped_jobs_sector": "CREATE INDEX ix_scraped_jobs_sector ON scraped_jobs (sector)",
+        "ix_scraped_jobs_source_posting": "CREATE INDEX ix_scraped_jobs_source_posting ON scraped_jobs (source, source_posting_id)",
+        "ix_scraped_jobs_ssic_code": "CREATE INDEX ix_scraped_jobs_ssic_code ON scraped_jobs (company_ssic_code)",
+        "ix_scraped_jobs_ssic_source": "CREATE INDEX ix_scraped_jobs_ssic_source ON scraped_jobs (company_ssic_source)",
         "ix_scraped_jobs_salary_floor": "CREATE INDEX ix_scraped_jobs_salary_floor ON scraped_jobs (salary_floor)",
     }
     for idx_name, idx_sql in index_defs.items():

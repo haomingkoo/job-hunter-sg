@@ -5,6 +5,9 @@ Notable changes to Job Hunter SG are tracked here.
 ## 2026-04-25
 
 ### Added
+- Jobs now store source posting IDs, openings, and company SSIC metadata fields for official industry classification.
+- Market Insights now reports ACRA SSIC coverage and distinguishes official industry sectors from inferred fallbacks.
+- Added `backfill_company_ssic.py` to populate company SSIC metadata from official ACRA data.gov.sg datasets on explicit runs.
 - Market Insights now exposes a visible Drill Down panel near the top so source, sector, and title filters are easier to discover.
 - Market Insights now includes source drilldowns for Careers@Gov/MyCareersFuture, clickable company/department rankings, and directional market movers based on recent versus older dated postings.
 - Story Bank generation now shows an indeterminate progress bar and rotating status text while resume-based stories are being extracted.
@@ -12,6 +15,7 @@ Notable changes to Job Hunter SG are tracked here.
 - Smart Match now shows the exact stored resume snapshot, word count, update time, and snapshot hash used for matching.
 
 ### Changed
+- Job deduplication is now source-aware: official posting IDs or canonical source URLs are used before title/company fallback, preserving distinct postings with the same title and employer.
 - Sector inference now uses title plus extracted skill signals and adds Singapore-market categories such as Built Environment, Food & Hospitality, Beauty & Wellness, Customer Service, and Public Sector.
 - Market Insights sector filters now use stored precomputed sectors only; unclassified rows are labelled explicitly instead of being re-guessed during requests.
 - Market Insights labels inferred sectors and unique ATS terms more explicitly to avoid implying ground-truth industry data.
