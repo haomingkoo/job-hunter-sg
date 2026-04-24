@@ -231,6 +231,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [scorePhase, setScorePhase] = useState(() => (resumeText.trim() ? "opening_scored" : "opening_pending"));
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
+  const [uploadWarnings, setUploadWarnings] = useState([]);
   const [dragOver, setDragOver] = useState(false);
   const [pastedText, setPastedText] = useState("");
   const [resumeVersions, setResumeVersions] = useState([]);
@@ -793,6 +794,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
     setUploading(true);
     setUploadError("");
+    setUploadWarnings([]);
     setError("");
 
     try {
@@ -814,6 +816,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
       const data = await response.json();
       const nextText = data.text || "";
+      setUploadWarnings(data.parse_quality?.warnings || []);
       setProfile({
         name: data.name || "",
         email: data.email || "",
@@ -845,6 +848,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
   const handlePasteResume = () => {
     if (!pastedText.trim()) return;
+    setUploadWarnings([]);
     setProfile({ name: "", email: "", phone: "", location: "" });
     setSelectedBulletId(null);
     setEditingNodeId(null);
@@ -2851,6 +2855,20 @@ CERTIFICATIONS
               <span>{message}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {wizardStep <= 3 && uploadWarnings.length > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <div className="flex items-center gap-2 font-semibold">
+            <AlertCircle size={14} className="flex-shrink-0" />
+            Review parsed resume text
+          </div>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs leading-relaxed">
+            {uploadWarnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
         </div>
       )}
 

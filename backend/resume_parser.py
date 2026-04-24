@@ -235,6 +235,81 @@ def _has_missing_spaces(text: str) -> bool:
     return long_words > len(words) * 0.15
 
 
+def _parse_quality(text: str, file_type: str) -> dict:
+    """Return lightweight diagnostics so the UI can warn on weak extraction.
+
+    This is intentionally heuristic. The parser should still return the text it
+    can read, but users deserve a visible warning when the extraction looks
+    incomplete or layout-damaged.
+    """
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    words = text.split()
+    lower_lines = {line.lower().rstrip(":") for line in lines}
+    section_hits = sum(1 for line in lower_lines if line in SECTION_HEADER_ALIASES)
+    bullet_lines = sum(1 for line in lines if re.match(r"^[\s]*(?:[•\-\*▪\u2022\u2023\u25E6\u2043\u2219]|\d+[.)])\s+", line))
+    long_tokens = [word for word in words if len(word) > 45]
+    email_found = bool(re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", text))
+    phone_found = bool(re.search(r"[\+]?[\d\s\-\(\)]{8,15}", text))
+    merged_words = _has_missing_spaces(text)
+
+    score = 100
+    warnings: list[str] = []
+
+    if len(words) < 120:
+        score -= 35
+        warnings.append(
+            f"Only {len(words)} words were extracted. If this is a full resume, the file may be image-based or protected."
+        )
+    elif len(words) < 220:
+        score -= 10
+
+    if len(lines) < 8:
+        score -= 20
+        warnings.append("Very few text lines were extracted; review the parsed text before scoring or tailoring.")
+
+    if section_hits < 2 and len(words) >= 120:
+        score -= 18
+        warnings.append("Few standard resume sections were detected; headings may have been lost or merged by the PDF parser.")
+
+    if bullet_lines == 0 and len(words) >= 180:
+        score -= 12
+        warnings.append("No bullet lines were detected. Achievements may have been flattened into paragraphs.")
+
+    if merged_words:
+        score -= 25
+        warnings.append("Some words still look merged after extraction. A DOCX upload or pasted text may parse better.")
+    elif long_tokens:
+        score -= 10
+        warnings.append("Some unusually long tokens were found; quickly check for missing spaces in the parsed resume.")
+
+    if not email_found and not phone_found and len(words) >= 120:
+        score -= 8
+        warnings.append("Contact details were not detected. Check the header if it was laid out with icons or columns.")
+
+    label = "good"
+    if score < 60:
+        label = "review"
+    elif warnings:
+        label = "check"
+
+    return {
+        "label": label,
+        "score": max(0, min(100, score)),
+        "warnings": warnings[:4],
+        "signals": {
+            "file_type": file_type,
+            "word_count": len(words),
+            "line_count": len(lines),
+            "section_count": section_hits,
+            "bullet_line_count": bullet_lines,
+            "email_found": email_found,
+            "phone_found": phone_found,
+            "possible_merged_words": merged_words,
+            "long_token_count": len(long_tokens),
+        },
+    }
+
+
 def _cluster_items_into_lines(items: list[dict], tolerance: float = 3.0) -> list[tuple[float, list[dict]]]:
     """Group positioned PDF items into visual lines using a top-position tolerance.
 
@@ -432,6 +507,7 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
         "file_type": file_type,
         "word_count": word_count,
         "line_count": line_count,
+        "parse_quality": _parse_quality(text, file_type),
         "name": name,
         "email": email_match.group() if email_match else None,
         "phone": phone_match.group().strip() if phone_match else None,

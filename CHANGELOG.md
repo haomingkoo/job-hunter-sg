@@ -5,6 +5,7 @@ Notable changes to Job Hunter SG are tracked here.
 ## 2026-04-24
 
 ### Added
+- Resume uploads now return parse-quality diagnostics and show a non-blocking warning when extracted text looks incomplete, flattened, or space-damaged.
 - Smart Match now includes a "Close the Gap" panel that recommends official MySkillsFuture courses for repeated missing skills.
 - SkillsFuture course recommendations rank by relevance, course rating, career impact, and response count.
 - Market Insights now surfaces ATS hard skills, over-indexed skills, hiring freshness, seniority mix, and salary coverage.

@@ -427,6 +427,68 @@ class TestResumeParser:
         except ImportError:
             pytest.skip("python-docx not installed")
 
+    def test_parse_quality_warns_on_low_signal_docx(self):
+        """Upload metadata should flag extracts that look too short to trust."""
+        from resume_parser import parse_resume
+        import io
+
+        try:
+            from docx import Document
+
+            doc = Document()
+            doc.add_paragraph("Jane Doe")
+            doc.add_paragraph("jane@example.com")
+            doc.add_paragraph("Experienced operator")
+            buf = io.BytesIO()
+            doc.save(buf)
+
+            result = parse_resume(
+                "thin.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                buf.getvalue(),
+            )
+            quality = result["parse_quality"]
+            assert quality["label"] == "review"
+            assert quality["warnings"]
+            assert quality["signals"]["word_count"] < 120
+        except ImportError:
+            pytest.skip("python-docx not installed")
+
+    def test_parse_quality_good_for_structured_docx(self):
+        """A normal structured resume should not show parse warnings."""
+        from resume_parser import parse_resume
+        import io
+
+        try:
+            from docx import Document
+
+            doc = Document()
+            doc.add_paragraph("Jane Doe")
+            doc.add_paragraph("jane@example.com | +65 9123 4567")
+            doc.add_paragraph("SUMMARY")
+            doc.add_paragraph("Engineering leader with experience across manufacturing and analytics.")
+            doc.add_paragraph("PROFESSIONAL EXPERIENCE")
+            doc.add_paragraph("Manager | Micron Technology | 2022-2025")
+            for _ in range(12):
+                bullet = doc.add_paragraph(style="List Bullet")
+                bullet.add_run("Led cross-functional process improvements across 3 fabs, improving cycle time by 20%")
+            doc.add_paragraph("EDUCATION")
+            doc.add_paragraph("Bachelor of Engineering, National University of Singapore")
+            doc.add_paragraph("SKILLS")
+            doc.add_paragraph("Python, SQL, Project Management, Data Analysis")
+            buf = io.BytesIO()
+            doc.save(buf)
+
+            result = parse_resume(
+                "structured.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                buf.getvalue(),
+            )
+            assert result["parse_quality"]["label"] == "good"
+            assert result["parse_quality"]["warnings"] == []
+        except ImportError:
+            pytest.skip("python-docx not installed")
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. Resume Scorer
