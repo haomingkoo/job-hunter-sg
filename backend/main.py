@@ -107,6 +107,8 @@ _JD_ENRICHMENT_IN_FLIGHT: set[int] = set()
 _JD_ENRICHMENT_LOCK = threading.Lock()
 _JD_ENRICHMENT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3)
 _FAILED_RETRY_SECONDS = 300  # retry failed/unavailable summaries after 5 min
+_STARTUP_ANALYTICS_WARM_DELAY_SECONDS = 5
+_STARTUP_MAINTENANCE_WARM_WAIT_SECONDS = 300
 
 # ── Cached filter metadata (avoid 3 GROUP BY queries per page 1 load) ────────
 _filter_meta_cache: dict = {}
@@ -183,6 +185,7 @@ async def lifespan(application: FastAPI):
     init_db()
     log.info("[STARTUP] Database initialized")
     from database import SessionLocal
+    startup_maintenance_done = threading.Event()
 
     # Auto-cleanup jobs older than 30 days (run in background to not block health check)
     def _startup_maintenance() -> None:
@@ -242,8 +245,8 @@ async def lifespan(application: FastAPI):
             log.warning(f"[STARTUP] job metadata backfill failed: {e}")
         finally:
             db_sort.close()
+            startup_maintenance_done.set()
 
-    import threading
     threading.Thread(target=_startup_maintenance, daemon=True).start()
 
     # Auto-create admin account if configured
@@ -355,7 +358,10 @@ async def lifespan(application: FastAPI):
     # Pre-warm analytics cache on startup so first page load is instant
     def _warm_analytics():
         import time as _time
-        _time.sleep(5)  # let the app finish starting
+        _time.sleep(_STARTUP_ANALYTICS_WARM_DELAY_SECONDS)
+        if not startup_maintenance_done.wait(_STARTUP_MAINTENANCE_WARM_WAIT_SECONDS):
+            log.warning("[STARTUP] Analytics warm skipped because maintenance is still running")
+            return
         try:
             import requests as _req
             _req.get("http://localhost:8080/api/analytics/skills?limit=50", timeout=30)
