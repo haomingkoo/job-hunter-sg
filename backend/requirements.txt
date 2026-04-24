@@ -4,7 +4,7 @@ requests==2.32.0
 beautifulsoup4==4.12.3
 sqlalchemy==2.0.35
 bcrypt==4.2.0
-PyJWT==2.9.0
+PyJWT==2.12.1
 python-multipart==0.0.12
 pydantic[email]==2.10.3
 pdfplumber==0.11.9
