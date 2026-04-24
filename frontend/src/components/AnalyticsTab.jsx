@@ -154,8 +154,8 @@ export default function AnalyticsTab() {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatTile icon={Briefcase} label="Analysed roles" value={data?.total_jobs_with_terms ? formatNumber(data.total_jobs_with_terms) : "..."} />
-        <StatTile icon={Tags} label="Skill signals" value={data?.top_skills?.length ? formatNumber(data.top_skills.length) : "..."} />
-        <StatTile icon={Building2} label="Companies" value={data?.top_companies?.length ? formatNumber(data.top_companies.length) : "..."} />
+        <StatTile icon={Tags} label="Skill signals" value={data?.skill_signal_count ? formatNumber(data.skill_signal_count) : "..."} />
+        <StatTile icon={Building2} label="Companies" value={data?.company_count ? formatNumber(data.company_count) : "..."} />
       </div>
 
       <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
