@@ -80,6 +80,7 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 - Suitability scores, skill gap analysis, bridge paths
 - Pre-embedded jobs for instant matching
 - Persisted match snapshots return repeat visits instantly when resume and job corpus are unchanged
+- "Close the Gap" course recommendations map repeated missing skills to official MySkillsFuture courses, ranked by relevance, rating, career impact, and response count
 
 ### Application Tracker
 - Track applications: Applied, Interview, Offer
@@ -96,7 +97,7 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 | Frontend | React 18 + Vite + Tailwind CSS + Framer Motion |
 | AI | SEA-LION (AI Singapore) — 32B interactive, 70B reasoning |
 | Embeddings | sentence-transformers/all-MiniLM-L6-v2 |
-| Skills | SSG-WSG SkillsFuture Skills Framework API |
+| Skills | SSG-WSG Skills Framework + data.gov.sg MySkillsFuture Course Directory |
 | Rate Limiting | In-memory token bucket, 5 API keys cycled (~45 req/min) |
 | Auth | JWT + bcrypt, tier-based rate limiting |
 | Deploy | Railway (Docker), persistent PostgreSQL |
@@ -191,6 +192,7 @@ shared/resume-classification.json ← single source of truth for both backend + 
 | `POST /api/ai/cover-letter` | Generate cover letter |
 | `POST /api/ai/resume-chat` | Conversational resume builder |
 | `GET /api/jobs/power-match` | Smart Match with RAG |
+| `POST /api/skillsfuture/recommend` | MySkillsFuture courses for Smart Match gaps |
 | `POST /api/admin/seed` | Trigger job crawl (admin) |
 
 ---

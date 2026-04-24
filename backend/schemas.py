@@ -204,6 +204,29 @@ class CoverLetterRequest(BaseModel):
     user_direction: str | None = Field(None, max_length=500, description="Custom instruction like 'emphasize leadership' or 'keep it concise'")
 
 
+class SkillsFutureRecommendRequest(BaseModel):
+    skills: list[str] = Field(..., min_length=1, max_length=8)
+    per_skill: int = Field(3, ge=1, le=5)
+
+    @field_validator("skills")
+    @classmethod
+    def clean_skills(cls, value: list[str]) -> list[str]:
+        cleaned = []
+        seen = set()
+        for raw in value:
+            skill = " ".join(str(raw or "").split()).strip()
+            key = skill.lower()
+            if not skill or key in seen:
+                continue
+            if len(skill) > 80:
+                skill = skill[:80]
+            cleaned.append(skill)
+            seen.add(key)
+        if not cleaned:
+            raise ValueError("At least one skill is required")
+        return cleaned[:8]
+
+
 class ResumeChatRequest(BaseModel):
     messages: list = Field(..., description="Chat history: [{role: 'user'|'assistant', content: '...'}]")
     action: str = Field("chat", description="'chat' for next question, 'generate' to produce resume")

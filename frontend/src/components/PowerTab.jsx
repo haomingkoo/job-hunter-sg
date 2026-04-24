@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Plus, AlertCircle, ExternalLink, RefreshCw,
   Loader2, Sparkles, FileText, MapPin, DollarSign, Building2,
-  Info, ShieldCheck, Target, Gauge,
+  Info, ShieldCheck, Target, Gauge, GraduationCap, Star, Clock3,
 } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 import { todayStr, getScoreTheme } from "../lib/helpers.js";
@@ -30,11 +30,29 @@ const matchRules = [
   },
 ];
 
+const formatMoney = (value) => (value ? `S$${Number(value).toLocaleString()}` : "Check provider");
+const formatHours = (value) => (value ? `${Number(value).toLocaleString()}h` : "Hours n/a");
+
+function RatingPill({ value, responses, label }) {
+  if (!value) {
+    return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">{label}: n/a</span>;
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+      <Star size={11} fill="currentColor" />
+      {label}: {value}/5{responses ? ` (${responses})` : ""}
+    </span>
+  );
+}
+
 export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [trackError, setTrackError] = useState("");
+  const [courseData, setCourseData] = useState(null);
+  const [courseLoading, setCourseLoading] = useState(false);
+  const [courseError, setCourseError] = useState("");
 
   const loadPowerMatches = useCallback(async () => {
     setLoading(true);
@@ -54,6 +72,55 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
   useEffect(() => {
     loadPowerMatches();
   }, [loadPowerMatches]);
+
+  const gapSkills = useMemo(() => {
+    const seen = new Set();
+    const collected = [];
+    const add = (skill) => {
+      const cleaned = String(skill || "").trim();
+      const key = cleaned.toLowerCase();
+      if (!cleaned || seen.has(key)) return;
+      seen.add(key);
+      collected.push(cleaned);
+    };
+    (data?.top_gaps || []).slice(0, 5).forEach((gap) => add(gap.skill));
+    if (collected.length < 3) {
+      (data?.recommendations || []).forEach((item) => {
+        (item.missing_skills || []).slice(0, 3).forEach(add);
+      });
+    }
+    return collected.slice(0, 5);
+  }, [data?.top_gaps, data?.recommendations]);
+
+  useEffect(() => {
+    if (!data?.resume_ready || gapSkills.length === 0) {
+      setCourseData(null);
+      setCourseError("");
+      setCourseLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setCourseLoading(true);
+    setCourseError("");
+    apiFetch("/api/skillsfuture/recommend", {
+      method: "POST",
+      body: JSON.stringify({ skills: gapSkills, per_skill: 3 }),
+      timeoutMs: 45000,
+    })
+      .then((resp) => resp.json())
+      .then((payload) => {
+        if (!cancelled) setCourseData(payload);
+      })
+      .catch((err) => {
+        if (!cancelled) setCourseError(err.message || "Course recommendations are unavailable right now.");
+      })
+      .finally(() => {
+        if (!cancelled) setCourseLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [data?.resume_ready, gapSkills]);
 
   const trackJob = async (item) => {
     setTrackError("");
@@ -237,6 +304,90 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                   </span>
                 ))}
               </div>
+            </div>
+          )}
+
+          {gapSkills.length > 0 && (
+            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">
+                    <GraduationCap size={16} />
+                    Close The Gap
+                  </div>
+                  <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
+                    Official MySkillsFuture courses mapped to repeated missing skills, ranked by relevance, rating, career impact, and response count.
+                  </div>
+                </div>
+                {courseLoading && (
+                  <span className="inline-flex items-center gap-2 rounded-full bg-[#f0f4f8] px-3 py-1 text-xs text-[#6A89A7]">
+                    <Loader2 size={12} className="animate-spin" />
+                    Finding courses
+                  </span>
+                )}
+              </div>
+
+              {courseError && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {courseError}
+                </div>
+              )}
+
+              {!courseError && courseData?.error && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {courseData.cache_status === "cached"
+                    ? "MySkillsFuture live refresh is temporarily unavailable, so cached official course data is shown."
+                    : "MySkillsFuture course recommendations are temporarily unavailable. Smart Match results are unaffected."}
+                </div>
+              )}
+
+              {!courseLoading && !courseError && courseData && (
+                <div className="mt-4 space-y-4">
+                  {gapSkills.map((skill) => {
+                    const courses = courseData.recommendations?.[skill] || [];
+                    return (
+                      <div key={skill} className="rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div className="text-sm font-semibold text-[#384959]">{skill}</div>
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-[#6A89A7]">
+                            {courses.length ? `${courses.length} course${courses.length === 1 ? "" : "s"}` : "No strong course match"}
+                          </span>
+                        </div>
+                        {courses.length > 0 ? (
+                          <div className="grid gap-3 xl:grid-cols-3">
+                            {courses.map((course) => (
+                              <a
+                                key={course.course_reference_number}
+                                href={course.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block rounded-2xl bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+                              >
+                                <div className="line-clamp-2 text-sm font-semibold leading-snug text-[#384959]">{course.title}</div>
+                                <div className="mt-1 line-clamp-1 text-xs text-[#6A89A7]">{course.provider || "Training provider n/a"}</div>
+                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                  <RatingPill value={course.course_rating_stars} responses={course.course_rating_respondents} label="Course" />
+                                  <RatingPill value={course.career_impact_stars} responses={course.career_impact_respondents} label="Impact" />
+                                </div>
+                                <div className="mt-3 flex flex-wrap gap-2 text-xs text-[#6A89A7]">
+                                  <span className="inline-flex items-center gap-1"><DollarSign size={12} />{formatMoney(course.net_course_fee || course.full_course_fee)}</span>
+                                  <span className="inline-flex items-center gap-1"><Clock3 size={12} />{formatHours(course.hours)}</span>
+                                  <span className="inline-flex items-center gap-1"><ExternalLink size={12} />MySkillsFuture</span>
+                                </div>
+                                <div className="mt-2 text-[11px] leading-relaxed text-[#6A89A7]">{course.reason}</div>
+                              </a>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="rounded-xl bg-white px-3 py-3 text-sm text-[#6A89A7]">
+                            No high-confidence SkillsFuture course match for this gap yet. Try a more specific tool or certification keyword.
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

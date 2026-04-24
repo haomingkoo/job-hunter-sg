@@ -66,6 +66,7 @@ from schemas import (
     ResumeScoreRequest,
     RewriteBulletRequest,
     SearchResponse,
+    SkillsFutureRecommendRequest,
     SignupRequest,
     TierInfo,
     TrackedJobCreate,
@@ -80,6 +81,7 @@ from resume_scorer import ResumeScorer
 from resume_templates import generate_docx, inspect_resume_export, list_templates
 from skill_extractor import extract_skill_phrases
 from scraper import CareersGovScraper, JobAggregator, SSGSkillsFrameworkAPI, _clean_html
+from skillsfuture_courses import recommend_courses_for_skills
 from tailoring_pipeline import get_pipeline_state, run_pipeline
 from jd_preparser import preparse_job_description as preparse_jd
 from jd_summary import summarize_job_description
@@ -3489,6 +3491,15 @@ def get_power_match(
         "limit": limit,
     }
     return result
+
+
+@app.post("/api/skillsfuture/recommend")
+def recommend_skillsfuture_courses(
+    body: SkillsFutureRecommendRequest,
+    _user: User = Depends(get_current_user),
+) -> dict:
+    """Recommend official MySkillsFuture courses for Smart Match skill gaps."""
+    return recommend_courses_for_skills(body.skills, per_skill=body.per_skill)
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobOut)
