@@ -2903,6 +2903,7 @@ def analytics_skills(
         ):
             baseline_counts = _analytics_cache.get("_skill_counts")
             baseline_total = int(_analytics_cache.get("total_jobs_with_terms", 0) or 0)
+    baseline_ready = bool(baseline_counts and baseline_total > 0)
 
     db_query = db.query(ScrapedJob).options(
         load_only(
@@ -3191,7 +3192,8 @@ def analytics_skills(
             if cache_generation == _analytics_cache_generation:
                 _analytics_cache = cache_payload
                 _analytics_cache_ts = now
-    _store_analytics_query_cache(query_cache_key, now, result, cache_generation)
+    if not has_filter or baseline_ready:
+        _store_analytics_query_cache(query_cache_key, now, result, cache_generation)
     return result
 
 

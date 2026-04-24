@@ -154,7 +154,7 @@ export default function AnalyticsTab() {
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatTile icon={Briefcase} label="Analysed roles" value={data?.total_jobs_with_terms ? formatNumber(data.total_jobs_with_terms) : "..."} />
-        <StatTile icon={Tags} label="Skill signals" value={data?.skill_signal_count ? formatNumber(data.skill_signal_count) : "..."} />
+        <StatTile icon={Tags} label="Unique ATS terms" value={data?.skill_signal_count ? formatNumber(data.skill_signal_count) : "..."} />
         <StatTile icon={Building2} label="Companies" value={data?.company_count ? formatNumber(data.company_count) : "..."} />
       </div>
 
@@ -245,11 +245,11 @@ export default function AnalyticsTab() {
                 ))}
               </div>
               <div className="mt-2 text-[11px] leading-relaxed text-[#6A89A7]">
-                Use this to isolate Careers@Gov, MCF, or any imported source before checking departments and skills.
+                Use this to isolate a job source before checking departments, sectors, and skills.
               </div>
             </div>
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Sectors</div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Inferred Sectors</div>
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
                 {(data.sectors || []).slice(0, 8).map((item, index) => (
                   <BarRow
@@ -432,7 +432,7 @@ export default function AnalyticsTab() {
 
       {!loading && !error && data?.salary_insights?.by_sector?.length > 0 && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-          <div className="mb-4 text-sm font-semibold text-[#384959]">Listed Salary by Sector</div>
+          <div className="mb-4 text-sm font-semibold text-[#384959]">Listed Salary by Inferred Sector</div>
           <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
             {data.salary_insights.by_sector.map((item) => (
               <div key={item.sector} className="flex items-center justify-between gap-3 rounded-xl bg-[#f0f4f8] px-3 py-2">
@@ -472,7 +472,7 @@ export default function AnalyticsTab() {
       {!loading && !error && data?.sectors?.length > 0 && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
-            <div className="text-sm font-semibold text-[#384959]">Sector Demand</div>
+            <div className="text-sm font-semibold text-[#384959]">Inferred Sector Demand</div>
             {sectorFilter && (
               <button type="button" onClick={() => setSectorFilter("")} className="text-xs text-[#88BDF2] hover:text-[#384959]">
                 Clear sector
