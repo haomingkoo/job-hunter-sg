@@ -5253,10 +5253,16 @@ async def upload_resume(
     # TODO: revisit with a better prompt or a structured JSON output approach.
     result["smart_formatted"] = False
 
+    parse_quality = result.get("parse_quality", {})
     db.add(UsageLog(
         user_id=user.id if user else None,
         action="resume_upload",
-        detail=f"{result['file_type']}:{result['word_count']}words",
+        detail=json.dumps({
+            "file_type": result["file_type"],
+            "word_count": result["word_count"],
+            "line_count": result["line_count"],
+            "parse_quality": parse_quality,
+        }, separators=(",", ":")),
     ))
     _persist_resume_to_memory(user, db, result["text"])
     db.commit()
@@ -5911,6 +5917,46 @@ def get_admin_metrics(
             UsageLog.created_at >= since_7d,
         )
     )
+    resume_upload_rows_30d = (
+        db.query(UsageLog.detail)
+        .filter(
+            UsageLog.action == "resume_upload",
+            UsageLog.created_at >= since_30d,
+        )
+        .all()
+    )
+    parse_labels: Counter[str] = Counter()
+    parse_file_types: Counter[str] = Counter()
+    parse_warnings: Counter[str] = Counter()
+    parse_scores: list[int] = []
+    parse_word_counts: list[int] = []
+    diagnostic_uploads = 0
+    for (detail,) in resume_upload_rows_30d:
+        try:
+            payload = json.loads(detail or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        if not isinstance(payload, dict):
+            continue
+        quality = payload.get("parse_quality") if isinstance(payload.get("parse_quality"), dict) else {}
+        signals = quality.get("signals") if isinstance(quality.get("signals"), dict) else {}
+        label = str(quality.get("label") or "").strip().lower()
+        if not label:
+            continue
+        diagnostic_uploads += 1
+        parse_labels[label] += 1
+        file_type = str(payload.get("file_type") or signals.get("file_type") or "unknown").strip().lower()
+        parse_file_types[file_type or "unknown"] += 1
+        score = quality.get("score")
+        if isinstance(score, int | float):
+            parse_scores.append(int(score))
+        word_count = payload.get("word_count") or signals.get("word_count")
+        if isinstance(word_count, int | float):
+            parse_word_counts.append(int(word_count))
+        for warning in quality.get("warnings") or []:
+            cleaned = str(warning or "").strip()
+            if cleaned:
+                parse_warnings[cleaned] += 1
     resume_scores_7d = _scalar(
         db.query(func.count(UsageLog.id)).filter(
             UsageLog.action == "resume_score",
@@ -5989,6 +6035,19 @@ def get_admin_metrics(
             "resume_downloads_7d": resume_downloads_7d,
             "resume_chat_starts_7d": resume_chat_starts_7d,
             "resume_chat_generates_7d": resume_chat_generates_7d,
+        },
+        "resume_parse_quality": {
+            "uploads_30d": len(resume_upload_rows_30d),
+            "diagnostic_uploads_30d": diagnostic_uploads,
+            "needs_review_30d": parse_labels.get("review", 0) + parse_labels.get("check", 0),
+            "labels": dict(parse_labels),
+            "file_types": dict(parse_file_types),
+            "avg_score": round(sum(parse_scores) / len(parse_scores), 1) if parse_scores else None,
+            "avg_word_count": round(sum(parse_word_counts) / len(parse_word_counts)) if parse_word_counts else None,
+            "top_warnings": [
+                {"warning": warning, "count": count}
+                for warning, count in parse_warnings.most_common(5)
+            ],
         },
         "funnel": {
             "users_with_saved_resume": users_with_saved_resume,

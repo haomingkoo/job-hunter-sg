@@ -210,7 +210,7 @@ export default function AccountTab({ user, onLogout }) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-5">
+              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4 mt-5">
                 <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
                   <div className="text-sm font-semibold text-[#384959]">Today</div>
                   <div className="mt-3 space-y-2 text-sm text-[#384959]">
@@ -238,6 +238,26 @@ export default function AccountTab({ user, onLogout }) {
                     <div className="flex items-center justify-between"><span>Users with tailored resume</span><span className="font-medium">{adminMetrics.funnel.users_with_tailored_resume}</span></div>
                     <div className="flex items-center justify-between"><span>Users with tracked jobs</span><span className="font-medium">{adminMetrics.funnel.users_with_tracked_jobs}</span></div>
                   </div>
+                </div>
+
+                <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
+                  <div className="text-sm font-semibold text-[#384959]">Resume Parse Quality</div>
+                  <div className="mt-3 space-y-2 text-sm text-[#384959]">
+                    <div className="flex items-center justify-between"><span>Diagnostics, 30d</span><span className="font-medium">{adminMetrics.resume_parse_quality?.diagnostic_uploads_30d ?? 0}</span></div>
+                    <div className="flex items-center justify-between"><span>Needs review</span><span className="font-medium">{adminMetrics.resume_parse_quality?.needs_review_30d ?? 0}</span></div>
+                    <div className="flex items-center justify-between"><span>Avg score</span><span className="font-medium">{adminMetrics.resume_parse_quality?.avg_score ?? "n/a"}</span></div>
+                    <div className="flex items-center justify-between"><span>Good / Check / Review</span><span className="font-medium">{adminMetrics.resume_parse_quality?.labels?.good ?? 0} / {adminMetrics.resume_parse_quality?.labels?.check ?? 0} / {adminMetrics.resume_parse_quality?.labels?.review ?? 0}</span></div>
+                  </div>
+                  {(adminMetrics.resume_parse_quality?.top_warnings || []).length > 0 && (
+                    <div className="mt-3 space-y-1 border-t border-[#BDDDFC]/30 pt-3 text-xs text-[#6A89A7]">
+                      {adminMetrics.resume_parse_quality.top_warnings.slice(0, 2).map((item) => (
+                        <div key={item.warning} className="flex gap-2">
+                          <span className="font-semibold text-[#384959]">{item.count}</span>
+                          <span>{item.warning}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
