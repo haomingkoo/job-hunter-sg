@@ -2,9 +2,33 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Plus, AlertCircle, ExternalLink, RefreshCw,
   Loader2, Sparkles, FileText, MapPin, DollarSign, Building2,
+  Info, ShieldCheck, Target, Gauge,
 } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 import { todayStr, getScoreTheme } from "../lib/helpers.js";
+
+const matchRules = [
+  {
+    icon: FileText,
+    label: "Resume source",
+    detail: "Uses your latest stored resume from upload or resume scoring.",
+  },
+  {
+    icon: Target,
+    label: "Fit signals",
+    detail: "Compares hard skills, title terms, domain overlap, and seniority level.",
+  },
+  {
+    icon: Gauge,
+    label: "Thresholds",
+    detail: "Strong, good, and stretch labels are ranking signals, not guarantees.",
+  },
+  {
+    icon: ShieldCheck,
+    label: "Human review",
+    detail: "No auto-submit. Use this to shortlist roles worth your time.",
+  },
+];
 
 export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
   const [data, setData] = useState(null);
@@ -67,6 +91,10 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
     setActiveTab("resume");
   };
 
+  const resumeUpdatedLabel = data?.resume_updated_at
+    ? new Date(data.resume_updated_at).toLocaleString()
+    : "";
+
   return (
     <div className="space-y-6">
       <div className="rounded-3xl border border-[#BDDDFC]/30 bg-[linear-gradient(135deg,_rgba(189,221,252,0.15)_0%,_rgba(255,255,255,1)_42%,_rgba(240,244,248,1)_100%)] p-6 shadow-sm">
@@ -90,6 +118,27 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
             Refresh Matches
           </button>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-[#384959]">
+          <Info size={16} />
+          How Smart Match Works
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {matchRules.map(({ icon: Icon, label, detail }) => (
+            <div key={label} className="rounded-xl bg-[#f0f4f8] px-3 py-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">
+                <Icon size={15} />
+                {label}
+              </div>
+              <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">{detail}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+          ATS reminder: exact hard-skill wording matters more than broad claims. Keep tools, certifications, domain terms, and measurable achievements in the resume before tailoring.
         </div>
       </div>
 
@@ -137,7 +186,9 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                 <div>
                   <div className="text-sm font-semibold text-[#384959]">Detected Resume Skills</div>
                   <div className="mt-1 text-xs text-[#6A89A7]">
-                    {data.resume_signal_mode === "skill_corpus"
+                    {resumeUpdatedLabel
+                      ? `Latest stored resume updated ${resumeUpdatedLabel}.`
+                      : data.resume_signal_mode === "skill_corpus"
                       ? "Skills were matched against the roles in our current job dataset."
                       : "Skills were extracted directly from your latest stored resume."}
                   </div>

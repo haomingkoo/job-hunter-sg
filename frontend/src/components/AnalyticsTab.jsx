@@ -1,8 +1,12 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Search, X, Loader2, BarChart2, Building2, Briefcase, Tags } from "lucide-react";
+import {
+  Search, X, Loader2, BarChart2, Building2, Briefcase, Tags,
+  TrendingUp, Clock, BadgeDollarSign, Layers, Target, ShieldCheck,
+} from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 
 const formatNumber = (value) => Number(value || 0).toLocaleString();
+const formatMoney = (value) => (value ? `S$${formatNumber(value)}` : "n/a");
 
 function StatTile({ icon: Icon, label, value }) {
   return (
@@ -13,6 +17,23 @@ function StatTile({ icon: Icon, label, value }) {
           <div className="mt-1 text-2xl font-semibold text-[#384959]">{value}</div>
         </div>
         <Icon size={18} className="text-[#88BDF2]" />
+      </div>
+    </div>
+  );
+}
+
+function SignalBlock({ icon: Icon, label, value, detail }) {
+  return (
+    <div className="rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-3 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 rounded-lg bg-[#BDDDFC]/15 p-2 text-[#384959]">
+          <Icon size={16} />
+        </div>
+        <div className="min-w-0">
+          <div className="text-xs font-medium uppercase text-[#6A89A7]">{label}</div>
+          <div className="mt-1 text-lg font-semibold text-[#384959]">{value}</div>
+          {detail && <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{detail}</div>}
+        </div>
       </div>
     </div>
   );
@@ -93,7 +114,11 @@ export default function AnalyticsTab() {
   const titlesMaxCount = data?.top_titles?.[0]?.count || 1;
   const sectorsMaxCount = data?.sectors?.[0]?.count || 1;
   const companiesMaxCount = data?.top_companies?.[0]?.count || 1;
+  const hardSkillsMaxCount = data?.hard_skills?.[0]?.count || 1;
+  const seniorityMaxCount = Math.max(...(data?.seniority_mix || []).map((item) => item.count || 0), 1);
   const activeFilters = [sectorFilter, titleFilter].filter(Boolean);
+  const salary = data?.salary_insights || {};
+  const freshness = data?.freshness || {};
 
   const chartColors = ["bg-[#88BDF2]", "bg-emerald-500", "bg-violet-500", "bg-amber-500", "bg-rose-500", "bg-cyan-500"];
 
@@ -135,6 +160,133 @@ export default function AnalyticsTab() {
           )}
         </div>
       </div>
+
+      {!loading && !error && data && (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <SignalBlock
+            icon={Clock}
+            label="Hiring freshness"
+            value={`${formatNumber(freshness.last_30)} roles`}
+            detail={`${freshness.last_30_percent || 0}% of dated postings were listed in the last 30 days.`}
+          />
+          <SignalBlock
+            icon={BadgeDollarSign}
+            label="Listed salary floor"
+            value={formatMoney(salary.median_floor)}
+            detail={`${salary.coverage_percent || 0}% of analysed roles expose salary data; treat this as directional.`}
+          />
+          <SignalBlock
+            icon={Layers}
+            label="Seniority signal"
+            value={data.seniority_mix?.[0]?.label || "n/a"}
+            detail={data.seniority_mix?.[0] ? `${data.seniority_mix[0].percent}% of this view sits here.` : "Seniority is inferred from titles when posting metadata is weak."}
+          />
+          <SignalBlock
+            icon={ShieldCheck}
+            label="ATS read"
+            value={data.overindexed_skills?.length ? "Niche signals found" : "Market baseline"}
+            detail={data.overindexed_skills?.length ? "These terms appear unusually often in the selected slice." : "Filter by sector or title to see what over-indexes."}
+          />
+        </div>
+      )}
+
+      {!loading && !error && data && (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
+          <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-[#384959]">
+              <Target size={16} />
+              ATS Hard Skills
+            </div>
+            <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
+              {(data.hard_skills || []).length > 0 ? (
+                data.hard_skills.slice(0, 10).map((item, index) => (
+                  <BarRow
+                    key={item.skill}
+                    rank={index + 1}
+                    label={item.skill}
+                    count={item.count}
+                    maxCount={hardSkillsMaxCount}
+                    color="bg-cyan-500"
+                  />
+                ))
+              ) : (
+                <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-[#6A89A7]">
+                  No hard-skill signal is available for this slice yet.
+                </div>
+              )}
+            </div>
+            <div className="mt-4 rounded-xl bg-[#f0f4f8] px-3 py-2 text-xs leading-relaxed text-[#6A89A7]">
+              Broad terms like communication and customer service are table stakes. ATS leverage usually comes from exact hard-skill, tool, certification, and domain terms.
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-[#384959]">
+              <TrendingUp size={16} />
+              Over-Indexed Skills
+            </div>
+            {(data.overindexed_skills || []).length > 0 ? (
+              <div className="space-y-2">
+                {data.overindexed_skills.slice(0, 8).map((item) => (
+                  <div key={item.skill} className="rounded-xl bg-[#f0f4f8] px-3 py-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="truncate text-sm font-medium text-[#384959]">{item.skill}</span>
+                      <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                        {item.lift}x
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-[#6A89A7]">
+                      {item.rate_percent}% in this view vs {item.market_rate_percent}% market-wide
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-[#6A89A7]">
+                Pick a sector or job title to reveal skills that appear unusually often compared with the overall market.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!loading && !error && data?.seniority_mix?.length > 0 && (
+        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+          <div className="mb-4 text-sm font-semibold text-[#384959]">Seniority Mix</div>
+          <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
+            {data.seniority_mix.map((item, index) => (
+              <BarRow
+                key={item.label}
+                rank={index + 1}
+                label={`${item.label} (${item.percent}%)`}
+                count={item.count}
+                maxCount={seniorityMaxCount}
+                color={chartColors[index % chartColors.length]}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!loading && !error && data?.salary_insights?.by_sector?.length > 0 && (
+        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+          <div className="mb-4 text-sm font-semibold text-[#384959]">Listed Salary by Sector</div>
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+            {data.salary_insights.by_sector.map((item) => (
+              <div key={item.sector} className="flex items-center justify-between gap-3 rounded-xl bg-[#f0f4f8] px-3 py-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-[#384959]">{item.sector}</div>
+                  <div className="text-xs text-[#6A89A7]">{formatNumber(item.count)} salary-listed roles</div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="text-sm font-semibold text-[#384959]">{formatMoney(item.median_floor)}</div>
+                  <div className="text-[11px] text-[#6A89A7]">median floor</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {loading && (
         <div className="flex items-center gap-2 py-12 justify-center text-[#6A89A7]">

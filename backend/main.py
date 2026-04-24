@@ -2441,6 +2441,163 @@ def _normalize_title(raw_title: str) -> str:
     return t
 
 
+_ANALYTICS_SKILL_ALIASES = {
+    "excel": "microsoft excel",
+    "ms excel": "microsoft excel",
+    "microsoft excel": "microsoft excel",
+    "word": "microsoft word",
+    "ms word": "microsoft word",
+    "microsoft word": "microsoft word",
+    "powerpoint": "microsoft powerpoint",
+    "ms powerpoint": "microsoft powerpoint",
+    "microsoft powerpoint": "microsoft powerpoint",
+    "aws": "aws",
+    "amazon web services": "aws",
+    "gcp": "gcp",
+    "google cloud": "gcp",
+    "google cloud platform": "gcp",
+    "azure": "microsoft azure",
+    "microsoft azure": "microsoft azure",
+    "power bi": "power bi",
+    "microsoft power bi": "power bi",
+    "javascript": "javascript",
+    "java script": "javascript",
+    "typescript": "typescript",
+    "node": "node.js",
+    "nodejs": "node.js",
+    "node.js": "node.js",
+    "reactjs": "react",
+    "react.js": "react",
+    "react": "react",
+    "ui ux": "ui/ux",
+    "ui/ux": "ui/ux",
+}
+
+_ANALYTICS_SKILL_DISPLAY = {
+    "aws": "AWS",
+    "gcp": "GCP",
+    "sql": "SQL",
+    "api": "API",
+    "apis": "APIs",
+    "ui/ux": "UI/UX",
+    "power bi": "Power BI",
+    "node.js": "Node.js",
+    "javascript": "JavaScript",
+    "typescript": "TypeScript",
+    "microsoft azure": "Microsoft Azure",
+    "microsoft excel": "Microsoft Excel",
+    "microsoft word": "Microsoft Word",
+    "microsoft powerpoint": "Microsoft PowerPoint",
+}
+
+_ANALYTICS_GENERIC_SKILLS = {
+    "customer service", "communication skills", "leadership", "problem solving",
+    "teamwork", "interpersonal skills", "customer satisfaction", "customer experience",
+    "administrative support", "administrative work", "data entry", "driving license",
+    "microsoft office", "microsoft word", "microsoft powerpoint", "time management",
+    "attention to detail", "written communication", "verbal communication",
+    "cross-functional teams", "continuous improvement",
+}
+
+
+def _analytics_skill_key(raw: str) -> str:
+    key = re.sub(r"\s+", " ", (raw or "").strip().lower())
+    key = key.strip(" -•.,;:")
+    return _ANALYTICS_SKILL_ALIASES.get(key, key)
+
+
+def _analytics_skill_display(key: str) -> str:
+    if key in _ANALYTICS_SKILL_DISPLAY:
+        return _ANALYTICS_SKILL_DISPLAY[key]
+    return key.title()
+
+
+def _is_generic_analytics_skill(key: str) -> bool:
+    return key in _ANALYTICS_GENERIC_SKILLS
+
+
+def _analytics_seniority_label(job: ScrapedJob) -> str:
+    text = f"{job.seniority or ''} {job.title or ''}".lower()
+    if "intern" in text:
+        return "Intern"
+    if any(term in text for term in {"entry", "fresh", "junior", "assistant", "associate"}):
+        return "Entry / Junior"
+    if any(term in text for term in {"vice president", "vp", "director", "head of", "chief"}):
+        return "Leadership"
+    if any(term in text for term in {"manager", "lead", "principal", "staff"}):
+        return "Manager / Lead"
+    if "senior" in text:
+        return "Senior IC"
+    return "Mid / Unspecified"
+
+
+def _parse_posted_sort(value: str) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _percentile(sorted_values: list[int], percentile: float) -> int:
+    if not sorted_values:
+        return 0
+    index = min(len(sorted_values) - 1, max(0, round((len(sorted_values) - 1) * percentile)))
+    return int(sorted_values[index])
+
+
+def _salary_bucket(items: dict[str, list[int]], label_key: str) -> list[dict]:
+    rows = []
+    for label, values in items.items():
+        if len(values) < 5:
+            continue
+        sorted_values = sorted(values)
+        rows.append({
+            label_key: label,
+            "count": len(sorted_values),
+            "median_floor": _percentile(sorted_values, 0.5),
+            "p75_floor": _percentile(sorted_values, 0.75),
+        })
+    return sorted(rows, key=lambda item: (-item["count"], -item["median_floor"]))[:8]
+
+
+def _build_overindexed_skills(
+    current_counts: dict[str, dict],
+    current_total: int,
+    baseline_counts: dict[str, int] | None,
+    baseline_total: int,
+) -> list[dict]:
+    if not baseline_counts or current_total < 20 or baseline_total <= 0:
+        return []
+    minimum_count = max(5, round(current_total * 0.015))
+    rows = []
+    for key, item in current_counts.items():
+        count = int(item["count"])
+        baseline_count = int(baseline_counts.get(key, 0))
+        if count < minimum_count or baseline_count < 10 or _is_generic_analytics_skill(key):
+            continue
+        current_rate = count / current_total
+        baseline_rate = baseline_count / baseline_total
+        if baseline_rate <= 0:
+            continue
+        lift = current_rate / baseline_rate
+        if lift < 1.35:
+            continue
+        rows.append({
+            "skill": item["display"],
+            "count": count,
+            "lift": round(lift, 1),
+            "rate_percent": round(current_rate * 100, 1),
+            "market_rate_percent": round(baseline_rate * 100, 1),
+        })
+    return sorted(rows, key=lambda item: (-item["lift"], -item["count"]))[:10]
+
+
 @app.get("/api/analytics/skills")
 def analytics_skills(
     limit: int = Query(50, ge=1, le=200),
@@ -2494,9 +2651,24 @@ def analytics_skills(
             "top_titles": cached["top_titles"],
             "sectors": cached["sectors"],
             "top_companies": cached.get("top_companies", []),
+            "hard_skills": cached.get("hard_skills", []),
+            "overindexed_skills": cached.get("overindexed_skills", []),
+            "salary_insights": cached.get("salary_insights", {}),
+            "freshness": cached.get("freshness", {}),
+            "seniority_mix": cached.get("seniority_mix", []),
         }
         _store_analytics_query_cache(query_cache_key, now, result, cache_generation)
         return result
+
+    baseline_counts: dict[str, int] | None = None
+    baseline_total = 0
+    with _ANALYTICS_CACHE_LOCK:
+        if (
+            _analytics_cache is not None
+            and now - _analytics_cache_ts < _ANALYTICS_CACHE_TTL
+        ):
+            baseline_counts = _analytics_cache.get("_skill_counts")
+            baseline_total = int(_analytics_cache.get("total_jobs_with_terms", 0) or 0)
 
     db_query = db.query(ScrapedJob).options(
         load_only(
@@ -2506,8 +2678,12 @@ def analytics_skills(
             ScrapedJob.title,
             ScrapedJob.company,
             ScrapedJob.sector,
+            ScrapedJob.salary_floor,
+            ScrapedJob.posted_at_sort,
+            ScrapedJob.seniority,
         )
     ).filter(
+        ScrapedJob.hidden == 0,
         ScrapedJob.job_terms_preview.isnot(None),
     )
     if source:
@@ -2523,12 +2699,19 @@ def analytics_skills(
     if sector:
         db_query = db_query.filter(_sector_filter_condition(sector))
 
-    skill_counts: dict[str, int] = {}
+    skill_counts: dict[str, dict] = {}
     source_counts: dict[str, int] = {}
     title_counts: dict[str, int] = {}
     sector_counts: dict[str, int] = {}
     company_counts: dict[str, int] = {}
+    seniority_counts: dict[str, int] = {}
+    salary_floors: list[int] = []
+    salary_by_sector: dict[str, list[int]] = {}
+    salary_by_title: dict[str, list[int]] = {}
+    fresh_counts = {"last_7": 0, "last_14": 0, "last_30": 0}
+    posted_count = 0
     total_jobs = 0
+    utc_now = datetime.now(timezone.utc)
 
     for job in db_query.yield_per(500):
         preview = job.job_terms_preview
@@ -2536,6 +2719,8 @@ def analytics_skills(
             continue
 
         raw_title = (job.title or "").strip()
+        job_sector = job.sector or _classify_sector(raw_title)
+        norm_title = _normalize_title(raw_title) if raw_title else ""
 
         total_jobs += 1
 
@@ -2551,31 +2736,68 @@ def analytics_skills(
             company_counts[comp_key]["count"] += 1
 
         for term in preview:
-            label = str(term).strip()
-            if not label:
+            key = _analytics_skill_key(str(term))
+            if not key:
                 continue
-            key = label.lower()
-            skill_counts[key] = skill_counts.get(key, 0) + 1
+            if key not in skill_counts:
+                skill_counts[key] = {"display": _analytics_skill_display(key), "count": 0}
+            skill_counts[key]["count"] += 1
 
         # Aggregate title and sector
-        if raw_title:
-            norm = _normalize_title(raw_title)
-            title_key = norm.lower()
+        if norm_title:
+            title_key = norm_title.lower()
             if title_key:
                 if title_key not in title_counts:
-                    title_counts[title_key] = {"display": norm, "count": 0}
+                    title_counts[title_key] = {"display": norm_title, "count": 0}
                 title_counts[title_key]["count"] += 1
 
-            job_sector = job.sector or _classify_sector(raw_title)
-            sector_counts[job_sector] = sector_counts.get(job_sector, 0) + 1
+        sector_counts[job_sector] = sector_counts.get(job_sector, 0) + 1
+
+        seniority_label = _analytics_seniority_label(job)
+        seniority_counts[seniority_label] = seniority_counts.get(seniority_label, 0) + 1
+
+        salary_floor = int(job.salary_floor or 0)
+        if 0 < salary_floor < 1000000:
+            salary_floors.append(salary_floor)
+            salary_by_sector.setdefault(job_sector, []).append(salary_floor)
+            if norm_title:
+                salary_by_title.setdefault(norm_title, []).append(salary_floor)
+
+        posted_at = _parse_posted_sort(job.posted_at_sort or "")
+        if posted_at:
+            posted_count += 1
+            age_days = (utc_now - posted_at).days
+            if 0 <= age_days <= 7:
+                fresh_counts["last_7"] += 1
+            if 0 <= age_days <= 14:
+                fresh_counts["last_14"] += 1
+            if 0 <= age_days <= 30:
+                fresh_counts["last_30"] += 1
 
     # Sort by count descending
-    sorted_skills = sorted(skill_counts.items(), key=lambda x: -x[1])
+    sorted_skills = sorted(skill_counts.values(), key=lambda x: -x["count"])
 
     all_skills = [
-        {"skill": term.title() if term == term.lower() else term, "count": count}
-        for term, count in sorted_skills
+        {"skill": item["display"], "count": item["count"]}
+        for item in sorted_skills
     ]
+    skill_count_numbers = {
+        key: int(item["count"])
+        for key, item in skill_counts.items()
+    }
+
+    hard_skills = [
+        {"skill": item["display"], "count": item["count"]}
+        for key, item in sorted(skill_counts.items(), key=lambda x: -x[1]["count"])
+        if not _is_generic_analytics_skill(key)
+    ][:20]
+
+    overindexed_skills = _build_overindexed_skills(
+        current_counts=skill_counts,
+        current_total=total_jobs,
+        baseline_counts=baseline_counts,
+        baseline_total=baseline_total,
+    )
 
     sources_list = [
         {"source": s, "count": c}
@@ -2597,16 +2819,56 @@ def analytics_skills(
         key=lambda x: -x["count"],
     )[:30]
 
+    sorted_salary_floors = sorted(salary_floors)
+    salary_insights = {
+        "coverage_count": len(sorted_salary_floors),
+        "coverage_percent": round((len(sorted_salary_floors) / total_jobs) * 100, 1) if total_jobs else 0,
+        "median_floor": _percentile(sorted_salary_floors, 0.5),
+        "p75_floor": _percentile(sorted_salary_floors, 0.75),
+        "by_sector": _salary_bucket(salary_by_sector, "sector"),
+        "by_title": _salary_bucket(salary_by_title, "title"),
+    }
+    freshness = {
+        **fresh_counts,
+        "coverage_count": posted_count,
+        "last_30_percent": round((fresh_counts["last_30"] / posted_count) * 100, 1) if posted_count else 0,
+    }
+    seniority_order = {
+        "Intern": 0,
+        "Entry / Junior": 1,
+        "Mid / Unspecified": 2,
+        "Senior IC": 3,
+        "Manager / Lead": 4,
+        "Leadership": 5,
+    }
+    seniority_mix = [
+        {
+            "label": label,
+            "count": count,
+            "percent": round((count / total_jobs) * 100, 1) if total_jobs else 0,
+        }
+        for label, count in sorted(
+            seniority_counts.items(),
+            key=lambda item: seniority_order.get(item[0], 99),
+        )
+    ]
+
     # Cache the full result when no filters active
     cache_payload = None
     if not has_filter:
         cache_payload = {
             "_all_skills": all_skills,
+            "_skill_counts": skill_count_numbers,
             "total_jobs_with_terms": total_jobs,
             "sources": sources_list,
             "top_titles": top_titles,
             "sectors": sectors,
             "top_companies": top_companies,
+            "hard_skills": hard_skills,
+            "overindexed_skills": overindexed_skills,
+            "salary_insights": salary_insights,
+            "freshness": freshness,
+            "seniority_mix": seniority_mix,
         }
 
     # Apply skill search filter if provided
@@ -2624,6 +2886,11 @@ def analytics_skills(
         "top_titles": top_titles,
         "sectors": sectors,
         "top_companies": top_companies,
+        "hard_skills": hard_skills,
+        "overindexed_skills": overindexed_skills,
+        "salary_insights": salary_insights,
+        "freshness": freshness,
+        "seniority_mix": seniority_mix,
     }
     if cache_payload is not None:
         with _ANALYTICS_CACHE_LOCK:
@@ -3193,6 +3460,8 @@ def get_power_match(
     result = {
         "resume_ready": True,
         "message": "Power matches generated from your latest stored resume.",
+        "resume_source": "latest_stored_resume",
+        "resume_updated_at": mem.updated_at.isoformat() if mem and mem.updated_at else "",
         "resume_signal_mode": resume_signal_mode,
         "resume_skills": _surface_power_skills(resume_skills, limit=24),
         "top_gaps": top_gaps,
