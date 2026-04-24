@@ -1253,24 +1253,6 @@ def _select_power_match_candidates(
         .all()
     )
 
-    if len(matched_jobs) >= min(80, limit):
-        return matched_jobs
-
-    seen_ids = {job.id for job in matched_jobs}
-    backfill_jobs = (
-        base_query
-        .order_by(ScrapedJob.id.desc())
-        .limit(max(100, limit // 2))
-        .all()
-    )
-    for job in backfill_jobs:
-        if job.id in seen_ids:
-            continue
-        matched_jobs.append(job)
-        seen_ids.add(job.id)
-        if len(matched_jobs) >= limit:
-            break
-
     return matched_jobs
 
 
