@@ -16,7 +16,7 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
     setLoading(true);
     setError("");
     try {
-      const resp = await apiFetch("/api/jobs/power-match?limit=8");
+      const resp = await apiFetch("/api/jobs/power-match?limit=8", { timeoutMs: 45000 });
       const payload = await resp.json();
       setData(payload);
     } catch (err) {
@@ -84,9 +84,10 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
           <button
             type="button"
             onClick={loadPowerMatches}
-            className="inline-flex items-center gap-2 rounded-xl border border-white bg-white px-4 py-2.5 text-sm font-medium text-[#384959] shadow-sm hover:bg-[#f0f4f8]"
+            disabled={loading}
+            className="inline-flex items-center gap-2 rounded-xl border border-white bg-white px-4 py-2.5 text-sm font-medium text-[#384959] shadow-sm hover:bg-[#f0f4f8] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <RefreshCw size={14} />
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
             Refresh Matches
           </button>
         </div>

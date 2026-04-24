@@ -62,17 +62,20 @@ export default function AuthModal({ onAuth, onClose }) {
             <input
               type="text" placeholder="Full Name" value={name}
               onChange={(e) => setName(e.target.value)} required
+              autoComplete="name"
               className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
             />
           )}
           <input
             type="email" placeholder="Email" value={email}
             onChange={(e) => setEmail(e.target.value)} required
+            autoComplete="email"
             className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
           />
           <input
             type="password" placeholder="Password" value={password}
             onChange={(e) => setPassword(e.target.value)} required minLength={8}
+            autoComplete={mode === "login" ? "current-password" : "new-password"}
             className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
           />
           <button type="submit" disabled={loading}

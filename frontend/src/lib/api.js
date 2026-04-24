@@ -11,17 +11,67 @@ export function clearResumeDraftStorage() {
   }
 }
 
+async function readApiError(resp) {
+  const raw = await resp.text();
+  const text = raw.trim();
+  const contentType = resp.headers.get("content-type") || "";
+
+  if (resp.status === 524) {
+    return "The server took too long to build this result. Please try again in a minute.";
+  }
+  if ([502, 503, 504].includes(resp.status)) {
+    return "The server is temporarily unavailable. Please try again shortly.";
+  }
+
+  if (contentType.includes("application/json") && text) {
+    try {
+      const payload = JSON.parse(text);
+      const detail = payload.detail || payload.message || payload.error;
+      if (typeof detail === "string" && detail.trim()) return detail.trim();
+    } catch {
+      // fall through to plain-text handling
+    }
+  }
+
+  if (/^<!doctype html/i.test(text) || /<html[\s>]/i.test(text)) {
+    return `Request failed (${resp.status}). The server returned an HTML error page.`;
+  }
+
+  return text ? `${resp.status}: ${text.slice(0, 300)}` : `Request failed (${resp.status})`;
+}
+
 export async function apiFetch(path, options = {}) {
+  const { timeoutMs, headers: optionHeaders, ...fetchOptions } = options;
   const token = localStorage.getItem("token");
-  const headers = { "Content-Type": "application/json", ...options.headers };
+  const headers = { "Content-Type": "application/json", ...optionHeaders };
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  const resp = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const controller = timeoutMs ? new AbortController() : null;
+  const timeoutId = controller
+    ? window.setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+
+  let resp;
+  try {
+    resp = await fetch(`${API_BASE}${path}`, {
+      ...fetchOptions,
+      headers,
+      signal: controller?.signal || fetchOptions.signal,
+    });
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw new Error("The request timed out. Please try again shortly.");
+    }
+    throw err;
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  }
+
   if (resp.status === 401) {
     localStorage.removeItem("token");
     clearResumeDraftStorage();
     window.location.reload();
     throw new Error("Session expired. Please sign in again.");
   }
-  if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
+  if (!resp.ok) throw new Error(await readApiError(resp));
   return resp;
 }

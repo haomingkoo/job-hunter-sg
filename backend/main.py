@@ -1133,7 +1133,7 @@ def _extract_resume_skills(resume_text: str, db: Session) -> tuple[list[str], st
     extracted = extract_skill_phrases(
         resume_text,
         db_session=db,
-        use_dynamic_skills=True,
+        use_dynamic_skills=False,
     )
     supplemental: list[str] = []
     for skill in POWER_SKILL_TERMS:
@@ -1171,6 +1171,29 @@ def _select_power_match_candidates(
     resume_skills: list[str],
     limit: int = 500,
 ) -> list[ScrapedJob]:
+    base_query = db.query(ScrapedJob).options(
+        load_only(
+            ScrapedJob.id,
+            ScrapedJob.title,
+            ScrapedJob.company,
+            ScrapedJob.location,
+            ScrapedJob.salary,
+            ScrapedJob.source,
+            ScrapedJob.url,
+            ScrapedJob.posted_date,
+            ScrapedJob.employment_type,
+            ScrapedJob.seniority,
+            ScrapedJob.description,
+            ScrapedJob.skills,
+            ScrapedJob.agency,
+            ScrapedJob.dedup_key,
+            ScrapedJob.search_keyword,
+            ScrapedJob.scraped_at,
+            ScrapedJob.closing_date,
+            ScrapedJob.job_terms_preview,
+            ScrapedJob.skills_flat,
+        )
+    ).filter(ScrapedJob.hidden == 0)
     hard_resume_terms = [
         skill for skill in resume_skills
         if skill.lower() in SEMICONDUCTOR_HARD_TERMS
@@ -1192,7 +1215,7 @@ def _select_power_match_candidates(
     ]
 
     if not prioritized_terms:
-        return db.query(ScrapedJob).order_by(ScrapedJob.id.desc()).limit(limit).all()
+        return base_query.order_by(ScrapedJob.id.desc()).limit(limit).all()
 
     conditions = []
     for term in prioritized_terms:
@@ -1206,7 +1229,7 @@ def _select_power_match_candidates(
         )
 
     matched_jobs = (
-        db.query(ScrapedJob)
+        base_query
         .filter(or_(*conditions))
         .order_by(ScrapedJob.id.desc())
         .limit(limit)
@@ -1218,7 +1241,7 @@ def _select_power_match_candidates(
 
     seen_ids = {job.id for job in matched_jobs}
     backfill_jobs = (
-        db.query(ScrapedJob)
+        base_query
         .order_by(ScrapedJob.id.desc())
         .limit(max(100, limit // 2))
         .all()
@@ -2972,28 +2995,24 @@ def get_power_match(
     resume_skill_lookup = {skill.lower(): skill for skill in resume_skills}
     lower_resume = resume_text.lower()
     resume_level = _infer_resume_level(resume_text)
+    candidate_limit = min(200, max(80, limit * 15))
 
     candidate_jobs = _select_power_match_candidates(
         db=db,
         resume_text=resume_text,
         resume_skills=resume_skills,
-        limit=200,
+        limit=candidate_limit,
     )
 
     # ── Semantic similarity (RAG) ─────────────────────────────────────────
     semantic_scores: dict[int, float] = {}
     try:
-        from embedding_service import encode_text as _embed_text, find_similar_jobs
+        from embedding_service import find_similar_jobs, is_similarity_matrix_ready
 
-        # Get or compute resume embedding
+        # Keep the HTTP path bounded: use semantic scores only when both the
+        # resume embedding and job matrix are already warm.
         resume_vector = mem.resume_embedding if mem and mem.resume_embedding else None
-        if not resume_vector:
-            resume_vector = _embed_text(resume_text[:3000])
-            if mem and resume_vector:
-                mem.resume_embedding = resume_vector
-                db.flush()
-
-        if resume_vector:
+        if resume_vector and is_similarity_matrix_ready():
             similar = find_similar_jobs(resume_vector, db, top_k=200)
             semantic_scores = {job_id: sim for job_id, sim in similar}
     except Exception:
@@ -3011,7 +3030,9 @@ def get_power_match(
         if isinstance(preview, list) and preview:
             job_skills = [str(s) for s in preview if s]
         else:
-            job_skills = _extract_job_match_skills(job, db)
+            job_skills = _clean_power_skills(_normalize_skill_strings(job.skills))
+            if not job_skills:
+                job_skills = _extract_title_terms(job.title)
         matched_skills = [
             skill for skill in job_skills
             if skill.lower() in resume_skill_lookup or skill.lower() in lower_resume

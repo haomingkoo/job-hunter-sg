@@ -95,6 +95,16 @@ def invalidate_matrix_cache() -> None:
         _matrix_ts = 0.0
 
 
+def is_similarity_matrix_ready() -> bool:
+    """Return True only when similarity search can run without rebuilding."""
+    with _matrix_lock:
+        return (
+            _job_matrix is not None
+            and len(_job_ids) > 0
+            and (time.monotonic() - _matrix_ts) < _MATRIX_TTL
+        )
+
+
 def _refresh_matrix_if_stale(db_session: Session) -> None:
     """Rebuild the matrix from DB if older than TTL."""
     global _job_matrix, _job_ids, _matrix_ts
