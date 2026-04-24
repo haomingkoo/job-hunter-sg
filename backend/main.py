@@ -115,6 +115,36 @@ _FILTER_META_TTL = 300  # 5 minutes
 _analytics_cache: dict | None = None
 _analytics_cache_ts: float = 0
 _ANALYTICS_CACHE_TTL = 86400  # 24 hours - refreshed daily, invalidated on new scrape
+_analytics_query_cache: dict[tuple, tuple[float, dict]] = {}
+_ANALYTICS_QUERY_CACHE_TTL = 3600
+_ANALYTICS_QUERY_CACHE_MAX = 64
+_ANALYTICS_CACHE_LOCK = threading.Lock()
+_analytics_cache_generation = 0
+
+
+def _clear_analytics_cache() -> None:
+    global _analytics_cache, _analytics_cache_ts, _analytics_cache_generation
+    with _ANALYTICS_CACHE_LOCK:
+        _analytics_cache = None
+        _analytics_cache_ts = 0
+        _analytics_query_cache.clear()
+        _analytics_cache_generation += 1
+
+
+def _store_analytics_query_cache(cache_key: tuple, cache_ts: float, result: dict, generation: int) -> None:
+    with _ANALYTICS_CACHE_LOCK:
+        if generation != _analytics_cache_generation:
+            return
+        expired_keys = [
+            key for key, (stored_ts, _) in _analytics_query_cache.items()
+            if cache_ts - stored_ts >= _ANALYTICS_QUERY_CACHE_TTL
+        ]
+        for key in expired_keys:
+            _analytics_query_cache.pop(key, None)
+        if len(_analytics_query_cache) >= _ANALYTICS_QUERY_CACHE_MAX:
+            oldest_key = min(_analytics_query_cache, key=lambda key: _analytics_query_cache[key][0])
+            _analytics_query_cache.pop(oldest_key, None)
+        _analytics_query_cache[cache_key] = (cache_ts, result)
 
 # ── Per-user power-match cache (avoid recomputing every request) ──────────────
 _power_match_cache: dict[int, dict] = {}
@@ -148,6 +178,7 @@ async def lifespan(application: FastAPI):
                     ScrapedJob.scraped_at < cutoff.isoformat()
                 ).delete()
                 db.commit()
+                _clear_analytics_cache()
                 log.info(f"[STARTUP] Cleaned up {stale} stale jobs")
             db.close()
         except Exception as e:
@@ -185,6 +216,7 @@ async def lifespan(application: FastAPI):
 
             precomputed = _backfill_job_precomputes(db_sort)
             if precomputed:
+                _clear_analytics_cache()
                 log.info(f"[STARTUP] job precompute backfill complete: {precomputed} jobs")
         except Exception as e:
             log.warning(f"[STARTUP] job metadata backfill failed: {e}")
@@ -1592,7 +1624,11 @@ def admin_seed_jobs(
 
     if body.get("full"):
         # Run full crawl in background thread
-        threading.Thread(target=crawl_all_jobs, daemon=True).start()
+        def run_full_crawl():
+            crawl_all_jobs()
+            _clear_analytics_cache()
+
+        threading.Thread(target=run_full_crawl, daemon=True).start()
         return {"status": "started", "mode": "full_crawl", "message": "Full crawl started in background"}
     elif body.get("careersgov_only"):
         # Quick refresh: CareersGov only via OpenGovSG JSON (~3 seconds)
@@ -1644,6 +1680,8 @@ def admin_seed_jobs(
                     ~ScrapedJob.dedup_key.in_(new_keys),
                 ).update({"hidden": 1}, synchronize_session=False)
                 db.commit()
+                if new_count or updated_count or hidden_count:
+                    _clear_analytics_cache()
                 log.info(f"[CareersGov] Refreshed: {new_count} new, {updated_count} updated, {hidden_count} stale hidden")
             except Exception as e:
                 db.rollback()
@@ -1658,7 +1696,9 @@ def admin_seed_jobs(
         keywords = body.get("keywords", "").split(",") if body.get("keywords") else None
 
         def run_seed():
-            seed_jobs(keywords=keywords or [], sources=sources, limit_per_source=limit)
+            stats = seed_jobs(keywords=keywords or [], sources=sources, limit_per_source=limit)
+            if stats.get("new_jobs") or stats.get("updated_jobs"):
+                _clear_analytics_cache()
 
         threading.Thread(target=run_seed, daemon=True).start()
         return {"status": "started", "mode": "keyword_seed", "sources": sources, "limit": limit}
@@ -2221,6 +2261,8 @@ def search_jobs(
 
     # Sanitize and cache jobs
     sanitized_jobs: list[dict] = []
+    analytics_dirty = False
+    analytics_fields = {"source", "title", "company", "sector", "job_terms_preview"}
     for job in results["jobs"]:
         raw = asdict(job)
         raw["dedup_key"] = job.dedup_key  # Property not included by asdict()
@@ -2236,8 +2278,15 @@ def search_jobs(
             .first()
         )
         if existing:
+            contributes_to_analytics = bool(existing.job_terms_preview)
             for key, val in clean.items():
                 if key not in ("id",):
+                    if (
+                        contributes_to_analytics
+                        and key in analytics_fields
+                        and getattr(existing, key, None) != val
+                    ):
+                        analytics_dirty = True
                     setattr(existing, key, val)
             db.flush()
             clean["id"] = existing.id
@@ -2245,6 +2294,8 @@ def search_jobs(
             new_job = ScrapedJob(**clean)
             db.add(new_job)
             db.flush()
+            if new_job.job_terms_preview:
+                analytics_dirty = True
             clean["id"] = new_job.id
             try:
                 from embedding_service import build_job_embed_text, encode_text, invalidate_matrix_cache
@@ -2260,6 +2311,8 @@ def search_jobs(
         sanitized_jobs.append(clean)
 
     db.commit()
+    if analytics_dirty:
+        _clear_analytics_cache()
 
     return {
         "keyword": results["keyword"],
@@ -2379,26 +2432,48 @@ def analytics_skills(
     global _analytics_cache, _analytics_cache_ts
 
     has_filter = source or sector or company or title
+    now = time.time()
+    query_cache_key = (
+        limit,
+        source or "",
+        q or "",
+        sector or "",
+        company or "",
+        title or "",
+    )
+    with _ANALYTICS_CACHE_LOCK:
+        cache_generation = _analytics_cache_generation
+        cached_query = _analytics_query_cache.get(query_cache_key)
+        if cached_query and now - cached_query[0] < _ANALYTICS_QUERY_CACHE_TTL:
+            return cached_query[1]
 
-    # Serve from cache when no filters and cache is fresh
-    if not has_filter and _analytics_cache is not None:
-        if time.time() - _analytics_cache_ts < _ANALYTICS_CACHE_TTL:
-            cached = _analytics_cache
-            all_skills = cached["_all_skills"]
-            if q:
-                q_lower = q.lower()
-                all_skills = [
-                    s for s in all_skills
-                    if q_lower in s["skill"].lower()
-                ]
-            return {
-                "top_skills": all_skills[:limit],
-                "total_jobs_with_terms": cached["total_jobs_with_terms"],
-                "sources": cached["sources"],
-                "top_titles": cached["top_titles"],
-                "sectors": cached["sectors"],
-                "top_companies": cached.get("top_companies", []),
-            }
+        # Serve from cache when no filters and cache is fresh
+        cached = (
+            _analytics_cache
+            if not has_filter
+            and _analytics_cache is not None
+            and now - _analytics_cache_ts < _ANALYTICS_CACHE_TTL
+            else None
+        )
+
+    if cached is not None:
+        all_skills = cached["_all_skills"]
+        if q:
+            q_lower = q.lower()
+            all_skills = [
+                s for s in all_skills
+                if q_lower in s["skill"].lower()
+            ]
+        result = {
+            "top_skills": all_skills[:limit],
+            "total_jobs_with_terms": cached["total_jobs_with_terms"],
+            "sources": cached["sources"],
+            "top_titles": cached["top_titles"],
+            "sectors": cached["sectors"],
+            "top_companies": cached.get("top_companies", []),
+        }
+        _store_analytics_query_cache(query_cache_key, now, result, cache_generation)
+        return result
 
     db_query = db.query(ScrapedJob).options(
         load_only(
@@ -2500,8 +2575,9 @@ def analytics_skills(
     )[:30]
 
     # Cache the full result when no filters active
+    cache_payload = None
     if not has_filter:
-        _analytics_cache = {
+        cache_payload = {
             "_all_skills": all_skills,
             "total_jobs_with_terms": total_jobs,
             "sources": sources_list,
@@ -2509,7 +2585,6 @@ def analytics_skills(
             "sectors": sectors,
             "top_companies": top_companies,
         }
-        _analytics_cache_ts = time.time()
 
     # Apply skill search filter if provided
     filtered_skills = all_skills
@@ -2519,7 +2594,7 @@ def analytics_skills(
             s for s in all_skills if q_lower in s["skill"].lower()
         ]
 
-    return {
+    result = {
         "top_skills": filtered_skills[:limit],
         "total_jobs_with_terms": total_jobs,
         "sources": sources_list,
@@ -2527,6 +2602,13 @@ def analytics_skills(
         "sectors": sectors,
         "top_companies": top_companies,
     }
+    if cache_payload is not None:
+        with _ANALYTICS_CACHE_LOCK:
+            if cache_generation == _analytics_cache_generation:
+                _analytics_cache = cache_payload
+                _analytics_cache_ts = now
+    _store_analytics_query_cache(query_cache_key, now, result, cache_generation)
+    return result
 
 
 @app.get("/api/jobs")

@@ -1,6 +1,54 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Search, X, Loader2, BarChart2 } from "lucide-react";
+import { Search, X, Loader2, BarChart2, Building2, Briefcase, Tags } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
+
+const formatNumber = (value) => Number(value || 0).toLocaleString();
+
+function StatTile({ icon: Icon, label, value }) {
+  return (
+    <div className="rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-3 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-medium uppercase text-[#6A89A7]">{label}</div>
+          <div className="mt-1 text-2xl font-semibold text-[#384959]">{value}</div>
+        </div>
+        <Icon size={18} className="text-[#88BDF2]" />
+      </div>
+    </div>
+  );
+}
+
+function BarRow({ rank, label, count, maxCount, active = false, color = "bg-[#88BDF2]", onClick }) {
+  const pct = maxCount > 0 ? Math.max(3, (count / maxCount) * 100) : 0;
+  const content = (
+    <>
+      <div className="w-7 shrink-0 text-right font-mono text-xs text-[#6A89A7]">{rank}</div>
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <span className="truncate text-sm font-medium text-[#384959]">{label}</span>
+          <span className="shrink-0 font-mono text-xs text-[#6A89A7]">{formatNumber(count)}</span>
+        </div>
+        <div className="h-2.5 overflow-hidden rounded-full bg-[#f0f4f8]">
+          <div className={`h-full rounded-full ${active ? "bg-[#384959]" : color}`} style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    </>
+  );
+
+  if (!onClick) {
+    return <div className="flex items-center gap-3 rounded-lg px-2 py-1.5">{content}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition hover:bg-[#f0f4f8] ${active ? "bg-[#BDDDFC]/15 ring-1 ring-[#BDDDFC]" : ""}`}
+    >
+      {content}
+    </button>
+  );
+}
 
 export default function AnalyticsTab() {
   const [data, setData] = useState(null);
@@ -43,20 +91,14 @@ export default function AnalyticsTab() {
   const visibleSkills = filteredSkills.slice(0, showCount);
 
   const titlesMaxCount = data?.top_titles?.[0]?.count || 1;
+  const sectorsMaxCount = data?.sectors?.[0]?.count || 1;
+  const companiesMaxCount = data?.top_companies?.[0]?.count || 1;
+  const activeFilters = [sectorFilter, titleFilter].filter(Boolean);
 
-  // Sector color palette
-  const sectorColors = [
-    "bg-blue-100 text-blue-800", "bg-emerald-100 text-emerald-800",
-    "bg-violet-100 text-violet-800", "bg-amber-100 text-amber-800",
-    "bg-rose-100 text-rose-800", "bg-cyan-100 text-cyan-800",
-    "bg-pink-100 text-pink-800", "bg-lime-100 text-lime-800",
-    "bg-orange-100 text-orange-800", "bg-teal-100 text-teal-800",
-    "bg-indigo-100 text-indigo-800", "bg-fuchsia-100 text-fuchsia-800",
-    "bg-[#BDDDFC]/10 text-[#384959]",
-  ];
+  const chartColors = ["bg-[#88BDF2]", "bg-emerald-500", "bg-violet-500", "bg-amber-500", "bg-rose-500", "bg-cyan-500"];
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       <div>
         <h2 className="flex items-center gap-2 text-2xl font-semibold text-[#384959]">
           <BarChart2 size={20} />
@@ -67,13 +109,21 @@ export default function AnalyticsTab() {
         </p>
       </div>
 
-      <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-        <strong>Beta</strong> — Free to use with 500 AI requests/day to help fund hosting and API costs. Data refreshes nightly.
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <StatTile icon={Briefcase} label="Analysed roles" value={data?.total_jobs_with_terms ? formatNumber(data.total_jobs_with_terms) : "..."} />
+        <StatTile icon={Tags} label="Skill signals" value={data?.top_skills?.length ? formatNumber(data.top_skills.length) : "..."} />
+        <StatTile icon={Building2} label="Companies" value={data?.top_companies?.length ? formatNumber(data.top_companies.length) : "..."} />
       </div>
 
       <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div className="text-xs text-[#6A89A7]">Click any sector or job title below to filter skills</div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="text-xs text-[#6A89A7]">
+            {activeFilters.length > 0 ? (
+              <>Filtered by <span className="font-semibold text-[#384959]">{activeFilters.join(" + ")}</span></>
+            ) : (
+              <>Click a sector or title to drill into skill demand.</>
+            )}
+          </div>
           {(sectorFilter || titleFilter) && (
             <button
               type="button"
@@ -102,20 +152,26 @@ export default function AnalyticsTab() {
       {/* Sectors */}
       {!loading && !error && data?.sectors?.length > 0 && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-          <div className="text-sm font-semibold text-[#384959] mb-3">
-            Job Sectors
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {data.sectors.map((s, i) => (
-              <button
-                key={s.sector}
-                type="button"
-                onClick={() => setSectorFilter(sectorFilter === s.sector ? "" : s.sector)}
-                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition ${sectorFilter === s.sector ? "ring-2 ring-[#88BDF2] ring-offset-1" : ""} ${sectorColors[i % sectorColors.length]}`}
-              >
-                {s.sector}
-                <span className="font-mono opacity-70">{s.count.toLocaleString()}</span>
+          <div className="mb-4 flex items-center justify-between">
+            <div className="text-sm font-semibold text-[#384959]">Sector Demand</div>
+            {sectorFilter && (
+              <button type="button" onClick={() => setSectorFilter("")} className="text-xs text-[#88BDF2] hover:text-[#384959]">
+                Clear sector
               </button>
+            )}
+          </div>
+          <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
+            {data.sectors.map((item, index) => (
+              <BarRow
+                key={item.sector}
+                rank={index + 1}
+                label={item.sector}
+                count={item.count}
+                maxCount={sectorsMaxCount}
+                color={chartColors[index % chartColors.length]}
+                active={sectorFilter === item.sector}
+                onClick={() => setSectorFilter(sectorFilter === item.sector ? "" : item.sector)}
+              />
             ))}
           </div>
         </div>
@@ -135,30 +191,41 @@ export default function AnalyticsTab() {
             )}
           </div>
           {titleFilter && (
-            <div className="mb-3 rounded-lg bg-[#BDDDFC]/15 px-3 py-2 text-xs text-[#88BDF2]">
+            <div className="mb-3 rounded-lg bg-[#BDDDFC]/15 px-3 py-2 text-xs text-[#384959]">
               Showing skills for: <strong>{titleFilter}</strong>
             </div>
           )}
-          <div className="space-y-1.5">
+          <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
             {data.top_titles.map((item, index) => (
-              <button
+              <BarRow
                 key={item.title}
-                type="button"
+                rank={index + 1}
+                label={item.title}
+                count={item.count}
+                maxCount={titlesMaxCount}
+                color="bg-emerald-500"
+                active={titleFilter === item.title}
                 onClick={() => setTitleFilter(titleFilter === item.title ? "" : item.title)}
-                className={`flex w-full items-center gap-3 rounded-lg px-1 py-0.5 text-left transition hover:bg-[#f0f4f8] ${titleFilter === item.title ? "bg-[#BDDDFC]/15 ring-1 ring-[#BDDDFC]" : ""}`}
-              >
-                <div className="w-5 text-right text-xs text-[#6A89A7] font-mono">{index + 1}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={`h-5 rounded-md ${titleFilter === item.title ? "bg-[#88BDF2]/80" : "bg-emerald-500/70"}`}
-                      style={{ width: `${Math.max(4, (item.count / titlesMaxCount) * 100)}%` }}
-                    />
-                    <span className="text-sm font-medium text-[#384959] whitespace-nowrap">{item.title}</span>
-                  </div>
-                </div>
-                <div className="text-xs text-[#6A89A7] font-mono w-12 text-right">{item.count.toLocaleString()}</div>
-              </button>
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Top Companies */}
+      {!loading && !error && data?.top_companies?.length > 0 && (
+        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+          <div className="mb-4 text-sm font-semibold text-[#384959]">Top Hiring Companies</div>
+          <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
+            {data.top_companies.slice(0, 16).map((item, index) => (
+              <BarRow
+                key={item.company}
+                rank={index + 1}
+                label={item.company}
+                count={item.count}
+                maxCount={companiesMaxCount}
+                color="bg-violet-500"
+              />
             ))}
           </div>
         </div>
@@ -198,21 +265,16 @@ export default function AnalyticsTab() {
           )}
           {visibleSkills.length > 0 ? (
             <>
-              <div className="space-y-2">
+              <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
                 {visibleSkills.map((item, index) => (
-                  <div key={item.skill} className="flex items-center gap-3">
-                    <div className="w-5 text-right text-xs text-[#6A89A7] font-mono">{index + 1}</div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="h-6 rounded-md bg-[#88BDF2]/80"
-                          style={{ width: `${Math.max(4, (item.count / maxCount) * 100)}%` }}
-                        />
-                        <span className="text-sm font-medium text-[#384959] whitespace-nowrap">{item.skill}</span>
-                      </div>
-                    </div>
-                    <div className="text-xs text-[#6A89A7] font-mono w-12 text-right">{item.count.toLocaleString()}</div>
-                  </div>
+                  <BarRow
+                    key={item.skill}
+                    rank={index + 1}
+                    label={item.skill}
+                    count={item.count}
+                    maxCount={maxCount}
+                    color="bg-[#88BDF2]"
+                  />
                 ))}
               </div>
               {filteredSkills.length > showCount && (
