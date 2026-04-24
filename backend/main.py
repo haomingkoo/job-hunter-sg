@@ -29,7 +29,7 @@ from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import String, cast, func, or_, text
+from sqlalchemy import and_, case, func, or_, text
 from sqlalchemy.orm import Session, load_only
 
 from auth import (
@@ -44,8 +44,15 @@ from auth import (
     validate_password,
     verify_password,
 )
-from database import get_db, init_db
-from models import ScrapedJob, TrackedJob, UsageLog, User, UserMemory
+from database import SessionLocal, get_db, init_db
+from job_precompute import (
+    SECTOR_KEYWORDS as _SECTOR_KEYWORDS,
+    apply_job_precomputes as _apply_job_precomputes,
+    classify_sector as _classify_sector,
+    salary_floor_from_text as _salary_floor_from_text,
+    skills_flat_text as _skills_flat_text,
+)
+from models import PowerMatchSnapshot, ScrapedJob, TrackedJob, UsageLog, User, UserMemory
 from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
 from schemas import (
     AuthResponse,
@@ -112,6 +119,7 @@ _ANALYTICS_CACHE_TTL = 86400  # 24 hours - refreshed daily, invalidated on new s
 # ── Per-user power-match cache (avoid recomputing every request) ──────────────
 _power_match_cache: dict[int, dict] = {}
 _POWER_MATCH_CACHE_TTL = 600  # 10 minutes
+_POWER_MATCH_SNAPSHOT_TTL_SECONDS = 86400  # 24 hours
 
 
 from contextlib import asynccontextmanager
@@ -173,9 +181,13 @@ async def lifespan(application: FastAPI):
                     db_sort.expunge_all()
                     offset += len(batch)
                     log.info(f"[STARTUP] Backfilled {offset}/{missing_count} jobs")
-                log.info(f"[STARTUP] posted_at_sort backfill complete")
+                log.info("[STARTUP] posted_at_sort backfill complete")
+
+            precomputed = _backfill_job_precomputes(db_sort)
+            if precomputed:
+                log.info(f"[STARTUP] job precompute backfill complete: {precomputed} jobs")
         except Exception as e:
-            log.warning(f"[STARTUP] posted_at_sort backfill failed: {e}")
+            log.warning(f"[STARTUP] job metadata backfill failed: {e}")
         finally:
             db_sort.close()
 
@@ -1157,7 +1169,7 @@ def _select_power_match_candidates(
             [
                 ScrapedJob.title.ilike(pattern),
                 ScrapedJob.search_keyword.ilike(pattern),
-                cast(ScrapedJob.skills, String).ilike(pattern),
+                ScrapedJob.skills_flat.ilike(pattern),
             ]
         )
 
@@ -1188,6 +1200,83 @@ def _select_power_match_candidates(
             break
 
     return matched_jobs
+
+
+def _resume_snapshot_hash(resume_text: str) -> str:
+    return hashlib.sha256((resume_text or "").encode("utf-8")).hexdigest()
+
+
+def _job_corpus_marker(db: Session) -> str:
+    count, max_id, max_scraped_at = (
+        db.query(
+            func.count(ScrapedJob.id),
+            func.max(ScrapedJob.id),
+            func.max(ScrapedJob.scraped_at),
+        )
+        .filter(ScrapedJob.hidden == 0)
+        .one()
+    )
+    return f"{int(count or 0)}:{int(max_id or 0)}:{max_scraped_at or ''}"
+
+
+def _load_power_match_snapshot(
+    db: Session,
+    user_id: int,
+    resume_hash: str,
+    corpus_marker: str,
+    limit: int,
+) -> dict | None:
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=_POWER_MATCH_SNAPSHOT_TTL_SECONDS)
+    snapshot = (
+        db.query(PowerMatchSnapshot)
+        .filter(
+            PowerMatchSnapshot.user_id == user_id,
+            PowerMatchSnapshot.resume_hash == resume_hash,
+            PowerMatchSnapshot.corpus_marker == corpus_marker,
+            PowerMatchSnapshot.limit == limit,
+            PowerMatchSnapshot.created_at >= cutoff,
+        )
+        .order_by(PowerMatchSnapshot.id.desc())
+        .first()
+    )
+    return snapshot.result if snapshot and isinstance(snapshot.result, dict) else None
+
+
+def _save_power_match_snapshot(
+    db: Session,
+    user_id: int,
+    resume_hash: str,
+    corpus_marker: str,
+    limit: int,
+    result: dict,
+) -> None:
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=_POWER_MATCH_SNAPSHOT_TTL_SECONDS)
+    db.query(PowerMatchSnapshot).filter(
+        PowerMatchSnapshot.user_id == user_id,
+        PowerMatchSnapshot.created_at < cutoff,
+    ).delete(synchronize_session=False)
+    snapshot = (
+        db.query(PowerMatchSnapshot)
+        .filter(
+            PowerMatchSnapshot.user_id == user_id,
+            PowerMatchSnapshot.resume_hash == resume_hash,
+            PowerMatchSnapshot.corpus_marker == corpus_marker,
+            PowerMatchSnapshot.limit == limit,
+        )
+        .order_by(PowerMatchSnapshot.id.desc())
+        .first()
+    )
+    if not snapshot:
+        snapshot = PowerMatchSnapshot(
+            user_id=user_id,
+            resume_hash=resume_hash,
+            corpus_marker=corpus_marker,
+            limit=limit,
+        )
+        db.add(snapshot)
+    snapshot.result = result
+    snapshot.created_at = datetime.now(timezone.utc)
+    db.flush()
 
 
 def _extract_title_terms(title: str) -> list[str]:
@@ -1533,6 +1622,7 @@ def admin_seed_jobs(
                     clean["posted_at_sort"] = _parse_job_posted_at(
                         clean.get("posted_date", ""), clean.get("scraped_at", "")
                     ).isoformat()
+                    _apply_job_precomputes(clean)
                     if preparse_jd and clean.get("description"):
                         clean["parsed_jd"] = preparse_jd(clean["description"], job_title=clean.get("title", ""))
                     existing = db.query(ScrapedJob).filter(ScrapedJob.dedup_key == clean["dedup_key"]).first()
@@ -1860,24 +1950,39 @@ def admin_backfill_embeddings(
         return {"status": "already_running", **_embedding_backfill_progress}
 
     force = (body or {}).get("force", False)
-    batch_size = (body or {}).get("batch_size", 64)
+    try:
+        batch_size = int((body or {}).get("batch_size", 64))
+    except (TypeError, ValueError):
+        batch_size = 64
+    batch_size = max(1, min(batch_size, 256))
 
     def run_backfill() -> None:
         _embedding_backfill_progress.update(running=True, done=0, total=0, phase="embedding")
         try:
             from embedding_service import build_job_embed_text, encode_texts, invalidate_matrix_cache
             from database import SessionLocal
+
             db = SessionLocal()
             try:
-                query = db.query(ScrapedJob)
+                base_query = db.query(ScrapedJob)
                 if not force:
-                    query = query.filter(ScrapedJob.embedding_vector.is_(None))
-                jobs = query.all()
-                _embedding_backfill_progress["total"] = len(jobs)
-                log.info("[EmbedBackfill] Starting: %d jobs", len(jobs))
+                    base_query = base_query.filter(ScrapedJob.embedding_vector.is_(None))
+                total = base_query.count()
+                _embedding_backfill_progress["total"] = total
+                log.info("[EmbedBackfill] Starting: %d jobs", total)
 
-                for i in range(0, len(jobs), batch_size):
-                    batch = jobs[i:i + batch_size]
+                processed = 0
+                last_id = 0
+                while True:
+                    batch = (
+                        base_query
+                        .filter(ScrapedJob.id > last_id)
+                        .order_by(ScrapedJob.id.asc())
+                        .limit(batch_size)
+                        .all()
+                    )
+                    if not batch:
+                        break
                     texts = [
                         build_job_embed_text(
                             title=j.title or "",
@@ -1890,8 +1995,11 @@ def admin_backfill_embeddings(
                     for j, vec in zip(batch, vectors):
                         j.embedding_vector = vec
                     db.commit()
-                    _embedding_backfill_progress["done"] = min(i + batch_size, len(jobs))
-                    log.info("[EmbedBackfill] %d/%d", _embedding_backfill_progress["done"], len(jobs))
+                    processed += len(batch)
+                    last_id = batch[-1].id
+                    db.expunge_all()
+                    _embedding_backfill_progress["done"] = min(processed, total)
+                    log.info("[EmbedBackfill] %d/%d", _embedding_backfill_progress["done"], total)
 
                 invalidate_matrix_cache()
             finally:
@@ -2119,6 +2227,7 @@ def search_jobs(
         clean = sanitize_job(raw)
         clean["search_keyword"] = sanitize_user_input(q)
         clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
+        _apply_job_precomputes(clean)
 
         # Upsert into scraped_jobs by dedup_key
         existing = (
@@ -2174,76 +2283,63 @@ def trending_skills(
     return get_trending_skills(db, limit=limit)
 
 
-# ── Sector classification keywords ────────────────────────────────────────────
-_SECTOR_KEYWORDS: dict[str, list[str]] = {
-    "Engineering": [
-        "engineer", "engineering", "mechanical", "electrical", "civil",
-        "structural", "chemical", "hardware", "firmware", "embedded",
-    ],
-    "IT / Tech": [
-        "software", "developer", "devops", "sre", "cloud", "fullstack",
-        "full-stack", "full stack", "frontend", "front-end", "backend",
-        "back-end", "programmer", "sysadmin", "it ", "information technology",
-        "cybersecurity", "cyber security", "infrastructure", "platform",
-        "solutions architect", "tech lead", "technical lead",
-    ],
-    "Data & AI": [
-        "data", "machine learning", "ml ", "ai ", "artificial intelligence",
-        "analytics", "business intelligence", "bi ", "data scientist",
-        "data engineer", "data analyst", "nlp", "deep learning",
-    ],
-    "Finance & Accounting": [
-        "finance", "financial", "accountant", "accounting", "audit",
-        "tax", "treasury", "credit", "banking", "investment", "fund",
-        "compliance", "risk", "actuary", "actuarial",
-    ],
-    "Healthcare": [
-        "nurse", "nursing", "doctor", "medical", "healthcare",
-        "health care", "clinical", "pharmacy", "pharmacist",
-        "therapist", "physiotherapist", "dental", "dentist",
-    ],
-    "Sales & Marketing": [
-        "sales", "marketing", "business development", "account manager",
-        "brand", "digital marketing", "seo", "sem ", "content",
-        "communications", "public relations", "pr ", "advertising",
-        "growth", "partnership",
-    ],
-    "Admin & Operations": [
-        "admin", "administrator", "operations", "coordinator",
-        "executive assistant", "office", "receptionist", "clerk",
-        "procurement", "supply chain", "logistics", "warehouse",
-    ],
-    "Design & Creative": [
-        "designer", "design", "ux", "ui ", "graphic", "creative",
-        "art director", "visual", "illustrator", "copywriter",
-    ],
-    "HR & Recruitment": [
-        "human resource", "hr ", "recruiter", "recruitment", "talent",
-        "people", "compensation", "benefits", "payroll", "hrbp",
-    ],
-    "Education & Training": [
-        "teacher", "lecturer", "professor", "trainer", "training",
-        "education", "tutor", "curriculum", "instructor", "teaching",
-    ],
-    "Legal": [
-        "lawyer", "legal", "counsel", "paralegal", "litigation",
-        "contract", "regulatory",
-    ],
-    "Product & Project Management": [
-        "product manager", "project manager", "scrum", "agile",
-        "program manager", "product owner", "delivery manager",
-    ],
-}
+def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
+    total_done = 0
+    while True:
+        jobs = (
+            db.query(ScrapedJob)
+            .options(
+                load_only(
+                    ScrapedJob.id,
+                    ScrapedJob.title,
+                    ScrapedJob.salary,
+                    ScrapedJob.skills,
+                    ScrapedJob.sector,
+                    ScrapedJob.salary_floor,
+                    ScrapedJob.skills_flat,
+                )
+            )
+            .filter(
+                or_(
+                    ScrapedJob.sector.is_(None),
+                    ScrapedJob.sector == "",
+                    ScrapedJob.salary_floor.is_(None),
+                    ScrapedJob.skills_flat.is_(None),
+                )
+            )
+            .limit(batch_size)
+            .all()
+        )
+        if not jobs:
+            break
+
+        for job in jobs:
+            job.sector = _classify_sector(job.title or "")
+            job.salary_floor = _salary_floor_from_text(job.salary or "")
+            job.skills_flat = _skills_flat_text(job.skills)
+
+        db.commit()
+        total_done += len(jobs)
+        db.expunge_all()
+        if total_done % 5000 == 0:
+            log.info("[STARTUP] Precomputed job fields for %s jobs", total_done)
+
+    return total_done
 
 
-def _classify_sector(title: str) -> str:
-    """Classify a job title into a broad sector. Returns 'Other' if no match."""
-    lower = f" {title.lower()} "
-    for sector, keywords in _SECTOR_KEYWORDS.items():
-        for kw in keywords:
-            if kw in lower:
-                return sector
-    return "Other"
+def _sector_filter_condition(selected_sector: str):
+    selected = selected_sector.strip()
+    fallback_terms = _SECTOR_KEYWORDS.get(selected, [])
+    blank_sector = or_(ScrapedJob.sector.is_(None), ScrapedJob.sector == "")
+    if not fallback_terms:
+        return ScrapedJob.sector == selected
+    fallback_match = or_(
+        *[ScrapedJob.title.ilike(f"%{term}%") for term in fallback_terms if term.strip()]
+    )
+    return or_(
+        ScrapedJob.sector == selected,
+        and_(blank_sector, fallback_match),
+    )
 
 
 def _normalize_title(raw_title: str) -> str:
@@ -2304,7 +2400,16 @@ def analytics_skills(
                 "top_companies": cached.get("top_companies", []),
             }
 
-    db_query = db.query(ScrapedJob).filter(
+    db_query = db.query(ScrapedJob).options(
+        load_only(
+            ScrapedJob.id,
+            ScrapedJob.job_terms_preview,
+            ScrapedJob.source,
+            ScrapedJob.title,
+            ScrapedJob.company,
+            ScrapedJob.sector,
+        )
+    ).filter(
         ScrapedJob.job_terms_preview.isnot(None),
     )
     if source:
@@ -2317,6 +2422,8 @@ def analytics_skills(
         db_query = db_query.filter(
             ScrapedJob.title.ilike(f"%{title}%")
         )
+    if sector:
+        db_query = db_query.filter(_sector_filter_condition(sector))
 
     skill_counts: dict[str, int] = {}
     source_counts: dict[str, int] = {}
@@ -2330,12 +2437,7 @@ def analytics_skills(
         if not isinstance(preview, list) or not preview:
             continue
 
-        # Sector filter: classify title and skip if not matching
         raw_title = (job.title or "").strip()
-        if sector and raw_title:
-            job_sector = _classify_sector(raw_title)
-            if job_sector.lower() != sector.lower():
-                continue
 
         total_jobs += 1
 
@@ -2366,7 +2468,7 @@ def analytics_skills(
                     title_counts[title_key] = {"display": norm, "count": 0}
                 title_counts[title_key]["count"] += 1
 
-            job_sector = _classify_sector(raw_title)
+            job_sector = job.sector or _classify_sector(raw_title)
             sector_counts[job_sector] = sector_counts.get(job_sector, 0) + 1
 
     # Sort by count descending
@@ -2440,10 +2542,6 @@ def list_cached_jobs(
     per_page: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> dict:
-    def salary_floor(value: str) -> int:
-        numbers = [int(part.replace(",", "")) for part in re.findall(r"\d[\d,]*", value or "")]
-        return numbers[0] if numbers else 0
-
     query = db.query(ScrapedJob).filter(ScrapedJob.hidden == 0).options(
         load_only(
             ScrapedJob.id,
@@ -2467,6 +2565,9 @@ def list_cached_jobs(
             ScrapedJob.jd_summary_generated_at,
             ScrapedJob.job_terms_preview,
             ScrapedJob.closing_date,
+            ScrapedJob.sector,
+            ScrapedJob.salary_floor,
+            ScrapedJob.skills_flat,
         )
     )
     if q:
@@ -2481,7 +2582,7 @@ def list_cached_jobs(
                     ScrapedJob.company.ilike(word_pattern),
                     ScrapedJob.description.ilike(word_pattern),
                     ScrapedJob.search_keyword.ilike(word_pattern),
-                    cast(ScrapedJob.skills, String).ilike(word_pattern),
+                    ScrapedJob.skills_flat.ilike(word_pattern),
                 )
             )
     if employment_type:
@@ -2492,31 +2593,27 @@ def list_cached_jobs(
         query = query.filter(ScrapedJob.source.ilike(f"%{source}%"))
     if location:
         query = query.filter(ScrapedJob.location.ilike(f"%{location}%"))
+    if sector:
+        query = query.filter(_sector_filter_condition(sector))
+    if min_salary is not None:
+        query = query.filter(
+            or_(
+                ScrapedJob.salary_floor >= min_salary,
+                ScrapedJob.salary_floor == 0,
+                ScrapedJob.salary_floor.is_(None),
+            )
+        )
 
     offset = (page - 1) * per_page
 
-    ordered_query = query.order_by(ScrapedJob.posted_at_sort.desc(), ScrapedJob.id.desc())
+    ordering = []
+    if min_salary is not None:
+        ordering.append(case((ScrapedJob.salary_floor >= min_salary, 0), else_=1))
+    ordering.extend([ScrapedJob.posted_at_sort.desc(), ScrapedJob.id.desc()])
+    ordered_query = query.order_by(*ordering)
 
-    # Sector filter: applied pre-pagination since sector is computed from title, not a DB column
-    if sector:
-        all_jobs = ordered_query.all()
-        all_jobs = [j for j in all_jobs if _classify_sector(j.title).lower() == sector.lower()]
-        if min_salary is not None:
-            salary_matched = [j for j in all_jobs if salary_floor(j.salary) >= min_salary]
-            salary_unknown = [j for j in all_jobs if salary_floor(j.salary) == 0]
-            all_jobs = salary_matched + salary_unknown
-        total = len(all_jobs)
-        jobs = all_jobs[offset: offset + per_page]
-    elif min_salary is not None:
-        jobs = ordered_query.all()
-        salary_matched = [job for job in jobs if salary_floor(job.salary) >= min_salary]
-        salary_unknown = [job for job in jobs if salary_floor(job.salary) == 0]
-        jobs = salary_matched + salary_unknown
-        total = len(jobs)
-        jobs = jobs[offset: offset + per_page]
-    else:
-        total = query.count()
-        jobs = ordered_query.offset(offset).limit(per_page).all()
+    total = query.count()
+    jobs = ordered_query.offset(offset).limit(per_page).all()
 
     # Queue CareersGov hydration in background (don't block the response)
     cgov_missing = [
@@ -2589,19 +2686,24 @@ def list_cached_jobs(
                 .limit(30)
                 .all()
             )
-            # Compute sector counts from titles
-            sector_counts: dict[str, int] = {}
-            for (title_val,) in db.query(ScrapedJob.title).filter(ScrapedJob.hidden == 0, ScrapedJob.title != "").yield_per(500):
-                s = _classify_sector(title_val)
-                if s != "Other":
-                    sector_counts[s] = sector_counts.get(s, 0) + 1
+            sector_counts = (
+                db.query(ScrapedJob.sector, func.count())
+                .filter(
+                    ScrapedJob.hidden == 0,
+                    ScrapedJob.sector.isnot(None),
+                    ScrapedJob.sector != "",
+                    ScrapedJob.sector != "Other",
+                )
+                .group_by(ScrapedJob.sector)
+                .all()
+            )
 
             filter_meta = {
                 "sources": [{"value": s, "count": c} for s, c in source_counts if s],
                 "employment_types": [{"value": t, "count": c} for t, c in emp_counts if t],
                 "locations": [{"value": loc, "count": c} for loc, c in loc_counts if loc],
                 "sectors": sorted(
-                    [{"value": s, "count": c} for s, c in sector_counts.items()],
+                    [{"value": s, "count": c} for s, c in sector_counts if s],
                     key=lambda x: -x["count"],
                 ),
             }
@@ -2623,7 +2725,7 @@ def list_cached_jobs(
                 "experience_years": (j.parsed_jd or {}).get("experience_years", "") if isinstance(j.parsed_jd, dict) else "",
                 "agency": j.agency, "scraped_at": j.scraped_at,
                 "closing_date": getattr(j, "closing_date", "") or "",
-                "sector": _classify_sector(j.title),
+                "sector": j.sector or _classify_sector(j.title),
                 "archetype": (j.parsed_jd or {}).get("archetype", "") if isinstance(j.parsed_jd, dict) else "",
             }
             for j in jobs
@@ -2743,10 +2845,6 @@ def get_power_match(
     for uid in expired_uids:
         _power_match_cache.pop(uid, None)
 
-    cached = _power_match_cache.get(user.id)
-    if cached and now - cached["_ts"] < _POWER_MATCH_CACHE_TTL:
-        return cached["data"]
-
     mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
     resume_text = (mem.resume_text or "").strip() if mem else ""
     if len(resume_text) < 50:
@@ -2757,6 +2855,36 @@ def get_power_match(
             "top_gaps": [],
             "recommendations": [],
         }
+
+    resume_hash = _resume_snapshot_hash(resume_text)
+    corpus_marker = _job_corpus_marker(db)
+
+    cached = _power_match_cache.get(user.id)
+    if (
+        cached
+        and now - cached["_ts"] < _POWER_MATCH_CACHE_TTL
+        and cached.get("resume_hash") == resume_hash
+        and cached.get("corpus_marker") == corpus_marker
+        and cached.get("limit") == limit
+    ):
+        return cached["data"]
+
+    snapshot = _load_power_match_snapshot(
+        db=db,
+        user_id=user.id,
+        resume_hash=resume_hash,
+        corpus_marker=corpus_marker,
+        limit=limit,
+    )
+    if snapshot:
+        _power_match_cache[user.id] = {
+            "data": snapshot,
+            "_ts": time.monotonic(),
+            "resume_hash": resume_hash,
+            "corpus_marker": corpus_marker,
+            "limit": limit,
+        }
+        return snapshot
 
     resume_skills, resume_signal_mode = _extract_resume_skills(resume_text, db)
     resume_skill_lookup = {skill.lower(): skill for skill in resume_skills}
@@ -2968,7 +3096,26 @@ def get_power_match(
         "recommended_queries": recommended_queries,
         "recommendations": recommendations,
     }
-    _power_match_cache[user.id] = {"data": result, "_ts": time.monotonic()}
+    try:
+        _save_power_match_snapshot(
+            db=db,
+            user_id=user.id,
+            resume_hash=resume_hash,
+            corpus_marker=corpus_marker,
+            limit=limit,
+            result=result,
+        )
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        log.warning("[PowerMatch] Snapshot save failed: %s", exc.__class__.__name__)
+    _power_match_cache[user.id] = {
+        "data": result,
+        "_ts": time.monotonic(),
+        "resume_hash": resume_hash,
+        "corpus_marker": corpus_marker,
+        "limit": limit,
+    }
     return result
 
 

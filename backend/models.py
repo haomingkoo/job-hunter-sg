@@ -56,6 +56,7 @@ class ScrapedJob(Base):
     company: Mapped[str] = mapped_column(String(500), nullable=False)
     location: Mapped[str] = mapped_column(String(500), default="")
     salary: Mapped[str] = mapped_column(String(200), default="")
+    salary_floor: Mapped[int] = mapped_column(Integer, default=0)
     source: Mapped[str] = mapped_column(String(200), default="")
     url: Mapped[str] = mapped_column(Text, default="")
     posted_date: Mapped[str] = mapped_column(String(100), default="")
@@ -67,6 +68,8 @@ class ScrapedJob(Base):
     agency: Mapped[str] = mapped_column(String(300), default="")
     dedup_key: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     search_keyword: Mapped[str] = mapped_column(String(300), default="")
+    sector: Mapped[str] = mapped_column(String(100), default="")
+    skills_flat: Mapped[str] = mapped_column(Text, default="")
     scraped_at: Mapped[str] = mapped_column(String(50), default="")
     posted_at_sort: Mapped[str] = mapped_column(String(50), default="")
 
@@ -92,6 +95,8 @@ class ScrapedJob(Base):
         Index("ix_scraped_jobs_location", "location"),
         Index("ix_scraped_jobs_seniority", "seniority"),
         Index("ix_scraped_jobs_emp_type", "employment_type"),
+        Index("ix_scraped_jobs_sector", "sector"),
+        Index("ix_scraped_jobs_salary_floor", "salary_floor"),
     )
 
 
@@ -152,6 +157,26 @@ class UserMemory(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class PowerMatchSnapshot(Base):
+    """
+    Persisted Power Match result for a user resume + job corpus version.
+    Keeps repeat visits off the expensive ranking path.
+    """
+    __tablename__ = "power_match_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    resume_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    corpus_marker: Mapped[str] = mapped_column(String(200), nullable=False)
+    limit: Mapped[int] = mapped_column(Integer, default=8)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        Index("ix_power_match_snapshots_lookup", "user_id", "resume_hash", "corpus_marker", "limit"),
+    )
 
 
 class TailoredResume(Base):

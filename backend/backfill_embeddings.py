@@ -24,11 +24,10 @@ def backfill(force: bool = False, limit: int | None = None) -> None:
         query = db.query(ScrapedJob)
         if not force:
             query = query.filter(ScrapedJob.embedding_vector.is_(None))
-        if limit:
-            query = query.limit(limit)
 
-        jobs = query.all()
-        total = len(jobs)
+        total = query.count()
+        if limit:
+            total = min(total, limit)
         if total == 0:
             print("No jobs to backfill.")
             return
@@ -39,8 +38,17 @@ def backfill(force: bool = False, limit: int | None = None) -> None:
         processed = 0
         t0 = time.time()
 
-        for i in range(0, total, batch_size):
-            batch = jobs[i : i + batch_size]
+        last_id = 0
+        while processed < total:
+            batch = (
+                query
+                .filter(ScrapedJob.id > last_id)
+                .order_by(ScrapedJob.id.asc())
+                .limit(min(batch_size, total - processed))
+                .all()
+            )
+            if not batch:
+                break
             texts = [
                 build_job_embed_text(
                     job.title,
@@ -54,8 +62,10 @@ def backfill(force: bool = False, limit: int | None = None) -> None:
             for job, vec in zip(batch, vectors):
                 job.embedding_vector = vec
 
-            db.flush()
+            db.commit()
             processed += len(batch)
+            last_id = batch[-1].id
+            db.expunge_all()
             elapsed = time.time() - t0
             rate = processed / elapsed if elapsed > 0 else 0
             print(
@@ -64,7 +74,6 @@ def backfill(force: bool = False, limit: int | None = None) -> None:
                 f"({rate:.1f} jobs/sec)"
             )
 
-        db.commit()
         elapsed = time.time() - t0
         print(f"Done. {processed} jobs embedded in {elapsed:.1f}s.")
 

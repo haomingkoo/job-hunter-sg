@@ -27,6 +27,10 @@ The backend uses SQLAlchemy with auto-migration. Tables are created automaticall
 - **Local dev**: SQLite (default `sqlite:///./jobhunter.db`)
 - **Production**: PostgreSQL on Railway (set `DATABASE_URL` env var)
 
+On deploy, the app may backfill derived job metadata (`sector`, `salary_floor`,
+`skills_flat`) in bounded batches. This keeps `/api/jobs` filters in SQL instead
+of doing full-result filtering in Python.
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |
@@ -91,6 +95,35 @@ If you prefer one service, you can serve the frontend from FastAPI:
 cd frontend && npm install && npm run build
 cp -r dist/ ../backend/static/
 # Then add StaticFiles mount in backend/main.py
+```
+
+## Post-Deploy Checks
+
+Run these checks after a production deploy:
+
+- `https://job.kooexperience.com/api/health` returns healthy.
+- `https://job.kooexperience.com/robots.txt` is reachable.
+- `https://job.kooexperience.com/sitemap.xml` is reachable.
+- `https://job.kooexperience.com/llms.txt` is reachable.
+- Railway memory chart is stable after startup backfills complete.
+- `/api/jobs?sector=Engineering&per_page=20` returns quickly and does not spike memory.
+
+Submit the canonical URL and sitemap in Google Search Console and Bing Webmaster
+Tools. ChatGPT search visibility depends on normal web indexing plus allowing
+OpenAI's search crawler in `robots.txt`.
+
+## Quality Gates
+
+GitHub Actions runs backend compile checks, Ruff critical lint, frontend build,
+and Gitleaks secret scanning. Dependabot tracks GitHub Actions, npm, and pip
+updates.
+
+Recommended local checks before pushing:
+
+```bash
+python -m compileall -q backend
+ruff check backend tests
+cd frontend && npm run build
 ```
 
 ## API Endpoints

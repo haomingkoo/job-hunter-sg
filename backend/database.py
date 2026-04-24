@@ -64,6 +64,12 @@ def _apply_lightweight_migrations() -> None:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN closing_date VARCHAR(100) DEFAULT ''")
     if "hidden" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN hidden INTEGER DEFAULT 0")
+    if "sector" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN sector VARCHAR(100) DEFAULT ''")
+    if "salary_floor" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN salary_floor INTEGER DEFAULT 0")
+    if "skills_flat" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN skills_flat TEXT DEFAULT ''")
 
     # Add indexes if they don't exist (safe for Postgres and SQLite)
     existing_indexes = {idx["name"] for idx in inspector.get_indexes("scraped_jobs")}
@@ -73,6 +79,8 @@ def _apply_lightweight_migrations() -> None:
         "ix_scraped_jobs_location": "CREATE INDEX ix_scraped_jobs_location ON scraped_jobs (location)",
         "ix_scraped_jobs_seniority": "CREATE INDEX ix_scraped_jobs_seniority ON scraped_jobs (seniority)",
         "ix_scraped_jobs_emp_type": "CREATE INDEX ix_scraped_jobs_emp_type ON scraped_jobs (employment_type)",
+        "ix_scraped_jobs_sector": "CREATE INDEX ix_scraped_jobs_sector ON scraped_jobs (sector)",
+        "ix_scraped_jobs_salary_floor": "CREATE INDEX ix_scraped_jobs_salary_floor ON scraped_jobs (salary_floor)",
     }
     for idx_name, idx_sql in index_defs.items():
         if idx_name not in existing_indexes:

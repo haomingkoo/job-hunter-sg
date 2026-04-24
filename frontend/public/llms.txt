@@ -1,0 +1,39 @@
+# Job Hunter SG
+
+> AI-powered job search, resume scoring, and resume tailoring for Singapore.
+
+Job Hunter SG helps candidates search Singapore jobs from MyCareersFuture and
+Careers@Gov, score resumes, extract ATS keywords, tailor resumes for specific
+roles, generate cover letters, and track applications.
+
+## Primary URL
+
+- https://job.kooexperience.com/
+
+## Key Pages
+
+- Home and app: https://job.kooexperience.com/
+- Project write-up: https://kooexperience.com/blog/posts/job-hunter.html
+- Source code: https://github.com/haomingkoo/job-hunter-sg
+
+## Capabilities
+
+- Browse Singapore job listings from MyCareersFuture and Careers@Gov.
+- Filter cached jobs by seniority, employment type, sector, salary, location,
+  and search keywords.
+- Score resumes against ATS-style criteria.
+- Rewrite and tailor resume bullets with validation gates.
+- Build resumes through chat and export DOCX resumes.
+- Match resumes to jobs with hybrid keyword and semantic scoring.
+- Track job applications and reminders.
+
+## Audience
+
+- Singapore job seekers.
+- Candidates tailoring resumes for Singapore employers.
+- AI Singapore, government, technology, product, data, and operations roles.
+
+## Contact
+
+- Creator: Haoming Koo
+- Portfolio: https://kooexperience.com/

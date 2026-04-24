@@ -25,6 +25,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(__file__))
 
 from database import init_db, SessionLocal
+from job_precompute import apply_job_precomputes
 from models import ScrapedJob
 from sanitizer import sanitize_job
 from scraper import JobAggregator
@@ -156,6 +157,7 @@ def seed_jobs(
                 clean = sanitize_job(raw)
                 clean["search_keyword"] = keyword
                 clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
+                apply_job_precomputes(clean)
 
                 existing = (
                     db.query(ScrapedJob)
@@ -255,6 +257,7 @@ def crawl_all_jobs() -> dict:
                 clean = sanitize_job(raw)
                 clean["search_keyword"] = "all"
                 clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
+                apply_job_precomputes(clean)
 
                 try:
                     existing = db.query(ScrapedJob).filter(
@@ -327,6 +330,7 @@ def crawl_all_jobs() -> dict:
             clean = sanitize_job(raw)
             clean["search_keyword"] = "all"
             clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
+            apply_job_precomputes(clean)
 
             # Pre-parse JD at insert time
             if preparse_job_description and clean.get("description"):

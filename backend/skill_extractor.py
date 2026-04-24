@@ -603,20 +603,19 @@ def build_dynamic_skills(db_session) -> dict[str, int]:
     log.info("Building dynamic skill dictionary from scraped JDs...")
     start = time.time()
 
-    # Fetch all JD descriptions
-    jobs = db_session.query(
-        ScrapedJob.description, ScrapedJob.skills
-    ).filter(ScrapedJob.description != "").all()
-
-    if not jobs:
-        return {}
-
     # Count how many JDs each phrase appears in (document frequency)
     phrase_df: Counter = Counter()
+    job_count = 0
 
-    for desc, job_skills in jobs:
+    query = (
+        db_session.query(ScrapedJob.description, ScrapedJob.skills)
+        .filter(ScrapedJob.description != "")
+        .yield_per(500)
+    )
+    for desc, job_skills in query:
         if not desc:
             continue
+        job_count += 1
 
         # Extract n-grams from description
         tokens = _tokenize_for_ngrams(desc)
@@ -639,8 +638,11 @@ def build_dynamic_skills(db_session) -> dict[str, int]:
         for phrase in phrases_in_this_jd:
             phrase_df[phrase] += 1
 
+    if job_count == 0:
+        return {}
+
     # Filter: keep phrases that appear in enough JDs
-    min_freq = max(_MIN_JD_FREQUENCY, len(jobs) // 100)  # At least 1% of jobs
+    min_freq = max(_MIN_JD_FREQUENCY, job_count // 100)  # At least 1% of jobs
     real_skills = {
         phrase: count
         for phrase, count in phrase_df.items()
@@ -657,12 +659,12 @@ def build_dynamic_skills(db_session) -> dict[str, int]:
     # Update cache
     _dynamic_cache["skills"] = real_skills
     _dynamic_cache["built_at"] = time.time()
-    _dynamic_cache["job_count"] = len(jobs)
+    _dynamic_cache["job_count"] = job_count
 
     elapsed = time.time() - start
     log.info(
         f"Dynamic skill dictionary built: {len(real_skills)} phrases "
-        f"from {len(jobs)} JDs in {elapsed:.1f}s"
+        f"from {job_count} JDs in {elapsed:.1f}s"
     )
 
     return real_skills

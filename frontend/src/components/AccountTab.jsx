@@ -6,10 +6,14 @@ import TierBadge from "./TierBadge.jsx";
 export default function AccountTab({ user, onLogout }) {
   const [usage, setUsage] = useState(null);
   const [usageLoading, setUsageLoading] = useState(true);
+  const [adminMetrics, setAdminMetrics] = useState(null);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminError, setAdminError] = useState("");
   const [contactForm, setContactForm] = useState({ name: user?.name || "", email: user?.email || "", message: "" });
   const [contactSending, setContactSending] = useState(false);
   const [contactSent, setContactSent] = useState(false);
   const [contactError, setContactError] = useState("");
+  const isAdmin = user?.tier === "admin";
 
   useEffect(() => {
     let cancelled = false;
@@ -26,6 +30,33 @@ export default function AccountTab({ user, onLogout }) {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setAdminMetrics(null);
+      setAdminError("");
+      setAdminLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setAdminLoading(true);
+    setAdminError("");
+
+    (async () => {
+      try {
+        const resp = await apiFetch("/api/admin/metrics");
+        const data = await resp.json();
+        if (!cancelled) setAdminMetrics(data);
+      } catch (err) {
+        if (!cancelled) setAdminError(err.message || "Could not load admin metrics.");
+      } finally {
+        if (!cancelled) setAdminLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [isAdmin]);
 
   const sendContact = async (e) => {
     e.preventDefault();
@@ -108,6 +139,142 @@ export default function AccountTab({ user, onLogout }) {
           <div className="text-sm text-[#6A89A7]">Could not load usage data.</div>
         )}
       </div>
+
+      {isAdmin && (
+        <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div>
+              <h3 className="font-semibold text-[#384959]">Admin Snapshot</h3>
+              <p className="text-sm text-[#6A89A7] mt-1">Site-wide signups, resume activity, and onboarding signals.</p>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                setAdminLoading(true);
+                setAdminError("");
+                try {
+                  const resp = await apiFetch("/api/admin/metrics");
+                  setAdminMetrics(await resp.json());
+                } catch (err) {
+                  setAdminError(err.message || "Could not load admin metrics.");
+                } finally {
+                  setAdminLoading(false);
+                }
+              }}
+              className="rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs text-[#6A89A7] hover:bg-[#f0f4f8]"
+            >
+              Refresh
+            </button>
+          </div>
+
+          {adminLoading ? (
+            <div className="flex items-center gap-2 text-sm text-[#6A89A7]"><Loader2 size={14} className="animate-spin" /> Loading admin metrics...</div>
+          ) : adminError ? (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">
+              {adminError}
+            </div>
+          ) : adminMetrics ? (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div className="rounded-xl bg-slate-50 p-4">
+                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.total_users?.toLocaleString?.() ?? adminMetrics.overview.total_users}</div>
+                  <div className="text-xs text-[#6A89A7] mt-1">Total users</div>
+                </div>
+                <div className="rounded-xl bg-blue-50 p-4">
+                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.signups_7d?.toLocaleString?.() ?? adminMetrics.overview.signups_7d}</div>
+                  <div className="text-xs text-[#6A89A7] mt-1">Signups last 7 days</div>
+                </div>
+                <div className="rounded-xl bg-emerald-50 p-4">
+                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.active_users_7d?.toLocaleString?.() ?? adminMetrics.overview.active_users_7d}</div>
+                  <div className="text-xs text-[#6A89A7] mt-1">Active users last 7 days</div>
+                </div>
+                <div className="rounded-xl bg-violet-50 p-4">
+                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.total_saved_resumes?.toLocaleString?.() ?? adminMetrics.overview.total_saved_resumes}</div>
+                  <div className="text-xs text-[#6A89A7] mt-1">Saved resumes</div>
+                </div>
+                <div className="rounded-xl bg-amber-50 p-4">
+                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.tailored_resumes_total?.toLocaleString?.() ?? adminMetrics.overview.tailored_resumes_total}</div>
+                  <div className="text-xs text-[#6A89A7] mt-1">Tailored resumes</div>
+                </div>
+                <div className="rounded-xl bg-cyan-50 p-4">
+                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.tracked_jobs_total?.toLocaleString?.() ?? adminMetrics.overview.tracked_jobs_total}</div>
+                  <div className="text-xs text-[#6A89A7] mt-1">Tracked jobs</div>
+                </div>
+                <div className="rounded-xl bg-rose-50 p-4">
+                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.activity.resume_chat_starts_7d?.toLocaleString?.() ?? adminMetrics.activity.resume_chat_starts_7d}</div>
+                  <div className="text-xs text-[#6A89A7] mt-1">Resume chat starts, 7d</div>
+                </div>
+                <div className="rounded-xl bg-indigo-50 p-4">
+                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.activity.resume_downloads_7d?.toLocaleString?.() ?? adminMetrics.activity.resume_downloads_7d}</div>
+                  <div className="text-xs text-[#6A89A7] mt-1">Resume downloads, 7d</div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-5">
+                <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
+                  <div className="text-sm font-semibold text-[#384959]">Today</div>
+                  <div className="mt-3 space-y-2 text-sm text-[#384959]">
+                    <div className="flex items-center justify-between"><span>Signups</span><span className="font-medium">{adminMetrics.overview.signups_today}</span></div>
+                    <div className="flex items-center justify-between"><span>Searches</span><span className="font-medium">{adminMetrics.activity.searches_today}</span></div>
+                    <div className="flex items-center justify-between"><span>AI calls</span><span className="font-medium">{adminMetrics.activity.ai_today}</span></div>
+                    <div className="flex items-center justify-between"><span>Anonymous AI</span><span className="font-medium">{adminMetrics.activity.anonymous_ai_today}</span></div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
+                  <div className="text-sm font-semibold text-[#384959]">Onboarding Signals</div>
+                  <div className="mt-3 space-y-2 text-sm text-[#384959]">
+                    <div className="flex items-center justify-between"><span>Resume chat starts, 7d</span><span className="font-medium">{adminMetrics.activity.resume_chat_starts_7d}</span></div>
+                    <div className="flex items-center justify-between"><span>Resume chat generates, 7d</span><span className="font-medium">{adminMetrics.activity.resume_chat_generates_7d}</span></div>
+                    <div className="flex items-center justify-between"><span>Resume uploads, 7d</span><span className="font-medium">{adminMetrics.activity.resume_uploads_7d}</span></div>
+                    <div className="flex items-center justify-between"><span>Resume scores, 7d</span><span className="font-medium">{adminMetrics.activity.resume_scores_7d}</span></div>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
+                  <div className="text-sm font-semibold text-[#384959]">User Funnel</div>
+                  <div className="mt-3 space-y-2 text-sm text-[#384959]">
+                    <div className="flex items-center justify-between"><span>Users with saved resume</span><span className="font-medium">{adminMetrics.funnel.users_with_saved_resume}</span></div>
+                    <div className="flex items-center justify-between"><span>Users with tailored resume</span><span className="font-medium">{adminMetrics.funnel.users_with_tailored_resume}</span></div>
+                    <div className="flex items-center justify-between"><span>Users with tracked jobs</span><span className="font-medium">{adminMetrics.funnel.users_with_tracked_jobs}</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 rounded-xl border border-[#BDDDFC]/30 bg-white overflow-hidden">
+                <div className="px-4 py-3 border-b border-[#BDDDFC]/20">
+                  <div className="text-sm font-semibold text-[#384959]">Last 14 Days</div>
+                  <div className="text-xs text-[#6A89A7] mt-1">Use this to sanity-check whether onboarding changes improve signup and resume activity.</div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-[#f0f4f8]">
+                      <tr>
+                        <th className="text-left px-4 py-2 text-[#6A89A7] text-xs uppercase">Date</th>
+                        <th className="text-right px-4 py-2 text-[#6A89A7] text-xs uppercase">Signups</th>
+                        <th className="text-right px-4 py-2 text-[#6A89A7] text-xs uppercase">Resumes Saved</th>
+                        <th className="text-right px-4 py-2 text-[#6A89A7] text-xs uppercase">Downloads</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#BDDDFC]/20">
+                      {(adminMetrics.daily || []).map((row) => (
+                        <tr key={row.date}>
+                          <td className="px-4 py-2 text-[#384959]">{row.date}</td>
+                          <td className="px-4 py-2 text-right text-[#384959]">{row.signups}</td>
+                          <td className="px-4 py-2 text-right text-[#384959]">{row.resumes_saved}</td>
+                          <td className="px-4 py-2 text-right text-[#384959]">{row.downloads}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="text-sm text-[#6A89A7]">No admin metrics yet.</div>
+          )}
+        </div>
+      )}
 
       {/* Tier Comparison */}
       <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">

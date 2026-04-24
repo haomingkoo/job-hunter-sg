@@ -8,7 +8,8 @@ Searches MyCareersFuture and Careers@Gov in one interface. Scores your resume, r
 
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![AI](https://img.shields.io/badge/AI-SEA--LION-purple)
-![Tests](https://img.shields.io/badge/tests-320%2B-green)
+![CI](https://github.com/haomingkoo/job-hunter-sg/actions/workflows/ci.yml/badge.svg)
+![Quality](https://img.shields.io/badge/quality-ruff%20%2B%20gitleaks%20%2B%20build-green)
 
 ## Screenshots
 
@@ -25,6 +26,18 @@ Searches MyCareersFuture and Careers@Gov in one interface. Scores your resume, r
 
 ---
 
+## Search Visibility
+
+- Public app URL: <https://job.kooexperience.com/>
+- `robots.txt` allows search engines plus OpenAI search crawlers for the public app while blocking `/api/` and `/api/admin/`.
+- `sitemap.xml` lists the canonical app URL.
+- `llms.txt` gives AI assistants a concise machine-readable project summary.
+- `index.html` includes canonical, Open Graph, Twitter Card, WebApplication JSON-LD, and FAQ JSON-LD metadata.
+
+After deployment, submit the site to Google Search Console and Bing Webmaster Tools, then confirm `https://job.kooexperience.com/robots.txt`, `/sitemap.xml`, and `/llms.txt` are publicly reachable.
+
+---
+
 ## Features
 
 ### Job Search
@@ -32,6 +45,7 @@ Searches MyCareersFuture and Careers@Gov in one interface. Scores your resume, r
 - Nightly crawl via Railway cron (22:00 UTC); extensible `SOURCE_MAP` supports 5 additional scrapers
 - Filter by seniority, job type, salary range, skills
 - ATS skill tags extracted at scrape time (413 known skills, ~50ms/job)
+- Precomputed sector, salary floor, and skill-search fields keep filters fast without loading full job tables
 
 ### Resume Builder
 - Upload PDF/DOCX or build from scratch with AI chat
@@ -65,6 +79,7 @@ Searches MyCareersFuture and Careers@Gov in one interface. Scores your resume, r
 - Hybrid scoring: keyword overlap + cosine similarity
 - Suitability scores, skill gap analysis, bridge paths
 - Pre-embedded jobs for instant matching
+- Persisted match snapshots return repeat visits instantly when resume and job corpus are unchanged
 
 ### Application Tracker
 - Track applications: Applied, Interview, Offer
@@ -78,13 +93,14 @@ Searches MyCareersFuture and Careers@Gov in one interface. Scores your resume, r
 | Layer | Technology |
 |-------|-----------|
 | Backend | FastAPI + SQLAlchemy + SQLite/PostgreSQL |
-| Frontend | React 19 + Vite + Tailwind CSS + Framer Motion |
+| Frontend | React 18 + Vite + Tailwind CSS + Framer Motion |
 | AI | SEA-LION (AI Singapore) — 32B interactive, 70B reasoning |
 | Embeddings | sentence-transformers/all-MiniLM-L6-v2 |
 | Skills | SSG-WSG SkillsFuture Skills Framework API |
 | Rate Limiting | In-memory token bucket, 5 API keys cycled (~45 req/min) |
 | Auth | JWT + bcrypt, tier-based rate limiting |
 | Deploy | Railway (Docker), persistent PostgreSQL |
+| Quality | GitHub Actions, Ruff, Gitleaks, Dependabot, pre-commit hooks |
 
 ---
 
@@ -107,11 +123,23 @@ npm run dev     # starts on :5173, proxies /api to :8000
 ## Testing
 
 ```bash
-# Backend (222 tests)
-cd backend && python -m pytest tests/ -q
+# Fast backend quality checks
+python -m compileall -q backend
+ruff check backend tests
 
-# Frontend (98 tests)
-cd frontend && npx vitest run
+# Frontend production build
+cd frontend && npm run build
+
+# Full test suites
+PYTHONPATH=backend python -m pytest backend/tests -q
+cd frontend && npm test
+```
+
+Local pre-commit hooks are intentionally lightweight and CI is the merge gate:
+
+```bash
+pip install pre-commit
+pre-commit install
 ```
 
 ---
@@ -123,7 +151,8 @@ scrapers (MCF, CareersGov, +5 pluggable)
     ↓
 jd_preparser.py (50ms/job → skills, exp, education)
     ↓
-scraped_jobs table (parsed_jd JSON, ATS terms, JD summary)
+scraped_jobs table (parsed_jd JSON, ATS terms, JD summary,
+sector, salary_floor, skills_flat)
     ↓
 embedding_service.py (MiniLM-L6-v2, 384-dim vectors)
 
@@ -138,6 +167,8 @@ tailoring_pipeline.py (7 stages: Analyze → Strategize → Cleanup → Rewrite 
 validation_gates.py (5 gates, revert on failure)
     ↓
 DOCX export via python-docx
+
+Power Match snapshots cache ranked results by resume hash + job corpus marker.
 
 shared/resume-classification.json ← single source of truth for both backend + frontend
 ```

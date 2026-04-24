@@ -1,3 +1,18 @@
+User-agent: OAI-SearchBot
+Allow: /
+Disallow: /api/
+Disallow: /api/admin/
+
+User-agent: ChatGPT-User
+Allow: /
+Disallow: /api/
+Disallow: /api/admin/
+
+User-agent: GPTBot
+Allow: /
+Disallow: /api/
+Disallow: /api/admin/
+
 User-agent: *
 Allow: /
 Disallow: /api/
