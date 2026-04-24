@@ -4907,7 +4907,8 @@ def ai_rewrite_bullet(
             f"Keep the rewrite under 35 words."
         )
 
-    # Return validated options (or original options if validation produced nothing)
+    # Return only validated options. If every option fails the gates, withhold
+    # suggestions instead of surfacing unvalidated AI text.
     if validated_options:
         return {
             "original": bullet,
@@ -4916,13 +4917,13 @@ def ai_rewrite_bullet(
             "model": "AI",
             "validated": True,
         }
-    # Fallback: return raw options with a warning
     return {
         "original": bullet,
-        "options": result or [],
+        "options": [],
         "model": "AI",
         "validated": False,
-        "warning": "These rewrites could not be fully validated. Review carefully before accepting.",
+        "no_change": True,
+        "message": "I could not validate a safe rewrite for this bullet. Edit it manually or add more source facts first.",
     }
 
 

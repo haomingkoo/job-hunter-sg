@@ -26,6 +26,7 @@ Notable changes to Job Hunter SG are tracked here.
 - Filtered Market Insights no longer caches empty over-indexing output before the market baseline cache is ready.
 - Power Match no longer pads candidate pools with newest jobs when too few skill-filtered roles are found.
 - The legacy jobs recommendation endpoint now uses the trusted skill extractor instead of capitalised-word matching.
+- Bullet rewrite now withholds suggestions when validation gates cannot produce a safe rewrite instead of showing raw AI output.
 
 ## 2026-04-24
 
