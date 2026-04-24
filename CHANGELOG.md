@@ -2,6 +2,27 @@
 
 Notable changes to Job Hunter SG are tracked here.
 
+## 2026-04-25
+
+### Added
+- Market Insights now exposes a visible Drill Down panel near the top so source, sector, and title filters are easier to discover.
+- Market Insights now includes source drilldowns for Careers@Gov/MyCareersFuture, clickable company/department rankings, and directional market movers based on recent versus older dated postings.
+- Story Bank generation now shows an indeterminate progress bar and rotating status text while resume-based stories are being extracted.
+- Account now includes quick actions, AI request usage, and cleaner unlimited-limit display.
+- Smart Match now shows the exact stored resume snapshot, word count, update time, and snapshot hash used for matching.
+
+### Changed
+- Sector inference now uses title plus extracted skill signals and adds Singapore-market categories such as Built Environment, Food & Hospitality, Beauty & Wellness, Customer Service, and Public Sector.
+- Market Insights sector filters now use stored precomputed sectors only; unclassified rows are labelled explicitly instead of being re-guessed during requests.
+- Salary insights now show advertised floor plus midpoint where the posting exposes a range, so low-looking medians are clearly labelled.
+- Seniority mix is sorted by market share instead of fixed career-stage order.
+- Smart Match no longer guesses resume skills from capitalised words when the trusted skill corpus finds no match.
+- Resume parsing keeps wrapped bullet continuations attached to the original bullet and avoids turning short line-wrap fragments into fake job headings.
+
+### Fixed
+- Certification lines such as `Full Stack Development with AI (NUS x Emeritus, 2025)` now render as full credential text instead of being split into fake title/date pairs.
+- All eight resume DOCX templates are covered by export tests.
+
 ## 2026-04-24
 
 ### Added

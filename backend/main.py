@@ -29,7 +29,7 @@ from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import and_, case, func, or_, text
+from sqlalchemy import case, func, or_, text
 from sqlalchemy.orm import Session, load_only
 
 from auth import (
@@ -46,9 +46,9 @@ from auth import (
 )
 from database import SessionLocal, get_db, init_db
 from job_precompute import (
-    SECTOR_KEYWORDS as _SECTOR_KEYWORDS,
     apply_job_precomputes as _apply_job_precomputes,
     classify_sector as _classify_sector,
+    salary_bounds_from_text as _salary_bounds_from_text,
     salary_floor_from_text as _salary_floor_from_text,
     skills_flat_text as _skills_flat_text,
 )
@@ -122,6 +122,23 @@ _ANALYTICS_QUERY_CACHE_TTL = 3600
 _ANALYTICS_QUERY_CACHE_MAX = 64
 _ANALYTICS_CACHE_LOCK = threading.Lock()
 _analytics_cache_generation = 0
+_ANALYTICS_UNCLASSIFIED_SECTOR = "Unclassified"
+_ANALYTICS_SALARY_MAX = 1_000_000
+_ANALYTICS_SALARY_BUCKET_MIN_ROLES = 5
+_ANALYTICS_OVERINDEX_MIN_TOTAL = 20
+_ANALYTICS_OVERINDEX_MIN_BASELINE_COUNT = 10
+_ANALYTICS_OVERINDEX_MIN_SHARE = 0.015
+_ANALYTICS_OVERINDEX_LIFT_THRESHOLD = 1.35
+_ANALYTICS_OVERINDEX_LIMIT = 10
+_ANALYTICS_MARKET_WINDOW_DAYS = 30
+_ANALYTICS_MARKET_MIN_TOTAL = 50
+_ANALYTICS_MARKET_MIN_COUNT = 5
+_ANALYTICS_MARKET_RECENT_MIN_SHARE = 0.01
+_ANALYTICS_MARKET_OLDER_MIN_SHARE = 0.005
+_ANALYTICS_MARKET_LIFT_THRESHOLD = 1.35
+_ANALYTICS_MARKET_COOLING_MIN_RECENT_COUNT = 2
+_ANALYTICS_MARKET_MOVER_LIMIT = 8
+_ANALYTICS_SOURCE_OTHER_LABEL = "Unknown"
 
 
 def _clear_analytics_cache() -> None:
@@ -152,6 +169,7 @@ def _store_analytics_query_cache(cache_key: tuple, cache_ts: float, result: dict
 _power_match_cache: dict[int, dict] = {}
 _POWER_MATCH_CACHE_TTL = 600  # 10 minutes
 _POWER_MATCH_SNAPSHOT_TTL_SECONDS = 86400  # 24 hours
+_POWER_MATCH_RESULT_VERSION = "power_match_v2"
 
 
 from contextlib import asynccontextmanager
@@ -1155,16 +1173,7 @@ def _extract_resume_skills(resume_text: str, db: Session) -> tuple[list[str], st
         )
         return ranked[:30], "skill_corpus"
 
-    fallback_terms = re.findall(r"\b[A-Z][A-Za-z0-9+#.]{2,}\b", resume_text)
-    fallback_deduped: list[str] = []
-    fallback_seen: set[str] = set()
-    for term in fallback_terms:
-        lower = term.lower()
-        if lower in fallback_seen:
-            continue
-        fallback_seen.add(lower)
-        fallback_deduped.append(term)
-    return fallback_deduped[:20], "fallback_terms"
+    return [], "skill_corpus_empty"
 
 
 def _select_power_match_candidates(
@@ -1217,7 +1226,7 @@ def _select_power_match_candidates(
     ]
 
     if not prioritized_terms:
-        return base_query.order_by(ScrapedJob.id.desc()).limit(limit).all()
+        return []
 
     conditions = []
     for term in prioritized_terms:
@@ -1296,7 +1305,11 @@ def _load_power_match_snapshot(
         .order_by(PowerMatchSnapshot.id.desc())
         .first()
     )
-    return snapshot.result if snapshot and isinstance(snapshot.result, dict) else None
+    if not snapshot or not isinstance(snapshot.result, dict):
+        return None
+    if snapshot.result.get("result_version") != _POWER_MATCH_RESULT_VERSION:
+        return None
+    return snapshot.result
 
 
 def _save_power_match_snapshot(
@@ -1334,6 +1347,52 @@ def _save_power_match_snapshot(
     snapshot.result = result
     snapshot.created_at = datetime.now(timezone.utc)
     db.flush()
+
+
+def _power_resume_source_meta(db: Session, user_id: int, resume_text: str) -> dict:
+    from models import ResumeVersion
+
+    sanitized = sanitize_resume_text(resume_text)
+    latest_version = (
+        db.query(ResumeVersion)
+        .filter(
+            ResumeVersion.user_id == user_id,
+            ResumeVersion.is_active == 1,
+        )
+        .order_by(ResumeVersion.updated_at.desc(), ResumeVersion.id.desc())
+        .first()
+    )
+    exact_version = None
+    if latest_version and sanitize_resume_text(latest_version.resume_text or "") == sanitized:
+        exact_version = latest_version
+
+    version = exact_version or latest_version
+    if not version:
+        return {
+            "label": "Latest stored resume",
+            "detail": "From your latest upload or resume scoring session.",
+            "version_id": None,
+            "source": "memory",
+            "is_exact_version": False,
+        }
+
+    label = version.label or "Saved resume"
+    source_label = (version.source or "saved").replace("_", " ").title()
+    detail = f"{source_label} version"
+    if version.job_title:
+        detail = f"{detail} for {version.job_title}"
+        if version.job_company:
+            detail = f"{detail} at {version.job_company}"
+    if not exact_version:
+        detail = f"Memory matches your latest stored resume text; nearest saved version is {label}."
+
+    return {
+        "label": label,
+        "detail": detail,
+        "version_id": version.id,
+        "source": version.source or "saved",
+        "is_exact_version": bool(exact_version),
+    }
 
 
 def _extract_title_terms(title: str) -> list[str]:
@@ -2361,8 +2420,63 @@ def trending_skills(
     return get_trending_skills(db, limit=limit)
 
 
+_JOB_PRECOMPUTE_MARKER = "sector_v2"
+
+
 def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
     total_done = 0
+    marker_exists = (
+        db.query(UsageLog.id)
+        .filter(
+            UsageLog.user_id.is_(None),
+            UsageLog.action == "job_precompute",
+            UsageLog.detail == _JOB_PRECOMPUTE_MARKER,
+        )
+        .first()
+        is not None
+    )
+
+    if not marker_exists:
+        last_id = 0
+        while True:
+            jobs = (
+                db.query(ScrapedJob)
+                .options(
+                    load_only(
+                        ScrapedJob.id,
+                        ScrapedJob.title,
+                        ScrapedJob.salary,
+                        ScrapedJob.skills,
+                        ScrapedJob.description,
+                        ScrapedJob.sector,
+                        ScrapedJob.salary_floor,
+                        ScrapedJob.skills_flat,
+                    )
+                )
+                .filter(ScrapedJob.id > last_id)
+                .order_by(ScrapedJob.id.asc())
+                .limit(batch_size)
+                .all()
+            )
+            if not jobs:
+                break
+
+            for job in jobs:
+                last_id = max(last_id, job.id)
+                job.sector = _classify_sector(job.title or "", job.skills, job.description or "")
+                job.salary_floor = _salary_floor_from_text(job.salary or "")
+                job.skills_flat = _skills_flat_text(job.skills)
+
+            db.commit()
+            total_done += len(jobs)
+            db.expunge_all()
+            if total_done % 5000 == 0:
+                log.info("[STARTUP] Precomputed job fields for %s jobs", total_done)
+
+        db.add(UsageLog(user_id=None, action="job_precompute", detail=_JOB_PRECOMPUTE_MARKER))
+        db.commit()
+        return total_done
+
     while True:
         jobs = (
             db.query(ScrapedJob)
@@ -2372,6 +2486,7 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
                     ScrapedJob.title,
                     ScrapedJob.salary,
                     ScrapedJob.skills,
+                    ScrapedJob.description,
                     ScrapedJob.sector,
                     ScrapedJob.salary_floor,
                     ScrapedJob.skills_flat,
@@ -2392,7 +2507,7 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
             break
 
         for job in jobs:
-            job.sector = _classify_sector(job.title or "")
+            job.sector = _classify_sector(job.title or "", job.skills, job.description or "")
             job.salary_floor = _salary_floor_from_text(job.salary or "")
             job.skills_flat = _skills_flat_text(job.skills)
 
@@ -2407,17 +2522,9 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
 
 def _sector_filter_condition(selected_sector: str):
     selected = selected_sector.strip()
-    fallback_terms = _SECTOR_KEYWORDS.get(selected, [])
-    blank_sector = or_(ScrapedJob.sector.is_(None), ScrapedJob.sector == "")
-    if not fallback_terms:
-        return ScrapedJob.sector == selected
-    fallback_match = or_(
-        *[ScrapedJob.title.ilike(f"%{term}%") for term in fallback_terms if term.strip()]
-    )
-    return or_(
-        ScrapedJob.sector == selected,
-        and_(blank_sector, fallback_match),
-    )
+    if selected == _ANALYTICS_UNCLASSIFIED_SECTOR:
+        return or_(ScrapedJob.sector.is_(None), ScrapedJob.sector == "")
+    return ScrapedJob.sector == selected
 
 
 def _normalize_title(raw_title: str) -> str:
@@ -2518,6 +2625,14 @@ def _is_generic_analytics_skill(key: str) -> bool:
     return key in _ANALYTICS_GENERIC_SKILLS
 
 
+def _analytics_source_label(source: str | None) -> str:
+    return (source or "").strip() or _ANALYTICS_SOURCE_OTHER_LABEL
+
+
+def _analytics_sector_label(sector: str | None) -> str:
+    return (sector or "").strip() or _ANALYTICS_UNCLASSIFIED_SECTOR
+
+
 def _analytics_seniority_label(job: ScrapedJob) -> str:
     text = f"{job.seniority or ''} {job.title or ''}".lower()
     if "intern" in text:
@@ -2553,19 +2668,37 @@ def _percentile(sorted_values: list[int], percentile: float) -> int:
     return int(sorted_values[index])
 
 
-def _salary_bucket(items: dict[str, list[int]], label_key: str) -> list[dict]:
+def _salary_bucket(
+    items: dict[str, list[int]],
+    label_key: str,
+    midpoint_items: dict[str, list[int]] | None = None,
+    ceiling_items: dict[str, list[int]] | None = None,
+) -> list[dict]:
     rows = []
     for label, values in items.items():
-        if len(values) < 5:
+        if len(values) < _ANALYTICS_SALARY_BUCKET_MIN_ROLES:
             continue
         sorted_values = sorted(values)
-        rows.append({
+        midpoint_values = sorted((midpoint_items or {}).get(label, []))
+        ceiling_values = sorted((ceiling_items or {}).get(label, []))
+        row = {
             label_key: label,
             "count": len(sorted_values),
             "median_floor": _percentile(sorted_values, 0.5),
             "p75_floor": _percentile(sorted_values, 0.75),
-        })
+        }
+        if midpoint_values:
+            row["median_midpoint"] = _percentile(midpoint_values, 0.5)
+        if ceiling_values:
+            row["median_ceiling"] = _percentile(ceiling_values, 0.5)
+        rows.append(row)
     return sorted(rows, key=lambda item: (-item["count"], -item["median_floor"]))[:8]
+
+
+def _increment_analytics_skill(bucket: dict[str, dict], key: str) -> None:
+    if key not in bucket:
+        bucket[key] = {"display": _analytics_skill_display(key), "count": 0}
+    bucket[key]["count"] += 1
 
 
 def _build_overindexed_skills(
@@ -2574,21 +2707,28 @@ def _build_overindexed_skills(
     baseline_counts: dict[str, int] | None,
     baseline_total: int,
 ) -> list[dict]:
-    if not baseline_counts or current_total < 20 or baseline_total <= 0:
+    if not baseline_counts or current_total < _ANALYTICS_OVERINDEX_MIN_TOTAL or baseline_total <= 0:
         return []
-    minimum_count = max(5, round(current_total * 0.015))
+    minimum_count = max(
+        _ANALYTICS_MARKET_MIN_COUNT,
+        round(current_total * _ANALYTICS_OVERINDEX_MIN_SHARE),
+    )
     rows = []
     for key, item in current_counts.items():
         count = int(item["count"])
         baseline_count = int(baseline_counts.get(key, 0))
-        if count < minimum_count or baseline_count < 10 or _is_generic_analytics_skill(key):
+        if (
+            count < minimum_count
+            or baseline_count < _ANALYTICS_OVERINDEX_MIN_BASELINE_COUNT
+            or _is_generic_analytics_skill(key)
+        ):
             continue
         current_rate = count / current_total
         baseline_rate = baseline_count / baseline_total
         if baseline_rate <= 0:
             continue
         lift = current_rate / baseline_rate
-        if lift < 1.35:
+        if lift < _ANALYTICS_OVERINDEX_LIFT_THRESHOLD:
             continue
         rows.append({
             "skill": item["display"],
@@ -2597,7 +2737,86 @@ def _build_overindexed_skills(
             "rate_percent": round(current_rate * 100, 1),
             "market_rate_percent": round(baseline_rate * 100, 1),
         })
-    return sorted(rows, key=lambda item: (-item["lift"], -item["count"]))[:10]
+    return sorted(rows, key=lambda item: (-item["lift"], -item["count"]))[:_ANALYTICS_OVERINDEX_LIMIT]
+
+
+def _build_market_movers(
+    recent_counts: dict[str, dict],
+    recent_total: int,
+    older_counts: dict[str, dict],
+    older_total: int,
+) -> dict:
+    if recent_total < _ANALYTICS_MARKET_MIN_TOTAL or older_total < _ANALYTICS_MARKET_MIN_TOTAL:
+        return {
+            "window_days": _ANALYTICS_MARKET_WINDOW_DAYS,
+            "recent_total": recent_total,
+            "older_total": older_total,
+            "rising": [],
+            "cooling": [],
+            "note": "Needs enough dated postings to compare recent demand against older demand.",
+        }
+
+    minimum_recent = max(
+        _ANALYTICS_MARKET_MIN_COUNT,
+        round(recent_total * _ANALYTICS_MARKET_RECENT_MIN_SHARE),
+    )
+    minimum_older = max(
+        _ANALYTICS_MARKET_MIN_COUNT,
+        round(older_total * _ANALYTICS_MARKET_OLDER_MIN_SHARE),
+    )
+    all_keys = set(recent_counts) | set(older_counts)
+    rising = []
+    cooling = []
+
+    for key in all_keys:
+        if _is_generic_analytics_skill(key):
+            continue
+        recent_count = int(recent_counts.get(key, {}).get("count", 0))
+        older_count = int(older_counts.get(key, {}).get("count", 0))
+        recent_rate = recent_count / recent_total if recent_total else 0
+        older_rate = older_count / older_total if older_total else 0
+        display = (
+            recent_counts.get(key, {}).get("display")
+            or older_counts.get(key, {}).get("display")
+            or _analytics_skill_display(key)
+        )
+
+        if recent_count >= minimum_recent and older_count >= minimum_older and older_rate > 0:
+            lift = recent_rate / older_rate
+            if lift >= _ANALYTICS_MARKET_LIFT_THRESHOLD:
+                rising.append({
+                    "skill": display,
+                    "recent_count": recent_count,
+                    "older_count": older_count,
+                    "lift": round(lift, 1),
+                    "recent_rate_percent": round(recent_rate * 100, 1),
+                    "older_rate_percent": round(older_rate * 100, 1),
+                })
+
+        if (
+            older_count >= minimum_older
+            and recent_count >= _ANALYTICS_MARKET_COOLING_MIN_RECENT_COUNT
+            and recent_rate > 0
+        ):
+            drop = older_rate / recent_rate
+            if drop >= _ANALYTICS_MARKET_LIFT_THRESHOLD:
+                cooling.append({
+                    "skill": display,
+                    "recent_count": recent_count,
+                    "older_count": older_count,
+                    "drop": round(drop, 1),
+                    "recent_rate_percent": round(recent_rate * 100, 1),
+                    "older_rate_percent": round(older_rate * 100, 1),
+                })
+
+    return {
+        "window_days": _ANALYTICS_MARKET_WINDOW_DAYS,
+        "recent_total": recent_total,
+        "older_total": older_total,
+        "rising": sorted(rising, key=lambda item: (-item["lift"], -item["recent_count"]))[:_ANALYTICS_MARKET_MOVER_LIMIT],
+        "cooling": sorted(cooling, key=lambda item: (-item["drop"], -item["older_count"]))[:_ANALYTICS_MARKET_MOVER_LIMIT],
+        "note": f"Compares dated postings from the last {_ANALYTICS_MARKET_WINDOW_DAYS} days against older dated postings in the current corpus.",
+    }
 
 
 @app.get("/api/analytics/skills")
@@ -2655,6 +2874,7 @@ def analytics_skills(
             "top_companies": cached.get("top_companies", []),
             "hard_skills": cached.get("hard_skills", []),
             "overindexed_skills": cached.get("overindexed_skills", []),
+            "market_movers": cached.get("market_movers", {}),
             "salary_insights": cached.get("salary_insights", {}),
             "freshness": cached.get("freshness", {}),
             "seniority_mix": cached.get("seniority_mix", []),
@@ -2679,7 +2899,9 @@ def analytics_skills(
             ScrapedJob.source,
             ScrapedJob.title,
             ScrapedJob.company,
+            ScrapedJob.salary,
             ScrapedJob.sector,
+            ScrapedJob.skills_flat,
             ScrapedJob.salary_floor,
             ScrapedJob.posted_at_sort,
             ScrapedJob.seniority,
@@ -2708,8 +2930,18 @@ def analytics_skills(
     company_counts: dict[str, int] = {}
     seniority_counts: dict[str, int] = {}
     salary_floors: list[int] = []
+    salary_midpoints: list[int] = []
+    salary_ceilings: list[int] = []
     salary_by_sector: dict[str, list[int]] = {}
+    salary_mid_by_sector: dict[str, list[int]] = {}
+    salary_ceiling_by_sector: dict[str, list[int]] = {}
     salary_by_title: dict[str, list[int]] = {}
+    salary_mid_by_title: dict[str, list[int]] = {}
+    salary_ceiling_by_title: dict[str, list[int]] = {}
+    recent_skill_counts: dict[str, dict] = {}
+    older_skill_counts: dict[str, dict] = {}
+    recent_total = 0
+    older_total = 0
     fresh_counts = {"last_7": 0, "last_14": 0, "last_30": 0}
     posted_count = 0
     total_jobs = 0
@@ -2721,12 +2953,12 @@ def analytics_skills(
             continue
 
         raw_title = (job.title or "").strip()
-        job_sector = job.sector or _classify_sector(raw_title)
+        job_sector = _analytics_sector_label(job.sector)
         norm_title = _normalize_title(raw_title) if raw_title else ""
 
         total_jobs += 1
 
-        src = job.source or "Unknown"
+        src = _analytics_source_label(job.source)
         source_counts[src] = source_counts.get(src, 0) + 1
 
         # Company aggregation
@@ -2737,13 +2969,13 @@ def analytics_skills(
                 company_counts[comp_key] = {"display": comp, "count": 0}
             company_counts[comp_key]["count"] += 1
 
+        term_keys: set[str] = set()
         for term in preview:
             key = _analytics_skill_key(str(term))
             if not key:
                 continue
-            if key not in skill_counts:
-                skill_counts[key] = {"display": _analytics_skill_display(key), "count": 0}
-            skill_counts[key]["count"] += 1
+            _increment_analytics_skill(skill_counts, key)
+            term_keys.add(key)
 
         # Aggregate title and sector
         if norm_title:
@@ -2758,12 +2990,23 @@ def analytics_skills(
         seniority_label = _analytics_seniority_label(job)
         seniority_counts[seniority_label] = seniority_counts.get(seniority_label, 0) + 1
 
-        salary_floor = int(job.salary_floor or 0)
+        parsed_floor, parsed_ceiling, parsed_midpoint = _salary_bounds_from_text(job.salary or "")
+        salary_floor = int(job.salary_floor or parsed_floor or 0)
         if 0 < salary_floor < 1000000:
             salary_floors.append(salary_floor)
             salary_by_sector.setdefault(job_sector, []).append(salary_floor)
             if norm_title:
                 salary_by_title.setdefault(norm_title, []).append(salary_floor)
+        if 0 < parsed_midpoint < 1000000:
+            salary_midpoints.append(parsed_midpoint)
+            salary_mid_by_sector.setdefault(job_sector, []).append(parsed_midpoint)
+            if norm_title:
+                salary_mid_by_title.setdefault(norm_title, []).append(parsed_midpoint)
+        if 0 < parsed_ceiling < 1000000:
+            salary_ceilings.append(parsed_ceiling)
+            salary_ceiling_by_sector.setdefault(job_sector, []).append(parsed_ceiling)
+            if norm_title:
+                salary_ceiling_by_title.setdefault(norm_title, []).append(parsed_ceiling)
 
         posted_at = _parse_posted_sort(job.posted_at_sort or "")
         if posted_at:
@@ -2775,6 +3018,13 @@ def analytics_skills(
                 fresh_counts["last_14"] += 1
             if 0 <= age_days <= 30:
                 fresh_counts["last_30"] += 1
+                recent_total += 1
+                for key in term_keys:
+                    _increment_analytics_skill(recent_skill_counts, key)
+            elif age_days > 30:
+                older_total += 1
+                for key in term_keys:
+                    _increment_analytics_skill(older_skill_counts, key)
 
     # Sort by count descending
     sorted_skills = sorted(skill_counts.values(), key=lambda x: -x["count"])
@@ -2800,9 +3050,15 @@ def analytics_skills(
         baseline_counts=baseline_counts,
         baseline_total=baseline_total,
     )
+    market_movers = _build_market_movers(
+        recent_counts=recent_skill_counts,
+        recent_total=recent_total,
+        older_counts=older_skill_counts,
+        older_total=older_total,
+    )
 
     sources_list = [
-        {"source": s, "count": c}
+        {"source": s, "label": _analytics_source_label(s), "count": c}
         for s, c in sorted(source_counts.items(), key=lambda x: -x[1])
     ]
 
@@ -2822,13 +3078,27 @@ def analytics_skills(
     )[:30]
 
     sorted_salary_floors = sorted(salary_floors)
+    sorted_salary_midpoints = sorted(salary_midpoints)
+    sorted_salary_ceilings = sorted(salary_ceilings)
     salary_insights = {
         "coverage_count": len(sorted_salary_floors),
         "coverage_percent": round((len(sorted_salary_floors) / total_jobs) * 100, 1) if total_jobs else 0,
         "median_floor": _percentile(sorted_salary_floors, 0.5),
+        "median_midpoint": _percentile(sorted_salary_midpoints, 0.5),
+        "median_ceiling": _percentile(sorted_salary_ceilings, 0.5),
         "p75_floor": _percentile(sorted_salary_floors, 0.75),
-        "by_sector": _salary_bucket(salary_by_sector, "sector"),
-        "by_title": _salary_bucket(salary_by_title, "title"),
+        "by_sector": _salary_bucket(
+            salary_by_sector,
+            "sector",
+            salary_mid_by_sector,
+            salary_ceiling_by_sector,
+        ),
+        "by_title": _salary_bucket(
+            salary_by_title,
+            "title",
+            salary_mid_by_title,
+            salary_ceiling_by_title,
+        ),
     }
     freshness = {
         **fresh_counts,
@@ -2851,7 +3121,7 @@ def analytics_skills(
         }
         for label, count in sorted(
             seniority_counts.items(),
-            key=lambda item: seniority_order.get(item[0], 99),
+            key=lambda item: (-item[1], seniority_order.get(item[0], 99)),
         )
     ]
 
@@ -2868,6 +3138,7 @@ def analytics_skills(
             "top_companies": top_companies,
             "hard_skills": hard_skills,
             "overindexed_skills": overindexed_skills,
+            "market_movers": market_movers,
             "salary_insights": salary_insights,
             "freshness": freshness,
             "seniority_mix": seniority_mix,
@@ -2890,6 +3161,7 @@ def analytics_skills(
         "top_companies": top_companies,
         "hard_skills": hard_skills,
         "overindexed_skills": overindexed_skills,
+        "market_movers": market_movers,
         "salary_insights": salary_insights,
         "freshness": freshness,
         "seniority_mix": seniority_mix,
@@ -3073,11 +3345,26 @@ def list_cached_jobs(
             )
 
             filter_meta = {
-                "sources": [{"value": s, "count": c} for s, c in source_counts if s],
+                "sources": [
+                    {
+                        "value": _analytics_source_label(s),
+                        "label": _analytics_source_label(s),
+                        "count": c,
+                    }
+                    for s, c in source_counts
+                    if s
+                ],
                 "employment_types": [{"value": t, "count": c} for t, c in emp_counts if t],
                 "locations": [{"value": loc, "count": c} for loc, c in loc_counts if loc],
                 "sectors": sorted(
-                    [{"value": s, "count": c} for s, c in sector_counts if s],
+                    [
+                        {
+                            "value": _analytics_sector_label(s),
+                            "label": _analytics_sector_label(s),
+                            "count": c,
+                        }
+                        for s, c in sector_counts
+                    ],
                     key=lambda x: -x["count"],
                 ),
             }
@@ -3099,7 +3386,7 @@ def list_cached_jobs(
                 "experience_years": (j.parsed_jd or {}).get("experience_years", "") if isinstance(j.parsed_jd, dict) else "",
                 "agency": j.agency, "scraped_at": j.scraped_at,
                 "closing_date": getattr(j, "closing_date", "") or "",
-                "sector": j.sector or _classify_sector(j.title),
+                "sector": _analytics_sector_label(j.sector),
                 "archetype": (j.parsed_jd or {}).get("archetype", "") if isinstance(j.parsed_jd, dict) else "",
             }
             for j in jobs
@@ -3232,6 +3519,7 @@ def get_power_match(
 
     resume_hash = _resume_snapshot_hash(resume_text)
     corpus_marker = _job_corpus_marker(db)
+    resume_source_meta = _power_resume_source_meta(db, user.id, resume_text)
 
     cached = _power_match_cache.get(user.id)
     if (
@@ -3460,9 +3748,17 @@ def get_power_match(
             break
 
     result = {
+        "result_version": _POWER_MATCH_RESULT_VERSION,
         "resume_ready": True,
         "message": "Power matches generated from your latest stored resume.",
         "resume_source": "latest_stored_resume",
+        "resume_source_label": resume_source_meta["label"],
+        "resume_source_detail": resume_source_meta["detail"],
+        "resume_version_id": resume_source_meta["version_id"],
+        "resume_source_kind": resume_source_meta["source"],
+        "resume_source_exact": resume_source_meta["is_exact_version"],
+        "resume_snapshot": resume_hash[:12],
+        "resume_word_count": len(resume_text.split()),
         "resume_updated_at": mem.updated_at.isoformat() if mem and mem.updated_at else "",
         "resume_signal_mode": resume_signal_mode,
         "resume_skills": _surface_power_skills(resume_skills, limit=24),

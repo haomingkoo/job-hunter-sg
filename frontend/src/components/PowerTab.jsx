@@ -11,7 +11,7 @@ const matchRules = [
   {
     icon: FileText,
     label: "Resume source",
-    detail: "Uses your latest stored resume from upload or resume scoring.",
+    detail: "Uses the latest stored resume snapshot shown below.",
   },
   {
     icon: Target,
@@ -173,7 +173,7 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
               Suitability, gaps, and bridge paths
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[#6A89A7]">
-              This view uses the latest stored version of your resume. We show what matched, what is missing, and where the job data itself is incomplete instead of guessing.
+              This view uses your latest stored resume snapshot. We show exactly which resume was used, what matched, what is missing, and where the job data itself is incomplete instead of guessing.
             </p>
           </div>
           <button
@@ -251,25 +251,46 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-[#384959]">Detected Resume Skills</div>
+                  <div className="text-sm font-semibold text-[#384959]">Resume Snapshot Used</div>
                   <div className="mt-1 text-xs text-[#6A89A7]">
-                    {resumeUpdatedLabel
-                      ? `Latest stored resume updated ${resumeUpdatedLabel}.`
-                      : data.resume_signal_mode === "skill_corpus"
+                    {data.resume_source_label || "Latest stored resume"}
+                    {resumeUpdatedLabel ? ` · updated ${resumeUpdatedLabel}` : ""}
+                    {data.resume_word_count ? ` · ${data.resume_word_count.toLocaleString()} words` : ""}
+                    {data.resume_snapshot ? ` · snapshot ${data.resume_snapshot}` : ""}
+                  </div>
+                  {data.resume_source_detail && (
+                    <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{data.resume_source_detail}</div>
+                  )}
+                  <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">
+                    {data.resume_signal_mode === "skill_corpus"
                       ? "Skills were matched against the roles in our current job dataset."
-                      : "Skills were extracted directly from your latest stored resume."}
+                      : "No trusted skill-corpus matches were detected in this stored resume yet."}
                   </div>
                 </div>
                 <span className="inline-flex h-10 min-w-10 items-center justify-center rounded-2xl bg-[#384959] px-2 text-sm font-bold text-white">
                   {data.resume_skills?.length || 0}
                 </span>
               </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("resume")}
+                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-xs font-medium text-[#384959] hover:bg-[#f0f4f8]"
+              >
+                <FileText size={13} />
+                Review Resume
+              </button>
               <div className="mt-4 flex flex-wrap gap-2">
-                {(data.resume_skills || []).map((skill) => (
-                  <span key={skill} className="rounded-full bg-[#BDDDFC]/10 px-2.5 py-1 text-xs font-medium text-[#384959]">
-                    {skill}
+                {(data.resume_skills || []).length > 0 ? (
+                  data.resume_skills.map((skill) => (
+                    <span key={skill} className="rounded-full bg-[#BDDDFC]/10 px-2.5 py-1 text-xs font-medium text-[#384959]">
+                      {skill}
+                    </span>
+                  ))
+                ) : (
+                  <span className="rounded-xl bg-[#f0f4f8] px-3 py-2 text-xs leading-relaxed text-[#6A89A7]">
+                    Add explicit tools, certifications, and domain skills to improve match quality.
                   </span>
-                ))}
+                )}
               </div>
             </div>
 

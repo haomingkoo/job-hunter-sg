@@ -44,6 +44,7 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 
 ### Job Search
 - Aggregates MyCareersFuture (~12K jobs) and Careers@Gov (~2K jobs) — CareersGov data via [OpenGovSG](https://github.com/opengovsg/careersgovsg-jobs-data) (credit: Alwyn Tan @ OGP)
+- Production source integrations should use official APIs, public employer feeds, or documented ATS job-board endpoints; browser automation is kept out of the hosted crawler unless explicitly reviewed for legal, privacy, and reliability risk
 - Nightly crawl via Railway cron (22:00 UTC); extensible `SOURCE_MAP` supports 5 additional scrapers
 - Filter by seniority, job type, salary range, skills
 - ATS skill tags extracted at scrape time (413 known skills, ~50ms/job)
@@ -80,14 +81,27 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 - Semantic job matching using sentence-transformers/all-MiniLM-L6-v2 (384-dim)
 - Hybrid scoring: keyword overlap + cosine similarity
 - Suitability scores, skill gap analysis, bridge paths
+- Shows the exact stored resume snapshot used for matching so results are auditable
 - Pre-embedded jobs for instant matching
 - Persisted match snapshots return repeat visits instantly when resume and job corpus are unchanged
 - "Close the Gap" course recommendations map repeated missing skills to official MySkillsFuture courses, ranked by relevance, rating, career impact, and response count
+
+### Market Insights
+- Sector, title, company, salary, freshness, and seniority breakdowns across the cached job corpus
+- Drill down by source, sector, title, or company/department to inspect Careers@Gov, MyCareersFuture, civil-service demand, and hiring concentration
+- Directional market movers compare last-30-day dated postings against older postings in the same slice; persisted daily snapshots are the next step for true trend charts
+- Salary views show advertised floor plus midpoint when range data is available
+- Sector inference uses precomputed title and extracted-skill signals to avoid slow request-time classification
 
 ### Application Tracker
 - Track applications: Applied, Interview, Offer
 - Follow-up reminders
 - Status tracking per job
+
+### Interview Story Bank
+- Generates STAR+R interview story drafts from resume evidence with review-before-save flow
+- Manual Big Three prompts cover elevator pitch, impact project, and conflict resolution
+- Long-running story extraction shows live progress feedback so users know it is still working
 
 ---
 

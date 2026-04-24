@@ -1,9 +1,14 @@
 import { useState, useEffect } from "react";
-import { User, LogOut, Mail, Star, X, CheckCircle, Loader2 } from "lucide-react";
+import {
+  User, LogOut, Mail, Star, CheckCircle, Loader2,
+  FileText, Sparkles, BookOpen, BarChart2,
+} from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 import TierBadge from "./TierBadge.jsx";
 
-export default function AccountTab({ user, onLogout }) {
+const formatLimit = (value) => (value >= 999999 ? "Unlimited" : value?.toLocaleString?.() ?? value);
+
+export default function AccountTab({ user, onLogout, setActiveTab }) {
   const [usage, setUsage] = useState(null);
   const [usageLoading, setUsageLoading] = useState(true);
   const [adminMetrics, setAdminMetrics] = useState(null);
@@ -81,9 +86,9 @@ export default function AccountTab({ user, onLogout }) {
 
   return (
     <div className="space-y-6">
-      <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl p-5">
+      <div className="rounded-xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
         <h2 className="font-semibold text-[#384959] flex items-center gap-2"><User size={18} /> Account</h2>
-        <p className="text-sm text-[#6A89A7] mt-1">Manage your account, view usage, and upgrade your plan.</p>
+        <p className="text-sm text-[#6A89A7] mt-1">Manage your account, usage, saved work, and support requests.</p>
       </div>
 
       {/* User Info */}
@@ -115,19 +120,26 @@ export default function AccountTab({ user, onLogout }) {
         {usageLoading ? (
           <div className="flex items-center gap-2 text-sm text-[#6A89A7]"><Loader2 size={14} className="animate-spin" /> Loading usage...</div>
         ) : usage ? (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div className="bg-blue-50 rounded-xl p-4 text-center">
               <div className="text-2xl font-bold text-[#384959]">{usage.searches_today ?? 0}</div>
               <div className="text-xs text-[#6A89A7] mt-1">Searches Today</div>
               {usage.searches_limit != null && (
-                <div className="text-xs text-[#6A89A7] mt-0.5">/ {usage.searches_limit} limit</div>
+                <div className="text-xs text-[#6A89A7] mt-0.5">/ {formatLimit(usage.searches_limit)} limit</div>
+              )}
+            </div>
+            <div className="bg-emerald-50 rounded-xl p-4 text-center">
+              <div className="text-2xl font-bold text-[#384959]">{usage.ai_today ?? 0}</div>
+              <div className="text-xs text-[#6A89A7] mt-1">AI Requests Today</div>
+              {usage.ai_limit != null && (
+                <div className="text-xs text-[#6A89A7] mt-0.5">/ {formatLimit(usage.ai_limit)} limit</div>
               )}
             </div>
             <div className="bg-purple-50 rounded-xl p-4 text-center">
               <div className="text-2xl font-bold text-[#384959]">{usage.tracked_jobs ?? 0}</div>
               <div className="text-xs text-[#6A89A7] mt-1">Tracked Jobs</div>
               {usage.tracked_limit != null && (
-                <div className="text-xs text-[#6A89A7] mt-0.5">/ {usage.tracked_limit >= 999999 ? "Unlimited" : usage.tracked_limit} limit</div>
+                <div className="text-xs text-[#6A89A7] mt-0.5">/ {formatLimit(usage.tracked_limit)} limit</div>
               )}
             </div>
             <div className="bg-green-50 rounded-xl p-4 text-center">
@@ -138,6 +150,31 @@ export default function AccountTab({ user, onLogout }) {
         ) : (
           <div className="text-sm text-[#6A89A7]">Could not load usage data.</div>
         )}
+      </div>
+
+      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
+        <h3 className="font-semibold text-[#384959] mb-4">Quick Actions</h3>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            { label: "Review Resume", detail: "Check parse quality and export.", icon: FileText, tab: "resume" },
+            { label: "Smart Match", detail: "Refresh fit and course gaps.", icon: Sparkles, tab: "power" },
+            { label: "Story Bank", detail: "Prepare interview examples.", icon: BookOpen, tab: "stories" },
+            { label: "Market Insights", detail: "Explore sector skill demand.", icon: BarChart2, tab: "analytics" },
+          ].map(({ label, detail, icon: Icon, tab }) => (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setActiveTab?.(tab)}
+              className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-3 text-left transition hover:bg-white hover:shadow-sm active:scale-[0.99]"
+            >
+              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">
+                <Icon size={15} />
+                {label}
+              </div>
+              <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{detail}</div>
+            </button>
+          ))}
+        </div>
       </div>
 
       {isAdmin && (
@@ -305,7 +342,7 @@ export default function AccountTab({ user, onLogout }) {
               <tr>
                 <th className="text-left px-4 py-3 text-[#6A89A7] text-xs uppercase">Feature</th>
                 <th className="text-center px-4 py-3 text-[#6A89A7] text-xs uppercase">Free</th>
-                <th className="text-center px-4 py-3 text-xs uppercase text-[#384959]">AISG (Free)</th>
+                <th className="text-center px-4 py-3 text-xs uppercase text-[#384959]">Pro / AISG</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#BDDDFC]/20">

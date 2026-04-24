@@ -306,7 +306,7 @@ export function splitEducationMeta(value) {
 }
 
 const ENTRY_SUBHEADING_SECTIONS = new Set(["experience", "projects", "activities", "career_break"]);
-const STRUCTURED_SUBHEADING_SECTIONS = new Set([...ENTRY_SUBHEADING_SECTIONS, "education", "certifications"]);
+const STRUCTURED_SUBHEADING_SECTIONS = new Set([...ENTRY_SUBHEADING_SECTIONS, "education"]);
 const DATE_ONLY_TEXT_RE = /^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+(?:19|20)\d{2}|(?:19|20)\d{2}|(?:present|current)|\d{1,2}\/(?:19|20)\d{2})(?:\s*[–—-]\s*(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+(?:19|20)\d{2}|(?:19|20)\d{2}|(?:present|current)|\d{1,2}\/(?:19|20)\d{2}))?$/i;
 const COMPANY_OR_LOCATION_RE = /\b(?:technology|technologies|corp(?:oration)?|inc|ltd|pte|limited|group|bank|systems|solutions|services|manufacturing|semiconductor|micron|dyson|apple|meta|tiktok|kla|mondelez|singapore|japan|taiwan|usa|us|boise|hiroshima|taichung|manassas|global|regional|apac|emea|americas)\b/i;
 
@@ -338,6 +338,7 @@ export function looksLikeResumeCompanyLine(value) {
   const trimmed = stripResumeMarkdown(value).replace(/^[|•]\s*/, "").trim();
   if (!trimmed || looksLikeDateOnlyText(trimmed) || looksLikeResumeTitleLine(trimmed)) return false;
   if (looksLikeEducationText(trimmed) || looksLikeCertificationText(trimmed)) return false;
+  if (/[.!?]$/.test(trimmed)) return false;
   const words = trimmed.split(/\s+/).filter(Boolean);
   if (words.length > 12) return false;
   return COMPANY_OR_LOCATION_RE.test(trimmed)
@@ -975,6 +976,7 @@ export function mergeParsedParagraphRuns(sections) {
       && previous.type === "paragraph"
       && section.type === "paragraph"
       && previous.sectionKey === section.sectionKey
+      && previous.sectionKey !== "certifications"
       && previous.lineIndices?.length
       && section.lineIndices?.length
       && previous.lineIndices[previous.lineIndices.length - 1] + 1 === section.lineIndices[0]
@@ -1169,6 +1171,7 @@ export function parseSubheadingParts(line, sectionKey = "") {
   if (!trimmed) return null;
   const entrySection = ENTRY_SUBHEADING_SECTIONS.has(sectionKey);
   if (!isStructuredSubheadingSection(sectionKey)) return null;
+  if (entrySection && /^[a-z]/.test(trimmed)) return null;
 
   if (trimmed.includes("|")) {
     const parts = trimmed.split("|").map((part) => part.trim()).filter(Boolean);
@@ -1291,7 +1294,7 @@ export function parseSubheadingParts(line, sectionKey = "") {
     if (wordCount >= 2 && wordCount <= 12 && (!startsLineWithResumeActionVerb(trimmed) || wordCount <= 8)) {
       const hasComma = trimmed.includes(",");
       const hasParens = /\(.*\)/.test(trimmed);
-      if (looksLikeResumeTitleLine(trimmed) || (!startsLineWithResumeActionVerb(trimmed) && ((hasComma && wordCount <= 10) || hasParens))) {
+      if (looksLikeResumeTitleLine(trimmed) || (!startsLineWithResumeActionVerb(trimmed) && hasParens && !/[.!?]$/.test(trimmed))) {
         return { left: trimmed, right: "", variant: "company" };
       }
     }
@@ -1599,6 +1602,20 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
     }
 
     const previousMeaningfulSection = [...parsed].reverse().find((section) => section.type !== "spacer");
+
+    if (shouldMergeContinuationLine(line, currentSectionKey, previousMeaningfulSection)) {
+      const mergedText = `${previousMeaningfulSection.text || ""} ${normalizedLine}`.replace(/\s+/g, " ").trim();
+      previousMeaningfulSection.text = mergedText;
+      previousMeaningfulSection.raw = [previousMeaningfulSection.raw, line].filter(Boolean).join("\n");
+      previousMeaningfulSection.lineIndices = [
+        ...new Set([...(previousMeaningfulSection.lineIndices || [previousMeaningfulSection.lineIndex]), lineIndex]),
+      ];
+      previousMeaningfulSection.keywordMatches = collectKeywordMatches(mergedText, keywords);
+      if (previousMeaningfulSection.type === "bullet") {
+        previousMeaningfulSection.annotation = annotateBullet(mergedText, keywords, text, currentSectionKey);
+      }
+      continue;
+    }
 
     const bulletMatch = line.match(RESUME_BULLET_RE);
     // Auto-promote bullets whose content looks like an entry heading (e.g., "• Senior Engineer (2019-2020)")

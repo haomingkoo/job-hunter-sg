@@ -12,6 +12,12 @@ import {
 } from "../lib/storyConstants.js";
 
 const PROMPT_ICONS = { User, Trophy, Handshake };
+const STORY_GENERATION_STEPS = [
+  "Reading resume evidence",
+  "Finding distinct STAR+R moments",
+  "Checking story facts against source bullets",
+  "Preparing drafts for review",
+];
 
 function TagPill({ tagId, small }) {
   const tag = TAG_MAP[tagId];
@@ -23,7 +29,24 @@ function TagPill({ tagId, small }) {
   );
 }
 
-function EmptyState({ onStart, onGenerate, generating }) {
+function StoryGenerationProgress({ status }) {
+  return (
+    <div className="mt-4 w-full max-w-md rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-left">
+      <div className="flex items-center justify-between gap-3 text-xs font-semibold text-violet-800">
+        <span>{status}</span>
+        <Loader2 size={14} className="animate-spin" />
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
+        <div className="h-full w-1/2 rounded-full bg-violet-600 animate-story-progress" />
+      </div>
+      <p className="mt-2 text-[11px] leading-relaxed text-violet-700">
+        This can take a minute because each story is checked against resume evidence before review.
+      </p>
+    </div>
+  );
+}
+
+function EmptyState({ onStart, onGenerate, generating, generationStatus }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 px-4">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-100 mb-6">
@@ -45,6 +68,7 @@ function EmptyState({ onStart, onGenerate, generating }) {
         {generating ? "Extracting stories from resume..." : "Generate from My Resume"}
       </button>
       <p className="mt-2 text-[10px] text-[#6A89A7]">Uses only facts from your uploaded resume. No hallucination.</p>
+      {generating && <StoryGenerationProgress status={generationStatus} />}
 
       <div className="mt-6 flex items-center gap-3 text-xs text-[#6A89A7]">
         <div className="h-px flex-1 bg-[#BDDDFC]/30" />
@@ -330,6 +354,18 @@ export default function StoriesTab() {
   const [generating, setGenerating] = useState(false);
   const [generatedDrafts, setGeneratedDrafts] = useState(null); // null = not generated, array = review mode
   const [generateError, setGenerateError] = useState("");
+  const [generationStep, setGenerationStep] = useState(0);
+
+  useEffect(() => {
+    if (!generating) {
+      setGenerationStep(0);
+      return undefined;
+    }
+    const interval = window.setInterval(() => {
+      setGenerationStep((step) => (step + 1) % STORY_GENERATION_STEPS.length);
+    }, 2600);
+    return () => window.clearInterval(interval);
+  }, [generating]);
 
   const fetchStories = useCallback(async () => {
     try {
@@ -511,7 +547,12 @@ export default function StoriesTab() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
           >
-            <EmptyState onStart={startFromPrompt} onGenerate={handleGenerate} generating={generating} />
+            <EmptyState
+              onStart={startFromPrompt}
+              onGenerate={handleGenerate}
+              generating={generating}
+              generationStatus={STORY_GENERATION_STEPS[generationStep]}
+            />
             {generateError && (
               <div className="mt-4 mx-auto max-w-md rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 text-center">
                 {generateError}
@@ -549,6 +590,9 @@ export default function StoriesTab() {
                 </button>
               </div>
             </div>
+            {generating && (
+              <StoryGenerationProgress status={STORY_GENERATION_STEPS[generationStep]} />
+            )}
 
             {/* Tag filters */}
             <div className="flex flex-wrap gap-1.5 mb-5">

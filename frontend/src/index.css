@@ -15,6 +15,16 @@
   100% { background-position: 200% 0; }
 }
 
+@keyframes story-progress {
+  0% { transform: translateX(-110%); }
+  55% { transform: translateX(80%); }
+  100% { transform: translateX(220%); }
+}
+
+.animate-story-progress {
+  animation: story-progress 1.45s cubic-bezier(0.23, 1, 0.32, 1) infinite;
+}
+
 /* Smooth scroll for anchor links */
 html { scroll-behavior: smooth; }
 

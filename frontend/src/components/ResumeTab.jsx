@@ -4563,7 +4563,7 @@ CERTIFICATIONS
 
                               return (
                                 <p
-                                  className={`mb-4 text-[#384959] ${section.sectionKey === "summary" && isLikelySummaryLeadParagraph(section.text) && !isShoutySummaryParagraph(section.text, section.sectionKey) ? "font-semibold tracking-[0.03em] text-[#384959]" : ""}`}
+                                  className={`${section.sectionKey === "certifications" ? "mb-1.5" : "mb-4"} text-[#384959] ${section.sectionKey === "summary" && isLikelySummaryLeadParagraph(section.text) && !isShoutySummaryParagraph(section.text, section.sectionKey) ? "font-semibold tracking-[0.03em] text-[#384959]" : ""}`}
                                   style={{ ...templateStyles.bodyStyle, breakInside: "avoid" }}
                                 >
                                   {renderHighlightedText(getDisplayParagraphText(section), section.keywordMatches || [])}

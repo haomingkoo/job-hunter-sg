@@ -279,7 +279,7 @@ export default function JobHunterSG() {
               )}
               {activeTab === "account" && (
                 user ? (
-                  <AccountTab user={user} onLogout={handleLogout} />
+                  <AccountTab user={user} onLogout={handleLogout} setActiveTab={navigateTo} />
                 ) : (
                   <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Account Settings" />
                 )

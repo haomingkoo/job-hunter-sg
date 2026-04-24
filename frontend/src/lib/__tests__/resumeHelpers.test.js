@@ -218,6 +218,12 @@ describe("parseSubheadingParts", () => {
     const line = "Led 0→1 development of the Process Integration Package (PIP): a data platform standardizing risk/conversion decisions across 4 global sites.";
     expect(parseSubheadingParts(line, "experience")).toBeNull();
   });
+
+  it("keeps certification lines with years as plain credential text", () => {
+    expect(parseSubheadingParts("Full Stack Development with AI (NUS x Emeritus, 2025)", "certifications")).toBeNull();
+    expect(parseSubheadingParts("GA100 – Generative AI (Heicoders Academy, WSQ Accredited, 2025)", "certifications")).toBeNull();
+    expect(parseSubheadingParts("PMP (in progress, expected 2025)", "certifications")).toBeNull();
+  });
 });
 
 describe("getDisplaySubheadingText", () => {
@@ -268,5 +274,19 @@ describe("parseResumeToSections - fixture regressions", () => {
     const sections = parseResumeToSections(getFixtureText("Haoming_Koo_KLA_TPM_Resume.txt"), []);
     const headings = sections.filter((section) => section.type === "heading" && section.sectionKey === "skills");
     expect(headings.some((section) => section.text === "TOOLS & SYSTEMS")).toBe(true);
+  });
+
+  it("does not split AWS transformation certification parentheses into fake dates", () => {
+    const text = [
+      "Haoming Koo",
+      "Certifications",
+      "Full Stack Development with AI (NUS x Emeritus, 2025)",
+      "GA100 – Generative AI (Heicoders Academy, WSQ Accredited, 2025)",
+      "PMP (in progress, expected 2025)",
+    ].join("\n");
+    const sections = parseResumeToSections(text, []);
+    const certificationItems = sections.filter((section) => section.sectionKey === "certifications" && section.type !== "heading");
+    expect(certificationItems.every((section) => section.type === "paragraph" || section.type === "spacer")).toBe(true);
+    expect(certificationItems.some((section) => section.text === "GA100 – Generative AI (Heicoders Academy, WSQ Accredited, 2025)")).toBe(true);
   });
 });

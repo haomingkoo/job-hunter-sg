@@ -7,6 +7,12 @@ import { apiFetch } from "../lib/api.js";
 
 const formatNumber = (value) => Number(value || 0).toLocaleString();
 const formatMoney = (value) => (value ? `S$${formatNumber(value)}` : "n/a");
+const formatSalaryRange = (salary) => {
+  if (salary?.median_floor && salary?.median_midpoint) {
+    return `${formatMoney(salary.median_floor)} floor / ${formatMoney(salary.median_midpoint)} mid`;
+  }
+  return formatMoney(salary?.median_floor);
+};
 
 function StatTile({ icon: Icon, label, value }) {
   return (
@@ -64,7 +70,9 @@ function BarRow({ rank, label, count, maxCount, active = false, color = "bg-[#88
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left transition hover:bg-[#f0f4f8] ${active ? "bg-[#BDDDFC]/15 ring-1 ring-[#BDDDFC]" : ""}`}
+      aria-pressed={active}
+      title={`Filter by ${label}`}
+      className={`flex w-full cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 text-left transition hover:bg-[#f0f4f8] active:scale-[0.99] ${active ? "bg-[#BDDDFC]/15 ring-1 ring-[#BDDDFC]" : ""}`}
     >
       {content}
     </button>
@@ -78,6 +86,7 @@ export default function AnalyticsTab() {
   const [sectorFilter, setSectorFilter] = useState("");
   const [companyFilter, setCompanyFilter] = useState("");
   const [titleFilter, setTitleFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
   const [showCount, setShowCount] = useState(30);
   const [skillSearch, setSkillSearch] = useState("");
 
@@ -89,6 +98,7 @@ export default function AnalyticsTab() {
       if (sectorFilter) params.set("sector", sectorFilter);
       if (companyFilter) params.set("company", companyFilter);
       if (titleFilter) params.set("title", titleFilter);
+      if (sourceFilter) params.set("source", sourceFilter);
       const resp = await apiFetch(`/api/analytics/skills?${params}`);
       if (!resp.ok) throw new Error("Failed to load analytics");
       setData(await resp.json());
@@ -96,7 +106,7 @@ export default function AnalyticsTab() {
       setError(err.message);
     }
     setLoading(false);
-  }, [sectorFilter, companyFilter, titleFilter]);
+  }, [sectorFilter, companyFilter, titleFilter, sourceFilter]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -113,12 +123,20 @@ export default function AnalyticsTab() {
 
   const titlesMaxCount = data?.top_titles?.[0]?.count || 1;
   const sectorsMaxCount = data?.sectors?.[0]?.count || 1;
+  const sourcesMaxCount = data?.sources?.[0]?.count || 1;
   const companiesMaxCount = data?.top_companies?.[0]?.count || 1;
   const hardSkillsMaxCount = data?.hard_skills?.[0]?.count || 1;
   const seniorityMaxCount = Math.max(...(data?.seniority_mix || []).map((item) => item.count || 0), 1);
-  const activeFilters = [sectorFilter, titleFilter].filter(Boolean);
+  const selectedSource = (data?.sources || []).find((item) => item.source === sourceFilter);
+  const activeFilters = [
+    selectedSource?.label || sourceFilter,
+    sectorFilter,
+    titleFilter,
+    companyFilter,
+  ].filter(Boolean);
   const salary = data?.salary_insights || {};
   const freshness = data?.freshness || {};
+  const movers = data?.market_movers || {};
 
   const chartColors = ["bg-[#88BDF2]", "bg-emerald-500", "bg-violet-500", "bg-amber-500", "bg-rose-500", "bg-cyan-500"];
 
@@ -146,13 +164,13 @@ export default function AnalyticsTab() {
             {activeFilters.length > 0 ? (
               <>Filtered by <span className="font-semibold text-[#384959]">{activeFilters.join(" + ")}</span></>
             ) : (
-              <>Click a sector or title to drill into skill demand.</>
+              <>Click a source, sector, or title to drill into skill demand.</>
             )}
           </div>
-          {(sectorFilter || titleFilter) && (
+          {(sourceFilter || sectorFilter || titleFilter || companyFilter) && (
             <button
               type="button"
-              onClick={() => { setSectorFilter(""); setTitleFilter(""); }}
+              onClick={() => { setSourceFilter(""); setSectorFilter(""); setTitleFilter(""); setCompanyFilter(""); }}
               className="rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs text-[#6A89A7] hover:bg-[#f0f4f8]"
             >
               Clear All Filters
@@ -171,13 +189,13 @@ export default function AnalyticsTab() {
           />
           <SignalBlock
             icon={BadgeDollarSign}
-            label="Listed salary floor"
-            value={formatMoney(salary.median_floor)}
-            detail={`${salary.coverage_percent || 0}% of analysed roles expose salary data; treat this as directional.`}
+            label="Listed salary range"
+            value={formatSalaryRange(salary)}
+            detail={`${salary.coverage_percent || 0}% of analysed roles expose salary data. Floor is the advertised lower bound, midpoint is the range middle.`}
           />
           <SignalBlock
             icon={Layers}
-            label="Seniority signal"
+            label="Largest seniority segment"
             value={data.seniority_mix?.[0]?.label || "n/a"}
             detail={data.seniority_mix?.[0] ? `${data.seniority_mix[0].percent}% of this view sits here.` : "Seniority is inferred from titles when posting metadata is weak."}
           />
@@ -187,6 +205,150 @@ export default function AnalyticsTab() {
             value={data.overindexed_skills?.length ? "Niche signals found" : "Market baseline"}
             detail={data.overindexed_skills?.length ? "These terms appear unusually often in the selected slice." : "Filter by sector or title to see what over-indexes."}
           />
+        </div>
+      )}
+
+      {!loading && !error && data && (
+        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <div className="text-sm font-semibold text-[#384959]">Drill Down</div>
+              <div className="text-xs leading-relaxed text-[#6A89A7]">
+                Pick a source, sector, or job title here to refresh the ATS skills, salary, freshness, and seniority signals above.
+              </div>
+            </div>
+            {(sourceFilter || sectorFilter || titleFilter || companyFilter) && (
+              <button
+                type="button"
+                onClick={() => { setSourceFilter(""); setSectorFilter(""); setTitleFilter(""); setCompanyFilter(""); }}
+                className="self-start rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs font-medium text-[#384959] hover:bg-[#f0f4f8] sm:self-auto"
+              >
+                Clear Drilldown
+              </button>
+            )}
+          </div>
+          <div className="mt-4 grid gap-4 xl:grid-cols-3">
+            <div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Sources</div>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
+                {(data.sources || []).slice(0, 6).map((item, index) => (
+                  <BarRow
+                    key={`drill-source-${item.source}`}
+                    rank={index + 1}
+                    label={item.label || item.source}
+                    count={item.count}
+                    maxCount={sourcesMaxCount}
+                    color="bg-violet-500"
+                    active={sourceFilter === item.source}
+                    onClick={() => setSourceFilter(sourceFilter === item.source ? "" : item.source)}
+                  />
+                ))}
+              </div>
+              <div className="mt-2 text-[11px] leading-relaxed text-[#6A89A7]">
+                Use this to isolate Careers@Gov, MCF, or any imported source before checking departments and skills.
+              </div>
+            </div>
+            <div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Sectors</div>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
+                {(data.sectors || []).slice(0, 8).map((item, index) => (
+                  <BarRow
+                    key={`drill-sector-${item.sector}`}
+                    rank={index + 1}
+                    label={item.sector}
+                    count={item.count}
+                    maxCount={sectorsMaxCount}
+                    color={chartColors[index % chartColors.length]}
+                    active={sectorFilter === item.sector}
+                    onClick={() => setSectorFilter(sectorFilter === item.sector ? "" : item.sector)}
+                  />
+                ))}
+              </div>
+              {(data.sectors || []).some((item) => item.sector === "Other") && (
+                <div className="mt-2 text-[11px] leading-relaxed text-[#6A89A7]">
+                  Other means the title and extracted skill terms do not map cleanly to a known sector yet.
+                </div>
+              )}
+            </div>
+            <div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Job Titles</div>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
+                {(data.top_titles || []).slice(0, 8).map((item, index) => (
+                  <BarRow
+                    key={`drill-title-${item.title}`}
+                    rank={index + 1}
+                    label={item.title}
+                    count={item.count}
+                    maxCount={titlesMaxCount}
+                    color="bg-emerald-500"
+                    active={titleFilter === item.title}
+                    onClick={() => setTitleFilter(titleFilter === item.title ? "" : item.title)}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!loading && !error && data && ((movers.rising || []).length > 0 || (movers.cooling || []).length > 0) && (
+        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">
+                <TrendingUp size={16} />
+                Market Movers
+              </div>
+              <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
+                Recent postings are compared with older dated postings in this same view. This is directional until daily snapshots are stored.
+              </div>
+            </div>
+            <div className="text-[11px] text-[#6A89A7]">
+              {formatNumber(movers.recent_total)} recent / {formatNumber(movers.older_total)} older
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Over-indexing recently</div>
+              <div className="space-y-2">
+                {(movers.rising || []).length > 0 ? (
+                  movers.rising.slice(0, 6).map((item) => (
+                    <div key={`rising-${item.skill}`} className="rounded-xl bg-emerald-50 px-3 py-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="truncate text-sm font-medium text-[#384959]">{item.skill}</span>
+                        <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">{item.lift}x</span>
+                      </div>
+                      <div className="mt-1 text-xs text-[#6A89A7]">
+                        {item.recent_rate_percent}% recent vs {item.older_rate_percent}% older
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-[#6A89A7]">No recent over-index signal in this slice yet.</div>
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-700">Cooling in recent postings</div>
+              <div className="space-y-2">
+                {(movers.cooling || []).length > 0 ? (
+                  movers.cooling.slice(0, 6).map((item) => (
+                    <div key={`cooling-${item.skill}`} className="rounded-xl bg-rose-50 px-3 py-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="truncate text-sm font-medium text-[#384959]">{item.skill}</span>
+                        <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800">{item.drop}x</span>
+                      </div>
+                      <div className="mt-1 text-xs text-[#6A89A7]">
+                        {item.recent_rate_percent}% recent vs {item.older_rate_percent}% older
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-[#6A89A7]">No cooling signal in this slice yet.</div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
@@ -281,6 +443,11 @@ export default function AnalyticsTab() {
                 <div className="shrink-0 text-right">
                   <div className="text-sm font-semibold text-[#384959]">{formatMoney(item.median_floor)}</div>
                   <div className="text-[11px] text-[#6A89A7]">median floor</div>
+                  {item.median_midpoint ? (
+                    <div className="mt-0.5 text-[11px] font-medium text-[#384959]">
+                      {formatMoney(item.median_midpoint)} midpoint
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -367,7 +534,14 @@ export default function AnalyticsTab() {
       {/* Top Companies */}
       {!loading && !error && data?.top_companies?.length > 0 && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-          <div className="mb-4 text-sm font-semibold text-[#384959]">Top Hiring Companies</div>
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="text-sm font-semibold text-[#384959]">Top Hiring Companies / Departments</div>
+            {companyFilter && (
+              <button type="button" onClick={() => setCompanyFilter("")} className="text-xs text-[#88BDF2] hover:text-[#384959]">
+                Clear company
+              </button>
+            )}
+          </div>
           <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
             {data.top_companies.slice(0, 16).map((item, index) => (
               <BarRow
@@ -377,6 +551,8 @@ export default function AnalyticsTab() {
                 count={item.count}
                 maxCount={companiesMaxCount}
                 color="bg-violet-500"
+                active={companyFilter === item.company}
+                onClick={() => setCompanyFilter(companyFilter === item.company ? "" : item.company)}
               />
             ))}
           </div>
