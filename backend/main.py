@@ -2643,14 +2643,16 @@ def _analytics_seniority_label(job: ScrapedJob) -> str:
     text = f"{job.seniority or ''} {job.title or ''}".lower()
     if "intern" in text:
         return "Intern"
-    if any(term in text for term in {"entry", "fresh", "junior", "assistant", "associate"}):
-        return "Entry / Junior"
+    if any(term in text for term in {"assistant director", "associate director", "deputy director"}):
+        return "Manager / Lead"
     if any(term in text for term in {"vice president", "vp", "director", "head of", "chief"}):
         return "Leadership"
     if any(term in text for term in {"manager", "lead", "principal", "staff"}):
         return "Manager / Lead"
     if "senior" in text:
         return "Senior IC"
+    if any(term in text for term in {"entry", "fresh", "junior", "assistant", "associate"}):
+        return "Entry / Junior"
     return "Mid / Unspecified"
 
 
