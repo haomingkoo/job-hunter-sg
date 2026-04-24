@@ -11,6 +11,8 @@ Searches MyCareersFuture and Careers@Gov in one interface. Scores your resume, r
 ![CI](https://github.com/haomingkoo/job-hunter-sg/actions/workflows/ci.yml/badge.svg)
 ![Quality](https://img.shields.io/badge/quality-ruff%20%2B%20gitleaks%20%2B%20build-green)
 
+See [CHANGELOG.md](CHANGELOG.md) for recent enhancements and fixes.
+
 ## Screenshots
 
 | | |
