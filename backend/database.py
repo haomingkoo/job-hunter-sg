@@ -101,12 +101,13 @@ def _apply_lightweight_migrations() -> None:
             statements.append("ALTER TABLE user_memories ADD COLUMN resume_embedding JSON")
 
     # Widen jd_summary_status if it was created as VARCHAR(30) (too short for model names)
-    if "jd_summary_status" in existing_columns:
-        try:
-            # Postgres: ALTER COLUMN TYPE
-            statements.append("ALTER TABLE scraped_jobs ALTER COLUMN jd_summary_status TYPE VARCHAR(100)")
-        except Exception:
-            pass  # SQLite doesn't support ALTER COLUMN TYPE, but doesn't enforce VARCHAR length anyway
+    summary_status_column = next(
+        (column for column in inspector.get_columns("scraped_jobs") if column["name"] == "jd_summary_status"),
+        None,
+    )
+    summary_status_length = getattr(summary_status_column["type"], "length", None) if summary_status_column else None
+    if summary_status_length is not None and summary_status_length < 100:
+        statements.append("ALTER TABLE scraped_jobs ALTER COLUMN jd_summary_status TYPE VARCHAR(100)")
 
     if not statements:
         return
