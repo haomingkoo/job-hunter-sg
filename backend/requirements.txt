@@ -1,4 +1,4 @@
-fastapi==0.115.0
+fastapi==0.136.1
 uvicorn[standard]==0.30.0
 requests==2.33.1
 beautifulsoup4==4.12.3
