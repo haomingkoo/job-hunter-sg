@@ -227,8 +227,12 @@ ALLOWED_ORIGINS=http://localhost:5173  # CORS
 
 # ACRA SSIC company taxonomy
 # Default: local backend/data/company_ssic_cache.json only; no live lookup on user requests.
-# Backfill top companies explicitly with:
-#   cd backend && python backfill_company_ssic.py --limit 200 --live
+# Local backfill:
+#   cd backend && python backfill_company_ssic.py --limit 200 --live --delay 8
+# Railway production backfill:
+#   railway ssh python backfill_company_ssic.py --limit 200 --live --delay 8
+# Do not use `railway run` for this; it runs locally and Railway's private
+# postgres.railway.internal hostname will not resolve from your laptop.
 # COMPANY_SSIC_CACHE_PATH=/absolute/path/company_ssic_cache.json
 ACRA_LIVE_LOOKUP=0
 ```

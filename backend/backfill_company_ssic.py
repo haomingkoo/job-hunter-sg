@@ -16,6 +16,7 @@ from sqlalchemy import func
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+import company_taxonomy
 from company_taxonomy import lookup_company_ssic
 from database import SessionLocal, init_db
 from job_precompute import apply_job_precomputes
@@ -90,8 +91,16 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=200, help="Top companies to check by job count")
     parser.add_argument("--live", action="store_true", help="Query official ACRA data.gov.sg datasets")
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=None,
+        help="Seconds to wait between live ACRA requests. Useful when data.gov.sg returns 429.",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.delay is not None:
+        company_taxonomy.LIVE_LOOKUP_MIN_INTERVAL_SECONDS = max(0, args.delay)
     print(backfill_company_ssic(limit=args.limit, live=args.live, dry_run=args.dry_run))
 
 
