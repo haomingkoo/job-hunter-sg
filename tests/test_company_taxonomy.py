@@ -19,9 +19,9 @@ def test_normalize_company_name_strips_common_legal_suffixes():
 
 
 def test_ssic_section_from_code_maps_to_official_section_range():
-    assert ssic_section_from_code("62011") == "J Information & Communications"
-    assert ssic_section_from_code("64120") == "K Financial & Insurance"
-    assert ssic_section_from_code("41001") == "F Construction"
+    assert ssic_section_from_code("62011") == "Information & Communications"
+    assert ssic_section_from_code("64120") == "Financial & Insurance"
+    assert ssic_section_from_code("41001") == "Construction"
 
 
 def test_apply_company_taxonomy_prefers_cached_acra_ssic(tmp_path, monkeypatch):
@@ -49,7 +49,17 @@ def test_apply_company_taxonomy_prefers_cached_acra_ssic(tmp_path, monkeypatch):
     assert job_data["company_ssic_code"] == "64120"
     assert job_data["company_ssic_description"] == "FULL BANKS"
     assert job_data["company_ssic_source"] == "acra"
-    assert job_data["sector"] == "K Financial & Insurance"
+    assert job_data["sector"] == "Financial & Insurance"
+
+
+def test_analytics_sector_label_strips_legacy_ssic_letter_prefix():
+    from main import _analytics_sector_label
+
+    assert _analytics_sector_label("K Financial & Insurance") == "Financial & Insurance"
+    assert _analytics_sector_label("N Administrative & Support Services") == "Administrative & Support Services"
+    # Already-clean labels are returned unchanged.
+    assert _analytics_sector_label("Engineering") == "Engineering"
+    assert _analytics_sector_label("Financial & Insurance") == "Financial & Insurance"
 
 
 def test_apply_company_taxonomy_labels_fallback_without_fake_code(tmp_path, monkeypatch):

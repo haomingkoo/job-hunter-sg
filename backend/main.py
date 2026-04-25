@@ -2660,8 +2660,17 @@ def _analytics_source_label(source: str | None) -> str:
     return (source or "").strip() or _ANALYTICS_SOURCE_OTHER_LABEL
 
 
+_SSIC_SECTION_LETTER_PREFIX_RE = re.compile(r"^[A-U]\s+(?=[A-Z])")
+
+
 def _analytics_sector_label(sector: str | None) -> str:
-    return (sector or "").strip() or _ANALYTICS_UNCLASSIFIED_SECTOR
+    cleaned = (sector or "").strip()
+    if not cleaned:
+        return _ANALYTICS_UNCLASSIFIED_SECTOR
+    # Older rows were written with the SSIC section letter embedded in the label
+    # (e.g. "K Financial & Insurance"). Strip it for display so the analytics
+    # surface stays consistent with newly-written, letter-free labels.
+    return _SSIC_SECTION_LETTER_PREFIX_RE.sub("", cleaned) or _ANALYTICS_UNCLASSIFIED_SECTOR
 
 
 def _analytics_seniority_label(job: ScrapedJob) -> str:
