@@ -1343,7 +1343,7 @@ def _power_resume_source_meta(db: Session, user_id: int, resume_text: str) -> di
         db.query(ResumeVersion)
         .filter(
             ResumeVersion.user_id == user_id,
-            ResumeVersion.is_active == 1,
+            ResumeVersion.is_active == True,  # Boolean column — Postgres rejects `== 1`
         )
         .order_by(ResumeVersion.updated_at.desc(), ResumeVersion.id.desc())
         .first()
