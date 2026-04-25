@@ -289,4 +289,51 @@ describe("parseResumeToSections - fixture regressions", () => {
     expect(certificationItems.every((section) => section.type === "paragraph" || section.type === "spacer")).toBe(true);
     expect(certificationItems.some((section) => section.text === "GA100 – Generative AI (Heicoders Academy, WSQ Accredited, 2025)")).toBe(true);
   });
+
+  it("does not merge a no-period bullet with the next position header (pipe + date)", () => {
+    const text = [
+      "Haoming Koo",
+      "Experience",
+      "Software Engineer | GovTech Singapore | Singapore | Jul 2019 – Dec 2021",
+      "• Helped with CI/CD pipeline improvements and deployment automation",
+      "• Built citizen-facing web applications using React and Node.js",
+    ].join("\n");
+    const sections = parseResumeToSections(text, []);
+    const bullet = sections.find((s) => s.type === "bullet" && s.text.startsWith("Helped with CI/CD"));
+    expect(bullet).toBeTruthy();
+    expect(bullet.text).not.toContain("GovTech");
+    expect(bullet.text).not.toContain("Software Engineer");
+  });
+
+  it("does not merge a no-period bullet followed by a new position header below it", () => {
+    const text = [
+      "Haoming Koo",
+      "Experience",
+      "Software Engineer | GovTech Singapore | Singapore | Jul 2019 – Dec 2021",
+      "• Helped with CI/CD pipeline improvements and deployment automation",
+      "Senior Engineer | Shopee | Singapore | Jan 2018 – Jun 2019",
+      "• Reduced infrastructure costs by 30% through AWS optimisation",
+    ].join("\n");
+    const sections = parseResumeToSections(text, []);
+    const bullet = sections.find((s) => s.type === "bullet" && s.text.startsWith("Helped with CI/CD"));
+    expect(bullet).toBeTruthy();
+    expect(bullet.text).not.toContain("Shopee");
+    expect(bullet.text).not.toContain("Senior Engineer");
+  });
+
+  it("does not merge a no-period bullet with a long pipe-and-date position header below", () => {
+    const text = [
+      "Haoming Koo",
+      "Experience",
+      "Software Engineer | GovTech Singapore | Singapore | Jul 2019 – Dec 2021",
+      "• Helped with CI/CD pipeline improvements and deployment automation",
+      "Software Engineer | GovTech Singapore | Singapore | GovTech Singapore | Singapore | Jul 2019 – Dec 2021",
+      "• Built citizen-facing web applications using React",
+    ].join("\n");
+    const sections = parseResumeToSections(text, []);
+    const bullet = sections.find((s) => s.type === "bullet" && s.text.startsWith("Helped with CI/CD"));
+    expect(bullet).toBeTruthy();
+    expect(bullet.text).not.toContain("GovTech");
+    expect(bullet.text).not.toContain("2019");
+  });
 });

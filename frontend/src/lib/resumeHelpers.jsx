@@ -1494,6 +1494,7 @@ function shouldMergeContinuationLine(line, currentSectionKey, previousItem) {
   const startsLowercase = /^[a-z(]/.test(trimmed);
   const definiteNewEntry = looksLikeDateOnlyText(trimmed)
     || looksLikeResumeTitleLine(trimmed)
+    || (trimmed.includes("|") && hasDateHint(trimmed))
     || (currentSectionKey === "education" && (startsNewEducationEntry(trimmed) || RESUME_DEGREE_RE.test(trimmed)));
 
   if (previousItem.type === "bullet") {
