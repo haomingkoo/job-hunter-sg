@@ -26,6 +26,7 @@ RECRUITER_COMPANY_KEYWORDS = (
     "wecruit",
     "anradus",
     "talent trader",
+    "talent search",
     "talentsis",
     "business edge personnel",
     "scientec",
@@ -39,6 +40,10 @@ RECRUITER_COMPANY_KEYWORDS = (
     "job express",
     "good job creations",
     "staffking",
+    "hkm hr",
+    "hr management",
+    "hr advisory",
+    "rn care",
 )
 
 RECRUITER_SSIC_KEYWORDS = (

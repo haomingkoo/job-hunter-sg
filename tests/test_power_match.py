@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from main import _select_power_match_candidates
+from main import _is_power_gap_noise, _power_job_duplicate_key, _select_power_match_candidates
 
 
 class FakeQuery:
@@ -54,3 +54,29 @@ def test_power_match_candidates_do_not_backfill_with_newest_jobs():
     assert result == [matched_job]
     assert db.query_obj.all_calls == 1
     assert db.query_obj.limit_values == [100]
+
+
+def test_power_match_duplicate_key_collapses_reposted_same_role():
+    first = SimpleNamespace(
+        title="QA/ QC Engineer [Ubi | 5 days | up to $4500] - LCYL",
+        company="THE SUPREME HR ADVISORY PTE. LTD.",
+        location="SHENTON HOUSE",
+        salary="$2,500 - $4,500",
+        source="MyCareersFuture",
+        source_posting_id="mcf-1",
+    )
+    second = SimpleNamespace(
+        title="QA/ QC Engineer [Ubi | 5 days | up to $4500] - LCYL",
+        company="THE SUPREME HR ADVISORY PTE. LTD.",
+        location="SHENTON HOUSE",
+        salary="$2,500 - $4,500",
+        source="MyCareersFuture",
+        source_posting_id="mcf-2",
+    )
+
+    assert _power_job_duplicate_key(first) == _power_job_duplicate_key(second)
+
+
+def test_power_match_gap_noise_excludes_office_basics():
+    assert _is_power_gap_noise("Microsoft Word")
+    assert _is_power_gap_noise("Microsoft Office")

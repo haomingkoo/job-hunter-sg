@@ -12,6 +12,9 @@ def test_recruitment_employers_are_detected():
     assert is_recruitment_employer("THE SUPREME HR ADVISORY PTE. LTD.")
     assert is_recruitment_employer("PERSOL SINGAPORE PTE. LTD.")
     assert is_recruitment_employer("MANPOWER STAFFING SERVICES (SINGAPORE) PTE LTD")
+    assert is_recruitment_employer("TALENT SEARCH PTE. LTD.")
+    assert is_recruitment_employer("HKM HR MANAGEMENT PTE. LTD.")
+    assert is_recruitment_employer("RN CARE PTE. LTD.")
 
 
 def test_direct_employers_are_kept():

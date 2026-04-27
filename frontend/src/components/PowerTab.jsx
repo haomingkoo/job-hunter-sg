@@ -47,6 +47,7 @@ function RatingPill({ value, responses, label }) {
 
 export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
   const [data, setData] = useState(null);
+  const [directOnly, setDirectOnly] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [trackError, setTrackError] = useState("");
@@ -58,7 +59,11 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
     setLoading(true);
     setError("");
     try {
-      const resp = await apiFetch("/api/jobs/power-match?limit=8", { timeoutMs: 45000 });
+      const params = new URLSearchParams({
+        limit: "8",
+        direct_employers_only: String(directOnly),
+      });
+      const resp = await apiFetch(`/api/jobs/power-match?${params}`, { timeoutMs: 45000 });
       const payload = await resp.json();
       setData(payload);
     } catch (err) {
@@ -67,7 +72,7 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [directOnly]);
 
   useEffect(() => {
     loadPowerMatches();
@@ -176,15 +181,30 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
               This view uses your latest stored resume snapshot. We show exactly which resume was used, what matched, what is missing, and where the job data itself is incomplete instead of guessing.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={loadPowerMatches}
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-xl border border-white bg-white px-4 py-2.5 text-sm font-medium text-[#384959] shadow-sm hover:bg-[#f0f4f8] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-            Refresh Matches
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={() => setDirectOnly((value) => !value)}
+              disabled={loading}
+              className={`inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                directOnly
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-white bg-white text-[#384959] hover:bg-[#f0f4f8]"
+              }`}
+            >
+              <ShieldCheck size={14} />
+              Direct employers only
+            </button>
+            <button
+              type="button"
+              onClick={loadPowerMatches}
+              disabled={loading}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-white bg-white px-4 py-2.5 text-sm font-medium text-[#384959] shadow-sm hover:bg-[#f0f4f8] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+              Refresh Matches
+            </button>
+          </div>
         </div>
       </div>
 
@@ -207,6 +227,13 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
           ATS reminder: exact hard-skill wording matters more than broad claims. Keep tools, certifications, domain terms, and measurable achievements in the resume before tailoring.
         </div>
+        {data?.resume_ready && (
+          <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-800">
+            {data.direct_employers_only
+              ? "Direct-employer mode is on, so staffing and recruitment firms are filtered out of these matches."
+              : "Direct-employer mode is off, so recruiter-posted roles may appear and are ranked slightly lower."}
+          </div>
+        )}
       </div>
 
       {trackError && (

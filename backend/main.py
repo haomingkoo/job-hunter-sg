@@ -47,7 +47,7 @@ from auth import (
 )
 from database import SessionLocal, get_db, init_db
 from email_service import send_email, smtp_configured
-from employer_filter import direct_employer_condition
+from employer_filter import direct_employer_condition, is_recruitment_employer
 from job_precompute import (
     apply_job_precomputes as _apply_job_precomputes,
     salary_bounds_from_text as _salary_bounds_from_text,
@@ -188,7 +188,7 @@ def _store_analytics_query_cache(cache_key: tuple, cache_ts: float, result: dict
 _power_match_cache: dict[int, dict] = {}
 _POWER_MATCH_CACHE_TTL = 600  # 10 minutes
 _POWER_MATCH_SNAPSHOT_TTL_SECONDS = 86400  # 24 hours
-_POWER_MATCH_RESULT_VERSION = "power_match_v3"
+_POWER_MATCH_RESULT_VERSION = "power_match_v4"
 
 
 from contextlib import asynccontextmanager
@@ -509,6 +509,10 @@ POWER_GAP_EXCLUDE = POWER_DISPLAY_EXCLUDE | {
     "problem solving skills",
     "problem-solving skills",
     "teamwork",
+    "microsoft office",
+    "microsoft outlook",
+    "microsoft powerpoint",
+    "microsoft word",
 }
 
 SEMICONDUCTOR_DOMAIN_TERMS = {
@@ -1262,6 +1266,7 @@ def _select_power_match_candidates(
     resume_text: str,
     resume_skills: list[str],
     limit: int = 500,
+    direct_employers_only: bool = False,
 ) -> list[ScrapedJob]:
     base_query = db.query(ScrapedJob).options(
         load_only(
@@ -1283,10 +1288,15 @@ def _select_power_match_candidates(
             ScrapedJob.search_keyword,
             ScrapedJob.scraped_at,
             ScrapedJob.closing_date,
+            ScrapedJob.company_ssic_description,
             ScrapedJob.job_terms_preview,
             ScrapedJob.skills_flat,
         )
     ).filter(ScrapedJob.hidden == 0)
+    if direct_employers_only:
+        base_query = base_query.filter(
+            direct_employer_condition(ScrapedJob.company, ScrapedJob.company_ssic_description)
+        )
     hard_resume_terms = [
         skill for skill in resume_skills
         if skill.lower() in SEMICONDUCTOR_HARD_TERMS
@@ -1350,16 +1360,12 @@ def _job_corpus_marker(db: Session) -> str:
 
 
 def _power_job_duplicate_key(job: ScrapedJob) -> tuple[str, ...]:
-    source_id = (job.source_posting_id or "").strip().lower()
-    if source_id:
-        return ("source_id", (job.source or "").strip().lower(), source_id)
-
     title = re.sub(r"\b(?:jr|job|req|r)\s*[-#:]?\s*\d+\b", " ", (job.title or "").lower())
     title = re.sub(r"[^a-z0-9]+", " ", title).strip()
     company = re.sub(r"\s+", " ", (job.company or "").strip().lower())
     location = re.sub(r"\s+", " ", (job.location or "").strip().lower())
     salary = re.sub(r"\s+", " ", (job.salary or "").strip().lower())
-    return ("fallback", title, company, location, salary)
+    return ("normalized_posting", title, company, location, salary)
 
 
 def _load_power_match_snapshot(
@@ -3786,6 +3792,7 @@ def get_recommended_jobs(
 @app.get("/api/jobs/power-match")
 def get_power_match(
     limit: int = Query(8, ge=1, le=20),
+    direct_employers_only: bool = Query(True),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -3815,7 +3822,7 @@ def get_power_match(
         }
 
     resume_hash = _resume_snapshot_hash(resume_text)
-    corpus_marker = _job_corpus_marker(db)
+    corpus_marker = f"{_job_corpus_marker(db)}:direct={int(direct_employers_only)}"
     resume_source_meta = _power_resume_source_meta(db, user.id, resume_text)
 
     cached = _power_match_cache.get(user.id)
@@ -3856,6 +3863,7 @@ def get_power_match(
         resume_text=resume_text,
         resume_skills=resume_skills,
         limit=candidate_limit,
+        direct_employers_only=direct_employers_only,
     )
 
     # ── Semantic similarity (RAG) ─────────────────────────────────────────
@@ -3956,6 +3964,11 @@ def get_power_match(
         )
         if low_level_role:
             suitability_score = min(suitability_score, 48)
+        if not direct_employers_only and is_recruitment_employer(
+            job.company,
+            getattr(job, "company_ssic_description", "") or "",
+        ):
+            suitability_score = max(0, suitability_score - 6)
 
         if suitability_score < 18:
             continue
@@ -4070,6 +4083,7 @@ def get_power_match(
         "resume_word_count": len(resume_text.split()),
         "resume_updated_at": mem.updated_at.isoformat() if mem and mem.updated_at else "",
         "resume_signal_mode": resume_signal_mode,
+        "direct_employers_only": direct_employers_only,
         "resume_skills": _surface_power_skills(resume_skills, limit=24),
         "top_gaps": top_gaps,
         "recommended_queries": recommended_queries,
