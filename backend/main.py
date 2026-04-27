@@ -494,6 +494,8 @@ POWER_DISPLAY_EXCLUDE = POWER_NOISE_SKILLS | {
 }
 
 POWER_GAP_EXCLUDE = POWER_DISPLAY_EXCLUDE | {
+    "ability to learn",
+    "able to work independently",
     "analytical skills",
     "analytical and problem-solving skills",
     "attention to detail",
@@ -502,13 +504,17 @@ POWER_GAP_EXCLUDE = POWER_DISPLAY_EXCLUDE | {
     "critical thinking",
     "eye for detail",
     "eye for details",
+    "excellent communication skills",
     "interpersonal skills",
     "management skills",
+    "ms office",
     "planning skills",
+    "presentation skills",
     "problem solving",
     "problem solving skills",
     "problem-solving skills",
     "teamwork",
+    "work well under pressure",
     "microsoft office",
     "microsoft outlook",
     "microsoft powerpoint",
@@ -1525,9 +1531,21 @@ def _build_bridge_plan(missing_skills: list[str]) -> list[dict]:
     seen_titles: set[str] = set()
     for skill in missing_skills[:6]:
         lower_skill = skill.lower()
+        skill_tokens = set(re.findall(r"[a-z0-9+#./-]+", lower_skill))
         matched_path = None
         for path in POWER_BRIDGE_LIBRARY:
-            if any(keyword in lower_skill for keyword in path["keywords"]):
+            if any(
+                keyword == lower_skill
+                or (
+                    " " in keyword
+                    and re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", lower_skill)
+                )
+                or (
+                    " " not in keyword
+                    and keyword in skill_tokens
+                )
+                for keyword in path["keywords"]
+            ):
                 matched_path = path
                 break
 
@@ -2853,11 +2871,18 @@ _ANALYTICS_GENERIC_SKILLS = {
     "cross-functional teams", "continuous improvement",
 }
 
+_ANALYTICS_EXCLUDED_SKILLS = {
+    "express",
+}
+
 
 def _analytics_skill_key(raw: str) -> str:
     key = re.sub(r"\s+", " ", (raw or "").strip().lower())
     key = key.strip(" -•.,;:")
-    return _ANALYTICS_SKILL_ALIASES.get(key, key)
+    key = _ANALYTICS_SKILL_ALIASES.get(key, key)
+    if key in _ANALYTICS_EXCLUDED_SKILLS:
+        return ""
+    return key
 
 
 def _analytics_skill_display(key: str) -> str:

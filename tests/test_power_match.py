@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from main import _is_power_gap_noise, _power_job_duplicate_key, _select_power_match_candidates
+from main import _analytics_skill_key, _build_bridge_plan, _is_power_gap_noise, _power_job_duplicate_key, _select_power_match_candidates
 
 
 class FakeQuery:
@@ -80,3 +80,16 @@ def test_power_match_duplicate_key_collapses_reposted_same_role():
 def test_power_match_gap_noise_excludes_office_basics():
     assert _is_power_gap_noise("Microsoft Word")
     assert _is_power_gap_noise("Microsoft Office")
+    assert _is_power_gap_noise("Able To Work Independently")
+    assert _is_power_gap_noise("Work Well Under Pressure")
+    assert _is_power_gap_noise("Excellent Communication Skills")
+
+
+def test_power_match_bridge_plan_does_not_match_excel_inside_excellent():
+    plan = _build_bridge_plan(["Excellent Communication Skills"])
+
+    assert plan[0]["pathway"] == "Role-specific bridging"
+
+
+def test_analytics_excludes_company_fragment_terms():
+    assert _analytics_skill_key("Express") == ""
