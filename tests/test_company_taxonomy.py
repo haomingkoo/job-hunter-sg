@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
@@ -75,3 +76,45 @@ def test_apply_company_taxonomy_labels_fallback_without_fake_code(tmp_path, monk
     assert job_data["company_ssic_description"] == ""
     assert job_data["company_ssic_source"] == "inferred"
     assert job_data["sector"] == "IT / Tech"
+
+
+def test_power_match_gaps_suppress_generic_soft_skills():
+    from main import _surface_power_gaps
+
+    gaps = _surface_power_gaps(
+        [
+            "Analytical and Problem-Solving Skills",
+            "Creative Problem Solving Skills",
+            "Semiconductor Manufacturing",
+            "Wafer Fabrication",
+        ],
+        limit=6,
+    )
+
+    assert "Semiconductor Manufacturing" in gaps
+    assert "Wafer Fabrication" in gaps
+    assert "Analytical and Problem-Solving Skills" not in gaps
+    assert "Creative Problem Solving Skills" not in gaps
+
+
+def test_power_match_duplicate_key_strips_requisition_ids():
+    from main import _power_job_duplicate_key
+
+    base = SimpleNamespace(
+        source_posting_id="",
+        source="MyCareersFuture",
+        title="Senior Equipment Engineer (Etch) JR11246",
+        company="STMICROELECTRONICS PTE LTD",
+        location="ANG MO KIO INDUSTRIAL PARK 2",
+        salary="$5,350 - $8,500",
+    )
+    duplicate = SimpleNamespace(
+        source_posting_id="",
+        source="MyCareersFuture",
+        title="Senior Equipment Engineer (Etch)",
+        company="STMICROELECTRONICS PTE LTD",
+        location="ANG MO KIO INDUSTRIAL PARK 2",
+        salary="$5,350 - $8,500",
+    )
+
+    assert _power_job_duplicate_key(base) == _power_job_duplicate_key(duplicate)

@@ -91,7 +91,7 @@ export default function HomePage({ onNavigate }) {
   const countNum = jobCount || 72000;
 
   return (
-    <div className="font-body w-full bg-[#f0f4f8]">
+    <div className="relative font-body w-full overflow-x-hidden bg-[#f0f4f8]">
 
       {/* ═══════ HERO ═══════════════════════════════════════════════════════
           Full viewport hero with parallax fade-out on scroll

@@ -1,12 +1,21 @@
 import { useState, useEffect } from "react";
 import {
-  User, LogOut, Mail, Star, CheckCircle, Loader2,
+  User, LogOut, Mail, Star, CheckCircle, Loader2, Bell, Save, ShieldCheck,
   FileText, Sparkles, BookOpen, BarChart2,
 } from "lucide-react";
-import { apiFetch } from "../lib/api.js";
+import { API_BASE, apiFetch } from "../lib/api.js";
 import TierBadge from "./TierBadge.jsx";
 
 const formatLimit = (value) => (value >= 999999 ? "Unlimited" : value?.toLocaleString?.() ?? value);
+const defaultAlertPrefs = {
+  enabled: false,
+  min_score: 75,
+  direct_employers_only: true,
+  frequency: "daily",
+  keywords: "",
+  max_jobs: 5,
+  last_run_at: null,
+};
 
 export default function AccountTab({ user, onLogout, setActiveTab }) {
   const [usage, setUsage] = useState(null);
@@ -18,6 +27,11 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
   const [contactSending, setContactSending] = useState(false);
   const [contactSent, setContactSent] = useState(false);
   const [contactError, setContactError] = useState("");
+  const [alertPrefs, setAlertPrefs] = useState(defaultAlertPrefs);
+  const [alertsLoading, setAlertsLoading] = useState(true);
+  const [alertsSaving, setAlertsSaving] = useState(false);
+  const [alertsSaved, setAlertsSaved] = useState(false);
+  const [alertsError, setAlertsError] = useState("");
   const isAdmin = user?.tier === "admin";
 
   useEffect(() => {
@@ -33,6 +47,26 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
         if (!cancelled) setUsageLoading(false);
       }
     })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAlertsLoading(true);
+    setAlertsError("");
+
+    (async () => {
+      try {
+        const resp = await apiFetch("/api/job-alerts/preferences");
+        const data = await resp.json();
+        if (!cancelled) setAlertPrefs({ ...defaultAlertPrefs, ...data });
+      } catch (err) {
+        if (!cancelled) setAlertsError(err.message || "Could not load job alerts.");
+      } finally {
+        if (!cancelled) setAlertsLoading(false);
+      }
+    })();
+
     return () => { cancelled = true; };
   }, []);
 
@@ -79,6 +113,34 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
       setContactError(err.message);
     } finally {
       setContactSending(false);
+    }
+  };
+
+  const saveAlertPrefs = async (e) => {
+    e.preventDefault();
+    setAlertsSaving(true);
+    setAlertsSaved(false);
+    setAlertsError("");
+    try {
+      const payload = {
+        enabled: Boolean(alertPrefs.enabled),
+        min_score: Number(alertPrefs.min_score) || 75,
+        direct_employers_only: Boolean(alertPrefs.direct_employers_only),
+        frequency: alertPrefs.frequency || "daily",
+        keywords: alertPrefs.keywords || "",
+        max_jobs: Number(alertPrefs.max_jobs) || 5,
+      };
+      const resp = await apiFetch("/api/job-alerts/preferences", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      setAlertPrefs({ ...defaultAlertPrefs, ...data });
+      setAlertsSaved(true);
+    } catch (err) {
+      setAlertsError(err.message || "Could not save job alerts.");
+    } finally {
+      setAlertsSaving(false);
     }
   };
 
@@ -175,6 +237,135 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="font-semibold text-[#384959] flex items-center gap-2">
+              <Bell size={17} /> Job Match Alerts
+            </h3>
+            <p className="mt-1 text-sm text-[#6A89A7]">
+              Email digests for new roles that clear your saved resume match threshold.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={alertsLoading}
+            onClick={() => {
+              setAlertsSaved(false);
+              setAlertPrefs((prev) => ({ ...prev, enabled: !prev.enabled }));
+            }}
+            className={`inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition active:scale-[0.98] disabled:opacity-50 ${
+              alertPrefs.enabled
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-[#BDDDFC]/40 bg-[#f0f4f8] text-[#384959] hover:bg-white"
+            }`}
+          >
+            <span className={`h-5 w-9 rounded-full p-0.5 transition ${alertPrefs.enabled ? "bg-emerald-600" : "bg-[#BDDDFC]"}`}>
+              <span className={`block h-4 w-4 rounded-full bg-white transition-transform ${alertPrefs.enabled ? "translate-x-4" : "translate-x-0"}`} />
+            </span>
+            {alertPrefs.enabled ? "Enabled" : "Off"}
+          </button>
+        </div>
+
+        {alertsError && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            {alertsError}
+          </div>
+        )}
+        {alertsSaved && (
+          <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+            Job alerts updated.
+          </div>
+        )}
+
+        {alertsLoading ? (
+          <div className="mt-4 flex items-center gap-2 text-sm text-[#6A89A7]">
+            <Loader2 size={14} className="animate-spin" /> Loading alert settings...
+          </div>
+        ) : (
+          <form onSubmit={saveAlertPrefs} className="mt-5 space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Minimum Score</span>
+                <input
+                  type="number"
+                  min="35"
+                  max="95"
+                  value={alertPrefs.min_score}
+                  onChange={(e) => setAlertPrefs((prev) => ({ ...prev, min_score: e.target.value }))}
+                  className="w-full rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959]"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Frequency</span>
+                <select
+                  value={alertPrefs.frequency}
+                  onChange={(e) => setAlertPrefs((prev) => ({ ...prev, frequency: e.target.value }))}
+                  className="w-full rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959]"
+                >
+                  <option value="daily">Daily digest</option>
+                  <option value="weekly">Weekly digest</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Max Jobs</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={alertPrefs.max_jobs}
+                  onChange={(e) => setAlertPrefs((prev) => ({ ...prev, max_jobs: e.target.value }))}
+                  className="w-full rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959]"
+                />
+              </label>
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-2">
+                <span>
+                  <span className="block text-sm font-medium text-[#384959]">Direct employers only</span>
+                  <span className="block text-xs text-[#6A89A7]">Default for cleaner alerts.</span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={Boolean(alertPrefs.direct_employers_only)}
+                  onChange={(e) => setAlertPrefs((prev) => ({ ...prev, direct_employers_only: e.target.checked }))}
+                  className="h-4 w-4 accent-[#384959]"
+                />
+              </label>
+            </div>
+
+            <label className="block">
+              <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Keywords</span>
+              <input
+                value={alertPrefs.keywords || ""}
+                onChange={(e) => setAlertPrefs((prev) => ({ ...prev, keywords: e.target.value }))}
+                placeholder="Optional: semicon, cloud, data engineering"
+                className="w-full rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959]"
+              />
+            </label>
+
+            <div className="flex flex-col gap-3 border-t border-[#BDDDFC]/20 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-xs text-[#6A89A7]">
+                {alertPrefs.last_run_at
+                  ? `Last checked ${new Date(alertPrefs.last_run_at).toLocaleString()}`
+                  : "Alerts start checking from the moment you enable them."}
+                {alertPrefs.enabled && (
+                  <span className="mt-1 block">
+                    By enabling alerts, you consent to receiving matched-job digests. Every alert includes an unsubscribe link.
+                  </span>
+                )}
+              </div>
+              <button
+                type="submit"
+                disabled={alertsSaving}
+                className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#384959] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#2d3a47] active:scale-[0.98] disabled:opacity-50"
+              >
+                {alertsSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                Save Alerts
+              </button>
+            </div>
+          </form>
+        )}
       </div>
 
       {isAdmin && (
@@ -332,6 +523,31 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
           )}
         </div>
       )}
+
+      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
+        <h3 className="font-semibold text-[#384959] mb-3 flex items-center gap-2">
+          <ShieldCheck size={17} /> Legal & Privacy
+        </h3>
+        <p className="text-sm text-[#6A89A7] mb-4">
+          Job Hunter SG is a hobby project. Review the service limits, privacy handling, and alert consent terms here.
+        </p>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <button
+            type="button"
+            onClick={() => window.open(`${API_BASE}/api/terms`, "_blank")}
+            className="inline-flex items-center justify-center rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2 text-sm font-medium text-[#384959] transition hover:bg-white active:scale-[0.98]"
+          >
+            Terms of Service
+          </button>
+          <button
+            type="button"
+            onClick={() => window.open(`${API_BASE}/api/privacy`, "_blank")}
+            className="inline-flex items-center justify-center rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2 text-sm font-medium text-[#384959] transition hover:bg-white active:scale-[0.98]"
+          >
+            Privacy Notice
+          </button>
+        </div>
+      </div>
 
       {/* Tier Comparison */}
       <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">

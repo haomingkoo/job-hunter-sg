@@ -731,6 +731,7 @@ class TestAPIEndpoints:
             "email": email,
             "password": pw,
             "name": "Test User",
+            "accepted_terms": True,
         })
         assert resp.status_code == 200
         data = resp.json()

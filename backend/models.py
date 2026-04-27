@@ -42,6 +42,8 @@ class User(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    terms_accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    privacy_accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     tracked_jobs: Mapped[list[TrackedJob]] = relationship(
         "TrackedJob", back_populates="user", cascade="all, delete-orphan"
@@ -165,6 +167,23 @@ class UserMemory(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class PasswordResetToken(Base):
+    """One-time password reset token. Only the token hash is stored."""
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        Index("ix_password_reset_tokens_user", "user_id", "created_at"),
+        Index("ix_password_reset_tokens_hash", "token_hash"),
+    )
 
 
 class PowerMatchSnapshot(Base):
@@ -310,6 +329,52 @@ class StoryUsage(Base):
     question_asked: Mapped[str] = mapped_column(Text, default="")
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class JobAlertPreference(Base):
+    """Per-user opt-in settings for matched job email digests."""
+    __tablename__ = "job_alert_preferences"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Integer, default=0, nullable=False)
+    min_score: Mapped[int] = mapped_column(Integer, default=75, nullable=False)
+    direct_employers_only: Mapped[bool] = mapped_column(Integer, default=1, nullable=False)
+    frequency: Mapped[str] = mapped_column(String(20), default="daily", nullable=False)
+    keywords: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    max_jobs: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    consented_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    __table_args__ = (
+        Index("ix_job_alert_preferences_user", "user_id", unique=True),
+        Index("ix_job_alert_preferences_enabled", "enabled"),
+    )
+
+
+class JobAlertDelivery(Base):
+    """Records alerted or user-suppressed jobs so digests do not repeat them."""
+    __tablename__ = "job_alert_deliveries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    preference_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("job_alert_preferences.id"), nullable=True
+    )
+    scraped_job_id: Mapped[int] = mapped_column(Integer, ForeignKey("scraped_jobs.id"), nullable=False)
+    resume_hash: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    match_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    action: Mapped[str] = mapped_column(String(30), default="sent", nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    dismissed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_job_alert_deliveries_lookup", "user_id", "scraped_job_id"),
+        Index("ix_job_alert_deliveries_action", "user_id", "action"),
+    )
 
 
 class UsageLog(Base):

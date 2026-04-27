@@ -36,7 +36,8 @@ def backfill_company_ssic(limit: int, live: bool, dry_run: bool) -> dict:
             .limit(limit)
             .all()
         )
-        for company, _count in company_rows:
+        total_companies = len(company_rows)
+        for company, count in company_rows:
             stats["companies_checked"] += 1
             match = lookup_company_ssic(company, allow_live=live)
             if match:
@@ -78,6 +79,13 @@ def backfill_company_ssic(limit: int, live: bool, dry_run: bool) -> dict:
                 job.company_ssic_source = data.get("company_ssic_source", "")
 
             stats["jobs_updated"] += updated_for_company
+            print(
+                f"[{stats['companies_checked']}/{total_companies}] "
+                f"{company} ({count} jobs): "
+                f"{'matched' if match else 'no official match'}, "
+                f"updated={updated_for_company}",
+                flush=True,
+            )
             if not dry_run:
                 db.commit()
             else:

@@ -149,6 +149,7 @@ r = c.post("/api/auth/signup", json={
     "email": test_email,
     "password": "TestPass123!",
     "name": "Fix Tester",
+    "accepted_terms": True,
 })
 print(f"  POST /api/auth/signup -> {r.status_code}")
 assert r.status_code == 200

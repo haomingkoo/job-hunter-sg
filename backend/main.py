@@ -5,6 +5,7 @@ FastAPI backend for Job Hunter SG.
 from __future__ import annotations
 
 import csv
+import html
 import hashlib
 import io
 import json
@@ -45,22 +46,40 @@ from auth import (
     verify_password,
 )
 from database import SessionLocal, get_db, init_db
+from email_service import send_email, smtp_configured
+from employer_filter import direct_employer_condition
 from job_precompute import (
     apply_job_precomputes as _apply_job_precomputes,
     salary_bounds_from_text as _salary_bounds_from_text,
 )
+from job_alerts import verify_unsubscribe_token
 from job_store import find_existing_scraped_job
-from models import PowerMatchSnapshot, ScrapedJob, TrackedJob, UsageLog, User, UserMemory
+from legal_pages import render_privacy_html, render_terms_html
+from models import (
+    JobAlertDelivery,
+    JobAlertPreference,
+    PasswordResetToken,
+    PowerMatchSnapshot,
+    ScrapedJob,
+    TrackedJob,
+    UsageLog,
+    User,
+    UserMemory,
+)
 from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
 from schemas import (
     AuthResponse,
     ContactRequest,
     CoverLetterRequest,
+    ForgotPasswordRequest,
     IntegrateKeywordsRequest,
+    JobAlertPreferenceOut,
+    JobAlertPreferenceUpdate,
     ResumeChatRequest,
     JobOut,
     LoginRequest,
     RegenerateSummaryRequest,
+    ResetPasswordRequest,
     ResumeScoreRequest,
     RewriteBulletRequest,
     SearchResponse,
@@ -169,7 +188,7 @@ def _store_analytics_query_cache(cache_key: tuple, cache_ts: float, result: dict
 _power_match_cache: dict[int, dict] = {}
 _POWER_MATCH_CACHE_TTL = 600  # 10 minutes
 _POWER_MATCH_SNAPSHOT_TTL_SECONDS = 86400  # 24 hours
-_POWER_MATCH_RESULT_VERSION = "power_match_v2"
+_POWER_MATCH_RESULT_VERSION = "power_match_v3"
 
 
 from contextlib import asynccontextmanager
@@ -362,7 +381,8 @@ async def lifespan(application: FastAPI):
             return
         try:
             import requests as _req
-            _req.get("http://localhost:8080/api/analytics/skills?limit=50", timeout=30)
+            port = int(os.environ.get("PORT", 8000))
+            _req.get(f"http://127.0.0.1:{port}/api/analytics/skills?limit=50", timeout=60)
             log.info("[STARTUP] Analytics cache warmed")
         except Exception as exc:
             log.warning(f"[STARTUP] Analytics warm failed: {exc}")
@@ -471,6 +491,24 @@ POWER_DISPLAY_EXCLUDE = POWER_NOISE_SKILLS | {
     "performance", "development", "transformation", "integration",
     "automation", "leadership", "reliability", "engineering", "validation",
     "collaboration", "certifications", "professional",
+}
+
+POWER_GAP_EXCLUDE = POWER_DISPLAY_EXCLUDE | {
+    "analytical skills",
+    "analytical and problem-solving skills",
+    "attention to detail",
+    "creative problem solving",
+    "creative problem solving skills",
+    "critical thinking",
+    "eye for detail",
+    "eye for details",
+    "interpersonal skills",
+    "management skills",
+    "planning skills",
+    "problem solving",
+    "problem solving skills",
+    "problem-solving skills",
+    "teamwork",
 }
 
 SEMICONDUCTOR_DOMAIN_TERMS = {
@@ -604,6 +642,21 @@ def _is_power_surface_noise(skill: str) -> bool:
     return False
 
 
+def _is_power_gap_noise(skill: str) -> bool:
+    lower = re.sub(r"\s+", " ", (skill or "").strip().lower())
+    if not lower or _is_power_surface_noise(lower):
+        return True
+    if lower in POWER_GAP_EXCLUDE:
+        return True
+    if re.fullmatch(
+        r"(analytical|creative|critical|interpersonal|management|planning|problem[- ]solving|teamwork)"
+        r"(?: and [a-z -]+)? skills?",
+        lower,
+    ):
+        return True
+    return False
+
+
 def _surface_power_skills(skills: list[str], limit: int = 24) -> list[str]:
     surfaced: list[str] = []
     seen: set[str] = set()
@@ -620,6 +673,30 @@ def _surface_power_skills(skills: list[str], limit: int = 24) -> list[str]:
         normalized = re.sub(r"\s+", " ", (skill or "").strip())
         lower = normalized.lower()
         if not normalized or lower in seen or _is_power_surface_noise(normalized):
+            continue
+        seen.add(lower)
+        surfaced.append(normalized)
+        if len(surfaced) >= limit:
+            break
+    return surfaced
+
+
+def _surface_power_gaps(skills: list[str], limit: int = 6) -> list[str]:
+    surfaced: list[str] = []
+    seen: set[str] = set()
+    ranked = sorted(
+        skills,
+        key=lambda skill: (
+            0 if skill.lower() in SEMICONDUCTOR_HARD_TERMS else 1,
+            0 if len(skill.split()) >= 2 else 1,
+            -len(skill.split()),
+            skill.lower(),
+        ),
+    )
+    for skill in ranked:
+        normalized = re.sub(r"\s+", " ", (skill or "").strip())
+        lower = normalized.lower()
+        if not normalized or lower in seen or _is_power_gap_noise(normalized):
             continue
         seen.add(lower)
         surfaced.append(normalized)
@@ -1202,6 +1279,7 @@ def _select_power_match_candidates(
             ScrapedJob.skills,
             ScrapedJob.agency,
             ScrapedJob.dedup_key,
+            ScrapedJob.source_posting_id,
             ScrapedJob.search_keyword,
             ScrapedJob.scraped_at,
             ScrapedJob.closing_date,
@@ -1269,6 +1347,19 @@ def _job_corpus_marker(db: Session) -> str:
         .one()
     )
     return f"{int(count or 0)}:{int(max_id or 0)}:{max_scraped_at or ''}"
+
+
+def _power_job_duplicate_key(job: ScrapedJob) -> tuple[str, ...]:
+    source_id = (job.source_posting_id or "").strip().lower()
+    if source_id:
+        return ("source_id", (job.source or "").strip().lower(), source_id)
+
+    title = re.sub(r"\b(?:jr|job|req|r)\s*[-#:]?\s*\d+\b", " ", (job.title or "").lower())
+    title = re.sub(r"[^a-z0-9]+", " ", title).strip()
+    company = re.sub(r"\s+", " ", (job.company or "").strip().lower())
+    location = re.sub(r"\s+", " ", (job.location or "").strip().lower())
+    salary = re.sub(r"\s+", " ", (job.salary or "").strip().lower())
+    return ("fallback", title, company, location, salary)
 
 
 def _load_power_match_snapshot(
@@ -2206,34 +2297,15 @@ def privacy() -> Response:
     """Privacy notice — returns a readable HTML page, not raw JSON."""
     contact = os.environ.get("CONTACT_EMAIL", "")
     contact_line = f"reach out at {contact}" if contact else "use the contact form on the Account page"
-    html = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Privacy Notice — Job Hunter SG</title>
-<style>body{{font-family:-apple-system,system-ui,sans-serif;max-width:680px;margin:40px auto;padding:0 20px;color:#333;line-height:1.7}}
-h1{{color:#4f46e5}}h2{{color:#1e293b;margin-top:2em}}p{{margin:0.5em 0}}.updated{{color:#94a3b8;font-size:0.85em}}</style></head>
-<body>
-<h1>How We Handle Your Data</h1>
-<p class="updated">Last updated: 24 March 2026</p>
+    return Response(content=render_privacy_html(contact_line), media_type="text/html")
 
-<h2>What We Store</h2>
-<p>When you create an account, we store your email and name. Your password is hashed (one-way encryption) — we never store or see your actual password. When you use our AI resume features, we store your resume text to personalise your coaching experience across sessions. Your tracked job applications and notes are also stored.</p>
 
-<h2>Why We Store Your Resume</h2>
-<p>Your resume is stored solely to power the Memory feature — so our AI coach can remember your background, strengths, and goals across sessions. Your resume data will <strong>NOT</strong> be used for any other purpose.</p>
-
-<h2>What We Don't Do</h2>
-<p>We do <strong>NOT</strong> sell, share, or disclose your personal data to any third party. We do <strong>NOT</strong> use your resume to train AI models. We do <strong>NOT</strong> show your data to other users. Your data is never used for advertising or marketing purposes.</p>
-
-<h2>AI Processing</h2>
-<p>When you use AI features (resume review, bullet rewriting, formatting), your resume text is sent to an AI model for processing. The AI does not retain your data after generating a response.</p>
-
-<h2>Your Control</h2>
-<p>You can view everything we know about you via the Memory page. You can edit or delete any stored information at any time. You can delete your entire memory with one click. If you want your account and all data permanently removed, contact us and we will delete everything.</p>
-
-<h2>Contact</h2>
-<p>Job Hunter SG is built to help job seekers in Singapore. If you have any questions or concerns about your data, {contact_line}.</p>
-</body></html>"""
-    return Response(content=html, media_type="text/html")
+@app.get("/api/terms")
+def terms() -> Response:
+    """Terms of Service — returns a readable HTML page, not raw JSON."""
+    contact = os.environ.get("CONTACT_EMAIL", "")
+    contact_line = f"reach out at {contact}" if contact else "use the contact form on the Account page"
+    return Response(content=render_terms_html(contact_line), media_type="text/html")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -2244,6 +2316,11 @@ h1{{color:#4f46e5}}h2{{color:#1e293b;margin-top:2em}}p{{margin:0.5em 0}}.updated
 def signup(body: SignupRequest, db: Session = Depends(get_db)) -> dict:
     # Rate limit signup attempts (abuse prevention)
     check_rate_limit(None, "search", db)
+    if not body.accepted_terms:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="You must accept the Terms of Service and Privacy Notice",
+        )
     validate_password(body.password)
     existing = db.query(User).filter(User.email == body.email).first()
     if existing:
@@ -2260,12 +2337,143 @@ def signup(body: SignupRequest, db: Session = Depends(get_db)) -> dict:
         password_hash=hash_password(body.password),
         name=sanitize_user_input(body.name),
         tier=tier,
+        terms_accepted_at=datetime.now(timezone.utc),
+        privacy_accepted_at=datetime.now(timezone.utc),
     )
     db.add(user)
     db.commit()
     db.refresh(user)
     token = create_token(user.id)
     return {"token": token, "user": user}
+
+
+_PASSWORD_RESET_MESSAGE = {
+    "message": "If that email is registered, we sent a password reset link."
+}
+_PASSWORD_RESET_EXPIRY_MINUTES = 60
+
+
+def _password_reset_hash(token: str) -> str:
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
+def _password_reset_rate_limited(email_hash: str, db: Session) -> bool:
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    attempts = (
+        db.query(func.count(UsageLog.id))
+        .filter(
+            UsageLog.action == "password_reset_request",
+            UsageLog.detail == email_hash,
+            UsageLog.created_at >= cutoff,
+        )
+        .scalar()
+        or 0
+    )
+    return attempts >= 5
+
+
+def _send_password_reset_email(user: User, reset_token: str) -> None:
+    app_base_url = os.environ.get("APP_BASE_URL", "https://job.kooexperience.com").rstrip("/")
+    reset_url = f"{app_base_url}/?reset_token={reset_token}"
+    subject = "Reset your Job Hunter SG password"
+    text_body = (
+        f"Hi {user.name},\n\n"
+        "Use this link to reset your Job Hunter SG password. It expires in 60 minutes.\n\n"
+        f"{reset_url}\n\n"
+        "If you did not request this, you can ignore this email."
+    )
+    html_body = (
+        "<div style=\"font-family:Inter,Arial,sans-serif;background:#f6f9fc;padding:24px;color:#243447;\">"
+        "<div style=\"max-width:560px;margin:0 auto;background:white;border:1px solid #dbe7f3;"
+        "border-radius:12px;padding:24px;\">"
+        f"<h1 style=\"font-size:20px;margin:0 0 8px;\">Reset your password</h1>"
+        f"<p style=\"color:#4b6478;\">Hi {html.escape(user.name)}, use this secure link to reset your "
+        "Job Hunter SG password. It expires in 60 minutes.</p>"
+        f"<a href=\"{html.escape(reset_url)}\" style=\"display:inline-block;margin-top:12px;"
+        "background:#384959;color:white;text-decoration:none;border-radius:8px;padding:10px 14px;"
+        "font-size:14px;font-weight:700;\">Reset password</a>"
+        "<p style=\"color:#6b7280;font-size:13px;margin-top:20px;\">"
+        "If you did not request this, you can ignore this email."
+        "</p></div></div>"
+    )
+    send_email(user.email, subject, text_body, html_body)
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)) -> dict:
+    email = str(body.email).strip().lower()
+    email_hash = hashlib.sha256(email.encode()).hexdigest()[:16]
+    if _password_reset_rate_limited(email_hash, db):
+        return _PASSWORD_RESET_MESSAGE
+
+    db.add(UsageLog(user_id=None, action="password_reset_request", detail=email_hash))
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    if not user or not smtp_configured():
+        if user and not smtp_configured():
+            log.warning("Password reset requested but SMTP is not configured")
+        db.commit()
+        return _PASSWORD_RESET_MESSAGE
+
+    now = datetime.now(timezone.utc)
+    db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == user.id,
+        PasswordResetToken.used_at.is_(None),
+    ).update({"used_at": now}, synchronize_session=False)
+
+    reset_token = secrets.token_urlsafe(40)
+    db.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=_password_reset_hash(reset_token),
+            expires_at=now + timedelta(minutes=_PASSWORD_RESET_EXPIRY_MINUTES),
+        )
+    )
+    db.commit()
+
+    try:
+        _send_password_reset_email(user, reset_token)
+    except Exception as exc:
+        log.warning("Password reset email failed for user_id=%s: %s", user.id, type(exc).__name__)
+
+    return _PASSWORD_RESET_MESSAGE
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)) -> dict:
+    validate_password(body.password)
+    now = datetime.now(timezone.utc)
+    reset = (
+        db.query(PasswordResetToken)
+        .filter(PasswordResetToken.token_hash == _password_reset_hash(body.token))
+        .first()
+    )
+    if not reset or reset.used_at is not None:
+        raise HTTPException(status_code=400, detail="Reset link is invalid or expired")
+
+    expires_at = reset.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < now:
+        reset.used_at = now
+        db.commit()
+        raise HTTPException(status_code=400, detail="Reset link is invalid or expired")
+
+    user = db.get(User, reset.user_id)
+    if not user:
+        reset.used_at = now
+        db.commit()
+        raise HTTPException(status_code=400, detail="Reset link is invalid or expired")
+
+    user.password_hash = hash_password(body.password)
+    reset.used_at = now
+    user.last_login = None
+    db.query(PasswordResetToken).filter(
+        PasswordResetToken.user_id == user.id,
+        PasswordResetToken.used_at.is_(None),
+    ).update({"used_at": now}, synchronize_session=False)
+    db.add(UsageLog(user_id=user.id, action="password_reset_completed", detail="password_reset"))
+    db.commit()
+    return {"message": "Password updated. You can sign in with your new password."}
 
 
 @app.post("/api/auth/login", response_model=AuthResponse)
@@ -3273,6 +3481,7 @@ def list_cached_jobs(
     location: Optional[str] = Query(None, max_length=200),
     sector: Optional[str] = Query(None, max_length=100),
     min_salary: Optional[int] = Query(None, ge=0),
+    direct_employers_only: bool = Query(False),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -3335,6 +3544,13 @@ def list_cached_jobs(
         query = query.filter(ScrapedJob.location.ilike(f"%{location}%"))
     if sector:
         query = query.filter(_sector_filter_condition(sector))
+    if direct_employers_only:
+        query = query.filter(
+            direct_employer_condition(
+                ScrapedJob.company,
+                ScrapedJob.company_ssic_description,
+            )
+        )
     if min_salary is not None:
         query = query.filter(
             or_(
@@ -3765,9 +3981,10 @@ def get_power_match(
             why = "Worth exploring, but the skill signal is still light."
 
         surfaced_matched_skills = _surface_power_skills(matched_skills, limit=6)
-        surfaced_missing_skills = _surface_power_skills(missing_skills, limit=6)
+        surfaced_missing_skills = _surface_power_gaps(missing_skills, limit=6)
 
         recommendations.append({
+            "_dedupe_key": _power_job_duplicate_key(job),
             "job": {
                 "id": job.id,
                 "title": job.title,
@@ -3802,7 +4019,18 @@ def get_power_match(
         ),
         reverse=True,
     )
-    recommendations = recommendations[:limit]
+    deduped_recommendations: list[dict] = []
+    seen_job_keys: set[tuple[str, ...]] = set()
+    for item in recommendations:
+        key = item.get("_dedupe_key")
+        if key in seen_job_keys:
+            continue
+        seen_job_keys.add(key)
+        item.pop("_dedupe_key", None)
+        deduped_recommendations.append(item)
+        if len(deduped_recommendations) >= limit:
+            break
+    recommendations = deduped_recommendations
 
     top_gap_counts = Counter(
         skill
@@ -3812,7 +4040,7 @@ def get_power_match(
     top_gaps = [
         {"skill": skill, "count": count}
         for skill, count in top_gap_counts.most_common(8)
-        if count >= 2 and not _is_power_surface_noise(skill)
+        if count >= 2 and not _is_power_gap_noise(skill)
     ]
 
     recommended_queries = []
@@ -3955,6 +4183,163 @@ def list_sources() -> dict:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# JOB ALERTS
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _get_or_create_job_alert_preference(db: Session, user_id: int) -> JobAlertPreference:
+    pref = (
+        db.query(JobAlertPreference)
+        .filter(JobAlertPreference.user_id == user_id)
+        .first()
+    )
+    if pref:
+        return pref
+    pref = JobAlertPreference(user_id=user_id)
+    db.add(pref)
+    db.flush()
+    return pref
+
+
+def _mark_job_alert_delivery_action(
+    db: Session,
+    user_id: int,
+    scraped_job_id: int | None,
+    action: str,
+) -> None:
+    if not scraped_job_id:
+        return
+    pref = _get_or_create_job_alert_preference(db, user_id)
+    delivery = (
+        db.query(JobAlertDelivery)
+        .filter(
+            JobAlertDelivery.user_id == user_id,
+            JobAlertDelivery.scraped_job_id == scraped_job_id,
+        )
+        .first()
+    )
+    now = datetime.now(timezone.utc)
+    if not delivery:
+        delivery = JobAlertDelivery(
+            user_id=user_id,
+            preference_id=pref.id,
+            scraped_job_id=scraped_job_id,
+            action=action,
+            sent_at=now,
+        )
+        db.add(delivery)
+    delivery.preference_id = pref.id
+    delivery.action = action
+    if action != "sent":
+        delivery.dismissed_at = now
+
+
+@app.get("/api/job-alerts/preferences", response_model=JobAlertPreferenceOut)
+def get_job_alert_preference(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JobAlertPreference:
+    pref = _get_or_create_job_alert_preference(db, user.id)
+    db.commit()
+    db.refresh(pref)
+    return pref
+
+
+@app.put("/api/job-alerts/preferences", response_model=JobAlertPreferenceOut)
+def update_job_alert_preference(
+    body: JobAlertPreferenceUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JobAlertPreference:
+    pref = _get_or_create_job_alert_preference(db, user.id)
+    updates = body.model_dump(exclude_unset=True)
+
+    enabling = updates.get("enabled") is True and not bool(pref.enabled)
+    disabling = updates.get("enabled") is False and bool(pref.enabled)
+    if updates.get("enabled") is True:
+        mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
+        resume_text = (mem.resume_text or "").strip() if mem else ""
+        if len(resume_text) < 50:
+            raise HTTPException(
+                status_code=400,
+                detail="Upload or score a resume first before enabling matched job alerts.",
+            )
+
+    for key, value in updates.items():
+        if key == "keywords" and isinstance(value, str):
+            value = sanitize_user_input(value)[:300]
+        setattr(pref, key, value)
+
+    if enabling:
+        # Start from now so opt-in does not send a large backlog of old jobs.
+        pref.last_run_at = datetime.now(timezone.utc)
+        pref.consented_at = datetime.now(timezone.utc)
+        pref.unsubscribed_at = None
+    if disabling:
+        pref.unsubscribed_at = datetime.now(timezone.utc)
+    pref.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(pref)
+    return pref
+
+
+@app.post("/api/job-alerts/jobs/{job_id}/dismiss")
+def dismiss_job_alert(
+    job_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    _mark_job_alert_delivery_action(db, user.id, job_id, "dismissed")
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/job-alerts/unsubscribe")
+@app.post("/api/job-alerts/unsubscribe")
+def unsubscribe_job_alerts(
+    token: str = Query(..., min_length=20, max_length=200),
+    db: Session = Depends(get_db),
+) -> Response:
+    try:
+        user_id = verify_unsubscribe_token(token)
+    except RuntimeError:
+        user_id = None
+    if not user_id:
+        return Response(
+            content=(
+                "<!DOCTYPE html><html><body style=\"font-family:system-ui,sans-serif;"
+                "max-width:640px;margin:48px auto;line-height:1.6;\">"
+                "<h1>Invalid unsubscribe link</h1>"
+                "<p>This alert link is invalid or expired. Sign in and turn off Job Match Alerts from Account.</p>"
+                "</body></html>"
+            ),
+            media_type="text/html",
+            status_code=400,
+        )
+
+    pref = _get_or_create_job_alert_preference(db, user_id)
+    pref.enabled = False
+    pref.unsubscribed_at = datetime.now(timezone.utc)
+    pref.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    app_base_url = os.environ.get("APP_BASE_URL", "https://job.kooexperience.com").rstrip("/")
+    return Response(
+        content=(
+            "<!DOCTYPE html><html><body style=\"font-family:system-ui,sans-serif;"
+            "max-width:640px;margin:48px auto;line-height:1.6;color:#243447;\">"
+            "<h1>Job alerts unsubscribed</h1>"
+            "<p>You will no longer receive Job Hunter SG match alert emails. "
+            "You can turn alerts back on from the Account page anytime.</p>"
+            f"<p><a href=\"{app_base_url}\">Return to Job Hunter SG</a></p>"
+            "</body></html>"
+        ),
+        media_type="text/html",
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # TRACKED JOBS
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -4003,6 +4388,7 @@ def create_tracked(
         scraped_job_id=body.scraped_job_id,
     )
     db.add(tracked)
+    _mark_job_alert_delivery_action(db, user.id, body.scraped_job_id, "tracked")
     db.commit()
     db.refresh(tracked)
     return tracked

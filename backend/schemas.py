@@ -29,6 +29,7 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
     name: str = Field(..., min_length=1, max_length=255)
+    accepted_terms: bool = Field(False, description="User accepted Terms of Service and Privacy Notice")
 
     @field_validator("email")
     @classmethod
@@ -46,10 +47,33 @@ class SignupRequest(BaseModel):
             raise ValueError("Password must be at least 8 characters")
         return v
 
+    @field_validator("accepted_terms")
+    @classmethod
+    def accepted_terms_required(cls, v: bool) -> bool:
+        if not v:
+            raise ValueError("You must accept the Terms of Service and Privacy Notice")
+        return v
+
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., max_length=128)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=20, max_length=300)
+    password: str = Field(..., min_length=8, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def password_min_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return v
 
 
 class UserOut(BaseModel):
@@ -61,6 +85,8 @@ class UserOut(BaseModel):
     tier: str
     api_key: Optional[str] = None
     created_at: datetime
+    terms_accepted_at: Optional[datetime] = None
+    privacy_accepted_at: Optional[datetime] = None
 
     @model_validator(mode="after")
     def mask_api_key(self):
@@ -153,6 +179,44 @@ class TrackedJobOut(BaseModel):
     scraped_job_id: Optional[int]
     created_at: datetime
     updated_at: datetime
+
+
+# ── Job Alerts ───────────────────────────────────────────────────────────────
+
+_ALERT_FREQUENCY = Literal["daily", "weekly"]
+
+
+class JobAlertPreferenceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    enabled: bool
+    min_score: int
+    direct_employers_only: bool
+    frequency: str
+    keywords: str
+    max_jobs: int
+    last_run_at: Optional[datetime]
+    consented_at: Optional[datetime]
+    unsubscribed_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+
+
+class JobAlertPreferenceUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    min_score: Optional[int] = Field(None, ge=35, le=95)
+    direct_employers_only: Optional[bool] = None
+    frequency: Optional[_ALERT_FREQUENCY] = None
+    keywords: Optional[str] = Field(None, max_length=300)
+    max_jobs: Optional[int] = Field(None, ge=1, le=10)
+
+    @field_validator("keywords")
+    @classmethod
+    def clean_keywords(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return " ".join(value.split()).strip()
 
 
 # ── Utility ──────────────────────────────────────────────────────────────────

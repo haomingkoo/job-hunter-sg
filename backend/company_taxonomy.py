@@ -41,6 +41,8 @@ LIVE_LOOKUP_ENABLED = os.environ.get("ACRA_LIVE_LOOKUP", "").strip().lower() in 
 LIVE_LOOKUP_MIN_INTERVAL_SECONDS = float(
     os.environ.get("ACRA_LIVE_LOOKUP_MIN_INTERVAL_SECONDS", "2.6")
 )
+LIVE_LOOKUP_MAX_ATTEMPTS = int(os.environ.get("ACRA_LIVE_LOOKUP_MAX_ATTEMPTS", "3"))
+LIVE_LOOKUP_RETRY_SECONDS = float(os.environ.get("ACRA_LIVE_LOOKUP_RETRY_SECONDS", "12"))
 
 _COMPANY_CACHE_LOCK = threading.Lock()
 _COMPANY_CACHE: dict[str, dict[str, str]] | None = None
@@ -229,6 +231,22 @@ def _score_record(record: dict, target_key: str) -> int:
     return score
 
 
+def _acra_retry_after(resp: requests.Response) -> float:
+    retry_after = resp.headers.get("Retry-After", "")
+    try:
+        return min(60.0, max(1.0, float(retry_after)))
+    except ValueError:
+        pass
+    try:
+        message = str(resp.json().get("errorMsg") or "")
+    except ValueError:
+        message = ""
+    match = re.search(r"try again in (\d+(?:\.\d+)?) seconds", message, re.I)
+    if match:
+        return min(60.0, max(1.0, float(match.group(1))))
+    return LIVE_LOOKUP_RETRY_SECONDS
+
+
 def _lookup_acra_live(company_name: str) -> CompanyTaxonomyMatch | None:
     if _is_generic_company(company_name):
         return None
@@ -237,18 +255,26 @@ def _lookup_acra_live(company_name: str) -> CompanyTaxonomyMatch | None:
     if not dataset_id:
         return None
 
-    _rate_limit_live_lookup()
-    resp = requests.get(
-        DATASTORE_SEARCH_URL,
-        params={
-            "resource_id": dataset_id,
-            "limit": 10,
-            "fields": "entity_name,entity_status_description,primary_ssic_code,primary_ssic_description",
-            "q": target_key,
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
+    params = {
+        "resource_id": dataset_id,
+        "limit": 10,
+        "fields": "entity_name,entity_status_description,primary_ssic_code,primary_ssic_description",
+        "q": target_key,
+    }
+    resp = None
+    attempts = max(1, LIVE_LOOKUP_MAX_ATTEMPTS)
+    for attempt in range(attempts):
+        _rate_limit_live_lookup()
+        resp = requests.get(DATASTORE_SEARCH_URL, params=params, timeout=15)
+        if resp.status_code == 429 and attempt < attempts - 1:
+            wait_seconds = _acra_retry_after(resp)
+            log.info("ACRA lookup rate-limited for company=%r; retrying in %.1fs", company_name, wait_seconds)
+            time.sleep(wait_seconds)
+            continue
+        resp.raise_for_status()
+        break
+    if resp is None:
+        return None
     records = resp.json().get("result", {}).get("records", [])
     viable = [
         record for record in records

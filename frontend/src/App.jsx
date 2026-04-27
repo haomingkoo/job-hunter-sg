@@ -40,6 +40,20 @@ export default function JobHunterSG() {
   const [token, setToken] = useState(() => localStorage.getItem("token"));
   const [authLoading, setAuthLoading] = useState(true);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get("reset_token") || "");
+
+  const clearResetToken = useCallback(() => {
+    setResetToken("");
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("reset_token")) {
+      url.searchParams.delete("reset_token");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (resetToken) setShowAuthModal(true);
+  }, [resetToken]);
 
   // Validate token on mount
   useEffect(() => {
@@ -213,8 +227,10 @@ export default function JobHunterSG() {
 
       {showAuthModal && (
         <AuthModal
-          onAuth={(authUser, authToken) => { handleAuth(authUser, authToken); setShowAuthModal(false); }}
-          onClose={() => setShowAuthModal(false)}
+          initialResetToken={resetToken}
+          onResetComplete={clearResetToken}
+          onAuth={(authUser, authToken) => { handleAuth(authUser, authToken); setShowAuthModal(false); clearResetToken(); }}
+          onClose={() => { setShowAuthModal(false); clearResetToken(); }}
         />
       )}
 

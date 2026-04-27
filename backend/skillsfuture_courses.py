@@ -28,6 +28,7 @@ POLL_URL = f"https://api-open.data.gov.sg/v1/public/api/datasets/{DATASET_ID}/po
 COURSE_URL = "https://www.myskillsfuture.gov.sg/content/portal/en/training-exchange/course-directory/course-detail.html?courseReferenceNumber={ref}"
 HEADERS = {"User-Agent": "JobHunterSG/1.0 (+https://jobhunter.kooexperience.com)"}
 CACHE_TTL_SECONDS = 24 * 3600
+ERROR_RETRY_SECONDS = 30 * 60
 DISK_CACHE_PATH = Path(os.environ.get("SKILLSFUTURE_COURSE_CACHE", "/tmp/jobhunter_skillsfuture_courses.xlsx"))
 
 _cache_lock = threading.Lock()
@@ -35,6 +36,7 @@ _refresh_lock = threading.Lock()
 _course_cache: list[dict] = []
 _course_cache_ts = 0.0
 _last_error = ""
+_last_attempt_ts = 0.0
 
 
 @dataclass
@@ -215,16 +217,43 @@ def _load_disk_course_rows() -> list[dict]:
     return _parse_course_rows(DISK_CACHE_PATH.read_bytes())
 
 
+def _disk_cache_is_fresh() -> bool:
+    try:
+        return DISK_CACHE_PATH.exists() and time.time() - DISK_CACHE_PATH.stat().st_mtime < CACHE_TTL_SECONDS
+    except OSError:
+        return False
+
+
 def load_courses() -> tuple[list[dict], str]:
-    global _course_cache, _course_cache_ts, _last_error
+    global _course_cache, _course_cache_ts, _last_error, _last_attempt_ts
     now = time.time()
     with _cache_lock:
         if _course_cache and now - _course_cache_ts < CACHE_TTL_SECONDS:
+            return _course_cache, _last_error
+        if not _course_cache and _last_error and now - _last_attempt_ts < ERROR_RETRY_SECONDS:
             return _course_cache, _last_error
 
     with _refresh_lock:
         with _cache_lock:
             if _course_cache and time.time() - _course_cache_ts < CACHE_TTL_SECONDS:
+                return _course_cache, _last_error
+            now = time.time()
+            if not _course_cache and _last_error and now - _last_attempt_ts < ERROR_RETRY_SECONDS:
+                return _course_cache, _last_error
+            _last_attempt_ts = now
+
+        disk_error = ""
+        disk_courses: list[dict] = []
+        if _disk_cache_is_fresh():
+            try:
+                disk_courses = _load_disk_course_rows()
+            except Exception as cache_exc:
+                disk_error = f"disk cache failed: {cache_exc.__class__.__name__}: {cache_exc}"
+        if disk_courses:
+            with _cache_lock:
+                _course_cache = disk_courses
+                _course_cache_ts = time.time()
+                _last_error = ""
                 return _course_cache, _last_error
 
         try:
@@ -243,7 +272,7 @@ def load_courses() -> tuple[list[dict], str]:
                     return _course_cache, _last_error
             if not courses:
                 with _cache_lock:
-                    _last_error = live_error
+                    _last_error = f"{live_error}; {disk_error}".strip("; ")
                     return _course_cache, _last_error
             with _cache_lock:
                 _course_cache = courses

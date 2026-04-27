@@ -42,6 +42,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [locationFilter, setLocationFilter] = useState(new Set());
   const [sectorFilter, setSectorFilter] = useState("");
+  const [directEmployersOnly, setDirectEmployersOnly] = useState(false);
   const activeSearchQuery = submittedQuery;
 
   // Track which jobs are already tracked (Feature 3)
@@ -77,9 +78,11 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       const activeLevel = nextFilters.levelFilter ?? levelFilter;
       const activeEmployment = nextFilters.employmentFilter ?? employmentFilter;
       const activeMinSalary = nextFilters.minSalaryFilter ?? minSalaryFilter;
+      const activeDirectEmployersOnly = nextFilters.directEmployersOnly ?? directEmployersOnly;
 
       if (normalizedQuery) params.set("q", normalizedQuery);
       if (activeLevel !== "all") params.set("seniority", activeLevel);
+      if (activeDirectEmployersOnly) params.set("direct_employers_only", "true");
       if (activeEmployment instanceof Set && activeEmployment.size > 0) {
         params.set("employment_type", [...activeEmployment].join(","));
       } else if (typeof activeEmployment === "string" && activeEmployment !== "all") {
@@ -427,6 +430,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     locationFilter.size > 0,
     String(minSalaryFilter).trim() !== "",
     sectorFilter !== "",
+    directEmployersOnly,
   ].filter(Boolean).length;
 
   const clearFilters = () => {
@@ -436,12 +440,14 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     setLocationFilter(new Set());
     setMinSalaryFilter("");
     setSectorFilter("");
+    setDirectEmployersOnly(false);
     setExpandedJobId(null);
     loadJobs(activeSearchQuery, 1, {
       levelFilter: "all",
       employmentFilter: new Set(),
       minSalaryFilter: "",
       sectorFilter: "",
+      directEmployersOnly: false,
     });
   };
 
@@ -478,6 +484,33 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             {loading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
           </button>
         </div>
+      </div>
+
+      {/* Employer Type */}
+      <div>
+        <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Employer Type</label>
+        <button
+          type="button"
+          onClick={() => {
+            const next = !directEmployersOnly;
+            setDirectEmployersOnly(next);
+            loadJobs(activeSearchQuery, 1, { directEmployersOnly: next });
+          }}
+          aria-pressed={directEmployersOnly}
+          className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition active:scale-[0.99] ${
+            directEmployersOnly
+              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+              : "border-[#BDDDFC]/30 bg-white text-[#384959] hover:bg-[#f0f4f8]"
+          }`}
+        >
+          <span>Direct employers only</span>
+          <span className={`h-5 w-9 rounded-full p-0.5 transition ${directEmployersOnly ? "bg-emerald-600" : "bg-[#BDDDFC]"}`}>
+            <span className={`block h-4 w-4 rounded-full bg-white transition-transform ${directEmployersOnly ? "translate-x-4" : "translate-x-0"}`} />
+          </span>
+        </button>
+        <p className="mt-1.5 text-[11px] leading-tight text-[#6A89A7]">
+          Hides recruitment and staffing firms so results focus on companies hiring directly.
+        </p>
       </div>
 
       {/* Experience Level */}

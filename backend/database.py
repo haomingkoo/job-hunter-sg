@@ -99,6 +99,14 @@ def _apply_lightweight_migrations() -> None:
         if idx_name not in existing_indexes:
             statements.append(idx_sql)
 
+    # users: explicit legal acceptance timestamps for password signup accounts
+    if "users" in inspector.get_table_names():
+        user_columns = {col["name"] for col in inspector.get_columns("users")}
+        if "terms_accepted_at" not in user_columns:
+            statements.append("ALTER TABLE users ADD COLUMN terms_accepted_at TIMESTAMP")
+        if "privacy_accepted_at" not in user_columns:
+            statements.append("ALTER TABLE users ADD COLUMN privacy_accepted_at TIMESTAMP")
+
     # tracked_jobs: new columns for resume versioning and stage history
     if "tracked_jobs" in inspector.get_table_names():
         tracked_columns = {col["name"] for col in inspector.get_columns("tracked_jobs")}
@@ -112,6 +120,14 @@ def _apply_lightweight_migrations() -> None:
         memory_columns = {col["name"] for col in inspector.get_columns("user_memories")}
         if "resume_embedding" not in memory_columns:
             statements.append("ALTER TABLE user_memories ADD COLUMN resume_embedding JSON")
+
+    # job_alert_preferences: opt-in and unsubscribe metadata
+    if "job_alert_preferences" in inspector.get_table_names():
+        alert_columns = {col["name"] for col in inspector.get_columns("job_alert_preferences")}
+        if "consented_at" not in alert_columns:
+            statements.append("ALTER TABLE job_alert_preferences ADD COLUMN consented_at TIMESTAMP")
+        if "unsubscribed_at" not in alert_columns:
+            statements.append("ALTER TABLE job_alert_preferences ADD COLUMN unsubscribed_at TIMESTAMP")
 
     # Widen jd_summary_status if it was created as VARCHAR(30) (too short for model names)
     summary_status_column = next(
