@@ -6,6 +6,7 @@ import {
 import { apiFetch } from "../lib/api.js";
 
 const formatNumber = (value) => Number(value || 0).toLocaleString();
+const formatPercent = (value) => Number(value || 0).toLocaleString(undefined, { maximumFractionDigits: 1 });
 const formatMoney = (value) => (value ? `S$${formatNumber(value)}` : "n/a");
 const formatSalaryRange = (salary) => {
   if (salary?.median_floor && salary?.median_midpoint) {
@@ -139,6 +140,15 @@ export default function AnalyticsTab() {
   const movers = data?.market_movers || {};
   const ssicCoverage = data?.ssic_coverage || {};
   const sectorSourceMix = data?.sector_source_mix || [];
+  const industryMappedCount = (ssicCoverage.official_count || 0) + (ssicCoverage.inferred_count || 0);
+  const industryMappedPercent = data?.total_jobs_with_terms
+    ? formatPercent((industryMappedCount / data.total_jobs_with_terms) * 100)
+    : "0";
+  const sectorSourceLabels = {
+    acra: "official company matches",
+    inferred: "inferred from postings",
+    unavailable: "uncategorised",
+  };
 
   const chartColors = ["bg-[#88BDF2]", "bg-emerald-500", "bg-violet-500", "bg-amber-500", "bg-rose-500", "bg-cyan-500"];
 
@@ -150,15 +160,15 @@ export default function AnalyticsTab() {
           Market Insights
         </h2>
         <p className="mt-1 text-sm text-[#6A89A7]">
-          Job market breakdown across {data?.total_jobs_with_terms?.toLocaleString() || "..."} listings with extracted ATS terms.
+          Skill and salary trends from {data?.total_jobs_with_terms?.toLocaleString() || "..."} Singapore job listings.
         </p>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile icon={Briefcase} label="Analysed roles" value={data?.total_jobs_with_terms ? formatNumber(data.total_jobs_with_terms) : "..."} />
-        <StatTile icon={Tags} label="Unique ATS terms" value={data?.skill_signal_count ? formatNumber(data.skill_signal_count) : "..."} />
+        <StatTile icon={Briefcase} label="Roles analysed" value={data?.total_jobs_with_terms ? formatNumber(data.total_jobs_with_terms) : "..."} />
+        <StatTile icon={Tags} label="Skill terms" value={data?.skill_signal_count ? formatNumber(data.skill_signal_count) : "..."} />
         <StatTile icon={Building2} label="Companies" value={data?.company_count ? formatNumber(data.company_count) : "..."} />
-        <StatTile icon={ShieldCheck} label="Official SSIC" value={`${ssicCoverage.official_percent || 0}%`} />
+        <StatTile icon={ShieldCheck} label="Industry mapped" value={`${industryMappedPercent}%`} />
       </div>
 
       <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
@@ -184,8 +194,8 @@ export default function AnalyticsTab() {
 
       {!loading && !error && sectorSourceMix.length > 0 && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 text-xs leading-relaxed text-[#6A89A7] shadow-sm">
-          Industry source: {sectorSourceMix.map((item) => `${formatNumber(item.count)} ${item.label}`).join(" / ")}.
-          ACRA SSIC is used when an official company match exists; otherwise the sector is labelled as inferred or unavailable.
+          Industry labels: {sectorSourceMix.map((item) => `${formatNumber(item.count)} ${sectorSourceLabels[item.source] || item.label}`).join(" / ")}.
+          Most listings do not publish SSIC directly, so inferred labels keep the market view usable.
         </div>
       )}
 
@@ -211,7 +221,7 @@ export default function AnalyticsTab() {
           />
           <SignalBlock
             icon={ShieldCheck}
-            label="ATS read"
+            label="Skill signal"
             value={data.overindexed_skills?.length ? "Niche signals found" : "Market baseline"}
             detail={data.overindexed_skills?.length ? "These terms appear unusually often in the selected slice." : "Filter by industry/sector or title to see what over-indexes."}
           />
@@ -222,9 +232,9 @@ export default function AnalyticsTab() {
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <div className="text-sm font-semibold text-[#384959]">Drill Down</div>
+              <div className="text-sm font-semibold text-[#384959]">Explore Market</div>
               <div className="text-xs leading-relaxed text-[#6A89A7]">
-                Pick a source, industry/sector, or job title here to refresh the ATS skills, salary, freshness, and seniority signals above.
+                Pick a source, industry/sector, or job title to refresh skills, salary, freshness, and seniority.
               </div>
             </div>
             {(sourceFilter || sectorFilter || titleFilter || companyFilter) && (
@@ -233,7 +243,7 @@ export default function AnalyticsTab() {
                 onClick={() => { setSourceFilter(""); setSectorFilter(""); setTitleFilter(""); setCompanyFilter(""); }}
                 className="self-start rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs font-medium text-[#384959] hover:bg-[#f0f4f8] sm:self-auto"
               >
-                Clear Drilldown
+                Clear Filters
               </button>
             )}
           </div>
@@ -276,7 +286,7 @@ export default function AnalyticsTab() {
               </div>
               {(data.sectors || []).some((item) => item.sector === "Other") && (
                 <div className="mt-2 text-[11px] leading-relaxed text-[#6A89A7]">
-                  Other means there is no official ACRA SSIC match and the inferred fallback did not map cleanly.
+                  Other means the listing could not be mapped to a clear industry.
                 </div>
               )}
             </div>
@@ -310,7 +320,7 @@ export default function AnalyticsTab() {
                 Market Movers
               </div>
               <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
-                Recent postings are compared with older dated postings in this same view. This is directional until daily snapshots are stored.
+                Recent postings are compared with older dated postings in this view.
               </div>
             </div>
             <div className="text-[11px] text-[#6A89A7]">
@@ -319,7 +329,7 @@ export default function AnalyticsTab() {
           </div>
           <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Over-indexing recently</div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Rising recently</div>
               <div className="space-y-2">
                 {(movers.rising || []).length > 0 ? (
                   movers.rising.slice(0, 6).map((item) => (
@@ -367,7 +377,7 @@ export default function AnalyticsTab() {
           <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-[#384959]">
               <Target size={16} />
-              ATS Hard Skills
+              Hard Skills
             </div>
             <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
               {(data.hard_skills || []).length > 0 ? (
@@ -388,14 +398,14 @@ export default function AnalyticsTab() {
               )}
             </div>
             <div className="mt-4 rounded-xl bg-[#f0f4f8] px-3 py-2 text-xs leading-relaxed text-[#6A89A7]">
-              Broad terms like communication and customer service are table stakes. ATS leverage usually comes from exact hard-skill, tool, certification, and domain terms.
+              Common terms like communication and customer service appear everywhere. Stronger resume alignment usually comes from exact tools, certifications, and domain terms.
             </div>
           </div>
 
           <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-[#384959]">
               <TrendingUp size={16} />
-              Over-Indexed Skills
+              Standout Skills
             </div>
             {(data.overindexed_skills || []).length > 0 ? (
               <div className="space-y-2">

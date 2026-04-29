@@ -395,7 +395,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           loaded: true,
           loading: false,
           stalled: false,
-          error: err.message || "Failed to load parsed JD cues.",
+          error: err.message || "Failed to load job terms.",
         },
       }));
       return false;
@@ -896,9 +896,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 <div className="mt-4 rounded-2xl border border-[#BDDDFC]/20 bg-[#f0f4f8] p-4">
                   {summaryText && (
                     <>
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">AI Summary</div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Job Summary</div>
                       <p className="mt-2 text-sm leading-relaxed text-[#384959]">{summaryText}</p>
-                      <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Original Description</div>
+                      <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Full Description</div>
                     </>
                   )}
                   {!summaryText && <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Description</div>}
@@ -911,7 +911,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                     </p>
                   )}
 
-                  <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Source Tags & Skill Cues</div>
+                  <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Skills Found</div>
                   {effectiveSkillDisplay.visibleSkills.length > 0 ? (
                     <>
                       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -923,23 +923,23 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                       </div>
                       <div className="mt-3 text-xs text-[#6A89A7]">
                         {parsedDisplay.visibleSkills.length > 0
-                          ? `Showing ${effectiveSkillDisplay.visibleSkills.length} practical cue${effectiveSkillDisplay.visibleSkills.length === 1 ? "" : "s"} extracted from the JD and source data.`
-                          : `Showing ${effectiveSkillDisplay.visibleSkills.length} practical cue${effectiveSkillDisplay.visibleSkills.length === 1 ? "" : "s"} from ${effectiveSkillDisplay.sourceTagCount} source tag${effectiveSkillDisplay.sourceTagCount === 1 ? "" : "s"}.`}
+                          ? `${effectiveSkillDisplay.visibleSkills.length} useful term${effectiveSkillDisplay.visibleSkills.length === 1 ? "" : "s"} found in the job description.`
+                          : `${effectiveSkillDisplay.visibleSkills.length} useful term${effectiveSkillDisplay.visibleSkills.length === 1 ? "" : "s"} found in ${effectiveSkillDisplay.sourceTagCount} source tag${effectiveSkillDisplay.sourceTagCount === 1 ? "" : "s"}.`}
                       </div>
                       {effectiveSkillDisplay.hiddenStudyAreas.length > 0 && (
                         <div className="mt-2 text-xs text-amber-700">
-                          Hid {effectiveSkillDisplay.hiddenStudyAreas.length} broad study-area label{effectiveSkillDisplay.hiddenStudyAreas.length === 1 ? "" : "s"} like {effectiveSkillDisplay.hiddenStudyAreas.slice(0, 2).join(", ")} so this stays focused on practical fit.
+                          Hidden: {effectiveSkillDisplay.hiddenStudyAreas.length} broad category label{effectiveSkillDisplay.hiddenStudyAreas.length === 1 ? "" : "s"} like {effectiveSkillDisplay.hiddenStudyAreas.slice(0, 2).join(", ")}.
                         </div>
                       )}
                     </>
                   ) : parsedMeta?.loading && !longCueLoad && !cuesWereAlreadyChecked ? (
                     <div className="mt-2 flex items-center gap-2 text-sm text-[#6A89A7]">
                       <Loader2 size={14} className="animate-spin" />
-                      Extracting skill cues from the job description...
+                      Reading job description...
                     </div>
                   ) : parsedMeta?.loading && longCueLoad && !cuesWereAlreadyChecked ? (
                     <div className="mt-2 text-sm text-[#6A89A7]">
-                      Cue extraction is taking longer than expected. Collapse and reopen the card to retry, or use the full listing if you need the original JD immediately.
+                      Skill extraction is taking longer than expected. Collapse and reopen the card to retry, or open the full listing.
                     </div>
                   ) : parsedMeta?.error ? (
                     <div className="mt-2 text-sm text-[#6A89A7]">
@@ -947,15 +947,15 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                     </div>
                   ) : cuesWereAlreadyChecked ? (
                     <div className="mt-2 text-sm text-[#6A89A7]">
-                      We checked this posting for practical ATS cues but did not find enough trustworthy terms to surface yet.
+                      We checked this posting but did not find enough reliable skill terms to show yet.
                     </div>
                   ) : job.skills.length > 0 ? (
                     <div className="mt-2 text-sm text-[#6A89A7]">
-                      This listing only exposed broad source tags, so we did not surface them as practical skill cues.
+                      This listing only exposed broad tags, so no focused skill terms are shown.
                     </div>
                   ) : (
                     <div className="mt-2 text-sm text-[#6A89A7]">
-                      No structured skills were captured from this source for this posting, and we could not confidently extract practical cues from the JD yet.
+                      No reliable skill terms were found for this posting yet.
                     </div>
                   )}
                 </div>

@@ -7,6 +7,7 @@ import { API_BASE, apiFetch } from "../lib/api.js";
 import TierBadge from "./TierBadge.jsx";
 
 const formatLimit = (value) => (value >= 999999 ? "Unlimited" : value?.toLocaleString?.() ?? value);
+const formatLimitLabel = (value) => (value >= 999999 ? "Unlimited" : `${formatLimit(value)} limit`);
 const defaultAlertPrefs = {
   enabled: false,
   min_score: 75,
@@ -18,6 +19,7 @@ const defaultAlertPrefs = {
 };
 
 export default function AccountTab({ user, onLogout, setActiveTab }) {
+  const [accountView, setAccountView] = useState("overview");
   const [usage, setUsage] = useState(null);
   const [usageLoading, setUsageLoading] = useState(true);
   const [adminMetrics, setAdminMetrics] = useState(null);
@@ -75,6 +77,11 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
       setAdminMetrics(null);
       setAdminError("");
       setAdminLoading(false);
+      if (accountView === "admin") setAccountView("overview");
+      return;
+    }
+
+    if (accountView !== "admin") {
       return;
     }
 
@@ -95,7 +102,7 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
     })();
 
     return () => { cancelled = true; };
-  }, [isAdmin]);
+  }, [accountView, isAdmin]);
 
   const sendContact = async (e) => {
     e.preventDefault();
@@ -145,14 +152,41 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
   };
 
   const isPro = user?.tier === "pro" || user?.tier === "admin";
+  const accountSections = [
+    { id: "overview", label: "Overview", icon: User },
+    { id: "plans", label: "Plans & Privacy", icon: ShieldCheck },
+    ...(isAdmin ? [{ id: "admin", label: "Admin", icon: BarChart2 }] : []),
+  ];
 
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
         <h2 className="font-semibold text-[#384959] flex items-center gap-2"><User size={18} /> Account</h2>
-        <p className="text-sm text-[#6A89A7] mt-1">Manage your account, usage, saved work, and support requests.</p>
+        <p className="text-sm text-[#6A89A7] mt-1">Manage your account, saved work, alerts, and support.</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {accountSections.map(({ id, label, icon: Icon }) => {
+            const selected = accountView === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setAccountView(id)}
+                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition active:scale-[0.98] ${
+                  selected
+                    ? "border-[#384959] bg-[#384959] text-white"
+                    : "border-[#BDDDFC]/30 bg-[#f0f4f8] text-[#6A89A7] hover:bg-white hover:text-[#384959]"
+                }`}
+              >
+                <Icon size={14} />
+                {label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
+      {accountView === "overview" && (
+      <>
       {/* User Info */}
       <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
         <h3 className="font-semibold text-[#384959] mb-4">Profile</h3>
@@ -185,28 +219,28 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div className="bg-blue-50 rounded-xl p-4 text-center">
               <div className="text-2xl font-bold text-[#384959]">{usage.searches_today ?? 0}</div>
-              <div className="text-xs text-[#6A89A7] mt-1">Searches Today</div>
+              <div className="text-xs text-[#6A89A7] mt-1">Searches today</div>
               {usage.searches_limit != null && (
-                <div className="text-xs text-[#6A89A7] mt-0.5">/ {formatLimit(usage.searches_limit)} limit</div>
+                <div className="text-xs text-[#6A89A7] mt-0.5">{formatLimitLabel(usage.searches_limit)}</div>
               )}
             </div>
             <div className="bg-emerald-50 rounded-xl p-4 text-center">
               <div className="text-2xl font-bold text-[#384959]">{usage.ai_today ?? 0}</div>
-              <div className="text-xs text-[#6A89A7] mt-1">AI Requests Today</div>
+              <div className="text-xs text-[#6A89A7] mt-1">AI requests today</div>
               {usage.ai_limit != null && (
-                <div className="text-xs text-[#6A89A7] mt-0.5">/ {formatLimit(usage.ai_limit)} limit</div>
+                <div className="text-xs text-[#6A89A7] mt-0.5">{formatLimitLabel(usage.ai_limit)}</div>
               )}
             </div>
             <div className="bg-purple-50 rounded-xl p-4 text-center">
               <div className="text-2xl font-bold text-[#384959]">{usage.tracked_jobs ?? 0}</div>
-              <div className="text-xs text-[#6A89A7] mt-1">Tracked Jobs</div>
+              <div className="text-xs text-[#6A89A7] mt-1">Tracked jobs</div>
               {usage.tracked_limit != null && (
-                <div className="text-xs text-[#6A89A7] mt-0.5">/ {formatLimit(usage.tracked_limit)} limit</div>
+                <div className="text-xs text-[#6A89A7] mt-0.5">{formatLimitLabel(usage.tracked_limit)}</div>
               )}
             </div>
             <div className="bg-green-50 rounded-xl p-4 text-center">
               <div className="text-2xl font-bold text-[#384959] capitalize">{usage.tier || user?.tier || "free"}</div>
-              <div className="text-xs text-[#6A89A7] mt-1">Current Tier</div>
+              <div className="text-xs text-[#6A89A7] mt-1">Current tier</div>
             </div>
           </div>
         ) : (
@@ -218,10 +252,10 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
         <h3 className="font-semibold text-[#384959] mb-4">Quick Actions</h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            { label: "Review Resume", detail: "Check parse quality and export.", icon: FileText, tab: "resume" },
-            { label: "Smart Match", detail: "Refresh fit and course gaps.", icon: Sparkles, tab: "power" },
-            { label: "Story Bank", detail: "Prepare interview examples.", icon: BookOpen, tab: "stories" },
-            { label: "Market Insights", detail: "Explore sector skill demand.", icon: BarChart2, tab: "analytics" },
+            { label: "Review Resume", detail: "Edit and export your resume.", icon: FileText, tab: "resume" },
+            { label: "Smart Match", detail: "Find roles and skill gaps.", icon: Sparkles, tab: "power" },
+            { label: "Story Bank", detail: "Save interview examples.", icon: BookOpen, tab: "stories" },
+            { label: "Market Insights", detail: "Explore skill and salary trends.", icon: BarChart2, tab: "analytics" },
           ].map(({ label, detail, icon: Icon, tab }) => (
             <button
               key={label}
@@ -246,7 +280,7 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
               <Bell size={17} /> Job Match Alerts
             </h3>
             <p className="mt-1 text-sm text-[#6A89A7]">
-              Email digests for new roles that clear your saved resume match threshold.
+              Get email digests for roles that match your saved resume.
             </p>
           </div>
           <button
@@ -288,7 +322,7 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
           <form onSubmit={saveAlertPrefs} className="mt-5 space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <label className="block">
-                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Minimum Score</span>
+                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Match Score</span>
                 <input
                   type="number"
                   min="35"
@@ -310,7 +344,7 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
                 </select>
               </label>
               <label className="block">
-                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Max Jobs</span>
+                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Jobs Per Email</span>
                 <input
                   type="number"
                   min="1"
@@ -323,7 +357,7 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
               <label className="flex items-center justify-between gap-3 rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-2">
                 <span>
                   <span className="block text-sm font-medium text-[#384959]">Direct employers only</span>
-                  <span className="block text-xs text-[#6A89A7]">Default for cleaner alerts.</span>
+                  <span className="block text-xs text-[#6A89A7]">Hide recruiters by default.</span>
                 </span>
                 <input
                   type="checkbox"
@@ -339,7 +373,7 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
               <input
                 value={alertPrefs.keywords || ""}
                 onChange={(e) => setAlertPrefs((prev) => ({ ...prev, keywords: e.target.value }))}
-                placeholder="Optional: semicon, cloud, data engineering"
+                placeholder="e.g. cloud, data engineering"
                 className="w-full rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959]"
               />
             </label>
@@ -348,7 +382,7 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
               <div className="text-xs text-[#6A89A7]">
                 {alertPrefs.last_run_at
                   ? `Last checked ${new Date(alertPrefs.last_run_at).toLocaleString()}`
-                  : "Alerts start checking from the moment you enable them."}
+                  : "Alerts start after you turn them on."}
                 {alertPrefs.enabled && (
                   <span className="mt-1 block">
                     By enabling alerts, you consent to receiving matched-job digests. Every alert includes an unsubscribe link.
@@ -367,13 +401,15 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
           </form>
         )}
       </div>
+      </>
+      )}
 
-      {isAdmin && (
+      {isAdmin && accountView === "admin" && (
         <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
           <div className="flex items-center justify-between gap-3 mb-4">
             <div>
-              <h3 className="font-semibold text-[#384959]">Admin Snapshot</h3>
-              <p className="text-sm text-[#6A89A7] mt-1">Site-wide signups, resume activity, and onboarding signals.</p>
+              <h3 className="font-semibold text-[#384959]">Admin Metrics</h3>
+              <p className="text-sm text-[#6A89A7] mt-1">Signups, resume activity, and usage.</p>
             </div>
             <button
               type="button"
@@ -450,7 +486,7 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
                 </div>
 
                 <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
-                  <div className="text-sm font-semibold text-[#384959]">Onboarding Signals</div>
+                  <div className="text-sm font-semibold text-[#384959]">Onboarding</div>
                   <div className="mt-3 space-y-2 text-sm text-[#384959]">
                     <div className="flex items-center justify-between"><span>Resume chat starts, 7d</span><span className="font-medium">{adminMetrics.activity.resume_chat_starts_7d}</span></div>
                     <div className="flex items-center justify-between"><span>Resume chat generates, 7d</span><span className="font-medium">{adminMetrics.activity.resume_chat_generates_7d}</span></div>
@@ -469,9 +505,9 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
                 </div>
 
                 <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
-                  <div className="text-sm font-semibold text-[#384959]">Resume Parse Quality</div>
+                  <div className="text-sm font-semibold text-[#384959]">Resume Parsing</div>
                   <div className="mt-3 space-y-2 text-sm text-[#384959]">
-                    <div className="flex items-center justify-between"><span>Diagnostics, 30d</span><span className="font-medium">{adminMetrics.resume_parse_quality?.diagnostic_uploads_30d ?? 0}</span></div>
+                    <div className="flex items-center justify-between"><span>Uploads checked, 30d</span><span className="font-medium">{adminMetrics.resume_parse_quality?.diagnostic_uploads_30d ?? 0}</span></div>
                     <div className="flex items-center justify-between"><span>Needs review</span><span className="font-medium">{adminMetrics.resume_parse_quality?.needs_review_30d ?? 0}</span></div>
                     <div className="flex items-center justify-between"><span>Avg score</span><span className="font-medium">{adminMetrics.resume_parse_quality?.avg_score ?? "n/a"}</span></div>
                     <div className="flex items-center justify-between"><span>Good / Check / Review</span><span className="font-medium">{adminMetrics.resume_parse_quality?.labels?.good ?? 0} / {adminMetrics.resume_parse_quality?.labels?.check ?? 0} / {adminMetrics.resume_parse_quality?.labels?.review ?? 0}</span></div>
@@ -492,7 +528,7 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
               <div className="mt-5 rounded-xl border border-[#BDDDFC]/30 bg-white overflow-hidden">
                 <div className="px-4 py-3 border-b border-[#BDDDFC]/20">
                   <div className="text-sm font-semibold text-[#384959]">Last 14 Days</div>
-                  <div className="text-xs text-[#6A89A7] mt-1">Use this to sanity-check whether onboarding changes improve signup and resume activity.</div>
+                  <div className="text-xs text-[#6A89A7] mt-1">Check whether product changes improve signups and resume activity.</div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -524,12 +560,14 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
         </div>
       )}
 
+      {accountView === "plans" && (
+      <>
       <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
         <h3 className="font-semibold text-[#384959] mb-3 flex items-center gap-2">
           <ShieldCheck size={17} /> Legal & Privacy
         </h3>
         <p className="text-sm text-[#6A89A7] mb-4">
-          Job Hunter SG is a hobby project. Review the service limits, privacy handling, and alert consent terms here.
+          Review service limits, privacy handling, and alert consent.
         </p>
         <div className="flex flex-col gap-3 sm:flex-row">
           <button
@@ -583,7 +621,7 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
                 <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
               </tr>
               <tr>
-                <td className="px-4 py-3 text-[#384959]">Smart Match (RAG)</td>
+                <td className="px-4 py-3 text-[#384959]">Smart Match</td>
                 <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
                 <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
               </tr>
@@ -610,19 +648,19 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
             <p className="text-sm text-[#6A89A7] mb-3">
               Sign in with an AISG account for unlimited AI requests, job tracking, and saved resume versions.
             </p>
-            <p className="text-sm text-[#6A89A7]">
-              Have questions? Send us a message below or reach out directly.
-            </p>
           </div>
         )}
       </div>
+      </>
+      )}
 
       {/* Contact */}
+      {accountView === "overview" && (
       <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
-        <h3 className="font-semibold text-[#384959] mb-4">Get in Touch</h3>
+        <h3 className="font-semibold text-[#384959] mb-4">Contact</h3>
 
         <div className="flex flex-wrap gap-3 mb-5">
-          <span className="text-sm text-[#6A89A7]">Send us a message below or email us through the contact form.</span>
+          <span className="text-sm text-[#6A89A7]">Send a message or report an issue.</span>
         </div>
 
         {contactSent && (
@@ -652,6 +690,7 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
           </button>
         </form>
       </div>
+      )}
 
       {/* Logout */}
       <button onClick={onLogout}

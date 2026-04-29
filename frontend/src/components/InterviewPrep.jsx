@@ -110,17 +110,18 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
   if (!user) return null;
 
   return (
-    <div className="rounded-2xl border border-[#BDDDFC]/20 bg-[#f0f4f8] p-4 mt-3">
+    <div className="w-full rounded-xl border border-[#BDDDFC]/25 bg-white px-3 py-2 shadow-sm sm:w-[340px]">
       {/* Header */}
-      <div className="flex items-center gap-2 mb-3">
-        <BookOpen size={18} className="text-violet-600" />
-        <h3 className="text-sm font-bold text-[#384959]">Prep for Interview</h3>
+      <div className="flex items-center gap-2">
+        <BookOpen size={16} className="text-violet-600" />
+        <h3 className="text-sm font-semibold text-[#384959]">Interview prep</h3>
       </div>
 
       {/* Loading */}
       {loading && (
-        <div className="flex items-center justify-center py-6">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-violet-300 border-t-violet-600" />
+        <div className="mt-2 flex items-center gap-2 text-xs text-[#6A89A7]">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-violet-300 border-t-violet-600" />
+          Loading suggestions...
         </div>
       )}
 
@@ -131,23 +132,23 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
 
       {/* Empty state: user has no stories */}
       {data && !data.suggestions?.length && !data.other_stories?.length && (
-        <div className="text-center py-6">
-          <Sparkles size={24} className="mx-auto text-violet-400 mb-2" />
-          <p className="text-sm text-[#6A89A7]">
-            Build your story bank to see prep suggestions here
+        <div className="mt-2 flex items-center gap-3">
+          <Sparkles size={16} className="shrink-0 text-violet-400" />
+          <p className="min-w-0 flex-1 text-xs leading-relaxed text-[#6A89A7]">
+            Add a few stories to get interview prompts for this role.
           </p>
           <button
             onClick={onNavigateToStories}
-            className="mt-3 rounded-xl bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 transition"
+            className="shrink-0 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-violet-700 active:scale-[0.98]"
           >
-            Go to Story Bank
+            Add stories
           </button>
         </div>
       )}
 
       {/* Results */}
       {data && (data.suggestions?.length > 0 || data.other_stories?.length > 0) && (
-        <div className="space-y-3">
+        <div className="mt-3 space-y-3">
           {/* Detected tags */}
           {data.detected_tags?.length > 0 && (
             <div>

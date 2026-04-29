@@ -1870,7 +1870,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       .map((section) => ({
         id: section.id,
         preview: section.text.length > 60 ? `${section.text.slice(0, 60)}...` : section.text,
-        hint: "Add a %, $, timeline, team size, or scale cue.",
+        hint: "Add a %, $, timeline, team size, or scale detail.",
       }));
     const totalBullets = liveBulletCount || 1;
     const actionScore = Math.min(10, Math.round((actionCount / totalBullets) * 10));
@@ -1886,7 +1886,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         actionSuggestions.push("Start more bullets with strong action verbs (e.g., Led, Developed, Implemented).");
       }
       if (metricCount / totalBullets < 0.5) {
-        specificsSuggestions.push("Quantify more bullets with numbers, percentages, dollar amounts, or scale cues.");
+        specificsSuggestions.push("Quantify more bullets with numbers, percentages, dollar amounts, or scale details.");
       }
     }
 
@@ -1938,7 +1938,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     : scorePhase === "final_complete"
       ? "Final score complete"
       : scorePhase === "editing"
-        ? "Final score pending"
+        ? "Draft edited"
         : scorePhase === "opening_scored"
           ? "Opening score ready"
           : "Opening score pending";
@@ -2669,10 +2669,10 @@ CERTIFICATIONS
           </div>
 
           <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Reference Cues</div>
-            <div className="mt-2 text-lg font-semibold text-slate-900">NUS benchmark signals</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Resume Guide</div>
+            <div className="mt-2 text-lg font-semibold text-slate-900">Recommended targets</div>
             <p className="mt-2 text-sm leading-relaxed text-slate-600">
-              These are calibration cues drawn from NUS career-centre benchmarks. They are guide rails, not hard rules.
+              Use these ranges as guide rails while you tighten the draft.
             </p>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
@@ -2903,7 +2903,7 @@ CERTIFICATIONS
                   <span>{template.name}</span>
                   {template.id === "singapore" && (
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">
-                      NUS-ready
+                      SG-ready
                     </span>
                   )}
                 </div>
@@ -2959,7 +2959,7 @@ CERTIFICATIONS
                 {improvementCount}
               </span>
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-indigo-500">Open Improvements</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-indigo-500">Suggested Fixes</div>
                 <div className="text-xs">{issueBulletCount} bullet issues, {relevantMissingKeywords.length} missing keywords</div>
               </div>
             </div>
@@ -2999,7 +2999,7 @@ CERTIFICATIONS
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-[#384959]">Improvement Queue</div>
+                  <div className="text-sm font-semibold text-[#384959]">Next Fixes</div>
                   <div className="mt-1 text-xs text-[#6A89A7]">Pick the next fix without leaving the document.</div>
                 </div>
                 <span className="inline-flex h-9 min-w-9 items-center justify-center rounded-2xl bg-[#384959] px-2 text-sm font-bold text-white">
@@ -3075,7 +3075,7 @@ CERTIFICATIONS
                 </div>
                 <div className="mt-1 text-sm text-[#6A89A7]">
                   {scoreData
-                    ? "Guidance snapshot based on structure, phrasing, and evidence cues."
+                    ? "Based on structure, phrasing, and evidence in the draft."
                     : scoreError
                       ? "Resume scoring is unavailable right now. Please retry when the API is healthy."
                       : "Upload or paste a resume to begin"}
@@ -3531,8 +3531,8 @@ CERTIFICATIONS
 
           {showFeedbackPanels && (
           <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold text-[#384959]">Benchmark Snapshot</div>
-            <div className="mt-1 text-xs text-[#6A89A7]">Compared against the NUS cues you shared with me.</div>
+            <div className="text-sm font-semibold text-[#384959]">Resume Targets</div>
+            <div className="mt-1 text-xs text-[#6A89A7]">Recommended ranges for this template and experience level.</div>
             <div className="mt-4 space-y-2">
               {benchmarkRows.map((row) => (
                 <div key={row.label} className="rounded-2xl border border-[#BDDDFC]/20 bg-[#f0f4f8] px-3 py-3">
@@ -3562,7 +3562,7 @@ CERTIFICATIONS
 
           {showFeedbackPanels && (
           <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold text-[#384959]">Relevant Terms</div>
+            <div className="text-sm font-semibold text-[#384959]">Job Terms</div>
             {scoreData ? (
               <>
                 {relevantTermsMode === "no_job" && (
@@ -3583,12 +3583,12 @@ CERTIFICATIONS
                     </div>
                     <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">
                       {relevantTermsMode === "job_match"
-                        ? "Using this job's canonical term list with job-specific match context."
+                        ? "Matched against the selected job description."
                         : relevantTermsMode === "skills_fallback"
-                            ? "Using the same canonical job terms above, with local resume matching until richer JD matching is available."
+                            ? "Using visible job terms until deeper matching is available."
                             : relevantTermsMode === "match_error"
                               ? "Job-specific matching is unavailable right now, so this panel is falling back to the same visible job terms above."
-                              : "Use these as alignment cues, not as a keyword-stuffing checklist."}
+                              : "Use these naturally. Do not force keywords into the resume."}
                     </div>
                   </>
                 )}
@@ -3614,8 +3614,8 @@ CERTIFICATIONS
                 {relevantMissingKeywords.length > 0 && (
                   <>
                     <div className="mt-4 flex items-center gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Missing</span>
-                      <span className="text-[10px] text-[#6A89A7]">Click to insert</span>
+                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Missing Terms</span>
+                      <span className="text-[10px] text-[#6A89A7]">Use naturally</span>
                     </div>
                     <div className="relative mt-2 flex flex-wrap gap-1.5">
                       {relevantMissingKeywords.slice(0, 12).map((keyword, idx) => {
@@ -3777,7 +3777,7 @@ CERTIFICATIONS
             {aiStatus && (
               <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#BDDDFC]/10 px-3 py-1 text-xs font-medium text-[#6A89A7]">
                 <span className={`inline-block h-2 w-2 rounded-full ${aiStatus.status === "ready" ? "bg-emerald-500" : aiStatus.status === "busy" ? "bg-amber-500" : "bg-rose-500"}`} />
-                {aiStatus.status === "ready" ? "AI ready" : aiStatus.status === "busy" ? "AI busy" : `Wait about ${Math.round(aiStatus.wait_seconds || 0)}s`}
+                {aiStatus.status === "ready" ? "Assistant ready" : aiStatus.status === "busy" ? "Assistant busy" : `Wait about ${Math.round(aiStatus.wait_seconds || 0)}s`}
               </div>
             )}
           </div>
@@ -3786,9 +3786,9 @@ CERTIFICATIONS
             <div className="rounded-3xl border border-violet-200 bg-violet-50 p-5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-[#384959]">Full Tailor Run</div>
+                  <div className="text-sm font-semibold text-[#384959]">Tailor Resume</div>
                   <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
-                    This staged run works bullet-by-bullet, then checks section coherence, refreshes the summary, and validates the final draft against the attached JD.
+                    Reviews bullets, sections, and summary against the selected job.
                   </div>
                 </div>
                 {tailoringSessionId && (
@@ -3904,11 +3904,11 @@ CERTIFICATIONS
 
                   {tailoringResult.skill_match && (
                     <div className="rounded-2xl border border-violet-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">JD Alignment Snapshot</div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Job Match</div>
                       <div className="mt-2 text-sm leading-relaxed text-[#384959]">
-                        Matched {tailoringResult.skill_match.before} JD skill cue{tailoringResult.skill_match.before === 1 ? "" : "s"} before rewrite.
+                        Matched {tailoringResult.skill_match.before} job term{tailoringResult.skill_match.before === 1 ? "" : "s"} before rewrite.
                         {tailoringResult.skill_match.injectable?.length > 0
-                          ? ` ${tailoringResult.skill_match.injectable.length} missing cue${tailoringResult.skill_match.injectable.length === 1 ? "" : "s"} looked safe to weave into existing experience.`
+                          ? ` ${tailoringResult.skill_match.injectable.length} missing term${tailoringResult.skill_match.injectable.length === 1 ? "" : "s"} looked safe to weave into existing experience.`
                           : ""}
                       </div>
                     </div>
@@ -4690,7 +4690,7 @@ CERTIFICATIONS
                                     className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100"
                                   >
                                     <Sparkles size={12} />
-                                    {showSummaryPrompt ? "Hide" : "AI Summary"}
+                                    {showSummaryPrompt ? "Hide" : "Rewrite Summary"}
                                   </button>
                                 </div>
                                 {showSummaryPrompt && (

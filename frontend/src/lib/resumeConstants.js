@@ -187,7 +187,7 @@ export const RESUME_TEMPLATE_STYLES = {
 export const NUS_RESUME_BENCHMARKS = [
   {
     value: "490",
-    label: "Average words seen across NUS resumes, not a hard cap",
+    label: "Typical word count for a focused one-page resume",
   },
   {
     value: "21",
@@ -199,7 +199,7 @@ export const NUS_RESUME_BENCHMARKS = [
   },
   {
     value: "25",
-    label: "Specifics or quantified cues in stronger resumes",
+    label: "Specifics or measurable details in stronger resumes",
   },
   {
     value: "4-5",
