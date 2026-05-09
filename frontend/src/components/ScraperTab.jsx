@@ -736,7 +736,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       {/* Two-column layout: sidebar + job list */}
       <div className="flex gap-6 items-start">
         {/* Desktop sidebar */}
-        <aside className={`hidden lg:block flex-shrink-0 sticky top-4 transition-all duration-200 ${sidebarCollapsed ? "w-12" : "w-[280px]"}`}>
+        <aside className={`hidden lg:block flex-shrink-0 sticky top-20 max-h-[calc(100vh-5rem)] overscroll-contain transition-all duration-200 ${sidebarCollapsed ? "w-12 overflow-visible" : "w-[280px] overflow-y-auto pr-1"}`}>
           {sidebarCollapsed ? (
             <div className="bg-[#f0f4f8] border border-[#BDDDFC]/30 rounded-xl p-2 shadow-sm flex flex-col items-center gap-3">
               <button
