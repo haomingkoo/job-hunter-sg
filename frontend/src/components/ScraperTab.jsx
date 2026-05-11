@@ -20,6 +20,49 @@ const ARCHETYPE_COLORS = {
   Leader: "bg-emerald-50 text-emerald-700 border-emerald-200",
 };
 
+const EMPLOYMENT_TYPE_GROUPS = [
+  { value: "full_time", label: "Full Time", aliases: ["Full Time", "Full-time"] },
+  { value: "part_time", label: "Part Time", aliases: ["Part Time", "Part-time"] },
+  { value: "internship", label: "Internship", aliases: ["Internship", "Internship/Attachment"] },
+  { value: "permanent", label: "Permanent", aliases: ["Permanent", "Permanent/Contract"] },
+  { value: "contract", label: "Contract", aliases: ["Contract", "Fixed Terms", "Permanent/Contract"] },
+  { value: "freelance", label: "Freelance", aliases: ["Freelance"] },
+];
+
+const normalizeEmploymentType = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+
+const buildEmploymentTypeOptions = (rawTypes) => {
+  const rawValues = [...new Set((rawTypes || []).map((type) => String(type || "").trim()).filter(Boolean))];
+  const used = new Set();
+  const grouped = EMPLOYMENT_TYPE_GROUPS.map((group) => {
+    const aliasKeys = new Set(group.aliases.map(normalizeEmploymentType));
+    const queryValues = rawValues.filter((type) => aliasKeys.has(normalizeEmploymentType(type)));
+    queryValues.forEach((type) => used.add(type));
+    return queryValues.length > 0 ? { ...group, queryValues } : null;
+  }).filter(Boolean);
+
+  const unknown = rawValues
+    .filter((type) => !used.has(type))
+    .sort((a, b) => a.localeCompare(b))
+    .map((type) => ({ value: `raw:${type}`, label: type, queryValues: [type] }));
+
+  return [...grouped, ...unknown];
+};
+
+const employmentQueryValuesFor = (selectedTypes, options) => {
+  const selected = selectedTypes instanceof Set ? selectedTypes : new Set([selectedTypes].filter(Boolean));
+  const byValue = new Map((options || []).map((option) => [option.value, option]));
+  const queryValues = new Set();
+
+  for (const value of selected) {
+    const option = byValue.get(value);
+    const values = option?.queryValues?.length ? option.queryValues : [value];
+    values.forEach((queryValue) => queryValues.add(queryValue));
+  }
+
+  return [...queryValues];
+};
+
 export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, onSignIn }) {
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
@@ -84,7 +127,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       if (activeLevel !== "all") params.set("seniority", activeLevel);
       if (activeDirectEmployersOnly) params.set("direct_employers_only", "true");
       if (activeEmployment instanceof Set && activeEmployment.size > 0) {
-        params.set("employment_type", [...activeEmployment].join(","));
+        params.set("employment_type", employmentQueryValuesFor(activeEmployment, employmentTypeOptions).join(","));
       } else if (typeof activeEmployment === "string" && activeEmployment !== "all") {
         params.set("employment_type", activeEmployment);
       }
@@ -191,9 +234,11 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   }, [results, sortBy, expYearsFilter, locationFilter]);
 
   const employmentTypeOptions = useMemo(
-    () => filterMeta.employment_types.length > 0
-      ? filterMeta.employment_types.map((t) => t.value)
-      : [...new Set(results.map((job) => job.type).filter(Boolean))].sort(),
+    () => buildEmploymentTypeOptions(
+      filterMeta.employment_types.length > 0
+        ? filterMeta.employment_types.map((type) => type.value)
+        : results.map((job) => job.type),
+    ),
     [results, filterMeta.employment_types],
   );
 
@@ -547,11 +592,11 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         <div>
           <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Job Type</label>
           <div className="space-y-0.5">
-            {employmentTypeOptions.map((type) => {
-              const active = employmentFilter.has(type);
+            {employmentTypeOptions.map((option) => {
+              const active = employmentFilter.has(option.value);
               return (
                 <label
-                  key={type}
+                  key={option.value}
                   className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${active ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
                 >
                   <input
@@ -559,13 +604,13 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                     checked={active}
                     onChange={() => {
                       const next = new Set(employmentFilter);
-                      if (active) next.delete(type); else next.add(type);
+                      if (active) next.delete(option.value); else next.add(option.value);
                       setEmploymentFilter(next);
                       loadJobs(activeSearchQuery, 1, { employmentFilter: next });
                     }}
                     className="w-3.5 h-3.5 accent-[#384959] rounded"
                   />
-                  {type}
+                  {option.label}
                 </label>
               );
             })}

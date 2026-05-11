@@ -157,6 +157,8 @@ _ANALYTICS_MARKET_OLDER_MIN_SHARE = 0.005
 _ANALYTICS_MARKET_LIFT_THRESHOLD = 1.35
 _ANALYTICS_MARKET_COOLING_MIN_RECENT_COUNT = 2
 _ANALYTICS_MARKET_MOVER_LIMIT = 8
+_ANALYTICS_LABEL_MOVER_MIN_COUNT = 3
+_ANALYTICS_LABEL_MOVER_MIN_SHARE = 0.002
 _ANALYTICS_SOURCE_OTHER_LABEL = "Unknown"
 
 
@@ -2849,6 +2851,7 @@ _ANALYTICS_SKILL_DISPLAY = {
     "aws": "AWS",
     "gcp": "GCP",
     "sql": "SQL",
+    "ai": "AI",
     "api": "API",
     "apis": "APIs",
     "ui/ux": "UI/UX",
@@ -2868,11 +2871,86 @@ _ANALYTICS_GENERIC_SKILLS = {
     "administrative support", "administrative work", "data entry", "driving license",
     "microsoft office", "microsoft word", "microsoft powerpoint", "time management",
     "attention to detail", "written communication", "verbal communication",
-    "cross-functional teams", "continuous improvement",
+    "cross-functional teams", "continuous improvement", "communication",
+    "critical thinking", "decision making", "emotional intelligence",
+    "learning & putting skills", "improving & innovating", "passion for sport",
+    "centre of excellence",
 }
 
 _ANALYTICS_EXCLUDED_SKILLS = {
     "express",
+    "government technology",
+    "insolvency & public trustee",
+    "ministry of home affairs",
+}
+
+_ANALYTICS_EXCLUDED_SKILL_PATTERNS = (
+    re.compile(r"\bministry of\b", re.IGNORECASE),
+    re.compile(r"\bpublic trustee\b", re.IGNORECASE),
+    re.compile(r"\bgovernment technology\b", re.IGNORECASE),
+    re.compile(r"\bcentre of excellence\b", re.IGNORECASE),
+    re.compile(r"\bpassion for\b", re.IGNORECASE),
+    re.compile(r"\blearning\s*&\s*putting skills\b", re.IGNORECASE),
+    re.compile(r"\bimproving\s*&\s*innovating\b", re.IGNORECASE),
+)
+
+_ANALYTICS_GENERIC_COMPANY_NAMES = {
+    "singapore public service",
+}
+_CAREERSGOV_AGENCY_ALIASES = {
+    "AGC": "Attorney-General's Chambers",
+    "AIC": "Agency for Integrated Care",
+    "A*STAR": "Agency for Science, Technology and Research",
+    "ASTAR": "Agency for Science, Technology and Research",
+    "BCA": "Building and Construction Authority",
+    "CAA": "Civil Aviation Authority of Singapore",
+    "CDA": "Communicable Diseases Agency",
+    "CPF": "Central Provident Fund Board",
+    "ECDA": "Early Childhood Development Agency",
+    "EDB": "Economic Development Board",
+    "ESG": "Enterprise Singapore",
+    "GOVTECH": "Government Technology Agency",
+    "HDB": "Housing & Development Board",
+    "HSA": "Health Sciences Authority",
+    "HTX": "Home Team Science and Technology Agency",
+    "IMD": "Infocomm Media Development Authority",
+    "IMDA": "Infocomm Media Development Authority",
+    "LTA": "Land Transport Authority",
+    "MAS": "Monetary Authority of Singapore",
+    "MCCY": "Ministry of Culture, Community and Youth",
+    "MDDI": "Ministry of Digital Development and Information",
+    "MFA": "Ministry of Foreign Affairs",
+    "MHA": "Ministry of Home Affairs",
+    "MINDEF": "Ministry of Defence",
+    "MINLAW": "Ministry of Law",
+    "MND": "Ministry of National Development",
+    "MOE": "Ministry of Education",
+    "MOF": "Ministry of Finance",
+    "MOH": "Ministry of Health",
+    "MOM": "Ministry of Manpower",
+    "MOT": "Ministry of Transport",
+    "MPA": "Maritime and Port Authority of Singapore",
+    "MSF": "Ministry of Social and Family Development",
+    "MTI": "Ministry of Trade and Industry",
+    "NAC": "National Arts Council",
+    "NEA": "National Environment Agency",
+    "NLB": "National Library Board",
+    "NPARKS": "National Parks Board",
+    "PA": "People's Association",
+    "PAS": "People's Association",
+    "PUB": "PUB, Singapore's National Water Agency",
+    "SCB": "Science Centre Board",
+    "SLA": "Singapore Land Authority",
+    "SSG": "SkillsFuture Singapore",
+    "URA": "Urban Redevelopment Authority",
+}
+_CAREERSGOV_AGENCY_LABEL_TO_CODES: dict[str, list[str]] = {}
+for _agency_code, _agency_label in _CAREERSGOV_AGENCY_ALIASES.items():
+    _CAREERSGOV_AGENCY_LABEL_TO_CODES.setdefault(_agency_label.lower(), []).append(_agency_code)
+_CAREERSGOV_BRACKET_CODE_RE = re.compile(r"^\[([A-Z][A-Z0-9*]{1,8})(?:[-\]/\s]|$)")
+_CAREERSGOV_MINISTRY_RE = re.compile(r"\b(Ministry of [A-Za-z][A-Za-z &]+)")
+_CAREERSGOV_MINISTRY_PHRASE_ALIASES = {
+    "ministry of social and family": "Ministry of Social and Family Development",
 }
 
 
@@ -2880,7 +2958,7 @@ def _analytics_skill_key(raw: str) -> str:
     key = re.sub(r"\s+", " ", (raw or "").strip().lower())
     key = key.strip(" -•.,;:")
     key = _ANALYTICS_SKILL_ALIASES.get(key, key)
-    if key in _ANALYTICS_EXCLUDED_SKILLS:
+    if key in _ANALYTICS_EXCLUDED_SKILLS or any(pattern.search(key) for pattern in _ANALYTICS_EXCLUDED_SKILL_PATTERNS):
         return ""
     return key
 
@@ -2897,6 +2975,68 @@ def _is_generic_analytics_skill(key: str) -> bool:
 
 def _analytics_source_label(source: str | None) -> str:
     return (source or "").strip() or _ANALYTICS_SOURCE_OTHER_LABEL
+
+
+def _display_ministry_name(raw: str) -> str:
+    cleaned = re.sub(r"\s+", " ", raw.replace("&", "and")).strip(" ,.-")
+    return _CAREERSGOV_MINISTRY_PHRASE_ALIASES.get(cleaned.lower(), cleaned)
+
+
+def _careersgov_hiring_org(job: ScrapedJob) -> str:
+    title = (getattr(job, "title", "") or "").strip()
+    agency = (getattr(job, "agency", "") or "").strip()
+    haystacks = [agency, title]
+
+    for text in haystacks:
+        if not text:
+            continue
+        bracket = _CAREERSGOV_BRACKET_CODE_RE.search(text)
+        if bracket:
+            code = bracket.group(1).upper()
+            if code in _CAREERSGOV_AGENCY_ALIASES:
+                return _CAREERSGOV_AGENCY_ALIASES[code]
+
+    for text in haystacks:
+        if not text:
+            continue
+        for token in re.findall(r"\b[A-Z][A-Z0-9*]{1,8}\b", text.upper()):
+            if token in _CAREERSGOV_AGENCY_ALIASES:
+                return _CAREERSGOV_AGENCY_ALIASES[token]
+
+    ministry = _CAREERSGOV_MINISTRY_RE.search(title)
+    if ministry:
+        return _display_ministry_name(ministry.group(1))
+
+    if agency and agency.lower() not in {"singapore", "not available", "n/a"}:
+        return agency
+    return ""
+
+
+def _analytics_company_label(job: ScrapedJob) -> str:
+    company = (getattr(job, "company", "") or "").strip()
+    agency = (getattr(job, "agency", "") or "").strip()
+    if company.lower() in _ANALYTICS_GENERIC_COMPANY_NAMES:
+        return _careersgov_hiring_org(job)
+    if agency and not company:
+        return _careersgov_hiring_org(job) or agency
+    return company or agency
+
+
+def _analytics_company_filter_condition(raw_company: str):
+    cleaned = (raw_company or "").strip()
+    terms = [cleaned]
+    terms.extend(_CAREERSGOV_AGENCY_LABEL_TO_CODES.get(cleaned.lower(), []))
+    terms = [term for term in _split_multi_value_filter(",".join(terms)) if term]
+    if not terms:
+        return ScrapedJob.company.ilike("%%")
+    return or_(*(
+        or_(
+            ScrapedJob.company.ilike(f"%{term}%"),
+            ScrapedJob.agency.ilike(f"%{term}%"),
+            ScrapedJob.title.ilike(f"%{term}%"),
+        )
+        for term in terms
+    ))
 
 
 _SSIC_SECTION_LETTER_PREFIX_RE = re.compile(r"^[A-U]\s+(?=[A-Z])")
@@ -2979,6 +3119,14 @@ def _salary_bucket(
 def _increment_analytics_skill(bucket: dict[str, dict], key: str) -> None:
     if key not in bucket:
         bucket[key] = {"display": _analytics_skill_display(key), "count": 0}
+    bucket[key]["count"] += 1
+
+
+def _increment_label_count(bucket: dict[str, dict], key: str, display: str) -> None:
+    if not key:
+        return
+    if key not in bucket:
+        bucket[key] = {"display": display, "count": 0}
     bucket[key]["count"] += 1
 
 
@@ -3100,6 +3248,83 @@ def _build_market_movers(
     }
 
 
+def _build_label_movers(
+    recent_counts: dict[str, dict],
+    recent_total: int,
+    older_counts: dict[str, dict],
+    older_total: int,
+    label_key: str,
+) -> dict:
+    if recent_total < _ANALYTICS_MARKET_MIN_TOTAL or older_total < _ANALYTICS_MARKET_MIN_TOTAL:
+        return {
+            "window_days": _ANALYTICS_MARKET_WINDOW_DAYS,
+            "recent_total": recent_total,
+            "older_total": older_total,
+            "rising": [],
+            "cooling": [],
+            "note": "Needs enough dated postings to compare recent hiring against older hiring.",
+        }
+
+    minimum_recent = max(
+        _ANALYTICS_LABEL_MOVER_MIN_COUNT,
+        round(recent_total * _ANALYTICS_LABEL_MOVER_MIN_SHARE),
+    )
+    minimum_older = max(
+        _ANALYTICS_LABEL_MOVER_MIN_COUNT,
+        round(older_total * _ANALYTICS_LABEL_MOVER_MIN_SHARE),
+    )
+    rising = []
+    cooling = []
+
+    for key in set(recent_counts) | set(older_counts):
+        recent_count = int(recent_counts.get(key, {}).get("count", 0))
+        older_count = int(older_counts.get(key, {}).get("count", 0))
+        recent_rate = recent_count / recent_total if recent_total else 0
+        older_rate = older_count / older_total if older_total else 0
+        display = (
+            recent_counts.get(key, {}).get("display")
+            or older_counts.get(key, {}).get("display")
+            or key.title()
+        )
+
+        if recent_count >= minimum_recent and older_count >= minimum_older and older_rate > 0:
+            lift = recent_rate / older_rate
+            if lift >= _ANALYTICS_MARKET_LIFT_THRESHOLD:
+                rising.append({
+                    label_key: display,
+                    "recent_count": recent_count,
+                    "older_count": older_count,
+                    "lift": round(lift, 1),
+                    "recent_rate_percent": round(recent_rate * 100, 1),
+                    "older_rate_percent": round(older_rate * 100, 1),
+                })
+
+        if (
+            older_count >= minimum_older
+            and recent_count >= _ANALYTICS_MARKET_COOLING_MIN_RECENT_COUNT
+            and recent_rate > 0
+        ):
+            drop = older_rate / recent_rate
+            if drop >= _ANALYTICS_MARKET_LIFT_THRESHOLD:
+                cooling.append({
+                    label_key: display,
+                    "recent_count": recent_count,
+                    "older_count": older_count,
+                    "drop": round(drop, 1),
+                    "recent_rate_percent": round(recent_rate * 100, 1),
+                    "older_rate_percent": round(older_rate * 100, 1),
+                })
+
+    return {
+        "window_days": _ANALYTICS_MARKET_WINDOW_DAYS,
+        "recent_total": recent_total,
+        "older_total": older_total,
+        "rising": sorted(rising, key=lambda item: (-item["lift"], -item["recent_count"]))[:_ANALYTICS_MARKET_MOVER_LIMIT],
+        "cooling": sorted(cooling, key=lambda item: (-item["drop"], -item["older_count"]))[:_ANALYTICS_MARKET_MOVER_LIMIT],
+        "note": f"Compares dated postings from the last {_ANALYTICS_MARKET_WINDOW_DAYS} days against older dated postings in the current corpus.",
+    }
+
+
 @app.get("/api/analytics/skills")
 def analytics_skills(
     limit: int = Query(50, ge=1, le=200),
@@ -3160,6 +3385,7 @@ def analytics_skills(
             "hard_skills": cached.get("hard_skills", []),
             "overindexed_skills": cached.get("overindexed_skills", []),
             "market_movers": cached.get("market_movers", {}),
+            "company_movers": cached.get("company_movers", {}),
             "salary_insights": cached.get("salary_insights", {}),
             "freshness": cached.get("freshness", {}),
             "seniority_mix": cached.get("seniority_mix", []),
@@ -3187,6 +3413,7 @@ def analytics_skills(
             ScrapedJob.source,
             ScrapedJob.title,
             ScrapedJob.company,
+            ScrapedJob.agency,
             ScrapedJob.salary,
             ScrapedJob.sector,
             ScrapedJob.company_ssic_source,
@@ -3202,9 +3429,7 @@ def analytics_skills(
     if source:
         db_query = db_query.filter(ScrapedJob.source == source)
     if company:
-        db_query = db_query.filter(
-            ScrapedJob.company.ilike(f"%{company}%")
-        )
+        db_query = db_query.filter(_analytics_company_filter_condition(company))
     if title:
         db_query = db_query.filter(
             ScrapedJob.title.ilike(f"%{title}%")
@@ -3230,6 +3455,8 @@ def analytics_skills(
     salary_ceiling_by_title: dict[str, list[int]] = {}
     recent_skill_counts: dict[str, dict] = {}
     older_skill_counts: dict[str, dict] = {}
+    recent_company_counts: dict[str, dict] = {}
+    older_company_counts: dict[str, dict] = {}
     recent_total = 0
     older_total = 0
     fresh_counts = {"last_7": 0, "last_14": 0, "last_30": 0}
@@ -3255,13 +3482,12 @@ def analytics_skills(
         src = _analytics_source_label(job.source)
         source_counts[src] = source_counts.get(src, 0) + 1
 
-        # Company aggregation
-        comp = (job.company or "").strip()
-        if comp:
-            comp_key = comp.lower()
-            if comp_key not in company_counts:
-                company_counts[comp_key] = {"display": comp, "count": 0}
-            company_counts[comp_key]["count"] += 1
+        # Company/agency aggregation. Careers@Gov rows often use the generic
+        # "Singapore Public Service" company; agency is the useful hiring org.
+        comp = _analytics_company_label(job)
+        comp_key = comp.lower() if comp else ""
+        if comp_key:
+            _increment_label_count(company_counts, comp_key, comp)
 
         term_keys: set[str] = set()
         for term in preview:
@@ -3313,10 +3539,12 @@ def analytics_skills(
             if 0 <= age_days <= 30:
                 fresh_counts["last_30"] += 1
                 recent_total += 1
+                _increment_label_count(recent_company_counts, comp_key, comp)
                 for key in term_keys:
                     _increment_analytics_skill(recent_skill_counts, key)
             elif age_days > 30:
                 older_total += 1
+                _increment_label_count(older_company_counts, comp_key, comp)
                 for key in term_keys:
                     _increment_analytics_skill(older_skill_counts, key)
 
@@ -3349,6 +3577,13 @@ def analytics_skills(
         recent_total=recent_total,
         older_counts=older_skill_counts,
         older_total=older_total,
+    )
+    company_movers = _build_label_movers(
+        recent_counts=recent_company_counts,
+        recent_total=recent_total,
+        older_counts=older_company_counts,
+        older_total=older_total,
+        label_key="company",
     )
 
     sources_list = [
@@ -3458,6 +3693,7 @@ def analytics_skills(
             "hard_skills": hard_skills,
             "overindexed_skills": overindexed_skills,
             "market_movers": market_movers,
+            "company_movers": company_movers,
             "salary_insights": salary_insights,
             "freshness": freshness,
             "seniority_mix": seniority_mix,
@@ -3487,6 +3723,7 @@ def analytics_skills(
         "hard_skills": hard_skills,
         "overindexed_skills": overindexed_skills,
         "market_movers": market_movers,
+        "company_movers": company_movers,
         "salary_insights": salary_insights,
         "freshness": freshness,
         "seniority_mix": seniority_mix,
@@ -3503,10 +3740,22 @@ def analytics_skills(
     return result
 
 
+def _split_multi_value_filter(value: str | None) -> list[str]:
+    seen: set[str] = set()
+    terms: list[str] = []
+    for term in str(value or "").split(","):
+        cleaned = term.strip()
+        key = cleaned.lower()
+        if cleaned and key not in seen:
+            seen.add(key)
+            terms.append(cleaned)
+    return terms
+
+
 @app.get("/api/jobs")
 def list_cached_jobs(
     q: Optional[str] = Query(None, max_length=200, description="Filter by keyword"),
-    employment_type: Optional[str] = Query(None, max_length=100),
+    employment_type: Optional[str] = Query(None, max_length=500),
     seniority: Optional[str] = Query(None, max_length=100),
     source: Optional[str] = Query(None, max_length=100),
     location: Optional[str] = Query(None, max_length=200),
@@ -3566,7 +3815,11 @@ def list_cached_jobs(
                 )
             )
     if employment_type:
-        query = query.filter(ScrapedJob.employment_type.ilike(f"%{employment_type}%"))
+        employment_terms = _split_multi_value_filter(employment_type)
+        if employment_terms:
+            query = query.filter(
+                or_(*(ScrapedJob.employment_type.ilike(f"%{term}%") for term in employment_terms))
+            )
     if seniority:
         query = query.filter(ScrapedJob.seniority.ilike(f"%{seniority}%"))
     if source:

@@ -138,6 +138,7 @@ export default function AnalyticsTab() {
   const salary = data?.salary_insights || {};
   const freshness = data?.freshness || {};
   const movers = data?.market_movers || {};
+  const companyMovers = data?.company_movers || {};
   const ssicCoverage = data?.ssic_coverage || {};
   const sectorSourceMix = data?.sector_source_mix || [];
   const industryMappedCount = (ssicCoverage.official_count || 0) + (ssicCoverage.inferred_count || 0);
@@ -167,7 +168,7 @@ export default function AnalyticsTab() {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile icon={Briefcase} label="Roles analysed" value={data?.total_jobs_with_terms ? formatNumber(data.total_jobs_with_terms) : "..."} />
         <StatTile icon={Tags} label="Skill terms" value={data?.skill_signal_count ? formatNumber(data.skill_signal_count) : "..."} />
-        <StatTile icon={Building2} label="Companies" value={data?.company_count ? formatNumber(data.company_count) : "..."} />
+        <StatTile icon={Building2} label="Hiring orgs" value={data?.company_count ? formatNumber(data.company_count) : "..."} />
         <StatTile icon={ShieldCheck} label="Industry mapped" value={`${industryMappedPercent}%`} />
       </div>
 
@@ -372,6 +373,84 @@ export default function AnalyticsTab() {
         </div>
       )}
 
+      {!loading && !error && data && ((data.top_companies || []).length > 0 || (companyMovers.rising || []).length > 0 || (companyMovers.cooling || []).length > 0) && (
+        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">
+                <Building2 size={16} />
+                Hiring Org Snapshot
+              </div>
+              <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
+                Top ministries, agencies, and companies in this view, plus recent posting movement where signal is strong enough.
+              </div>
+            </div>
+            <div className="text-[11px] text-[#6A89A7]">
+              {formatNumber(companyMovers.recent_total)} recent / {formatNumber(companyMovers.older_total)} older
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Most active</div>
+              <div className="space-y-1.5">
+                {(data.top_companies || []).slice(0, 6).map((item, index) => (
+                  <BarRow
+                    key={`org-snapshot-${item.company}`}
+                    rank={index + 1}
+                    label={item.company}
+                    count={item.count}
+                    maxCount={companiesMaxCount}
+                    color="bg-violet-500"
+                    active={companyFilter === item.company}
+                    onClick={() => setCompanyFilter(companyFilter === item.company ? "" : item.company)}
+                  />
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Hiring more recently</div>
+              <div className="space-y-2">
+                {(companyMovers.rising || []).length > 0 ? (
+                  companyMovers.rising.slice(0, 6).map((item) => (
+                    <div key={`company-rising-${item.company}`} className="rounded-xl bg-emerald-50 px-3 py-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="truncate text-sm font-medium text-[#384959]">{item.company}</span>
+                        <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">{item.lift}x</span>
+                      </div>
+                      <div className="mt-1 text-xs text-[#6A89A7]">
+                        {formatNumber(item.recent_count)} recent vs {formatNumber(item.older_count)} older
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-[#6A89A7]">No hiring spike in this slice yet.</div>
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-700">Hiring less recently</div>
+              <div className="space-y-2">
+                {(companyMovers.cooling || []).length > 0 ? (
+                  companyMovers.cooling.slice(0, 6).map((item) => (
+                    <div key={`company-cooling-${item.company}`} className="rounded-xl bg-rose-50 px-3 py-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="truncate text-sm font-medium text-[#384959]">{item.company}</span>
+                        <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800">{item.drop}x</span>
+                      </div>
+                      <div className="mt-1 text-xs text-[#6A89A7]">
+                        {formatNumber(item.recent_count)} recent vs {formatNumber(item.older_count)} older
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-[#6A89A7]">No slowdown in this slice yet.</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {!loading && !error && data && (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
           <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
@@ -555,7 +634,7 @@ export default function AnalyticsTab() {
       {!loading && !error && data?.top_companies?.length > 0 && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between gap-3">
-            <div className="text-sm font-semibold text-[#384959]">Top Hiring Companies / Departments</div>
+            <div className="text-sm font-semibold text-[#384959]">Top Hiring Agencies / Companies</div>
             {companyFilter && (
               <button type="button" onClick={() => setCompanyFilter("")} className="text-xs text-[#88BDF2] hover:text-[#384959]">
                 Clear company
