@@ -298,10 +298,20 @@ class CareersGovScraper:
 
     @staticmethod
     def _build_url(item: dict) -> str:
-        job_id = item.get("jobId", "")
-        posting_no = item.get("postingNo", "")
-        if job_id and posting_no:
+        # Upstream feed now multiplexes hrp + greenhouse (GovTech) + workable (PSD).
+        # See https://github.com/opengovsg/careersgovsg-jobs-data
+        platform = (item.get("platform") or "hrp").lower()
+        job_id = (item.get("jobId") or "").strip()
+        posting_no = (item.get("postingNo") or "").strip()
+
+        if platform == "hrp" and job_id and posting_no:
             return f"https://jobs.careers.gov.sg/jobs/hrp/{job_id}/{posting_no}"
+        if platform == "greenhouse" and job_id:
+            # Upstream script pins board='govtech'; jobId is the Greenhouse job id.
+            return f"https://job-boards.greenhouse.io/govtech/jobs/{job_id}"
+        if platform == "workable" and job_id and posting_no:
+            # Upstream stores the Workable account in jobId and the shortcode in postingNo.
+            return f"https://apply.workable.com/{job_id}/j/{posting_no}/"
         return ""
 
     @staticmethod
@@ -330,8 +340,13 @@ class CareersGovScraper:
         if not posted:
             posted = self._parse_timestamp(item, "closingDate")
         closing = self._parse_timestamp(item, "closingDate")
+        platform = (item.get("platform") or "hrp").lower()
         job_id = str(item.get("jobId") or "").strip()
         posting_no = str(item.get("postingNo") or "").strip()
+        # Keep HRP source_posting_id unprefixed for dedup_key continuity with
+        # existing rows; prefix newer platforms so the Workable account constant
+        # ("psd-sg") doesn't collide across postings.
+        sid_parts = [job_id, posting_no] if platform == "hrp" else [platform, job_id, posting_no]
         return Job(
             title=(item.get("jobTitle") or "").strip(),
             company="Singapore Public Service",
@@ -346,7 +361,7 @@ class CareersGovScraper:
             skills=[],
             agency=(item.get("agency") or "").strip(),
             closing_date=closing,
-            source_posting_id=":".join(part for part in (job_id, posting_no) if part),
+            source_posting_id=":".join(part for part in sid_parts if part),
             openings=_extract_openings(item),
         )
 
