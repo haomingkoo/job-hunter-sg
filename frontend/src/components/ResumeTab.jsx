@@ -3777,7 +3777,7 @@ CERTIFICATIONS
             {aiStatus && (
               <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#BDDDFC]/10 px-3 py-1 text-xs font-medium text-[#6A89A7]">
                 <span className={`inline-block h-2 w-2 rounded-full ${aiStatus.status === "ready" ? "bg-emerald-500" : aiStatus.status === "busy" ? "bg-amber-500" : "bg-rose-500"}`} />
-                {aiStatus.status === "ready" ? "Assistant ready" : aiStatus.status === "busy" ? "Assistant busy" : `Wait about ${Math.round(aiStatus.wait_seconds || 0)}s`}
+                {aiStatus.status === "ready" ? "Assistant ready" : aiStatus.status === "busy" ? "Assistant busy" : aiStatus.wait_seconds >= 0 ? `Wait about ${Math.round(aiStatus.wait_seconds)}s` : "Assistant unavailable"}
               </div>
             )}
           </div>

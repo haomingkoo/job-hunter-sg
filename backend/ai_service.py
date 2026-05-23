@@ -234,7 +234,15 @@ def _call_sealion(
         )
         resp.raise_for_status()
         data = resp.json()
-        content = data["choices"][0]["message"]["content"]
+        message = data["choices"][0]["message"]
+        content = message.get("content") or message.get("reasoning_content")
+        if isinstance(content, list):
+            content = "".join(
+                part.get("text", "") if isinstance(part, dict) else str(part)
+                for part in content
+            )
+        if not isinstance(content, str):
+            raise KeyError("content/reasoning_content")
         usage = data.get("usage", {})
         log.info(
             f"[AI] SEA-LION response: {usage.get('total_tokens', '?')} tokens"
