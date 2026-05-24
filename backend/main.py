@@ -3333,12 +3333,13 @@ def analytics_skills(
     sector: str | None = Query(None, max_length=100),
     company: str | None = Query(None, max_length=200),
     title: str | None = Query(None, max_length=200),
+    direct_employers_only: bool = Query(False),
     db: Session = Depends(get_db),
 ) -> dict:
     """Aggregate ATS skill demand, top titles, and sectors from scraped jobs."""
     global _analytics_cache, _analytics_cache_ts
 
-    has_filter = source or sector or company or title
+    has_filter = source or sector or company or title or direct_employers_only
     now = time.time()
     query_cache_key = (
         limit,
@@ -3347,6 +3348,7 @@ def analytics_skills(
         sector or "",
         company or "",
         title or "",
+        int(direct_employers_only),
     )
     with _ANALYTICS_CACHE_LOCK:
         cache_generation = _analytics_cache_generation
@@ -3391,6 +3393,7 @@ def analytics_skills(
             "seniority_mix": cached.get("seniority_mix", []),
             "ssic_coverage": cached.get("ssic_coverage", {}),
             "sector_source_mix": cached.get("sector_source_mix", []),
+            "direct_employers_only": direct_employers_only,
         }
         _store_analytics_query_cache(query_cache_key, now, result, cache_generation)
         return result
@@ -3417,6 +3420,7 @@ def analytics_skills(
             ScrapedJob.salary,
             ScrapedJob.sector,
             ScrapedJob.company_ssic_source,
+            ScrapedJob.company_ssic_description,
             ScrapedJob.skills_flat,
             ScrapedJob.salary_floor,
             ScrapedJob.posted_at_sort,
@@ -3436,6 +3440,13 @@ def analytics_skills(
         )
     if sector:
         db_query = db_query.filter(_sector_filter_condition(sector))
+    if direct_employers_only:
+        db_query = db_query.filter(
+            direct_employer_condition(
+                ScrapedJob.company,
+                ScrapedJob.company_ssic_description,
+            )
+        )
 
     skill_counts: dict[str, dict] = {}
     source_counts: dict[str, int] = {}
@@ -3699,6 +3710,7 @@ def analytics_skills(
             "seniority_mix": seniority_mix,
             "ssic_coverage": ssic_coverage,
             "sector_source_mix": sector_source_mix,
+            "direct_employers_only": direct_employers_only,
         }
 
     # Apply skill search filter if provided
@@ -3729,6 +3741,7 @@ def analytics_skills(
         "seniority_mix": seniority_mix,
         "ssic_coverage": ssic_coverage,
         "sector_source_mix": sector_source_mix,
+        "direct_employers_only": direct_employers_only,
     }
     if cache_payload is not None:
         with _ANALYTICS_CACHE_LOCK:

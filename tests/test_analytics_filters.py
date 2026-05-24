@@ -12,6 +12,7 @@ from main import (  # noqa: E402
     _build_label_movers,
     _split_multi_value_filter,
 )
+from employer_filter import is_recruitment_employer  # noqa: E402
 
 
 def test_analytics_uses_agency_when_careersgov_company_is_generic():
@@ -73,3 +74,9 @@ def test_split_multi_value_filter_trims_dedupes_and_preserves_order():
         "Full Time",
         "Contract",
     ]
+
+
+def test_direct_employer_filter_classifies_common_recruiters():
+    assert is_recruitment_employer("RECRUIT EXPRESS PTE LTD")
+    assert is_recruitment_employer("Example Pte Ltd", "Employment Agencies")
+    assert not is_recruitment_employer("Land Transport Authority")

@@ -86,8 +86,10 @@ export default function AnalyticsTab() {
   const [error, setError] = useState("");
   const [sectorFilter, setSectorFilter] = useState("");
   const [companyFilter, setCompanyFilter] = useState("");
+  const [companyDraft, setCompanyDraft] = useState("");
   const [titleFilter, setTitleFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
+  const [directEmployersOnly, setDirectEmployersOnly] = useState(false);
   const [showCount, setShowCount] = useState(30);
   const [skillSearch, setSkillSearch] = useState("");
 
@@ -100,6 +102,7 @@ export default function AnalyticsTab() {
       if (companyFilter) params.set("company", companyFilter);
       if (titleFilter) params.set("title", titleFilter);
       if (sourceFilter) params.set("source", sourceFilter);
+      if (directEmployersOnly) params.set("direct_employers_only", "true");
       const resp = await apiFetch(`/api/analytics/skills?${params}`);
       if (!resp.ok) throw new Error("Failed to load analytics");
       setData(await resp.json());
@@ -107,7 +110,7 @@ export default function AnalyticsTab() {
       setError(err.message);
     }
     setLoading(false);
-  }, [sectorFilter, companyFilter, titleFilter, sourceFilter]);
+  }, [sectorFilter, companyFilter, titleFilter, sourceFilter, directEmployersOnly]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -134,6 +137,7 @@ export default function AnalyticsTab() {
     sectorFilter,
     titleFilter,
     companyFilter,
+    directEmployersOnly ? "Direct employers" : "",
   ].filter(Boolean);
   const salary = data?.salary_insights || {};
   const freshness = data?.freshness || {};
@@ -152,6 +156,19 @@ export default function AnalyticsTab() {
   };
 
   const chartColors = ["bg-[#88BDF2]", "bg-emerald-500", "bg-violet-500", "bg-amber-500", "bg-rose-500", "bg-cyan-500"];
+  const applyCompanyFilter = (value) => {
+    const next = String(value || "").trim();
+    setCompanyFilter(next);
+    setCompanyDraft(next);
+  };
+  const clearAllFilters = () => {
+    setSourceFilter("");
+    setSectorFilter("");
+    setTitleFilter("");
+    setCompanyFilter("");
+    setCompanyDraft("");
+    setDirectEmployersOnly(false);
+  };
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -178,13 +195,13 @@ export default function AnalyticsTab() {
             {activeFilters.length > 0 ? (
               <>Filtered by <span className="font-semibold text-[#384959]">{activeFilters.join(" + ")}</span></>
             ) : (
-              <>Click a source, industry/sector, or title to drill into skill demand.</>
+              <>Click a source, industry/sector, hiring org, or title to drill into skill demand.</>
             )}
           </div>
-          {(sourceFilter || sectorFilter || titleFilter || companyFilter) && (
+          {(sourceFilter || sectorFilter || titleFilter || companyFilter || directEmployersOnly) && (
             <button
               type="button"
-              onClick={() => { setSourceFilter(""); setSectorFilter(""); setTitleFilter(""); setCompanyFilter(""); }}
+              onClick={clearAllFilters}
               className="rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs text-[#6A89A7] hover:bg-[#f0f4f8]"
             >
               Clear All Filters
@@ -197,6 +214,7 @@ export default function AnalyticsTab() {
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 text-xs leading-relaxed text-[#6A89A7] shadow-sm">
           Industry labels: {sectorSourceMix.map((item) => `${formatNumber(item.count)} ${sectorSourceLabels[item.source] || item.label}`).join(" / ")}.
           Most listings do not publish SSIC directly, so inferred labels keep the market view usable.
+          Careers@Gov postings are normalised to ministries and agencies where possible.
         </div>
       )}
 
@@ -235,20 +253,38 @@ export default function AnalyticsTab() {
             <div>
               <div className="text-sm font-semibold text-[#384959]">Explore Market</div>
               <div className="text-xs leading-relaxed text-[#6A89A7]">
-                Pick a source, industry/sector, or job title to refresh skills, salary, freshness, and seniority.
+                Pick a source, industry/sector, hiring org, or job title to refresh skills, salary, freshness, and seniority.
               </div>
             </div>
-            {(sourceFilter || sectorFilter || titleFilter || companyFilter) && (
-              <button
-                type="button"
-                onClick={() => { setSourceFilter(""); setSectorFilter(""); setTitleFilter(""); setCompanyFilter(""); }}
-                className="self-start rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs font-medium text-[#384959] hover:bg-[#f0f4f8] sm:self-auto"
-              >
-                Clear Filters
-              </button>
-            )}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="inline-flex overflow-hidden rounded-lg border border-[#BDDDFC]/40 bg-[#f0f4f8] p-0.5 text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => setDirectEmployersOnly(false)}
+                  className={`rounded-md px-2.5 py-1.5 transition ${!directEmployersOnly ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7] hover:text-[#384959]"}`}
+                >
+                  All orgs
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDirectEmployersOnly(true)}
+                  className={`rounded-md px-2.5 py-1.5 transition ${directEmployersOnly ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7] hover:text-[#384959]"}`}
+                >
+                  Direct employers
+                </button>
+              </div>
+              {(sourceFilter || sectorFilter || titleFilter || companyFilter || directEmployersOnly) && (
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="self-start rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs font-medium text-[#384959] hover:bg-[#f0f4f8] sm:self-auto"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
           </div>
-          <div className="mt-4 grid gap-4 xl:grid-cols-3">
+          <div className="mt-4 grid gap-4 xl:grid-cols-4">
             <div>
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Sources</div>
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
@@ -290,6 +326,51 @@ export default function AnalyticsTab() {
                   Other means the listing could not be mapped to a clear industry.
                 </div>
               )}
+            </div>
+            <div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Hiring Orgs</div>
+              <form
+                className="relative mb-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  applyCompanyFilter(companyDraft);
+                }}
+              >
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#6A89A7]" />
+                <input
+                  type="text"
+                  value={companyDraft}
+                  onChange={(event) => setCompanyDraft(event.target.value)}
+                  placeholder="Filter org or agency..."
+                  className="w-full rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] py-1.5 pl-8 pr-8 text-xs text-[#384959] placeholder-[#6A89A7] focus:border-[#88BDF2] focus:outline-none focus:ring-1 focus:ring-[#BDDDFC]"
+                />
+                {companyDraft && (
+                  <button
+                    type="button"
+                    onClick={() => applyCompanyFilter("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[#6A89A7] hover:text-[#384959]"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </form>
+              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
+                {(data.top_companies || []).slice(0, 8).map((item, index) => (
+                  <BarRow
+                    key={`drill-company-${item.company}`}
+                    rank={index + 1}
+                    label={item.company}
+                    count={item.count}
+                    maxCount={companiesMaxCount}
+                    color="bg-violet-500"
+                    active={companyFilter === item.company}
+                    onClick={() => applyCompanyFilter(companyFilter === item.company ? "" : item.company)}
+                  />
+                ))}
+              </div>
+              <div className="mt-2 text-[11px] leading-relaxed text-[#6A89A7]">
+                Govt rows use resolved ministries or agencies when the source exposes enough signal.
+              </div>
             </div>
             <div>
               <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Job Titles</div>
@@ -382,7 +463,7 @@ export default function AnalyticsTab() {
                 Hiring Org Snapshot
               </div>
               <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
-                Top ministries, agencies, and companies in this view, plus recent posting movement where signal is strong enough.
+                Top ministries, agencies, and companies in this view. Use direct-employer mode to remove recruitment firms from this snapshot.
               </div>
             </div>
             <div className="text-[11px] text-[#6A89A7]">
@@ -402,7 +483,7 @@ export default function AnalyticsTab() {
                     maxCount={companiesMaxCount}
                     color="bg-violet-500"
                     active={companyFilter === item.company}
-                    onClick={() => setCompanyFilter(companyFilter === item.company ? "" : item.company)}
+                    onClick={() => applyCompanyFilter(companyFilter === item.company ? "" : item.company)}
                   />
                 ))}
               </div>
@@ -636,7 +717,7 @@ export default function AnalyticsTab() {
           <div className="mb-4 flex items-center justify-between gap-3">
             <div className="text-sm font-semibold text-[#384959]">Top Hiring Agencies / Companies</div>
             {companyFilter && (
-              <button type="button" onClick={() => setCompanyFilter("")} className="text-xs text-[#88BDF2] hover:text-[#384959]">
+              <button type="button" onClick={() => applyCompanyFilter("")} className="text-xs text-[#88BDF2] hover:text-[#384959]">
                 Clear company
               </button>
             )}
@@ -651,7 +732,7 @@ export default function AnalyticsTab() {
                 maxCount={companiesMaxCount}
                 color="bg-violet-500"
                 active={companyFilter === item.company}
-                onClick={() => setCompanyFilter(companyFilter === item.company ? "" : item.company)}
+                onClick={() => applyCompanyFilter(companyFilter === item.company ? "" : item.company)}
               />
             ))}
           </div>
