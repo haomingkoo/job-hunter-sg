@@ -68,6 +68,7 @@ from models import (
 )
 from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
 from schemas import (
+    ApplicationPackRequest,
     AuthResponse,
     ContactRequest,
     CoverLetterRequest,
@@ -93,6 +94,7 @@ from schemas import (
 )
 from ai_service import SEALION_MODEL, _call_sealion, apply_uk_spelling, coach_resume, get_ai_health, get_ai_status, integrate_keywords, rewrite_bullet
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms, merge_job_terms_with_match
+from career_agent import build_application_pack
 from resume_parser import parse_resume
 from resume_scorer import ResumeScorer
 from resume_templates import generate_docx, inspect_resume_export, list_templates
@@ -6192,6 +6194,95 @@ Return ONLY the cover letter text. No subject lines, no labels, no markdown form
 
     word_count = len(cover_letter.split())
     return {"cover_letter": cover_letter, "word_count": word_count}
+
+
+@app.post("/api/ai/application-pack")
+def generate_application_pack(
+    body: ApplicationPackRequest,
+    user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Build a job-specific application pack: recruiter verdict, ATS gaps,
+    evidence questions, resume changes, outreach copy, and interview prep.
+    """
+    check_rate_limit(user, "ai", db)
+    db.add(UsageLog(
+        user_id=user.id if user else None,
+        action="ai",
+        detail="application_pack",
+    ))
+    db.commit()
+
+    resume_text = sanitize_resume_text(body.resume_text)
+    job_title = sanitize_user_input(body.job_title)
+    job_company = sanitize_user_input(body.job_company)
+    job_description = sanitize_user_input(body.job_description)
+    parsed_jd = None
+    skills_list: list[str] = []
+    job_id = body.job_id
+
+    if job_id:
+        target_job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+        if not target_job:
+            raise HTTPException(status_code=404, detail="Job not found.")
+        if target_job.source == "Careers@Gov" and not (target_job.description or "").strip():
+            if _enrich_careersgov_job(target_job, db):
+                db.commit()
+        elif target_job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(target_job, db):
+            db.commit()
+
+        job_title = job_title or target_job.title or ""
+        job_company = job_company or target_job.company or ""
+        job_description = job_description or target_job.description or ""
+        skills_list = target_job.skills if isinstance(target_job.skills, list) else []
+        parsed_jd = target_job.parsed_jd
+        if not parsed_jd and job_description:
+            parsed_jd = preparse_jd(
+                job_description,
+                skills=skills_list,
+                db_session=db,
+                job_title=job_title,
+            )
+            target_job.parsed_jd = parsed_jd
+            db.commit()
+
+    job_terms = build_job_ats_terms(
+        jd_text=job_description,
+        job_skills=skills_list,
+        parsed_jd=parsed_jd,
+        job_title=job_title,
+        limit=30,
+        db_session=db,
+    )
+    match_result = match_resume_against_job_terms(
+        resume_text=resume_text,
+        job_terms=job_terms,
+        jd_text=job_description,
+    )
+
+    pack = build_application_pack(
+        resume_text=resume_text,
+        job_title=job_title,
+        job_company=job_company,
+        job_description=job_description,
+        job_terms=job_terms,
+        match_result=match_result,
+        parsed_jd=parsed_jd if isinstance(parsed_jd, dict) else None,
+        user_direction=sanitize_user_input(body.user_direction or ""),
+    )
+    return {
+        **pack,
+        "job": {
+            "id": job_id,
+            "title": job_title,
+            "company": job_company,
+        },
+        "ats_local": {
+            "matched_count": len(match_result.get("matched", [])),
+            "missing_count": len(match_result.get("missing", [])),
+        },
+    }
 
 
 @app.post("/api/ai/resume-chat")

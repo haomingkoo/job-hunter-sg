@@ -4,7 +4,7 @@ import {
   Search, Plus, ChevronRight, Clock, AlertCircle,
   ExternalLink, Filter, Loader2, FileText,
   MapPin, DollarSign, Building2, X, SlidersHorizontal,
-  PanelLeftClose, PanelLeftOpen, CheckCircle2,
+  PanelLeftClose, PanelLeftOpen, CheckCircle2, Bot, Copy,
 } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 import { todayStr } from "../lib/helpers.js";
@@ -63,6 +63,37 @@ const employmentQueryValuesFor = (selectedTypes, options) => {
   return [...queryValues];
 };
 
+const APPLICATION_VERDICT_LABELS = {
+  shortlist: "Shortlist",
+  maybe: "Maybe",
+  weak_fit: "Weak fit",
+};
+
+const formatApplicationPack = (pack) => {
+  if (!pack) return "";
+  const lines = [];
+  const verdict = pack.verdict || {};
+  lines.push(`Verdict: ${APPLICATION_VERDICT_LABELS[verdict.decision] || verdict.decision || "Maybe"} (${verdict.fit_score || 0}/100)`);
+  if (verdict.rationale) lines.push(verdict.rationale);
+  const appendList = (label, items) => {
+    if (!Array.isArray(items) || items.length === 0) return;
+    lines.push("", label);
+    items.forEach((item) => lines.push(`- ${typeof item === "string" ? item : JSON.stringify(item)}`));
+  };
+  appendList("Strengths", verdict.strengths);
+  appendList("Risks", verdict.risks);
+  appendList("Missing Terms", pack.ats?.missing_terms);
+  appendList("Evidence Questions", (pack.evidence_questions || []).map((q) => q.prompt));
+  if (pack.resume?.summary) lines.push("", "Tailored Summary", pack.resume.summary);
+  appendList("Bullet Upgrades", (pack.resume?.bullet_upgrades || []).map((b) => `${b.original} -> ${b.rewrite}`));
+  if (pack.application_assets?.cover_letter) lines.push("", "Cover Letter", pack.application_assets.cover_letter);
+  if (pack.application_assets?.recruiter_dm) lines.push("", "Recruiter DM", pack.application_assets.recruiter_dm);
+  if (pack.application_assets?.follow_up_email) lines.push("", "Follow-up Email", pack.application_assets.follow_up_email);
+  appendList("Likely Interview Questions", pack.interview?.likely_questions);
+  appendList("Questions To Ask", pack.interview?.interviewer_questions);
+  return lines.join("\n");
+};
+
 export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, onSignIn }) {
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
@@ -106,6 +137,14 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [coverLetterLoading, setCoverLetterLoading] = useState(false);
   const [coverLetterError, setCoverLetterError] = useState("");
   const [coverLetterCopied, setCoverLetterCopied] = useState(false);
+
+  // Application agent state
+  const [applicationPackModal, setApplicationPackModal] = useState(null); // { job } or null
+  const [applicationPackDirection, setApplicationPackDirection] = useState("");
+  const [applicationPack, setApplicationPack] = useState(null);
+  const [applicationPackLoading, setApplicationPackLoading] = useState(false);
+  const [applicationPackError, setApplicationPackError] = useState("");
+  const [applicationPackCopied, setApplicationPackCopied] = useState(false);
 
   // Load cached jobs on mount (browse mode)
   useEffect(() => {
@@ -357,6 +396,69 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const openApplicationPackModal = (job) => {
+    setApplicationPackModal({ job });
+    setApplicationPackDirection("");
+    setApplicationPack(null);
+    setApplicationPackError("");
+    setApplicationPackLoading(false);
+    setApplicationPackCopied(false);
+  };
+
+  const closeApplicationPackModal = () => {
+    setApplicationPackModal(null);
+    setApplicationPack(null);
+    setApplicationPackDirection("");
+    setApplicationPackError("");
+    setApplicationPackLoading(false);
+    setApplicationPackCopied(false);
+  };
+
+  const generateApplicationPack = async () => {
+    const resumeText = sessionStorage.getItem("jh_resume_text") || "";
+    if (!resumeText || resumeText.length < 50) {
+      setApplicationPackError("Please upload or paste your resume in the Resume tab first (at least 50 characters).");
+      return;
+    }
+    const job = applicationPackModal?.job;
+    if (!job) return;
+
+    setApplicationPackLoading(true);
+    setApplicationPackError("");
+    setApplicationPack(null);
+    setApplicationPackCopied(false);
+
+    try {
+      const resp = await apiFetch("/api/ai/application-pack", {
+        method: "POST",
+        body: JSON.stringify({
+          resume_text: resumeText,
+          job_id: job.id || null,
+          job_title: job.title || "",
+          job_company: job.company || "",
+          job_description: job.description || "",
+          user_direction: applicationPackDirection.trim() || null,
+        }),
+      });
+      const data = await resp.json();
+      setApplicationPack(data);
+    } catch (err) {
+      setApplicationPackError(err.message || "Failed to build the application pack. Please try again.");
+    } finally {
+      setApplicationPackLoading(false);
+    }
+  };
+
+  const copyApplicationPack = async () => {
+    try {
+      await navigator.clipboard.writeText(formatApplicationPack(applicationPack));
+      setApplicationPackCopied(true);
+      setTimeout(() => setApplicationPackCopied(false), 2000);
+    } catch {
+      setApplicationPackError("Failed to copy. Please select the text and copy manually.");
+    }
   };
 
   const toggleExpandedJob = (jobId) => {
@@ -1021,6 +1123,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 )}
 
                 <div className="flex flex-wrap gap-2">
+                  <button onClick={(event) => { event.stopPropagation(); openApplicationPackModal(job); }} className="flex items-center gap-1.5 bg-[#384959] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#2d3a47] transition">
+                    <Bot size={12} /> Application Pack
+                  </button>
                   <button onClick={(event) => { event.stopPropagation(); generateResume(job); }} className="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-emerald-700 transition">
                     <FileText size={12} /> Tailor Resume
                   </button>
@@ -1176,6 +1281,269 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                       {coverLetterLoading ? "Generating..." : "Generate"}
                     </button>
                   </>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Application Pack Modal */}
+      <AnimatePresence>
+        {applicationPackModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+            onClick={closeApplicationPackModal}
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.96, opacity: 0 }}
+              className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Bot size={18} className="text-[#384959]" />
+                    <h3 className="text-lg font-semibold text-[#384959]">Application Pack</h3>
+                  </div>
+                  <p className="mt-0.5 truncate text-sm text-[#6A89A7]">
+                    {applicationPackModal.job?.title} at {applicationPackModal.job?.company}
+                  </p>
+                </div>
+                <button onClick={closeApplicationPackModal} className="p-1 hover:bg-gray-100 rounded-lg transition">
+                  <X size={20} className="text-[#6A89A7]" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                {!applicationPack && !applicationPackLoading && (
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-[#384959] mb-1.5">
+                        Optional direction
+                      </label>
+                      <input
+                        type="text"
+                        value={applicationPackDirection}
+                        onChange={(e) => setApplicationPackDirection(e.target.value)}
+                        placeholder="e.g. focus on public sector fit, leadership, analytics, or concise outreach"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-[#88BDF2] focus:border-[#88BDF2] outline-none"
+                        maxLength={1000}
+                      />
+                    </div>
+                    {!sessionStorage.getItem("jh_resume_text") && (
+                      <p className="text-sm text-amber-700 bg-amber-50 px-3 py-2 rounded-lg">
+                        No resume found in this session. Upload or paste your resume in the Resume tab first.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {applicationPackError && (
+                  <div className="mb-4 flex items-start gap-2 text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">
+                    <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
+                    {applicationPackError}
+                  </div>
+                )}
+
+                {applicationPackLoading && (
+                  <div className="flex flex-col items-center justify-center py-14 gap-3">
+                    <Loader2 size={30} className="animate-spin text-[#384959]" />
+                    <p className="text-sm text-[#6A89A7]">Analysing the role, resume evidence, gaps, and interview angles...</p>
+                  </div>
+                )}
+
+                {applicationPack && (
+                  <div className="space-y-5">
+                    {applicationPack.degraded && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                        The model was unavailable, so this pack uses local ATS signals. Rerun before using final copy.
+                      </div>
+                    )}
+
+                    <div className="grid gap-3 md:grid-cols-3">
+                      <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f8fbff] p-4">
+                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Verdict</div>
+                        <div className="mt-1 text-xl font-bold text-[#384959]">
+                          {APPLICATION_VERDICT_LABELS[applicationPack.verdict?.decision] || "Maybe"}
+                        </div>
+                        <div className="mt-1 text-sm text-[#6A89A7]">{applicationPack.verdict?.fit_score || 0}/100 fit</div>
+                      </div>
+                      <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">Matched</div>
+                        <div className="mt-1 text-xl font-bold text-emerald-800">
+                          {(applicationPack.ats?.matched_terms || []).length}
+                        </div>
+                        <div className="mt-1 text-sm text-emerald-700">terms already covered</div>
+                      </div>
+                      <div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-rose-700">Gaps</div>
+                        <div className="mt-1 text-xl font-bold text-rose-800">
+                          {(applicationPack.ats?.missing_terms || []).length}
+                        </div>
+                        <div className="mt-1 text-sm text-rose-700">terms to address carefully</div>
+                      </div>
+                    </div>
+
+                    {applicationPack.verdict?.rationale && (
+                      <section className="border-t border-[#BDDDFC]/30 pt-4">
+                        <h4 className="text-sm font-semibold text-[#384959]">Recruiter Read</h4>
+                        <p className="mt-2 text-sm leading-relaxed text-[#384959]">{applicationPack.verdict.rationale}</p>
+                      </section>
+                    )}
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {(applicationPack.verdict?.strengths || []).length > 0 && (
+                        <section className="border-t border-[#BDDDFC]/30 pt-4">
+                          <h4 className="text-sm font-semibold text-[#384959]">Strengths</h4>
+                          <ul className="mt-2 space-y-1.5 text-sm text-[#384959]">
+                            {applicationPack.verdict.strengths.map((item, index) => <li key={index}>• {item}</li>)}
+                          </ul>
+                        </section>
+                      )}
+                      {(applicationPack.verdict?.risks || []).length > 0 && (
+                        <section className="border-t border-[#BDDDFC]/30 pt-4">
+                          <h4 className="text-sm font-semibold text-[#384959]">Risks</h4>
+                          <ul className="mt-2 space-y-1.5 text-sm text-[#384959]">
+                            {applicationPack.verdict.risks.map((item, index) => <li key={index}>• {item}</li>)}
+                          </ul>
+                        </section>
+                      )}
+                    </div>
+
+                    {(applicationPack.evidence_questions || []).length > 0 && (
+                      <section className="border-t border-[#BDDDFC]/30 pt-4">
+                        <h4 className="text-sm font-semibold text-[#384959]">Evidence Questions</h4>
+                        <div className="mt-2 space-y-2">
+                          {applicationPack.evidence_questions.map((item, index) => (
+                            <div key={item.id || index} className="rounded-lg border border-[#BDDDFC]/25 bg-[#f0f4f8] px-3 py-2">
+                              <div className="text-sm font-medium text-[#384959]">{item.prompt}</div>
+                              {item.why_it_matters && <div className="mt-1 text-xs text-[#6A89A7]">{item.why_it_matters}</div>}
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+
+                    {(applicationPack.ats?.missing_terms || []).length > 0 && (
+                      <section className="border-t border-[#BDDDFC]/30 pt-4">
+                        <h4 className="text-sm font-semibold text-[#384959]">ATS Gaps</h4>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {applicationPack.ats.missing_terms.map((term) => (
+                            <span key={term} className="rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-rose-200">
+                              {term}
+                            </span>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+
+                    {applicationPack.resume?.summary && (
+                      <section className="border-t border-[#BDDDFC]/30 pt-4">
+                        <h4 className="text-sm font-semibold text-[#384959]">Tailored Summary</h4>
+                        <p className="mt-2 text-sm leading-relaxed text-[#384959]">{applicationPack.resume.summary}</p>
+                      </section>
+                    )}
+
+                    {(applicationPack.resume?.bullet_upgrades || []).length > 0 && (
+                      <section className="border-t border-[#BDDDFC]/30 pt-4">
+                        <h4 className="text-sm font-semibold text-[#384959]">Bullet Upgrades</h4>
+                        <div className="mt-2 space-y-3">
+                          {applicationPack.resume.bullet_upgrades.map((item, index) => (
+                            <div key={index} className="rounded-lg border border-[#BDDDFC]/25 p-3">
+                              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Original</div>
+                              <p className="mt-1 text-sm text-[#6A89A7]">{item.original}</p>
+                              <div className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Rewrite</div>
+                              <p className="mt-1 text-sm font-medium leading-relaxed text-[#384959]">{item.rewrite}</p>
+                              {item.needs_user_fact && (
+                                <div className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                                  Verify facts before using this rewrite.
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {applicationPack.application_assets?.cover_letter && (
+                        <section className="border-t border-[#BDDDFC]/30 pt-4 md:col-span-2">
+                          <h4 className="text-sm font-semibold text-[#384959]">Cover Letter</h4>
+                          <textarea
+                            value={applicationPack.application_assets.cover_letter}
+                            readOnly
+                            className="mt-2 h-52 w-full resize-none rounded-lg border border-[#BDDDFC]/30 bg-[#f8fbff] px-3 py-2 text-sm leading-relaxed text-[#384959] outline-none"
+                          />
+                        </section>
+                      )}
+                      {applicationPack.application_assets?.recruiter_dm && (
+                        <section className="border-t border-[#BDDDFC]/30 pt-4">
+                          <h4 className="text-sm font-semibold text-[#384959]">Recruiter DM</h4>
+                          <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-[#384959]">{applicationPack.application_assets.recruiter_dm}</p>
+                        </section>
+                      )}
+                      {applicationPack.application_assets?.follow_up_email && (
+                        <section className="border-t border-[#BDDDFC]/30 pt-4">
+                          <h4 className="text-sm font-semibold text-[#384959]">Follow-up Email</h4>
+                          <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-[#384959]">{applicationPack.application_assets.follow_up_email}</p>
+                        </section>
+                      )}
+                    </div>
+
+                    {((applicationPack.interview?.likely_questions || []).length > 0 || (applicationPack.interview?.interviewer_questions || []).length > 0) && (
+                      <section className="border-t border-[#BDDDFC]/30 pt-4">
+                        <h4 className="text-sm font-semibold text-[#384959]">Interview Prep</h4>
+                        <div className="mt-2 grid gap-4 md:grid-cols-2">
+                          {(applicationPack.interview?.likely_questions || []).length > 0 && (
+                            <div>
+                              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Likely Questions</div>
+                              <ul className="mt-2 space-y-1.5 text-sm text-[#384959]">
+                                {applicationPack.interview.likely_questions.map((item, index) => <li key={index}>• {item}</li>)}
+                              </ul>
+                            </div>
+                          )}
+                          {(applicationPack.interview?.interviewer_questions || []).length > 0 && (
+                            <div>
+                              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Ask Them</div>
+                              <ul className="mt-2 space-y-1.5 text-sm text-[#384959]">
+                                {applicationPack.interview.interviewer_questions.map((item, index) => <li key={index}>• {item}</li>)}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </section>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
+                <span className="text-xs text-[#6A89A7]">
+                  {applicationPack?.agent?.workflow || "application_pack_v1"}
+                </span>
+                {applicationPack ? (
+                  <button
+                    onClick={copyApplicationPack}
+                    className="flex items-center gap-1.5 px-4 py-2 text-sm bg-[#384959] text-white rounded-lg hover:bg-[#2d3a47] transition font-medium"
+                  >
+                    <Copy size={14} />
+                    {applicationPackCopied ? "Copied" : "Copy Pack"}
+                  </button>
+                ) : (
+                  <button
+                    onClick={generateApplicationPack}
+                    disabled={applicationPackLoading}
+                    className="flex items-center gap-1.5 px-5 py-2 text-sm bg-[#384959] text-white rounded-lg hover:bg-[#2d3a47] transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {applicationPackLoading ? <Loader2 size={14} className="animate-spin" /> : <Bot size={14} />}
+                    {applicationPackLoading ? "Building..." : "Build Pack"}
+                  </button>
                 )}
               </div>
             </motion.div>

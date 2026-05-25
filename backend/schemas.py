@@ -274,6 +274,15 @@ class CoverLetterRequest(BaseModel):
     user_direction: str | None = Field(None, max_length=500, description="Custom instruction like 'emphasize leadership' or 'keep it concise'")
 
 
+class ApplicationPackRequest(BaseModel):
+    resume_text: str = Field(..., min_length=50, max_length=15000)
+    job_id: int | None = Field(None)
+    job_title: str = Field("", max_length=200)
+    job_company: str = Field("", max_length=200)
+    job_description: str = Field("", max_length=15000)
+    user_direction: str | None = Field(None, max_length=1000, description="Optional instruction for the application agent")
+
+
 class SkillsFutureRecommendRequest(BaseModel):
     skills: list[str] = Field(..., min_length=1, max_length=8)
     per_skill: int = Field(3, ge=1, le=5)
