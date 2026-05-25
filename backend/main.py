@@ -2952,6 +2952,73 @@ _CAREERSGOV_MINISTRY_RE = re.compile(r"\b(Ministry of [A-Za-z][A-Za-z &]+)")
 _CAREERSGOV_MINISTRY_PHRASE_ALIASES = {
     "ministry of social and family": "Ministry of Social and Family Development",
 }
+_ANALYTICS_AGENCY_SUBSETS = {
+    "public_sector": {
+        "label": "Public sector",
+        "terms": ["Careers@Gov", "Singapore Public Service"],
+    },
+    "ministries": {
+        "label": "Ministries",
+        "terms": [
+            "Ministry of", "MCCY", "MDDI", "MFA", "MHA", "MINDEF", "MINLAW", "MND",
+            "MOE", "MOF", "MOH", "MOM", "MOT", "MSF", "MTI",
+            *[label for label in _CAREERSGOV_AGENCY_ALIASES.values() if label.startswith("Ministry of ")],
+        ],
+    },
+    "stat_boards": {
+        "label": "Stat boards",
+        "terms": [
+            "AIC", "AGC", "A*STAR", "ASTAR", "BCA", "CAA", "CDA", "CPF", "ECDA",
+            "EDB", "ESG", "GOVTECH", "HDB", "HSA", "HTX", "IMD", "IMDA", "LTA",
+            "MAS", "MPA", "NAC", "NEA", "NLB", "NPARKS", "PA", "PAS", "PUB",
+            "SCB", "SLA", "SSG", "URA",
+            *[
+                label for label in _CAREERSGOV_AGENCY_ALIASES.values()
+                if not label.startswith("Ministry of ")
+            ],
+        ],
+    },
+    "digital_gov": {
+        "label": "Digital Gov",
+        "terms": [
+            "GOVTECH", "Government Technology Agency", "IMD", "IMDA",
+            "Infocomm Media Development Authority", "MDDI",
+            "Ministry of Digital Development and Information", "HTX",
+            "Home Team Science and Technology Agency",
+        ],
+    },
+    "defence_home": {
+        "label": "Defence / Home Team",
+        "terms": [
+            "MINDEF", "Ministry of Defence", "MHA", "Ministry of Home Affairs",
+            "HTX", "Home Team Science and Technology Agency",
+        ],
+    },
+    "transport": {
+        "label": "Transport",
+        "terms": [
+            "MOT", "Ministry of Transport", "LTA", "Land Transport Authority",
+            "MPA", "Maritime and Port Authority of Singapore",
+            "CAA", "Civil Aviation Authority of Singapore",
+        ],
+    },
+    "education_research": {
+        "label": "Education / Research",
+        "terms": [
+            "MOE", "Ministry of Education", "A*STAR", "ASTAR",
+            "Agency for Science, Technology and Research", "ECDA",
+            "Early Childhood Development Agency", "SSG", "SkillsFuture Singapore",
+            "SCB", "Science Centre Board", "NLB", "National Library Board",
+        ],
+    },
+    "healthcare": {
+        "label": "Healthcare",
+        "terms": [
+            "MOH", "Ministry of Health", "HSA", "Health Sciences Authority",
+            "CDA", "Communicable Diseases Agency", "AIC", "Agency for Integrated Care",
+        ],
+    },
+}
 
 
 def _analytics_skill_key(raw: str) -> str:
@@ -3037,6 +3104,86 @@ def _analytics_company_filter_condition(raw_company: str):
         )
         for term in terms
     ))
+
+
+def _normalise_agency_subset_id(value: str | None) -> str:
+    key = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+    return key if key in _ANALYTICS_AGENCY_SUBSETS else ""
+
+
+def _analytics_agency_subset_options() -> list[dict]:
+    return [
+        {"id": subset_id, "label": meta["label"]}
+        for subset_id, meta in _ANALYTICS_AGENCY_SUBSETS.items()
+    ]
+
+
+def _is_agency_code_term(term: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z][A-Z0-9*]{1,8}", term or ""))
+
+
+def _agency_term_condition(term: str):
+    if _is_agency_code_term(term):
+        return or_(
+            ScrapedJob.agency.ilike(f"{term}%"),
+            ScrapedJob.agency.ilike(f"% {term}%"),
+            ScrapedJob.title.ilike(f"%[{term}%"),
+            ScrapedJob.title.ilike(f"% {term} %"),
+        )
+    return or_(
+        ScrapedJob.company.ilike(f"%{term}%"),
+        ScrapedJob.agency.ilike(f"%{term}%"),
+        ScrapedJob.title.ilike(f"%{term}%"),
+        ScrapedJob.source.ilike(f"%{term}%"),
+    )
+
+
+def _analytics_agency_subset_condition(subset_id: str):
+    subset_key = _normalise_agency_subset_id(subset_id)
+    if not subset_key:
+        return ScrapedJob.company.ilike("%%")
+
+    terms = []
+    seen = set()
+    for raw in _ANALYTICS_AGENCY_SUBSETS[subset_key]["terms"]:
+        term = str(raw or "").strip()
+        key = term.lower()
+        if term and key not in seen:
+            seen.add(key)
+            terms.append(term)
+
+    conditions = []
+    if subset_key == "public_sector":
+        conditions.append(ScrapedJob.source.ilike("%Careers@Gov%"))
+    for term in terms:
+        conditions.append(_agency_term_condition(term))
+    return or_(*conditions) if conditions else ScrapedJob.company.ilike("%%")
+
+
+def _agency_term_matches(text: str, term: str) -> bool:
+    cleaned = str(term or "").strip()
+    if not cleaned:
+        return False
+    if _is_agency_code_term(cleaned):
+        return bool(re.search(rf"(^|[^A-Z0-9*]){re.escape(cleaned)}([^A-Z0-9*]|$)", text.upper()))
+    return cleaned.lower() in text.lower()
+
+
+def _analytics_job_matches_agency_subset(job: ScrapedJob, subset_id: str) -> bool:
+    subset_key = _normalise_agency_subset_id(subset_id)
+    if not subset_key:
+        return False
+    haystack = " ".join(
+        str(value or "")
+        for value in (
+            getattr(job, "source", ""),
+            getattr(job, "company", ""),
+            getattr(job, "agency", ""),
+            getattr(job, "title", ""),
+            _analytics_company_label(job),
+        )
+    )
+    return any(_agency_term_matches(haystack, str(term or "")) for term in _ANALYTICS_AGENCY_SUBSETS[subset_key]["terms"])
 
 
 _SSIC_SECTION_LETTER_PREFIX_RE = re.compile(r"^[A-U]\s+(?=[A-Z])")
@@ -3333,13 +3480,15 @@ def analytics_skills(
     sector: str | None = Query(None, max_length=100),
     company: str | None = Query(None, max_length=200),
     title: str | None = Query(None, max_length=200),
+    agency_subset: str | None = Query(None, max_length=50),
     direct_employers_only: bool = Query(False),
     db: Session = Depends(get_db),
 ) -> dict:
     """Aggregate ATS skill demand, top titles, and sectors from scraped jobs."""
     global _analytics_cache, _analytics_cache_ts
 
-    has_filter = source or sector or company or title or direct_employers_only
+    agency_subset_key = _normalise_agency_subset_id(agency_subset)
+    has_filter = source or sector or company or title or agency_subset_key or direct_employers_only
     now = time.time()
     query_cache_key = (
         limit,
@@ -3348,6 +3497,7 @@ def analytics_skills(
         sector or "",
         company or "",
         title or "",
+        agency_subset_key,
         int(direct_employers_only),
     )
     with _ANALYTICS_CACHE_LOCK:
@@ -3393,6 +3543,8 @@ def analytics_skills(
             "seniority_mix": cached.get("seniority_mix", []),
             "ssic_coverage": cached.get("ssic_coverage", {}),
             "sector_source_mix": cached.get("sector_source_mix", []),
+            "agency_subsets": cached.get("agency_subsets", _analytics_agency_subset_options()),
+            "agency_subset": agency_subset_key,
             "direct_employers_only": direct_employers_only,
         }
         _store_analytics_query_cache(query_cache_key, now, result, cache_generation)
@@ -3440,6 +3592,8 @@ def analytics_skills(
         )
     if sector:
         db_query = db_query.filter(_sector_filter_condition(sector))
+    if agency_subset_key:
+        db_query = db_query.filter(_analytics_agency_subset_condition(agency_subset_key))
     if direct_employers_only:
         db_query = db_query.filter(
             direct_employer_condition(
@@ -3455,6 +3609,7 @@ def analytics_skills(
     company_counts: dict[str, int] = {}
     seniority_counts: dict[str, int] = {}
     sector_source_counts: dict[str, int] = {}
+    agency_subset_counts: dict[str, int] = {subset_id: 0 for subset_id in _ANALYTICS_AGENCY_SUBSETS}
     salary_floors: list[int] = []
     salary_midpoints: list[int] = []
     salary_ceilings: list[int] = []
@@ -3489,6 +3644,9 @@ def analytics_skills(
 
         total_jobs += 1
         sector_source_counts[sector_source] = sector_source_counts.get(sector_source, 0) + 1
+        for subset_id in agency_subset_counts:
+            if _analytics_job_matches_agency_subset(job, subset_id):
+                agency_subset_counts[subset_id] += 1
 
         src = _analytics_source_label(job.source)
         source_counts[src] = source_counts.get(src, 0) + 1
@@ -3685,6 +3843,13 @@ def analytics_skills(
         "inferred_count": sector_source_counts.get("inferred", 0),
         "unavailable_count": sector_source_counts.get("unavailable", 0),
     }
+    agency_subsets = [
+        {
+            **option,
+            "count": agency_subset_counts.get(option["id"], 0),
+        }
+        for option in _analytics_agency_subset_options()
+    ]
 
     # Cache the full result when no filters active
     cache_payload = None
@@ -3710,6 +3875,8 @@ def analytics_skills(
             "seniority_mix": seniority_mix,
             "ssic_coverage": ssic_coverage,
             "sector_source_mix": sector_source_mix,
+            "agency_subsets": agency_subsets,
+            "agency_subset": agency_subset_key,
             "direct_employers_only": direct_employers_only,
         }
 
@@ -3741,6 +3908,8 @@ def analytics_skills(
         "seniority_mix": seniority_mix,
         "ssic_coverage": ssic_coverage,
         "sector_source_mix": sector_source_mix,
+        "agency_subsets": agency_subsets,
+        "agency_subset": agency_subset_key,
         "direct_employers_only": direct_employers_only,
     }
     if cache_payload is not None:

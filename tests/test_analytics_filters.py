@@ -6,7 +6,9 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from main import (  # noqa: E402
+    _analytics_agency_subset_options,
     _analytics_company_label,
+    _analytics_job_matches_agency_subset,
     _analytics_skill_display,
     _analytics_skill_key,
     _build_label_movers,
@@ -80,3 +82,37 @@ def test_direct_employer_filter_classifies_common_recruiters():
     assert is_recruitment_employer("RECRUIT EXPRESS PTE LTD")
     assert is_recruitment_employer("Example Pte Ltd", "Employment Agencies")
     assert not is_recruitment_employer("Land Transport Authority")
+
+
+def test_agency_subset_options_include_public_sector_groups():
+    options = {item["id"]: item["label"] for item in _analytics_agency_subset_options()}
+
+    assert options["public_sector"] == "Public sector"
+    assert options["ministries"] == "Ministries"
+    assert options["digital_gov"] == "Digital Gov"
+
+
+def test_agency_subset_matching_uses_agency_codes_and_labels():
+    lta_job = SimpleNamespace(
+        source="Careers@Gov",
+        company="Singapore Public Service",
+        agency="LTA BCO B6 L2",
+        title="[LTA-RSE] Executive Engineer / Engineer, Communications",
+    )
+    govtech_job = SimpleNamespace(
+        source="Careers@Gov",
+        company="Singapore Public Service",
+        agency="GOVTECH",
+        title="Software Engineer",
+    )
+    private_job = SimpleNamespace(
+        source="MyCareersFuture",
+        company="Example Pte Ltd",
+        agency="",
+        title="Software Engineer",
+    )
+
+    assert _analytics_job_matches_agency_subset(lta_job, "public_sector")
+    assert _analytics_job_matches_agency_subset(lta_job, "transport")
+    assert _analytics_job_matches_agency_subset(govtech_job, "digital_gov")
+    assert not _analytics_job_matches_agency_subset(private_job, "public_sector")

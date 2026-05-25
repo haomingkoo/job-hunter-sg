@@ -14,6 +14,16 @@ const formatSalaryRange = (salary) => {
   }
   return formatMoney(salary?.median_floor);
 };
+const AGENCY_SUBSET_OPTIONS = [
+  { id: "public_sector", label: "Public sector" },
+  { id: "ministries", label: "Ministries" },
+  { id: "stat_boards", label: "Stat boards" },
+  { id: "digital_gov", label: "Digital Gov" },
+  { id: "defence_home", label: "Defence / Home Team" },
+  { id: "transport", label: "Transport" },
+  { id: "education_research", label: "Education / Research" },
+  { id: "healthcare", label: "Healthcare" },
+];
 
 function StatTile({ icon: Icon, label, value }) {
   return (
@@ -89,6 +99,7 @@ export default function AnalyticsTab() {
   const [companyDraft, setCompanyDraft] = useState("");
   const [titleFilter, setTitleFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
+  const [agencySubset, setAgencySubset] = useState("");
   const [directEmployersOnly, setDirectEmployersOnly] = useState(false);
   const [showCount, setShowCount] = useState(30);
   const [skillSearch, setSkillSearch] = useState("");
@@ -102,6 +113,7 @@ export default function AnalyticsTab() {
       if (companyFilter) params.set("company", companyFilter);
       if (titleFilter) params.set("title", titleFilter);
       if (sourceFilter) params.set("source", sourceFilter);
+      if (agencySubset) params.set("agency_subset", agencySubset);
       if (directEmployersOnly) params.set("direct_employers_only", "true");
       const resp = await apiFetch(`/api/analytics/skills?${params}`);
       if (!resp.ok) throw new Error("Failed to load analytics");
@@ -110,7 +122,7 @@ export default function AnalyticsTab() {
       setError(err.message);
     }
     setLoading(false);
-  }, [sectorFilter, companyFilter, titleFilter, sourceFilter, directEmployersOnly]);
+  }, [sectorFilter, companyFilter, titleFilter, sourceFilter, agencySubset, directEmployersOnly]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -132,11 +144,14 @@ export default function AnalyticsTab() {
   const hardSkillsMaxCount = data?.hard_skills?.[0]?.count || 1;
   const seniorityMaxCount = Math.max(...(data?.seniority_mix || []).map((item) => item.count || 0), 1);
   const selectedSource = (data?.sources || []).find((item) => item.source === sourceFilter);
+  const agencySubsetOptions = data?.agency_subsets?.length ? data.agency_subsets : AGENCY_SUBSET_OPTIONS;
+  const selectedAgencySubset = agencySubsetOptions.find((item) => item.id === agencySubset) || AGENCY_SUBSET_OPTIONS.find((item) => item.id === agencySubset);
   const activeFilters = [
     selectedSource?.label || sourceFilter,
     sectorFilter,
     titleFilter,
     companyFilter,
+    selectedAgencySubset?.label,
     directEmployersOnly ? "Direct employers" : "",
   ].filter(Boolean);
   const salary = data?.salary_insights || {};
@@ -167,6 +182,7 @@ export default function AnalyticsTab() {
     setTitleFilter("");
     setCompanyFilter("");
     setCompanyDraft("");
+    setAgencySubset("");
     setDirectEmployersOnly(false);
   };
 
@@ -198,7 +214,7 @@ export default function AnalyticsTab() {
               <>Click a source, industry/sector, hiring org, or title to drill into skill demand.</>
             )}
           </div>
-          {(sourceFilter || sectorFilter || titleFilter || companyFilter || directEmployersOnly) && (
+          {(sourceFilter || sectorFilter || titleFilter || companyFilter || agencySubset || directEmployersOnly) && (
             <button
               type="button"
               onClick={clearAllFilters}
@@ -273,7 +289,7 @@ export default function AnalyticsTab() {
                   Direct employers
                 </button>
               </div>
-              {(sourceFilter || sectorFilter || titleFilter || companyFilter || directEmployersOnly) && (
+              {(sourceFilter || sectorFilter || titleFilter || companyFilter || agencySubset || directEmployersOnly) && (
                 <button
                   type="button"
                   onClick={clearAllFilters}
@@ -282,6 +298,28 @@ export default function AnalyticsTab() {
                   Clear Filters
                 </button>
               )}
+            </div>
+          </div>
+          <div className="mt-4">
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Agency subsets</div>
+            <div className="flex flex-wrap gap-2">
+              {agencySubsetOptions.map((item) => {
+                const active = agencySubset === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setAgencySubset(active ? "" : item.id)}
+                    aria-pressed={active}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${active ? "border-[#384959] bg-[#384959] text-white" : "border-[#BDDDFC]/40 bg-[#f0f4f8] text-[#6A89A7] hover:border-[#88BDF2] hover:text-[#384959]"}`}
+                  >
+                    <span>{item.label}</span>
+                    {!agencySubset && Number.isFinite(Number(item.count)) && (
+                      <span className={`font-mono text-[11px] ${active ? "text-white/75" : "text-[#6A89A7]"}`}>{formatNumber(item.count)}</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           </div>
           <div className="mt-4 grid gap-4 xl:grid-cols-4">
