@@ -1909,7 +1909,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const issueBulletCount = bulletSections.filter((section) => section.annotation?.tone && section.annotation.tone !== "emerald").length;
   const improvementCount = issueBulletCount + Math.min(scoreData?.top_suggestions?.length || 0, 3) + Math.min(relevantMissingKeywords.length, 6);
   const isFeedbackView = workspaceView === "feedback";
-  const isEditorView = workspaceView === "editor";
   const showFeedbackPanels = isFeedbackView || mobilePanel === "feedback";
   const lowScoreWarning = scoreData && overallScore !== null && overallScore < 50;
   const setupVisible = showSetupPanel || !resumeText.trim() || wizardStep === 1;
@@ -1942,26 +1941,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         : scorePhase === "opening_scored"
           ? "Opening score ready"
           : "Opening score pending";
-  const workflowSteps = [
-    {
-      id: "intake",
-      label: "Intake",
-      detail: resumeText.trim() ? "Resume loaded" : "Upload a PDF, DOCX, or pasted draft",
-      state: resumeText.trim() ? "complete" : "active",
-    },
-    {
-      id: "refine",
-      label: "Refine",
-      detail: selectedBullet ? "Bullet-level feedback active" : "Review score, phrasing, and structure",
-      state: !resumeText.trim() ? "upcoming" : scorePhase === "final_complete" ? "complete" : "active",
-    },
-    {
-      id: "finalize",
-      label: "Finalize",
-      detail: scorePhase === "final_complete" ? "Final score locked for export" : "Finalize score before download",
-      state: !resumeText.trim() ? "upcoming" : scorePhase === "final_complete" ? "complete" : needsRescore ? "active" : "upcoming",
-    },
-  ];
 
   const focusBullet = useCallback((sectionId) => {
     setSelectedBulletId(sectionId);

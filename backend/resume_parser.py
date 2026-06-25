@@ -223,7 +223,6 @@ def _has_missing_spaces(text: str) -> bool:
     2. Very long tokens: words >40 chars that span multiple merged words.
     Either signal affecting >10% of tokens triggers the fix.
     """
-    import re
     words = text.split()
     if not words:
         return False

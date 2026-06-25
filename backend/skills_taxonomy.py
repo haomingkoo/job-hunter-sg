@@ -557,12 +557,6 @@ def load_tier2_skills() -> set[str]:
     return _tier2_cache
 
 
-def invalidate_tier2_cache() -> None:
-    """Clear the Tier 2 cache so it reloads on next access."""
-    global _tier2_cache
-    _tier2_cache = None
-
-
 # ── Classification ──────────────────────────────────────────────────────────
 
 def classify_skill_tier(term: str, jd_frequency: int = 0) -> int:
@@ -593,24 +587,3 @@ def classify_skill_tier(term: str, jd_frequency: int = 0) -> int:
         return 2
 
     return 3
-
-
-def is_known_skill(term: str) -> bool:
-    """Check if a term is a Tier 1 or Tier 2 skill."""
-    return classify_skill_tier(term) <= 2
-
-
-# ── Stats ───────────────────────────────────────────────────────────────────
-
-def taxonomy_stats() -> dict:
-    """Return counts for each tier source."""
-    tier2 = load_tier2_skills()
-    return {
-        "tier1_total": len(TIER1_SKILLS),
-        "tier1_onet_skills": len(ONET_SKILLS),
-        "tier1_onet_knowledge": len(ONET_KNOWLEDGE),
-        "tier1_onet_hot_technologies": len(ONET_HOT_TECHNOLOGIES),
-        "tier1_onet_software_categories": len(ONET_SOFTWARE_CATEGORIES),
-        "tier1_tech_skills": len(TECH_SKILLS),
-        "tier2_learned": len(tier2),
-    }

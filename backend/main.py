@@ -11,7 +11,6 @@ import io
 import json
 import logging
 import os
-import random
 import sys
 import time
 import concurrent.futures
@@ -717,13 +716,6 @@ def _surface_power_gaps(skills: list[str], limit: int = 6) -> list[str]:
         if len(surfaced) >= limit:
             break
     return surfaced
-
-
-def _extract_job_match_skills(job: ScrapedJob, db: Session) -> list[str]:
-    return [
-        term["skill"] if isinstance(term, dict) else str(term)
-        for term in _build_canonical_job_terms(job, db)
-    ]
 
 
 def _build_canonical_job_terms(job: ScrapedJob, db: Session | None = None) -> list[dict]:
@@ -2291,7 +2283,6 @@ def admin_rebuild_skills_taxonomy(
 @app.get("/sitemap.xml")
 def sitemap_xml() -> Response:
     """Dynamic sitemap for search engines."""
-    from fastapi.responses import Response
     pages = [
         {"loc": "https://job.kooexperience.com/", "priority": "1.0", "changefreq": "daily"},
         {"loc": "https://job.kooexperience.com/#jobs", "priority": "0.9", "changefreq": "daily"},
@@ -4613,10 +4604,8 @@ def match_resume_to_job(
     elif job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(job, db):
         db.commit()
 
-    import json as _json
-
     # Get skills from the job's database record + description
-    db_skills = job.skills if isinstance(job.skills, list) else _json.loads(job.skills) if job.skills else []
+    db_skills = job.skills if isinstance(job.skills, list) else json.loads(job.skills) if job.skills else []
     jd_text = job.description or ""
     canonical_terms = _build_canonical_job_terms(job, db)
 
@@ -5297,7 +5286,6 @@ def generate_stories_from_resume(
         )
 
     # Parse JSON from response
-    import json as _json
     content = content.strip()
     # Strip markdown code blocks if present
     if content.startswith("```"):
@@ -5306,14 +5294,14 @@ def generate_stories_from_resume(
         content = content.strip()
 
     try:
-        stories = _json.loads(content)
-    except _json.JSONDecodeError:
+        stories = json.loads(content)
+    except json.JSONDecodeError:
         # Try to extract JSON array from response
         match = re.search(r"\[.*\]", content, re.DOTALL)
         if match:
             try:
-                stories = _json.loads(match.group())
-            except _json.JSONDecodeError:
+                stories = json.loads(match.group())
+            except json.JSONDecodeError:
                 raise HTTPException(status_code=500, detail="AI returned invalid format. Try again.")
         else:
             raise HTTPException(status_code=500, detail="AI returned invalid format. Try again.")
@@ -5417,13 +5405,12 @@ def score_resume(
     if body.job_id:
         job_row = db.query(ScrapedJob).filter(ScrapedJob.id == body.job_id).first()
         if job_row:
-            import json as _json
             raw = job_row.parsed_jd
             if isinstance(raw, dict):
                 scored_parsed_jd = raw
             elif isinstance(raw, str) and raw.strip():
                 try:
-                    scored_parsed_jd = _json.loads(raw)
+                    scored_parsed_jd = json.loads(raw)
                 except (ValueError, TypeError):
                     scored_parsed_jd = None
             # Use the job's description as JD text if caller didn't supply one
@@ -6577,11 +6564,6 @@ async def upload_resume(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Smart Format disabled — regex parser handles most cases well enough,
-    # and the LLM was splitting bullets mid-sentence causing rendering issues.
-    # TODO: revisit with a better prompt or a structured JSON output approach.
-    result["smart_formatted"] = False
-
     parse_quality = result.get("parse_quality", {})
     db.add(UsageLog(
         user_id=user.id if user else None,
@@ -6682,84 +6664,6 @@ Return a JSON array:
             "message": f"{keep_count} bullets are strong. {improve_count} can be improved."
         }
     }
-
-
-@app.post("/api/resume/format")
-def format_resume(
-    body: ResumeScoreRequest,
-    user: Optional[User] = Depends(get_optional_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """
-    AI-powered resume formatting — takes raw resume text and returns
-    a clean, ATS-friendly formatted version. Counts as 1 AI credit.
-    """
-    check_rate_limit(user, "ai", db)
-    db.add(UsageLog(
-        user_id=user.id if user else None,
-        action="ai",
-        detail="format",
-    ))
-    db.commit()
-
-    system = """You are an expert resume formatter. Take the raw resume text and return a perfectly formatted, ATS-friendly resume.
-
-CRITICAL — DO NOT HALLUCINATE:
-- NEVER change, invent, or alter: names, email addresses, phone numbers, dates, company names, job titles, degree names, university names, certifications, or any factual information
-- ONLY improve: formatting, structure, bullet point wording, action verbs, and section organization
-- If you're unsure about a detail, keep the original text exactly as-is
-- Do NOT add achievements, metrics, or skills that are not in the original resume
-
-CRITICAL STRUCTURE RULES:
-- NEVER turn job titles into bullet points
-- Preserve this hierarchy exactly:
-  SECTION HEADER (ALL CAPS)
-  Company Name — Location
-  Job Title | Date Range
-  • Achievement bullet 1
-  • Achievement bullet 2
-- Job titles with dates (e.g., "Program Manager | Aug 2022 – Jan 2025") are SUBHEADINGS, not bullets
-- Only achievement/responsibility lines should be bullets (starting with •)
-- NEVER merge or reorder sections
-- NEVER change dates, company names, or job titles
-
-Formatting rules:
-- Use clear section headers: PROFESSIONAL SUMMARY, EXPERIENCE, EDUCATION, SKILLS, CERTIFICATIONS
-- Each job entry: Company Name — Location on one line, then Job Title | Date Range on the next line
-- Bullet points start with strong action verbs
-- Remove filler words and weak phrases
-- Keep ALL content — do not remove or summarize anything. Reorganize and clean up formatting only.
-- Use consistent date formats throughout
-- Put skills in a comma-separated list, grouped by category
-- If residency status is mentioned, keep it prominent
-- Output as clean PLAIN TEXT — no markdown, no **bold**, no _italic_, no # headers
-- Section headers must be ALL CAPS on their own line (e.g., PROFESSIONAL EXPERIENCE)
-- Do NOT wrap anything in **asterisks** or markdown formatting
-- Do NOT add any commentary — return ONLY the formatted resume"""
-
-    resume_text = sanitize_resume_text(body.resume_text)
-    jd = sanitize_user_input(body.job_description)
-
-    user_msg = f"Format this resume into a clean, ATS-friendly structure:\n\n{resume_text}"
-    if jd:
-        user_msg += f"\n\n---\nOptimize the ordering and keywords for this job:\n{jd}"
-
-    content = _call_sealion(
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_msg},
-        ],
-        max_tokens=4000,  # Enough for a full 2-3 page resume output
-        temperature=0.3,
-    )
-
-    if not content:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service unavailable. Try again shortly.",
-        )
-
-    return {"formatted_resume": content, "original_word_count": len(resume_text.split())}
 
 
 @app.post("/api/resume/download")
@@ -6991,53 +6895,6 @@ ul {{ padding-left: 18pt; margin: 0; }}
 def get_templates() -> list[dict]:
     """List available resume templates."""
     return list_templates()
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# ENCOURAGEMENT — small touches that keep job seekers going
-# ═════════════════════════════════════════════════════════════════════════════
-
-_ENCOURAGEMENTS = {
-    "search": [
-        "Every search brings you closer to the right opportunity.",
-        "Keep exploring — the perfect role is out there.",
-        "You're putting in the work, and it shows.",
-    ],
-    "track": [
-        "Another one tracked! Staying organised is half the battle.",
-        "You're building real momentum. Keep it going.",
-        "That's a solid pick. Fingers crossed for this one!",
-    ],
-    "resume_score": [
-        "Taking the time to improve your resume is already a step ahead of most candidates.",
-        "Every small improvement adds up. You've got this.",
-        "Smart move getting your resume checked — preparation pays off.",
-    ],
-    "ai_coach": [
-        "You're investing in yourself, and that's never wasted.",
-        "The fact that you're refining your resume shows real dedication.",
-        "Great resumes get interviews. You're on the right track.",
-    ],
-    "download": [
-        "Looking sharp! Go get that role.",
-        "Your resume is ready. Now go make them an offer they can't refuse.",
-        "All the best with your applications — you've done the hard work!",
-    ],
-    "general": [
-        "Job hunting is tough, but so are you.",
-        "Remember: every 'no' gets you closer to the right 'yes'.",
-        "Take it one application at a time. You're doing great.",
-        "It only takes one yes. Keep going.",
-        "The right company is looking for someone exactly like you.",
-    ],
-}
-
-
-@app.get("/api/encouragement")
-def get_encouragement(context: str = Query("general", description="Context: search, track, resume_score, ai_coach, download, general")) -> dict:
-    """Return a contextual word of encouragement."""
-    messages = _ENCOURAGEMENTS.get(context, _ENCOURAGEMENTS["general"])
-    return {"message": random.choice(messages), "context": context}
 
 
 # ═════════════════════════════════════════════════════════════════════════════

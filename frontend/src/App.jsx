@@ -92,21 +92,6 @@ export default function JobHunterSG() {
     if (user) refreshJobs();
   }, [user, refreshJobs]);
 
-  // Usage meter
-  const [usageData, setUsageData] = useState(null);
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const resp = await apiFetch("/api/usage");
-        const data = await resp.json();
-        if (!cancelled) setUsageData(data);
-      } catch { /* silent */ }
-    })();
-    return () => { cancelled = true; };
-  }, [user]);
-
   const handleAuth = (authUser, authToken) => {
     setUser(authUser);
     setToken(authToken);
@@ -238,8 +223,6 @@ export default function JobHunterSG() {
       {isHome ? (
         <HomePage
           onNavigate={navigateTo}
-          onSignIn={() => setShowAuthModal(true)}
-          user={user}
         />
       ) : (
         <>

@@ -68,9 +68,8 @@ SEALION_MODEL_INTERACTIVE = "aisingapore/Qwen-SEA-LION-v4-32B-IT"
 SEALION_MODEL_PIPELINE_BULLETS = "aisingapore/Qwen-SEA-LION-v4-32B-IT"
 SEALION_MODEL_REASONING = "aisingapore/Llama-SEA-LION-v3.5-70B-R"
 
-# Backwards-compatible aliases used by older call sites.
+# Backwards-compatible alias used by older call sites.
 SEALION_MODEL = SEALION_MODEL_INTERACTIVE
-SEALION_MODEL_FAST = SEALION_MODEL_PIPELINE_BULLETS
 
 # Available models (for reference):
 # - aisingapore/Qwen-SEA-LION-v4-32B-IT  (best interactive / batched rewrite model)
@@ -352,92 +351,6 @@ def get_ai_status() -> dict:
 # ── Public AI Features ──────────────────────────────────────────────────────
 
 
-def smart_format_resume_text(raw_text: str) -> Optional[str]:
-    """Reformat extracted resume text for better structure.
-
-    Uses LLM to fix line breaks, separate headings, and add bullet
-    markers — WITHOUT changing any content. Returns formatted text
-    or None on failure.
-    """
-    if not raw_text or len(raw_text.strip()) < 50:
-        return None
-
-    original_words = raw_text.split()
-    original_word_count = len(original_words)
-
-    # Skip very long resumes to avoid token limits
-    if original_word_count > 2000:
-        log.info("[SmartFormat] Skipping — resume too long (%d words)", original_word_count)
-        return None
-
-    system = """You are a resume text formatter. You take raw text extracted from a PDF and fix ONLY the line structure. You MUST NOT change any words.
-
-FORMAT RULES:
-- Section headings (EXPERIENCE, EDUCATION, SKILLS, SUMMARY, CERTIFICATIONS, etc.) go on their own line in UPPERCASE
-- Company name goes on its own line
-- Job title goes on its own line (or combined with company using " | ")
-- Date range goes on the same line as the job title, separated by " | " (e.g., "Manager, Engineering | Aug 2022 – Jan 2025")
-- Each bullet point starts on its own line with "• "
-- One blank line between sections
-- Contact info (email, phone, LinkedIn) stays on one line separated by " | "
-
-STRICT CONSTRAINTS:
-- Do NOT change, add, or remove any words, numbers, dates, or punctuation
-- Do NOT rephrase anything
-- Do NOT add section headings that don't exist in the original
-- Do NOT wrap output in code blocks, markdown, or JSON
-- Return ONLY the reformatted plain text"""
-
-    user_msg = f"Reformat this resume text:\n\n{raw_text[:6000]}"
-
-    result = _call_sealion(
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_msg},
-        ],
-        max_tokens=3000,
-        model=SEALION_MODEL,
-        temperature=0.1,
-    )
-
-    if not result:
-        log.warning("[SmartFormat] LLM returned empty response")
-        return None
-
-    # Strip code block wrappers if present
-    formatted = result.strip()
-    if formatted.startswith("```"):
-        formatted = "\n".join(formatted.split("\n")[1:])
-    if formatted.endswith("```"):
-        formatted = "\n".join(formatted.split("\n")[:-1])
-    formatted = formatted.strip()
-
-    if not formatted:
-        log.warning("[SmartFormat] Empty after cleanup")
-        return None
-
-    # Validate: word count should be within 15% of original
-    formatted_word_count = len(formatted.split())
-    ratio = formatted_word_count / max(original_word_count, 1)
-    if ratio < 0.85 or ratio > 1.15:
-        log.warning(
-            "[SmartFormat] Rejected — word count drift %.0f%% (%d → %d)",
-            (ratio - 1) * 100, original_word_count, formatted_word_count,
-        )
-        return None
-
-    # Spot-check: first 3 significant words must appear in output
-    sig_words = [w for w in original_words if len(w) >= 4][:5]
-    formatted_lower = formatted.lower()
-    missing = [w for w in sig_words if w.lower() not in formatted_lower]
-    if len(missing) >= 2:
-        log.warning("[SmartFormat] Rejected — content mismatch: %s", missing)
-        return None
-
-    log.info("[SmartFormat] Applied (%d → %d words)", original_word_count, formatted_word_count)
-    return formatted
-
-
 def coach_resume(resume_text: str, job_description: str = "") -> Optional[dict]:
     """
     AI-powered resume coaching.
@@ -601,93 +514,6 @@ Return EXACTLY this format (3 lines, nothing else):
             options.append(cleaned)
 
     return [apply_uk_spelling(o) for o in (options[:3] if options else [content.strip()])]
-
-
-def prep_interview(resume_text: str, job_description: str) -> Optional[str]:
-    """Generate interview prep based on resume + job description."""
-    system = """You are an interview coach who has conducted 5,000+ interviews at Singapore companies.
-
-Based on the candidate's resume and the job description, generate:
-
-1. **Likely Interview Questions** (5-7 questions)
-   Mix of behavioral (STAR format) and technical/role-specific.
-   For each question, give a brief coaching tip on how to answer.
-
-2. **Your STAR Stories** (3 stories)
-   Pull from THEIR resume — identify their best achievements and frame them as STAR stories:
-   - Situation: [context from their experience]
-   - Task: [what they needed to do]
-   - Action: [what they did — use their own bullet points]
-   - Result: [the outcome/impact]
-
-3. **Questions to Ask the Interviewer** (3 smart questions)
-   Based on the job description, suggest questions that show genuine interest and research.
-
-4. **Singapore-Specific Tips**
-   Dress code norms for SG companies, common interview formats (panel vs 1:1), cultural expectations.
-
-Be conversational and encouraging. Use "you" and "your"."""
-
-    user_msg = f"My resume:\n{resume_text[:2000]}\n\n---\nJob I'm interviewing for:\n{job_description[:2000]}"
-
-    content = _call_sealion(
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_msg},
-        ],
-        max_tokens=1000,
-        temperature=0.7,
-    )
-    return content
-
-
-def match_resume_to_jobs(resume_text: str, jobs: list[dict], top_n: int = 5) -> Optional[list[dict]]:
-    """
-    Use AI to rank jobs by fit with the resume.
-    Returns top_n jobs with match reasoning.
-    """
-    # Build a compact job summary
-    job_summaries = []
-    for i, j in enumerate(jobs[:20]):
-        job_summaries.append(
-            f"[{i+1}] {j.get('title', '')} @ {j.get('company', '')} "
-            f"| Skills: {', '.join(j.get('skills', [])[:5])}"
-        )
-
-    system = (
-        "You are a job matching expert. Given a resume and a list of jobs, "
-        "rank the top 5 best matches. For each, explain WHY it's a good fit "
-        "in 1 sentence. Return as JSON array: [{\"rank\": 1, \"job_index\": N, \"reason\": \"...\"}]"
-    )
-
-    user_msg = (
-        f"Resume (summary):\n{resume_text[:1500]}\n\n"
-        f"Available jobs:\n" + "\n".join(job_summaries)
-    )
-
-    content = _call_sealion(
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_msg},
-        ],
-        max_tokens=400,
-        temperature=0.3,
-    )
-
-    if not content:
-        return None
-
-    # Try to parse JSON from response
-    try:
-        # Find JSON array in response
-        start = content.find("[")
-        end = content.rfind("]") + 1
-        if start >= 0 and end > start:
-            return json.loads(content[start:end])
-    except (json.JSONDecodeError, ValueError):
-        pass
-
-    return [{"rank": 1, "job_index": 0, "reason": content[:200]}]
 
 
 def integrate_keywords(

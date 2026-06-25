@@ -31,7 +31,7 @@ npm run dev     # starts on :5173, proxies /api to :8000
 | Model | Size | Used for | Constant |
 |-------|------|----------|----------|
 | `Qwen-SEA-LION-v4-32B-IT` | 32B (Qwen3 base) | Interactive single-bullet rewrites | `SEALION_MODEL` |
-| `Llama-SEA-LION-v3.5-70B-R` | 70B (reasoning) | Full pipeline (strategy, rewrites, summary) | `SEALION_MODEL_FAST`, `SEALION_MODEL_REASONING` |
+| `Llama-SEA-LION-v3.5-70B-R` | 70B (reasoning) | Full pipeline (strategy, rewrites, summary) | `SEALION_MODEL_REASONING` |
 
 Both models are on the same free API at `https://api.sea-lion.ai/v1`. Same rate limits. 70B is slower but stronger. Use 32B only where instant response matters (interactive rewrite buttons).
 
@@ -173,7 +173,6 @@ cd frontend && npx vitest run
 |------|---------|
 | `jd_summary.py` | LLM summary generation via SEA-LION 32B |
 | `jd_analyzer.py` | Quality scoring, red flags, injection detection, duplicate hashing |
-| `job_enrichment.py` | Shared term computation utilities |
 | `backfill_enrichment.py` | CLI + admin endpoint for batch enrichment of all jobs |
 | `embedding_service.py` | RAG embeddings for semantic job-resume matching (MiniLM-L6-v2) |
 

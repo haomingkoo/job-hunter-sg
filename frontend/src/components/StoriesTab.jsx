@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  BookOpen, Plus, ChevronLeft, Trash2, Pencil,
+  BookOpen, Plus, ChevronLeft, Trash2,
   User, Trophy, Handshake, Sparkles, Save,
-  Wand2, AlertTriangle, Loader2, FileText,
+  Wand2, AlertTriangle, Loader2,
 } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 import {
