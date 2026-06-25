@@ -256,19 +256,6 @@ for _key in _SKILL_BY_FIRST_WORD:
     _SKILL_BY_FIRST_WORD[_key].sort(key=len, reverse=True)
 
 
-# ── Sentence splitting ──────────────────────────────────────────────────────
-
-_SENTENCE_RE = re.compile(
-    r"(?<=[.!?;])\s+|(?<=\n)\s*"
-)
-
-
-def _split_sentences(text: str) -> list[str]:
-    """Split text into rough sentence-like chunks."""
-    raw = _SENTENCE_RE.split(text)
-    return [s.strip() for s in raw if s.strip()]
-
-
 def _find_context(text: str, phrase: str) -> str:
     """Find the sentence containing a phrase, for context display."""
     text_lower = text.lower()

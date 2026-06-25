@@ -7,8 +7,6 @@ LLM for a short 2-4 sentence summary that is easier for humans to skim.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from ai_service import SEALION_MODEL_INTERACTIVE, _call_sealion
 from jd_analyzer import sanitize_for_llm
 
@@ -60,7 +58,6 @@ def build_structured_jd_outline(
         "single_word_skills": single_word_skills,
         "key_responsibilities": responsibilities,
         "competency_signals": domain_terms[:8],
-        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 

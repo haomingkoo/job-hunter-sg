@@ -145,7 +145,7 @@ export default function AnalyticsTab() {
   const seniorityMaxCount = Math.max(...(data?.seniority_mix || []).map((item) => item.count || 0), 1);
   const selectedSource = (data?.sources || []).find((item) => item.source === sourceFilter);
   const agencySubsetOptions = data?.agency_subsets?.length ? data.agency_subsets : AGENCY_SUBSET_OPTIONS;
-  const selectedAgencySubset = agencySubsetOptions.find((item) => item.id === agencySubset) || AGENCY_SUBSET_OPTIONS.find((item) => item.id === agencySubset);
+  const selectedAgencySubset = agencySubsetOptions.find((item) => item.id === agencySubset);
   const activeFilters = [
     selectedSource?.label || sourceFilter,
     sectorFilter,

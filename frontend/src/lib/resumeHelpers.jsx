@@ -1971,12 +1971,6 @@ export function summarizeTailoringChanges(changes = []) {
   }, {});
 }
 
-export function getTailorChangeKey(change, index = 0) {
-  if (!change) return `change-${index}`;
-  if (change.type === "summary_rewrite") return "summary";
-  return change.bullet_id || `${change.type || "change"}-${index}`;
-}
-
 export function getAtsGapKey(gap) {
   return [
     gap?.skill || "",

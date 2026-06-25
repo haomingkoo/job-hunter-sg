@@ -103,7 +103,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [employmentFilter, setEmploymentFilter] = useState(new Set());
   const [expYearsFilter, setExpYearsFilter] = useState(new Set());
   const [minSalaryFilter, setMinSalaryFilter] = useState("");
-  const [filterMeta, setFilterMeta] = useState({ sources: [], employment_types: [] });
+  const [filterMeta, setFilterMeta] = useState({ employment_types: [] });
   const [sortBy, setSortBy] = useState("newest");
   const [error, setError] = useState("");
   const [trackError, setTrackError] = useState("");
@@ -207,7 +207,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       setResults(mapped);
       if (pageNum === 1 && data.filter_meta && typeof data.filter_meta === "object") {
         setFilterMeta({
-          sources: Array.isArray(data.filter_meta.sources) ? data.filter_meta.sources : [],
           employment_types: Array.isArray(data.filter_meta.employment_types) ? data.filter_meta.employment_types : [],
           sectors: Array.isArray(data.filter_meta.sectors) ? data.filter_meta.sectors : [],
         });

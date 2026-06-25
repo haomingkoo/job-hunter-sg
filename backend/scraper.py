@@ -28,15 +28,13 @@ Usage:
   python sg_job_scraper.py "react developer" --limit 50 --output jobs.csv
 """
 
-import argparse
-import csv
 import hashlib
 import json
 import logging
 import os
 import re
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 from urllib.parse import quote_plus, urlsplit, urlunsplit
@@ -281,19 +279,7 @@ class CareersGovScraper:
         resp.raise_for_status()
         cls._cached_jobs = resp.json()
         cls._cache_time = time.time()
-        # Check data freshness via GitHub commits API
-        try:
-            commits_resp = SESSION.get(
-                "https://api.github.com/repos/opengovsg/careersgovsg-jobs-data/commits?path=data/job-listings.json&per_page=1",
-                timeout=10,
-            )
-            if commits_resp.ok:
-                last_update = commits_resp.json()[0]["commit"]["committer"]["date"]
-                log.info(f"[Careers@Gov] Loaded {len(cls._cached_jobs)} jobs (last updated: {last_update})")
-            else:
-                log.info(f"[Careers@Gov] Loaded {len(cls._cached_jobs)} jobs")
-        except Exception:
-            log.info(f"[Careers@Gov] Loaded {len(cls._cached_jobs)} jobs")
+        log.info(f"[Careers@Gov] Loaded {len(cls._cached_jobs)} jobs")
         return cls._cached_jobs
 
     @staticmethod
@@ -965,44 +951,6 @@ class JobAggregator:
         }
 
 
-# ─── Export helpers ─────────────────────────────────────────────────────────────
-
-def export_json(results: dict, filepath: str):
-    """Export results to JSON file."""
-    output = {
-        **{k: v for k, v in results.items() if k != "jobs"},
-        "jobs": [asdict(j) for j in results["jobs"]],
-    }
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(output, f, indent=2, ensure_ascii=False)
-    log.info(f"Saved {len(results['jobs'])} jobs to {filepath}")
-
-
-def export_csv(results: dict, filepath: str):
-    """Export results to CSV file."""
-    if not results["jobs"]:
-        log.warning("No jobs to export.")
-        return
-
-    fields = [
-        "title", "company", "location", "salary", "source", "url",
-        "posted_date", "employment_type", "seniority", "skills",
-        "description", "agency", "closing_date", "source_posting_id",
-        "openings", "scraped_at",
-    ]
-    with open(filepath, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        for job in results["jobs"]:
-            row = asdict(job)
-            row["skills"] = "; ".join(row["skills"]) if row["skills"] else ""
-            if len(row.get("description", "")) > 500:
-                row["description"] = row["description"][:500] + "..."
-            row.pop("dedup_key", None)
-            writer.writerow(row)
-    log.info(f"Saved {len(results['jobs'])} jobs to {filepath}")
-
-
 def _extract_employment_type(item: dict) -> str:
     """Extract employment type from MCF API response.
 
@@ -1051,108 +999,3 @@ def _clean_html(text: str) -> str:
     cleaned = re.sub(r"[ \t]+", " ", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
-
-
-def print_summary(results: dict):
-    """Print a nice summary to terminal."""
-    print("\n" + "=" * 70)
-    print(f"  SG JOB SCRAPER — Results for '{results['keyword']}'")
-    print("=" * 70)
-    print(f"  Searched at: {results['searched_at']}")
-    print(f"  Total raw results:   {results['total_raw']}")
-    print(f"  After dedup:         {results['total_deduped']}")
-    print(f"  Duplicates removed:  {results['duplicates_removed']}")
-    print()
-    print("  Results by source:")
-    for src, count in results["by_source"].items():
-        print(f"    {src:20s} {count:>4} jobs")
-    print()
-
-    if results["ssg_recommended_skills"]:
-        print("  SSG Skills Framework — Recommended skills for this role:")
-        skills_str = ", ".join(results["ssg_recommended_skills"][:15])
-        print(f"    {skills_str}")
-        if len(results["ssg_recommended_skills"]) > 15:
-            print(f"    ... and {len(results['ssg_recommended_skills']) - 15} more")
-        print()
-
-    print("  Top jobs:")
-    print(f"  {'Title':<35} {'Company':<25} {'Source':<20} {'Salary'}")
-    print("  " + "-" * 100)
-    for job in results["jobs"][:25]:
-        title = job.title[:33] + ".." if len(job.title) > 35 else job.title
-        company = job.company[:23] + ".." if len(job.company) > 25 else job.company
-        source = job.source[:18] + ".." if len(job.source) > 20 else job.source
-        salary = job.salary[:20] if job.salary else "-"
-        print(f"  {title:<35} {company:<25} {source:<20} {salary}")
-
-    if len(results["jobs"]) > 25:
-        print(f"\n  ... and {len(results['jobs']) - 25} more jobs. Export to see all.")
-    print("=" * 70 + "\n")
-
-
-# ─── CLI ────────────────────────────────────────────────────────────────────────
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="SG Job Scraper — Search across Singapore job portals",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python sg_job_scraper.py "software engineer"
-  python sg_job_scraper.py "data analyst" --sources mcf,careersgov
-  python sg_job_scraper.py "react developer" --limit 50 --output results.csv
-  python sg_job_scraper.py "product manager" --output results.json --no-skills
-
-Available sources: mcf, careersgov, nodeflair, indeed, jobstreet
-        """,
-    )
-    parser.add_argument("keyword", help="Job search keyword (e.g., 'software engineer')")
-    parser.add_argument(
-        "--sources", "-s",
-        help="Comma-separated sources (default: all). Options: mcf,careersgov,nodeflair,indeed,jobstreet",
-        default=None,
-    )
-    parser.add_argument("--limit", "-l", type=int, default=20, help="Max jobs per source (default: 20)")
-    parser.add_argument("--output", "-o", help="Output file path (.json or .csv)")
-    parser.add_argument("--no-skills", action="store_true", help="Skip SSG Skills Framework enrichment")
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
-
-    args = parser.parse_args()
-
-    if args.verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
-
-    sources = args.sources.split(",") if args.sources else None
-
-    aggregator = JobAggregator()
-    results = aggregator.search_all(
-        keyword=args.keyword,
-        sources=sources,
-        limit_per_source=args.limit,
-        enrich_skills=not args.no_skills,
-    )
-
-    # Print summary
-    print_summary(results)
-
-    # Export
-    if args.output:
-        filepath = args.output
-    else:
-        safe_keyword = re.sub(r"[^a-zA-Z0-9]+", "_", args.keyword).strip("_")
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filepath = f"sg_jobs_{safe_keyword}_{timestamp}.json"
-
-    if filepath.endswith(".csv"):
-        export_csv(results, filepath)
-    else:
-        export_json(results, filepath)
-        csv_path = filepath.replace(".json", ".csv")
-        export_csv(results, csv_path)
-
-    print(f"Done! Files saved. Found {results['total_deduped']} unique jobs across {len(results['by_source'])} sources.\n")
-
-
-if __name__ == "__main__":
-    main()
