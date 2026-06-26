@@ -39,6 +39,19 @@ SEALION_SMART_MODEL: str = os.getenv(
 # and returns empty. Floor its max_tokens at call sites that use it.
 SMART_MIN_MAX_TOKENS: int = 3000
 
+# ── Resume deep-agent v2 knobs ───────────────────────────────────────────────
+AGENT_MAX_TOOL_ITERATIONS: int = _int_env("AGENT_MAX_TOOL_ITERATIONS", 8)
+AGENT_PERSONA_COUNT: int = _int_env("AGENT_PERSONA_COUNT", 5)
+AGENT_SMART_MAX_TOKENS: int = max(
+    SMART_MIN_MAX_TOKENS,
+    _int_env("AGENT_SMART_MAX_TOKENS", SMART_MIN_MAX_TOKENS),
+)
+AGENT_SEARCH_JOBS_LIMIT: int = _int_env("AGENT_SEARCH_JOBS_LIMIT", 7)
+AGENT_MAX_CONCURRENT_RUNS_PER_USER: int = _int_env(
+    "AGENT_MAX_CONCURRENT_RUNS_PER_USER", 1
+)
+AGENT_CHAT_HISTORY_LIMIT: int = _int_env("AGENT_CHAT_HISTORY_LIMIT", 20)
+
 # ── SEA-LION throughput / network knobs ───────────────────────────────────────
 # Free tier is 10 req/min/key; default kept at 9 for headroom against 429s.
 SEALION_REQ_PER_MIN: int = _int_env("SEALION_REQ_PER_MIN", 9)
