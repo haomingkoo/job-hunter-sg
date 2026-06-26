@@ -1,0 +1,169 @@
+"""Small MCP-facing wrappers around existing Job Hunter SG resume tools."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import asdict
+from typing import Any
+
+import config
+from database import SessionLocal
+from embedding_service import encode_text, find_similar_jobs
+from models import ScrapedJob
+from resume_scorer import ResumeScorer
+from resume_structurer import get_all_bullets, structure_resume
+from skill_extractor import extract_skill_phrases
+from validation_gates import _extract_numbers, validate_and_fix
+
+
+def _json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def parse_resume(resume_text: str) -> str:
+    """Parse resume text into sections, stats, and stable bullet IDs."""
+    structured = structure_resume(resume_text or "")
+    return _json(
+        {
+            "contact": structured.get("contact", {}),
+            "stats": structured.get("stats", {}),
+            "bullets": get_all_bullets(structured),
+            "sections": structured.get("sections", []),
+        }
+    )
+
+
+def score_resume(
+    resume_text: str,
+    job_description: str = "",
+    job_id: int | None = None,
+) -> str:
+    """Score a resume with optional job-specific ATS blending."""
+    parsed_jd = None
+    if job_id:
+        db = SessionLocal()
+        try:
+            job = db.get(ScrapedJob, job_id)
+            if job:
+                parsed_jd = job.parsed_jd if isinstance(job.parsed_jd, dict) else None
+                if not job_description:
+                    job_description = job.description or ""
+        finally:
+            db.close()
+    result = ResumeScorer().analyze(
+        resume_text=resume_text or "",
+        job_description=job_description or "",
+        parsed_jd=parsed_jd,
+    )
+    return _json(result)
+
+
+def extract_skills(text: str) -> str:
+    """Extract ATS-style skill phrases from text."""
+    return _json({"skills": extract_skill_phrases(text or "")})
+
+
+def get_job(job_id: int) -> str:
+    """Fetch one job from the internal jobs DB."""
+    db = SessionLocal()
+    try:
+        job = db.get(ScrapedJob, job_id)
+        if not job:
+            return _json({"error": "job_not_found", "job_id": job_id})
+        return _json(_job_payload(job))
+    finally:
+        db.close()
+
+
+def search_jobs(query: str, limit: int = config.AGENT_SEARCH_JOBS_LIMIT) -> str:
+    """Search internal jobs DB semantically."""
+    capped = max(1, min(int(limit or 1), config.AGENT_SEARCH_JOBS_LIMIT))
+    db = SessionLocal()
+    try:
+        matches = find_similar_jobs(encode_text(query or ""), db, top_k=capped)
+        jobs = []
+        for job_id, similarity in matches:
+            job = db.get(ScrapedJob, job_id)
+            if job:
+                jobs.append({**_job_payload(job), "similarity": round(similarity, 4)})
+        return _json({"jobs": jobs})
+    finally:
+        db.close()
+
+
+def validate_bullet_edit(
+    original: str,
+    rewrite: str,
+    job_description: str = "",
+    required_keywords: list[str] | None = None,
+) -> str:
+    """Validate one proposed bullet rewrite and return gates plus final text."""
+    original_numbers = _extract_numbers(original or "")
+    rewrite_numbers = _extract_numbers(rewrite or "")
+    fabricated_numbers = sorted(rewrite_numbers - original_numbers)
+    final_text, gates = validate_and_fix(
+        original=original or "",
+        tailored=rewrite or "",
+        jd_text=job_description or "",
+        required_keywords=required_keywords,
+    )
+    gate_payloads = [asdict(gate) for gate in gates]
+    if fabricated_numbers:
+        final_text = original or ""
+        gate_payloads.append(
+            {
+                "passed": False,
+                "gate_name": "numeric_fabrication",
+                "message": f"Rewrite introduced unsupported numeric facts: {', '.join(fabricated_numbers)}",
+                "auto_fixed": False,
+                "fixed_text": None,
+            }
+        )
+    return _json(
+        {
+            "accepted": final_text == (rewrite or ""),
+            "final_text": final_text,
+            "gates": gate_payloads,
+        }
+    )
+
+
+def propose_resume_diff(
+    resume_text: str,
+    bullet_id: str,
+    rewrite: str,
+    job_description: str = "",
+    required_keywords: list[str] | None = None,
+) -> str:
+    """Validate a rewrite against a resume bullet ID."""
+    bullets = {bullet["id"]: bullet for bullet in get_all_bullets(structure_resume(resume_text or ""))}
+    bullet = bullets.get(bullet_id)
+    if not bullet:
+        return _json({"accepted": False, "error": "unknown_bullet_id", "bullet_id": bullet_id})
+    original = bullet.get("text", "")
+    payload = json.loads(validate_bullet_edit(original, rewrite, job_description, required_keywords))
+    return _json(
+        {
+            **payload,
+            "bullet_id": bullet_id,
+            "section_key": bullet.get("section_key", ""),
+            "entry_id": bullet.get("entry_id", ""),
+            "original": original,
+            "rewrite": rewrite,
+        }
+    )
+
+
+def _job_payload(job: ScrapedJob) -> dict[str, Any]:
+    return {
+        "id": job.id,
+        "title": job.title,
+        "company": job.company,
+        "location": job.location,
+        "salary": job.salary,
+        "source": job.source,
+        "url": job.url,
+        "description": job.description,
+        "skills": job.skills or [],
+        "parsed_jd": job.parsed_jd if isinstance(job.parsed_jd, dict) else {},
+    }
