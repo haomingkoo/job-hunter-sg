@@ -3,7 +3,7 @@ import { act } from "react-dom/test-utils";
 import { createRoot } from "react-dom/client";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
-import ResumeTab, { applyAgentDiffDecision } from "../ResumeTab.jsx";
+import ResumeTab, { applyAgentDiffDecision, parseSseEvents } from "../ResumeTab.jsx";
 
 function responseJson(data, ok = true) {
   return Promise.resolve({
@@ -95,5 +95,19 @@ describe("ResumeTab Agent v2", () => {
     expect(accepted.pendingDiffs).toEqual([]);
     expect(rejected.resumeText).toBe(resumeText);
     expect(rejected.pendingDiffs).toEqual([]);
+  });
+
+  it("parses agent error events from SSE", () => {
+    const events = parseSseEvents(
+      'event: error\ndata: {"event":"error","session_id":"sid-1","message":"Agent v2 needs SEALION_API configured before it can run."}\n\n',
+    );
+
+    expect(events).toEqual([
+      {
+        event: "error",
+        session_id: "sid-1",
+        message: "Agent v2 needs SEALION_API configured before it can run.",
+      },
+    ]);
   });
 });

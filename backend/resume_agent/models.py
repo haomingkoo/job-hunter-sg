@@ -21,13 +21,26 @@ class _SeaLionRateLimiter(BaseRateLimiter):
 _rate_limiter = _SeaLionRateLimiter()
 
 
+class ResumeAgentConfigurationError(RuntimeError):
+    """Raised when the agent cannot be configured from the current environment."""
+
+
+def _api_key() -> str:
+    key = ai_service._get_api_key()
+    if not key:
+        raise ResumeAgentConfigurationError(
+            "Agent v2 needs SEALION_API configured before it can run."
+        )
+    return key
+
+
 def create_fast_model(temperature: float = 0.0):
     """Return the FAST model used by the orchestrator and tool-calling loop."""
     from langchain_openai import ChatOpenAI
 
     return ChatOpenAI(
         base_url=ai_service.SEALION_BASE_URL,
-        api_key=ai_service._get_api_key(),
+        api_key=_api_key(),
         model=config.SEALION_FAST_MODEL,
         temperature=temperature,
         rate_limiter=_rate_limiter,
@@ -40,7 +53,7 @@ def create_smart_model(temperature: float = 0.0):
 
     return ChatOpenAI(
         base_url=ai_service.SEALION_BASE_URL,
-        api_key=ai_service._get_api_key(),
+        api_key=_api_key(),
         model=config.SEALION_SMART_MODEL,
         temperature=temperature,
         max_tokens=config.AGENT_SMART_MAX_TOKENS,

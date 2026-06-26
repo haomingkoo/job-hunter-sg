@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from resume_structurer import get_all_bullets, structure_resume
 
 from .agent import create_resume_agent, run_agent_turn
+from .models import ResumeAgentConfigurationError
 from .tools import bullet_context
 
 
@@ -202,6 +203,18 @@ def stream_chat_events(
             if event["event"] == "token":
                 state["messages"].append({"role": "assistant", "content": event["content"]})
             yield event
+    except ResumeAgentConfigurationError as exc:
+        yield {
+            "event": "error",
+            "session_id": session_id,
+            "message": str(exc),
+        }
+    except Exception:
+        yield {
+            "event": "error",
+            "session_id": session_id,
+            "message": "Agent v2 hit an internal error. Check the backend logs.",
+        }
     finally:
         _finish_run(owner)
 

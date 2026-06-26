@@ -254,6 +254,30 @@ def test_general_mode_runs_without_target_job():
     assert events[-1] == {"event": "done", "session_id": session_id}
 
 
+def test_missing_agent_credentials_return_error_event(monkeypatch):
+    import resume_agent.models as agent_models
+    import resume_agent.session as agent_session
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "")
+
+    events = list(
+        agent_session.stream_chat_events(
+            {
+                "message": "Strengthen this resume",
+                "resume_text": "EXPERIENCE\n- Built data pipeline processing 10M events daily",
+            }
+        )
+    )
+
+    assert events[0]["event"] == "session"
+    assert events[1] == {
+        "event": "error",
+        "session_id": events[0]["session_id"],
+        "message": "Agent v2 needs SEALION_API configured before it can run.",
+    }
+    assert events[-1] == {"event": "done", "session_id": events[0]["session_id"]}
+
+
 def test_session_collects_propose_edit_tool_diffs():
     import json
 

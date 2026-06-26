@@ -81,7 +81,7 @@ export function applyAgentDiffDecision(resumeText, pendingDiffs, bulletId, decis
   };
 }
 
-function parseSseEvents(text) {
+export function parseSseEvents(text) {
   return String(text || "")
     .split(/\n\n+/)
     .map((block) => {
@@ -780,12 +780,17 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       if (!response.ok) throw new Error("Agent v2 is unavailable right now.");
       const events = parseSseEvents(await response.text());
       let nextSessionId = agentSessionId;
+      let nextError = "";
       events.forEach((event) => {
         if (event.session_id) nextSessionId = event.session_id;
         if (event.event === "token" && event.content) {
           setAgentMessages((current) => [...current, { role: "assistant", content: event.content }]);
         }
+        if (event.event === "error" && event.message) {
+          nextError = event.message;
+        }
       });
+      if (nextError) setAgentError(nextError);
       setAgentSessionId(nextSessionId || "");
       if (nextSessionId) await refreshAgentState(nextSessionId);
     } catch (err) {
