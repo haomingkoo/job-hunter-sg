@@ -217,3 +217,38 @@ GovTech | Data Engineer | Jan 2020 - Present
     assert [diff["bullet_id"] for diff in pending] == [bullets[0]["id"]]
     assert pending[0]["original"] == bullets[0]["text"]
     assert pending[0]["rewrite"] == "Built reliable data pipeline processing 10M events daily"
+
+
+def test_general_mode_runs_without_target_job():
+    from langchain_core.messages import AIMessage
+
+    import resume_agent.session as agent_session
+
+    class FakeAgent:
+        def __init__(self):
+            self.message = ""
+
+        def invoke(self, payload, config=None):
+            self.message = payload["messages"][0]["content"]
+            assert config["configurable"]["thread_id"]
+            return {"messages": [AIMessage(content="General critique with safe edits.")]}
+
+    fake_agent = FakeAgent()
+
+    events = list(
+        agent_session.stream_chat_events(
+            {
+                "message": "Strengthen this resume",
+                "resume_text": "EXPERIENCE\n- Built data pipeline processing 10M events daily",
+            },
+            agent=fake_agent,
+        )
+    )
+
+    session_id = events[0]["session_id"]
+    state = agent_session.get_state(session_id)
+
+    assert state["job_id"] is None
+    assert state["mode"] == "general"
+    assert "General strengthening mode" in fake_agent.message
+    assert events[-1] == {"event": "done", "session_id": session_id}

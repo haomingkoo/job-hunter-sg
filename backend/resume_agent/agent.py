@@ -31,6 +31,12 @@ def create_resume_agent(
     )
 
 
-def run_agent_turn(agent: Any, message: str) -> dict:
+def run_agent_turn(agent: Any, message: str, session_id: str | None = None) -> dict:
     """Run one synchronous agent turn."""
-    return agent.invoke({"messages": [{"role": "user", "content": message}]})
+    payload = {"messages": [{"role": "user", "content": message}]}
+    if not session_id:
+        return agent.invoke(payload)
+    return agent.invoke(
+        payload,
+        config={"configurable": {"thread_id": session_id}},
+    )
