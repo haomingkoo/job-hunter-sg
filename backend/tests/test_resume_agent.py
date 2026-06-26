@@ -182,3 +182,38 @@ def test_persona_subagent_uses_smart_model_and_no_tools(monkeypatch):
         assert subagent["tools"] == []
         assert subagent["model"].model_name == config.SEALION_SMART_MODEL
         assert subagent["model"].max_tokens >= config.SMART_MIN_MAX_TOKENS
+
+
+def test_per_bullet_diff_preserves_bullet_ids():
+    from resume_structurer import get_all_bullets, structure_resume
+
+    import resume_agent.diffs as agent_diffs
+
+    resume_text = """
+Jane Doe
+jane@example.com
+
+EXPERIENCE
+GovTech | Data Engineer | Jan 2020 - Present
+- Built data pipeline processing 10M events daily
+- Led analytics migration for reporting workloads
+"""
+    bullets = get_all_bullets(structure_resume(resume_text))
+
+    pending = agent_diffs.build_pending_diffs(
+        resume_text,
+        [
+            {
+                "bullet_id": bullets[0]["id"],
+                "rewrite": "Built reliable data pipeline processing 10M events daily",
+            },
+            {
+                "bullet_id": bullets[1]["id"],
+                "rewrite": "Led analytics migration for reporting workloads and improved uptime by 50%",
+            },
+        ],
+    )
+
+    assert [diff["bullet_id"] for diff in pending] == [bullets[0]["id"]]
+    assert pending[0]["original"] == bullets[0]["text"]
+    assert pending[0]["rewrite"] == "Built reliable data pipeline processing 10M events daily"
