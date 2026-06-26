@@ -397,3 +397,23 @@ GovTech | Data Engineer | Jan 2020 - Present
     assert [diff["rewrite"] for diff in pending_a] == [
         diff["rewrite"] for diff in pending_b
     ]
+
+
+def test_existing_pipeline_endpoints_unchanged():
+    from fastapi.testclient import TestClient
+
+    import main
+
+    client = TestClient(main.app)
+
+    tailor_response = client.post(
+        "/api/resume/tailor",
+        json={"resume_text": "too short", "job_id": 1, "intensity": "full"},
+    )
+    score_response = client.post(
+        "/api/resume/score",
+        json={"resume_text": "", "job_description": ""},
+    )
+
+    assert tailor_response.status_code == 400
+    assert score_response.status_code in (200, 422)
