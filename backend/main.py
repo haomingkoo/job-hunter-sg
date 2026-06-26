@@ -7514,6 +7514,17 @@ def resume_agent_chat(body: dict):
     )
 
 
+def _get_resume_agent_state(session_id: str) -> dict:
+    from resume_agent.session import get_state
+
+    return get_state(session_id)
+
+
+@app.get("/api/resume/agent/{session_id}/state")
+def resume_agent_state(session_id: str):
+    return _get_resume_agent_state(session_id)
+
+
 # ── Resume Tailoring Pipeline ───────────────────────────────────────────────
 
 

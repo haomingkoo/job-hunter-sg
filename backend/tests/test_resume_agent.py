@@ -315,3 +315,29 @@ def test_chat_endpoint_streams_token_and_tool_events(monkeypatch):
     assert body.index("event: tool") < body.index("event: token")
     assert '"name": "search_jobs"' in body
     assert '"content": "Found a role."' in body
+
+
+def test_state_endpoint_returns_draft_todos_and_pending_diffs(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import main
+
+    monkeypatch.setattr(
+        main,
+        "_get_resume_agent_state",
+        lambda session_id: {
+            "session_id": session_id,
+            "draft": "Resume draft",
+            "todos": ["Review bullets"],
+            "persona_findings": [{"persona": "recruiter", "finding": "Clear"}],
+            "pending_diffs": [{"bullet_id": "exp-0-b0", "status": "pending"}],
+        },
+    )
+
+    response = TestClient(main.app).get("/api/resume/agent/sid-1/state")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["draft"] == "Resume draft"
+    assert data["todos"] == ["Review bullets"]
+    assert data["pending_diffs"][0]["bullet_id"] == "exp-0-b0"
