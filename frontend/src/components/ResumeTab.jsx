@@ -69,6 +69,38 @@ import {
   buildFocusedFeedbackContext,
 } from "../lib/resumeHelpers.jsx";
 
+export function applyAgentDiffDecision(resumeText, pendingDiffs, bulletId, decision) {
+  const target = pendingDiffs.find((diff) => diff.bullet_id === bulletId);
+  const remaining = pendingDiffs.filter((diff) => diff.bullet_id !== bulletId);
+  if (!target || decision !== "accept") {
+    return { resumeText, pendingDiffs: remaining };
+  }
+  return {
+    resumeText: resumeText.replace(target.original, target.rewrite),
+    pendingDiffs: remaining,
+  };
+}
+
+function parseSseEvents(text) {
+  return String(text || "")
+    .split(/\n\n+/)
+    .map((block) => {
+      const lines = block.split("\n");
+      const eventLine = lines.find((line) => line.startsWith("event:"));
+      const dataLine = lines.find((line) => line.startsWith("data:"));
+      if (!dataLine) return null;
+      try {
+        return {
+          event: eventLine ? eventLine.replace("event:", "").trim() : "message",
+          ...JSON.parse(dataLine.replace("data:", "").trim()),
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
 function TemplatePreview({ templateId }) {
   const accent = templateId === "modern"
     ? "bg-indigo-500"
@@ -322,6 +354,15 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [activeSuggestionHint, setActiveSuggestionHint] = useState(null);
   const [selectedInjectKeyword, setSelectedInjectKeyword] = useState(null);
   const chatEndRef = useRef(null);
+  const [editorMode, setEditorMode] = useState("classic");
+  const [agentInput, setAgentInput] = useState("");
+  const [agentMessages, setAgentMessages] = useState([]);
+  const [agentSessionId, setAgentSessionId] = useState("");
+  const [agentLoading, setAgentLoading] = useState(false);
+  const [agentError, setAgentError] = useState("");
+  const [agentTodos, setAgentTodos] = useState([]);
+  const [agentFindings, setAgentFindings] = useState([]);
+  const [agentPendingDiffs, setAgentPendingDiffs] = useState([]);
 
   const openMobileFeedbackPanel = useCallback((targetRef = scorePanelRef) => {
     if (typeof window === "undefined" || window.innerWidth >= 1024) return;
@@ -708,6 +749,59 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       if (nextText.trim()) setScorePhase("editing");
     }
   }, [jobDescription, runScore, resumeText]);
+
+  const refreshAgentState = useCallback(async (nextSessionId) => {
+    if (!nextSessionId) return;
+    const response = await apiFetch(`/api/resume/agent/${nextSessionId}/state`);
+    const data = await response.json();
+    setAgentTodos(Array.isArray(data.todos) ? data.todos : []);
+    setAgentFindings(Array.isArray(data.persona_findings) ? data.persona_findings : []);
+    setAgentPendingDiffs(Array.isArray(data.pending_diffs) ? data.pending_diffs : []);
+  }, []);
+
+  const handleAgentSend = useCallback(async () => {
+    const message = agentInput.trim();
+    if (!message || agentLoading) return;
+    setAgentInput("");
+    setAgentError("");
+    setAgentLoading(true);
+    setAgentMessages((current) => [...current, { role: "user", content: message }]);
+    try {
+      const response = await fetch(`${API_BASE}/api/resume/agent/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: agentSessionId || undefined,
+          message,
+          resume_text: resumeText,
+          job_id: selectedJob?.id || undefined,
+        }),
+      });
+      if (!response.ok) throw new Error("Agent v2 is unavailable right now.");
+      const events = parseSseEvents(await response.text());
+      let nextSessionId = agentSessionId;
+      events.forEach((event) => {
+        if (event.session_id) nextSessionId = event.session_id;
+        if (event.event === "token" && event.content) {
+          setAgentMessages((current) => [...current, { role: "assistant", content: event.content }]);
+        }
+      });
+      setAgentSessionId(nextSessionId || "");
+      if (nextSessionId) await refreshAgentState(nextSessionId);
+    } catch (err) {
+      setAgentError(err.message || "Agent v2 is unavailable right now.");
+    } finally {
+      setAgentLoading(false);
+    }
+  }, [agentInput, agentLoading, agentSessionId, refreshAgentState, resumeText, selectedJob?.id]);
+
+  const handleAgentDiffDecision = useCallback((bulletId, decision) => {
+    const next = applyAgentDiffDecision(resumeText, agentPendingDiffs, bulletId, decision);
+    if (decision === "accept" && next.resumeText !== resumeText) {
+      applyResumeText(next.resumeText, { preserveTailoringContext: true });
+    }
+    setAgentPendingDiffs(next.pendingDiffs);
+  }, [agentPendingDiffs, applyResumeText, resumeText]);
 
   const startBlankResumeFlow = useCallback(() => {
     const starterResume = buildBlankResumeStarter(profile);
@@ -2923,6 +3017,28 @@ CERTIFICATIONS
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-2xl border border-[#BDDDFC]/30 bg-white p-1" role="tablist" aria-label="Resume editor mode">
+              {[
+                ["classic", "Classic"],
+                ["agent", "Agent v2"],
+              ].map(([mode, label]) => {
+                const active = editorMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setEditorMode(mode)}
+                    aria-pressed={active}
+                    className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
+                      active ? "bg-[#384959] text-white" : "text-[#6A89A7] hover:bg-[#f0f4f8] hover:text-[#384959]"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+
             <div className="inline-flex items-center gap-2 rounded-2xl bg-[#f0f4f8] px-3 py-2 text-sm text-[#6A89A7]">
               <span className={`inline-flex h-8 min-w-8 items-center justify-center rounded-xl px-2 text-base font-bold ${scorePillClass}`}>
                 {scoreDisplayValue}
@@ -2968,11 +3084,136 @@ CERTIFICATIONS
         </div>
       </div>
 
-      <div className="lg:hidden rounded-xl bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
+      {editorMode === "agent" && (
+        <div data-testid="resume-agent-v2-panel" className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <section className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-[#384959]">Resume Deep Agent</div>
+                <div className="mt-1 text-xs text-[#6A89A7]">
+                  {selectedJob?.title ? `${selectedJob.title} at ${selectedJob.company || "target company"}` : "General strengthening"}
+                </div>
+              </div>
+              {agentLoading && <Loader2 size={16} className="animate-spin text-[#6A89A7]" />}
+            </div>
+
+            <div className="mt-4 min-h-40 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3">
+              {agentMessages.length > 0 ? (
+                <div className="space-y-2">
+                  {agentMessages.map((message, index) => (
+                    <div
+                      key={`${message.role}-${index}`}
+                      className={`max-w-[75ch] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
+                        message.role === "user"
+                          ? "ml-auto bg-[#384959] text-white"
+                          : "bg-white text-[#384959]"
+                      }`}
+                    >
+                      {message.content}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-[#6A89A7]">Ask for a role-specific pass or a general strengthening pass.</div>
+              )}
+            </div>
+
+            {agentError && (
+              <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                {agentError}
+              </div>
+            )}
+
+            <div className="mt-4 flex gap-2">
+              <textarea
+                value={agentInput}
+                onChange={(event) => setAgentInput(event.target.value)}
+                rows={3}
+                className="min-h-20 flex-1 resize-y rounded-2xl border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959] outline-none transition focus:border-[#88BDF2] focus:ring-2 focus:ring-[#88BDF2]/20"
+                placeholder="Ask the agent to tailor or strengthen this resume..."
+              />
+              <button
+                type="button"
+                onClick={handleAgentSend}
+                disabled={agentLoading || !agentInput.trim() || !resumeText.trim()}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#384959] text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
+                title="Send to Agent v2"
+              >
+                {agentLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+              </button>
+            </div>
+          </section>
+
+          <aside className="space-y-4">
+            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-[#384959]">Plan</div>
+              <div className="mt-3 space-y-2">
+                {(agentTodos.length ? agentTodos : ["Read resume evidence", "Check role fit", "Prepare bullet diffs"]).map((todo) => (
+                  <div key={todo} className="flex items-start gap-2 text-sm text-[#6A89A7]">
+                    <CheckCircle size={14} className="mt-0.5 shrink-0 text-emerald-600" />
+                    <span>{todo}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+              <div className="text-sm font-semibold text-[#384959]">Persona Findings</div>
+              <div className="mt-3 space-y-2">
+                {agentFindings.length > 0 ? agentFindings.map((finding, index) => (
+                  <div key={`${finding.persona || "persona"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-sm text-[#384959]">
+                    <span className="font-semibold">{finding.persona || "persona"}:</span> {finding.finding || finding.message || ""}
+                  </div>
+                )) : (
+                  <div className="text-sm text-[#6A89A7]">Findings will appear after the agent reviews the draft.</div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-[#384959]">Pending Diffs</div>
+                <span className="rounded-full bg-[#BDDDFC]/20 px-2 py-0.5 text-xs font-semibold text-[#384959]">{agentPendingDiffs.length}</span>
+              </div>
+              <div className="mt-3 space-y-3">
+                {agentPendingDiffs.length > 0 ? agentPendingDiffs.map((diff) => (
+                  <div key={diff.bullet_id} className="rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3">
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">{diff.bullet_id}</div>
+                    <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">{diff.original}</div>
+                    <div className="mt-2 text-sm leading-relaxed text-[#384959]">{diff.rewrite}</div>
+                    <div className="mt-3 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleAgentDiffDecision(diff.bullet_id, "accept")}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-700"
+                      >
+                        <CheckCircle size={13} />
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAgentDiffDecision(diff.bullet_id, "reject")}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-1.5 text-xs font-medium text-[#384959] transition hover:bg-[#f0f4f8]"
+                      >
+                        <X size={13} />
+                        Reject
+                      </button>
+                    </div>
+                  </div>
+                )) : (
+                  <div className="text-sm text-[#6A89A7]">Validated bullet edits will appear here.</div>
+                )}
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      <div className={`${editorMode === "agent" ? "hidden" : "lg:hidden"} rounded-xl bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700`}>
         Tap any colored bullet for AI feedback. For the full editing experience, use a desktop browser.
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,65%)_minmax(320px,35%)]">
+      <div className={`${editorMode === "agent" ? "hidden" : "grid"} gap-6 lg:grid-cols-[minmax(0,65%)_minmax(320px,35%)]`} data-testid="classic-resume-editor">
         <aside className="hidden space-y-4 lg:order-2 lg:block lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto">
           {(
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
