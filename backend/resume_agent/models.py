@@ -2,8 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import ai_service
 import config
+from langchain_core.rate_limiters import BaseRateLimiter
+
+
+class _SeaLionRateLimiter(BaseRateLimiter):
+    def acquire(self, *, blocking: bool = True) -> bool:
+        timeout = config.SEALION_HTTP_TIMEOUT if blocking else 0
+        return ai_service._limiter.acquire(timeout=timeout)
+
+    async def aacquire(self, *, blocking: bool = True) -> bool:
+        return await asyncio.to_thread(self.acquire, blocking=blocking)
+
+
+_rate_limiter = _SeaLionRateLimiter()
 
 
 def create_fast_model(temperature: float = 0.0):
@@ -15,6 +30,7 @@ def create_fast_model(temperature: float = 0.0):
         api_key=ai_service._get_api_key(),
         model=config.SEALION_FAST_MODEL,
         temperature=temperature,
+        rate_limiter=_rate_limiter,
     )
 
 
@@ -28,4 +44,5 @@ def create_smart_model(temperature: float = 0.0):
         model=config.SEALION_SMART_MODEL,
         temperature=temperature,
         max_tokens=config.AGENT_SMART_MAX_TOKENS,
+        rate_limiter=_rate_limiter,
     )

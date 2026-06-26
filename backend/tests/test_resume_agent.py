@@ -278,6 +278,38 @@ def test_tool_iteration_cap_stops_runaway_loop():
     }
 
 
+def test_active_run_gate_rejects_concurrent_same_owner():
+    from langchain_core.messages import AIMessage
+
+    import resume_agent.session as agent_session
+
+    class NestedAgent:
+        def invoke(self, _payload, config=None):
+            nested_events = list(
+                agent_session.stream_chat_events(
+                    {"message": "nested", "session_id": "nested"},
+                    agent=InstantAgent(),
+                    owner_key="user:1",
+                )
+            )
+            assert nested_events[1]["event"] == "error"
+            return {"messages": [AIMessage(content="outer done")]}
+
+    class InstantAgent:
+        def invoke(self, _payload, config=None):
+            return {"messages": [AIMessage(content="inner done")]}
+
+    events = list(
+        agent_session.stream_chat_events(
+            {"message": "outer", "session_id": "outer"},
+            agent=NestedAgent(),
+            owner_key="user:1",
+        )
+    )
+
+    assert events[-1] == {"event": "done", "session_id": "outer"}
+
+
 def test_chat_endpoint_streams_token_and_tool_events(monkeypatch):
     from fastapi.testclient import TestClient
 

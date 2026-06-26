@@ -7507,7 +7507,12 @@ def _resume_agent_sse(body: dict):
 
 
 @app.post("/api/resume/agent/chat")
-def resume_agent_chat(body: dict):
+def resume_agent_chat(
+    body: dict,
+    user: Optional[User] = Depends(get_optional_user),
+):
+    if user:
+        body = {**body, "_owner_key": f"user:{user.id}"}
     return StreamingResponse(
         _resume_agent_sse(body),
         media_type="text/event-stream",
