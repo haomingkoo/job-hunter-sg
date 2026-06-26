@@ -254,6 +254,57 @@ def test_general_mode_runs_without_target_job():
     assert events[-1] == {"event": "done", "session_id": session_id}
 
 
+def test_session_collects_propose_edit_tool_diffs():
+    import json
+
+    from langchain_core.messages import AIMessage, ToolMessage
+    from resume_structurer import get_all_bullets, structure_resume
+
+    import resume_agent.session as agent_session
+
+    resume_text = "EXPERIENCE\n- Built data pipeline processing 10M events daily"
+    bullet_id = get_all_bullets(structure_resume(resume_text))[0]["id"]
+
+    class FakeAgent:
+        def invoke(self, _payload, config=None):
+            return {
+                "messages": [
+                    ToolMessage(
+                        name="propose_edit",
+                        tool_call_id="call_1",
+                        content=json.dumps(
+                            {
+                                "accepted": True,
+                                "bullet_id": bullet_id,
+                                "rewrite": "Built reliable data pipeline processing 10M events daily",
+                            }
+                        ),
+                    ),
+                    AIMessage(content="Prepared one validated diff."),
+                ]
+            }
+
+    events = list(
+        agent_session.stream_chat_events(
+            {"message": "Improve this", "resume_text": resume_text, "session_id": "diff-session"},
+            agent=FakeAgent(),
+            owner_key="diff-owner",
+        )
+    )
+    state = agent_session.get_state(events[0]["session_id"])
+
+    assert state["pending_diffs"] == [
+        {
+            "bullet_id": bullet_id,
+            "section_key": "experience",
+            "entry_id": "exp-0",
+            "original": "Built data pipeline processing 10M events daily",
+            "rewrite": "Built reliable data pipeline processing 10M events daily",
+            "status": "pending",
+        }
+    ]
+
+
 def test_tool_iteration_cap_stops_runaway_loop():
     from langgraph.errors import GraphRecursionError
 
