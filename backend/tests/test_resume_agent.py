@@ -341,3 +341,18 @@ def test_state_endpoint_returns_draft_todos_and_pending_diffs(monkeypatch):
     assert data["draft"] == "Resume draft"
     assert data["todos"] == ["Review bullets"]
     assert data["pending_diffs"][0]["bullet_id"] == "exp-0-b0"
+
+
+def test_smart_persona_output_strips_think_tags():
+    import resume_agent.personas as personas
+
+    raw = """
+<think>private reasoning</think>
+```json
+{"findings": [{"persona": "recruiter", "message": "Clear impact."}]}
+```
+"""
+
+    assert personas.parse_persona_output(raw) == {
+        "findings": [{"persona": "recruiter", "message": "Clear impact."}]
+    }

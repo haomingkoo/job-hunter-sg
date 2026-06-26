@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
 import config
@@ -58,3 +60,21 @@ def create_persona_subagents(smart_model: Any | None = None) -> list[dict]:
             }
         )
     return subagents
+
+
+def parse_persona_output(raw: str) -> dict:
+    """Parse SMART persona JSON after removing reasoning wrappers."""
+    cleaned = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.S).strip()
+    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I).strip()
+    cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return {}
+
+    try:
+        parsed = json.loads(cleaned[start : end + 1])
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
