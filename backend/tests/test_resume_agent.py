@@ -117,7 +117,11 @@ def test_agent_calls_search_jobs_for_role_query():
             AIMessage(content="Found Data Engineer at GovTech."),
         ]
     )
-    agent = agent_module.create_resume_agent(model=model, tools=[search_jobs])
+    agent = agent_module.create_resume_agent(
+        model=model,
+        tools=[search_jobs],
+        subagents=[],
+    )
 
     result = agent_module.run_agent_turn(agent, "Find data engineer jobs")
 
@@ -155,3 +159,26 @@ def test_propose_edit_rejects_fabricated_metric():
 
     assert result["accepted"] is False
     assert "Unsupported numeric facts" in result["reason"]
+
+
+def test_persona_subagent_uses_smart_model_and_no_tools(monkeypatch):
+    import config
+    import resume_agent.models as agent_models
+    import resume_agent.personas as personas
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+
+    subagents = personas.create_persona_subagents()
+
+    assert len(subagents) == config.AGENT_PERSONA_COUNT
+    assert {subagent["name"] for subagent in subagents} == {
+        "recruiter",
+        "hiring_manager",
+        "ats",
+        "skeptic",
+        "market_researcher",
+    }
+    for subagent in subagents:
+        assert subagent["tools"] == []
+        assert subagent["model"].model_name == config.SEALION_SMART_MODEL
+        assert subagent["model"].max_tokens >= config.SMART_MIN_MAX_TOKENS
