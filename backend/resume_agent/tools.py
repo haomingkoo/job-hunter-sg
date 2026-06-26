@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 import config
@@ -9,6 +11,21 @@ from database import SessionLocal
 from embedding_service import encode_text, find_similar_jobs
 from langchain_core.tools import tool
 from models import ScrapedJob
+
+
+_current_bullets: ContextVar[dict[str, str]] = ContextVar(
+    "resume_agent_current_bullets",
+    default={},
+)
+
+
+@contextmanager
+def bullet_context(bullets: dict[str, str]):
+    token = _current_bullets.set(dict(bullets))
+    try:
+        yield
+    finally:
+        _current_bullets.reset(token)
 
 
 def _limit_jobs(n: int | None) -> int:
@@ -81,3 +98,101 @@ def search_jobs(query: str, n: int | None = None) -> list[dict]:
         ]
     finally:
         db.close()
+
+
+@tool
+def get_job(job_id: int) -> dict:
+    """Return parsed job context for one internal job id."""
+    db = SessionLocal()
+    try:
+        job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+        if not job:
+            return {"found": False, "id": job_id}
+        return {
+            "found": True,
+            "id": job.id,
+            "title": job.title,
+            "company": job.company,
+            "location": job.location,
+            "description": job.description or "",
+            "parsed_jd": job.parsed_jd or {},
+            "jd_summary": job.jd_summary or "",
+            "skills": _skills_list(job.skills),
+        }
+    finally:
+        db.close()
+
+
+@tool
+def score_resume(resume_text: str) -> dict:
+    """Score resume text with the existing resume scorer."""
+    from resume_scorer import ResumeScorer
+
+    return ResumeScorer().analyze(resume_text or "")
+
+
+@tool
+def extract_skills(text: str) -> list[str]:
+    """Extract skill phrases from text with the existing skill extractor."""
+    from skill_extractor import extract_skill_phrases
+
+    return extract_skill_phrases(text or "")
+
+
+def _gate_payload(gates: list[Any]) -> list[dict]:
+    return [
+        {
+            "gate": gate.gate_name,
+            "passed": gate.passed,
+            "message": gate.message,
+        }
+        for gate in gates
+    ]
+
+
+@tool
+def propose_edit(bullet_id: str, rewrite: str) -> dict:
+    """Validate a proposed rewrite for one resume bullet id."""
+    from validation_gates import _extract_numbers, validate_and_fix
+
+    bullets = _current_bullets.get()
+    original = bullets.get(bullet_id)
+    if not original:
+        return {
+            "accepted": False,
+            "bullet_id": bullet_id,
+            "rewrite": "",
+            "reason": "Unknown bullet_id.",
+            "gates": [],
+        }
+
+    clean_rewrite = (rewrite or "").strip()
+    new_numbers = _extract_numbers(clean_rewrite) - _extract_numbers(original)
+    if new_numbers:
+        return {
+            "accepted": False,
+            "bullet_id": bullet_id,
+            "rewrite": "",
+            "reason": f"Unsupported numeric facts: {', '.join(sorted(new_numbers))}",
+            "gates": [],
+        }
+
+    final_text, gates = validate_and_fix(original=original, tailored=clean_rewrite)
+    failed = [gate for gate in gates if not gate.passed]
+    if final_text == original and clean_rewrite != original:
+        return {
+            "accepted": False,
+            "bullet_id": bullet_id,
+            "rewrite": "",
+            "reason": "; ".join(gate.message for gate in failed)
+            or "Validation gates rejected rewrite.",
+            "gates": _gate_payload(gates),
+        }
+
+    return {
+        "accepted": True,
+        "bullet_id": bullet_id,
+        "rewrite": final_text,
+        "reason": "",
+        "gates": _gate_payload(gates),
+    }

@@ -124,3 +124,34 @@ def test_agent_calls_search_jobs_for_role_query():
     assert calls == [("data engineer", 2)]
     assert result["messages"][-1].content == "Found Data Engineer at GovTech."
     assert any(getattr(msg, "name", "") == "search_jobs" for msg in result["messages"])
+
+
+def test_propose_edit_accepts_clean_rewrite():
+    import resume_agent.tools as agent_tools
+
+    original = "Built data pipeline processing 10M events daily"
+    rewrite = "Built reliable data pipeline processing 10M events daily"
+
+    with agent_tools.bullet_context({"bullet-1": original}):
+        result = agent_tools.propose_edit.invoke(
+            {"bullet_id": "bullet-1", "rewrite": rewrite}
+        )
+
+    assert result["accepted"] is True
+    assert result["bullet_id"] == "bullet-1"
+    assert result["rewrite"] == rewrite
+
+
+def test_propose_edit_rejects_fabricated_metric():
+    import resume_agent.tools as agent_tools
+
+    original = "Built data pipeline processing 10M events daily"
+    rewrite = "Built data pipeline processing 10M events daily and improved uptime by 50%"
+
+    with agent_tools.bullet_context({"bullet-1": original}):
+        result = agent_tools.propose_edit.invoke(
+            {"bullet_id": "bullet-1", "rewrite": rewrite}
+        )
+
+    assert result["accepted"] is False
+    assert "Unsupported numeric facts" in result["reason"]
