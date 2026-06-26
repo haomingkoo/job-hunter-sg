@@ -276,3 +276,42 @@ def test_tool_iteration_cap_stops_runaway_loop():
         "stopped": True,
         "reason": "tool_iteration_cap",
     }
+
+
+def test_chat_endpoint_streams_token_and_tool_events(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import main
+
+    monkeypatch.setattr(
+        main,
+        "_stream_resume_agent_events",
+        lambda _body: iter(
+            [
+                {"event": "session", "session_id": "sid-1"},
+                {
+                    "event": "tool",
+                    "session_id": "sid-1",
+                    "name": "search_jobs",
+                    "content": "[]",
+                },
+                {
+                    "event": "token",
+                    "session_id": "sid-1",
+                    "content": "Found a role.",
+                },
+                {"event": "done", "session_id": "sid-1"},
+            ]
+        ),
+    )
+
+    response = TestClient(main.app).post(
+        "/api/resume/agent/chat",
+        json={"message": "Find data jobs"},
+    )
+
+    assert response.status_code == 200
+    body = response.text
+    assert body.index("event: tool") < body.index("event: token")
+    assert '"name": "search_jobs"' in body
+    assert '"content": "Found a role."' in body

@@ -7490,6 +7490,30 @@ def delete_resume_version(
     return {"id": version.id, "deleted": True}
 
 
+# ── Resume Deep Agent v2 ────────────────────────────────────────────────────
+
+
+def _stream_resume_agent_events(body: dict):
+    from resume_agent.session import stream_chat_events
+
+    return stream_chat_events(body)
+
+
+def _resume_agent_sse(body: dict):
+    for event in _stream_resume_agent_events(body):
+        event_name = event.get("event", "message")
+        yield f"event: {event_name}\n"
+        yield f"data: {json.dumps(event)}\n\n"
+
+
+@app.post("/api/resume/agent/chat")
+def resume_agent_chat(body: dict):
+    return StreamingResponse(
+        _resume_agent_sse(body),
+        media_type="text/event-stream",
+    )
+
+
 # ── Resume Tailoring Pipeline ───────────────────────────────────────────────
 
 
