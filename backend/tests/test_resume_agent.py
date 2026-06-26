@@ -356,3 +356,44 @@ def test_smart_persona_output_strips_think_tags():
     assert personas.parse_persona_output(raw) == {
         "findings": [{"persona": "recruiter", "message": "Clear impact."}]
     }
+
+
+def test_fairness_counterfactual_name_school_swap():
+    from resume_structurer import get_all_bullets, structure_resume
+
+    import resume_agent.diffs as agent_diffs
+    from resume_agent.prompts import FAIRNESS_AND_ANTI_FABRICATION_GUARDRAILS
+
+    resume_a = """
+Jane Doe
+Singapore
+
+EDUCATION
+National University of Singapore | BSc Computer Science
+
+EXPERIENCE
+GovTech | Data Engineer | Jan 2020 - Present
+- Built data pipeline processing 10M events daily
+"""
+    resume_b = resume_a.replace("Jane Doe", "Alex Tan").replace(
+        "National University of Singapore",
+        "Example Regional University",
+    ).replace("Singapore", "Jurong")
+
+    for term in ["name", "school/university", "GPA", "location"]:
+        assert term in FAIRNESS_AND_ANTI_FABRICATION_GUARDRAILS
+
+    bullet_a = get_all_bullets(structure_resume(resume_a))[0]
+    bullet_b = get_all_bullets(structure_resume(resume_b))[0]
+    proposal_a = {
+        "bullet_id": bullet_a["id"],
+        "rewrite": "Built reliable data pipeline processing 10M events daily",
+    }
+    proposal_b = {**proposal_a, "bullet_id": bullet_b["id"]}
+
+    pending_a = agent_diffs.build_pending_diffs(resume_a, [proposal_a])
+    pending_b = agent_diffs.build_pending_diffs(resume_b, [proposal_b])
+
+    assert [diff["rewrite"] for diff in pending_a] == [
+        diff["rewrite"] for diff in pending_b
+    ]
