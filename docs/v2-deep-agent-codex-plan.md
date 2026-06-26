@@ -11,6 +11,7 @@
 - **No magic numbers.** Every cap/threshold/token-budget lives in `backend/config.py` (named constant, env-overridable). This is a hard requirement from the project's magic-number audit.
 - **No fabrication.** Every AI-proposed resume edit runs through `validation_gates` before it can be accepted. The agent must never invent metrics, employers, dates, or skills.
 - **Reuse the model tiers** from `backend/config.py`: `SEALION_FAST_MODEL`, `SEALION_SMART_MODEL`, `SMART_MIN_MAX_TOKENS` (already exist).
+- **Parse SMART output defensively** — it's a reasoning model: strip `<think>…</think>` / ```` ```json ```` fences / slice to outer braces before JSON-parsing (see §9; cf. existing commit 158d888). **Fairness + anti-fabrication guardrails live in the persona prompts** (see §9), kept in ONE shared place — do not duplicate prompt text.
 
 ## 1. What you're building
 
@@ -96,11 +97,13 @@ Add to `backend/requirements.txt` (pin versions): `deepagents`, `langgraph`, `la
 9. `test_tool_iteration_cap_stops_runaway_loop` — a model stub that always tool-calls halts at `AGENT_MAX_TOOL_ITERATIONS`.
 10. `test_chat_endpoint_streams_token_and_tool_events` — SSE yields ordered events for a stubbed run.
 11. `test_state_endpoint_returns_draft_todos_and_pending_diffs`.
-12. `test_existing_pipeline_endpoints_unchanged` — smoke that `/api/resume/tailor` + classic paths still import/respond (regression guard).
+12. `test_smart_persona_output_strips_think_tags` — a SMART response wrapped in `<think>…</think>` + ```` ```json ```` parses to clean structured output (reasoning-model defensive parse).
+13. `test_fairness_counterfactual_name_school_swap` — swapping candidate name / school / location in the input leaves the proposed bullet edits unchanged (prompt-level fairness regression guard; a real eval the prior art lacks).
+14. `test_existing_pipeline_endpoints_unchanged` — smoke that `/api/resume/tailor` + classic paths still import/respond (regression guard).
 
 **Frontend (`frontend/src/.../__tests__`, vitest):**
-13. `v2 toggle renders and does not affect the classic editor`.
-14. `accepting a bullet diff applies it; rejecting discards it` (state-level).
+15. `v2 toggle renders and does not affect the classic editor`.
+16. `accepting a bullet diff applies it; rejecting discards it` (state-level).
 
 Each test: integration-style, public interface, survives refactors. Use the project's existing test patterns. Mock external calls per `~/.claude/skills/tdd/mocking.md`.
 
@@ -121,6 +124,37 @@ Each test: integration-style, public interface, survives refactors. Use the proj
 - **Rate/cost:** cap personas, serialize sub-agents, one run/user, reuse the `ai_service` throttle.
 - **Railway memory:** lazy-import the agent; verify boot.
 
-## 9. Reference
-- Prior art to study for guardrails/eval patterns: `interviewstreet/hiring-agent` (HackerRank). Skim before T5 (personas) and the anti-bias guardrails.
-- deepagents API: `create_deep_agent(model=, tools=, subagents=, system_prompt=)` (verified current).
+## 9. Prior art — `interviewstreet/hiring-agent` (HackerRank), studied
+It's a deterministic resume→**score** *screening* pipeline (employer side), NOT a
+deepagents/tool-calling agent — no agent loop, no personas, no JD-matching, no
+eval harness. So its *orchestration* is a floor, not a model. Steal these patterns:
+
+**ADOPT**
+- **Defensive JSON parsing for SMART output**: strip ```` ```json ```` fences, strip
+  `<think>…</think>` / reasoning preamble, slice to outer braces. SMART (v4.5) is a
+  reasoning model — required (cf. existing commit 158d888). Ref: their
+  `llm_utils.extract_json_from_response`.
+- **Per-section extraction** (narrow prompt + per-section Pydantic schema) over one
+  mega-prompt — higher fidelity on mid-size models. Reuse `resume_structurer`.
+- **Triple-enforce any numeric the agent emits**: prompt anchor → Pydantic validator
+  → Python clamp. Models drift; never trust the LLM alone.
+- **Compute facts in code; use the LLM only for fuzzy judgment; always a deterministic
+  fallback** — apply to the jobs-DB research step (filter/rank in code, personas
+  interpret). Ref: their GitHub top-7 selection + "fall back to first 7".
+- **Fairness guardrail in persona prompts**: explicit deny-list (don't score/penalize
+  on name, gender, demographics, school/university, GPA, location) + allow-list
+  (skills, project complexity, impact). Important for an AISG-adjacent product.
+- **Anti-fabrication in the prompt too** (not only post-hoc gates): "keep only what's
+  in the source; never invent URLs/metrics/skills," with DO/DON'T examples.
+- **Rubric anchored to concrete signals**, not vague adjectives — makes per-bullet
+  edit rationales credible.
+
+**AVOID**
+- Their single-shot, persona-less, JD-blind scoring + zero eval — those gaps are
+  exactly our value. Keep multi-persona + JD-aware tailoring + the §5 test list.
+- Don't duplicate guardrail prompt text across files (theirs drifts) — keep the
+  fairness/anti-fabrication block in ONE shared partial/constant (extend the
+  `shared/resume-classification.json` habit).
+
+deepagents API: `create_deep_agent(model=, tools=, subagents=, system_prompt=)` (verified current).
+Clone available at `/tmp/hiring-agent-study`.
