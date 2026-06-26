@@ -16,6 +16,13 @@ from typing import Optional
 
 import requests
 
+from config import (
+    SEALION_FAST_MODEL,
+    SEALION_HTTP_TIMEOUT,
+    SEALION_REQ_PER_MIN,
+    SEALION_SMART_MODEL,
+)
+
 log = logging.getLogger("jobhunter.ai")
 
 # ── Rate limiter (token bucket, 10 req/min) ────────────────────────────────
@@ -64,9 +71,13 @@ class _RateLimiter:
 # ── SEA-LION Client ─────────────────────────────────────────────────────────
 
 SEALION_BASE_URL = "https://api.sea-lion.ai/v1"
-SEALION_MODEL_INTERACTIVE = "aisingapore/Qwen-SEA-LION-v4-32B-IT"
-SEALION_MODEL_PIPELINE_BULLETS = "aisingapore/Qwen-SEA-LION-v4-32B-IT"
-SEALION_MODEL_REASONING = "aisingapore/Llama-SEA-LION-v3.5-70B-R"
+SEALION_MODEL_INTERACTIVE = SEALION_FAST_MODEL
+SEALION_MODEL_PIPELINE_BULLETS = SEALION_FAST_MODEL
+# v1 pipeline retired the 70B-R reasoning model (couldn't tool-call, leaked
+# chain-of-thought into output, slow). FAST is faster + cleaner; SMART (v4.5) is
+# reserved for the deep agent's persona reviews. See config.py + the model eval.
+SEALION_MODEL_REASONING = SEALION_FAST_MODEL
+SEALION_MODEL_SMART = SEALION_SMART_MODEL
 
 # Backwards-compatible alias used by older call sites.
 SEALION_MODEL = SEALION_MODEL_INTERACTIVE
@@ -98,13 +109,16 @@ _api_keys = _load_api_keys()
 _key_index = 0
 _key_lock = threading.Lock()
 
-# Rate limiter: 9 req/min per key, so N keys = 9*N req/min total
+# Rate limiter: SEALION_REQ_PER_MIN per key, so N keys = N*that req/min total.
 _limiter = _RateLimiter(
-    max_tokens=max(1, 9 * len(_api_keys)),
+    max_tokens=max(1, SEALION_REQ_PER_MIN * len(_api_keys)),
     refill_seconds=60,
 )
 
-log.info(f"[AI] Loaded {len(_api_keys)} SEA-LION API key(s) → {9 * len(_api_keys)} req/min capacity")
+log.info(
+    f"[AI] Loaded {len(_api_keys)} SEA-LION API key(s) → "
+    f"{SEALION_REQ_PER_MIN * len(_api_keys)} req/min capacity"
+)
 
 
 def _get_api_key() -> str:
@@ -229,7 +243,7 @@ def _call_sealion(
                 "max_completion_tokens": max_tokens,
                 "temperature": temperature,
             },
-            timeout=60,
+            timeout=SEALION_HTTP_TIMEOUT,
         )
         resp.raise_for_status()
         data = resp.json()

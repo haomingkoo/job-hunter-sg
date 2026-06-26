@@ -28,12 +28,14 @@ npm run dev     # starts on :5173, proxies /api to :8000
 
 ## AI Models (SEA-LION)
 
-| Model | Size | Used for | Constant |
-|-------|------|----------|----------|
-| `Qwen-SEA-LION-v4-32B-IT` | 32B (Qwen3 base) | Interactive single-bullet rewrites | `SEALION_MODEL` |
-| `Llama-SEA-LION-v3.5-70B-R` | 70B (reasoning) | Full pipeline (strategy, rewrites, summary) | `SEALION_MODEL_REASONING` |
+Two tiers, defined in `backend/config.py` (env-overridable), chosen by an empirical eval (2026-06-26).
 
-Both models are on the same free API at `https://api.sea-lion.ai/v1`. Same rate limits. 70B is slower but stronger. Use 32B only where instant response matters (interactive rewrite buttons).
+| Tier | Model | Used for | Constant |
+|------|-------|----------|----------|
+| **FAST** | `Qwen-SEA-LION-v4-32B-IT` (32B, Qwen3) | Interactive rewrites, JD summaries, **and the full tailoring pipeline**. Only model that reliably tool-calls. | `SEALION_FAST_MODEL` |
+| **SMART** | `Qwen-SEA-LION-v4.5-27B-IT` (27B, agent-tuned reasoning) | Deep-agent persona reviews — sharpest critiques, but slow and needs `max_tokens >= 3000`; no tools. | `SEALION_SMART_MODEL` |
+
+Retired `Llama-SEA-LION-v3.5-70B-R`: couldn't tool-call on the endpoint and leaked chain-of-thought into output. Free API at `https://api.sea-lion.ai/v1`; throttle via `SEALION_REQ_PER_MIN` (per key).
 
 ## Resume Tailoring Pipeline
 
@@ -43,11 +45,11 @@ The core feature is a multi-pass AI pipeline that tailors a resume for a specifi
 
 ```
 Stage 0: Local (200ms)   -- Parse resume into structured sections/bullets + load pre-parsed JD + baseline score
-Stage 1: 70B   (~10s)    -- Strategic analysis: which bullets to prioritize, where to inject keywords
+Stage 1: FAST  (~8s)     -- Strategic analysis: which bullets to prioritize, where to inject keywords
 Stage 2: Local (50ms)    -- AI phrase cleanup (107 replacements, protected if phrase appears in JD)
-Stage 3: 70B   (~15s)    -- Per-bullet rewrites (batched 4/call, validation-gated)
+Stage 3: FAST  (~12s)    -- Per-bullet rewrites (batched 4/call, validation-gated)
 Stage 4: Local (50ms)    -- Section coherence: verb dedup with synonym map, tense consistency
-Stage 5: 70B   (~12s)    -- Executive summary generation from polished content below
+Stage 5: FAST  (~10s)    -- Executive summary generation from polished content below
 Stage 6: Local (50ms)    -- Validation gates (fact preservation, hallucination detection) + final score
 ```
 
@@ -101,7 +103,7 @@ cd frontend && npx vitest run
 2. **Structured resume model** -- Resume is parsed into sections/entries/bullets with IDs, not kept as flat text. Enables surgical edits.
 3. **Validation gates on every rewrite** -- Facts (numbers, dates) must be preserved. Hallucinated terms rejected. AI phrases auto-replaced. Reverts to original if critical gate fails.
 4. **Injectable vs non-injectable keywords** -- Only inject keywords the user plausibly has experience with. Never fabricate skills.
-5. **70B for pipeline, 32B for interactive** -- Background pipeline uses stronger model since user sees progress bar. Single-bullet rewrite uses faster model since user is watching.
+5. **One FAST tier for v1** -- Pipeline and interactive both use `config.SEALION_FAST_MODEL` (v4-32B): fast, clean, reliable tool-calling. The SMART tier (v4.5) is reserved for the deep agent's persona reviews. (Pipeline was 70B-R; retired — see AI Models.)
 
 ## API Endpoints
 

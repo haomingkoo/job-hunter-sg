@@ -24,6 +24,11 @@ from typing import Optional
 
 from ai_phrases import clean_ai_phrases
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms
+from config import (
+    PIPELINE_REWRITE_TOKENS_PER_BULLET,
+    PIPELINE_STRATEGY_MAX_TOKENS,
+    PIPELINE_SUMMARY_MAX_TOKENS,
+)
 from ai_service import (
     SEALION_MODEL_PIPELINE_BULLETS,
     SEALION_MODEL_REASONING,
@@ -292,7 +297,7 @@ Only include bullets that need work in bullet_priorities. Skip strong bullets.""
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ],
-        max_tokens=800,
+        max_tokens=PIPELINE_STRATEGY_MAX_TOKENS,
         model=SEALION_MODEL_REASONING,
     )
 
@@ -478,7 +483,7 @@ The array MUST have exactly {len(batch)} items, one per input bullet, in the sam
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=150 * len(batch),
+            max_tokens=PIPELINE_REWRITE_TOKENS_PER_BULLET * len(batch),
             model=SEALION_MODEL_PIPELINE_BULLETS,
         )
 
@@ -687,7 +692,7 @@ Return ONLY the summary text, nothing else."""
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ],
-        max_tokens=200,
+        max_tokens=PIPELINE_SUMMARY_MAX_TOKENS,
         model=SEALION_MODEL_REASONING,
         temperature=0.3,
     )
