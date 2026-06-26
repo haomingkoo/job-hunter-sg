@@ -252,3 +252,27 @@ def test_general_mode_runs_without_target_job():
     assert state["mode"] == "general"
     assert "General strengthening mode" in fake_agent.message
     assert events[-1] == {"event": "done", "session_id": session_id}
+
+
+def test_tool_iteration_cap_stops_runaway_loop():
+    from langgraph.errors import GraphRecursionError
+
+    import config as app_config
+    import resume_agent.agent as agent_module
+
+    class RunawayAgent:
+        def invoke(self, _payload, config=None):
+            assert config["recursion_limit"] == app_config.AGENT_MAX_TOOL_ITERATIONS
+            raise GraphRecursionError("runaway")
+
+    result = agent_module.run_agent_turn(
+        RunawayAgent(),
+        "Keep searching forever",
+        session_id="cap-test",
+    )
+
+    assert result == {
+        "messages": [],
+        "stopped": True,
+        "reason": "tool_iteration_cap",
+    }

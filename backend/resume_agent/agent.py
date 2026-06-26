@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+import config as app_config
+from langgraph.errors import GraphRecursionError
+
 from .models import create_fast_model
 from .personas import create_persona_subagents
 from .prompts import ORCHESTRATOR_SYSTEM_PROMPT
@@ -34,9 +37,16 @@ def create_resume_agent(
 def run_agent_turn(agent: Any, message: str, session_id: str | None = None) -> dict:
     """Run one synchronous agent turn."""
     payload = {"messages": [{"role": "user", "content": message}]}
-    if not session_id:
-        return agent.invoke(payload)
-    return agent.invoke(
-        payload,
-        config={"configurable": {"thread_id": session_id}},
-    )
+    run_config: dict[str, Any] = {
+        "recursion_limit": app_config.AGENT_MAX_TOOL_ITERATIONS,
+    }
+    if session_id:
+        run_config["configurable"] = {"thread_id": session_id}
+    try:
+        return agent.invoke(payload, config=run_config)
+    except GraphRecursionError:
+        return {
+            "messages": [],
+            "stopped": True,
+            "reason": "tool_iteration_cap",
+        }
