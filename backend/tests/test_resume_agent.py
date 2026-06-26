@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import ClassVar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -77,3 +78,49 @@ def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
         "jd_summary": "Build data platforms.",
         "skills": ["Python", "SQL"],
     }
+
+
+def test_agent_calls_search_jobs_for_role_query():
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.tools import tool
+
+    import resume_agent.agent as agent_module
+
+    class ToolCallingFakeModel(FakeMessagesListChatModel):
+        bound_tools: ClassVar[list] = []
+
+        def bind_tools(self, tools, **_kwargs):
+            type(self).bound_tools = tools
+            return self
+
+    calls = []
+
+    @tool
+    def search_jobs(query: str, n: int | None = None) -> list[dict]:
+        """Search the jobs database."""
+        calls.append((query, n))
+        return [{"title": "Data Engineer", "company": "GovTech"}]
+
+    model = ToolCallingFakeModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "search_jobs",
+                        "args": {"query": "data engineer", "n": 2},
+                        "id": "call_1",
+                    }
+                ],
+            ),
+            AIMessage(content="Found Data Engineer at GovTech."),
+        ]
+    )
+    agent = agent_module.create_resume_agent(model=model, tools=[search_jobs])
+
+    result = agent_module.run_agent_turn(agent, "Find data engineer jobs")
+
+    assert calls == [("data engineer", 2)]
+    assert result["messages"][-1].content == "Found Data Engineer at GovTech."
+    assert any(getattr(msg, "name", "") == "search_jobs" for msg in result["messages"])
