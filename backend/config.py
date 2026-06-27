@@ -25,6 +25,21 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _float_env(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _csv_env(name: str, default: str) -> tuple[str, ...]:
+    raw = os.getenv(name, default)
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
 # ── SEA-LION model tiers ──────────────────────────────────────────────────────
 # FAST: interactive rewrites, JD summaries, default classic pipeline tier.
 SEALION_FAST_MODEL: str = os.getenv(
@@ -40,6 +55,12 @@ SEALION_AGENT_MODEL: str = os.getenv(
 # SMART: deep-agent persona reviews (single-shot, no tools, latency-tolerant).
 SEALION_SMART_MODEL: str = os.getenv(
     "SEALION_SMART_MODEL", "aisingapore/Qwen-SEA-LION-v4.5-27B-IT"
+)
+# Models that must run in instruct/non-thinking mode for product-facing text and
+# JSON calls. Qwen v4.5 otherwise returns reasoning_content instead of content.
+SEALION_DISABLE_THINKING_MODELS: tuple[str, ...] = _csv_env(
+    "SEALION_DISABLE_THINKING_MODELS",
+    SEALION_AGENT_MODEL,
 )
 # SMART is a reasoning model — under a tight budget it spends all tokens "thinking"
 # and returns empty. Floor its max_tokens at call sites that use it.
@@ -69,3 +90,9 @@ PIPELINE_REWRITE_TOKENS_PER_BULLET: int = _int_env(
     "PIPELINE_REWRITE_TOKENS_PER_BULLET", 150
 )
 PIPELINE_SUMMARY_MAX_TOKENS: int = _int_env("PIPELINE_SUMMARY_MAX_TOKENS", 200)
+
+# ── Resume validation gates ──────────────────────────────────────────────────
+VALIDATION_REWRITE_MAX_EXPANSION_RATIO: float = _float_env(
+    "VALIDATION_REWRITE_MAX_EXPANSION_RATIO",
+    2.0,
+)

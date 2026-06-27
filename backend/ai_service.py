@@ -17,6 +17,7 @@ from typing import Optional
 import requests
 
 from config import (
+    SEALION_DISABLE_THINKING_MODELS,
     SEALION_FAST_MODEL,
     SEALION_HTTP_TIMEOUT,
     SEALION_PIPELINE_MODEL,
@@ -221,6 +222,7 @@ def _call_sealion(
     max_tokens: int = 500,
     model: str = SEALION_MODEL,
     temperature: float = 0.7,
+    response_format: dict | None = None,
 ) -> Optional[str]:
     """Call SEA-LION API with rate limiting. Returns response text or None."""
     api_key = _get_api_key()
@@ -233,31 +235,39 @@ def _call_sealion(
         return None
 
     try:
+        body = {
+            "model": model,
+            "messages": messages,
+            "max_completion_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if model in SEALION_DISABLE_THINKING_MODELS:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        if response_format:
+            body["response_format"] = response_format
+
         resp = requests.post(
             f"{SEALION_BASE_URL}/chat/completions",
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": model,
-                "messages": messages,
-                "max_completion_tokens": max_tokens,
-                "temperature": temperature,
-            },
+            json=body,
             timeout=SEALION_HTTP_TIMEOUT,
         )
         resp.raise_for_status()
         data = resp.json()
         message = data["choices"][0]["message"]
-        content = message.get("content") or message.get("reasoning_content")
+        content = message.get("content")
         if isinstance(content, list):
             content = "".join(
                 part.get("text", "") if isinstance(part, dict) else str(part)
                 for part in content
             )
         if not isinstance(content, str):
-            raise KeyError("content/reasoning_content")
+            if message.get("reasoning_content"):
+                raise KeyError("content missing; reasoning_content not accepted")
+            raise KeyError("content")
         usage = data.get("usage", {})
         log.info(
             f"[AI] SEA-LION response: {usage.get('total_tokens', '?')} tokens"
@@ -307,6 +317,7 @@ def call_sealion_json(
             max_tokens=max_tokens,
             model=model,
             temperature=temp,
+            response_format={"type": "json_object"},
         )
         if result and result.strip():
             stripped = result.strip()

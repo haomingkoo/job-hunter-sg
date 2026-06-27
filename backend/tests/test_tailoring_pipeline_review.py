@@ -204,6 +204,67 @@ def test_stage_5_summary_failure_is_reported(monkeypatch):
     )
 
 
+def test_stage_5_prompt_does_not_import_jd_experience(monkeypatch):
+    import tailoring_pipeline as pipeline
+    from resume_structurer import structure_resume
+
+    captured = {}
+
+    def fake_call(messages, *args, **kwargs):
+        captured["prompt"] = "\n".join(m["content"] for m in messages)
+        return "Senior engineer building Python data pipelines and cloud systems."
+
+    monkeypatch.setattr(pipeline, "_call_sealion", fake_call)
+
+    structured = structure_resume(SAMPLE_RESUME)
+    state = pipeline.PipelineState("stage5-prompt")
+    result = pipeline._stage_5_full_polish(
+        structured=structured,
+        strategy={"summary_direction": "Highlight Python, pipelines, and cloud."},
+        parsed_jd={
+            "required_skills": ["Python"],
+            "preferred_skills": [],
+            "experience_years": "5+ years",
+        },
+        jd_text=SAMPLE_JD,
+        state=state,
+    )
+
+    assert result["summary_rewritten"]
+    assert "5+ years" not in captured["prompt"]
+    assert "target job's required experience is not the candidate's experience" in captured["prompt"]
+
+
+def test_stage_5_rejects_unsupported_years_claim(monkeypatch):
+    import tailoring_pipeline as pipeline
+    from resume_structurer import flatten_to_text, structure_resume
+
+    monkeypatch.setattr(
+        pipeline,
+        "_call_sealion",
+        lambda *args, **kwargs: "Cloud engineer with 5+ years of experience building data pipelines.",
+    )
+
+    structured = structure_resume(SAMPLE_RESUME)
+    state = pipeline.PipelineState("stage5-years")
+    result = pipeline._stage_5_full_polish(
+        structured=structured,
+        strategy={"summary_direction": "Highlight Python, pipelines, and cloud."},
+        parsed_jd={
+            "required_skills": ["Python"],
+            "preferred_skills": [],
+            "experience_years": "5+ years",
+        },
+        jd_text=SAMPLE_JD,
+        state=state,
+    )
+
+    assert result["_degraded"]
+    assert not result["summary_rewritten"]
+    assert "5+ years" not in flatten_to_text(structured)
+    assert "PROFESSIONAL SUMMARY" not in flatten_to_text(structured)
+
+
 def test_stage_3_invalid_rewrites_keep_originals_and_do_not_crash(monkeypatch):
     import tailoring_pipeline as pipeline
 
@@ -237,6 +298,41 @@ def test_stage_3_invalid_rewrites_keep_originals_and_do_not_crash(monkeypatch):
         for change in state.result["changes"]
     )
     assert "Built scalable data pipeline processing 10M events daily" in state.result["tailored_text"]
+
+
+def test_stage_3_malformed_json_fragment_is_not_used_as_bullet(monkeypatch):
+    import tailoring_pipeline as pipeline
+
+    call_count = {"count": 0}
+
+    def fake_json(*args, **kwargs):
+        call_count["count"] += 1
+        if call_count["count"] == 1:
+            return (
+                '{"bullet_priorities": ['
+                '{"id": "exp-1-b1", "priority": "high", "reason": "test"}'
+                '], "keyword_placements": [], "summary_direction": "Keep concise."}'
+            )
+        return '{"rewrites": ["Led team of 8 to migrate systems to cloud infrastructure."'
+
+    monkeypatch.setattr(pipeline, "call_sealion_json", fake_json)
+    monkeypatch.setattr(pipeline, "_call_sealion", lambda *args, **kwargs: None)
+
+    state = pipeline.run_pipeline(
+        resume_text=SAMPLE_RESUME,
+        job_description=SAMPLE_JD,
+        parsed_jd=None,
+        intensity="full",
+    )
+
+    status = _wait_for_pipeline(state)
+    assert status is not None and status["complete"], status
+    assert state.result is not None
+    assert not any(
+        change.get("type") == "bullet_rewrite"
+        for change in state.result["changes"]
+    )
+    assert '{"rewrites"' not in state.result["tailored_text"]
 
 
 def test_stage_3_validation_failure_does_not_create_change(monkeypatch):
@@ -302,6 +398,56 @@ def test_stage_6_validate_signature_includes_parsed_jd_and_state():
 
     params = list(inspect.signature(pipeline._stage_6_validate).parameters)
     assert params == ["structured", "original_text", "jd_text", "parsed_jd", "state"]
+
+
+def test_stage_0_score_uses_parsed_jd():
+    import tailoring_pipeline as pipeline
+
+    parsed_jd = {
+        "required_skills": ["Python", "cloud infrastructure"],
+        "preferred_skills": ["Kubernetes"],
+        "single_word_skills": [],
+    }
+    state = pipeline.PipelineState("stage0-score")
+
+    analysis = pipeline._stage_0_analyze(
+        resume_text=SAMPLE_RESUME,
+        parsed_jd=parsed_jd,
+        jd_text=SAMPLE_JD,
+        state=state,
+    )
+
+    assert analysis["score_result"].get("ats_match", {}).get("blended") is True
+
+
+def test_stage_6_score_uses_parsed_jd(monkeypatch):
+    import tailoring_pipeline as pipeline
+    from resume_structurer import structure_resume
+
+    parsed_jd = {
+        "required_skills": ["Python"],
+        "preferred_skills": [],
+        "single_word_skills": [],
+    }
+    calls = []
+
+    class FakeScorer:
+        def analyze(self, resume_text, job_description="", template_sections=None, parsed_jd=None):
+            calls.append(parsed_jd)
+            return {"overall_score": 42}
+
+    monkeypatch.setattr(pipeline, "ResumeScorer", FakeScorer)
+
+    result = pipeline._stage_6_validate(
+        structured=structure_resume(SAMPLE_RESUME),
+        original_text=SAMPLE_RESUME,
+        jd_text=SAMPLE_JD,
+        parsed_jd=parsed_jd,
+        state=pipeline.PipelineState("stage6-score"),
+    )
+
+    assert result["final_score"] == 42
+    assert calls == [parsed_jd]
 
 
 def test_stage_6_validate_reports_real_matched_after():

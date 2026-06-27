@@ -4,6 +4,7 @@ from validation_gates import (
     gate_hallucination,
     gate_keyword_verbatim,
     gate_length_sanity,
+    gate_unsupported_claims,
     validate_and_fix,
 )
 
@@ -96,6 +97,22 @@ def test_hallucination_detected():
     assert not result.passed
 
 
+def test_unsupported_outcome_claim_detected():
+    result = gate_unsupported_claims(
+        "Led team of 8 to migrate legacy systems to cloud",
+        "Led 8-engineer team to migrate legacy systems with zero downtime and improved reliability",
+    )
+    assert not result.passed
+
+
+def test_supported_outcome_claim_allowed():
+    result = gate_unsupported_claims(
+        "Led cloud migration with zero downtime",
+        "Led 8-engineer cloud migration with zero downtime",
+    )
+    assert result.passed
+
+
 def test_critical_failure_reverts():
     original = "Saved $3M through process optimization"
     tailored = "Revolutionized process optimization achieving unprecedented results"
@@ -110,3 +127,17 @@ def test_auto_fix_applied():
     final_text, _results = validate_and_fix(original, tailored, jd_text="")
     assert "spearheaded" not in final_text.lower()
     assert final_text != original
+
+
+def test_unsupported_claim_reverts():
+    original = "Led team of 8 to migrate legacy systems to cloud"
+    tailored = (
+        "Led 8-engineer team to migrate legacy systems to cloud infrastructure, "
+        "ensuring zero downtime and improved system reliability."
+    )
+    final_text, results = validate_and_fix(original, tailored)
+    assert final_text == original
+    assert any(
+        result.gate_name == "unsupported_claims" and not result.passed
+        for result in results
+    )

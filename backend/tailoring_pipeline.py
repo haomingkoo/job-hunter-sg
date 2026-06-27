@@ -28,6 +28,7 @@ from config import (
     PIPELINE_REWRITE_TOKENS_PER_BULLET,
     PIPELINE_STRATEGY_MAX_TOKENS,
     PIPELINE_SUMMARY_MAX_TOKENS,
+    VALIDATION_REWRITE_MAX_EXPANSION_RATIO,
 )
 from ai_service import (
     SEALION_MODEL_PIPELINE_BULLETS,
@@ -208,7 +209,7 @@ def _stage_0_analyze(
     state.update_progress(1, 3, "Scoring resume...")
 
     scorer = ResumeScorer()
-    score_result = scorer.analyze(resume_text, jd_text)
+    score_result = scorer.analyze(resume_text, jd_text, parsed_jd=parsed_jd)
     state.update_progress(2, 3, "Analyzing skill gaps...")
 
     # Skill gap from parsed JD
@@ -459,8 +460,12 @@ CRITICAL RULES:
 - If original has "$3M", keep "$3M" exactly
 - If no numbers exist, use [X%] or [N] placeholders
 - Start each bullet with a STRONG action verb
-- Keep each bullet to 15-30 words
+- Keep each bullet concise; never make it more than {VALIDATION_REWRITE_MAX_EXPANSION_RATIO:g}x the original word count
 - If [inject: keyword] is noted, weave that keyword in naturally
+- Do NOT add outcomes such as zero downtime, improved reliability, cost savings,
+  seamless transition, operational continuity, latency reduction, speed gains,
+  or revenue impact unless the original bullet or sibling bullets explicitly say so
+- Do NOT add an "ensuring ..." clause unless the original bullet already has one
 
 QUALITY RULES:
 - Each bullet is shown with its role context [Company | Title] and sibling bullets
@@ -496,10 +501,15 @@ The array MUST have exactly {len(batch)} items, one per input bullet, in the sam
                     rewrites = []
             except (json.JSONDecodeError, ValueError, AttributeError):
                 # Fallback: try numbered-line parsing
-                for line in content.strip().split("\n"):
-                    cleaned = re.sub(r"^\d+[\.\)]\s*", "", line.strip())
-                    if cleaned and len(cleaned) > 10:
-                        rewrites.append(cleaned)
+                raw_content = content.strip()
+                if not (
+                    raw_content.startswith(("{", "["))
+                    or '"rewrites"' in raw_content
+                ):
+                    for line in raw_content.split("\n"):
+                        cleaned = re.sub(r"^\d+[\.\)]\s*", "", line.strip())
+                        if cleaned and len(cleaned) > 10:
+                            rewrites.append(cleaned)
 
         if not rewrites:
             log.warning(
@@ -612,6 +622,20 @@ def _ensure_summary_section(structured: dict) -> dict:
     return summary_section
 
 
+_YEARS_EXPERIENCE_RE = re.compile(
+    r"\b\d+(?:\.\d+)?\+?\s*(?:years?|yrs?)\s+(?:of\s+)?experience\b",
+    re.IGNORECASE,
+)
+
+
+def _summary_has_unsupported_years(source_text: str, summary_text: str) -> bool:
+    source_claims = {m.group(0).lower() for m in _YEARS_EXPERIENCE_RE.finditer(source_text)}
+    for match in _YEARS_EXPERIENCE_RE.finditer(summary_text):
+        if match.group(0).lower() not in source_claims:
+            return True
+    return False
+
+
 def _summary_needs_refresh(summary_section: dict | None) -> bool:
     """Heuristic for whether the summary should be regenerated in a full pass."""
     if not summary_section:
@@ -667,22 +691,27 @@ def _stage_5_full_polish(
     system = """You are an expert resume writer specializing in Singapore's job market.
 
 Generate a compelling professional summary (2-4 sentences, ~40-60 words) that:
-1. Opens with years of experience + core expertise
+1. Opens with core expertise; mention years of experience only if the source bullets explicitly state it
 2. Highlights 2-3 key strengths relevant to the target role
 3. Mentions a quantified achievement if possible
 4. Sounds natural, not AI-generated
 
 CRITICAL RULES:
 - Only reference achievements and skills that appear in the bullet points below. Do NOT invent.
+- The target job's required experience is not the candidate's experience.
+- If the source bullets do not explicitly say "years of experience", do not mention years.
+- Do NOT add outcomes such as zero downtime, improved reliability, cost savings,
+  seamless transition, operational continuity, latency reduction, speed gains,
+  or revenue impact unless the bullets explicitly say so.
+- Do NOT add an "ensuring ..." clause unless the bullets explicitly have one.
 - NEVER change numbers, years of experience, dollar amounts, or metrics from the original resume.
-  If the resume says "7+ years", keep "7+ years". Do NOT calculate or infer different numbers.
+  If the resume says "7+ years", keep "7+ years". Do NOT calculate, infer, or import different numbers.
 - Preserve all factual claims exactly as stated in the resume.
 
 Return ONLY the summary text, nothing else."""
 
     user_msg = (
         f"TARGET ROLE: {parsed_jd.get('required_skills', [])[:5]}"
-        f"\nEXPERIENCE: {parsed_jd.get('experience_years', '')}"
         f"\nDIRECTION: {summary_direction}"
         f"\n\nKEY BULLETS FROM RESUME:\n" + "\n".join(bullet_context)
     )
@@ -713,7 +742,13 @@ Return ONLY the summary text, nothing else."""
         )
     elif summary_section is not None and _summary_needs_refresh(summary_section):
         new_summary = content.strip().strip('"')
-        if len(new_summary) > 30:
+        source_text = "\n".join(bullet_context)
+        if _summary_has_unsupported_years(source_text, new_summary):
+            result["_degraded"] = True
+            result["_degraded_reason"] = (
+                "AI summary polishing added unsupported years of experience, so the pipeline kept the current summary."
+            )
+        elif len(new_summary) > 30:
             result["original_summary"] = summary_section.get("content", "")
             result["new_summary"] = new_summary
             result["summary_rewritten"] = True
@@ -728,6 +763,11 @@ Return ONLY the summary text, nothing else."""
         result["_degraded_reason"] = (
             "The resume did not contain enough structured content to generate a professional summary."
         )
+
+    if summary_was_missing and not result["summary_rewritten"]:
+        sections = structured.get("sections", [])
+        if summary_section in sections:
+            sections.remove(summary_section)
 
     state.update_progress(1, 1, "Full polish complete.")
     return result
@@ -745,7 +785,7 @@ def _stage_6_validate(
 
     tailored_text = flatten_to_text(structured)
     scorer = ResumeScorer()
-    final_score = scorer.analyze(tailored_text, jd_text)
+    final_score = scorer.analyze(tailored_text, jd_text, parsed_jd=parsed_jd)
 
     state.update_progress(1, 4, "Re-scanning skill match...")
 

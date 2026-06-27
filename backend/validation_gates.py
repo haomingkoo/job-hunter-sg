@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 
 from ai_phrases import clean_ai_phrases
+from config import VALIDATION_REWRITE_MAX_EXPANSION_RATIO
 
 log = logging.getLogger("jobhunter.gates")
 
@@ -49,6 +50,16 @@ _TECH_TERMS = {
     "linux", "git", "jira", "tableau", "powerbi", "figma",
     "terraform", "ansible", "jenkins", "ci/cd",
 }
+
+_UNSUPPORTED_OUTCOME_PATTERNS = [
+    re.compile(r"\bzero[- ]downtime\b", re.IGNORECASE),
+    re.compile(r"\bno downtime\b", re.IGNORECASE),
+    re.compile(r"\bwithout downtime\b", re.IGNORECASE),
+    re.compile(r"\bimproved (?:system )?reliability\b", re.IGNORECASE),
+    re.compile(r"\bseamless transition\b", re.IGNORECASE),
+    re.compile(r"\boperational continuity\b", re.IGNORECASE),
+    re.compile(r"\bensur(?:ed|ing)\b", re.IGNORECASE),
+]
 
 
 def _extract_numbers(text: str) -> set[str]:
@@ -173,13 +184,14 @@ def gate_length_sanity(original: str, tailored: str) -> GateResult:
             message=f"Rewrite is very short ({tail_words} words).",
         )
 
-    if orig_words > 0 and tail_words / orig_words > 1.8:
+    if orig_words > 0 and tail_words / orig_words > VALIDATION_REWRITE_MAX_EXPANSION_RATIO:
         return GateResult(
             passed=False,
             gate_name="length_sanity",
             message=(
                 f"Rewrite is {tail_words / orig_words:.1f}x longer than "
-                f"original ({orig_words} -> {tail_words} words). Max 1.8x."
+                f"original ({orig_words} -> {tail_words} words). "
+                f"Max {VALIDATION_REWRITE_MAX_EXPANSION_RATIO:g}x."
             ),
         )
 
@@ -220,6 +232,25 @@ def gate_hallucination(
     )
 
 
+# ── Gate 6: Unsupported Outcome Claims ──────────────────────────────────────
+
+
+def gate_unsupported_claims(original: str, tailored: str) -> GateResult:
+    """Reject high-risk outcome claims that were not present in the source bullet."""
+    for pattern in _UNSUPPORTED_OUTCOME_PATTERNS:
+        if pattern.search(tailored) and not pattern.search(original):
+            return GateResult(
+                passed=False,
+                gate_name="unsupported_claims",
+                message="Rewrite adds unsupported outcome claims.",
+            )
+    return GateResult(
+        passed=True,
+        gate_name="unsupported_claims",
+        message="No unsupported outcome claims detected.",
+    )
+
+
 # ── Runners ─────────────────────────────────────────────────────────────────
 
 
@@ -230,13 +261,14 @@ def run_all_gates(
     required_keywords: list[str] | None = None,
     injectable_keywords: set[str] | None = None,
 ) -> list[GateResult]:
-    """Run all 5 validation gates. Returns list of results."""
+    """Run all validation gates. Returns list of results."""
     return [
         gate_fact_preservation(original, tailored),
         gate_ai_phrases(tailored, jd_text),
         gate_keyword_verbatim(tailored, required_keywords),
         gate_length_sanity(original, tailored),
         gate_hallucination(original, tailored, injectable_keywords),
+        gate_unsupported_claims(original, tailored),
     ]
 
 
@@ -259,7 +291,7 @@ def validate_and_fix(
     final_text = tailored
 
     # Check for critical failures -- revert to original
-    critical_gates = {"fact_preservation", "hallucination"}
+    critical_gates = {"fact_preservation", "hallucination", "unsupported_claims"}
     for result in results:
         if not result.passed and result.gate_name in critical_gates:
             log.info(
