@@ -33,6 +33,14 @@ def test_fact_removed():
     assert not result.passed
 
 
+def test_added_numeric_fact_rejected():
+    result = gate_fact_preservation(
+        "Led team of 8 to migrate legacy systems to cloud",
+        "Led team of 8 to migrate legacy systems to cloud, handling 10M events daily",
+    )
+    assert not result.passed
+
+
 def test_ai_phrase_replaced():
     result = gate_ai_phrases("Spearheaded a transformative initiative")
     assert result.auto_fixed

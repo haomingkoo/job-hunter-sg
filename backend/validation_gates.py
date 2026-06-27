@@ -35,6 +35,7 @@ _NUMBER_RE = re.compile(
     r"|\d+(?:\.\d+)?%"
     r"|\d{1,3}(?:,\d{3})+"
     r"|\d+[kKmMbB]\b"
+    r"|\b\d+(?:\.\d+)?\+?\b"
     r"|\d+\s*(?:team|users|people|projects|systems|clients|engineers"
     r"|members|staff|reports|sites|regions|countries)"
 )
@@ -79,16 +80,23 @@ def _extract_domain_terms(text: str) -> set[str]:
 
 
 def gate_fact_preservation(original: str, tailored: str) -> GateResult:
-    """Ensure all numbers and metrics from the original appear in the tailored version."""
+    """Ensure numeric facts are preserved and not newly introduced."""
     orig_numbers = _extract_numbers(original)
     tail_numbers = _extract_numbers(tailored)
     missing = orig_numbers - tail_numbers
+    added = tail_numbers - orig_numbers
 
     if missing:
         return GateResult(
             passed=False,
             gate_name="fact_preservation",
             message=f"Missing facts from original: {', '.join(sorted(missing))}",
+        )
+    if added:
+        return GateResult(
+            passed=False,
+            gate_name="fact_preservation",
+            message=f"Added unsupported numeric facts: {', '.join(sorted(added))}",
         )
     return GateResult(
         passed=True,
