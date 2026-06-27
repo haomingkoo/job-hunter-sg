@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 
@@ -53,3 +54,24 @@ def test_call_sealion_reads_sealion_reasoning_content(monkeypatch):
     )
 
     assert ai_service._call_sealion([{"role": "user", "content": "hello"}]) == "SEA-LION reply"
+
+
+def test_pipeline_model_can_be_overridden(monkeypatch):
+    import ai_service
+    import config
+
+    original = os.environ.get("SEALION_PIPELINE_MODEL")
+    monkeypatch.setenv("SEALION_PIPELINE_MODEL", "test-pipeline-model")
+    try:
+        importlib.reload(config)
+        reloaded = importlib.reload(ai_service)
+
+        assert reloaded.SEALION_MODEL_PIPELINE_BULLETS == "test-pipeline-model"
+        assert reloaded.SEALION_MODEL_REASONING == "test-pipeline-model"
+    finally:
+        if original is None:
+            monkeypatch.delenv("SEALION_PIPELINE_MODEL", raising=False)
+        else:
+            monkeypatch.setenv("SEALION_PIPELINE_MODEL", original)
+        importlib.reload(config)
+        importlib.reload(ai_service)

@@ -26,10 +26,13 @@ def _int_env(name: str, default: int) -> int:
 
 
 # ── SEA-LION model tiers ──────────────────────────────────────────────────────
-# FAST: tool-calling agent loop, interactive rewrites, JD summaries, v1 pipeline.
+# FAST: interactive rewrites, JD summaries, default classic pipeline tier.
 SEALION_FAST_MODEL: str = os.getenv(
     "SEALION_FAST_MODEL", "aisingapore/Qwen-SEA-LION-v4-32B-IT"
 )
+# Classic tailoring pipeline model. Defaults to FAST because v4.5 Qwen currently
+# leaks reasoning text into strict JSON/prose prompts on this path.
+SEALION_PIPELINE_MODEL: str = os.getenv("SEALION_PIPELINE_MODEL", SEALION_FAST_MODEL)
 # AGENT: Resume Agent v2 orchestration and tool-calling loop.
 SEALION_AGENT_MODEL: str = os.getenv(
     "SEALION_AGENT_MODEL", "aisingapore/Qwen-SEA-LION-v4.5-27B-IT"

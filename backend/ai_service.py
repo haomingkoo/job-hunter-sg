@@ -19,6 +19,7 @@ import requests
 from config import (
     SEALION_FAST_MODEL,
     SEALION_HTTP_TIMEOUT,
+    SEALION_PIPELINE_MODEL,
     SEALION_REQ_PER_MIN,
     SEALION_SMART_MODEL,
 )
@@ -72,11 +73,12 @@ class _RateLimiter:
 
 SEALION_BASE_URL = "https://api.sea-lion.ai/v1"
 SEALION_MODEL_INTERACTIVE = SEALION_FAST_MODEL
-SEALION_MODEL_PIPELINE_BULLETS = SEALION_FAST_MODEL
+SEALION_MODEL_PIPELINE_BULLETS = SEALION_PIPELINE_MODEL
 # v1 pipeline retired the 70B-R reasoning model (couldn't tool-call, leaked
-# chain-of-thought into output, slow). FAST is faster + cleaner; SMART (v4.5) is
-# reserved for the deep agent's persona reviews. See config.py + the model eval.
-SEALION_MODEL_REASONING = SEALION_FAST_MODEL
+# chain-of-thought into output, slow). The classic pipeline is env-switchable via
+# SEALION_PIPELINE_MODEL; v4 32B remains the default because it follows strict
+# JSON/prose prompts better than v4.5 Qwen on this path.
+SEALION_MODEL_REASONING = SEALION_PIPELINE_MODEL
 SEALION_MODEL_SMART = SEALION_SMART_MODEL
 
 # Backwards-compatible alias used by older call sites.
