@@ -767,9 +767,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setAgentLoading(true);
     setAgentMessages((current) => [...current, { role: "user", content: message }]);
     try {
-      const response = await fetch(`${API_BASE}/api/resume/agent/chat`, {
+      const response = await apiFetch("/api/resume/agent/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: agentSessionId || undefined,
           message,
@@ -777,7 +776,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           job_id: selectedJob?.id || undefined,
         }),
       });
-      if (!response.ok) throw new Error("Agent v2 is unavailable right now.");
       const events = parseSseEvents(await response.text());
       let nextSessionId = agentSessionId;
       let nextError = "";
@@ -794,7 +792,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       setAgentSessionId(nextSessionId || "");
       if (nextSessionId) await refreshAgentState(nextSessionId);
     } catch (err) {
-      setAgentError(err.message || "Agent v2 is unavailable right now.");
+      setAgentError(err.message || "Agent Review is unavailable right now.");
     } finally {
       setAgentLoading(false);
     }
@@ -3015,18 +3013,19 @@ CERTIFICATIONS
 
       {/* ── Step 3: Review & Edit ────────────────────────────────────── */}
       {wizardStep === 3 && (<>
-      <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-3 shadow-sm">
+      <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="inline-flex items-center rounded-2xl bg-[#BDDDFC]/10 px-4 py-2">
-            <span className="text-sm font-semibold text-[#384959]">Resume Editor</span>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-[#384959]">Resume Workspace</div>
+            <div className="mt-0.5 text-xs text-[#6A89A7]">Edit directly or review evidence-safe bullet proposals.</div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-2xl border border-[#BDDDFC]/30 bg-white p-1" role="tablist" aria-label="Resume editor mode">
+            <div className="inline-flex rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-1" role="tablist" aria-label="Resume editor mode">
               {[
-                ["classic", "Classic"],
-                ["agent", "Agent v2"],
-              ].map(([mode, label]) => {
+                ["classic", "Classic editor", Edit3],
+                ["agent", "Agent review", Sparkles],
+              ].map(([mode, label, Icon]) => {
                 const active = editorMode === mode;
                 return (
                   <button
@@ -3034,10 +3033,11 @@ CERTIFICATIONS
                     type="button"
                     onClick={() => setEditorMode(mode)}
                     aria-pressed={active}
-                    className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
+                    className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
                       active ? "bg-[#384959] text-white" : "text-[#6A89A7] hover:bg-[#f0f4f8] hover:text-[#384959]"
                     }`}
                   >
+                    <Icon size={13} />
                     {label}
                   </button>
                 );
@@ -3090,13 +3090,13 @@ CERTIFICATIONS
       </div>
 
       {editorMode === "agent" && (
-        <div data-testid="resume-agent-v2-panel" className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div data-testid="resume-agent-v2-panel" className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
           <section className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-[#384959]">Resume Deep Agent</div>
+                <div className="text-sm font-semibold text-[#384959]">Agent Review</div>
                 <div className="mt-1 text-xs text-[#6A89A7]">
-                  {selectedJob?.title ? `${selectedJob.title} at ${selectedJob.company || "target company"}` : "General strengthening"}
+                  {selectedJob?.title ? `Targeting ${selectedJob.title} at ${selectedJob.company || "target company"}` : "General resume strengthening"}
                 </div>
               </div>
               {agentLoading && <Loader2 size={16} className="animate-spin text-[#6A89A7]" />}
@@ -3119,13 +3119,22 @@ CERTIFICATIONS
                   ))}
                 </div>
               ) : (
-                <div className="text-sm text-[#6A89A7]">Ask for a role-specific pass or a general strengthening pass.</div>
+                <div className="flex min-h-32 items-center justify-center text-center">
+                  <div className="max-w-sm">
+                    <Sparkles size={18} className="mx-auto text-[#88BDF2]" />
+                    <div className="mt-2 text-sm font-semibold text-[#384959]">Ask for a review pass</div>
+                    <div className="mt-1 text-sm leading-relaxed text-[#6A89A7]">
+                      The agent will return bullet edits for you to accept or reject before the draft changes.
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
 
             {agentError && (
-              <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                {agentError}
+              <div className="mt-3 flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                <span>{agentError}</span>
               </div>
             )}
 
@@ -3134,15 +3143,16 @@ CERTIFICATIONS
                 value={agentInput}
                 onChange={(event) => setAgentInput(event.target.value)}
                 rows={3}
-                className="min-h-20 flex-1 resize-y rounded-2xl border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959] outline-none transition focus:border-[#88BDF2] focus:ring-2 focus:ring-[#88BDF2]/20"
-                placeholder="Ask the agent to tailor or strengthen this resume..."
+                disabled={!resumeText.trim()}
+                className="min-h-20 flex-1 resize-y rounded-2xl border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959] outline-none transition focus:border-[#88BDF2] focus:ring-2 focus:ring-[#88BDF2]/20 disabled:bg-[#f0f4f8] disabled:text-[#6A89A7]"
+                placeholder={resumeText.trim() ? "Ask for ATS gaps, unsupported claims, or safer bullet rewrites..." : "Upload or paste a resume before using Agent Review."}
               />
               <button
                 type="button"
                 onClick={handleAgentSend}
                 disabled={agentLoading || !agentInput.trim() || !resumeText.trim()}
                 className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#384959] text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
-                title="Send to Agent v2"
+                title="Send to Agent Review"
               >
                 {agentLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
               </button>
@@ -3151,9 +3161,9 @@ CERTIFICATIONS
 
           <aside className="space-y-4">
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-              <div className="text-sm font-semibold text-[#384959]">Plan</div>
+              <div className="text-sm font-semibold text-[#384959]">Worklist</div>
               <div className="mt-3 space-y-2">
-                {(agentTodos.length ? agentTodos : ["Read resume evidence", "Check role fit", "Prepare bullet diffs"]).map((todo) => (
+                {(agentTodos.length ? agentTodos : ["Read resume evidence", "Check role fit", "Prepare reviewable bullet edits"]).map((todo) => (
                   <div key={todo} className="flex items-start gap-2 text-sm text-[#6A89A7]">
                     <CheckCircle size={14} className="mt-0.5 shrink-0 text-emerald-600" />
                     <span>{todo}</span>
@@ -3163,7 +3173,7 @@ CERTIFICATIONS
             </div>
 
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-              <div className="text-sm font-semibold text-[#384959]">Persona Findings</div>
+              <div className="text-sm font-semibold text-[#384959]">Reviewer Notes</div>
               <div className="mt-3 space-y-2">
                 {agentFindings.length > 0 ? agentFindings.map((finding, index) => (
                   <div key={`${finding.persona || "persona"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-sm text-[#384959]">
@@ -3177,15 +3187,21 @@ CERTIFICATIONS
 
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-[#384959]">Pending Diffs</div>
+                <div className="text-sm font-semibold text-[#384959]">Proposed Edits</div>
                 <span className="rounded-full bg-[#BDDDFC]/20 px-2 py-0.5 text-xs font-semibold text-[#384959]">{agentPendingDiffs.length}</span>
               </div>
               <div className="mt-3 space-y-3">
-                {agentPendingDiffs.length > 0 ? agentPendingDiffs.map((diff) => (
+                {agentPendingDiffs.length > 0 ? agentPendingDiffs.map((diff, index) => (
                   <div key={diff.bullet_id} className="rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">{diff.bullet_id}</div>
-                    <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">{diff.original}</div>
-                    <div className="mt-2 text-sm leading-relaxed text-[#384959]">{diff.rewrite}</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Edit {index + 1}</div>
+                    <div className="mt-2 rounded-xl bg-white px-3 py-2">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Current</div>
+                      <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{diff.original}</div>
+                    </div>
+                    <div className="mt-2 rounded-xl bg-white px-3 py-2">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Proposed</div>
+                      <div className="mt-1 text-sm leading-relaxed text-[#384959]">{diff.rewrite}</div>
+                    </div>
                     <div className="mt-3 flex gap-2">
                       <button
                         type="button"
@@ -3206,7 +3222,7 @@ CERTIFICATIONS
                     </div>
                   </div>
                 )) : (
-                  <div className="text-sm text-[#6A89A7]">Validated bullet edits will appear here.</div>
+                  <div className="text-sm leading-relaxed text-[#6A89A7]">Per-bullet edits will appear here for review before they change the draft.</div>
                 )}
               </div>
             </div>

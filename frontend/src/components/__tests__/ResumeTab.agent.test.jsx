@@ -56,7 +56,7 @@ describe("ResumeTab Agent v2", () => {
     const classicButton = Array.from(container.querySelectorAll("button"))
       .find((button) => button.textContent.includes("Classic"));
     const agentButton = Array.from(container.querySelectorAll("button"))
-      .find((button) => button.textContent.includes("Agent v2"));
+      .find((button) => button.textContent.includes("Agent review"));
     const classicEditor = container.querySelector("[data-testid='classic-resume-editor']");
 
     expect(classicButton).toBeTruthy();
