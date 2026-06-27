@@ -69,6 +69,8 @@ import {
   buildFocusedFeedbackContext,
 } from "../lib/resumeHelpers.jsx";
 
+const RESUME_UNDO_LIMIT = 30;
+
 export function applyAgentDiffDecision(resumeText, pendingDiffs, bulletId, decision) {
   const target = pendingDiffs.find((diff) => diff.bullet_id === bulletId);
   const remaining = pendingDiffs.filter((diff) => diff.bullet_id !== bulletId);
@@ -719,9 +721,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   }, [selectedJob?.id, scoreData, needsRescore, jobDescription, resumeText]);
 
   const applyResumeText = useCallback((nextText, { rescore = false, clearRewrites = false, preserveTailoringContext = false, _isUndo = false } = {}) => {
-    // Push current text to undo stack (max 30) unless this IS an undo/redo
+    // Push current text to undo stack unless this IS an undo/redo.
     if (!_isUndo && resumeText && resumeText !== nextText) {
-      undoStackRef.current = [...undoStackRef.current.slice(-29), resumeText];
+      undoStackRef.current = [...undoStackRef.current.slice(-(RESUME_UNDO_LIMIT - 1)), resumeText];
       redoStackRef.current = [];
     }
     setResumeText(nextText);
@@ -834,16 +836,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         setShowSetupPanel(false);
         setWizardStep(2);
       } else {
-        // AI couldn't produce anything useful, fall back to blank
-        startBlankResumeFlow();
+        setChatError("AI could not generate a usable resume from the current answers. Add more detail or start from a blank draft.");
       }
-    } catch {
-      // API failed, fall back to blank
-      startBlankResumeFlow();
+    } catch (err) {
+      setChatError(err.message || "Could not generate a resume right now. Your current draft was not changed.");
     } finally {
       setChatLoading(false);
     }
-  }, [chatMessages, applyResumeText, resetResumeChat, startBlankResumeFlow]);
+  }, [chatMessages, applyResumeText, resetResumeChat]);
 
   const handleUndo = useCallback(() => {
     if (undoStackRef.current.length === 0) return;
@@ -863,6 +863,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   useEffect(() => {
     const handler = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+        const target = e.target;
+        if (
+          target instanceof HTMLElement
+          && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+        ) {
+          return;
+        }
         e.preventDefault();
         if (e.shiftKey) handleRedo();
         else handleUndo();

@@ -103,6 +103,7 @@ from skillsfuture_courses import recommend_courses_for_skills
 from tailoring_pipeline import get_pipeline_state, run_pipeline
 from jd_preparser import preparse_job_description as preparse_jd
 from jd_summary import summarize_job_description
+import config as app_config
 
 # Route Python logs to stdout so Railway tags them [inf] instead of [err].
 # force=True overrides any basicConfig set at import time by CLI modules
@@ -120,13 +121,13 @@ log = logging.getLogger("jobhunter")
 # Disable OpenAPI docs in production to reduce attack surface
 _is_production = "postgresql" in os.environ.get("DATABASE_URL", "")
 
-_CAREERSGOV_PATH_RE = re.compile(r"/en-US/PublicServiceCareers(/job/.+)$")
+_CAREERSGOV_PATH_RE = re.compile(r"(?:/en-US/PublicServiceCareers(/job/.+)$|(/jobs/hrp/[^?#]+))")
 _JD_ENRICHMENT_IN_FLIGHT: set[int] = set()
 _JD_ENRICHMENT_LOCK = threading.Lock()
-_JD_ENRICHMENT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3)
-_FAILED_RETRY_SECONDS = 300  # retry failed/unavailable summaries after 5 min
-_STARTUP_ANALYTICS_WARM_DELAY_SECONDS = 5
-_STARTUP_MAINTENANCE_WARM_WAIT_SECONDS = 300
+_JD_ENRICHMENT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=app_config.JD_ENRICHMENT_MAX_WORKERS)
+_FAILED_RETRY_SECONDS = app_config.FAILED_SUMMARY_RETRY_SECONDS
+_STARTUP_ANALYTICS_WARM_DELAY_SECONDS = app_config.STARTUP_ANALYTICS_WARM_DELAY_SECONDS
+_STARTUP_MAINTENANCE_WARM_WAIT_SECONDS = app_config.STARTUP_MAINTENANCE_WARM_WAIT_SECONDS
 
 # ── Cached filter metadata (avoid 3 GROUP BY queries per page 1 load) ────────
 _filter_meta_cache: dict = {}
@@ -846,7 +847,9 @@ def _persist_resume_to_memory(user: Optional[User], db: Session, resume_text: st
 
 def _extract_careersgov_external_path(url: str) -> str:
     match = _CAREERSGOV_PATH_RE.search(url or "")
-    return match.group(1) if match else ""
+    if not match:
+        return ""
+    return next((part for part in match.groups() if part), "")
 
 
 def _extract_careersgov_skills(detail: dict) -> list[str]:
@@ -7519,15 +7522,22 @@ def resume_agent_chat(
     )
 
 
-def _get_resume_agent_state(session_id: str) -> dict:
+def _get_resume_agent_state(session_id: str, owner_key: str | None = None) -> dict:
     from resume_agent.session import get_state
 
-    return get_state(session_id)
+    return get_state(session_id, owner_key=owner_key)
 
 
 @app.get("/api/resume/agent/{session_id}/state")
-def resume_agent_state(session_id: str):
-    return _get_resume_agent_state(session_id)
+def resume_agent_state(
+    session_id: str,
+    user: Optional[User] = Depends(get_optional_user),
+):
+    owner_key = f"user:{user.id}" if user else None
+    try:
+        return _get_resume_agent_state(session_id, owner_key=owner_key)
+    except PermissionError:
+        raise HTTPException(status_code=404, detail="Agent session not found")
 
 
 # ── Resume Tailoring Pipeline ───────────────────────────────────────────────

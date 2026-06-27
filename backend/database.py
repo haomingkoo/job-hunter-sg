@@ -10,6 +10,8 @@ from collections.abc import Generator
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+import config as app_config
+
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./jobhunter.db")
 
 # Railway gives postgres:// but SQLAlchemy 2.x needs postgresql://
@@ -20,7 +22,17 @@ connect_args = {}
 if DATABASE_URL.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
 
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
+engine_kwargs = {"connect_args": connect_args}
+if not DATABASE_URL.startswith("sqlite"):
+    engine_kwargs.update(
+        pool_pre_ping=True,
+        pool_size=app_config.DATABASE_POOL_SIZE,
+        max_overflow=app_config.DATABASE_MAX_OVERFLOW,
+        pool_timeout=app_config.DATABASE_POOL_TIMEOUT,
+        pool_recycle=app_config.DATABASE_POOL_RECYCLE_SECONDS,
+    )
+
+engine = create_engine(DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
@@ -128,6 +140,23 @@ def _apply_lightweight_migrations() -> None:
             statements.append("ALTER TABLE job_alert_preferences ADD COLUMN consented_at TIMESTAMP")
         if "unsubscribed_at" not in alert_columns:
             statements.append("ALTER TABLE job_alert_preferences ADD COLUMN unsubscribed_at TIMESTAMP")
+
+    # usage_logs: rate limits and admin metrics should not full-scan forever
+    if "usage_logs" in inspector.get_table_names():
+        usage_indexes = {idx["name"] for idx in inspector.get_indexes("usage_logs")}
+        usage_index_defs = {
+            "ix_usage_logs_user_action_created": (
+                "CREATE INDEX ix_usage_logs_user_action_created "
+                "ON usage_logs (user_id, action, created_at)"
+            ),
+            "ix_usage_logs_action_created": (
+                "CREATE INDEX ix_usage_logs_action_created "
+                "ON usage_logs (action, created_at)"
+            ),
+        }
+        for idx_name, idx_sql in usage_index_defs.items():
+            if idx_name not in usage_indexes:
+                statements.append(idx_sql)
 
     # Widen jd_summary_status if it was created as VARCHAR(30) (too short for model names)
     summary_status_column = next(

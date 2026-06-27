@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import secrets
 import threading
+import time
 from typing import Any, Iterator
 
 import config as app_config
@@ -20,6 +21,7 @@ _sessions: dict[str, dict] = {}
 _checkpointer: Any | None = None
 _active_runs: dict[str, int] = {}
 _active_runs_lock = threading.Lock()
+_sessions_lock = threading.Lock()
 
 
 def _get_checkpointer():
@@ -32,8 +34,11 @@ def _get_checkpointer():
 
 
 def _new_state(session_id: str) -> dict:
+    now = time.time()
     return {
         "session_id": session_id,
+        "_owner_key": None,
+        "_updated_at": now,
         "mode": "general",
         "job_id": None,
         "draft": "",
@@ -44,8 +49,57 @@ def _new_state(session_id: str) -> dict:
     }
 
 
-def get_state(session_id: str) -> dict:
-    return dict(_sessions.get(session_id, _new_state(session_id)))
+def _cleanup_sessions() -> None:
+    now = time.time()
+    expired = [
+        session_id
+        for session_id, state in _sessions.items()
+        if now - float(state.get("_updated_at") or 0) > app_config.AGENT_SESSION_TTL_SECONDS
+    ]
+    for session_id in expired:
+        _sessions.pop(session_id, None)
+
+    overflow = len(_sessions) - app_config.AGENT_MAX_SESSIONS
+    if overflow <= 0:
+        return
+    oldest = sorted(_sessions, key=lambda sid: float(_sessions[sid].get("_updated_at") or 0))
+    for session_id in oldest[:overflow]:
+        _sessions.pop(session_id, None)
+
+
+def _public_state(state: dict) -> dict:
+    return {
+        key: value
+        for key, value in state.items()
+        if not key.startswith("_") and key != "messages"
+    }
+
+
+def _state_visible_to_owner(state: dict, owner_key: str | None) -> bool:
+    state_owner = state.get("_owner_key")
+    if not state_owner:
+        return True
+    if str(state_owner).startswith("session:") and owner_key is None:
+        return True
+    return state_owner == owner_key
+
+
+def get_state(session_id: str, owner_key: str | None = None) -> dict:
+    with _sessions_lock:
+        _cleanup_sessions()
+        state = _sessions.get(session_id)
+        if not state:
+            return _public_state(_new_state(session_id))
+        if not _state_visible_to_owner(state, owner_key):
+            raise PermissionError("Agent session is not visible to this user.")
+        state["_updated_at"] = time.time()
+        return _public_state(state)
+
+
+def _append_message(state: dict, message: dict) -> None:
+    messages = state.setdefault("messages", [])
+    messages.append(message)
+    del messages[:-app_config.AGENT_CHAT_HISTORY_LIMIT]
 
 
 def _resume_bullet_maps(resume_text: str) -> tuple[dict[str, str], dict[str, dict]]:
@@ -112,7 +166,7 @@ def _collect_pending_diffs(
             "rewrite": rewrite,
             "status": "pending",
         }
-    return list(pending_by_id.values())
+    return list(pending_by_id.values())[: app_config.AGENT_PENDING_DIFFS_LIMIT]
 
 
 def _event_messages(result: dict, session_id: str) -> Iterator[dict]:
@@ -164,10 +218,37 @@ def stream_chat_events(
     owner_key: str | None = None,
 ) -> Iterator[dict]:
     session_id = str(body.get("session_id") or secrets.token_urlsafe())
-    state = _sessions.setdefault(session_id, _new_state(session_id))
-    resume_text = str(body.get("resume_text") or state.get("draft") or "")
-    job_id = body.get("job_id")
     owner = _run_owner(body, session_id, owner_key)
+    visibility_error = False
+    with _sessions_lock:
+        _cleanup_sessions()
+        state = _sessions.setdefault(session_id, _new_state(session_id))
+        visibility_error = not _state_visible_to_owner(state, owner)
+        if not visibility_error:
+            state["_owner_key"] = owner
+            state["_updated_at"] = time.time()
+
+    if visibility_error:
+        yield {
+            "event": "error",
+            "session_id": session_id,
+            "message": "Agent session is not visible to this user.",
+        }
+        yield {"event": "done", "session_id": session_id}
+        return
+
+    resume_text = str(body.get("resume_text") or state.get("draft") or "")
+    if len(resume_text) > app_config.AGENT_MAX_DRAFT_CHARS:
+        yield {"event": "session", "session_id": session_id}
+        yield {
+            "event": "error",
+            "session_id": session_id,
+            "message": "Resume draft is too large for Agent Review.",
+        }
+        yield {"event": "done", "session_id": session_id}
+        return
+
+    job_id = body.get("job_id")
     bullet_texts, bullet_meta = _resume_bullet_maps(resume_text)
 
     state["mode"] = "target_job" if job_id else "general"
@@ -197,11 +278,11 @@ def stream_chat_events(
             bullet_meta,
             state.get("pending_diffs", []),
         )
-        state["messages"].append({"role": "user", "content": str(body.get("message", ""))})
+        _append_message(state, {"role": "user", "content": str(body.get("message", ""))})
 
         for event in _event_messages(result, session_id):
             if event["event"] == "token":
-                state["messages"].append({"role": "assistant", "content": event["content"]})
+                _append_message(state, {"role": "assistant", "content": event["content"]})
             yield event
     except ResumeAgentConfigurationError as exc:
         yield {

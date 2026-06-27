@@ -515,13 +515,25 @@ def build_job_ats_terms(
         for term in terms:
             normalized = _normalize_term(term)
             context = _find_context(description, normalized)
-            if _is_noise_term(normalized, context):
+            lowered = normalized.lower()
+            words = lowered.split()
+            parsed_metadata_term = source in {"required", "preferred"}
+            if _is_noise_term(normalized, context) and not (
+                parsed_metadata_term
+                and 2 <= len(words) <= 4
+                and "year" not in lowered
+                and " or " not in lowered
+                and "'" not in lowered
+                and "\u2019" not in lowered
+                and lowered not in ATS_DISPLAY_EXCLUDE
+                and lowered not in ATS_OUTLINE_NOISE
+            ):
                 continue
             priority_rows.append((
                 priority,
-                normalized.lower(),
+                lowered,
                 {
-                    "skill": normalized.lower(),
+                    "skill": lowered,
                     "source": source,
                     "required": required,
                     "preferred": preferred,

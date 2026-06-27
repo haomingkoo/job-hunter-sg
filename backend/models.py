@@ -385,3 +385,8 @@ class UsageLog(Base):
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     detail: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        Index("ix_usage_logs_user_action_created", "user_id", "action", "created_at"),
+        Index("ix_usage_logs_action_created", "action", "created_at"),
+    )

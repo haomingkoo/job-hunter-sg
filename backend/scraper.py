@@ -42,6 +42,8 @@ from urllib.parse import quote_plus, urlsplit, urlunsplit
 import requests
 from bs4 import BeautifulSoup
 
+import config as app_config
+
 # ─── Configuration ──────────────────────────────────────────────────────────────
 
 logging.basicConfig(
@@ -272,10 +274,10 @@ class CareersGovScraper:
     @classmethod
     def _fetch_data(cls) -> list[dict]:
         """Fetch and cache the full JSON (cache for 1 hour)."""
-        if cls._cached_jobs is not None and (time.time() - cls._cache_time) < 3600:
+        if cls._cached_jobs is not None and (time.time() - cls._cache_time) < app_config.CAREERSGOV_CACHE_TTL_SECONDS:
             return cls._cached_jobs
         log.info("[Careers@Gov] Fetching from OpenGovSG JSON dump...")
-        resp = SESSION.get(cls.DATA_URL, timeout=30)
+        resp = SESSION.get(cls.DATA_URL, timeout=app_config.CAREERSGOV_HTTP_TIMEOUT_SECONDS)
         resp.raise_for_status()
         cls._cached_jobs = resp.json()
         cls._cache_time = time.time()
@@ -299,6 +301,46 @@ class CareersGovScraper:
         ]
         combined = "\n\n".join(p.strip() for p in parts if p.strip())
         return _clean_html(combined) if "<" in combined else combined
+
+    @classmethod
+    def _detail_payload(cls, item: dict) -> dict:
+        payload = dict(item)
+        payload["jobDescription"] = cls._build_description(item)
+        payload.setdefault("companyName", item.get("agency", "") or "Singapore Public Service")
+        payload.setdefault("company", item.get("agency", "") or "Singapore Public Service")
+        return payload
+
+    def get_job_detail(self, external_path: str) -> dict:
+        """Return one Careers@Gov detail record from the cached OpenGovSG dump."""
+        target = (external_path or "").strip()
+        if not target:
+            return {}
+        try:
+            target_path = urlsplit(target).path or target
+        except ValueError:
+            target_path = target
+
+        for item in self._fetch_data():
+            job_id = str(item.get("jobId") or "").strip()
+            posting_no = str(item.get("postingNo") or "").strip()
+            url = self._build_url(item)
+            candidates = {
+                target_field
+                for target_field in (
+                    url,
+                    urlsplit(url).path if url else "",
+                    f"/jobs/hrp/{job_id}/{posting_no}" if job_id and posting_no else "",
+                    f"{job_id}/{posting_no}" if job_id and posting_no else "",
+                    f"{job_id}:{posting_no}" if job_id and posting_no else "",
+                    str(item.get("externalPath") or "").strip(),
+                    str(item.get("external_path") or "").strip(),
+                    str(item.get("url") or "").strip(),
+                )
+                if target_field
+            }
+            if target in candidates or target_path in candidates:
+                return self._detail_payload(item)
+        return {}
 
     @staticmethod
     def _parse_timestamp(item: dict, field: str) -> str:

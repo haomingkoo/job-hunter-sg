@@ -315,7 +315,7 @@ def test_session_collects_propose_edit_tool_diffs():
             owner_key="diff-owner",
         )
     )
-    state = agent_session.get_state(events[0]["session_id"])
+    state = agent_session.get_state(events[0]["session_id"], owner_key="diff-owner")
 
     assert state["pending_diffs"] == [
         {
@@ -327,6 +327,52 @@ def test_session_collects_propose_edit_tool_diffs():
             "status": "pending",
         }
     ]
+
+
+def test_agent_state_is_owner_bound():
+    from langchain_core.messages import AIMessage
+
+    import resume_agent.session as agent_session
+
+    class FakeAgent:
+        def invoke(self, _payload, config=None):
+            return {"messages": [AIMessage(content="owner bound")]}
+
+    events = list(
+        agent_session.stream_chat_events(
+            {"message": "Review this", "session_id": "owner-bound"},
+            agent=FakeAgent(),
+            owner_key="user:1",
+        )
+    )
+
+    assert events[0] == {"event": "session", "session_id": "owner-bound"}
+    assert agent_session.get_state("owner-bound", owner_key="user:1")["session_id"] == "owner-bound"
+    try:
+        agent_session.get_state("owner-bound", owner_key="user:2")
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("state should not be visible to another owner")
+
+
+def test_agent_rejects_oversized_draft(monkeypatch):
+    import config as app_config
+    import resume_agent.session as agent_session
+
+    monkeypatch.setattr(app_config, "AGENT_MAX_DRAFT_CHARS", 10)
+
+    events = list(
+        agent_session.stream_chat_events(
+            {"message": "Review this", "resume_text": "x" * 11},
+            agent=object(),
+        )
+    )
+
+    assert events[0]["event"] == "session"
+    assert events[1]["event"] == "error"
+    assert "too large" in events[1]["message"]
+    assert events[-1] == {"event": "done", "session_id": events[0]["session_id"]}
 
 
 def test_tool_iteration_cap_stops_runaway_loop():
@@ -432,7 +478,7 @@ def test_state_endpoint_returns_draft_todos_and_pending_diffs(monkeypatch):
     monkeypatch.setattr(
         main,
         "_get_resume_agent_state",
-        lambda session_id: {
+        lambda session_id, owner_key=None: {
             "session_id": session_id,
             "draft": "Resume draft",
             "todos": ["Review bullets"],

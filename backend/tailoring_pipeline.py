@@ -1084,7 +1084,6 @@ def _execute_pipeline(
 
         # ── Stage 6: Validate ──────────────────────────────────
         final = _stage_6_validate(analysis["structured"], resume_text, jd_text, parsed_jd, state)
-        state.advance("Validation done.")
 
     elapsed = round(time.monotonic() - start_time, 1)
 

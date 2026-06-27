@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+from itertools import chain, repeat
 from types import SimpleNamespace
 
 import pytest
@@ -241,6 +242,34 @@ class TestSkillExtractor:
         assert "Overview paragraph." in cleaned
         assert "\n- First item" in cleaned
         assert "\n- Second item" in cleaned
+
+    def test_careersgov_detail_uses_cached_json_dump(self, monkeypatch):
+        from scraper import CareersGovScraper
+
+        monkeypatch.setattr(
+            CareersGovScraper,
+            "_fetch_data",
+            classmethod(
+                lambda cls: [
+                    {
+                        "jobId": "123",
+                        "postingNo": "ABC",
+                        "jobTitle": "Data Engineer",
+                        "agency": "GovTech",
+                        "jobDescription": "<p>Build pipelines.</p>",
+                        "jobResponsibilities": "<ul><li>Own data quality</li></ul>",
+                        "jobRequirements": "Python and SQL",
+                    }
+                ]
+            ),
+        )
+
+        detail = CareersGovScraper().get_job_detail("/jobs/hrp/123/ABC")
+
+        assert detail["companyName"] == "GovTech"
+        assert "Build pipelines." in detail["jobDescription"]
+        assert "- Own data quality" in detail["jobDescription"]
+        assert "Python and SQL" in detail["jobDescription"]
 
     def test_ats_terms_exclude_benefits_bullets_but_keep_real_skills(self):
         from ats_terms import build_job_ats_terms
@@ -837,7 +866,7 @@ class TestBackfillProgress:
 
         fake_db = FakeDB(jobs)
         progress_updates = []
-        timeline = iter([0, 60, 120, 180, 180])
+        timeline = iter(chain([0, 60, 120, 180, 180], repeat(180)))
 
         monkeypatch.setattr("backfill_enrichment.SessionLocal", lambda: fake_db)
         monkeypatch.setattr("backfill_enrichment.preparse_jd", lambda *args, **kwargs: {"required_skills": []})

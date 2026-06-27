@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Briefcase, Loader2, LogOut, ChevronLeft } from "lucide-react";
 
-import { apiFetch, clearResumeDraftStorage } from "./lib/api.js";
+import { AUTH_EXPIRED_EVENT, apiFetch, clearResumeDraftStorage } from "./lib/api.js";
 
 import Nav from "./components/Nav.jsx";
 import AuthModal from "./components/AuthModal.jsx";
@@ -25,6 +25,7 @@ import ResumeTab from "./components/ResumeTab.jsx";
 export default function JobHunterSG() {
   const [activeTab, setActiveTab] = useState("home");
   const [trackedJobs, setTrackedJobs] = useState([]);
+  const [trackedJobsError, setTrackedJobsError] = useState("");
   const [selectedJob, setSelectedJob] = useState(null);
 
   // Scroll state for glassmorphism header
@@ -55,6 +56,17 @@ export default function JobHunterSG() {
     if (resetToken) setShowAuthModal(true);
   }, [resetToken]);
 
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      setUser(null);
+      setToken(null);
+      setTrackedJobs([]);
+      setTrackedJobsError("");
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+  }, []);
+
   // Validate token on mount
   useEffect(() => {
     if (!token) {
@@ -83,8 +95,9 @@ export default function JobHunterSG() {
       const resp = await apiFetch("/api/tracked");
       const data = await resp.json();
       setTrackedJobs(Array.isArray(data) ? data : data.jobs || []);
-    } catch {
-      setTrackedJobs([]);
+      setTrackedJobsError("");
+    } catch (err) {
+      setTrackedJobsError(err.message || "Could not refresh tracked jobs.");
     }
   }, []);
 
@@ -103,6 +116,7 @@ export default function JobHunterSG() {
     setUser(null);
     setToken(null);
     setTrackedJobs([]);
+    setTrackedJobsError("");
     setActiveTab("home");
   };
 
@@ -255,7 +269,7 @@ export default function JobHunterSG() {
               )}
               {activeTab === "tracker" && (
                 user ? (
-                  <TrackerTab user={user} jobs={trackedJobs} refreshJobs={refreshJobs} setActiveTab={navigateTo} />
+                  <TrackerTab user={user} jobs={trackedJobs} loadError={trackedJobsError} refreshJobs={refreshJobs} setActiveTab={navigateTo} />
                 ) : (
                   <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Application Tracker" />
                 )

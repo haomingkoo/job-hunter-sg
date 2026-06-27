@@ -1,11 +1,13 @@
 // ─── API Config ────────────────────────────────────────────────────────────────
 export const API_BASE = import.meta.env.VITE_API_URL || "";
+export const AUTH_EXPIRED_EVENT = "jobhunter:auth-expired";
 
 export function clearResumeDraftStorage() {
   try {
     sessionStorage.removeItem("jh_resume_profile");
     sessionStorage.removeItem("jh_resume_text");
     sessionStorage.removeItem("jh_resume_template");
+    sessionStorage.removeItem("jh_wizard_step");
   } catch {
     // ignore storage errors
   }
@@ -71,8 +73,7 @@ export async function apiFetch(path, options = {}) {
 
   if (resp.status === 401) {
     localStorage.removeItem("token");
-    clearResumeDraftStorage();
-    window.location.reload();
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
     throw new Error("Session expired. Please sign in again.");
   }
   if (!resp.ok) throw new Error(await readApiError(resp));

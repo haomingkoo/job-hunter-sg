@@ -15,14 +15,14 @@ import os
 
 
 def _int_env(name: str, default: int) -> int:
-    """Read an int from the environment, falling back to ``default`` if unset/invalid."""
+    """Read an int from the environment."""
     raw = os.getenv(name)
     if raw is None:
         return default
     try:
         return int(raw)
     except ValueError:
-        return default
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from None
 
 
 def _float_env(name: str, default: float) -> float:
@@ -32,7 +32,7 @@ def _float_env(name: str, default: float) -> float:
     try:
         return float(raw)
     except ValueError:
-        return default
+        raise ValueError(f"{name} must be a number, got {raw!r}") from None
 
 
 def _csv_env(name: str, default: str) -> tuple[str, ...]:
@@ -64,7 +64,7 @@ SEALION_DISABLE_THINKING_MODELS: tuple[str, ...] = _csv_env(
 )
 # SMART is a reasoning model — under a tight budget it spends all tokens "thinking"
 # and returns empty. Floor its max_tokens at call sites that use it.
-SMART_MIN_MAX_TOKENS: int = 3000
+SMART_MIN_MAX_TOKENS: int = _int_env("SMART_MIN_MAX_TOKENS", 3000)
 
 # ── Resume deep-agent v2 knobs ───────────────────────────────────────────────
 AGENT_MAX_TOOL_ITERATIONS: int = _int_env("AGENT_MAX_TOOL_ITERATIONS", 8)
@@ -78,11 +78,27 @@ AGENT_MAX_CONCURRENT_RUNS_PER_USER: int = _int_env(
     "AGENT_MAX_CONCURRENT_RUNS_PER_USER", 1
 )
 AGENT_CHAT_HISTORY_LIMIT: int = _int_env("AGENT_CHAT_HISTORY_LIMIT", 20)
+AGENT_SESSION_TTL_SECONDS: int = _int_env("AGENT_SESSION_TTL_SECONDS", 3600)
+AGENT_MAX_SESSIONS: int = _int_env("AGENT_MAX_SESSIONS", 200)
+AGENT_MAX_DRAFT_CHARS: int = _int_env("AGENT_MAX_DRAFT_CHARS", 50000)
+AGENT_PENDING_DIFFS_LIMIT: int = _int_env("AGENT_PENDING_DIFFS_LIMIT", 30)
 
 # ── SEA-LION throughput / network knobs ───────────────────────────────────────
 # Free tier is 10 req/min/key; default kept at 9 for headroom against 429s.
 SEALION_REQ_PER_MIN: int = _int_env("SEALION_REQ_PER_MIN", 9)
 SEALION_HTTP_TIMEOUT: int = _int_env("SEALION_HTTP_TIMEOUT", 60)  # seconds
+
+# ── Database / scraper runtime knobs ─────────────────────────────────────────
+DATABASE_POOL_SIZE: int = _int_env("DATABASE_POOL_SIZE", 5)
+DATABASE_MAX_OVERFLOW: int = _int_env("DATABASE_MAX_OVERFLOW", 10)
+DATABASE_POOL_TIMEOUT: int = _int_env("DATABASE_POOL_TIMEOUT", 30)
+DATABASE_POOL_RECYCLE_SECONDS: int = _int_env("DATABASE_POOL_RECYCLE_SECONDS", 1800)
+CAREERSGOV_CACHE_TTL_SECONDS: int = _int_env("CAREERSGOV_CACHE_TTL_SECONDS", 3600)
+CAREERSGOV_HTTP_TIMEOUT_SECONDS: int = _int_env("CAREERSGOV_HTTP_TIMEOUT_SECONDS", 30)
+JD_ENRICHMENT_MAX_WORKERS: int = _int_env("JD_ENRICHMENT_MAX_WORKERS", 3)
+FAILED_SUMMARY_RETRY_SECONDS: int = _int_env("FAILED_SUMMARY_RETRY_SECONDS", 300)
+STARTUP_ANALYTICS_WARM_DELAY_SECONDS: int = _int_env("STARTUP_ANALYTICS_WARM_DELAY_SECONDS", 5)
+STARTUP_MAINTENANCE_WARM_WAIT_SECONDS: int = _int_env("STARTUP_MAINTENANCE_WARM_WAIT_SECONDS", 300)
 
 # ── Resume-tailoring pipeline token budgets (all on the FAST tier) ────────────
 PIPELINE_STRATEGY_MAX_TOKENS: int = _int_env("PIPELINE_STRATEGY_MAX_TOKENS", 800)

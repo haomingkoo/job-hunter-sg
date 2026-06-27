@@ -13,9 +13,7 @@ import re
 # Keys are lowercase for case-insensitive matching.
 AI_PHRASE_REPLACEMENTS: dict[str, str] = {
     # ── Truly AI-generated / cringeworthy verbs ─────────────────────────
-    # NOTE: "spearheaded", "orchestrated", "championed", "pioneered",
-    # "architected", "facilitated", "leveraged" are legitimate strong resume
-    # verbs that recruiters expect. Do NOT replace them.
+    "spearheaded": "led",
     "synergized": "collaborated",
     "catalyzed": "started",
     "galvanized": "motivated",

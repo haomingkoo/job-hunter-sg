@@ -9,7 +9,7 @@ import { STATUS_CONFIG, SG_JOB_PORTALS } from "../lib/constants.js";
 import { todayStr, daysBetween } from "../lib/helpers.js";
 import StatusBadge from "./StatusBadge.jsx";
 
-export default function TrackerTab({ user, jobs, refreshJobs, setActiveTab }) {
+export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, setActiveTab }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [filterStatus, setFilterStatus] = useState("all");
@@ -113,6 +113,12 @@ export default function TrackerTab({ user, jobs, refreshJobs, setActiveTab }) {
   if (jobs.length === 0 && !showForm) {
     return (
       <div className="flex flex-col items-center justify-center py-20 px-4">
+        {loadError && (
+          <div className="mb-6 flex max-w-md items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <span>{loadError}</span>
+            <button onClick={() => refreshJobs()} className="font-medium text-red-800 hover:text-red-900">Retry</button>
+          </div>
+        )}
         <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#f0f4f8] mb-6">
           <Briefcase size={32} className="text-[#6A89A7]" />
         </div>
@@ -143,10 +149,14 @@ export default function TrackerTab({ user, jobs, refreshJobs, setActiveTab }) {
 
   return (
     <div className="space-y-6">
-      {error && !showForm && (
+      {(error || loadError) && !showForm && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center justify-between">
-          <div className="flex items-center gap-2"><AlertCircle size={14} className="flex-shrink-0" />{error}</div>
-          <button onClick={() => setError("")} className="text-red-400 hover:text-red-600"><X size={14} /></button>
+          <div className="flex items-center gap-2"><AlertCircle size={14} className="flex-shrink-0" />{error || loadError}</div>
+          {error ? (
+            <button onClick={() => setError("")} className="text-red-400 hover:text-red-600"><X size={14} /></button>
+          ) : (
+            <button onClick={() => refreshJobs()} className="font-medium text-red-800 hover:text-red-900">Retry</button>
+          )}
         </div>
       )}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
