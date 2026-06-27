@@ -21,7 +21,7 @@ A chat-first **deep agent** that tailors a user's resume to a **specific target 
 | Decision | Choice |
 |----------|--------|
 | Engine | `deepagents` (Python) + `langgraph`, on SEA-LION via `langchain-openai` `ChatOpenAI(base_url=...)` |
-| Orchestrator + ALL tool-calling | `config.SEALION_FAST_MODEL` (v4-32B — the only reliable tool-caller; proven by spike) |
+| Orchestrator + ALL tool-calling | `config.SEALION_AGENT_MODEL` (v4.5 Qwen 27B — current agentic model line) |
 | Persona sub-agents | `config.SEALION_SMART_MODEL` (v4.5-27B) — **single-shot, NO tools**, `max_tokens >= SMART_MIN_MAX_TOKENS` |
 | Interaction | Chat-first; main agent + persona sub-agents + a research step |
 | Deliverable | A resume tailored to a target job (or general strengthening) |
@@ -33,8 +33,9 @@ A chat-first **deep agent** that tailors a user's resume to a **specific target 
 | Frontend | "Classic / Agent v2" toggle inside ResumeTab; classic path unchanged |
 
 ### Hard facts from the model eval (do not relearn these)
-- SEA-LION **FAST (v4-32B) tool-calls reliably**; the multi-step tool loop works (proven against the live API).
-- **SMART (v4.5-27B) must never be given tools** — it won't emit tool calls within budget. Use it only for single-shot persona critiques, with `max_tokens >= 3000`, or it returns **empty**.
+- SEA-LION **Qwen v4.5 27B** is the current agentic model line; use it for the deep-agent orchestrator.
+- SEA-LION **FAST (v4-32B)** remains the cheaper classic-pipeline/default interactive model.
+- Persona critiques stay single-shot with no tools to keep cost/latency bounded; the orchestrator may tool-call on `SEALION_AGENT_MODEL`.
 - `Llama-v3.5-70B-R` is retired (no tool support; leaks chain-of-thought).
 - Rate limit: `config.SEALION_REQ_PER_MIN` per key × N keys. A full turn (plan + personas + research) can be 15–30 calls → cap and serialize (see §4 T10).
 
@@ -52,7 +53,7 @@ frontend/src/components/ResumeTab.jsx   # + v2 toggle + chat/diff panel (additiv
 backend/config.py                # + new AGENT_* constants
 ```
 
-- **Model factory** (`models.py`): returns `ChatOpenAI(base_url=ai_service.SEALION_BASE_URL, api_key=<key from ai_service pool>, model=config.SEALION_FAST_MODEL)` for the orchestrator, and a SMART instance (`temperature` low, `max_tokens=config.SMART_MIN_MAX_TOKENS`) for personas.
+- **Model factory** (`models.py`): returns `ChatOpenAI(base_url=ai_service.SEALION_BASE_URL, api_key=<key from ai_service pool>, model=config.SEALION_AGENT_MODEL)` for the orchestrator, and a SMART instance (`temperature` low, `max_tokens=config.SMART_MIN_MAX_TOKENS`) for personas.
 - **Tools** (`tools.py`), each a `@tool`, each capped by a `config.AGENT_*` constant:
   - `search_jobs(query, n)` → `embedding_service` semantic search over `scraped_jobs`.
   - `get_job(job_id)` → `parsed_jd` + `jd_summary`.

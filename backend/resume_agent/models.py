@@ -34,17 +34,20 @@ def _api_key() -> str:
     return key
 
 
-def create_fast_model(temperature: float = 0.0):
-    """Return the FAST model used by the orchestrator and tool-calling loop."""
+def create_agent_model(temperature: float = 0.0):
+    """Return the agentic model used by the orchestrator and tool-calling loop."""
     from langchain_openai import ChatOpenAI
 
     return ChatOpenAI(
         base_url=ai_service.SEALION_BASE_URL,
         api_key=_api_key(),
-        model=config.SEALION_FAST_MODEL,
+        model=config.SEALION_AGENT_MODEL,
         temperature=temperature,
         rate_limiter=_rate_limiter,
     )
+
+
+create_fast_model = create_agent_model
 
 
 def create_smart_model(temperature: float = 0.0):

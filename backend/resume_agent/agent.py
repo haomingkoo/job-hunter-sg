@@ -7,7 +7,7 @@ from typing import Any, Sequence
 import config as app_config
 from langgraph.errors import GraphRecursionError
 
-from .models import create_fast_model
+from .models import create_agent_model
 from .personas import create_persona_subagents
 from .prompts import ORCHESTRATOR_SYSTEM_PROMPT
 from .tools import extract_skills, get_job, propose_edit, score_resume, search_jobs
@@ -26,7 +26,7 @@ def create_resume_agent(
     from deepagents import create_deep_agent
 
     return create_deep_agent(
-        model=model or create_fast_model(),
+        model=model or create_agent_model(),
         tools=list(tools) if tools is not None else DEFAULT_TOOLS,
         subagents=list(subagents) if subagents is not None else create_persona_subagents(),
         system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
