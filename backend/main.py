@@ -132,15 +132,17 @@ _STARTUP_MAINTENANCE_WARM_WAIT_SECONDS = app_config.STARTUP_MAINTENANCE_WARM_WAI
 # ── Cached filter metadata (avoid 3 GROUP BY queries per page 1 load) ────────
 _filter_meta_cache: dict = {}
 _filter_meta_ts: float = 0.0
-_FILTER_META_TTL = 300  # 5 minutes
+_FILTER_META_TTL = app_config.ANALYTICS_FILTER_META_TTL_SECONDS
 
 # ── Cached analytics/skills response (avoid 70K row scan per request) ─────────
 _analytics_cache: dict | None = None
 _analytics_cache_ts: float = 0
-_ANALYTICS_CACHE_TTL = 86400  # 24 hours - refreshed daily, invalidated on new scrape
+_ANALYTICS_CACHE_TTL = app_config.ANALYTICS_CACHE_TTL_SECONDS
 _analytics_query_cache: dict[tuple, tuple[float, dict]] = {}
-_ANALYTICS_QUERY_CACHE_TTL = 3600
-_ANALYTICS_QUERY_CACHE_MAX = 64
+_ANALYTICS_QUERY_CACHE_TTL = app_config.ANALYTICS_QUERY_CACHE_TTL_SECONDS
+_ANALYTICS_QUERY_CACHE_MAX = app_config.ANALYTICS_QUERY_CACHE_MAX
+_ANALYTICS_MAX_ROWS = app_config.ANALYTICS_MAX_ROWS
+_ANALYTICS_YIELD_PER = app_config.ANALYTICS_YIELD_PER
 _ANALYTICS_CACHE_LOCK = threading.Lock()
 _analytics_cache_generation = 0
 _ANALYTICS_UNCLASSIFIED_SECTOR = "Unclassified"
@@ -3536,6 +3538,9 @@ def analytics_skills(
             "company_movers": cached.get("company_movers", {}),
             "salary_insights": cached.get("salary_insights", {}),
             "freshness": cached.get("freshness", {}),
+            "sampled_jobs": cached.get("sampled_jobs", cached["total_jobs_with_terms"]),
+            "sampled_job_limit": cached.get("sampled_job_limit", _ANALYTICS_MAX_ROWS),
+            "partial": cached.get("partial", False),
             "seniority_mix": cached.get("seniority_mix", []),
             "ssic_coverage": cached.get("ssic_coverage", {}),
             "sector_source_mix": cached.get("sector_source_mix", []),
@@ -3624,9 +3629,16 @@ def analytics_skills(
     fresh_counts = {"last_7": 0, "last_14": 0, "last_30": 0}
     posted_count = 0
     total_jobs = 0
+    scanned_rows = 0
     utc_now = datetime.now(timezone.utc)
 
-    for job in db_query.yield_per(500):
+    scan_query = (
+        db_query
+        .order_by(ScrapedJob.posted_at_sort.desc().nullslast(), ScrapedJob.id.desc())
+        .limit(_ANALYTICS_MAX_ROWS)
+    )
+    for job in scan_query.yield_per(_ANALYTICS_YIELD_PER):
+        scanned_rows += 1
         preview = job.job_terms_preview
         if not isinstance(preview, list) or not preview:
             continue
@@ -3799,6 +3811,7 @@ def analytics_skills(
         "coverage_count": posted_count,
         "last_30_percent": round((fresh_counts["last_30"] / posted_count) * 100, 1) if posted_count else 0,
     }
+    partial = scanned_rows >= _ANALYTICS_MAX_ROWS
     seniority_order = {
         "Intern": 0,
         "Entry / Junior": 1,
@@ -3868,6 +3881,9 @@ def analytics_skills(
             "company_movers": company_movers,
             "salary_insights": salary_insights,
             "freshness": freshness,
+            "sampled_jobs": scanned_rows,
+            "sampled_job_limit": _ANALYTICS_MAX_ROWS,
+            "partial": partial,
             "seniority_mix": seniority_mix,
             "ssic_coverage": ssic_coverage,
             "sector_source_mix": sector_source_mix,
@@ -3901,6 +3917,9 @@ def analytics_skills(
         "company_movers": company_movers,
         "salary_insights": salary_insights,
         "freshness": freshness,
+        "sampled_jobs": scanned_rows,
+        "sampled_job_limit": _ANALYTICS_MAX_ROWS,
+        "partial": partial,
         "seniority_mix": seniority_mix,
         "ssic_coverage": ssic_coverage,
         "sector_source_mix": sector_source_mix,

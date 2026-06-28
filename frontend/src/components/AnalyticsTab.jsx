@@ -196,6 +196,11 @@ export default function AnalyticsTab() {
         <p className="mt-1 text-sm text-[#6A89A7]">
           Skill and salary trends from {data?.total_jobs_with_terms?.toLocaleString() || "..."} Singapore job listings.
         </p>
+        {!loading && !error && data?.partial && (
+          <p className="mt-1 text-xs text-[#6A89A7]">
+            Showing a recent sample of {data.sampled_jobs?.toLocaleString()} listings for faster loading.
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
