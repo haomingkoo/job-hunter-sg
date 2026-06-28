@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict
 from typing import Any
 
@@ -13,6 +14,7 @@ from models import ScrapedJob
 from resume_scorer import ResumeScorer
 from resume_structurer import get_all_bullets, structure_resume
 from skill_extractor import extract_skill_phrases
+from skills_taxonomy import TIER1_SKILLS
 from validation_gates import _extract_numbers, validate_and_fix
 
 
@@ -61,6 +63,45 @@ def score_resume(
 def extract_skills(text: str) -> str:
     """Extract ATS-style skill phrases from text."""
     return _json({"skills": extract_skill_phrases(text or "")})
+
+
+def _candidate_signals(text: str) -> dict[str, str]:
+    signals = {skill.lower(): skill for skill in extract_skill_phrases(text or "")}
+    lowered = (text or "").lower()
+    for skill in TIER1_SKILLS:
+        if re.search(rf"\b{re.escape(skill)}\b", lowered):
+            signals.setdefault(skill, skill.upper() if len(skill) <= 3 else skill.title())
+    return signals
+
+
+def compare_candidate_profile(resume_text: str, profile_context: str) -> str:
+    """Compare resume text with optional LinkedIn/profile text for consistency gaps."""
+    resume_skills = _candidate_signals(resume_text or "")
+    profile_skills = _candidate_signals(profile_context or "")
+    resume_lower = (resume_text or "").lower()
+    profile_lower = (profile_context or "").lower()
+    missing_from_resume = [
+        display
+        for key, display in profile_skills.items()
+        if key not in resume_skills and key not in resume_lower
+    ][:20]
+    missing_from_profile = [
+        display
+        for key, display in resume_skills.items()
+        if key not in profile_skills and key not in profile_lower
+    ][:20]
+    return _json(
+        {
+            "resume_skills": list(resume_skills.values()),
+            "profile_skills": list(profile_skills.values()),
+            "profile_only_skills": missing_from_resume,
+            "resume_only_skills": missing_from_profile,
+            "guidance": (
+                "Use these as consistency gaps or user questions. Do not add "
+                "profile-only claims to the resume without user confirmation."
+            ),
+        }
+    )
 
 
 def get_job(job_id: int) -> str:

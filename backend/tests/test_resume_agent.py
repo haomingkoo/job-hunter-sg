@@ -254,6 +254,44 @@ def test_general_mode_runs_without_target_job():
     assert events[-1] == {"event": "done", "session_id": session_id}
 
 
+def test_agent_prompt_includes_bounded_profile_context(monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    import config as app_config
+    import resume_agent.session as agent_session
+
+    monkeypatch.setattr(app_config, "AGENT_MAX_PROFILE_CONTEXT_CHARS", 40)
+
+    class FakeAgent:
+        def __init__(self):
+            self.message = ""
+
+        def invoke(self, payload, config=None):
+            self.message = payload["messages"][0]["content"]
+            return {"messages": [AIMessage(content="Checked profile consistency.")]}
+
+    fake_agent = FakeAgent()
+    events = list(
+        agent_session.stream_chat_events(
+            {
+                "message": "Review the candidate packet",
+                "resume_text": "EXPERIENCE\n- Built Python data pipelines",
+                "profile_context": "LinkedIn: Python, SQL, Tableau, stakeholder leadership, public speaking",
+                "session_id": "profile-context",
+            },
+            agent=fake_agent,
+            owner_key="profile-owner",
+        )
+    )
+
+    state = agent_session.get_state("profile-context", owner_key="profile-owner")
+    assert events[-1] == {"event": "done", "session_id": "profile-context"}
+    assert "Optional LinkedIn/profile context" in fake_agent.message
+    assert "Do not turn this into resume claims" in fake_agent.message
+    assert "stakeholder leadership" not in fake_agent.message
+    assert len(state["profile_context"]) == app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS
+
+
 def test_missing_agent_credentials_return_error_event(monkeypatch):
     import resume_agent.models as agent_models
     import resume_agent.session as agent_session

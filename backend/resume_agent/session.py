@@ -42,6 +42,7 @@ def _new_state(session_id: str) -> dict:
         "mode": "general",
         "job_id": None,
         "draft": "",
+        "profile_context": "",
         "todos": [],
         "persona_findings": [],
         "pending_diffs": [],
@@ -115,9 +116,13 @@ def _resume_bullet_maps(resume_text: str) -> tuple[dict[str, str], dict[str, dic
 def _build_prompt(body: dict) -> str:
     message = str(body.get("message", ""))
     resume_text = str(body.get("resume_text", ""))
+    profile_context = str(body.get("profile_context", ""))[: app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS]
     job_id = body.get("job_id")
 
-    parts = [message]
+    parts = [
+        "Review this like a senior recruiter and Head of HR. Be direct, evidence-bound, and practical.",
+        message,
+    ]
     if resume_text:
         parts.append(f"Resume:\n{resume_text}")
         bullet_texts, _bullet_meta = _resume_bullet_maps(resume_text)
@@ -126,6 +131,12 @@ def _build_prompt(body: dict) -> str:
                 "Resume bullet IDs:\n"
                 + "\n".join(f"- {bullet_id}: {text}" for bullet_id, text in bullet_texts.items())
             )
+    if profile_context:
+        parts.append(
+            "Optional LinkedIn/profile context for consistency review only. "
+            "Do not turn this into resume claims unless the resume already supports them or the user confirms them:\n"
+            f"{profile_context}"
+        )
     if job_id:
         parts.append(f"Target job id: {job_id}")
     else:
@@ -238,6 +249,7 @@ def stream_chat_events(
         return
 
     resume_text = str(body.get("resume_text") or state.get("draft") or "")
+    profile_context = str(body.get("profile_context") or state.get("profile_context") or "")
     if len(resume_text) > app_config.AGENT_MAX_DRAFT_CHARS:
         yield {"event": "session", "session_id": session_id}
         yield {
@@ -247,6 +259,8 @@ def stream_chat_events(
         }
         yield {"event": "done", "session_id": session_id}
         return
+    if len(profile_context) > app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS:
+        profile_context = profile_context[: app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS]
 
     job_id = body.get("job_id")
     bullet_texts, bullet_meta = _resume_bullet_maps(resume_text)
@@ -255,6 +269,8 @@ def stream_chat_events(
     state["job_id"] = job_id
     if resume_text:
         state["draft"] = resume_text
+    if profile_context:
+        state["profile_context"] = profile_context
 
     yield {"event": "session", "session_id": session_id}
 
@@ -269,7 +285,7 @@ def stream_chat_events(
 
     try:
         active_agent = agent or create_resume_agent(checkpointer=_get_checkpointer())
-        prompt = _build_prompt({**body, "resume_text": resume_text})
+        prompt = _build_prompt({**body, "resume_text": resume_text, "profile_context": profile_context})
         with bullet_context(bullet_texts):
             result = run_agent_turn(active_agent, prompt, session_id=session_id)
         state["pending_diffs"] = _collect_pending_diffs(

@@ -69,6 +69,7 @@ describe("ResumeTab Agent v2", () => {
 
     expect(container.querySelector("[data-testid='resume-agent-v2-panel']")).toBeTruthy();
     expect(classicEditor.className).toContain("hidden");
+    expect(container.textContent).toContain("Add LinkedIn or profile context");
 
     await act(async () => {
       classicButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));

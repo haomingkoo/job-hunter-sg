@@ -35,6 +35,12 @@ def extract_skills(text: str) -> str:
 
 
 @mcp.tool()
+def compare_candidate_profile(resume_text: str, profile_context: str) -> str:
+    """Compare resume and LinkedIn/profile text for consistency gaps."""
+    return tools.compare_candidate_profile(resume_text, profile_context)
+
+
+@mcp.tool()
 def get_job(job_id: int) -> str:
     """Fetch one job from the internal jobs DB."""
     return tools.get_job(job_id)

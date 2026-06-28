@@ -358,6 +358,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const chatEndRef = useRef(null);
   const [editorMode, setEditorMode] = useState("classic");
   const [agentInput, setAgentInput] = useState("");
+  const [agentProfileContext, setAgentProfileContext] = useState("");
   const [agentMessages, setAgentMessages] = useState([]);
   const [agentSessionId, setAgentSessionId] = useState("");
   const [agentLoading, setAgentLoading] = useState(false);
@@ -775,6 +776,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           session_id: agentSessionId || undefined,
           message,
           resume_text: resumeText,
+          profile_context: agentProfileContext.trim() || undefined,
           job_id: selectedJob?.id || undefined,
         }),
       });
@@ -798,7 +800,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     } finally {
       setAgentLoading(false);
     }
-  }, [agentInput, agentLoading, agentSessionId, refreshAgentState, resumeText, selectedJob?.id]);
+  }, [agentInput, agentLoading, agentProfileContext, agentSessionId, refreshAgentState, resumeText, selectedJob?.id]);
 
   const handleAgentDiffDecision = useCallback((bulletId, decision) => {
     const next = applyAgentDiffDecision(resumeText, agentPendingDiffs, bulletId, decision);
@@ -3164,6 +3166,22 @@ CERTIFICATIONS
                 {agentLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
               </button>
             </div>
+
+            <details className="mt-3 rounded-2xl border border-[#BDDDFC]/30 bg-white px-3 py-2">
+              <summary className="cursor-pointer text-xs font-semibold text-[#384959]">
+                Add LinkedIn or profile context
+              </summary>
+              <textarea
+                value={agentProfileContext}
+                onChange={(event) => setAgentProfileContext(event.target.value)}
+                rows={4}
+                className="mt-3 min-h-24 w-full resize-y rounded-xl border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959] outline-none transition focus:border-[#88BDF2] focus:ring-2 focus:ring-[#88BDF2]/20"
+                placeholder="Paste LinkedIn About/Experience or profile notes. The agent uses this for consistency checks and questions, not unsupported resume claims."
+              />
+              <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">
+                Profile-only details stay as gaps to verify unless your resume already supports them.
+              </div>
+            </details>
           </section>
 
           <aside className="space-y-4">

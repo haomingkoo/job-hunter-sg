@@ -29,6 +29,20 @@ def test_validate_bullet_edit_rejects_fabricated_metric():
     assert data["final_text"] == "Built data pipeline processing 10M events daily"
 
 
+def test_compare_candidate_profile_returns_consistency_gaps():
+    import mcp_tools
+
+    data = json.loads(
+        mcp_tools.compare_candidate_profile(
+            "EXPERIENCE\n- Built Python data pipelines",
+            "LinkedIn About: Python, SQL, Tableau dashboards",
+        )
+    )
+
+    assert "SQL" in data["profile_only_skills"] or "Tableau" in data["profile_only_skills"]
+    assert "Do not add" in data["guidance"]
+
+
 def test_propose_resume_diff_uses_bullet_id_and_gates():
     import mcp_tools
 
