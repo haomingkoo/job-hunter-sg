@@ -11,3 +11,19 @@ extend-exclude = [
 # Baseline lint: catch syntax errors and undefined names without turning the
 # current codebase into a noisy style migration.
 select = ["E9", "F63", "F7", "F82"]
+
+[tool.ty.environment]
+python-version = "3.12"
+extra-paths = ["backend"]
+
+[tool.ty.src]
+# Baseline type-checking for the actively developed agent/API surface.
+include = [
+    "backend/schemas.py",
+    "backend/resume_agent",
+]
+
+[tool.ty.rules]
+# Third-party import resolution is still noisy in this pip-layout repo.
+# Keep compile/tests as the import guard while ty covers local type mistakes.
+unresolved-import = "ignore"

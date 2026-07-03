@@ -5,13 +5,18 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend-quality:
-    name: Backend quality
+    name: Backend lint, type check, tests
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -21,9 +26,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
-      - name: Install lint tools
-        run: python -m pip install --upgrade pip ruff
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt pytest ruff==0.15.20 ty==0.0.56
 
       - name: Compile backend
         run: python -m compileall -q backend
@@ -31,8 +39,14 @@ jobs:
       - name: Ruff critical checks
         run: ruff check backend tests
 
+      - name: ty baseline type check
+        run: ty check --output-format github
+
+      - name: Backend tests
+        run: PYTHONPATH=backend python -m pytest backend/tests -q --ignore=backend/tests/test_fixes.py
+
   frontend-build:
-    name: Frontend build
+    name: Frontend tests and build
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -48,6 +62,10 @@ jobs:
       - name: Install dependencies
         working-directory: frontend
         run: npm ci --legacy-peer-deps
+
+      - name: Test frontend
+        working-directory: frontend
+        run: npm test -- --run
 
       - name: Build frontend
         working-directory: frontend
