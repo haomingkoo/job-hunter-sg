@@ -7,6 +7,7 @@ import asyncio
 import ai_service
 import config
 from langchain_core.rate_limiters import BaseRateLimiter
+from pydantic import SecretStr
 
 
 class _SeaLionRateLimiter(BaseRateLimiter):
@@ -40,7 +41,7 @@ def create_agent_model(temperature: float = 0.0):
 
     return ChatOpenAI(
         base_url=ai_service.SEALION_BASE_URL,
-        api_key=_api_key(),
+        api_key=SecretStr(_api_key()),
         model=config.SEALION_AGENT_MODEL,
         temperature=temperature,
         rate_limiter=_rate_limiter,
@@ -56,9 +57,9 @@ def create_smart_model(temperature: float = 0.0):
 
     return ChatOpenAI(
         base_url=ai_service.SEALION_BASE_URL,
-        api_key=_api_key(),
+        api_key=SecretStr(_api_key()),
         model=config.SEALION_SMART_MODEL,
         temperature=temperature,
-        max_tokens=config.AGENT_SMART_MAX_TOKENS,
+        max_completion_tokens=config.AGENT_SMART_MAX_TOKENS,
         rate_limiter=_rate_limiter,
     )

@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 import config
+from deepagents.middleware.subagents import SubAgent
 
 from .models import create_smart_model
 from .prompts import FAIRNESS_AND_ANTI_FABRICATION_GUARDRAILS
@@ -41,7 +42,7 @@ _PERSONAS = [
 ]
 
 
-def create_persona_subagents(smart_model: Any | None = None) -> list[dict]:
+def create_persona_subagents(smart_model: Any | None = None) -> list[SubAgent]:
     """Return SMART, no-tool persona subagent specs."""
     model = smart_model or create_smart_model()
     subagents = []

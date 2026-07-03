@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 import config as app_config
+from deepagents.middleware.subagents import SubAgent
 from langgraph.errors import GraphRecursionError
 
 from .models import create_agent_model
@@ -19,7 +20,7 @@ DEFAULT_TOOLS = [search_jobs, get_job, score_resume, extract_skills, propose_edi
 def create_resume_agent(
     model: Any | None = None,
     tools: Sequence[Any] | None = None,
-    subagents: Sequence[dict] | None = None,
+    subagents: Sequence[SubAgent] | None = None,
     checkpointer: Any | None = None,
 ):
     """Create the Resume Deep Agent graph."""
