@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 import config
 from deepagents.middleware.subagents import SubAgent
@@ -48,7 +48,7 @@ def create_persona_subagents(smart_model: Any | None = None) -> list[SubAgent]:
     subagents = []
     for name, description, prompt in _PERSONAS[: config.AGENT_PERSONA_COUNT]:
         subagents.append(
-            {
+            cast(SubAgent, {
                 "name": name,
                 "description": description,
                 "system_prompt": (
@@ -58,7 +58,7 @@ def create_persona_subagents(smart_model: Any | None = None) -> list[SubAgent]:
                 ),
                 "tools": [],
                 "model": model,
-            }
+            })
         )
     return subagents
 
