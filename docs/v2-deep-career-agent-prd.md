@@ -54,6 +54,8 @@ Ingest historical resumes and saved resume versions, deduplicate variants, extra
 
 Add controlled research for similar job titles, role expectations, public job posts, ATS language, company signals, and safe interview-question sources. Research should enrich the role brief, not bypass user approval.
 
+Interview-question research should use public/latest sources where accessible, including company career pages, public Glassdoor pages or search snippets, Reddit discussions for large companies, and other indexed public pages. Do not bypass login walls, paywalls, robots restrictions, CAPTCHAs, or private communities. Save source URL, source type, retrieval date, and confidence for each question cluster.
+
 **Phase 4: Outcome Learning**
 
 Use application outcomes to compare which role angles, resume versions, keywords, bullets, and company types correlate with interviews, rejections, offers, or no response. Treat these as signals, not causal proof.
@@ -74,6 +76,7 @@ Use application outcomes to compare which role angles, resume versions, keywords
 - [#43 Graphify Resume And Dev Evidence Search](https://github.com/haomingkoo/job-hunter-sg/issues/43)
 - [#44 Interview Prep Pack](https://github.com/haomingkoo/job-hunter-sg/issues/44)
 - [#45 Outcome Learning Signals](https://github.com/haomingkoo/job-hunter-sg/issues/45)
+- [#46 Quality Gates And QA Harness](https://github.com/haomingkoo/job-hunter-sg/issues/46)
 
 ## User Stories
 
@@ -112,11 +115,12 @@ Use application outcomes to compare which role angles, resume versions, keywords
 33. As a candidate, I want each application to link to its role brief, resume version, debate round, claim ledger, and interview prep, so that every artifact stays connected.
 34. As a candidate, I want interview questions prepared from the job description and my resume, so that I can answer with relevant stories.
 35. As a candidate, I want STAR, CAR, and accomplishment-story guidance, so that answers are structured but still natural.
-36. As a candidate, I want the system to track which applications got interviews, rejections, offers, or no response, so that it can learn which positioning works.
-37. As a candidate, I want the system to rank outcome signals cautiously, so that it does not overclaim that one keyword caused an interview.
-38. As a candidate, I want the system to compare successful and unsuccessful applications, so that I can improve future targeting.
-39. As a candidate, I want to see which role families are getting traction, so that I can focus my search.
-40. As a candidate, I want the system to avoid automatic submission, so that no application is sent without my approval.
+36. As a candidate, I want interview-prep questions informed by public/latest sources such as company pages, public Glassdoor pages, and Reddit discussions, so that preparation reflects what candidates are actually reporting.
+37. As a candidate, I want the system to track which applications got interviews, rejections, offers, or no response, so that it can learn which positioning works.
+38. As a candidate, I want the system to rank outcome signals cautiously, so that it does not overclaim that one keyword caused an interview.
+39. As a candidate, I want the system to compare successful and unsuccessful applications, so that I can improve future targeting.
+40. As a candidate, I want to see which role families are getting traction, so that I can focus my search.
+41. As a candidate, I want the system to avoid automatic submission, so that no application is sent without my approval.
 
 ## Implementation Decisions
 
@@ -181,6 +185,8 @@ Phase 1 can start with the existing tables and JSON fields. New tables should be
 - Tests should verify that pipeline-board drag updates the application status through the same backend API as table edits.
 - Tests should verify that missing SEA-LION credentials produce a clear user-facing error.
 - Tests should avoid asserting internal agent reasoning text. They should assert stable artifacts: role brief, claim ledger entries, debate findings, final verdicts, status history, and saved resume versions.
+- Every V2 slice should leave one runnable quality check behind. Normal tests should use fake agents; live SEA-LION and MCP checks should be opt-in through environment flags.
+- Research QA should verify source URL, source type, retrieval date, confidence, and whether the content came from public Glassdoor, Reddit, company, job-board, or generic web sources.
 
 ## Out of Scope
 
