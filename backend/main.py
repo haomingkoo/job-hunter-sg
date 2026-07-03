@@ -4830,6 +4830,15 @@ def unsubscribe_job_alerts(
 # TRACKED JOBS
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _tracked_stage_event(stage: str, source: str, date: str | None = None, notes: str = "") -> dict:
+    return {
+        "stage": stage,
+        "date": date or datetime.now(timezone.utc).date().isoformat(),
+        "source": source,
+        "notes": notes,
+    }
+
+
 @app.get("/api/tracked", response_model=list[TrackedJobOut])
 def list_tracked(
     user: User = Depends(get_current_user),
@@ -4873,6 +4882,9 @@ def create_tracked(
         follow_up_date=body.follow_up_date,
         notes=sanitize_user_input(body.notes),
         scraped_job_id=body.scraped_job_id,
+        stage_history=[
+            _tracked_stage_event(body.status, "created", body.date_applied)
+        ],
     )
     db.add(tracked)
     _mark_job_alert_delivery_action(db, user.id, body.scraped_job_id, "tracked")
@@ -4895,11 +4907,18 @@ def update_tracked(
         raise HTTPException(status_code=403, detail="Not your tracked job")
 
     updates = body.model_dump(exclude_unset=True)
+    previous_status = tracked.status
     sanitize_fields = ("company", "role", "source", "notes")
     for key, val in updates.items():
         if key in sanitize_fields and isinstance(val, str):
             val = sanitize_user_input(val)
         setattr(tracked, key, val)
+
+    next_status = updates.get("status")
+    if next_status and next_status != previous_status:
+        tracked.stage_history = list(tracked.stage_history or []) + [
+            _tracked_stage_event(next_status, "manual")
+        ]
 
     db.commit()
     db.refresh(tracked)

@@ -775,6 +775,44 @@ class TestAPIEndpoints:
         assert resp.status_code == 200
         assert "token" in resp.json()
 
+    def test_tracked_status_history_is_append_only(self, client):
+        import secrets
+        from database import init_db
+
+        init_db()
+
+        email = f"tracked_{secrets.token_hex(4)}@aisg.sg"
+        pw = "TestPassword123!"
+        signup = client.post("/api/auth/signup", json={
+            "email": email,
+            "password": pw,
+            "name": "Tracked User",
+            "accepted_terms": True,
+        })
+        assert signup.status_code == 200
+        headers = {"Authorization": f"Bearer {signup.json()['token']}"}
+
+        created = client.post("/api/tracked", json={
+            "company": "Example Co",
+            "role": "AI Program Manager",
+            "date_applied": "2026-07-03",
+            "status": "saved",
+        }, headers=headers)
+        assert created.status_code == 201
+        tracked = created.json()
+        assert [event["stage"] for event in tracked["stage_history"]] == ["saved"]
+
+        updated = client.put(
+            f"/api/tracked/{tracked['id']}",
+            json={"status": "screening"},
+            headers=headers,
+        )
+        assert updated.status_code == 200
+        assert [event["stage"] for event in updated.json()["stage_history"]] == [
+            "saved",
+            "screening",
+        ]
+
     def test_static_frontend_or_no_static(self, client):
         """/ should serve frontend if static dir exists, or 404 otherwise."""
         resp = client.get("/")

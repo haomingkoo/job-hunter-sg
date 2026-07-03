@@ -140,7 +140,19 @@ class SearchResponse(BaseModel):
 
 # ── Tracker ──────────────────────────────────────────────────────────────────
 
-_STATUS = Literal["applied", "interview", "offer", "rejected", "withdrawn"]
+_STATUS = Literal[
+    "saved",
+    "applied",
+    "screening",
+    "interview",
+    "assessment",
+    "final_round",
+    "offer",
+    "accepted",
+    "rejected",
+    "withdrawn",
+    "no_response",
+]
 
 
 class TrackedJobCreate(BaseModel):
@@ -177,6 +189,8 @@ class TrackedJobOut(BaseModel):
     follow_up_date: Optional[str]
     notes: str
     scraped_job_id: Optional[int]
+    resume_version_id: Optional[int] = None
+    stage_history: Optional[list] = None
     created_at: datetime
     updated_at: datetime
 
