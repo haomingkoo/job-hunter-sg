@@ -72,3 +72,20 @@ def test_application_workspace_stores_job_context_and_append_only_history():
         "saved",
         "interview",
     ]
+
+
+def test_application_workspace_requires_company_title_and_job_description():
+    from database import init_db
+    from main import app
+
+    init_db()
+    client = TestClient(app)
+    headers = _signup(client)
+
+    response = client.post("/api/applications/workspaces", json={
+        "company": "GovTech",
+        "title": "Senior AI Engineer",
+    }, headers=headers)
+
+    assert response.status_code == 422
+    assert "job_description" in response.text
