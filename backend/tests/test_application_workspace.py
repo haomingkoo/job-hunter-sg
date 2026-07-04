@@ -142,6 +142,13 @@ def test_application_workspace_agent_review_saves_artifacts(monkeypatch):
                     "status": "pending",
                 }
             ],
+            "debate_summary": {
+                "roles": ["recruiter", "ats", "skeptic"],
+                "key_disagreements": ["ATS wants more keyword coverage; skeptic wants proof before adding claims."],
+                "final_recommendation": "Revise one bullet, then rerun review.",
+                "confidence": "medium",
+                "trace_id": "trace-123",
+            },
         },
     )
 
@@ -156,6 +163,13 @@ def test_application_workspace_agent_review_saves_artifacts(monkeypatch):
     assert review["role_brief"]["title"] == "Senior AI Engineer"
     assert review["recommendations"] == ["Emphasize agentic workflow delivery."]
     assert review["pending_diffs"][0]["bullet_id"] == "exp-0-b0"
+    assert review["debate_summary"] == {
+        "roles": ["recruiter", "ats", "skeptic"],
+        "key_disagreements": ["ATS wants more keyword coverage; skeptic wants proof before adding claims."],
+        "final_recommendation": "Revise one bullet, then rerun review.",
+        "confidence": "medium",
+        "trace_id": "trace-123",
+    }
     assert workspace["stage_history"][-1]["source"] == "agent_review"
 
 

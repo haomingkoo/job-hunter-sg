@@ -161,6 +161,8 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
   const isPro = user?.tier === "pro" || user?.tier === "admin";
   const isFree = user?.tier === "free";
   const atLimit = isFree;
+  const agentReview = workspace?.role_metadata?.agent_review;
+  const debateSummary = agentReview?.debate_summary;
 
   // Show onboarding empty state when no jobs tracked at all
   if (jobs.length === 0 && !showForm) {
@@ -382,7 +384,32 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-[#6A89A7]">Agent review not run yet.</div>
+                {debateSummary ? (
+                  <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-[#384959]">
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Debate summary</div>
+                    <p className="mt-2 text-sm">{debateSummary.final_recommendation}</p>
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {(Array.isArray(debateSummary.roles) ? debateSummary.roles : []).map((role) => (
+                        <span key={role} className="rounded-full bg-[#f0f4f8] px-2 py-1 text-xs text-[#384959]">
+                          {role}
+                        </span>
+                      ))}
+                    </div>
+                    {(Array.isArray(debateSummary.key_disagreements) ? debateSummary.key_disagreements : []).length > 0 && (
+                      <ul className="mt-3 list-disc space-y-1 pl-4 text-xs text-[#6A89A7]">
+                        {debateSummary.key_disagreements.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    )}
+                    <div className="mt-3 text-xs text-[#6A89A7]">
+                      Confidence: {debateSummary.confidence || "unknown"}
+                      {debateSummary.trace_id ? `, trace ID: ${debateSummary.trace_id}` : ""}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-[#6A89A7]">Agent review not run yet.</div>
+                )}
                 <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-[#6A89A7]">No submitted resume recorded yet.</div>
               </div>
             </>
