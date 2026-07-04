@@ -4896,6 +4896,31 @@ def _workspace_agent_review_prompt(tracked: TrackedJob) -> str:
     )
 
 
+def _workspace_debate_summary(agent_state: dict, recommendations: list[str], trace_id: str) -> dict:
+    saved = agent_state.get("debate_summary") if isinstance(agent_state.get("debate_summary"), dict) else {}
+    persona_roles = [
+        str(item.get("persona"))
+        for item in agent_state.get("persona_findings", [])
+        if isinstance(item, dict) and item.get("persona")
+    ]
+    summary = {
+        "roles": saved.get("roles") or persona_roles or [
+            "recruiter",
+            "hiring_manager",
+            "ats",
+            "skeptic",
+            "market_researcher",
+        ],
+        "key_disagreements": saved.get("key_disagreements") or saved.get("disagreements") or [],
+        "final_recommendation": saved.get("final_recommendation")
+        or saved.get("recommendation")
+        or (recommendations[-1] if recommendations else "Review completed. Inspect pending diffs before applying changes."),
+        "confidence": saved.get("confidence") or ("medium" if recommendations else "low"),
+        "trace_id": saved.get("trace_id") or trace_id or None,
+    }
+    return summary
+
+
 @app.get("/api/tracked", response_model=list[TrackedJobOut])
 def list_tracked(
     user: User = Depends(get_current_user),
@@ -5079,10 +5104,12 @@ def run_application_workspace_agent_review(
     session_id = ""
     recommendations: list[str] = []
     error_message = ""
+    trace_id = str(body.get("trace_id") or "")
     for event in _stream_resume_agent_events(agent_body):
         event_name = event.get("event")
         if event_name == "session":
             session_id = str(event.get("session_id") or "")
+            trace_id = trace_id or str(event.get("trace_id") or "")
         elif event_name == "token" and str(event.get("content") or "").strip():
             recommendations.append(str(event["content"]).strip())
         elif event_name == "error":
@@ -5101,6 +5128,7 @@ def run_application_workspace_agent_review(
         },
         "recommendations": recommendations,
         "pending_diffs": agent_state.get("pending_diffs", []),
+        "debate_summary": _workspace_debate_summary(agent_state, recommendations, trace_id),
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
     }
     tracked.role_metadata = role_metadata
