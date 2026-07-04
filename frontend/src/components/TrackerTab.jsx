@@ -296,6 +296,10 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
   const agentReview = workspace?.role_metadata?.agent_review;
   const debateSummary = agentReview?.debate_summary;
   const submittedResume = workspace?.role_metadata?.submitted_resume;
+  const interviewPrep = workspace?.role_metadata?.interview_prep_pack;
+  const interviewPrepSummary = interviewPrep?.summary || {};
+  const prepQuestions = Array.isArray(interviewPrep?.question_clusters) ? interviewPrep.question_clusters : [];
+  const prepEvidenceQuestions = Array.isArray(interviewPrep?.evidence_questions) ? interviewPrep.evidence_questions : [];
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
   const handleBoardDragEnd = async ({ active, over }) => {
@@ -630,6 +634,42 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
                   </div>
                 </div>
               </div>
+              {interviewPrep && (
+                <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-sm text-[#384959]" data-interview-prep-pack>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Interview prep</div>
+                    <div className="text-xs text-[#6A89A7]">
+                      {interviewPrepSummary.question_count || 0} questions · {interviewPrepSummary.evidence_question_count || 0} evidence gaps ·{" "}
+                      {interviewPrepSummary.source_count || 0} sources
+                    </div>
+                  </div>
+                  {interviewPrep.degraded_reason && (
+                    <div className="mt-2 rounded-lg bg-[#f0f4f8] px-3 py-2 text-xs text-[#6A89A7]">
+                      {interviewPrep.degraded_reason}
+                    </div>
+                  )}
+                  {prepQuestions.length > 0 && (
+                    <div className="mt-3 space-y-2">
+                      {prepQuestions.map((item) => (
+                        <div key={item.question_key} className="rounded-lg bg-[#f0f4f8] px-3 py-2">
+                          <div className="text-xs text-[#6A89A7]">{item.type} · {item.confidence}</div>
+                          <div>{item.question}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {prepEvidenceQuestions.length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Evidence questions</div>
+                      <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-[#6A89A7]">
+                        {prepEvidenceQuestions.map((item, index) => (
+                          <li key={item.claim_id || index}>{item.question}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>
