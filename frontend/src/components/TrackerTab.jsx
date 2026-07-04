@@ -1,20 +1,107 @@
 import { useState } from "react";
+import { DndContext, PointerSensor, closestCorners, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
 import {
   Plus, X, AlertCircle, Filter, RefreshCw,
   Download, Loader2, Edit3, Save, Trash2,
-  Briefcase, Search, FileText,
+  Briefcase, Search, FileText, GripVertical,
 } from "lucide-react";
 import { API_BASE, apiFetch } from "../lib/api.js";
 import { STATUS_CONFIG, SG_JOB_PORTALS } from "../lib/constants.js";
 import { todayStr, daysBetween } from "../lib/helpers.js";
 import StatusBadge from "./StatusBadge.jsx";
 
+export function getPipelineStatusMove(active, over) {
+  if (!over) return null;
+  const jobId = active?.data?.current?.jobId;
+  const previousStatus = active?.data?.current?.status;
+  const nextStatus = String(over.id || "").replace("status:", "");
+  if (!jobId || !STATUS_CONFIG[nextStatus] || nextStatus === previousStatus) return null;
+  return { jobId, nextStatus };
+}
+
+function PipelineCard({ job, moving, openWorkspace, handleEdit, handleDelete }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `job:${job.id}`,
+    data: { jobId: job.id, status: job.status },
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform) }}
+      className={`rounded-lg border border-[#BDDDFC]/30 bg-white p-3 text-sm shadow-sm transition ${isDragging || moving ? "opacity-60" : ""}`}
+      data-pipeline-card={job.id}
+    >
+      <div className="flex items-start gap-2">
+        <button
+          type="button"
+          className="mt-0.5 cursor-grab text-[#6A89A7]/70 active:cursor-grabbing"
+          aria-label={`Move ${job.company} ${job.role}`}
+          title="Move"
+          {...listeners}
+          {...attributes}
+        >
+          <GripVertical size={14} />
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-semibold text-[#384959]">{job.company}</div>
+          <div className="mt-1 truncate text-[#6A89A7]">{job.role}</div>
+        </div>
+      </div>
+      <div className="mt-2 flex items-center justify-between text-xs text-[#6A89A7]">
+        <span>{job.date_applied || "No date"}</span>
+        <span>{job.source || "Manual"}</span>
+      </div>
+      <div className="mt-3 flex gap-2">
+        <button type="button" onClick={() => openWorkspace(job.id)} className="text-xs text-[#384959] hover:underline">Open</button>
+        <button type="button" onClick={() => handleEdit(job)} className="text-xs text-[#384959] hover:underline">Edit</button>
+        <button type="button" onClick={() => handleDelete(job.id)} className="text-xs text-red-500 hover:underline">Delete</button>
+      </div>
+    </div>
+  );
+}
+
+function PipelineColumn({ status, jobs, movingId, openWorkspace, handleEdit, handleDelete }) {
+  const { isOver, setNodeRef } = useDroppable({ id: `status:${status}` });
+  const config = STATUS_CONFIG[status];
+
+  return (
+    <div ref={setNodeRef} className={`min-h-[220px] rounded-lg bg-[#f0f4f8] p-3 ${isOver ? "ring-2 ring-[#88BDF2]" : ""}`} data-pipeline-column={status}>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-[#384959]">{config?.label || status}</div>
+        <span className="rounded-full bg-white px-2 py-0.5 text-xs text-[#6A89A7]">{jobs.length}</span>
+      </div>
+      <div className="space-y-2">
+        {jobs.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-[#BDDDFC]/50 px-3 py-6 text-center text-xs text-[#6A89A7]">
+            Drop here
+          </div>
+        ) : (
+          jobs.map((job) => (
+            <PipelineCard
+              key={job.id}
+              job={job}
+              moving={movingId === job.id}
+              openWorkspace={openWorkspace}
+              handleEdit={handleEdit}
+              handleDelete={handleDelete}
+            />
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, setActiveTab }) {
   const [showForm, setShowForm] = useState(false);
   const [formMode, setFormMode] = useState("manual");
   const [editingId, setEditingId] = useState(null);
   const [filterStatus, setFilterStatus] = useState("all");
+  const [viewMode, setViewMode] = useState("table");
   const [saving, setSaving] = useState(false);
+  const [movingId, setMovingId] = useState(null);
   const [error, setError] = useState("");
   const [workspace, setWorkspace] = useState(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
@@ -189,6 +276,11 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
   };
 
   const filtered = filterStatus === "all" ? jobs : jobs.filter((j) => j.status === filterStatus);
+  const boardStatuses = Object.keys(STATUS_CONFIG);
+  const boardJobsByStatus = boardStatuses.reduce((groups, status) => {
+    groups[status] = filtered.filter((job) => job.status === status);
+    return groups;
+  }, {});
   const stats = {
     total: jobs.length,
     active: jobs.filter((j) => ["applied", "screening", "interview", "assessment", "final_round"].includes(j.status)).length,
@@ -202,6 +294,26 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
   const agentReview = workspace?.role_metadata?.agent_review;
   const debateSummary = agentReview?.debate_summary;
   const submittedResume = workspace?.role_metadata?.submitted_resume;
+  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+
+  const handleBoardDragEnd = async ({ active, over }) => {
+    const move = getPipelineStatusMove(active, over);
+    if (!move) return;
+    const { jobId, nextStatus } = move;
+    setMovingId(jobId);
+    setError("");
+    try {
+      await apiFetch(`/api/tracked/${jobId}`, {
+        method: "PUT",
+        body: JSON.stringify({ status: nextStatus }),
+      });
+      await refreshJobs();
+    } catch (err) {
+      setError(err.message || "Failed to move application.");
+    } finally {
+      setMovingId(null);
+    }
+  };
 
   // Show onboarding empty state when no jobs tracked at all
   if (jobs.length === 0 && !showForm) {
@@ -280,13 +392,31 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
         </div>
       )}
 
-      <div className="flex justify-between items-center">
-        <div className="flex items-center gap-2">
-          <Filter size={14} className="text-[#6A89A7]" />
-          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="text-sm border border-[#BDDDFC]/30 rounded-lg px-3 py-1.5 bg-white">
-            <option value="all">All statuses</option>
-            {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-          </select>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2">
+            <Filter size={14} className="text-[#6A89A7]" />
+            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="text-sm border border-[#BDDDFC]/30 rounded-lg px-3 py-1.5 bg-white">
+              <option value="all">All statuses</option>
+              {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+          </div>
+          <div className="inline-flex rounded-lg border border-[#BDDDFC]/30 bg-white p-0.5 text-sm">
+            <button
+              type="button"
+              onClick={() => setViewMode("table")}
+              className={`rounded-md px-3 py-1.5 ${viewMode === "table" ? "bg-[#384959] text-white" : "text-[#6A89A7] hover:text-[#384959]"}`}
+            >
+              Table
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("board")}
+              className={`rounded-md px-3 py-1.5 ${viewMode === "board" ? "bg-[#384959] text-white" : "text-[#6A89A7] hover:text-[#384959]"}`}
+            >
+              Board
+            </button>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {isPro && (
@@ -501,71 +631,98 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
         </div>
       )}
 
-      {/* Desktop table */}
-      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl overflow-hidden hidden sm:block">
-        <table className="w-full text-sm">
-          <thead className="bg-[#f0f4f8] text-[#6A89A7] text-xs uppercase">
-            <tr>
-              <th className="text-left px-4 py-3">Company</th>
-              <th className="text-left px-4 py-3">Role</th>
-              <th className="text-left px-4 py-3">Applied</th>
-              <th className="text-left px-4 py-3">Source</th>
-              <th className="text-left px-4 py-3">Status</th>
-              <th className="text-left px-4 py-3">Days</th>
-              <th className="text-right px-4 py-3">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#BDDDFC]/15">
-            {filtered.length === 0 && (
-              <tr><td colSpan={7} className="text-center py-8 text-[#6A89A7]">No applications tracked yet. Browse jobs and click Track to get started!</td></tr>
-            )}
-            {filtered.map((job) => (
-              <tr key={job.id} className="hover:bg-[#f0f4f8] transition">
-                <td className="px-4 py-3 font-medium text-[#384959]">{job.company}</td>
-                <td className="px-4 py-3 text-[#6A89A7]">{job.role}</td>
-                <td className="px-4 py-3 text-[#6A89A7]">{job.date_applied}</td>
-                <td className="px-4 py-3 text-[#6A89A7]">{job.source}</td>
-                <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
-                <td className="px-4 py-3 text-[#6A89A7]">{daysBetween(job.date_applied, todayStr())}d</td>
-                <td className="px-4 py-3 text-right">
-                  <button aria-label={`Open workspace for ${job.company} ${job.role}`} onClick={() => openWorkspace(job.id)} className="text-[#6A89A7] hover:text-[#384959] mr-2"><FileText size={14} /></button>
-                  <button onClick={() => handleEdit(job)} className="text-[#6A89A7] hover:text-[#384959] mr-2"><Edit3 size={14} /></button>
-                  <button onClick={() => handleDelete(job.id)} className="text-[#6A89A7] hover:text-red-500"><Trash2 size={14} /></button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Mobile card layout */}
-      <div className="sm:hidden space-y-3">
-        {filtered.length === 0 && (
-          <div className="text-center py-8 text-[#6A89A7] text-sm">No applications tracked yet. Browse jobs and click Track to get started!</div>
-        )}
-        {filtered.map((job) => (
-          <div key={job.id} className="bg-white border border-[#BDDDFC]/30 rounded-xl p-4 space-y-2">
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="font-semibold text-[#384959] text-sm">{job.company}</div>
-                <div className="text-sm text-[#6A89A7]">{job.role}</div>
-              </div>
-              <StatusBadge status={job.status} />
-            </div>
-            <div className="flex items-center gap-3 text-xs text-[#6A89A7]">
-              <span>{job.date_applied}</span>
-              <span>{job.source}</span>
-              <span>{daysBetween(job.date_applied, todayStr())}d ago</span>
-            </div>
-            {job.notes && <p className="text-xs text-[#6A89A7]">{job.notes}</p>}
-            <div className="flex gap-2 pt-1">
-              <button onClick={() => openWorkspace(job.id)} className="text-xs text-[#384959] hover:underline flex items-center gap-1"><FileText size={12} /> Open</button>
-              <button onClick={() => handleEdit(job)} className="text-xs text-[#384959] hover:underline flex items-center gap-1"><Edit3 size={12} /> Edit</button>
-              <button onClick={() => handleDelete(job.id)} className="text-xs text-red-500 hover:underline flex items-center gap-1"><Trash2 size={12} /> Delete</button>
+      {viewMode === "board" && (
+        <DndContext sensors={dndSensors} collisionDetection={closestCorners} onDragEnd={handleBoardDragEnd}>
+          <div className="overflow-x-auto pb-1">
+            <div
+              className="grid gap-3"
+              style={{ gridTemplateColumns: `repeat(${boardStatuses.length}, minmax(180px, 1fr))` }}
+            >
+              {boardStatuses.map((status) => (
+                <PipelineColumn
+                  key={status}
+                  status={status}
+                  jobs={boardJobsByStatus[status] || []}
+                  movingId={movingId}
+                  openWorkspace={openWorkspace}
+                  handleEdit={handleEdit}
+                  handleDelete={handleDelete}
+                />
+              ))}
             </div>
           </div>
-        ))}
-      </div>
+        </DndContext>
+      )}
+
+      {viewMode === "table" && (
+        <>
+          {/* Desktop table */}
+          <div className="bg-white border border-[#BDDDFC]/30 rounded-xl overflow-hidden hidden sm:block">
+            <table className="w-full text-sm">
+              <thead className="bg-[#f0f4f8] text-[#6A89A7] text-xs uppercase">
+                <tr>
+                  <th className="text-left px-4 py-3">Company</th>
+                  <th className="text-left px-4 py-3">Role</th>
+                  <th className="text-left px-4 py-3">Applied</th>
+                  <th className="text-left px-4 py-3">Source</th>
+                  <th className="text-left px-4 py-3">Status</th>
+                  <th className="text-left px-4 py-3">Days</th>
+                  <th className="text-right px-4 py-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#BDDDFC]/15">
+                {filtered.length === 0 && (
+                  <tr><td colSpan={7} className="text-center py-8 text-[#6A89A7]">No applications tracked yet. Browse jobs and click Track to get started!</td></tr>
+                )}
+                {filtered.map((job) => (
+                  <tr key={job.id} className="hover:bg-[#f0f4f8] transition">
+                    <td className="px-4 py-3 font-medium text-[#384959]">{job.company}</td>
+                    <td className="px-4 py-3 text-[#6A89A7]">{job.role}</td>
+                    <td className="px-4 py-3 text-[#6A89A7]">{job.date_applied}</td>
+                    <td className="px-4 py-3 text-[#6A89A7]">{job.source}</td>
+                    <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
+                    <td className="px-4 py-3 text-[#6A89A7]">{daysBetween(job.date_applied, todayStr())}d</td>
+                    <td className="px-4 py-3 text-right">
+                      <button aria-label={`Open workspace for ${job.company} ${job.role}`} onClick={() => openWorkspace(job.id)} className="text-[#6A89A7] hover:text-[#384959] mr-2"><FileText size={14} /></button>
+                      <button onClick={() => handleEdit(job)} className="text-[#6A89A7] hover:text-[#384959] mr-2"><Edit3 size={14} /></button>
+                      <button onClick={() => handleDelete(job.id)} className="text-[#6A89A7] hover:text-red-500"><Trash2 size={14} /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile card layout */}
+          <div className="sm:hidden space-y-3">
+            {filtered.length === 0 && (
+              <div className="text-center py-8 text-[#6A89A7] text-sm">No applications tracked yet. Browse jobs and click Track to get started!</div>
+            )}
+            {filtered.map((job) => (
+              <div key={job.id} className="bg-white border border-[#BDDDFC]/30 rounded-xl p-4 space-y-2">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="font-semibold text-[#384959] text-sm">{job.company}</div>
+                    <div className="text-sm text-[#6A89A7]">{job.role}</div>
+                  </div>
+                  <StatusBadge status={job.status} />
+                </div>
+                <div className="flex items-center gap-3 text-xs text-[#6A89A7]">
+                  <span>{job.date_applied}</span>
+                  <span>{job.source}</span>
+                  <span>{daysBetween(job.date_applied, todayStr())}d ago</span>
+                </div>
+                {job.notes && <p className="text-xs text-[#6A89A7]">{job.notes}</p>}
+                <div className="flex gap-2 pt-1">
+                  <button onClick={() => openWorkspace(job.id)} className="text-xs text-[#384959] hover:underline flex items-center gap-1"><FileText size={12} /> Open</button>
+                  <button onClick={() => handleEdit(job)} className="text-xs text-[#384959] hover:underline flex items-center gap-1"><Edit3 size={12} /> Edit</button>
+                  <button onClick={() => handleDelete(job.id)} className="text-xs text-red-500 hover:underline flex items-center gap-1"><Trash2 size={12} /> Delete</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
