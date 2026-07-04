@@ -177,6 +177,61 @@ def test_application_workspace_requires_company_title_and_job_description():
     assert "job_description" in response.text
 
 
+def test_application_workspace_module_creates_and_moves_workspace():
+    from application_workspace import (
+        create_application_workspace,
+        get_application_workspace,
+        update_tracked_job,
+    )
+    from database import SessionLocal, init_db
+    from models import User
+    from schemas import ApplicationWorkspaceCreate, TrackedJobUpdate
+
+    init_db()
+    db = SessionLocal()
+    try:
+        from auth import hash_password
+
+        user = User(
+            email=f"workspace_module_{secrets.token_hex(4)}@aisg.sg",
+            password_hash=hash_password("TestPassword123!"),
+            name="Workspace Module User",
+            tier="pro",
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        workspace = create_application_workspace(
+            db,
+            user,
+            ApplicationWorkspaceCreate(
+                company="GovTech",
+                title="Senior AI Engineer",
+                job_description="Build agentic workflows for public-sector digital services.",
+                status="saved",
+            ),
+        )
+        assert workspace["title"] == "Senior AI Engineer"
+        assert [event["stage"] for event in workspace["stage_history"]] == ["saved"]
+
+        moved = update_tracked_job(
+            db,
+            user,
+            workspace["id"],
+            TrackedJobUpdate(status="interview"),
+        )
+        loaded = get_application_workspace(db, user.id, moved.id)
+
+        assert loaded["status"] == "interview"
+        assert [event["stage"] for event in loaded["stage_history"]] == [
+            "saved",
+            "interview",
+        ]
+    finally:
+        db.close()
+
+
 def test_application_workspace_agent_review_saves_artifacts(monkeypatch):
     from database import init_db
     import main
