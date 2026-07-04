@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiFetch } from "../../lib/api.js";
-import TrackerTab from "../TrackerTab.jsx";
+import TrackerTab, { getPipelineStatusMove } from "../TrackerTab.jsx";
 
 vi.mock("../../lib/api.js", () => ({
   API_BASE: "",
@@ -175,6 +175,63 @@ describe("TrackerTab workspace creation", () => {
     expect(container.textContent).toContain("Version #7");
     expect(container.textContent).toContain("Agent review not run yet.");
     expect(container.textContent).toContain("No submitted resume recorded yet.");
+  });
+
+  it("groups tracked applications by status in board view", async () => {
+    await act(async () => {
+      root.render(
+        <TrackerTab
+          user={{ tier: "pro" }}
+          jobs={[
+            {
+              id: 123,
+              company: "GovTech",
+              role: "Senior AI Engineer",
+              date_applied: "2026-07-04",
+              status: "saved",
+              source: "Other",
+            },
+            {
+              id: 124,
+              company: "Grab",
+              role: "ML Engineer",
+              date_applied: "2026-07-03",
+              status: "interview",
+              source: "Referral",
+            },
+          ]}
+          refreshJobs={refreshJobs}
+          setActiveTab={() => {}}
+        />,
+      );
+    });
+
+    const boardButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent.includes("Board"));
+    await act(async () => {
+      boardButton.click();
+    });
+
+    const savedColumn = container.querySelector("[data-pipeline-column='saved']");
+    const interviewColumn = container.querySelector("[data-pipeline-column='interview']");
+    const appliedColumn = container.querySelector("[data-pipeline-column='applied']");
+    expect(savedColumn.textContent).toContain("GovTech");
+    expect(savedColumn.textContent).toContain("Senior AI Engineer");
+    expect(interviewColumn.textContent).toContain("Grab");
+    expect(interviewColumn.textContent).toContain("ML Engineer");
+    expect(appliedColumn.textContent).toContain("Drop here");
+  });
+
+  it("maps a board drop to a status update target", () => {
+    const active = { data: { current: { jobId: 123, status: "saved" } } };
+
+    expect(getPipelineStatusMove(active, { id: "status:interview" })).toEqual({
+      jobId: 123,
+      nextStatus: "interview",
+    });
+    expect(getPipelineStatusMove(active, { id: "status:saved" })).toBeNull();
+    expect(getPipelineStatusMove(active, { id: "status:not_real" })).toBeNull();
+    expect(getPipelineStatusMove(active, null)).toBeNull();
   });
 
   it("shows a saved debate summary in the workspace detail view", async () => {
