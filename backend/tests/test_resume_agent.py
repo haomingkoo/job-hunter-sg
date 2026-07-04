@@ -33,6 +33,10 @@ def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
             self.location = "Singapore"
             self.source = "careers.gov.sg"
             self.jd_summary = "Build data platforms."
+            self.salary = "S$8k-S$10k"
+            self.url = f"https://example.com/jobs/{job_id}"
+            self.description = "Full job description with responsibilities."
+            self.parsed_jd = {"required_skills": ["Python"]}
             self.skills = ["Python", "SQL"]
 
     class Query:
@@ -63,12 +67,15 @@ def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
         ],
     )
 
-    results = agent_tools.search_jobs.invoke(
+    result = agent_tools.search_jobs.invoke(
         {"query": "data engineer", "n": config.AGENT_SEARCH_JOBS_LIMIT + 20}
     )
 
-    assert len(results) == config.AGENT_SEARCH_JOBS_LIMIT
-    assert results[0] == {
+    assert result["ok"] is True
+    assert result["count"] == config.AGENT_SEARCH_JOBS_LIMIT
+    assert result["empty"] is False
+    assert result["detail"] is False
+    assert result["results"][0] == {
         "id": 1,
         "title": "Data Engineer 1",
         "company": "GovTech",
@@ -78,6 +85,88 @@ def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
         "jd_summary": "Build data platforms.",
         "skills": ["Python", "SQL"],
     }
+    assert "description" not in result["results"][0]
+
+
+def test_search_jobs_detail_expands_job_payload(monkeypatch):
+    import resume_agent.tools as agent_tools
+
+    class Job:
+        id = 7
+        title = "AI Engineer"
+        company = "GovTech"
+        location = "Singapore"
+        source = "careers.gov.sg"
+        jd_summary = "Build AI services."
+        salary = "S$8k-S$10k"
+        url = "https://example.com/jobs/7"
+        description = "Build agentic AI workflows for public services."
+        parsed_jd = {"required_skills": ["Python"]}
+        skills = ["Python"]
+
+    class Query:
+        def filter(self, *_args):
+            return self
+
+        def all(self):
+            return [Job()]
+
+    class FakeDb:
+        def query(self, *_args):
+            return Query()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(agent_tools, "SessionLocal", lambda: FakeDb())
+    monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
+    monkeypatch.setattr(agent_tools, "find_similar_jobs", lambda *_args, **_kwargs: [(7, 0.9)])
+
+    result = agent_tools.search_jobs.invoke({"query": "ai engineer", "detail": True})
+
+    assert result["detail"] is True
+    assert result["results"][0]["description"] == "Build agentic AI workflows for public services."
+    assert result["results"][0]["parsed_jd"] == {"required_skills": ["Python"]}
+
+
+def test_search_jobs_empty_results_are_explicit(monkeypatch):
+    import resume_agent.tools as agent_tools
+
+    class FakeDb:
+        def close(self):
+            return None
+
+    monkeypatch.setattr(agent_tools, "SessionLocal", lambda: FakeDb())
+    monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
+    monkeypatch.setattr(agent_tools, "find_similar_jobs", lambda *_args, **_kwargs: [])
+
+    result = agent_tools.search_jobs.invoke({"query": "rare role"})
+
+    assert result["ok"] is True
+    assert result["empty"] is True
+    assert result["count"] == 0
+    assert result["results"] == []
+
+
+def test_search_jobs_errors_are_structured(monkeypatch):
+    import resume_agent.tools as agent_tools
+
+    class FakeDb:
+        def close(self):
+            return None
+
+    def broken_search(*_args, **_kwargs):
+        raise RuntimeError("vector index unavailable")
+
+    monkeypatch.setattr(agent_tools, "SessionLocal", lambda: FakeDb())
+    monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
+    monkeypatch.setattr(agent_tools, "find_similar_jobs", broken_search)
+
+    result = agent_tools.search_jobs.invoke({"query": "data engineer"})
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "search_failed"
+    assert "vector index unavailable" in result["error"]["message"]
 
 
 def test_agent_calls_search_jobs_for_role_query():
