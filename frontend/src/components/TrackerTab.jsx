@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   Plus, X, AlertCircle, Filter, RefreshCw,
   Download, Loader2, Edit3, Save, Trash2,
-  Briefcase, Search,
+  Briefcase, Search, FileText,
 } from "lucide-react";
 import { API_BASE, apiFetch } from "../lib/api.js";
 import { STATUS_CONFIG, SG_JOB_PORTALS } from "../lib/constants.js";
@@ -16,6 +16,9 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
   const [filterStatus, setFilterStatus] = useState("all");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [workspace, setWorkspace] = useState(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState("");
   const blankForm = (mode = "manual") => ({
     company: "", role: "", date_applied: todayStr(),
     status: mode === "workspace" ? "saved" : "applied",
@@ -111,6 +114,20 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
       await refreshJobs();
     } catch (err) {
       setError(err.message || "Failed to delete job.");
+    }
+  };
+
+  const openWorkspace = async (id) => {
+    setWorkspace(null);
+    setWorkspaceError("");
+    setWorkspaceLoading(true);
+    try {
+      const response = await apiFetch(`/api/applications/workspaces/${id}`);
+      setWorkspace(await response.json());
+    } catch (err) {
+      setWorkspaceError(err.message || "Failed to load workspace.");
+    } finally {
+      setWorkspaceLoading(false);
     }
   };
 
@@ -305,6 +322,74 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
         </div>
       )}
 
+      {(workspaceLoading || workspace || workspaceError) && (
+        <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5 space-y-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="font-semibold text-[#384959]">Application Workspace</h3>
+              {workspace && (
+                <p className="text-sm text-[#6A89A7]">{workspace.title} at {workspace.company}</p>
+              )}
+            </div>
+            <button onClick={() => { setWorkspace(null); setWorkspaceError(""); }} className="text-[#6A89A7] hover:text-[#384959]"><X size={18} /></button>
+          </div>
+          {workspaceLoading && (
+            <div className="flex items-center gap-2 text-sm text-[#6A89A7]">
+              <Loader2 size={14} className="animate-spin" /> Loading workspace...
+            </div>
+          )}
+          {workspaceError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">{workspaceError}</div>
+          )}
+          {workspace && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-[#6A89A7]">Status</div>
+                  <StatusBadge status={workspace.status} />
+                </div>
+                <div>
+                  <div className="text-xs text-[#6A89A7]">Resume context</div>
+                  <div className="text-[#384959]">
+                    {workspace.resume_version_id ? `Version #${workspace.resume_version_id}` : "No resume linked yet"}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-[#6A89A7]">Source</div>
+                  <div className="text-[#384959] break-all">{workspace.source_url || workspace.source || "Manual"}</div>
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-[#6A89A7] mb-1">Job description</div>
+                <p className="whitespace-pre-wrap rounded-lg bg-[#f0f4f8] p-3 text-sm text-[#384959]">
+                  {workspace.job_description || "No job description saved."}
+                </p>
+              </div>
+              <div>
+                <div className="text-xs text-[#6A89A7] mb-2">Stage history</div>
+                <div className="space-y-2">
+                  {(workspace.stage_history || []).length === 0 && (
+                    <div className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#6A89A7]">
+                      No stage history recorded yet.
+                    </div>
+                  )}
+                  {(workspace.stage_history || []).map((event, index) => (
+                    <div key={`${event.stage}-${index}`} className="flex items-center justify-between rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm">
+                      <span className="font-medium text-[#384959]">{STATUS_CONFIG[event.stage]?.label || event.stage}</span>
+                      <span className="text-[#6A89A7]">{event.date}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-[#6A89A7]">Agent review not run yet.</div>
+                <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-[#6A89A7]">No submitted resume recorded yet.</div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* Desktop table */}
       <div className="bg-white border border-[#BDDDFC]/30 rounded-xl overflow-hidden hidden sm:block">
         <table className="w-full text-sm">
@@ -332,6 +417,7 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
                 <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
                 <td className="px-4 py-3 text-[#6A89A7]">{daysBetween(job.date_applied, todayStr())}d</td>
                 <td className="px-4 py-3 text-right">
+                  <button aria-label={`Open workspace for ${job.company} ${job.role}`} onClick={() => openWorkspace(job.id)} className="text-[#6A89A7] hover:text-[#384959] mr-2"><FileText size={14} /></button>
                   <button onClick={() => handleEdit(job)} className="text-[#6A89A7] hover:text-[#384959] mr-2"><Edit3 size={14} /></button>
                   <button onClick={() => handleDelete(job.id)} className="text-[#6A89A7] hover:text-red-500"><Trash2 size={14} /></button>
                 </td>
@@ -362,6 +448,7 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
             </div>
             {job.notes && <p className="text-xs text-[#6A89A7]">{job.notes}</p>}
             <div className="flex gap-2 pt-1">
+              <button onClick={() => openWorkspace(job.id)} className="text-xs text-[#384959] hover:underline flex items-center gap-1"><FileText size={12} /> Open</button>
               <button onClick={() => handleEdit(job)} className="text-xs text-[#384959] hover:underline flex items-center gap-1"><Edit3 size={12} /> Edit</button>
               <button onClick={() => handleDelete(job.id)} className="text-xs text-red-500 hover:underline flex items-center gap-1"><Trash2 size={12} /> Delete</button>
             </div>
