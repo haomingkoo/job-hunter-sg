@@ -282,10 +282,12 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
     return groups;
   }, {});
   const stats = {
-    total: jobs.length,
-    active: jobs.filter((j) => ["applied", "screening", "interview", "assessment", "final_round"].includes(j.status)).length,
-    offers: jobs.filter((j) => ["offer", "accepted"].includes(j.status)).length,
-    closed: jobs.filter((j) => ["rejected", "withdrawn", "no_response"].includes(j.status)).length,
+    submitted: jobs.filter((j) => j.status === "applied").length,
+    interview: jobs.filter((j) => ["screening", "interview", "assessment", "final_round"].includes(j.status)).length,
+    offer: jobs.filter((j) => ["offer", "accepted"].includes(j.status)).length,
+    rejected: jobs.filter((j) => j.status === "rejected").length,
+    withdrawn: jobs.filter((j) => j.status === "withdrawn").length,
+    noResponse: jobs.filter((j) => j.status === "no_response").length,
   };
 
   const isPro = user?.tier === "pro" || user?.tier === "admin";
@@ -371,14 +373,16 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
           )}
         </div>
       )}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
         {[
-          { label: "Total", value: stats.total, bg: "bg-[#f0f4f8]" },
-          { label: "Active", value: stats.active, bg: "bg-[#BDDDFC]/15" },
-          { label: "Offers", value: stats.offers, bg: "bg-green-50" },
-          { label: "Closed", value: stats.closed, bg: "bg-[#f0f4f8]" },
+          { key: "submitted", label: "Submitted", value: stats.submitted, bg: "bg-[#f0f4f8]" },
+          { key: "interview", label: "Interview", value: stats.interview, bg: "bg-[#BDDDFC]/15" },
+          { key: "offer", label: "Offer", value: stats.offer, bg: "bg-green-50" },
+          { key: "rejected", label: "Rejected", value: stats.rejected, bg: "bg-red-50" },
+          { key: "withdrawn", label: "Withdrawn", value: stats.withdrawn, bg: "bg-[#f0f4f8]" },
+          { key: "no_response", label: "No Response", value: stats.noResponse, bg: "bg-[#f0f4f8]" },
         ].map((s) => (
-          <div key={s.label} className={`${s.bg} rounded-xl p-4 text-center`}>
+          <div key={s.key} className={`${s.bg} rounded-xl p-4 text-center`} data-outcome-count={s.key}>
             <div className="text-2xl font-bold text-[#384959]">{s.value}</div>
             <div className="text-xs text-[#6A89A7] mt-1">{s.label}</div>
           </div>
