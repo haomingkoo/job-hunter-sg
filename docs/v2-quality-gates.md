@@ -15,8 +15,12 @@ acceptance criteria. Keep the check close to the changed behavior.
 
 - Normal agent tests use fake agents or fake tools by default.
 - Live SEA-LION checks are opt-in with `RUN_LIVE_SEALION=1`.
+- Claims about autonomous tool use need a live opt-in tool-choice smoke with a
+  relevant app tool such as `search_jobs`, not only a chat-completion smoke.
 - Live MCP checks are opt-in with `RUN_LIVE_MCP=1`.
 - Missing live credentials must fail or skip clearly; never return fake success.
+- Agent-facing tools should return capped, minimal, structured results with
+  explicit empty states. Add `--full`-style detail expansion only when needed.
 
 ## Research Outputs
 

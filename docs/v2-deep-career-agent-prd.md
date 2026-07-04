@@ -50,6 +50,11 @@ job description
 
 Ingest historical resumes and saved resume versions, deduplicate variants, extract recurring claims, and build a candidate capability model. This becomes the evidence source behind the claim ledger.
 
+Use vector retrieval for relevant text and job matching. Use the evidence graph
+for relationships: candidate claims, source evidence, target jobs, application
+artifacts, decisions, and outcomes. Do not replace one with the other; retrieval
+finds likely evidence, while the graph keeps the proof chain connected.
+
 **Phase 3: Web Auto-Research**
 
 Add controlled research for similar job titles, role expectations, public job posts, ATS language, company signals, and safe interview-question sources. Research should enrich the role brief, not bypass user approval.
@@ -130,6 +135,14 @@ Use application outcomes to compare which role angles, resume versions, keywords
 - Use one orchestrator agent. Specialist agents should not run as an unstructured group chat. The orchestrator coordinates tasks, merges critiques, asks the user when evidence is missing, and produces user-visible recommendations.
 - Save debate metadata per application. Each debate round must link to the exact resume draft it reviewed.
 - Use a claim ledger as the source of truth for resume accuracy. Each claim should be linked to evidence or flagged as needing user confirmation.
+- Keep retrieval and graph memory separate. RAG-style vector search is for finding
+  relevant resumes, job descriptions, and notes. Graph-style evidence memory is
+  for connecting claims to sources, jobs, submitted resumes, interviews, and
+  outcomes.
+- Make agent-facing tools cheap to inspect: capped defaults, minimal fields,
+  explicit empty results, and optional detail expansion. This follows the AXI
+  principle that agents work better with progressive disclosure than with large
+  generic payloads.
 - Store final submitted resumes as both structured text and the exact submitted file artifact.
 - Track application stages as append-only history. Updating the current status should add a stage event rather than erase prior status movement.
 - Preserve the existing table tracker and add a pipeline board as an additional view.

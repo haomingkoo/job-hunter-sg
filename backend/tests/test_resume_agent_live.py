@@ -101,9 +101,80 @@ GovTech | AI Project Lead | Jan 2022 - Present
 
     state = agent_session.get_state(session_id, owner_key=owner_key)
     assistant_outputs = [
-        message["content"]
-        for message in state["messages"]
-        if message.get("role") == "assistant" and message.get("content")
+        event["content"]
+        for event in [*first_events, *second_events]
+        if event.get("event") == "token" and event.get("content")
     ]
     assert state["draft"].strip() == resume_text.strip()
     assert len(assistant_outputs) >= 2
+
+
+def test_live_sealion_agent_calls_search_jobs_for_role_research(monkeypatch):
+    ai_service, _agent_session = _reload_live_agent_modules()
+    if not ai_service._get_api_key():
+        pytest.fail("RUN_LIVE_SEALION=1 requires SEALION_API or sealion_api in the environment or backend/.env.")
+
+    import resume_agent.agent as agent_module
+    import resume_agent.tools as agent_tools
+
+    class Job:
+        def __init__(self, job_id: int, title: str, company: str):
+            self.id = job_id
+            self.title = title
+            self.company = company
+            self.location = "Singapore"
+            self.source = "live-smoke"
+            self.jd_summary = "Agentic product role for AI workflow delivery."
+            self.skills = ["AI product", "Python", "stakeholder management"]
+
+    jobs = [
+        Job(1, "Senior AI Product Manager", "GovTech"),
+        Job(2, "AI Workflow Lead", "DBS"),
+    ]
+    search_calls = []
+
+    class Query:
+        def filter(self, *_args):
+            return self
+
+        def all(self):
+            return jobs
+
+    class FakeDb:
+        def query(self, *_args):
+            return Query()
+
+        def close(self):
+            return None
+
+    def fake_find_similar_jobs(query_vector, _db, top_k):
+        search_calls.append({"query_vector": query_vector, "top_k": top_k})
+        return [(1, 0.98), (2, 0.94)]
+
+    monkeypatch.setattr(agent_tools, "SessionLocal", lambda: FakeDb())
+    monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
+    monkeypatch.setattr(agent_tools, "find_similar_jobs", fake_find_similar_jobs)
+
+    agent = agent_module.create_resume_agent(
+        tools=[agent_tools.search_jobs],
+        subagents=[],
+    )
+    result = agent_module.run_agent_turn(
+        agent,
+        (
+            "Find similar Singapore jobs for a candidate targeting AI product "
+            "and workflow automation roles. Use the internal jobs database, "
+            "then answer with the best matching title and company."
+        ),
+        session_id=f"live-search-jobs-smoke-{secrets.token_hex(4)}",
+    )
+
+    tool_messages = [
+        message
+        for message in result.get("messages", [])
+        if getattr(message, "name", "") == "search_jobs"
+    ]
+
+    assert search_calls
+    assert tool_messages
+    assert "Senior AI Product Manager" in str(tool_messages[0].content)
