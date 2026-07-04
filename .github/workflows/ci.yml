@@ -48,7 +48,7 @@ jobs:
         run: PYTHONPATH=backend python -c "from database import init_db; init_db()"
 
       - name: Backend tests
-        run: PYTHONPATH=backend python -m pytest backend/tests -q --ignore=backend/tests/test_fixes.py
+        run: PYTHONPATH=backend python -m pytest backend/tests -q
 
   frontend-build:
     name: Frontend tests and build

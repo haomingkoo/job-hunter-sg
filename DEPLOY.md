@@ -8,15 +8,15 @@ job-hunter-sg/
 │   ├── main.py           ← API server (FastAPI + SQLAlchemy)
 │   ├── scraper.py        ← Multi-portal job scraper
 │   ├── requirements.txt
-│   ├── Dockerfile
 │   └── .env.example
 ├── frontend/             ← React + Vite + Tailwind
 │   ├── src/App.jsx       ← Main React app
 │   ├── package.json
-│   ├── Dockerfile
 │   └── ...
+├── Dockerfile            ← Builds frontend, then serves it from FastAPI
+├── railway.toml          ← Main Railway service
+├── railway.alerts.toml   ← Scheduled alert worker
 ├── .env.example          ← Environment variable reference
-├── CLAUDE.md             ← Project context for Claude Code
 └── DEPLOY.md             ← This file
 ```
 
@@ -41,21 +41,7 @@ of doing full-result filtering in Python.
 | `ALLOWED_ORIGINS` | No | `*` | Comma-separated CORS origins. Set to frontend URL in production. |
 | `VITE_API_URL` | No | `""` | (Frontend) Backend API URL. Empty = same-origin. |
 
-## Deploy to Railway with Claude Code
-
-Open Claude Code in this directory and say:
-
-```
-Deploy this to Railway as two services:
-1. Backend (Python FastAPI) from the /backend folder
-2. Frontend (React/Vite) from the /frontend folder
-
-The frontend needs VITE_API_URL env var pointing to the backend Railway URL.
-The backend needs DATABASE_URL, JWT_SECRET, PORT=8000, and ALLOWED_ORIGINS.
-Use `railway init` and `railway up` for each service.
-```
-
-## Manual Railway Deployment
+## Deploy to Railway
 
 ### 1. Install Railway CLI
 ```bash
@@ -63,39 +49,23 @@ npm install -g @railway/cli
 railway login
 ```
 
-### 2. Deploy Backend
+### 2. Deploy Main Service
 ```bash
-cd backend
-railway init          # Creates a new Railway project
-railway up            # Deploys the backend
-railway domain        # Get the public URL (e.g., backend-xxx.up.railway.app)
+railway init
+railway up
+railway domain
 ```
 
-Set environment variables for the backend service:
+Set environment variables:
 ```bash
 railway variables set JWT_SECRET=<your-random-secret>
 railway variables set DATABASE_URL=<postgres-url-from-railway>
-railway variables set PORT=8000
-railway variables set ALLOWED_ORIGINS=https://frontend-xxx.up.railway.app
+railway variables set ALLOWED_ORIGINS=https://job.kooexperience.com
 ```
 
-### 3. Deploy Frontend
-```bash
-cd ../frontend
-
-railway init
-railway variables set VITE_API_URL=https://backend-xxx.up.railway.app
-railway up
-railway domain        # Get the frontend URL
-```
-
-### 4. Alternative: Single-Service Deploy
-If you prefer one service, you can serve the frontend from FastAPI:
-```bash
-cd frontend && npm install && npm run build
-cp -r dist/ ../backend/static/
-# Then add StaticFiles mount in backend/main.py
-```
+Railway uses `railway.toml`, which points at the root `Dockerfile`. The image
+builds the Vite frontend, copies `frontend/dist` into `backend/static`, and runs
+FastAPI as one service.
 
 ## Post-Deploy Checks
 
@@ -114,16 +84,17 @@ OpenAI's search crawler in `robots.txt`.
 
 ## Quality Gates
 
-GitHub Actions runs backend compile checks, Ruff critical lint, frontend build,
-and Gitleaks secret scanning. Dependabot tracks GitHub Actions, npm, and pip
-updates.
+GitHub Actions runs backend compile checks, Ruff, the scoped ty baseline,
+backend tests, frontend tests/build, and Gitleaks secret scanning. Dependabot
+tracks GitHub Actions, npm, and pip updates.
 
 Recommended local checks before pushing:
 
 ```bash
 python -m compileall -q backend
 ruff check backend tests
-cd frontend && npm run build
+ty check
+cd frontend && npm test -- --run && npm run build
 ```
 
 ## API Endpoints
