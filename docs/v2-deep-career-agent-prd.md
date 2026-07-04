@@ -67,6 +67,8 @@ Use application outcomes to compare which role angles, resume versions, keywords
 
 ## Issue Plan
 
+### Phase 1 Shipped
+
 - [#32 Create Application Workspace V1](https://github.com/haomingkoo/job-hunter-sg/issues/32)
 - [#33 Create Application From Pasted Job Description](https://github.com/haomingkoo/job-hunter-sg/issues/33)
 - [#34 Workspace Detail View](https://github.com/haomingkoo/job-hunter-sg/issues/34)
@@ -76,12 +78,24 @@ Use application outcomes to compare which role angles, resume versions, keywords
 - [#38 Submitted Resume Artifact](https://github.com/haomingkoo/job-hunter-sg/issues/38)
 - [#39 Pipeline Board View](https://github.com/haomingkoo/job-hunter-sg/issues/39)
 - [#40 SEA-LION Live Smoke Test](https://github.com/haomingkoo/job-hunter-sg/issues/40)
-- [#41 MCP Tool Loader](https://github.com/haomingkoo/job-hunter-sg/issues/41)
+- [#45 Outcome Learning Signals](https://github.com/haomingkoo/job-hunter-sg/issues/45)
+- [#46 Quality Gates And QA Harness](https://github.com/haomingkoo/job-hunter-sg/issues/46)
+
+### Open Parent Themes
+
 - [#42 Web Auto-Research Role Brief](https://github.com/haomingkoo/job-hunter-sg/issues/42)
 - [#43 Graphify Resume And Dev Evidence Search](https://github.com/haomingkoo/job-hunter-sg/issues/43)
 - [#44 Interview Prep Pack](https://github.com/haomingkoo/job-hunter-sg/issues/44)
-- [#45 Outcome Learning Signals](https://github.com/haomingkoo/job-hunter-sg/issues/45)
-- [#46 Quality Gates And QA Harness](https://github.com/haomingkoo/job-hunter-sg/issues/46)
+
+### Next Implementation Slices
+
+- [#41 MCP Tool Loader](https://github.com/haomingkoo/job-hunter-sg/issues/41)
+- [#59 Application Workspace Module Seam](https://github.com/haomingkoo/job-hunter-sg/issues/59)
+- [#60 Agent Tool Surface Contracts](https://github.com/haomingkoo/job-hunter-sg/issues/60)
+- [#61 Candidate Evidence Graph Tracer Bullet](https://github.com/haomingkoo/job-hunter-sg/issues/61)
+- [#62 Workspace Role Research Source Ledger](https://github.com/haomingkoo/job-hunter-sg/issues/62)
+- [#63 Evidence-Grounded Interview Prep Tracer Bullet](https://github.com/haomingkoo/job-hunter-sg/issues/63)
+- [#64 PRD And Issue Map Reconciliation](https://github.com/haomingkoo/job-hunter-sg/issues/64)
 
 ## User Stories
 
@@ -154,6 +168,10 @@ Use application outcomes to compare which role angles, resume versions, keywords
 - Use the codebase-design vocabulary for architecture work. The key first seam is the application workspace: one module should hide the details of tracked application records, role briefs, resume drafts, debate metadata, claim ledger entries, and stage history behind a small interface. This gives callers leverage and keeps workflow changes local.
 - Use the improve-codebase-architecture skill before expanding beyond Phase 1. The target is to avoid a shallow layer that spreads application-workspace behavior across tracker, resume, and agent callers.
 - Refactoring the current codebase is allowed when it increases locality for the Application Workspace V1 slice. The refactor should concentrate application-specific behavior that is currently spread across tracker endpoints, resume-version endpoints, and the resume-agent session.
+- Avoid hidden fallbacks. If SEA-LION, MCP, retrieval, graph memory, or research sources are unavailable, the system should return a clear error or explicit degraded status that tests can assert. It must not return fake success.
+- Avoid random flags. Feature flags, live-smoke toggles, caps, thresholds, source-type lists, confidence labels, and status vocabularies should be named, documented, and owned by `backend/config.py`, schema literals, or existing frontend constants.
+- Deduplicate before adding new storage. Prefer existing tables, JSON fields, constants, and helper functions until the data has an independent lifecycle or tests show the current shape is unsafe.
+- Do not duplicate magic numbers, metadata keys, status strings, source-type strings, payload field lists, timeouts, or result caps across endpoints, tools, and UI code.
 
 ### Architecture Refactor Direction
 
@@ -184,9 +202,21 @@ The module's interface should be small and application-centered. It should hide 
 
 Phase 1 can start with the existing tables and JSON fields. New tables should be added only when a JSON field becomes too awkward to query or validate.
 
+### Architecture Review Result
+
+The 2026-07-04 architecture review found four deepening candidates:
+
+1. **Application Workspace module** - strongest next step. Concentrate workspace create/get/update/review/artifact/status behavior behind one small interface.
+2. **Candidate Evidence Graph** - keep graph memory separate from RAG. Retrieval finds relevant text; the graph connects claims, source evidence, jobs, artifacts, and outcomes.
+3. **Agent Tool Surface** - share compact, capped, structured tool result contracts across LangChain and MCP adapters.
+4. **Workspace Panel** - split frontend workspace UI only when workspace state grows enough to justify it.
+
+The issue map follows this order: #59 and #60 are the prefactors; #61 and #62 are the evidence/research tracer bullets; #63 depends on those outputs; #42, #43, and #44 remain parent themes.
+
 ## Testing Decisions
 
 - Test behavior at the application workflow level where possible: creating an application, researching a role, generating drafts, saving debate metadata, approving output, and updating status history.
+- Prefer tests through deep module interfaces over endpoint internals when a module exists.
 - Existing Resume Agent v2 tests are prior art for deep-agent wiring, tool calls, persona configuration, missing credentials, owner-bound sessions, pending diffs, anti-fabrication gates, and endpoint streaming.
 - Existing tracker endpoint tests are prior art for authenticated application tracking.
 - Tests should verify that the backend accepts every status shown by the frontend.
@@ -200,6 +230,7 @@ Phase 1 can start with the existing tables and JSON fields. New tables should be
 - Tests should avoid asserting internal agent reasoning text. They should assert stable artifacts: role brief, claim ledger entries, debate findings, final verdicts, status history, and saved resume versions.
 - Every V2 slice should leave one runnable quality check behind. Normal tests should use fake agents; live SEA-LION and MCP checks should be opt-in through environment flags.
 - Research QA should verify source URL, source type, retrieval date, confidence, and whether the content came from public Glassdoor, Reddit, company, job-board, or generic web sources.
+- Tests should cover empty states and degraded states explicitly so hidden fallbacks cannot pass as successful output.
 
 ## Out of Scope
 

@@ -50,3 +50,23 @@ def test_v2_harness_points_to_existing_fake_agent_and_ui_smokes():
     assert "search_jobs" in live_tests
     assert "opens a workspace detail view" in tracker_tests
     assert "groups tracked applications by status in board view" in tracker_tests
+
+
+def test_v2_prd_tracks_architecture_review_issue_map():
+    text = (ROOT / "docs" / "v2-deep-career-agent-prd.md").read_text()
+
+    for phrase in [
+        "Open Parent Themes",
+        "Next Implementation Slices",
+        "#59 Application Workspace Module Seam",
+        "#60 Agent Tool Surface Contracts",
+        "#61 Candidate Evidence Graph Tracer Bullet",
+        "#62 Workspace Role Research Source Ledger",
+        "#63 Evidence-Grounded Interview Prep Tracer Bullet",
+        "Avoid hidden fallbacks",
+        "Avoid random flags",
+        "Deduplicate before adding new storage",
+        "Do not duplicate magic numbers",
+        "Tests should cover empty states and degraded states explicitly",
+    ]:
+        assert phrase in text
