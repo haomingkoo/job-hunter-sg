@@ -4897,6 +4897,50 @@ def _workspace_agent_review_prompt(tracked: TrackedJob) -> str:
     )
 
 
+_APPLICATION_OUTCOME_GROUPS = {
+    "submitted": {"applied"},
+    "interview": {"screening", "interview", "assessment", "final_round"},
+    "offer": {"offer", "accepted"},
+    "rejected": {"rejected"},
+    "withdrawn": {"withdrawn"},
+    "no_response": {"no_response"},
+}
+
+
+def _empty_application_outcome_counts() -> dict[str, int]:
+    return {key: 0 for key in _APPLICATION_OUTCOME_GROUPS}
+
+
+def _application_outcome_key(status_value: str | None) -> str:
+    status_key = (status_value or "").strip()
+    for outcome, statuses in _APPLICATION_OUTCOME_GROUPS.items():
+        if status_key in statuses:
+            return outcome
+    return ""
+
+
+def _count_current_application_outcomes(tracked_jobs: list[TrackedJob]) -> dict[str, int]:
+    counts = _empty_application_outcome_counts()
+    for tracked in tracked_jobs:
+        outcome = _application_outcome_key(tracked.status)
+        if outcome:
+            counts[outcome] += 1
+    return counts
+
+
+def _count_stage_history_outcomes(tracked_jobs: list[TrackedJob]) -> dict[str, int]:
+    counts = _empty_application_outcome_counts()
+    for tracked in tracked_jobs:
+        seen: set[str] = set()
+        for event in tracked.stage_history or []:
+            stage = event.get("stage") if isinstance(event, dict) else ""
+            outcome = _application_outcome_key(str(stage))
+            if outcome and outcome not in seen:
+                counts[outcome] += 1
+                seen.add(outcome)
+    return counts
+
+
 def _workspace_debate_summary(agent_state: dict, recommendations: list[str], trace_id: str) -> dict:
     saved = agent_state.get("debate_summary") if isinstance(agent_state.get("debate_summary"), dict) else {}
     persona_roles = [
@@ -4982,6 +5026,48 @@ def list_tracked(
         .order_by(TrackedJob.created_at.desc())
         .all()
     )
+
+
+@app.get("/api/applications/outcomes")
+def application_outcomes(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    tracked_jobs = (
+        db.query(TrackedJob)
+        .filter(TrackedJob.user_id == user.id)
+        .order_by(TrackedJob.created_at.desc())
+        .all()
+    )
+    resume_versions: dict[int, dict] = {}
+    unlinked_applications = 0
+    for tracked in tracked_jobs:
+        if tracked.resume_version_id is None:
+            unlinked_applications += 1
+            continue
+        row = resume_versions.setdefault(
+            tracked.resume_version_id,
+            {
+                "resume_version_id": tracked.resume_version_id,
+                "applications": 0,
+                "counts": _empty_application_outcome_counts(),
+            },
+        )
+        row["applications"] += 1
+        outcome = _application_outcome_key(tracked.status)
+        if outcome:
+            row["counts"][outcome] += 1
+
+    return {
+        "total_applications": len(tracked_jobs),
+        "counts": _count_current_application_outcomes(tracked_jobs),
+        "stage_counts": _count_stage_history_outcomes(tracked_jobs),
+        "resume_versions": sorted(
+            resume_versions.values(),
+            key=lambda item: (-item["applications"], item["resume_version_id"]),
+        ),
+        "unlinked_applications": unlinked_applications,
+    }
 
 
 @app.post("/api/tracked", response_model=TrackedJobOut, status_code=201)

@@ -222,6 +222,35 @@ describe("TrackerTab workspace creation", () => {
     expect(appliedColumn.textContent).toContain("Drop here");
   });
 
+  it("shows outcome counts in the tracker dashboard", async () => {
+    await act(async () => {
+      root.render(
+        <TrackerTab
+          user={{ tier: "pro" }}
+          jobs={[
+            { id: 1, company: "A", role: "Engineer", date_applied: "2026-07-04", status: "applied", source: "Other" },
+            { id: 2, company: "B", role: "Engineer", date_applied: "2026-07-04", status: "screening", source: "Other" },
+            { id: 3, company: "C", role: "Engineer", date_applied: "2026-07-04", status: "final_round", source: "Other" },
+            { id: 4, company: "D", role: "Engineer", date_applied: "2026-07-04", status: "accepted", source: "Other" },
+            { id: 5, company: "E", role: "Engineer", date_applied: "2026-07-04", status: "rejected", source: "Other" },
+            { id: 6, company: "F", role: "Engineer", date_applied: "2026-07-04", status: "withdrawn", source: "Other" },
+            { id: 7, company: "G", role: "Engineer", date_applied: "2026-07-04", status: "no_response", source: "Other" },
+          ]}
+          refreshJobs={refreshJobs}
+          setActiveTab={() => {}}
+        />,
+      );
+    });
+
+    const outcomeValue = (key) => container.querySelector(`[data-outcome-count='${key}'] div`).textContent;
+    expect(outcomeValue("submitted")).toBe("1");
+    expect(outcomeValue("interview")).toBe("2");
+    expect(outcomeValue("offer")).toBe("1");
+    expect(outcomeValue("rejected")).toBe("1");
+    expect(outcomeValue("withdrawn")).toBe("1");
+    expect(outcomeValue("no_response")).toBe("1");
+  });
+
   it("maps a board drop to a status update target", () => {
     const active = { data: { current: { jobId: 123, status: "saved" } } };
 

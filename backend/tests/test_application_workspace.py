@@ -95,6 +95,71 @@ def test_application_workspace_stores_job_context_and_append_only_history():
     ]
 
 
+def test_application_outcomes_are_queryable_by_status_history_and_resume_version():
+    from database import init_db
+    from main import app
+
+    init_db()
+    client = TestClient(app)
+    headers = _signup(client)
+    workspace = _create_workspace_with_resume(client, headers)
+    version_id = workspace["resume_version_id"]
+
+    moved = client.put(
+        f"/api/tracked/{workspace['id']}",
+        json={"status": "interview"},
+        headers=headers,
+    )
+    assert moved.status_code == 200
+
+    for company, status, resume_version_id in [
+        ("Submitted Co", "applied", version_id),
+        ("Offer Co", "accepted", version_id),
+        ("Rejected Co", "rejected", None),
+        ("Withdrawn Co", "withdrawn", None),
+        ("Silent Co", "no_response", None),
+    ]:
+        response = client.post("/api/tracked", json={
+            "company": company,
+            "role": "AI Program Manager",
+            "date_applied": "2026-07-04",
+            "status": status,
+            "resume_version_id": resume_version_id,
+        }, headers=headers)
+        assert response.status_code == 201
+
+    response = client.get("/api/applications/outcomes", headers=headers)
+    assert response.status_code == 200
+    summary = response.json()
+
+    assert summary["total_applications"] == 6
+    assert summary["counts"] == {
+        "submitted": 1,
+        "interview": 1,
+        "offer": 1,
+        "rejected": 1,
+        "withdrawn": 1,
+        "no_response": 1,
+    }
+    assert summary["stage_counts"]["interview"] == 1
+    assert summary["stage_counts"]["submitted"] == 1
+    assert summary["unlinked_applications"] == 3
+    assert summary["resume_versions"] == [
+        {
+            "resume_version_id": version_id,
+            "applications": 3,
+            "counts": {
+                "submitted": 1,
+                "interview": 1,
+                "offer": 1,
+                "rejected": 0,
+                "withdrawn": 0,
+                "no_response": 0,
+            },
+        }
+    ]
+
+
 def test_application_workspace_requires_company_title_and_job_description():
     from database import init_db
     from main import app
