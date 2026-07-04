@@ -59,6 +59,7 @@ from models import (
     JobAlertPreference,
     PasswordResetToken,
     PowerMatchSnapshot,
+    ResumeVersion,
     ScrapedJob,
     TrackedJob,
     UsageLog,
@@ -67,6 +68,8 @@ from models import (
 )
 from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
 from schemas import (
+    ApplicationWorkspaceCreate,
+    ApplicationWorkspaceOut,
     ApplicationPackRequest,
     AuthResponse,
     ContactRequest,
@@ -4839,6 +4842,45 @@ def _tracked_stage_event(stage: str, source: str, date: str | None = None, notes
     }
 
 
+def _ensure_resume_version_owner(db: Session, user_id: int, version_id: int | None) -> None:
+    if version_id is None:
+        return
+    version = (
+        db.query(ResumeVersion)
+        .filter(
+            ResumeVersion.id == version_id,
+            ResumeVersion.user_id == user_id,
+            ResumeVersion.is_active == True,
+        )
+        .first()
+    )
+    if not version:
+        raise HTTPException(status_code=404, detail="Resume version not found")
+
+
+def _workspace_response(tracked: TrackedJob) -> dict:
+    return {
+        "id": tracked.id,
+        "user_id": tracked.user_id,
+        "company": tracked.company,
+        "title": tracked.role,
+        "role": tracked.role,
+        "job_description": tracked.job_description or "",
+        "source_url": tracked.source_url or "",
+        "source": tracked.source or "",
+        "status": tracked.status,
+        "date_applied": tracked.date_applied,
+        "follow_up_date": tracked.follow_up_date,
+        "notes": tracked.notes or "",
+        "scraped_job_id": tracked.scraped_job_id,
+        "resume_version_id": tracked.resume_version_id,
+        "role_metadata": tracked.role_metadata or {},
+        "stage_history": tracked.stage_history or [],
+        "created_at": tracked.created_at,
+        "updated_at": tracked.updated_at,
+    }
+
+
 @app.get("/api/tracked", response_model=list[TrackedJobOut])
 def list_tracked(
     user: User = Depends(get_current_user),
@@ -4858,6 +4900,8 @@ def create_tracked(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TrackedJob:
+    _ensure_resume_version_owner(db, user.id, body.resume_version_id)
+
     # Check tier limit
     limits = TIER_LIMITS.get(user.tier, TIER_LIMITS["free"])
     current_count = (
@@ -4879,9 +4923,13 @@ def create_tracked(
         date_applied=body.date_applied,
         status=body.status,
         source=sanitize_user_input(body.source),
+        source_url=sanitize_user_input(body.source_url),
+        job_description=sanitize_user_input(body.job_description),
+        role_metadata=body.role_metadata,
         follow_up_date=body.follow_up_date,
         notes=sanitize_user_input(body.notes),
         scraped_job_id=body.scraped_job_id,
+        resume_version_id=body.resume_version_id,
         stage_history=[
             _tracked_stage_event(body.status, "created", body.date_applied)
         ],
@@ -4907,8 +4955,9 @@ def update_tracked(
         raise HTTPException(status_code=403, detail="Not your tracked job")
 
     updates = body.model_dump(exclude_unset=True)
+    _ensure_resume_version_owner(db, user.id, updates.get("resume_version_id"))
     previous_status = tracked.status
-    sanitize_fields = ("company", "role", "source", "notes")
+    sanitize_fields = ("company", "role", "source", "source_url", "job_description", "notes")
     for key, val in updates.items():
         if key in sanitize_fields and isinstance(val, str):
             val = sanitize_user_input(val)
@@ -4923,6 +4972,47 @@ def update_tracked(
     db.commit()
     db.refresh(tracked)
     return tracked
+
+
+@app.post("/api/applications/workspaces", response_model=ApplicationWorkspaceOut, status_code=201)
+def create_application_workspace(
+    body: ApplicationWorkspaceCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    tracked = create_tracked(
+        TrackedJobCreate(
+            company=body.company,
+            role=body.title,
+            date_applied=body.date_applied,
+            status=body.status,
+            source=body.source,
+            source_url=body.source_url,
+            job_description=body.job_description,
+            role_metadata=body.role_metadata,
+            follow_up_date=body.follow_up_date,
+            notes=body.notes,
+            scraped_job_id=body.scraped_job_id,
+            resume_version_id=body.resume_version_id,
+        ),
+        user,
+        db,
+    )
+    return _workspace_response(tracked)
+
+
+@app.get("/api/applications/workspaces/{workspace_id}", response_model=ApplicationWorkspaceOut)
+def get_application_workspace(
+    workspace_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    tracked = db.query(TrackedJob).filter(TrackedJob.id == workspace_id).first()
+    if not tracked:
+        raise HTTPException(status_code=404, detail="Application workspace not found")
+    if tracked.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your application workspace")
+    return _workspace_response(tracked)
 
 
 @app.delete("/api/tracked/{job_id}")
