@@ -19,6 +19,11 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
   const [workspace, setWorkspace] = useState(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceError, setWorkspaceError] = useState("");
+  const [submittedFile, setSubmittedFile] = useState(null);
+  const [submittedDate, setSubmittedDate] = useState(todayStr());
+  const [submittedNotes, setSubmittedNotes] = useState("");
+  const [submittedSaving, setSubmittedSaving] = useState(false);
+  const [submittedError, setSubmittedError] = useState("");
   const blankForm = (mode = "manual") => ({
     company: "", role: "", date_applied: todayStr(),
     status: mode === "workspace" ? "saved" : "applied",
@@ -120,6 +125,10 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
   const openWorkspace = async (id) => {
     setWorkspace(null);
     setWorkspaceError("");
+    setSubmittedFile(null);
+    setSubmittedDate(todayStr());
+    setSubmittedNotes("");
+    setSubmittedError("");
     setWorkspaceLoading(true);
     try {
       const response = await apiFetch(`/api/applications/workspaces/${id}`);
@@ -128,6 +137,35 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
       setWorkspaceError(err.message || "Failed to load workspace.");
     } finally {
       setWorkspaceLoading(false);
+    }
+  };
+
+  const saveSubmittedResume = async () => {
+    if (!workspace || !submittedFile) return;
+    setSubmittedSaving(true);
+    setSubmittedError("");
+    try {
+      const formData = new FormData();
+      formData.append("file", submittedFile);
+      formData.append("submitted_date", submittedDate || todayStr());
+      formData.append("notes", submittedNotes);
+      const token = localStorage.getItem("token");
+      const response = await fetch(`${API_BASE}/api/applications/workspaces/${workspace.id}/submitted-resume`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: formData,
+      });
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || "Failed to save submitted resume.");
+      }
+      setWorkspace(await response.json());
+      setSubmittedFile(null);
+      setSubmittedNotes("");
+    } catch (err) {
+      setSubmittedError(err.message || "Failed to save submitted resume.");
+    } finally {
+      setSubmittedSaving(false);
     }
   };
 
@@ -163,6 +201,7 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
   const atLimit = isFree;
   const agentReview = workspace?.role_metadata?.agent_review;
   const debateSummary = agentReview?.debate_summary;
+  const submittedResume = workspace?.role_metadata?.submitted_resume;
 
   // Show onboarding empty state when no jobs tracked at all
   if (jobs.length === 0 && !showForm) {
@@ -410,7 +449,52 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
                 ) : (
                   <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-[#6A89A7]">Agent review not run yet.</div>
                 )}
-                <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-[#6A89A7]">No submitted resume recorded yet.</div>
+                <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-[#384959]">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Submitted resume</div>
+                  {submittedResume ? (
+                    <div className="mt-2 space-y-1 text-sm">
+                      <div>{submittedResume.filename}</div>
+                      <div className="text-xs text-[#6A89A7]">
+                        {submittedResume.submitted_date} - {submittedResume.word_count || 0} words
+                      </div>
+                      {submittedResume.notes && <div className="text-xs text-[#6A89A7]">{submittedResume.notes}</div>}
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-sm text-[#6A89A7]">No submitted resume recorded yet.</div>
+                  )}
+                  <div className="mt-3 space-y-2">
+                    <input
+                      type="file"
+                      accept=".pdf,.docx"
+                      onChange={(event) => setSubmittedFile(event.target.files?.[0] || null)}
+                      className="w-full text-xs text-[#6A89A7]"
+                    />
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <input
+                        type="date"
+                        value={submittedDate}
+                        onChange={(event) => setSubmittedDate(event.target.value)}
+                        className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]"
+                      />
+                      <input
+                        placeholder="Submitted resume notes"
+                        value={submittedNotes}
+                        onChange={(event) => setSubmittedNotes(event.target.value)}
+                        className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]"
+                      />
+                    </div>
+                    {submittedError && <div className="text-xs text-red-600">{submittedError}</div>}
+                    <button
+                      type="button"
+                      onClick={saveSubmittedResume}
+                      disabled={!submittedFile || submittedSaving}
+                      className="flex items-center gap-2 rounded-lg bg-[#384959] px-3 py-2 text-xs font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
+                    >
+                      {submittedSaving ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+                      Save submitted resume
+                    </button>
+                  </div>
+                </div>
               </div>
             </>
           )}

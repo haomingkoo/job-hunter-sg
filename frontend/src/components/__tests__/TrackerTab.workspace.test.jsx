@@ -24,6 +24,7 @@ describe("TrackerTab workspace creation", () => {
   beforeEach(() => {
     apiFetch.mockReset();
     apiFetch.mockResolvedValue({});
+    vi.stubGlobal("fetch", vi.fn());
     refreshJobs = vi.fn();
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -34,6 +35,7 @@ describe("TrackerTab workspace creation", () => {
     act(() => root.unmount());
     container.remove();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("creates a workspace from pasted job description", async () => {
@@ -235,5 +237,86 @@ describe("TrackerTab workspace creation", () => {
     expect(container.textContent).toContain("recruiter");
     expect(container.textContent).toContain("ATS wants more keyword coverage; skeptic wants proof first.");
     expect(container.textContent).toContain("Confidence: medium, trace ID: trace-123");
+  });
+
+  it("uploads a submitted resume artifact from the workspace detail view", async () => {
+    const workspace = {
+      id: 123,
+      company: "GovTech",
+      title: "Senior AI Engineer",
+      role: "Senior AI Engineer",
+      job_description: "Build agentic workflows for public-sector digital services.",
+      source_url: "https://example.com/jobs/1",
+      source: "Other",
+      status: "saved",
+      date_applied: "2026-07-04",
+      follow_up_date: "",
+      notes: "",
+      scraped_job_id: null,
+      resume_version_id: 7,
+      role_metadata: {},
+      stage_history: [{ stage: "saved", date: "2026-07-04", source: "created", notes: "" }],
+      created_at: "2026-07-04T00:00:00Z",
+      updated_at: "2026-07-04T00:00:00Z",
+    };
+    const uploadedWorkspace = {
+      ...workspace,
+      role_metadata: {
+        submitted_resume: {
+          filename: "submitted.pdf",
+          submitted_date: "2026-07-04",
+          notes: "Submitted through company portal.",
+          word_count: 42,
+        },
+      },
+    };
+    apiFetch.mockResolvedValueOnce({ json: vi.fn().mockResolvedValue(workspace) });
+    fetch.mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue(uploadedWorkspace) });
+
+    await act(async () => {
+      root.render(
+        <TrackerTab
+          user={{ tier: "pro" }}
+          jobs={[{
+            id: 123,
+            company: "GovTech",
+            role: "Senior AI Engineer",
+            date_applied: "2026-07-04",
+            status: "saved",
+            source: "Other",
+          }]}
+          refreshJobs={refreshJobs}
+          setActiveTab={() => {}}
+        />,
+      );
+    });
+
+    const openButton = container.querySelector("button[aria-label='Open workspace for GovTech Senior AI Engineer']");
+    await act(async () => {
+      openButton.click();
+    });
+
+    const file = new File(["resume"], "submitted.pdf", { type: "application/pdf" });
+    const fileInput = container.querySelector("input[type='file']");
+    Object.defineProperty(fileInput, "files", { value: [file], configurable: true });
+    await act(async () => {
+      fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+      setField(container.querySelector("input[placeholder='Submitted resume notes']"), "Submitted through company portal.");
+    });
+
+    const saveButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent.includes("Save submitted resume"));
+    await act(async () => {
+      saveButton.click();
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [url, options] = fetch.mock.calls[0];
+    expect(url).toBe("/api/applications/workspaces/123/submitted-resume");
+    expect(options.method).toBe("POST");
+    expect(options.body.get("file")).toBe(file);
+    expect(options.body.get("notes")).toBe("Submitted through company portal.");
+    expect(container.textContent).toContain("submitted.pdf");
+    expect(container.textContent).toContain("2026-07-04 - 42 words");
   });
 });
