@@ -119,4 +119,59 @@ describe("TrackerTab workspace creation", () => {
     expect(container.textContent).toContain("Job description is required to create a workspace.");
     expect(apiFetch).not.toHaveBeenCalled();
   });
+
+  it("opens a workspace detail view from a tracked application", async () => {
+    const workspace = {
+      id: 123,
+      company: "GovTech",
+      title: "Senior AI Engineer",
+      role: "Senior AI Engineer",
+      job_description: "Build agentic workflows for public-sector digital services.",
+      source_url: "https://example.com/jobs/1",
+      source: "Other",
+      status: "saved",
+      date_applied: "2026-07-04",
+      follow_up_date: "",
+      notes: "",
+      scraped_job_id: null,
+      resume_version_id: 7,
+      role_metadata: {},
+      stage_history: [{ stage: "saved", date: "2026-07-04", source: "created", notes: "" }],
+      created_at: "2026-07-04T00:00:00Z",
+      updated_at: "2026-07-04T00:00:00Z",
+    };
+    apiFetch.mockResolvedValueOnce({ json: vi.fn().mockResolvedValue(workspace) });
+
+    await act(async () => {
+      root.render(
+        <TrackerTab
+          user={{ tier: "pro" }}
+          jobs={[{
+            id: 123,
+            company: "GovTech",
+            role: "Senior AI Engineer",
+            date_applied: "2026-07-04",
+            status: "saved",
+            source: "Other",
+          }]}
+          refreshJobs={refreshJobs}
+          setActiveTab={() => {}}
+        />,
+      );
+    });
+
+    const openButton = container.querySelector("button[aria-label='Open workspace for GovTech Senior AI Engineer']");
+    await act(async () => {
+      openButton.click();
+    });
+
+    expect(apiFetch).toHaveBeenCalledWith("/api/applications/workspaces/123");
+    expect(container.textContent).toContain("Application Workspace");
+    expect(container.textContent).toContain("Senior AI Engineer at GovTech");
+    expect(container.textContent).toContain("Build agentic workflows for public-sector digital services.");
+    expect(container.textContent).toContain("Saved");
+    expect(container.textContent).toContain("Version #7");
+    expect(container.textContent).toContain("Agent review not run yet.");
+    expect(container.textContent).toContain("No submitted resume recorded yet.");
+  });
 });
