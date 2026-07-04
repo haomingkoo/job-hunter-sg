@@ -12,6 +12,8 @@ def test_v2_quality_gate_docs_cover_required_controls():
     for phrase in [
         "one runnable check",
         "RUN_LIVE_SEALION=1",
+        "tool-choice smoke",
+        "search_jobs",
         "RUN_LIVE_MCP=1",
         "source_url",
         "source_type",
@@ -45,5 +47,6 @@ def test_v2_harness_points_to_existing_fake_agent_and_ui_smokes():
 
     assert "FakeAgent" in agent_tests
     assert "RUN_LIVE_SEALION" in live_tests
+    assert "search_jobs" in live_tests
     assert "opens a workspace detail view" in tracker_tests
     assert "groups tracked applications by status in board view" in tracker_tests
