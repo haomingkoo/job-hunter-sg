@@ -4881,6 +4881,21 @@ def _workspace_response(tracked: TrackedJob) -> dict:
     }
 
 
+def _workspace_agent_review_prompt(tracked: TrackedJob) -> str:
+    return "\n\n".join(
+        [
+            "Run a deep application review for this workspace.",
+            f"Company: {tracked.company}",
+            f"Role: {tracked.role}",
+            f"Job description:\n{tracked.job_description or ''}",
+            (
+                "Return practical recommendations and propose evidence-bound resume edits. "
+                "Do not invent unsupported metrics, employers, tools, dates, or outcomes."
+            ),
+        ]
+    )
+
+
 @app.get("/api/tracked", response_model=list[TrackedJobOut])
 def list_tracked(
     user: User = Depends(get_current_user),
@@ -5012,6 +5027,94 @@ def get_application_workspace(
         raise HTTPException(status_code=404, detail="Application workspace not found")
     if tracked.user_id != user.id:
         raise HTTPException(status_code=403, detail="Not your application workspace")
+    return _workspace_response(tracked)
+
+
+@app.post("/api/applications/workspaces/{workspace_id}/agent-review", response_model=ApplicationWorkspaceOut)
+def run_application_workspace_agent_review(
+    workspace_id: int,
+    body: dict | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    tracked = db.query(TrackedJob).filter(TrackedJob.id == workspace_id).first()
+    if not tracked:
+        raise HTTPException(status_code=404, detail="Application workspace not found")
+    if tracked.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your application workspace")
+
+    body = body or {}
+    resume_text = sanitize_resume_text(str(body.get("resume_text") or ""))
+    if not resume_text and tracked.resume_version_id:
+        version = (
+            db.query(ResumeVersion)
+            .filter(
+                ResumeVersion.id == tracked.resume_version_id,
+                ResumeVersion.user_id == user.id,
+                ResumeVersion.is_active == True,
+            )
+            .first()
+        )
+        if not version:
+            raise HTTPException(status_code=404, detail="Resume version not found")
+        resume_text = version.resume_text or ""
+    if not resume_text:
+        raise HTTPException(
+            status_code=400,
+            detail="Attach a resume version or provide resume_text before running agent review.",
+        )
+
+    owner_key = f"user:{user.id}"
+    agent_body = {
+        "message": str(body.get("message") or _workspace_agent_review_prompt(tracked)),
+        "resume_text": resume_text,
+        "profile_context": str(body.get("profile_context") or ""),
+        "_owner_key": owner_key,
+    }
+    if tracked.scraped_job_id:
+        agent_body["job_id"] = tracked.scraped_job_id
+    if body.get("session_id"):
+        agent_body["session_id"] = str(body["session_id"])
+
+    session_id = ""
+    recommendations: list[str] = []
+    error_message = ""
+    for event in _stream_resume_agent_events(agent_body):
+        event_name = event.get("event")
+        if event_name == "session":
+            session_id = str(event.get("session_id") or "")
+        elif event_name == "token" and str(event.get("content") or "").strip():
+            recommendations.append(str(event["content"]).strip())
+        elif event_name == "error":
+            error_message = str(event.get("message") or "Agent review failed.")
+
+    agent_state = _get_resume_agent_state(session_id, owner_key=owner_key) if session_id else {}
+    role_metadata = dict(tracked.role_metadata or {})
+    role_metadata["agent_review"] = {
+        "status": "error" if error_message else "completed",
+        "session_id": session_id,
+        "role_brief": {
+            "company": tracked.company,
+            "title": tracked.role,
+            "job_description": tracked.job_description or "",
+            "source_url": tracked.source_url or "",
+        },
+        "recommendations": recommendations,
+        "pending_diffs": agent_state.get("pending_diffs", []),
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    tracked.role_metadata = role_metadata
+    tracked.stage_history = list(tracked.stage_history or []) + [
+        _tracked_stage_event(
+            tracked.status,
+            "agent_review_error" if error_message else "agent_review",
+            notes=error_message or "Deep agent review completed.",
+        )
+    ]
+    db.commit()
+    db.refresh(tracked)
+    if error_message:
+        raise HTTPException(status_code=503, detail=error_message)
     return _workspace_response(tracked)
 
 

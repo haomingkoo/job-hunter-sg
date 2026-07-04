@@ -22,6 +22,25 @@ def _signup(client: TestClient) -> dict:
     return {"Authorization": f"Bearer {response.json()['token']}"}
 
 
+def _create_workspace_with_resume(client: TestClient, headers: dict) -> dict:
+    resume = client.post("/api/resume/versions", json={
+        "label": "Master resume",
+        "resume_text": "EXPERIENCE\n- Built Python data pipelines for public-sector services.",
+        "is_master": True,
+    }, headers=headers)
+    assert resume.status_code == 200
+
+    created = client.post("/api/applications/workspaces", json={
+        "company": "GovTech",
+        "title": "Senior AI Engineer",
+        "job_description": "Build agentic workflows for public-sector digital services.",
+        "status": "saved",
+        "resume_version_id": resume.json()["id"],
+    }, headers=headers)
+    assert created.status_code == 201
+    return created.json()
+
+
 def test_application_workspace_stores_job_context_and_append_only_history():
     from database import init_db
     from main import app
@@ -89,3 +108,73 @@ def test_application_workspace_requires_company_title_and_job_description():
 
     assert response.status_code == 422
     assert "job_description" in response.text
+
+
+def test_application_workspace_agent_review_saves_artifacts(monkeypatch):
+    from database import init_db
+    import main
+    from main import app
+
+    init_db()
+    client = TestClient(app)
+    headers = _signup(client)
+    workspace_id = _create_workspace_with_resume(client, headers)["id"]
+
+    seen_body = {}
+
+    def fake_stream(body):
+        seen_body.update(body)
+        yield {"event": "session", "session_id": "workspace-agent-review"}
+        yield {"event": "token", "session_id": "workspace-agent-review", "content": "Emphasize agentic workflow delivery."}
+        yield {"event": "done", "session_id": "workspace-agent-review"}
+
+    monkeypatch.setattr(main, "_stream_resume_agent_events", fake_stream)
+    monkeypatch.setattr(
+        main,
+        "_get_resume_agent_state",
+        lambda session_id, owner_key=None: {
+            "session_id": session_id,
+            "pending_diffs": [
+                {
+                    "bullet_id": "exp-0-b0",
+                    "original": "Built Python data pipelines for public-sector services.",
+                    "rewrite": "Built agentic Python data workflows for public-sector services.",
+                    "status": "pending",
+                }
+            ],
+        },
+    )
+
+    response = client.post(f"/api/applications/workspaces/{workspace_id}/agent-review", headers=headers)
+    assert response.status_code == 200
+    workspace = response.json()
+    review = workspace["role_metadata"]["agent_review"]
+
+    assert "GovTech" in seen_body["message"]
+    assert seen_body["resume_text"] == "EXPERIENCE\n- Built Python data pipelines for public-sector services."
+    assert review["status"] == "completed"
+    assert review["role_brief"]["title"] == "Senior AI Engineer"
+    assert review["recommendations"] == ["Emphasize agentic workflow delivery."]
+    assert review["pending_diffs"][0]["bullet_id"] == "exp-0-b0"
+    assert workspace["stage_history"][-1]["source"] == "agent_review"
+
+
+def test_application_workspace_agent_review_returns_clean_config_error(monkeypatch):
+    import resume_agent.models as agent_models
+    from database import init_db
+    from main import app
+
+    init_db()
+    client = TestClient(app)
+    headers = _signup(client)
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "")
+    workspace_id = _create_workspace_with_resume(client, headers)["id"]
+
+    response = client.post(f"/api/applications/workspaces/{workspace_id}/agent-review", headers=headers)
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Agent v2 needs SEALION_API configured before it can run."
+
+    loaded = client.get(f"/api/applications/workspaces/{workspace_id}", headers=headers)
+    review = loaded.json()["role_metadata"]["agent_review"]
+    assert review["status"] == "error"
+    assert loaded.json()["stage_history"][-1]["source"] == "agent_review_error"
