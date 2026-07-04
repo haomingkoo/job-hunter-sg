@@ -11,27 +11,45 @@ import StatusBadge from "./StatusBadge.jsx";
 
 export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, setActiveTab }) {
   const [showForm, setShowForm] = useState(false);
+  const [formMode, setFormMode] = useState("manual");
   const [editingId, setEditingId] = useState(null);
   const [filterStatus, setFilterStatus] = useState("all");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState({
-    company: "", role: "", date_applied: todayStr(), status: "applied",
-    source: "MyCareersFuture", follow_up_date: "", notes: "",
+  const blankForm = (mode = "manual") => ({
+    company: "", role: "", date_applied: todayStr(),
+    status: mode === "workspace" ? "saved" : "applied",
+    source: mode === "workspace" ? "Other" : "MyCareersFuture",
+    source_url: "", job_description: "",
+    follow_up_date: "", notes: "",
   });
+  const [form, setForm] = useState(blankForm);
 
   const resetForm = () => {
-    setForm({
-      company: "", role: "", date_applied: todayStr(), status: "applied",
-      source: "MyCareersFuture", follow_up_date: "", notes: "",
-    });
+    setForm(blankForm());
+    setFormMode("manual");
     setShowForm(false);
     setEditingId(null);
     setError("");
   };
 
+  const openForm = (mode = "manual") => {
+    setForm(blankForm(mode));
+    setFormMode(mode);
+    setEditingId(null);
+    setError("");
+    setShowForm(true);
+  };
+
   const handleSave = async () => {
-    if (!form.company || !form.role) return;
+    if (!form.company.trim() || !form.role.trim()) {
+      setError("Company and role are required.");
+      return;
+    }
+    if (!editingId && formMode === "workspace" && !form.job_description.trim()) {
+      setError("Job description is required to create a workspace.");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -39,6 +57,21 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
         await apiFetch(`/api/tracked/${editingId}`, {
           method: "PUT",
           body: JSON.stringify(form),
+        });
+      } else if (formMode === "workspace") {
+        await apiFetch("/api/applications/workspaces", {
+          method: "POST",
+          body: JSON.stringify({
+            company: form.company,
+            title: form.role,
+            job_description: form.job_description,
+            source_url: form.source_url,
+            source: form.source,
+            status: form.status,
+            date_applied: form.date_applied,
+            follow_up_date: form.follow_up_date,
+            notes: form.notes,
+          }),
         });
       } else {
         await apiFetch("/api/tracked", {
@@ -62,9 +95,12 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
       date_applied: job.date_applied || todayStr(),
       status: job.status || "applied",
       source: job.source || "MyCareersFuture",
+      source_url: job.source_url || "",
+      job_description: job.job_description || "",
       follow_up_date: job.follow_up_date || "",
       notes: job.notes || "",
     });
+    setFormMode(job.job_description ? "workspace" : "manual");
     setEditingId(job.id);
     setShowForm(true);
   };
@@ -137,7 +173,13 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
             </button>
           )}
           <button
-            onClick={() => setShowForm(true)}
+            onClick={() => openForm("workspace")}
+            className="flex items-center gap-2 rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#2d3a47] transition"
+          >
+            <Plus size={16} /> Paste JD
+          </button>
+          <button
+            onClick={() => openForm("manual")}
             className="flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 px-5 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] transition"
           >
             <Plus size={16} /> Add Manually
@@ -197,7 +239,11 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
           <button onClick={() => refreshJobs()} className="flex items-center gap-2 border border-[#BDDDFC]/30 text-[#6A89A7] px-3 py-2 rounded-lg text-sm hover:bg-[#f0f4f8] transition">
             <RefreshCw size={14} />
           </button>
-          <button onClick={() => { resetForm(); setShowForm(true); }} disabled={atLimit}
+          <button onClick={() => openForm("workspace")} disabled={atLimit}
+            className="flex items-center gap-2 border border-[#BDDDFC]/30 text-[#384959] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#f0f4f8] disabled:opacity-40 transition">
+            <Plus size={16} /> Paste JD
+          </button>
+          <button onClick={() => openForm("manual")} disabled={atLimit}
             className="flex items-center gap-2 bg-[#384959] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2d3a47] disabled:opacity-40 transition">
             <Plus size={16} /> Add
           </button>
@@ -207,7 +253,9 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
       {showForm && (
         <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5 space-y-4 shadow-sm">
           <div className="flex justify-between items-center">
-            <h3 className="font-semibold text-[#384959]">{editingId ? "Edit" : "New"} Application</h3>
+            <h3 className="font-semibold text-[#384959]">
+              {editingId ? "Edit" : formMode === "workspace" ? "New Workspace" : "New"} Application
+            </h3>
             <button onClick={resetForm} className="text-[#6A89A7] hover:text-[#384959]"><X size={18} /></button>
           </div>
           {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">{error}</div>}
@@ -231,6 +279,23 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
               <input type="date" value={form.follow_up_date || ""} onChange={(e) => setForm({ ...form, follow_up_date: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm w-full" />
             </div>
           </div>
+          {(formMode === "workspace" || form.job_description) && (
+            <>
+              <input
+                placeholder="Source URL"
+                value={form.source_url}
+                onChange={(e) => setForm({ ...form, source_url: e.target.value })}
+                className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm w-full"
+              />
+              <textarea
+                placeholder="Paste job description *"
+                value={form.job_description}
+                onChange={(e) => setForm({ ...form, job_description: e.target.value })}
+                className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm w-full"
+                rows={6}
+              />
+            </>
+          )}
           <textarea placeholder="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm w-full" rows={2} />
           <button onClick={handleSave} disabled={saving || !form.company || !form.role}
             className="flex items-center gap-2 bg-[#384959] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2d3a47] disabled:opacity-40 transition">
