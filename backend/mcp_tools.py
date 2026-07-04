@@ -7,7 +7,7 @@ import re
 from dataclasses import asdict
 from typing import Any
 
-import config
+import agent_tool_contract as contract
 from database import SessionLocal
 from embedding_service import encode_text, find_similar_jobs
 from models import ScrapedJob
@@ -106,30 +106,69 @@ def compare_candidate_profile(resume_text: str, profile_context: str) -> str:
 
 def get_job(job_id: int) -> str:
     """Fetch one job from the internal jobs DB."""
-    db = SessionLocal()
+    db = None
     try:
+        db = SessionLocal()
         job = db.get(ScrapedJob, job_id)
         if not job:
-            return _json({"error": "job_not_found", "job_id": job_id})
-        return _json(_job_payload(job))
+            return _json(
+                contract.tool_error(
+                    contract.GET_JOB_TOOL,
+                    "job_not_found",
+                    "No job exists for this id.",
+                    job_id=job_id,
+                )
+            )
+        return _json(contract.get_job_result(contract.job_payload(job, detail=True)))
+    except Exception as exc:
+        return _json(
+            contract.tool_error(
+                contract.GET_JOB_TOOL,
+                "get_job_failed",
+                str(exc) or "Job lookup failed.",
+                job_id=job_id,
+            )
+        )
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
-def search_jobs(query: str, limit: int = config.AGENT_SEARCH_JOBS_LIMIT) -> str:
-    """Search internal jobs DB semantically."""
-    capped = max(1, min(int(limit or 1), config.AGENT_SEARCH_JOBS_LIMIT))
-    db = SessionLocal()
+def search_jobs(query: str, limit: int | None = None, detail: bool = False) -> str:
+    """Search internal jobs DB semantically. Use detail=true for full job text."""
+    clean_query = (query or "").strip()
+    if not clean_query:
+        return _json(
+            contract.tool_error(
+                contract.SEARCH_JOBS_TOOL,
+                "empty_query",
+                "search_jobs requires a non-empty query.",
+            )
+        )
+
+    capped = contract.limit_jobs(limit)
+    db = None
     try:
-        matches = find_similar_jobs(encode_text(query or ""), db, top_k=capped)
+        db = SessionLocal()
+        matches = find_similar_jobs(encode_text(clean_query), db, top_k=capped)
         jobs = []
         for job_id, similarity in matches:
             job = db.get(ScrapedJob, job_id)
             if job:
-                jobs.append({**_job_payload(job), "similarity": round(similarity, 4)})
-        return _json({"jobs": jobs})
+                jobs.append(contract.job_payload(job, similarity, detail=detail))
+        return _json(contract.search_jobs_result(clean_query, capped, jobs, detail=detail))
+    except Exception as exc:
+        return _json(
+            contract.tool_error(
+                contract.SEARCH_JOBS_TOOL,
+                "search_failed",
+                str(exc) or "Job search failed.",
+                query=clean_query,
+            )
+        )
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 def validate_bullet_edit(
@@ -193,18 +232,3 @@ def propose_resume_diff(
             "rewrite": rewrite,
         }
     )
-
-
-def _job_payload(job: ScrapedJob) -> dict[str, Any]:
-    return {
-        "id": job.id,
-        "title": job.title,
-        "company": job.company,
-        "location": job.location,
-        "salary": job.salary,
-        "source": job.source,
-        "url": job.url,
-        "description": job.description,
-        "skills": job.skills or [],
-        "parsed_jd": job.parsed_jd if isinstance(job.parsed_jd, dict) else {},
-    }

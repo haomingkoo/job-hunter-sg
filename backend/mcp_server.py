@@ -5,6 +5,7 @@ from pathlib import Path
 
 os.chdir(Path(__file__).resolve().parent)
 
+import config
 import mcp_tools as tools
 
 try:
@@ -47,9 +48,13 @@ def get_job(job_id: int) -> str:
 
 
 @mcp.tool()
-def search_jobs(query: str, limit: int = 7) -> str:
+def search_jobs(
+    query: str,
+    limit: int = config.AGENT_SEARCH_JOBS_LIMIT,
+    detail: bool = False,
+) -> str:
     """Search internal jobs DB semantically."""
-    return tools.search_jobs(query, limit)
+    return tools.search_jobs(query, limit, detail)
 
 
 @mcp.tool()
