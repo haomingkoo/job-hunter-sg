@@ -4921,6 +4921,55 @@ def _workspace_debate_summary(agent_state: dict, recommendations: list[str], tra
     return summary
 
 
+def _workspace_tailored_draft_text(source_text: str, agent_state: dict) -> str:
+    explicit = agent_state.get("tailored_draft") or agent_state.get("tailored_text")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+
+    draft = source_text
+    for diff in agent_state.get("pending_diffs", []):
+        if not isinstance(diff, dict):
+            continue
+        original = str(diff.get("original") or "")
+        rewrite = str(diff.get("rewrite") or "")
+        if original and rewrite:
+            draft = draft.replace(original, rewrite, 1)
+    return draft if draft != source_text else ""
+
+
+def _save_workspace_tailored_draft(
+    db: Session,
+    user_id: int,
+    tracked: TrackedJob,
+    source_resume_version_id: int | None,
+    source_text: str,
+    agent_state: dict,
+) -> dict | None:
+    draft_text = _workspace_tailored_draft_text(source_text, agent_state)
+    if len(draft_text) < 50:
+        return None
+
+    version = ResumeVersion(
+        user_id=user_id,
+        label=f"Agent draft for {tracked.role[:80]}",
+        source="agent_review",
+        resume_text=draft_text,
+        job_id=tracked.scraped_job_id,
+        job_title=tracked.role,
+        job_company=tracked.company,
+        word_count=len(draft_text.split()),
+        is_master=False,
+    )
+    db.add(version)
+    db.flush()
+    return {
+        "resume_version_id": version.id,
+        "source_resume_version_id": source_resume_version_id,
+        "label": version.label,
+        "status": "draft",
+    }
+
+
 @app.get("/api/tracked", response_model=list[TrackedJobOut])
 def list_tracked(
     user: User = Depends(get_current_user),
@@ -5116,6 +5165,16 @@ def run_application_workspace_agent_review(
             error_message = str(event.get("message") or "Agent review failed.")
 
     agent_state = _get_resume_agent_state(session_id, owner_key=owner_key) if session_id else {}
+    tailored_draft = None
+    if not error_message:
+        tailored_draft = _save_workspace_tailored_draft(
+            db,
+            user.id,
+            tracked,
+            tracked.resume_version_id,
+            resume_text,
+            agent_state,
+        )
     role_metadata = dict(tracked.role_metadata or {})
     role_metadata["agent_review"] = {
         "status": "error" if error_message else "completed",
@@ -5129,6 +5188,7 @@ def run_application_workspace_agent_review(
         "recommendations": recommendations,
         "pending_diffs": agent_state.get("pending_diffs", []),
         "debate_summary": _workspace_debate_summary(agent_state, recommendations, trace_id),
+        "tailored_draft": tailored_draft,
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
     }
     tracked.role_metadata = role_metadata

@@ -22,7 +22,7 @@ def _signup(client: TestClient) -> dict:
     return {"Authorization": f"Bearer {response.json()['token']}"}
 
 
-def _create_workspace_with_resume(client: TestClient, headers: dict) -> dict:
+def _create_workspace_with_resume(client: TestClient, headers: dict, role_metadata: dict | None = None) -> dict:
     resume = client.post("/api/resume/versions", json={
         "label": "Master resume",
         "resume_text": "EXPERIENCE\n- Built Python data pipelines for public-sector services.",
@@ -36,6 +36,7 @@ def _create_workspace_with_resume(client: TestClient, headers: dict) -> dict:
         "job_description": "Build agentic workflows for public-sector digital services.",
         "status": "saved",
         "resume_version_id": resume.json()["id"],
+        "role_metadata": role_metadata or {},
     }, headers=headers)
     assert created.status_code == 201
     return created.json()
@@ -118,7 +119,13 @@ def test_application_workspace_agent_review_saves_artifacts(monkeypatch):
     init_db()
     client = TestClient(app)
     headers = _signup(client)
-    workspace_id = _create_workspace_with_resume(client, headers)["id"]
+    workspace = _create_workspace_with_resume(
+        client,
+        headers,
+        role_metadata={"submitted_resume": {"artifact_id": "submitted-1"}},
+    )
+    workspace_id = workspace["id"]
+    source_resume_version_id = workspace["resume_version_id"]
 
     seen_body = {}
 
@@ -170,7 +177,18 @@ def test_application_workspace_agent_review_saves_artifacts(monkeypatch):
         "confidence": "medium",
         "trace_id": "trace-123",
     }
+    assert review["tailored_draft"]["source_resume_version_id"] == source_resume_version_id
+    assert workspace["role_metadata"]["submitted_resume"] == {"artifact_id": "submitted-1"}
     assert workspace["stage_history"][-1]["source"] == "agent_review"
+
+    draft = client.get(f"/api/resume/versions/{review['tailored_draft']['resume_version_id']}", headers=headers)
+    assert draft.status_code == 200
+    assert draft.json()["source"] == "agent_review"
+    assert "Built agentic Python data workflows for public-sector services." in draft.json()["resume_text"]
+
+    source = client.get(f"/api/resume/versions/{source_resume_version_id}", headers=headers)
+    assert source.status_code == 200
+    assert "Built Python data pipelines for public-sector services." in source.json()["resume_text"]
 
 
 def test_application_workspace_agent_review_returns_clean_config_error(monkeypatch):
