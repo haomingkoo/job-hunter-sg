@@ -4,6 +4,7 @@ FastAPI backend for Job Hunter SG.
 
 from __future__ import annotations
 
+import base64
 import csv
 import html
 import hashlib
@@ -25,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pathlib import Path
 
-from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -5203,6 +5204,75 @@ def run_application_workspace_agent_review(
     db.refresh(tracked)
     if error_message:
         raise HTTPException(status_code=503, detail=error_message)
+    return _workspace_response(tracked)
+
+
+@app.post("/api/applications/workspaces/{workspace_id}/submitted-resume", response_model=ApplicationWorkspaceOut)
+async def upload_workspace_submitted_resume(
+    workspace_id: int,
+    file: UploadFile = File(...),
+    submitted_date: str = Form(""),
+    notes: str = Form(""),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    tracked = db.query(TrackedJob).filter(TrackedJob.id == workspace_id).first()
+    if not tracked:
+        raise HTTPException(status_code=404, detail="Application workspace not found")
+    if tracked.user_id != user.id:
+        raise HTTPException(status_code=403, detail="Not your application workspace")
+
+    file_bytes = await file.read()
+    try:
+        parsed = parse_resume(
+            filename=file.filename or "resume",
+            content_type=file.content_type or "",
+            file_bytes=file_bytes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    now = datetime.now(timezone.utc)
+    filename = sanitize_user_input(file.filename or "resume")
+    artifact = {
+        "artifact_id": secrets.token_urlsafe(12),
+        "filename": filename,
+        "content_type": file.content_type or "",
+        "file_type": parsed.get("file_type", ""),
+        "size_bytes": len(file_bytes),
+        "submitted_date": sanitize_user_input(submitted_date) or now.date().isoformat(),
+        "notes": sanitize_user_input(notes),
+        "text": parsed.get("text", ""),
+        "word_count": parsed.get("word_count", 0),
+        "line_count": parsed.get("line_count", 0),
+        "parse_quality": parsed.get("parse_quality", {}),
+        "content_base64": base64.b64encode(file_bytes).decode("ascii"),
+        "created_at": now.isoformat(),
+    }
+    role_metadata = dict(tracked.role_metadata or {})
+    history = list(role_metadata.get("submitted_resume_artifacts") or [])
+    history.append(artifact)
+    role_metadata["submitted_resume_artifacts"] = history
+    role_metadata["submitted_resume"] = {
+        key: artifact[key]
+        for key in (
+            "artifact_id",
+            "filename",
+            "content_type",
+            "file_type",
+            "size_bytes",
+            "submitted_date",
+            "notes",
+            "text",
+            "word_count",
+            "line_count",
+            "parse_quality",
+            "created_at",
+        )
+    }
+    tracked.role_metadata = role_metadata
+    db.commit()
+    db.refresh(tracked)
     return _workspace_response(tracked)
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import io
 import secrets
 import sys
 
@@ -210,3 +211,78 @@ def test_application_workspace_agent_review_returns_clean_config_error(monkeypat
     review = loaded.json()["role_metadata"]["agent_review"]
     assert review["status"] == "error"
     assert loaded.json()["stage_history"][-1]["source"] == "agent_review_error"
+
+
+def test_application_workspace_submitted_resume_artifact_survives_draft_generation(monkeypatch):
+    from docx import Document
+
+    from database import init_db
+    import main
+    from main import app
+
+    init_db()
+    client = TestClient(app)
+    headers = _signup(client)
+    workspace = _create_workspace_with_resume(client, headers)
+    workspace_id = workspace["id"]
+
+    doc = Document()
+    doc.add_paragraph("Submitted resume for GovTech Senior AI Engineer.")
+    doc.add_paragraph("Built agentic workflows with Python and FastAPI.")
+    buffer = io.BytesIO()
+    doc.save(buffer)
+
+    uploaded = client.post(
+        f"/api/applications/workspaces/{workspace_id}/submitted-resume",
+        headers=headers,
+        data={"submitted_date": "2026-07-04", "notes": "Submitted through company portal."},
+        files={
+            "file": (
+                "submitted.docx",
+                buffer.getvalue(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    assert uploaded.status_code == 200
+    submitted = uploaded.json()["role_metadata"]["submitted_resume"]
+    assert submitted["filename"] == "submitted.docx"
+    assert submitted["submitted_date"] == "2026-07-04"
+    assert submitted["notes"] == "Submitted through company portal."
+    assert "Submitted resume for GovTech" in submitted["text"]
+    assert len(uploaded.json()["role_metadata"]["submitted_resume_artifacts"]) == 1
+    assert uploaded.json()["role_metadata"]["submitted_resume_artifacts"][0]["content_base64"]
+
+    monkeypatch.setattr(
+        main,
+        "_stream_resume_agent_events",
+        lambda _body: iter(
+            [
+                {"event": "session", "session_id": "submitted-artifact-review"},
+                {"event": "token", "session_id": "submitted-artifact-review", "content": "Draft saved."},
+                {"event": "done", "session_id": "submitted-artifact-review"},
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_get_resume_agent_state",
+        lambda session_id, owner_key=None: {
+            "session_id": session_id,
+            "pending_diffs": [
+                {
+                    "bullet_id": "exp-0-b0",
+                    "original": "Built Python data pipelines for public-sector services.",
+                    "rewrite": "Built agentic Python data workflows for public-sector services.",
+                    "status": "pending",
+                }
+            ],
+        },
+    )
+
+    reviewed = client.post(f"/api/applications/workspaces/{workspace_id}/agent-review", headers=headers)
+    assert reviewed.status_code == 200
+    metadata = reviewed.json()["role_metadata"]
+    assert metadata["submitted_resume"]["artifact_id"] == submitted["artifact_id"]
+    assert len(metadata["submitted_resume_artifacts"]) == 1
+    assert metadata["agent_review"]["tailored_draft"]["resume_version_id"]
