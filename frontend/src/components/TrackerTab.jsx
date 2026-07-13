@@ -106,6 +106,8 @@ export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiv
   const [workspace, setWorkspace] = useState(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceError, setWorkspaceError] = useState("");
+  const [workspaceAgentLoading, setWorkspaceAgentLoading] = useState(false);
+  const [workspaceAgentError, setWorkspaceAgentError] = useState("");
   const [submittedFile, setSubmittedFile] = useState(null);
   const [submittedDate, setSubmittedDate] = useState(todayStr());
   const [submittedNotes, setSubmittedNotes] = useState("");
@@ -212,6 +214,7 @@ export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiv
   const openWorkspace = async (id) => {
     setWorkspace(null);
     setWorkspaceError("");
+    setWorkspaceAgentError("");
     setSubmittedFile(null);
     setSubmittedDate(todayStr());
     setSubmittedNotes("");
@@ -224,6 +227,37 @@ export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiv
       setWorkspaceError(err.message || "Failed to load workspace.");
     } finally {
       setWorkspaceLoading(false);
+    }
+  };
+
+  const runWorkspaceAgentReview = async () => {
+    if (!workspace || workspaceAgentLoading) return;
+    setWorkspaceAgentLoading(true);
+    setWorkspaceAgentError("");
+    try {
+      let resumeVersionId = workspace.resume_version_id;
+      if (!resumeVersionId) {
+        const versionsResponse = await apiFetch("/api/resume/versions");
+        const versions = await versionsResponse.json();
+        const selectedVersion = versions.find((version) => version.is_master) || versions[0];
+        if (!selectedVersion) {
+          throw new Error("Save a resume version in Resume before running Deep Agent review.");
+        }
+        resumeVersionId = selectedVersion.id;
+        await apiFetch(`/api/tracked/${workspace.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ resume_version_id: resumeVersionId }),
+        });
+      }
+      const response = await apiFetch(`/api/applications/workspaces/${workspace.id}/agent-review`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      setWorkspace(await response.json());
+    } catch (err) {
+      setWorkspaceAgentError(err.message || "Deep Agent review failed.");
+    } finally {
+      setWorkspaceAgentLoading(false);
     }
   };
 
@@ -498,7 +532,20 @@ export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiv
                 <p className="text-sm text-[#6A89A7]">{workspace.title} at {workspace.company}</p>
               )}
             </div>
-            <button onClick={() => { setWorkspace(null); setWorkspaceError(""); }} className="text-[#6A89A7] hover:text-[#384959]"><X size={18} /></button>
+            <div className="flex items-center gap-2">
+              {workspace && (
+                <button
+                  type="button"
+                  onClick={runWorkspaceAgentReview}
+                  disabled={workspaceAgentLoading}
+                  className="flex items-center gap-2 rounded-lg bg-[#384959] px-3 py-2 text-xs font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-50"
+                >
+                  {workspaceAgentLoading ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+                  {workspaceAgentLoading ? "Reviewing..." : agentReview ? "Run review again" : "Run Deep Agent review"}
+                </button>
+              )}
+              <button onClick={() => { setWorkspace(null); setWorkspaceError(""); setWorkspaceAgentError(""); }} className="text-[#6A89A7] hover:text-[#384959]"><X size={18} /></button>
+            </div>
           </div>
           {workspaceLoading && (
             <div className="flex items-center gap-2 text-sm text-[#6A89A7]">
@@ -507,6 +554,23 @@ export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiv
           )}
           {workspaceError && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">{workspaceError}</div>
+          )}
+          {workspaceAgentLoading && (
+            <div className="flex items-start gap-3 rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3 text-sm text-[#384959]" role="status">
+              <Loader2 size={16} className="mt-0.5 shrink-0 animate-spin text-[#6A89A7]" />
+              <div>
+                <div className="font-medium">Deep Agent is reviewing your evidence and role fit.</div>
+                <div className="mt-1 text-xs text-[#6A89A7]">This usually takes 20–40 seconds. You will review every proposed edit before anything changes.</div>
+              </div>
+            </div>
+          )}
+          {workspaceAgentError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              {workspaceAgentError}
+              {workspaceAgentError.startsWith("Save a resume version") && (
+                <button type="button" onClick={() => setActiveTab("resume")} className="ml-2 font-medium underline">Open Resume</button>
+              )}
+            </div>
           )}
           {workspace && (
             <>

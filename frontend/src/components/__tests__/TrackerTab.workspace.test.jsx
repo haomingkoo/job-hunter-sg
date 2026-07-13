@@ -177,6 +177,73 @@ describe("TrackerTab workspace creation", () => {
     expect(container.textContent).toContain("No submitted resume recorded yet.");
   });
 
+  it("runs a linked resume through Deep Agent with a clear loading state", async () => {
+    const workspace = {
+      id: 123,
+      company: "GovTech",
+      title: "Senior AI Engineer",
+      role: "Senior AI Engineer",
+      job_description: "Build agentic workflows for public-sector digital services.",
+      source: "Other",
+      status: "saved",
+      date_applied: "2026-07-04",
+      resume_version_id: 7,
+      role_metadata: {},
+      stage_history: [],
+    };
+    const reviewedWorkspace = {
+      ...workspace,
+      role_metadata: {
+        agent_review: {
+          debate_summary: {
+            roles: ["recruiter"],
+            final_recommendation: "Lead with verified delivery impact.",
+            confidence: "high",
+          },
+        },
+      },
+    };
+    let finishReview;
+    const reviewResponse = new Promise((resolve) => {
+      finishReview = () => resolve({ json: vi.fn().mockResolvedValue(reviewedWorkspace) });
+    });
+    apiFetch
+      .mockResolvedValueOnce({ json: vi.fn().mockResolvedValue(workspace) })
+      .mockReturnValueOnce(reviewResponse);
+
+    await act(async () => {
+      root.render(
+        <TrackerTab
+          jobs={[{ id: 123, company: "GovTech", role: "Senior AI Engineer", status: "saved", source: "Other" }]}
+          refreshJobs={refreshJobs}
+          setActiveTab={() => {}}
+        />,
+      );
+    });
+    await act(async () => {
+      container.querySelector("button[aria-label='Open workspace for GovTech Senior AI Engineer']").click();
+    });
+
+    const runButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent.includes("Run Deep Agent review"));
+    await act(async () => {
+      runButton.click();
+    });
+
+    expect(container.querySelector("[role='status']").textContent).toContain("20–40 seconds");
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      "/api/applications/workspaces/123/agent-review",
+      { method: "POST", body: "{}" },
+    );
+
+    await act(async () => {
+      finishReview();
+      await reviewResponse;
+    });
+    expect(container.textContent).toContain("Lead with verified delivery impact.");
+    expect(container.querySelector("[role='status']")).toBeNull();
+  });
+
   it("groups tracked applications by status in board view", async () => {
     await act(async () => {
       root.render(
