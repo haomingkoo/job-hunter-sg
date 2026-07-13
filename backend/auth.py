@@ -166,18 +166,11 @@ def get_current_user(
     db: Session = Depends(get_db),
 ) -> User:
     """
-    Get authenticated user. Supports two modes:
-    1. Cloudflare Access (production): reads Cf-Access-Authenticated-User-Email header
-    2. JWT Bearer token (local dev / API access)
-    """
-    # Mode 1: Cloudflare Access header (production only)
-    # SECURITY: Only trust this header when behind Cloudflare (production).
-    # In dev (SQLite), ignore it to prevent header spoofing.
-    _is_prod = "postgresql" in os.environ.get("DATABASE_URL", "")
-    if cf_access_email and _is_prod:
-        return _get_or_create_cf_user(cf_access_email, db)
+    Get an authenticated user from the application's signed bearer token.
 
-    # Mode 2: JWT Bearer token (local dev / API)
+    Cloudflare's email header is intentionally ignored. It is not proof of
+    identity when the Railway origin can be reached directly.
+    """
     token = _extract_token(authorization)
     if not token:
         raise HTTPException(
@@ -200,13 +193,7 @@ def get_optional_user(
     cf_access_email: Optional[str] = Header(None, alias="Cf-Access-Authenticated-User-Email"),
     db: Session = Depends(get_db),
 ) -> Optional[User]:
-    """Return user if authenticated (via CF Access or JWT), else None."""
-    # Mode 1: Cloudflare Access (production only)
-    _is_prod = "postgresql" in os.environ.get("DATABASE_URL", "")
-    if cf_access_email and _is_prod:
-        return _get_or_create_cf_user(cf_access_email, db)
-
-    # Mode 2: JWT
+    """Return the signed-bearer user when present, otherwise None."""
     token = _extract_token(authorization)
     if not token:
         return None
