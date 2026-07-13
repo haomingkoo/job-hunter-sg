@@ -1,8 +1,16 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Briefcase, Loader2, LogOut, ChevronLeft } from "lucide-react";
 
-import { API_BASE, AUTH_EXPIRED_EVENT, apiFetch, clearResumeDraftStorage } from "./lib/api.js";
+import {
+  API_BASE,
+  AUTH_EXPIRED_EVENT,
+  AUTH_SYNC_KEY,
+  apiFetch,
+  bindResumeDraftStorageToUser,
+  broadcastAuthChange,
+  clearResumeDraftStorage,
+} from "./lib/api.js";
 
 import Nav from "./components/Nav.jsx";
 import AuthModal from "./components/AuthModal.jsx";
@@ -21,6 +29,39 @@ import ResumeTab from "./components/ResumeTab.jsx";
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const AUTH_LINK_TOKEN_NAMES = ["reset_token", "verify_token"];
+
+export function readAuthLinkTokens(href = window.location.href) {
+  const url = new URL(href);
+  const hashParams = new URLSearchParams(url.hash.slice(1));
+  return Object.fromEntries(
+    AUTH_LINK_TOKEN_NAMES.map((name) => [name, hashParams.get(name) || url.searchParams.get(name) || ""]),
+  );
+}
+
+export function removeAuthLinkTokensFromUrl(names = AUTH_LINK_TOKEN_NAMES) {
+  const url = new URL(window.location.href);
+  const hashParams = new URLSearchParams(url.hash.slice(1));
+  let changed = false;
+  let hashChanged = false;
+
+  names.forEach((name) => {
+    if (url.searchParams.has(name)) {
+      url.searchParams.delete(name);
+      changed = true;
+    }
+    if (hashParams.has(name)) {
+      hashParams.delete(name);
+      changed = true;
+      hashChanged = true;
+    }
+  });
+
+  if (!changed) return;
+  if (hashChanged) url.hash = hashParams.toString();
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
 export default function JobHunterSG() {
   const [activeTab, setActiveTab] = useState("home");
   const [trackedJobs, setTrackedJobs] = useState([]);
@@ -37,22 +78,27 @@ export default function JobHunterSG() {
 
   // Auth state
   const [user, setUser] = useState(null);
+  const activeUserIdRef = useRef(null);
+  const identityGenerationRef = useRef(0);
+  activeUserIdRef.current = user?.id ?? null;
   const [token, setToken] = useState(() => localStorage.getItem("token"));
+  const [authGeneration, setAuthGeneration] = useState(0);
   const [authConfig, setAuthConfig] = useState(null);
   const [cloudflareIdentityReady, setCloudflareIdentityReady] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get("reset_token") || "");
-  const [verifyToken, setVerifyToken] = useState(() => new URLSearchParams(window.location.search).get("verify_token") || "");
+  const [authLinkTokens] = useState(readAuthLinkTokens);
+  const [resetToken, setResetToken] = useState(authLinkTokens.reset_token);
+  const [verifyToken, setVerifyToken] = useState(authLinkTokens.verify_token);
+
+  // Layout effects run before the app's fetch effects, so link secrets cannot
+  // leak into later requests or remain visible while verification is running.
+  useLayoutEffect(() => removeAuthLinkTokensFromUrl(), []);
 
   const clearAuthToken = useCallback((name) => {
     if (name === "reset_token") setResetToken("");
     if (name === "verify_token") setVerifyToken("");
-    const url = new URL(window.location.href);
-    if (url.searchParams.has(name)) {
-      url.searchParams.delete(name);
-      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-    }
+    removeAuthLinkTokensFromUrl([name]);
   }, []);
 
   useEffect(() => {
@@ -61,13 +107,41 @@ export default function JobHunterSG() {
 
   useEffect(() => {
     const handleAuthExpired = () => {
+      identityGenerationRef.current += 1;
+      bindResumeDraftStorageToUser(null);
       setUser(null);
       setToken(null);
       setTrackedJobs([]);
       setTrackedJobsError("");
+      setAuthLoading(false);
+      setActiveTab("home");
+      setShowAuthModal(false);
     };
     window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+  }, []);
+
+  useEffect(() => {
+    const handleAuthStorage = (event) => {
+      if (
+        (event.key !== "token" && event.key !== AUTH_SYNC_KEY)
+        || (event.storageArea && event.storageArea !== localStorage)
+      ) return;
+      identityGenerationRef.current += 1;
+      clearResumeDraftStorage();
+      setUser(null);
+      setTrackedJobs([]);
+      setTrackedJobsError("");
+      setCloudflareIdentityReady(false);
+      setAuthLoading(false);
+      const isLoginSignal = event.key === AUTH_SYNC_KEY && event.newValue?.startsWith("login:");
+      setToken(event.key === "token" ? event.newValue : localStorage.getItem("token"));
+      if (isLoginSignal) setAuthGeneration((generation) => generation + 1);
+      setActiveTab("home");
+      setShowAuthModal(false);
+    };
+    window.addEventListener("storage", handleAuthStorage);
+    return () => window.removeEventListener("storage", handleAuthStorage);
   }, []);
 
   useEffect(() => {
@@ -90,42 +164,86 @@ export default function JobHunterSG() {
   useEffect(() => {
     if (!authConfig) return undefined;
     let cancelled = false;
+    const expectedGeneration = identityGenerationRef.current;
+    const isCurrentIdentity = () => (
+      !cancelled && identityGenerationRef.current === expectedGeneration
+    );
     setAuthLoading(true);
     (async () => {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
         const resp = await fetch(`${API_BASE}/api/auth/me`, { headers, credentials: "include" });
         if (resp.status === 401) {
+          if (token) {
+            if (isCurrentIdentity()) {
+              localStorage.removeItem("token");
+              clearResumeDraftStorage();
+              identityGenerationRef.current += 1;
+              setUser(null);
+              setTrackedJobs([]);
+              setTrackedJobsError("");
+              setActiveTab("home");
+              setShowAuthModal(false);
+              setToken(null);
+              setAuthLoading(false);
+            }
+          } else if (isCurrentIdentity()) {
+            bindResumeDraftStorageToUser(null);
+          }
           if (authConfig.mode === "cloudflare") {
             const data = await resp.json().catch(() => ({}));
-            if (!cancelled) setCloudflareIdentityReady(data.detail === "Account registration required");
+            if (isCurrentIdentity()) {
+              setCloudflareIdentityReady(data.detail === "Account registration required");
+            }
           }
           return;
         }
         if (!resp.ok) throw new Error(`Account lookup failed (${resp.status})`);
         const data = await resp.json();
-        if (!cancelled) {
+        if (isCurrentIdentity()) {
+          bindResumeDraftStorageToUser(data.id);
           setUser(data);
           if (authConfig.mode === "cloudflare") setCloudflareIdentityReady(true);
         }
       } catch {
-        if (token) localStorage.removeItem("token");
-        if (!cancelled && token) setToken(null);
+        if (token && isCurrentIdentity()) localStorage.removeItem("token");
+        if (isCurrentIdentity() && token) {
+          identityGenerationRef.current += 1;
+          clearResumeDraftStorage();
+          setUser(null);
+          setTrackedJobs([]);
+          setTrackedJobsError("");
+          setActiveTab("home");
+          setShowAuthModal(false);
+          setToken(null);
+          setAuthLoading(false);
+        }
       } finally {
-        if (!cancelled) setAuthLoading(false);
+        if (isCurrentIdentity()) setAuthLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [authConfig, token]);
+  }, [authConfig, token, authGeneration]);
 
   // Load tracked jobs once authenticated
   const refreshJobs = useCallback(async () => {
+    const expectedUserId = activeUserIdRef.current;
+    const expectedGeneration = identityGenerationRef.current;
+    if (expectedUserId === null) return;
     try {
       const resp = await apiFetch("/api/tracked");
       const data = await resp.json();
+      if (
+        activeUserIdRef.current !== expectedUserId
+        || identityGenerationRef.current !== expectedGeneration
+      ) return;
       setTrackedJobs(Array.isArray(data) ? data : data.jobs || []);
       setTrackedJobsError("");
     } catch (err) {
+      if (
+        activeUserIdRef.current !== expectedUserId
+        || identityGenerationRef.current !== expectedGeneration
+      ) return;
       setTrackedJobsError(err.message || "Could not refresh tracked jobs.");
     }
   }, []);
@@ -135,12 +253,19 @@ export default function JobHunterSG() {
   }, [user, refreshJobs]);
 
   const handleAuth = (authUser, authToken) => {
+    identityGenerationRef.current += 1;
+    bindResumeDraftStorageToUser(authUser.id);
+    setTrackedJobs([]);
+    setTrackedJobsError("");
     setUser(authUser);
     setToken(authToken);
+    if (!authToken) broadcastAuthChange("login");
   };
 
   const handleLogout = () => {
+    identityGenerationRef.current += 1;
     localStorage.removeItem("token");
+    broadcastAuthChange("logout");
     clearResumeDraftStorage();
     setUser(null);
     setToken(null);
@@ -154,7 +279,9 @@ export default function JobHunterSG() {
   };
 
   const handleAccountDeleted = (logoutUrl) => {
+    identityGenerationRef.current += 1;
     localStorage.removeItem("token");
+    broadcastAuthChange("logout");
     clearResumeDraftStorage();
     setUser(null);
     setToken(null);
@@ -301,7 +428,7 @@ export default function JobHunterSG() {
           <Nav active={activeTab} setActive={navigateTo} />
           <AnimatePresence mode="wait">
             <motion.div
-              key={activeTab}
+              key={`${activeTab}:${user?.id ?? "anonymous"}`}
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}

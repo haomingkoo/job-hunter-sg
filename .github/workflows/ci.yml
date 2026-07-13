@@ -33,7 +33,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r backend/requirements.txt pytest ruff==0.15.20 ty==0.0.56
+          python -m pip install -r backend/requirements.txt pip-audit pytest ruff==0.15.20 ty==0.0.56
+
+      - name: Audit Python dependencies
+        run: pip-audit -r backend/requirements.txt
 
       - name: Compile backend
         run: python -m compileall -q backend
@@ -68,6 +71,10 @@ jobs:
       - name: Test frontend
         working-directory: frontend
         run: npm test -- --run
+
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high
 
       - name: Build frontend
         working-directory: frontend

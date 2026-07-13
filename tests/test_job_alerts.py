@@ -50,8 +50,32 @@ def test_alert_score_returns_none_without_resume_overlap():
 
 def test_unsubscribe_token_round_trip(monkeypatch):
     monkeypatch.setenv("JWT_SECRET", "test-secret")
+    user = SimpleNamespace(id=42, api_key="account-nonce-a")
 
-    token = create_unsubscribe_token(42)
+    class Query:
+        def __init__(self, current_user):
+            self.current_user = current_user
 
-    assert verify_unsubscribe_token(token) == 42
-    assert verify_unsubscribe_token(token + "bad") is None
+        def filter(self, _condition):
+            return self
+
+        def populate_existing(self):
+            return self
+
+        def first(self):
+            return self.current_user
+
+    class DB:
+        def __init__(self, current_user):
+            self.current_user = current_user
+
+        def query(self, _model):
+            return Query(self.current_user)
+
+    token = create_unsubscribe_token(user)
+
+    assert verify_unsubscribe_token(token, DB(user)) == 42
+    assert verify_unsubscribe_token(token + "bad", DB(user)) is None
+    assert verify_unsubscribe_token(f"{'9' * 100}.bad", DB(user)) is None
+    replacement = SimpleNamespace(id=42, api_key="account-nonce-b")
+    assert verify_unsubscribe_token(token, DB(replacement)) is None

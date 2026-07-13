@@ -44,6 +44,8 @@ def create_agent_model(temperature: float = 0.0):
         api_key=SecretStr(_api_key()),
         model=config.SEALION_AGENT_MODEL,
         temperature=temperature,
+        timeout=config.SEALION_HTTP_TIMEOUT,
+        max_retries=1,
         rate_limiter=_rate_limiter,
     )
 
@@ -61,5 +63,7 @@ def create_smart_model(temperature: float = 0.0):
         model=config.SEALION_SMART_MODEL,
         temperature=temperature,
         max_completion_tokens=config.AGENT_SMART_MAX_TOKENS,
+        timeout=config.SEALION_HTTP_TIMEOUT,
+        max_retries=1,
         rate_limiter=_rate_limiter,
     )

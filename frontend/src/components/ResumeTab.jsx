@@ -501,7 +501,9 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           }
 
           if (statusData?.complete) {
-            const resultResponse = await apiFetch(`/api/resume/tailor/${tailoringSessionId}/result`);
+            const resultResponse = await apiFetch(`/api/resume/tailor/${tailoringSessionId}/result`, {
+              method: "POST",
+            });
             const resultData = await resultResponse.json();
             if (cancelled) return;
             setTailoringResult(resultData);

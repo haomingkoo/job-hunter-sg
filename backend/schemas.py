@@ -78,6 +78,16 @@ class ResetPasswordRequest(BaseModel):
 
 class VerifyEmailRequest(BaseModel):
     token: str = Field(..., min_length=20, max_length=300)
+    password: str = Field(..., min_length=8, max_length=128)
+    name: str = Field(..., min_length=1, max_length=255)
+    accepted_terms: bool = False
+
+    @field_validator("accepted_terms")
+    @classmethod
+    def accepted_terms_required(cls, v: bool) -> bool:
+        if not v:
+            raise ValueError("You must accept the Terms of Service and Privacy Notice")
+        return v
 
 
 class ResendVerificationRequest(BaseModel):

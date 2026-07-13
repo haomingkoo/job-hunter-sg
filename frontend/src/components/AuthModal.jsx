@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { X, Briefcase, Loader2, Mail, KeyRound, ShieldCheck } from "lucide-react";
 import { API_BASE } from "../lib/api.js";
 
@@ -37,6 +37,14 @@ export default function AuthModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (initialResetToken) {
@@ -52,37 +60,13 @@ export default function AuthModal({
     setMode("verify");
     setError("");
     setSuccess("");
-
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      try {
-        const resp = await fetch(`${API_BASE}/api/auth/verify-email`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: initialVerifyToken }),
-        });
-        if (!resp.ok) throw new Error(await readAuthError(resp));
-        const data = await resp.json();
-        if (cancelled) return;
-        localStorage.setItem("token", data.token);
-        onVerifyComplete?.();
-        onAuth(data.user, data.token);
-      } catch (err) {
-        if (!cancelled) setError(err.message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-
-    return () => { cancelled = true; };
   }, [initialVerifyToken]);
 
   const copy = useMemo(() => {
     if (mode === "verify") {
       return {
         title: "Verify your email",
-        subtitle: loading ? "Checking your verification link..." : "Your account could not be verified.",
+        subtitle: "Choose the password for this account.",
         icon: Mail,
       };
     }
@@ -144,6 +128,28 @@ export default function AuthModal({
     setSuccess("");
     setLoading(true);
     try {
+      if (mode === "verify") {
+        if (!initialVerifyToken) throw new Error("Verification link is missing. Request a new email.");
+        if (password !== confirmPassword) throw new Error("Passwords do not match.");
+        const resp = await fetch(`${API_BASE}/api/auth/verify-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token: initialVerifyToken,
+            password,
+            name,
+            accepted_terms: acceptedTerms,
+          }),
+        });
+        if (!resp.ok) throw new Error(await readAuthError(resp));
+        const data = await resp.json();
+        if (!mountedRef.current) return;
+        localStorage.setItem("token", data.token);
+        onVerifyComplete?.();
+        onAuth(data.user, data.token);
+        return;
+      }
+
       if (mode === "forgot") {
         const resp = await fetch(`${API_BASE}/api/auth/forgot-password`, {
           method: "POST",
@@ -151,6 +157,7 @@ export default function AuthModal({
           body: JSON.stringify({ email }),
         });
         if (!resp.ok) throw new Error(await readAuthError(resp));
+        if (!mountedRef.current) return;
         setSuccess("If that email is registered, a reset link has been sent.");
         return;
       }
@@ -164,6 +171,7 @@ export default function AuthModal({
           body: JSON.stringify({ token: resetToken, password: newPassword }),
         });
         if (!resp.ok) throw new Error(await readAuthError(resp));
+        if (!mountedRef.current) return;
         setSuccess("Password updated. Sign in with your new password.");
         setResetToken("");
         setNewPassword("");
@@ -182,6 +190,7 @@ export default function AuthModal({
         });
         if (!resp.ok) throw new Error(await readAuthError(resp));
         const data = await resp.json();
+        if (!mountedRef.current) return;
         localStorage.removeItem("token");
         onAuth(data, null);
         return;
@@ -197,18 +206,20 @@ export default function AuthModal({
       if (!resp.ok) throw new Error(await readAuthError(resp));
       if (mode === "signup") {
         const data = await resp.json();
+        if (!mountedRef.current) return;
         setPassword("");
         setMode("signup-sent");
         setSuccess(data.message || "Check your email for a verification link before signing in.");
         return;
       }
       const data = await resp.json();
+      if (!mountedRef.current) return;
       localStorage.setItem("token", data.token);
       onAuth(data.user, data.token);
     } catch (err) {
-      setError(err.message);
+      if (mountedRef.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   };
 
@@ -224,11 +235,12 @@ export default function AuthModal({
       });
       if (!resp.ok) throw new Error(await readAuthError(resp));
       await resp.json();
+      if (!mountedRef.current) return;
       setSuccess("If your account is awaiting verification, a new link has been sent.");
     } catch (err) {
-      setError(err.message);
+      if (mountedRef.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
   };
 
@@ -258,12 +270,7 @@ export default function AuthModal({
           </div>
         )}
 
-        {mode === "verify" ? (
-          <div className="flex items-center justify-center gap-2 py-4 text-sm text-[#6A89A7]">
-            {loading && <Loader2 size={16} className="animate-spin" />}
-            {loading ? "Verifying..." : "Please request a new verification email and try again."}
-          </div>
-        ) : mode === "signup-sent" ? (
+        {mode === "signup-sent" ? (
           <div className="space-y-3">
             <button
               type="button"
@@ -291,7 +298,7 @@ export default function AuthModal({
           </a>
         ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
-          {(mode === "signup" || authConfig.mode === "cloudflare") && (
+          {(mode === "signup" || mode === "verify" || authConfig.mode === "cloudflare") && (
             <input
               type="text" aria-label="Full name" placeholder="Full Name" value={name}
               onChange={(e) => setName(e.target.value)} required
@@ -309,11 +316,20 @@ export default function AuthModal({
             />
           )}
 
-          {authConfig.mode === "password" && (mode === "login" || mode === "signup") && (
+          {authConfig.mode === "password" && (mode === "login" || mode === "signup" || mode === "verify") && (
             <input
-              type="password" aria-label="Password" placeholder="Password" value={password}
+              type="password" aria-label="Password" placeholder={mode === "verify" ? "Choose password" : "Password"} value={password}
               onChange={(e) => setPassword(e.target.value)} required minLength={8}
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              autoComplete={mode === "signup" || mode === "verify" ? "new-password" : "current-password"}
+              className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
+            />
+          )}
+
+          {authConfig.mode === "password" && mode === "verify" && (
+            <input
+              type="password" aria-label="Confirm password" placeholder="Confirm password" value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)} required minLength={8}
+              autoComplete="new-password"
               className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
             />
           )}
@@ -335,7 +351,7 @@ export default function AuthModal({
             </>
           )}
 
-          {(mode === "signup" || authConfig.mode === "cloudflare") && (
+          {(mode === "signup" || mode === "verify" || authConfig.mode === "cloudflare") && (
             <label className="flex items-start gap-3 rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3 text-left">
               <input
                 type="checkbox"
@@ -364,6 +380,7 @@ export default function AuthModal({
             {authConfig.mode === "cloudflare" && "Create Account"}
             {authConfig.mode === "password" && mode === "login" && "Sign In"}
             {mode === "signup" && "Create Account"}
+            {mode === "verify" && "Activate Account"}
             {mode === "forgot" && "Send Reset Link"}
             {mode === "reset" && "Update Password"}
           </button>

@@ -117,6 +117,34 @@ class PipelineState:
 _active_pipelines: dict[str, PipelineState] = {}
 _pipelines_lock = threading.Lock()
 _PIPELINE_TTL_SECONDS = 1800  # 30 minutes
+_MAX_ACTIVE_PIPELINES = 4
+_MAX_RETAINED_PIPELINES = 32
+
+
+class PipelineCapacityError(RuntimeError):
+    """Raised when another tailoring pipeline cannot be admitted."""
+
+
+def _trim_terminal_pipelines_locked(max_total: int) -> None:
+    """Evict the oldest finished sessions until the registry fits."""
+    overflow = len(_active_pipelines) - max_total
+    if overflow <= 0:
+        return
+
+    terminal = sorted(
+        (
+            (session_id, state)
+            for session_id, state in _active_pipelines.items()
+            if state.stage_name == "complete" or state.error is not None
+        ),
+        key=lambda item: (
+            getattr(item[1], "_completed_at", item[1]._created_at),
+            item[1]._created_at,
+            item[0],
+        ),
+    )
+    for session_id, _state in terminal[:overflow]:
+        _active_pipelines.pop(session_id, None)
 
 
 def get_pipeline_state(
@@ -167,6 +195,7 @@ def _cleanup_expired_pipelines() -> None:
         ]
         for sid in expired:
             del _active_pipelines[sid]
+        _trim_terminal_pipelines_locked(_MAX_RETAINED_PIPELINES)
         if expired:
             log.info(f"[PIPELINE] Cleaned up {len(expired)} expired sessions")
 
@@ -1010,6 +1039,20 @@ def run_pipeline(
     _cleanup_expired_pipelines()
 
     with _pipelines_lock:
+        active = [
+            existing
+            for existing in _active_pipelines.values()
+            if existing.stage_name != "complete" and existing.error is None
+        ]
+        if owner_key is not None and any(
+            existing.owner_key == owner_key for existing in active
+        ):
+            raise PipelineCapacityError(
+                "A tailoring pipeline is already running for this account."
+            )
+        if len(active) >= _MAX_ACTIVE_PIPELINES:
+            raise PipelineCapacityError("Tailoring is busy. Try again shortly.")
+        _trim_terminal_pipelines_locked(_MAX_RETAINED_PIPELINES - 1)
         _active_pipelines[session_id] = state
 
     def _run() -> None:

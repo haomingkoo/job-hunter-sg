@@ -784,7 +784,15 @@ class TestAPIEndpoints:
         assert resp.status_code == 200
         assert "token" not in resp.json()
 
-        resp = client.post("/api/auth/verify-email", json={"token": sent["token"]})
+        resp = client.post(
+            "/api/auth/verify-email",
+            json={
+                "token": sent["token"],
+                "password": pw,
+                "name": "Test User",
+                "accepted_terms": True,
+            },
+        )
         assert resp.status_code == 200
         assert resp.json()["user"]["email"] == email
         assert resp.json()["user"]["tier"] == "user"
@@ -821,7 +829,13 @@ class TestAPIEndpoints:
         })
         assert signup.status_code == 200
         verification = client.post(
-            "/api/auth/verify-email", json={"token": sent["token"]}
+            "/api/auth/verify-email",
+            json={
+                "token": sent["token"],
+                "password": pw,
+                "name": "Test User",
+                "accepted_terms": True,
+            },
         )
         assert verification.status_code == 200
         headers = {"Authorization": f"Bearer {verification.json()['token']}"}

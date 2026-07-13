@@ -37,7 +37,9 @@ of doing full-result filtering in Python.
 | `DATABASE_URL` | No | `sqlite:///./jobhunter.db` | DB connection string. Use Postgres URL on Railway. |
 | `JWT_SECRET` | **Yes** (prod) | — | Secret key for signing JWT tokens. Generate a random string. |
 | `PORT` | No | `8000` | Server port. Railway sets this automatically. |
+| `APP_ENV` | **Yes** (prod) | development | Set to `production` on hosted deployments. Railway presence also fails closed. |
 | `ALLOWED_ORIGINS` | No | local frontend URLs | Comma-separated CORS origins. Wildcards are rejected in production. |
+| `TRUST_CLOUDFLARE_IP_HEADER` | No | `0` | Set to `1` only when all public origins are Cloudflare-proxied and direct Railway domains are removed. Restores per-visitor throttling from `CF-Connecting-IP`. |
 | `AUTH_MODE` | No | `password` | Use verified email/password accounts for public signup, or `cloudflare` for a restricted Access deployment. |
 | `CF_ACCESS_TEAM_DOMAIN` | Cloudflare mode | — | Cloudflare Access team domain used to validate JWT issuer and keys. |
 | `CF_ACCESS_AUD` | Cloudflare mode | — | Access application audience tag. |
@@ -66,11 +68,23 @@ railway variables set JWT_SECRET=<your-random-secret>
 railway variables set DATABASE_URL=<postgres-url-from-railway>
 railway variables set ALLOWED_ORIGINS=https://job.kooexperience.com
 railway variables set AUTH_MODE=password
+railway variables set APP_ENV=production
+railway variables set ACCOUNT_AI_PER_DAY=500
+railway variables set TRUST_CLOUDFLARE_IP_HEADER=0
 ```
+
+Keep `TRUST_CLOUDFLARE_IP_HEADER=0` unless the origin rejects every request that
+did not come through Cloudflare. A custom domain alone does not provide that
+boundary.
 
 Railway uses `railway.toml`, which points at the root `Dockerfile`. The image
 builds the Vite frontend, copies `frontend/dist` into `backend/static`, and runs
 FastAPI as one service.
+
+Keep the web service at exactly one Railway replica and one Python worker. Agent,
+tailoring, rate-limit, and account-deletion coordination is intentionally
+in-process. Move those controls to shared storage before enabling multiple
+replicas or workers.
 
 ## Post-Deploy Checks
 
@@ -112,7 +126,7 @@ cd frontend && npm test -- --run && npm run build
 | `/api/auth/me` | GET | Yes | Current user info |
 | `/api/auth/change-password` | POST | Yes | Change password and invalidate older JWTs |
 | `/api/account` | DELETE | Yes | Permanently delete the account and user-owned data |
-| `/api/search?q=keyword` | GET | Admin | Run a live multi-source refresh |
+| `/api/search?q=keyword` | POST | Admin | Run a live multi-source refresh |
 | `/api/jobs` | GET | No | Cached job listings |
 | `/api/tracked` | GET | Yes | User's tracked jobs |
 | `/api/tracked` | POST | Yes | Track a job |

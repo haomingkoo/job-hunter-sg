@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 import sys
+import threading
 import zipfile
+from datetime import datetime, timezone
 from io import BytesIO
 
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.datastructures import Headers, UploadFile
+from starlette.responses import Response
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -132,6 +136,111 @@ def test_fixed_window_rate_limiter_bounds_identity_keys():
     assert set(limiter._hits) == {"newer", "newest"}
 
 
+def test_client_ip_uses_cloudflare_header_only_when_explicitly_trusted(monkeypatch):
+    import main
+
+    request = Request(
+        _http_scope(headers=[(b"cf-connecting-ip", b"203.0.113.8")])
+    )
+    monkeypatch.setattr(main, "_TRUST_CLOUDFLARE_IP_HEADER", False)
+    assert main._get_client_ip(request) == "127.0.0.1"
+
+    monkeypatch.setattr(main, "_TRUST_CLOUDFLARE_IP_HEADER", True)
+    assert main._get_client_ip(request) == "203.0.113.8"
+
+    invalid = Request(
+        _http_scope(headers=[(b"cf-connecting-ip", b"not-an-ip")])
+    )
+    assert main._get_client_ip(invalid) == "127.0.0.1"
+
+
+def test_security_headers_harden_private_responses():
+    from security import SecurityHeadersMiddleware
+
+    async def ok(_scope, _receive, send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    scope = _http_scope()
+    scope["path"] = "/api/account"
+    responses = asyncio.run(_run_asgi(SecurityHeadersMiddleware(ok, hsts=True), scope))
+    headers = dict(responses[0]["headers"])
+
+    assert headers[b"cache-control"] == b"no-store"
+    assert headers[b"x-frame-options"] == b"DENY"
+    assert headers[b"x-content-type-options"] == b"nosniff"
+    assert headers[b"referrer-policy"] == b"no-referrer"
+    assert b"frame-ancestors 'none'" in headers[b"content-security-policy"]
+    assert b"max-age=31536000" in headers[b"strict-transport-security"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/ai/coach",
+        "/api/jobs/42/match",
+        "/api/jobs/42/parsed",
+        "/api/jobs/power-match",
+        "/api/jobs/recommended",
+        "/api/memory",
+        "/api/search",
+        "/api/skillsfuture/recommend",
+        "/api/usage",
+    ],
+)
+def test_security_headers_prevent_caching_authenticated_responses(path):
+    from security import SecurityHeadersMiddleware
+
+    async def ok(_scope, _receive, send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    scope = _http_scope()
+    scope["path"] = path
+    responses = asyncio.run(_run_asgi(SecurityHeadersMiddleware(ok), scope))
+
+    assert dict(responses[0]["headers"])[b"cache-control"] == b"no-store"
+
+
+def test_security_headers_leave_public_job_responses_cacheable():
+    from security import SecurityHeadersMiddleware
+
+    async def ok(_scope, _receive, send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    scope = _http_scope()
+    scope["path"] = "/api/jobs/42"
+    responses = asyncio.run(_run_asgi(SecurityHeadersMiddleware(ok), scope))
+
+    assert b"cache-control" not in dict(responses[0]["headers"])
+
+
+def test_cloudflare_mode_rejects_unsafe_requests_without_a_trusted_origin(
+    monkeypatch,
+):
+    import auth
+    from main import reject_cross_site_cloudflare_writes
+
+    monkeypatch.setattr(auth, "AUTH_MODE", "cloudflare")
+    monkeypatch.setenv("ALLOWED_ORIGINS", "https://job.example.com")
+
+    async def call(origin: str | None):
+        scope = _http_scope(
+            headers=[] if origin is None else [(b"origin", origin.encode())]
+        )
+        request = Request(scope)
+
+        async def next_request(_request: Request) -> Response:
+            return Response(status_code=204)
+
+        return await reject_cross_site_cloudflare_writes(request, next_request)
+
+    assert asyncio.run(call(None)).status_code == 403
+    assert asyncio.run(call("https://evil.example")).status_code == 403
+    assert asyncio.run(call("https://job.example.com")).status_code == 204
+
+
 def test_docx_zip_bomb_is_rejected_before_parsing():
     from resume_parser import extract_text_from_docx
 
@@ -164,6 +273,226 @@ def test_resume_upload_rejects_more_than_five_megabytes():
 
     assert exc_info.value.status_code == 413
     assert upload.file.closed
+
+
+def test_resume_upload_parsing_runs_off_the_event_loop(monkeypatch):
+    import main
+
+    caller_thread = threading.get_ident()
+    parser_threads: list[int] = []
+
+    def fake_parse_resume(**_kwargs) -> dict:
+        parser_threads.append(threading.get_ident())
+        return {
+            "text": "Parsed resume",
+            "file_type": "pdf",
+            "word_count": 2,
+            "line_count": 1,
+            "parse_quality": {},
+        }
+
+    class FakeSession:
+        def add(self, _value) -> None:
+            pass
+
+        def commit(self) -> None:
+            pass
+
+    monkeypatch.setattr(main, "parse_resume_isolated", fake_parse_resume)
+    upload = UploadFile(
+        file=BytesIO(b"small-pdf"),
+        filename="resume.pdf",
+        headers=Headers({"content-type": "application/pdf"}),
+    )
+
+    result = asyncio.run(
+        main.upload_resume(
+            request=Request(_http_scope()),
+            file=upload,
+            user=None,
+            db=FakeSession(),
+        )
+    )
+
+    assert result["text"] == "Parsed resume"
+    assert parser_threads and parser_threads[0] != caller_thread
+
+
+def test_resume_upload_rejects_when_parser_capacity_is_full(monkeypatch):
+    import main
+
+    monkeypatch.setattr(main, "_RESUME_PARSE_SLOTS", threading.BoundedSemaphore(0))
+    upload = UploadFile(
+        file=BytesIO(b"small-pdf"),
+        filename="resume.pdf",
+        headers=Headers({"content-type": "application/pdf"}),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            main.upload_resume(
+                request=Request(_http_scope()),
+                file=upload,
+                user=None,
+                db=None,
+            )
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.headers == {"Retry-After": "2"}
+
+
+def test_auth_email_links_keep_tokens_out_of_query_strings(monkeypatch):
+    from types import SimpleNamespace
+
+    import main
+
+    messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        main,
+        "send_email",
+        lambda _email, _subject, text, html: messages.append((text, html)),
+    )
+    user = SimpleNamespace(email="person@example.com", name="Person")
+
+    main._send_verification_email(user, "verification-token")
+    main._send_password_reset_email(user, "reset-token")
+
+    combined = "\n".join(part for message in messages for part in message)
+    assert "/#verify_token=verification-token" in combined
+    assert "/#reset_token=reset-token" in combined
+    assert "/?verify_token=" not in combined
+    assert "/?reset_token=" not in combined
+
+
+def test_job_search_bounds_expensive_public_queries():
+    from fastapi.testclient import TestClient
+
+    from main import _contains_like_pattern, app
+
+    client = TestClient(app)
+
+    assert client.get("/api/jobs", params={"q": "one two three four five six seven eight nine"}).status_code == 422
+    assert client.get("/api/jobs", params={"page": 501}).status_code == 422
+    assert client.get(
+        "/api/jobs",
+        params=[("location", f"location-{index}") for index in range(21)],
+    ).status_code == 422
+    assert _contains_like_pattern("%_") == r"%\%\_%"
+
+
+def test_unused_live_skills_proxy_is_not_public():
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    assert TestClient(app).get("/api/skills", params={"q": "engineer"}).status_code == 404
+
+
+def test_hidden_jobs_are_not_available_by_detail_or_as_similarity_targets():
+    from fastapi.testclient import TestClient
+
+    from database import SessionLocal
+    from main import app
+    from models import ScrapedJob
+
+    marker = secrets.token_hex(8)
+    with SessionLocal() as db:
+        hidden = ScrapedJob(
+            title=f"Hidden {marker} Engineer",
+            company="Hidden Employer",
+            dedup_key=secrets.token_hex(16),
+            posted_at_sort=datetime.now(timezone.utc).isoformat(),
+            hidden=1,
+        )
+        visible = ScrapedJob(
+            title=f"Visible {marker} Engineer",
+            company="Visible Employer",
+            dedup_key=secrets.token_hex(16),
+            posted_at_sort=datetime.now(timezone.utc).isoformat(),
+        )
+        db.add_all([hidden, visible])
+        db.commit()
+        hidden_id = hidden.id
+        visible_id = visible.id
+
+    try:
+        client = TestClient(app)
+        assert client.get(f"/api/jobs/{hidden_id}").status_code == 404
+        assert client.get(f"/api/jobs/{hidden_id}/similar").status_code == 404
+        assert client.get(f"/api/jobs/{visible_id}").status_code == 200
+        similar = client.get(f"/api/jobs/{visible_id}/similar")
+        assert similar.status_code == 200
+        assert hidden_id not in {job["id"] for job in similar.json()}
+    finally:
+        with SessionLocal() as db:
+            db.query(ScrapedJob).filter(
+                ScrapedJob.id.in_([hidden_id, visible_id])
+            ).delete(synchronize_session=False)
+            db.commit()
+
+
+def test_background_seed_is_single_flight():
+    import main
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_seed() -> None:
+        started.set()
+        assert release.wait(2)
+
+    assert main._start_seed_task(blocking_seed)
+    assert started.wait(2)
+    assert not main._start_seed_task(lambda: None)
+    release.set()
+    assert main._SEED_RUN_LOCK.acquire(timeout=2)
+    main._SEED_RUN_LOCK.release()
+
+
+def test_tracked_job_ownership_does_not_reveal_other_record_ids():
+    import main
+    from database import SessionLocal
+    from models import TrackedJob, User
+    from schemas import TrackedJobUpdate
+
+    marker = secrets.token_hex(8)
+    with SessionLocal() as db:
+        owner = User(
+            email=f"owner-{marker}@example.com",
+            password_hash="unused",  # pragma: allowlist secret
+            name="Owner",
+        )
+        intruder = User(
+            email=f"intruder-{marker}@example.com",
+            password_hash="unused",  # pragma: allowlist secret
+            name="Intruder",
+        )
+        db.add_all([owner, intruder])
+        db.flush()
+        tracked = TrackedJob(user_id=owner.id, company="Employer", role="Role")
+        db.add(tracked)
+        db.commit()
+        tracked_id = tracked.id
+
+        with pytest.raises(HTTPException) as update_error:
+            main.update_tracked(
+                tracked_id,
+                TrackedJobUpdate(notes="changed"),
+                intruder,
+                db,
+            )
+        with pytest.raises(HTTPException) as delete_error:
+            main.delete_tracked(tracked_id, intruder, db)
+
+        assert update_error.value.status_code == 404
+        assert delete_error.value.status_code == 404
+        assert db.get(TrackedJob, tracked_id).notes == ""
+
+        db.delete(tracked)
+        db.delete(owner)
+        db.delete(intruder)
+        db.commit()
 
 
 def test_health_returns_503_when_database_is_unavailable():
@@ -217,8 +546,127 @@ def test_rag_agent_and_legacy_live_search_require_accounts():
     client = TestClient(app)
 
     assert client.post("/api/resume/agent/chat", json={"message": "Find jobs"}).status_code == 401
-    assert client.get("/api/search", params={"q": "engineer"}).status_code == 401
+    assert client.post("/api/search", params={"q": "engineer"}).status_code == 401
+    assert client.get("/api/search", params={"q": "engineer"}).status_code == 405
+    assert client.get("/api/jobs/power-match").status_code == 405
+    assert client.get("/api/resume/tailor/missing/result").status_code == 405
     assert client.get("/api/jobs/recommended", params={"resume_text": "private resume"}).status_code == 405
+
+
+def test_unsubscribe_link_requires_confirmation_before_mutating(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import main
+    from database import SessionLocal
+    from job_alerts import create_unsubscribe_token
+    from models import JobAlertPreference, User
+
+    marker = secrets.token_hex(8)
+    monkeypatch.setenv("ALERT_UNSUBSCRIBE_SECRET", f"unsubscribe-{marker}")
+    with SessionLocal() as db:
+        user = User(
+            email=f"unsubscribe-{marker}@example.com",
+            password_hash="unused",  # pragma: allowlist secret
+            name="Unsubscribe Test",
+        )
+        db.add(user)
+        db.flush()
+        pref = JobAlertPreference(user_id=user.id, enabled=True)
+        db.add(pref)
+        token = create_unsubscribe_token(user)
+        db.commit()
+        user_id = user.id
+
+    try:
+        client = TestClient(main.app)
+        preview = client.get("/api/job-alerts/unsubscribe", params={"token": token})
+
+        assert preview.status_code == 200
+        assert "Confirm" in preview.text
+        with SessionLocal() as db:
+            assert bool(
+                db.query(JobAlertPreference)
+                .filter(JobAlertPreference.user_id == user_id)
+                .one()
+                .enabled
+            )
+
+        confirmed = client.post("/api/job-alerts/unsubscribe", params={"token": token})
+        assert confirmed.status_code == 200
+        with SessionLocal() as db:
+            assert not bool(
+                db.query(JobAlertPreference)
+                .filter(JobAlertPreference.user_id == user_id)
+                .one()
+                .enabled
+            )
+
+        with SessionLocal() as db:
+            db.query(JobAlertPreference).filter(JobAlertPreference.user_id == user_id).delete()
+            db.query(User).filter(User.id == user_id).delete()
+            db.commit()
+            replacement = User(
+                email=f"replacement-{marker}@example.com",
+                password_hash="unused",  # pragma: allowlist secret
+                name="Replacement Account",
+            )
+            db.add(replacement)
+            db.flush()
+            assert replacement.id == user_id
+            db.add(JobAlertPreference(user_id=replacement.id, enabled=True))
+            db.commit()
+
+        stale = client.post("/api/job-alerts/unsubscribe", params={"token": token})
+        assert stale.status_code == 400
+        with SessionLocal() as db:
+            assert bool(
+                db.query(JobAlertPreference)
+                .filter(JobAlertPreference.user_id == user_id)
+                .one()
+                .enabled
+            )
+
+    finally:
+        with SessionLocal() as db:
+            db.query(JobAlertPreference).filter(JobAlertPreference.user_id == user_id).delete()
+            db.query(User).filter(User.id == user_id).delete()
+            db.commit()
+
+
+def test_story_usage_storage_is_bounded_per_account(monkeypatch):
+    import main
+    from database import SessionLocal
+    from models import InterviewStory, StoryUsage, User
+
+    marker = secrets.token_hex(8)
+    with SessionLocal() as db:
+        user = User(
+            email=f"story-usage-{marker}@example.com",
+            password_hash="unused",  # pragma: allowlist secret
+            name="Story Usage Test",
+        )
+        db.add(user)
+        db.flush()
+        story = InterviewStory(user_id=user.id, title="Bounded story")
+        db.add(story)
+        db.flush()
+        db.add(StoryUsage(story_id=story.id, user_id=user.id))
+        db.commit()
+        user_id = user.id
+        story_id = story.id
+
+        monkeypatch.setattr(main, "_MAX_STORY_USAGES", 1)
+        with pytest.raises(HTTPException) as exc_info:
+            main.record_story_usage(story_id, {}, user, db)
+
+        assert exc_info.value.status_code == 409
+        assert db.query(StoryUsage).filter(StoryUsage.user_id == user_id).count() == 1
+
+    with SessionLocal() as db:
+        db.query(StoryUsage).filter(StoryUsage.user_id == user_id).delete()
+        db.query(InterviewStory).filter(InterviewStory.user_id == user_id).delete()
+        db.query(User).filter(User.id == user_id).delete()
+        db.commit()
 
 
 def test_saved_resume_and_story_counts_are_bounded():

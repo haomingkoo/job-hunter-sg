@@ -21,6 +21,7 @@ _sessions: dict[str, dict] = {}
 _checkpointer: Any | None = None
 _active_runs: dict[str, int] = {}
 _active_runs_lock = threading.Lock()
+_MAX_ACTIVE_RUNS = 4
 _sessions_lock = threading.Lock()
 
 
@@ -50,6 +51,14 @@ def _new_state(session_id: str) -> dict:
     }
 
 
+def _drop_sessions(session_ids: list[str]) -> None:
+    """Drop session metadata and its checkpoint while holding `_sessions_lock`."""
+    for session_id in session_ids:
+        if _checkpointer is not None:
+            _checkpointer.delete_thread(session_id)
+        _sessions.pop(session_id, None)
+
+
 def _cleanup_sessions() -> None:
     now = time.time()
     expired = [
@@ -57,15 +66,13 @@ def _cleanup_sessions() -> None:
         for session_id, state in _sessions.items()
         if now - float(state.get("_updated_at") or 0) > app_config.AGENT_SESSION_TTL_SECONDS
     ]
-    for session_id in expired:
-        _sessions.pop(session_id, None)
+    _drop_sessions(expired)
 
     overflow = len(_sessions) - app_config.AGENT_MAX_SESSIONS
     if overflow <= 0:
         return
     oldest = sorted(_sessions, key=lambda sid: float(_sessions[sid].get("_updated_at") or 0))
-    for session_id in oldest[:overflow]:
-        _sessions.pop(session_id, None)
+    _drop_sessions(oldest[:overflow])
 
 
 def _public_state(state: dict) -> dict:
@@ -90,7 +97,7 @@ def get_state(session_id: str, owner_key: str | None = None) -> dict:
         _cleanup_sessions()
         state = _sessions.get(session_id)
         if not state:
-            return _public_state(_new_state(session_id))
+            raise KeyError(session_id)
         if not _state_visible_to_owner(state, owner_key):
             raise PermissionError("Agent session is not visible to this user.")
         state["_updated_at"] = time.time()
@@ -109,11 +116,7 @@ def purge_owner_sessions(owner_key: str) -> None:
             for session_id, state in _sessions.items()
             if state.get("_owner_key") == owner_key
         ]
-        for session_id in session_ids:
-            _sessions.pop(session_id, None)
-    if _checkpointer is not None:
-        for session_id in session_ids:
-            _checkpointer.delete_thread(session_id)
+        _drop_sessions(session_ids)
 
 
 def _append_message(state: dict, message: dict) -> None:
@@ -224,31 +227,51 @@ def _run_owner(body: dict, session_id: str, owner_key: str | None) -> str:
     return f"session:{session_id}"
 
 
-def _try_start_run(owner: str) -> bool:
+def reserve_owner_run(owner_key: str) -> bool:
     with _active_runs_lock:
-        current = _active_runs.get(owner, 0)
-        if current >= app_config.AGENT_MAX_CONCURRENT_RUNS_PER_USER:
+        current = _active_runs.get(owner_key, 0)
+        if (
+            current >= app_config.AGENT_MAX_CONCURRENT_RUNS_PER_USER
+            or sum(_active_runs.values()) >= _MAX_ACTIVE_RUNS
+        ):
             return False
-        _active_runs[owner] = current + 1
+        _active_runs[owner_key] = current + 1
         return True
 
 
-def _finish_run(owner: str) -> None:
+def release_owner_run(owner_key: str) -> None:
     with _active_runs_lock:
-        current = _active_runs.get(owner, 0)
+        current = _active_runs.get(owner_key, 0)
         if current <= 1:
-            _active_runs.pop(owner, None)
+            _active_runs.pop(owner_key, None)
         else:
-            _active_runs[owner] = current - 1
+            _active_runs[owner_key] = current - 1
 
 
 def stream_chat_events(
     body: dict,
     agent: Any | None = None,
     owner_key: str | None = None,
+    owner_run_reserved: bool = False,
 ) -> Iterator[dict]:
     session_id = str(body.get("session_id") or secrets.token_urlsafe())
     owner = _run_owner(body, session_id, owner_key)
+    if not owner_run_reserved:
+        yield from _stream_chat_events(body, agent, session_id, owner, False)
+        return
+    try:
+        yield from _stream_chat_events(body, agent, session_id, owner, True)
+    finally:
+        release_owner_run(owner)
+
+
+def _stream_chat_events(
+    body: dict,
+    agent: Any | None,
+    session_id: str,
+    owner: str,
+    owner_run_reserved: bool,
+) -> Iterator[dict]:
     visibility_error = False
     with _sessions_lock:
         _cleanup_sessions()
@@ -293,7 +316,7 @@ def stream_chat_events(
 
     yield {"event": "session", "session_id": session_id}
 
-    if not _try_start_run(owner):
+    if not owner_run_reserved and not reserve_owner_run(owner):
         yield {
             "event": "error",
             "session_id": session_id,
@@ -332,6 +355,7 @@ def stream_chat_events(
             "message": "Agent v2 hit an internal error. Check the backend logs.",
         }
     finally:
-        _finish_run(owner)
+        if not owner_run_reserved:
+            release_owner_run(owner)
 
     yield {"event": "done", "session_id": session_id}

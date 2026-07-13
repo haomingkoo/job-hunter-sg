@@ -202,7 +202,7 @@ shared/resume-classification.json ← single source of truth for both backend + 
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/jobs` | Browse cached jobs with filters |
-| `GET /api/search?q=...` | Full-text job search |
+| `POST /api/search?q=...` | Admin live-source job search |
 | `POST /api/resume/score` | Score resume 0-100 |
 | `POST /api/resume/upload` | Upload PDF/DOCX, extract text |
 | `POST /api/resume/tailor` | Start 7-stage tailoring pipeline |
@@ -210,7 +210,7 @@ shared/resume-classification.json ← single source of truth for both backend + 
 | `POST /api/ai/rewrite` | AI bullet rewrite (3 options) |
 | `POST /api/ai/cover-letter` | Generate cover letter |
 | `POST /api/ai/resume-chat` | Conversational resume builder |
-| `GET /api/jobs/power-match` | Smart Match with RAG |
+| `POST /api/jobs/power-match` | Smart Match with RAG |
 | `POST /api/skillsfuture/recommend` | MySkillsFuture courses for Smart Match gaps |
 | `POST /api/admin/seed` | Trigger job crawl (admin) |
 

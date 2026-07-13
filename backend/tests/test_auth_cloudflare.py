@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -52,6 +54,7 @@ def _assertion(private_key, kid: str, **claim_overrides) -> str:
 def cloudflare_config(monkeypatch):
     monkeypatch.setenv("CF_ACCESS_TEAM_DOMAIN", TEAM_DOMAIN)
     monkeypatch.setenv("CF_ACCESS_AUD", AUDIENCE)
+    monkeypatch.setattr(auth, "AUTH_MODE", "cloudflare")
     auth._CF_JWKS_CACHE.clear()
     auth._CF_JWKS_NEXT_MISS_REFRESH.clear()
 
@@ -147,6 +150,83 @@ def test_unknown_kid_refreshes_cached_jwks_for_key_rotation(monkeypatch):
     assert request_count == 2
 
 
+def test_concurrent_jwks_refresh_fails_fast_instead_of_parking_workers(monkeypatch):
+    _, jwk = _key_pair("key-1")
+    fetch_started = threading.Event()
+    release_fetch = threading.Event()
+    fetch_count = 0
+
+    def blocked_fetch(_team_domain):
+        nonlocal fetch_count
+        fetch_count += 1
+        fetch_started.set()
+        assert release_fetch.wait(5)
+        auth._CF_JWKS_CACHE[TEAM_DOMAIN] = (auth.time.monotonic() + 300, [jwk])
+        return [jwk]
+
+    monkeypatch.setattr(auth, "_fetch_cloudflare_jwks", blocked_fetch)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(auth._cloudflare_signing_key, TEAM_DOMAIN, "key-1")
+        assert fetch_started.wait(5)
+        second = pool.submit(auth._cloudflare_signing_key, TEAM_DOMAIN, "key-1")
+        try:
+            with pytest.raises(auth.CloudflareJwksUnavailable, match="refreshing"):
+                second.result(timeout=1)
+        finally:
+            release_fetch.set()
+        assert first.result(timeout=5) is not None
+
+    assert fetch_count == 1
+
+
+def test_jwks_refresh_unavailability_is_temporary_not_invalid_auth(monkeypatch):
+    private_key, _ = _key_pair("key-1")
+    fetch_count = 0
+
+    def offline(_team_domain):
+        nonlocal fetch_count
+        fetch_count += 1
+        raise auth.requests.ConnectionError("offline")
+
+    monkeypatch.setattr(
+        auth,
+        "_fetch_cloudflare_jwks",
+        offline,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        auth._validate_cloudflare_assertion(
+            _assertion(private_key, "key-1"), "person@example.com"
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.headers == {"Retry-After": "2"}
+    with pytest.raises(auth.CloudflareJwksUnavailable):
+        auth._cloudflare_signing_key(TEAM_DOMAIN, "key-1")
+    assert fetch_count == 1
+
+
+def test_cold_unknown_kid_uses_refresh_cooldown(monkeypatch):
+    _, trusted_jwk = _key_pair("trusted-key")
+    fetch_count = 0
+
+    def fetch(_team_domain):
+        nonlocal fetch_count
+        fetch_count += 1
+        auth._CF_JWKS_CACHE[TEAM_DOMAIN] = (
+            auth.time.monotonic() + 300,
+            [trusted_jwk],
+        )
+        return [trusted_jwk]
+
+    monkeypatch.setattr(auth, "_fetch_cloudflare_jwks", fetch)
+
+    for _ in range(2):
+        with pytest.raises(ValueError, match="No matching"):
+            auth._cloudflare_signing_key(TEAM_DOMAIN, "missing-key")
+
+    assert fetch_count == 1
+
 def test_assertion_signed_by_an_untrusted_key_is_rejected(monkeypatch):
     _, trusted_jwk = _key_pair("key-1")
     attacker_private_key, _ = _key_pair("attacker-key")
@@ -192,6 +272,7 @@ def test_invalid_issuer_audience_or_header_email_fails_closed(
 
 
 def test_app_jwt_fallback_is_unchanged_without_cloudflare_headers(monkeypatch):
+    monkeypatch.setattr(auth, "AUTH_MODE", "password")
     expected_user = type("ExpectedUser", (), {"token_version": 0})()
 
     class Query:
@@ -212,6 +293,30 @@ def test_app_jwt_fallback_is_unchanged_without_cloudflare_headers(monkeypatch):
         cf_access_email=None,
         cf_access_assertion=None,
         db=DB(),
+    ) is expected_user
+
+
+def test_password_mode_ignores_cloudflare_identity_headers(monkeypatch):
+    monkeypatch.setattr(auth, "AUTH_MODE", "password")
+    expected_user = object()
+    monkeypatch.setattr(auth, "_get_jwt_user", lambda token, db: expected_user)
+    monkeypatch.setattr(
+        auth,
+        "_validate_cloudflare_assertion",
+        lambda *_args: pytest.fail("password mode must not use Cloudflare identity"),
+    )
+
+    assert auth.get_current_user(
+        authorization="Bearer app-token",
+        cf_access_email="spoofed@example.com",
+        cf_access_assertion="spoofed-assertion",
+        db=object(),
+    ) is expected_user
+    assert auth.get_optional_user(
+        authorization="Bearer app-token",
+        cf_access_email="spoofed@example.com",
+        cf_access_assertion="spoofed-assertion",
+        db=object(),
     ) is expected_user
 
 

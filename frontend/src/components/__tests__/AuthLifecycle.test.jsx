@@ -87,14 +87,82 @@ describe("account authentication lifecycle", () => {
         />,
       );
     });
+    setInput("Full Name", "Asha Tan");
+    setInput("Choose password", "correct-horse");
+    setInput("Confirm password", "correct-horse");
+    act(() => container.querySelector('input[type="checkbox"]').click());
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
 
     expect(global.fetch).toHaveBeenCalledWith(
       "/api/auth/verify-email",
-      expect.objectContaining({ body: JSON.stringify({ token: "email-token" }) }),
+      expect.objectContaining({
+        body: JSON.stringify({
+          token: "email-token",
+          password: "correct-horse", // pragma: allowlist secret
+          name: "Asha Tan",
+          accepted_terms: true,
+        }),
+      }),
     );
     expect(localStorage.getItem("token")).toBe("verified-token");
     expect(onVerifyComplete).toHaveBeenCalledOnce();
     expect(onAuth).toHaveBeenCalledWith(user, "verified-token");
+  });
+
+  it("does not activate an account when verification passwords differ", async () => {
+    global.fetch = vi.fn();
+    await act(async () => {
+      root.render(<AuthModal initialVerifyToken="email-token" onAuth={vi.fn()} />);
+    });
+    setInput("Full Name", "Asha Tan");
+    setInput("Choose password", "correct-horse");
+    setInput("Confirm password", "different-horse");
+    act(() => container.querySelector('input[type="checkbox"]').click());
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(container.textContent).toContain("Passwords do not match.");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("ignores a login response after another tab replaces the modal identity", async () => {
+    let resolveLogin;
+    const pendingLogin = new Promise((resolve) => { resolveLogin = resolve; });
+    const onAuth = vi.fn();
+    global.fetch = vi.fn(() => pendingLogin);
+
+    await act(async () => {
+      root.render(<AuthModal onAuth={onAuth} onClose={vi.fn()} />);
+    });
+    setInput("Email", "a@example.com");
+    setInput("Password", "correct-horse");
+    act(() => {
+      container.querySelector("form").dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    localStorage.setItem("token", "token-b");
+    await act(async () => {
+      root.render(<div>Account B</div>);
+    });
+    await act(async () => {
+      resolveLogin(response({
+        token: "token-a",
+        user: { id: 1, name: "Account A", email: "a@example.com" },
+      }));
+    });
+
+    expect(localStorage.getItem("token")).toBe("token-b");
+    expect(onAuth).not.toHaveBeenCalled();
+    expect(container.textContent).toBe("Account B");
   });
 
   it("navigates to Cloudflare before attempting registration", async () => {

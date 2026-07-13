@@ -221,7 +221,7 @@ def test_cross_account_agent_chat_and_tailoring_return_404(monkeypatch):
             json={"session_id": "private-agent", "message": "continue"},
         ).status_code == 404
         assert client.get("/api/resume/tailor/private-tailor/status").status_code == 404
-        assert client.get("/api/resume/tailor/private-tailor/result").status_code == 404
+        assert client.post("/api/resume/tailor/private-tailor/result").status_code == 404
         assert client.post(
             "/api/resume/tailor/private-tailor/feedback",
             json={"bullet_id": "x", "action": "accept"},

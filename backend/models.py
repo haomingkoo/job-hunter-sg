@@ -29,6 +29,12 @@ def _generate_api_key() -> str:
     return secrets.token_hex(32)
 
 
+def _generate_token_version() -> int:
+    # Prevent a deleted account's JWT from authenticating a later SQLite row
+    # that happens to reuse the same integer primary key.
+    return secrets.randbelow(1_000_000_000) + 1
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -44,7 +50,11 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    token_version: Mapped[int] = mapped_column(
+        Integer,
+        default=_generate_token_version,
+        nullable=False,
+    )
     terms_accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     privacy_accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

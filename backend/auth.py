@@ -5,6 +5,7 @@ JWT authentication, password hashing, and rate-limit checks.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -25,16 +26,47 @@ SECRET_KEY = os.environ.get("JWT_SECRET", "")
 ALGORITHM = "HS256"
 TOKEN_EXPIRY_DAYS = 7
 CLOUDFLARE_PASSWORD_SENTINEL = "cloudflare-access"  # pragma: allowlist secret
+_DUMMY_PASSWORD_HASH = "$2b$12$8eFh8m9T8OQqR9bf97Lz5ubKa6eBIqH0uC4TWmMMK6cTG7Vq5nS3K"
+
+
+class CloudflareJwksUnavailable(Exception):
+    """Cloudflare signing keys could not be refreshed without blocking."""
 
 # JWT_SECRET is required in ALL environments. No silent fallbacks.
-_db_url = os.environ.get("DATABASE_URL", "")
-_is_production = _db_url.lower().startswith(("postgres://", "postgresql://", "postgresql+"))
-if not SECRET_KEY:
-    if _is_production:
-        raise RuntimeError(
-            "JWT_SECRET must be set in production! "
-            'Generate one: python -c "import secrets; print(secrets.token_hex(32))"'
+def _jwt_secret_is_strong(secret: str) -> bool:
+    normalized = secret.strip().lower()
+    weak_markers = ("change-me", "changeme", "replace-me", "example", "password")
+    return len(secret.encode("utf-8")) >= 32 and not any(
+        marker in normalized for marker in weak_markers
+    )
+
+
+def is_production_environment() -> bool:
+    """Use APP_ENV explicitly, while keeping older Railway deploys fail-closed."""
+    if any(
+        os.environ.get(name, "").strip()
+        for name in (
+            "RAILWAY_ENVIRONMENT",
+            "RAILWAY_ENVIRONMENT_NAME",
+            "RAILWAY_PROJECT_ID",
+            "RAILWAY_SERVICE_ID",
         )
+    ):
+        return True
+    app_env = os.environ.get("APP_ENV", "").strip().lower()
+    if app_env:
+        return app_env not in {"dev", "development", "local", "test"}
+    db_url = os.environ.get("DATABASE_URL", "").lower()
+    return db_url.startswith(("postgres://", "postgresql://", "postgresql+"))
+
+
+_is_production = is_production_environment()
+if _is_production and not _jwt_secret_is_strong(SECRET_KEY):
+    raise RuntimeError(
+        "JWT_SECRET must be a non-placeholder value of at least 32 bytes in production. "
+        'Generate one: python -c "import secrets; print(secrets.token_hex(32))"'
+    )
+if not SECRET_KEY:
     # Local dev: generate a random key per process. Auth still works,
     # but tokens don't survive restarts. This is intentional.
     import secrets as _secrets
@@ -71,7 +103,7 @@ ACCESS_LIMITS: dict[str, dict] = {
     "user": {
         "searches_per_day": 999999,
         "ai_per_day": _ACCOUNT_AI,
-        "max_tracked_jobs": 999999,
+        "max_tracked_jobs": 500,
         "can_export": True,
         "can_save": True,
     },
@@ -94,12 +126,29 @@ def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
+def verify_password_or_dummy(plain: str, hashed: str | None) -> bool:
+    """Run one bcrypt check even when no usable account hash exists."""
+    usable_hash = bool(hashed and hashed != CLOUDFLARE_PASSWORD_SENTINEL)
+    candidate = hashed if usable_hash else _DUMMY_PASSWORD_HASH
+    try:
+        matches = verify_password(plain, candidate)
+    except (TypeError, ValueError):
+        usable_hash = False
+        matches = verify_password(plain, _DUMMY_PASSWORD_HASH)
+    return usable_hash and matches
+
+
 def validate_password(password: str) -> None:
     """Raise HTTPException 422 if password is too weak."""
     if len(password) < 8:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Password must be at least 8 characters",
+        )
+    if len(password.encode("utf-8")) > 72:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Password must be at most 72 UTF-8 bytes",
         )
 
 
@@ -145,6 +194,7 @@ _CF_JWKS_CACHE_TTL_SECONDS = 300
 _CF_JWKS_REFRESH_COOLDOWN_SECONDS = 30
 _CF_JWKS_CACHE: dict[str, tuple[float, list[dict]]] = {}
 _CF_JWKS_NEXT_MISS_REFRESH: dict[str, float] = {}
+_CF_JWKS_REFRESH_LOCK = threading.Lock()
 
 
 def _cloudflare_config() -> tuple[str, str]:
@@ -190,24 +240,55 @@ def _fetch_cloudflare_jwks(team_domain: str) -> list[dict]:
 
 
 def _cloudflare_signing_key(team_domain: str, kid: str):
-    cached = _CF_JWKS_CACHE.get(team_domain)
-    cache_valid = bool(cached and cached[0] > time.monotonic())
-    keys = cached[1] if cache_valid else _fetch_cloudflare_jwks(team_domain)
-
-    jwk = next((key for key in keys if key.get("kid") == kid), None)
     now = time.monotonic()
-    if (
-        jwk is None
-        and cache_valid
-        and now >= _CF_JWKS_NEXT_MISS_REFRESH.get(team_domain, 0)
-    ):
-        # Refresh once on an unknown kid so Cloudflare key rotation takes effect
-        # before the short cache expires, with a cooldown against forced refetches.
+    cached = _CF_JWKS_CACHE.get(team_domain)
+    if cached and cached[0] > now:
+        jwk = next((key for key in cached[1] if key.get("kid") == kid), None)
+        if jwk is not None:
+            return _parse_cloudflare_signing_key(jwk)
+        if now < _CF_JWKS_NEXT_MISS_REFRESH.get(team_domain, 0):
+            raise ValueError("No matching Cloudflare signing key")
+
+    # Only one request may perform the network refresh. Other requests fail
+    # closed instead of tying up every sync worker behind a five-second fetch.
+    if not _CF_JWKS_REFRESH_LOCK.acquire(blocking=False):
+        raise CloudflareJwksUnavailable("Cloudflare signing keys are refreshing")
+    try:
+        cached = _CF_JWKS_CACHE.get(team_domain)
+        now = time.monotonic()
+        cache_valid = bool(cached and cached[0] > now)
+        if cache_valid:
+            jwk = next((key for key in cached[1] if key.get("kid") == kid), None)
+            if jwk is not None:
+                return _parse_cloudflare_signing_key(jwk)
+        if now < _CF_JWKS_NEXT_MISS_REFRESH.get(team_domain, 0):
+            if cache_valid:
+                raise ValueError("No matching Cloudflare signing key")
+            raise CloudflareJwksUnavailable("Cloudflare signing keys are unavailable")
+
+        # Set the cooldown before the network call so failures cannot trigger a
+        # new five-second fetch on every subsequent request.
         _CF_JWKS_NEXT_MISS_REFRESH[team_domain] = (
             now + _CF_JWKS_REFRESH_COOLDOWN_SECONDS
         )
-        keys = _fetch_cloudflare_jwks(team_domain)
+        try:
+            keys = _fetch_cloudflare_jwks(team_domain)
+        except (requests.RequestException, TypeError, ValueError) as exc:
+            raise CloudflareJwksUnavailable(
+                "Cloudflare signing keys are unavailable"
+            ) from exc
         jwk = next((key for key in keys if key.get("kid") == kid), None)
+        if not cache_valid and jwk is not None:
+            # A successful normal refresh should not delay an immediate
+            # rotation lookup. The cooldown is only retained for unknown-kid
+            # refreshes and failed network calls.
+            _CF_JWKS_NEXT_MISS_REFRESH.pop(team_domain, None)
+    finally:
+        _CF_JWKS_REFRESH_LOCK.release()
+    return _parse_cloudflare_signing_key(jwk)
+
+
+def _parse_cloudflare_signing_key(jwk: dict | None):
     if (
         jwk is None
         or jwk.get("kty") != "RSA"
@@ -241,6 +322,12 @@ def _validate_cloudflare_assertion(
         if header_email is not None and header_email.strip().lower() != email:
             raise ValueError("Cloudflare email header does not match assertion")
         return email
+    except CloudflareJwksUnavailable:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cloudflare Access authentication is temporarily unavailable",
+            headers={"Retry-After": "2"},
+        )
     except (jwt.PyJWTError, requests.RequestException, TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -285,6 +372,23 @@ def auth_config() -> dict[str, str]:
     return config
 
 
+def validate_cloudflare_unsafe_origin(method: str, origin: str | None) -> None:
+    """Reject cross-site state changes authenticated by Cloudflare cookies."""
+    if AUTH_MODE != "cloudflare" or method.upper() in {"GET", "HEAD", "OPTIONS"}:
+        return
+    allowed_origins = {
+        value.strip().lower().rstrip("/")
+        for value in os.environ.get(
+            "ALLOWED_ORIGINS",
+            "http://localhost:5173,http://localhost:3000",
+        ).split(",")
+        if value.strip() and value.strip() != "*"
+    }
+    normalized_origin = (origin or "").strip().lower().rstrip("/")
+    if not normalized_origin or normalized_origin not in allowed_origins:
+        raise HTTPException(status_code=403, detail="Cross-site request blocked")
+
+
 def _get_jwt_user(token: str, db: Session) -> User:
     payload = decode_token(token)
     try:
@@ -311,22 +415,20 @@ def get_current_user(
     db: Session = Depends(get_db),
 ) -> User:
     """
-    Get authenticated user. Supports two modes:
-    1. Cloudflare Access: validates its signed assertion
-    2. JWT Bearer token (local dev / API access)
+    Get the authenticated user for the configured authentication mode.
     """
-    # A partial or invalid Cloudflare identity must not fall through to app JWT auth.
-    if cf_access_email is not None or cf_access_assertion is not None:
-        email = _validate_cloudflare_assertion(cf_access_assertion, cf_access_email)
-        return _get_cf_user(email, db)
-
     if AUTH_MODE == "cloudflare":
+        # A partial or invalid Cloudflare identity must not fall through.
+        if cf_access_email is not None or cf_access_assertion is not None:
+            email = _validate_cloudflare_assertion(cf_access_assertion, cf_access_email)
+            return _get_cf_user(email, db)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Cloudflare Access authentication required",
         )
 
-    # Mode 2: JWT Bearer token (local password-auth development)
+    # Cloudflare may still add its headers when password auth sits behind
+    # Access. In password mode, only the app's bearer token is authoritative.
     token = _extract_token(authorization)
     if not token:
         raise HTTPException(
@@ -342,17 +444,16 @@ def get_optional_user(
     cf_access_assertion: Optional[str] = Header(None, alias="Cf-Access-Jwt-Assertion"),
     db: Session = Depends(get_db),
 ) -> Optional[User]:
-    """Return user if authenticated (via CF Access or JWT), else None."""
-    if cf_access_email is not None or cf_access_assertion is not None:
-        email = _validate_cloudflare_assertion(cf_access_assertion, cf_access_email)
-        try:
-            return _get_cf_user(email, db)
-        except HTTPException as exc:
-            if exc.detail == "Account registration required":
-                return None
-            raise
-
+    """Return the user for the configured authentication mode, else None."""
     if AUTH_MODE == "cloudflare":
+        if cf_access_email is not None or cf_access_assertion is not None:
+            email = _validate_cloudflare_assertion(cf_access_assertion, cf_access_email)
+            try:
+                return _get_cf_user(email, db)
+            except HTTPException as exc:
+                if exc.detail == "Account registration required":
+                    return None
+                raise
         return None
 
     # Mode 2: JWT

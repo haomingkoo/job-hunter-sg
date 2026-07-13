@@ -20,16 +20,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir torch==2.12.1 --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
 
-COPY backend/ .
-COPY shared/ ../shared/
+RUN useradd --create-home --uid 10001 --user-group appuser && chown appuser:appuser /app
+ENV HOME=/home/appuser
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')" && \
+    chown -R appuser:appuser /home/appuser
+
+COPY --chown=appuser:appuser backend/ .
+COPY --chown=appuser:appuser shared/ ../shared/
 
 # Copy built frontend into /app/static
-COPY --from=frontend-build /app/frontend/dist ./static
+COPY --from=frontend-build --chown=appuser:appuser /app/frontend/dist ./static
 
 EXPOSE 8000
+
+USER appuser
 
 CMD ["python", "main.py"]

@@ -1,6 +1,17 @@
 // ─── API Config ────────────────────────────────────────────────────────────────
 export const API_BASE = import.meta.env.VITE_API_URL || "";
 export const AUTH_EXPIRED_EVENT = "jobhunter:auth-expired";
+export const AUTH_SYNC_KEY = "jobhunter:auth-change";
+const RESUME_DRAFT_OWNER_KEY = "jh_resume_owner";
+
+export function broadcastAuthChange(kind) {
+  try {
+    const nonce = globalThis.crypto?.randomUUID?.() || `${Date.now()}:${Math.random()}`;
+    localStorage.setItem(AUTH_SYNC_KEY, `${kind}:${nonce}`);
+  } catch {
+    // A storage event is a best-effort safety net for other tabs.
+  }
+}
 
 export function clearResumeDraftStorage() {
   try {
@@ -8,6 +19,23 @@ export function clearResumeDraftStorage() {
     sessionStorage.removeItem("jh_resume_text");
     sessionStorage.removeItem("jh_resume_template");
     sessionStorage.removeItem("jh_wizard_step");
+    sessionStorage.removeItem(RESUME_DRAFT_OWNER_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function bindResumeDraftStorageToUser(userId) {
+  try {
+    const currentOwner = sessionStorage.getItem(RESUME_DRAFT_OWNER_KEY);
+    if (userId == null) {
+      if (currentOwner) clearResumeDraftStorage();
+      return;
+    }
+
+    const nextOwner = String(userId);
+    if (currentOwner && currentOwner !== nextOwner) clearResumeDraftStorage();
+    sessionStorage.setItem(RESUME_DRAFT_OWNER_KEY, nextOwner);
   } catch {
     // ignore storage errors
   }
@@ -74,6 +102,9 @@ export async function apiFetch(path, options = {}) {
 
   if (resp.status === 401) {
     localStorage.removeItem("token");
+    if (token) clearResumeDraftStorage();
+    else bindResumeDraftStorageToUser(null);
+    broadcastAuthChange("logout");
     window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
     throw new Error("Session expired. Please sign in again.");
   }

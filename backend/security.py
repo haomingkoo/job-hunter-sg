@@ -52,6 +52,75 @@ class RequestBodyLimitMiddleware:
             await JSONResponse({"detail": "Request body too large"}, status_code=413)(scope, receive, send)
 
 
+class SecurityHeadersMiddleware:
+    """Add browser hardening headers without buffering response bodies."""
+
+    _CONTENT_SECURITY_POLICY = (
+        "default-src 'self'; base-uri 'self'; object-src 'none'; "
+        "frame-ancestors 'none'; form-action 'self'; img-src 'self' data: https:; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "script-src 'self' 'unsafe-inline'; connect-src 'self' https:; "
+        "font-src 'self' data: https://fonts.gstatic.com"
+    ).encode()
+
+    _PRIVATE_PREFIXES = (
+        "/api/account",
+        "/api/admin",
+        "/api/ai",
+        "/api/auth",
+        "/api/job-alerts",
+        "/api/memory",
+        "/api/resume",
+        "/api/search",
+        "/api/skillsfuture",
+        "/api/stories",
+        "/api/tracked",
+        "/api/usage",
+    )
+    _PRIVATE_JOB_PATHS = ("/api/jobs/power-match", "/api/jobs/recommended")
+
+    def __init__(self, app, hsts: bool = False):
+        self.app = app
+        self.hsts = hsts
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+
+        async def send_with_headers(message):
+            if message.get("type") == "http.response.start":
+                headers = list(message.get("headers") or [])
+                headers.extend(
+                    [
+                        (b"content-security-policy", self._CONTENT_SECURITY_POLICY),
+                        (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
+                        (b"referrer-policy", b"no-referrer"),
+                        (b"x-content-type-options", b"nosniff"),
+                        (b"x-frame-options", b"DENY"),
+                    ]
+                )
+                if self.hsts:
+                    headers.append(
+                        (b"strict-transport-security", b"max-age=31536000; includeSubDomains")
+                    )
+                if (
+                    path.startswith(self._PRIVATE_PREFIXES)
+                    or path in self._PRIVATE_JOB_PATHS
+                    or (
+                        path.startswith("/api/jobs/")
+                        and path.endswith(("/match", "/parsed"))
+                    )
+                ):
+                    headers.append((b"cache-control", b"no-store"))
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
 class FixedWindowRateLimiter:
     def __init__(self, max_keys: int = 10_000):
         self._hits: dict[str, deque[float]] = {}

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import os
 import sys
+import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -44,6 +45,37 @@ def test_call_sealion_reads_standard_content(monkeypatch):
     )
 
     assert ai_service._call_sealion([{"role": "user", "content": "hello"}]) == "Standard reply"
+
+
+def test_call_sealion_rejects_excess_concurrency_without_waiting(monkeypatch):
+    ai_service = _setup_call(monkeypatch)
+    monkeypatch.setattr(ai_service, "_AI_CALL_SLOTS", threading.BoundedSemaphore(0))
+    called = []
+    monkeypatch.setattr(
+        ai_service.requests,
+        "post",
+        lambda *args, **kwargs: called.append(True),
+    )
+
+    assert ai_service._call_sealion([{"role": "user", "content": "hello"}]) is None
+    assert called == []
+
+
+def test_call_sealion_does_not_sleep_for_rate_limit_capacity(monkeypatch):
+    import ai_service
+
+    seen_timeouts = []
+
+    class NoCapacity:
+        def acquire(self, timeout: float = 30) -> bool:
+            seen_timeouts.append(timeout)
+            return False
+
+    monkeypatch.setattr(ai_service, "_get_api_key", lambda: "test-key")
+    monkeypatch.setattr(ai_service, "_limiter", NoCapacity())
+
+    assert ai_service._call_sealion([{"role": "user", "content": "hello"}]) is None
+    assert seen_timeouts == [0]
 
 
 def test_call_sealion_rejects_reasoning_content(monkeypatch):

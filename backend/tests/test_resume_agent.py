@@ -395,6 +395,69 @@ def test_agent_state_is_owner_bound():
         raise AssertionError("state should not be visible to another owner")
 
 
+def test_session_cleanup_drops_expired_and_overflow_checkpoints(monkeypatch):
+    import time
+
+    import config as app_config
+    import resume_agent.session as agent_session
+
+    class FakeCheckpointer:
+        def __init__(self):
+            self.deleted = []
+
+        def delete_thread(self, session_id):
+            self.deleted.append(session_id)
+
+    fake_checkpointer = FakeCheckpointer()
+    monkeypatch.setattr(agent_session, "_sessions", {})
+    monkeypatch.setattr(agent_session, "_checkpointer", fake_checkpointer)
+    monkeypatch.setattr(app_config, "AGENT_SESSION_TTL_SECONDS", 10)
+    monkeypatch.setattr(app_config, "AGENT_MAX_SESSIONS", 1)
+
+    now = time.time()
+    for session_id, updated_at in (
+        ("expired", now - 11),
+        ("older", now - 2),
+        ("newer", now - 1),
+    ):
+        state = agent_session._new_state(session_id)
+        state["_updated_at"] = updated_at
+        agent_session._sessions[session_id] = state
+
+    with agent_session._sessions_lock:
+        agent_session._cleanup_sessions()
+
+    assert set(fake_checkpointer.deleted) == {"expired", "older"}
+    assert list(agent_session._sessions) == ["newer"]
+
+
+def test_account_session_purge_drops_owned_checkpoints(monkeypatch):
+    import resume_agent.session as agent_session
+
+    class FakeCheckpointer:
+        def __init__(self):
+            self.deleted = []
+
+        def delete_thread(self, session_id):
+            self.deleted.append(session_id)
+
+    fake_checkpointer = FakeCheckpointer()
+    monkeypatch.setattr(agent_session, "_sessions", {})
+    monkeypatch.setattr(agent_session, "_checkpointer", fake_checkpointer)
+    agent_session._sessions.update(
+        {
+            "owned-1": {"_owner_key": "user:1"},
+            "owned-2": {"_owner_key": "user:1"},
+            "other": {"_owner_key": "user:2"},
+        }
+    )
+
+    agent_session.purge_owner_sessions("user:1")
+
+    assert set(fake_checkpointer.deleted) == {"owned-1", "owned-2"}
+    assert agent_session._sessions == {"other": {"_owner_key": "user:2"}}
+
+
 def test_agent_rejects_oversized_draft(monkeypatch):
     import config as app_config
     import resume_agent.session as agent_session
@@ -470,6 +533,73 @@ def test_active_run_gate_rejects_concurrent_same_owner():
     assert events[-1] == {"event": "done", "session_id": "outer"}
 
 
+def test_owner_run_can_be_reserved_before_streaming(monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    import resume_agent.session as agent_session
+
+    class InstantAgent:
+        def invoke(self, _payload, config=None):
+            return {"messages": [AIMessage(content="done")]}
+
+    monkeypatch.setattr(agent_session, "_active_runs", {})
+
+    assert agent_session.reserve_owner_run("user:1") is True
+    assert agent_session.reserve_owner_run("user:1") is False
+    assert agent_session.owner_has_active_sessions("user:1") is True
+
+    events = list(
+        agent_session.stream_chat_events(
+            {"message": "review", "session_id": "pre-reserved"},
+            agent=InstantAgent(),
+            owner_key="user:1",
+            owner_run_reserved=True,
+        )
+    )
+
+    assert any(event.get("content") == "done" for event in events)
+    assert agent_session.owner_has_active_sessions("user:1") is False
+
+
+def test_owner_run_reservation_can_be_released_without_streaming(monkeypatch):
+    import config as app_config
+    import resume_agent.session as agent_session
+
+    monkeypatch.setattr(agent_session, "_active_runs", {})
+
+    assert agent_session.reserve_owner_run("user:1") is True
+    agent_session.release_owner_run("user:1")
+
+    assert agent_session.owner_has_active_sessions("user:1") is False
+    assert agent_session.reserve_owner_run("user:1") is True
+    agent_session.release_owner_run("user:1")
+
+    monkeypatch.setattr(app_config, "AGENT_MAX_DRAFT_CHARS", 1)
+    assert agent_session.reserve_owner_run("user:1") is True
+    list(
+        agent_session.stream_chat_events(
+            {"message": "review", "resume_text": "too large"},
+            owner_key="user:1",
+            owner_run_reserved=True,
+        )
+    )
+    assert agent_session.owner_has_active_sessions("user:1") is False
+
+
+def test_owner_run_reservation_has_a_global_cap(monkeypatch):
+    import resume_agent.session as agent_session
+
+    monkeypatch.setattr(agent_session, "_active_runs", {})
+    monkeypatch.setattr(agent_session, "_MAX_ACTIVE_RUNS", 2)
+
+    assert agent_session.reserve_owner_run("user:1") is True
+    assert agent_session.reserve_owner_run("user:2") is True
+    assert agent_session.reserve_owner_run("user:3") is False
+
+    agent_session.release_owner_run("user:1")
+    assert agent_session.reserve_owner_run("user:3") is True
+
+
 def test_chat_endpoint_streams_token_and_tool_events(monkeypatch):
     from fastapi.testclient import TestClient
     from types import SimpleNamespace
@@ -508,13 +638,16 @@ def test_chat_endpoint_streams_token_and_tool_events(monkeypatch):
         )
     finally:
         main.app.dependency_overrides.pop(get_current_user, None)
+        from resume_agent.session import release_owner_run
+
+        release_owner_run("user:1")
 
     assert response.status_code == 200
     body = response.text
     assert body.index("event: tool") < body.index("event: token")
     assert '"name": "search_jobs"' in body
     assert '"content": "Found a role."' in body
-    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["cache-control"] == "no-cache, no-store"
 
 
 def test_resume_agent_sse_sends_keepalive_while_agent_runs(monkeypatch):
@@ -564,6 +697,44 @@ def test_state_endpoint_returns_draft_todos_and_pending_diffs(monkeypatch):
     assert data["draft"] == "Resume draft"
     assert data["todos"] == ["Review bullets"]
     assert data["pending_diffs"][0]["bullet_id"] == "exp-0-b0"
+
+
+def test_explicit_missing_agent_session_returns_404_before_quota(monkeypatch):
+    from fastapi.testclient import TestClient
+    from types import SimpleNamespace
+
+    import main
+    import resume_agent.session as agent_session
+    from auth import get_current_user
+
+    session_id = "missing-agent-session"
+    with agent_session._sessions_lock:
+        agent_session._sessions.pop(session_id, None)
+
+    quota_calls = []
+    stream_calls = []
+    monkeypatch.setattr(main, "_consume_ai_credit", lambda *args: quota_calls.append(args))
+    monkeypatch.setattr(
+        main,
+        "_stream_resume_agent_events",
+        lambda body: stream_calls.append(body) or iter(()),
+    )
+    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1, tier="user")
+
+    try:
+        client = TestClient(main.app)
+        chat_response = client.post(
+            "/api/resume/agent/chat",
+            json={"message": "Continue", "session_id": session_id},
+        )
+        state_response = client.get(f"/api/resume/agent/{session_id}/state")
+    finally:
+        main.app.dependency_overrides.pop(get_current_user, None)
+
+    assert chat_response.status_code == 404
+    assert state_response.status_code == 404
+    assert quota_calls == []
+    assert stream_calls == []
 
 
 def test_smart_persona_output_strips_think_tags():

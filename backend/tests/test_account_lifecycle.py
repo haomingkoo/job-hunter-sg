@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import main
@@ -29,8 +33,12 @@ from models import (
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(main.app)
+def client():
+    with main._PUBLIC_RATE_LIMITER._lock:
+        main._PUBLIC_RATE_LIMITER._hits.clear()
+    yield TestClient(main.app)
+    with main._PUBLIC_RATE_LIMITER._lock:
+        main._PUBLIC_RATE_LIMITER._hits.clear()
 
 
 @pytest.fixture
@@ -62,10 +70,15 @@ def _signup(client: TestClient, tokens: list[str]) -> tuple[str, str, str]:
     return email, password, tokens[-1]
 
 
-def _verify(client: TestClient, verification_token: str) -> str:
+def _verify(client: TestClient, verification_token: str, password: str) -> str:
     response = client.post(
         "/api/auth/verify-email",
-        json={"token": verification_token},
+        json={
+            "token": verification_token,
+            "password": password,
+            "name": "Account Test",
+            "accepted_terms": True,
+        },
     )
     assert response.status_code == 200
     return response.json()["token"]
@@ -92,9 +105,15 @@ def test_signup_requires_single_use_email_verification(
         assert stored.token_hash != verification_token
         assert stored.token_hash == main._auth_token_hash(verification_token)
 
-    bearer = _verify(client, verification_token)
+    bearer = _verify(client, verification_token, password)
     replay = client.post(
-        "/api/auth/verify-email", json={"token": verification_token}
+        "/api/auth/verify-email",
+        json={
+            "token": verification_token,
+            "password": password,
+            "name": "Account Test",
+            "accepted_terms": True,
+        },
     )
     assert replay.status_code == 400
     assert client.get(
@@ -106,7 +125,7 @@ def test_expired_and_unknown_verification_links_are_rejected(
     client: TestClient,
     verification_mail: list[str],
 ) -> None:
-    email, _password, verification_token = _signup(client, verification_mail)
+    email, password, verification_token = _signup(client, verification_mail)
     with SessionLocal() as db:
         verification = (
             db.query(EmailVerificationToken)
@@ -118,11 +137,75 @@ def test_expired_and_unknown_verification_links_are_rejected(
         db.commit()
 
     assert client.post(
-        "/api/auth/verify-email", json={"token": verification_token}
+        "/api/auth/verify-email",
+        json={
+            "token": verification_token,
+            "password": password,
+            "name": "Account Test",
+            "accepted_terms": True,
+        },
     ).status_code == 400
     assert client.post(
-        "/api/auth/verify-email", json={"token": secrets.token_urlsafe(40)}
+        "/api/auth/verify-email",
+        json={
+            "token": secrets.token_urlsafe(40),
+            "password": password,
+            "name": "Account Test",
+            "accepted_terms": True,
+        },
     ).status_code == 400
+
+
+def test_resend_does_not_revoke_an_already_delivered_verification_link(
+    client: TestClient,
+    verification_mail: list[str],
+) -> None:
+    email, password, first_token = _signup(client, verification_mail)
+    with SessionLocal() as db:
+        token_row = (
+            db.query(EmailVerificationToken)
+            .join(User, User.id == EmailVerificationToken.user_id)
+            .filter(User.email == email)
+            .one()
+        )
+        token_row.created_at = datetime.now(timezone.utc) - timedelta(minutes=6)
+        db.commit()
+
+    resent = client.post("/api/auth/resend-verification", json={"email": email})
+    assert resent.status_code == 200
+    assert len(verification_mail) == 2
+    second_token = verification_mail[-1]
+    assert second_token != first_token
+
+    bearer = _verify(client, first_token, password)
+    assert bearer
+    assert client.post(
+        "/api/auth/verify-email",
+        json={
+            "token": second_token,
+            "password": password,
+            "name": "Account Test",
+            "accepted_terms": True,
+        },
+    ).status_code == 400
+
+
+def test_invalid_bcrypt_length_does_not_consume_verification_link(
+    client: TestClient,
+    verification_mail: list[str],
+) -> None:
+    _email, password, verification_token = _signup(client, verification_mail)
+    invalid = client.post(
+        "/api/auth/verify-email",
+        json={
+            "token": verification_token,
+            "password": "a" * 73,
+            "name": "Account Test",
+            "accepted_terms": True,
+        },
+    )
+    assert invalid.status_code == 422
+    assert _verify(client, verification_token, password)
 
 
 def test_duplicate_signup_is_generic_and_cloudflare_hash_never_reaches_bcrypt(
@@ -141,10 +224,16 @@ def test_duplicate_signup_is_generic_and_cloudflare_hash_never_reaches_bcrypt(
     )
     assert duplicate.status_code == 200
     assert duplicate.json() == main._VERIFICATION_MESSAGE
-    assert verification_mail[-1] != first_token
+    assert len(verification_mail) == 1
     assert client.post(
-        "/api/auth/verify-email", json={"token": first_token}
-    ).status_code == 400
+        "/api/auth/verify-email",
+        json={
+            "token": first_token,
+            "password": password,
+            "name": "Account Test",
+            "accepted_terms": True,
+        },
+    ).status_code == 200
 
     cloudflare_email = f"cf_{secrets.token_hex(6)}@aisg.sg"
     with SessionLocal() as db:
@@ -167,13 +256,92 @@ def test_duplicate_signup_is_generic_and_cloudflare_hash_never_reaches_bcrypt(
     assert response.status_code == 401
 
 
+def test_mailbox_owner_can_claim_a_pre_registered_email_without_signup_races(
+    client: TestClient,
+    verification_mail: list[str],
+) -> None:
+    email, attacker_password, attacker_token = _signup(client, verification_mail)
+    victim_password = "VictimOwnedPassword456!"  # pragma: allowlist secret
+    replacement = client.post(
+        "/api/auth/signup",
+        json={
+            "email": email,
+            "password": victim_password,
+            "name": "Actual Email Owner",
+            "accepted_terms": True,
+        },
+    )
+
+    assert replacement.status_code == 200
+    assert len(verification_mail) == 1
+
+    attacker_retry = client.post(
+        "/api/auth/signup",
+        json={
+            "email": email,
+            "password": attacker_password,
+            "name": "Attacker Retry",
+            "accepted_terms": True,
+        },
+    )
+    assert attacker_retry.status_code == 200
+    assert len(verification_mail) == 1
+    assert client.post(
+        "/api/auth/verify-email",
+        json={
+            "token": attacker_token,
+            "password": victim_password,
+            "name": "Actual Email Owner",
+            "accepted_terms": True,
+        },
+    ).status_code == 200
+    assert client.post(
+        "/api/auth/login", json={"email": email, "password": attacker_password}
+    ).status_code == 401
+    victim_login = client.post(
+        "/api/auth/login", json={"email": email, "password": victim_password}
+    )
+    assert victim_login.status_code == 200
+    assert victim_login.json()["user"]["name"] == "Actual Email Owner"
+
+
+def test_correct_password_is_not_blocked_by_attackers_failed_attempts(
+    client: TestClient,
+    verification_mail: list[str],
+) -> None:
+    email, password, verification_token = _signup(client, verification_mail)
+    _verify(client, verification_token, password)
+    email_hash = hashlib.sha256(email.encode()).hexdigest()[:16]
+    with SessionLocal() as db:
+        db.add_all(
+            UsageLog(user_id=None, action="login_failed", detail=email_hash)
+            for _ in range(5)
+        )
+        db.commit()
+
+    valid = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": password},
+    )
+    invalid = client.post(
+        "/api/auth/login",
+        json={
+            "email": email,
+            "password": "WrongPassword123!",  # pragma: allowlist secret
+        },
+    )
+
+    assert valid.status_code == 200
+    assert invalid.status_code == 429
+
+
 def test_password_change_and_reset_revoke_existing_tokens(
     client: TestClient,
     verification_mail: list[str],
     monkeypatch,
 ) -> None:
     email, password, verification_token = _signup(client, verification_mail)
-    original_token = _verify(client, verification_token)
+    original_token = _verify(client, verification_token, password)
     changed_password = "ChangedPassword123!"  # pragma: allowlist secret
     change = client.post(
         "/api/auth/change-password",
@@ -211,6 +379,223 @@ def test_password_change_and_reset_revoke_existing_tokens(
     ).status_code == 200
 
 
+def test_password_reset_requests_share_a_per_account_cooldown(
+    client: TestClient,
+    verification_mail: list[str],
+    monkeypatch,
+) -> None:
+    email, password, verification_token = _signup(client, verification_mail)
+    _verify(client, verification_token, password)
+    reset_tokens: list[str] = []
+    monkeypatch.setattr(
+        main,
+        "_send_password_reset_email",
+        lambda _user, token: reset_tokens.append(token),
+    )
+
+    for _ in range(2):
+        assert client.post(
+            "/api/auth/forgot-password",
+            json={"email": email},
+        ).status_code == 200
+    assert len(reset_tokens) == 1
+
+    with SessionLocal() as db:
+        token = (
+            db.query(PasswordResetToken)
+            .join(User, User.id == PasswordResetToken.user_id)
+            .filter(User.email == email)
+            .one()
+        )
+        token.created_at = datetime.now(timezone.utc) - timedelta(minutes=6)
+        db.commit()
+
+    assert client.post(
+        "/api/auth/forgot-password",
+        json={"email": email},
+    ).status_code == 200
+    assert len(reset_tokens) == 2
+
+    reset_password = "ResetPassword123!"  # pragma: allowlist secret
+    assert client.post(
+        "/api/auth/reset-password",
+        json={"token": reset_tokens[0], "password": reset_password},
+    ).status_code == 200
+    assert client.post(
+        "/api/auth/reset-password",
+        json={"token": reset_tokens[1], "password": reset_password},
+    ).status_code == 400
+
+
+def test_concurrent_password_changes_are_serialized(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from auth import hash_password, verify_password
+    from schemas import ChangePasswordRequest
+
+    email = f"credential_race_{secrets.token_hex(6)}@aisg.sg"
+    current_password = "StartingPassword123!"  # pragma: allowlist secret
+    first_password = "FirstPassword123!"  # pragma: allowlist secret
+    second_password = "SecondPassword123!"  # pragma: allowlist secret
+    with SessionLocal() as db:
+        user = User(
+            email=email,
+            password_hash=hash_password(current_password),
+            name="Credential Race",
+            email_verified_at=datetime.now(timezone.utc),
+        )
+        db.add(user)
+        db.commit()
+        user_id = user.id
+        initial_token_version = user.token_version
+
+    first_db = SessionLocal()
+    second_db = SessionLocal()
+    first_user = first_db.get(User, user_id)
+    second_user = second_db.get(User, user_id)
+    first_hash_started = threading.Event()
+    release_first = threading.Event()
+    second_started = threading.Event()
+    real_hash_password = main.hash_password
+
+    def gated_hash_password(password: str) -> str:
+        if password == first_password:
+            first_hash_started.set()
+            assert release_first.wait(5)
+        return real_hash_password(password)
+
+    monkeypatch.setattr(main, "hash_password", gated_hash_password)
+
+    def run_first_change() -> dict:
+        return main.change_password(
+            ChangePasswordRequest(
+                current_password=current_password,
+                new_password=first_password,
+            ),
+            first_user,
+            first_db,
+        )
+
+    def run_second_change() -> dict:
+        second_started.set()
+        return main.change_password(
+            ChangePasswordRequest(
+                current_password=current_password,
+                new_password=second_password,
+            ),
+            second_user,
+            second_db,
+        )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first_future = pool.submit(run_first_change)
+            assert first_hash_started.wait(5)
+            second_future = pool.submit(run_second_change)
+            assert second_started.wait(5)
+            release_first.set()
+            first_change = first_future.result(timeout=10)
+            with pytest.raises(HTTPException) as exc_info:
+                second_future.result(timeout=10)
+            assert exc_info.value.status_code == 401
+
+        with SessionLocal() as db:
+            final_user = db.get(User, user_id)
+            assert final_user.token_version == initial_token_version + 1
+            assert verify_password(first_password, final_user.password_hash)
+        assert client.get(
+            "/api/auth/me",
+            headers={"Authorization": f"Bearer {first_change['token']}"},
+        ).status_code == 200
+    finally:
+        release_first.set()
+        first_db.rollback()
+        second_db.rollback()
+        first_db.close()
+        second_db.close()
+        with SessionLocal() as db:
+            db.query(User).filter(User.id == user_id).delete()
+            db.commit()
+
+
+def test_reset_password_increments_a_fresh_token_version(
+    client: TestClient,
+    monkeypatch,
+) -> None:
+    from auth import hash_password, verify_password
+    from schemas import ChangePasswordRequest, ResetPasswordRequest
+
+    email = f"reset_version_{secrets.token_hex(6)}@aisg.sg"
+    current_password = "StartingPassword123!"  # pragma: allowlist secret
+    changed_password = "ChangedPassword123!"  # pragma: allowlist secret
+    reset_password = "ResetPassword123!"  # pragma: allowlist secret
+    reset_token = secrets.token_urlsafe(40)
+    with SessionLocal() as db:
+        user = User(
+            email=email,
+            password_hash=hash_password(current_password),
+            name="Reset Version",
+            email_verified_at=datetime.now(timezone.utc),
+        )
+        db.add(user)
+        db.commit()
+        user_id = user.id
+        initial_token_version = user.token_version
+
+    change_db = SessionLocal()
+    reset_db = SessionLocal()
+    change_user = change_db.get(User, user_id)
+    reset_db.get(User, user_id)  # Simulate a request that read the old version.
+    monkeypatch.setattr(main._PUBLIC_RATE_LIMITER, "allow", lambda *_args, **_kwargs: True)
+
+    try:
+        changed = main.change_password(
+            ChangePasswordRequest(
+                current_password=current_password,
+                new_password=changed_password,
+            ),
+            change_user,
+            change_db,
+        )
+        with SessionLocal() as db:
+            db.add(
+                PasswordResetToken(
+                    user_id=user_id,
+                    token_hash=main._password_reset_hash(reset_token),
+                    expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                )
+            )
+            db.commit()
+
+        main.reset_password(
+            SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")),
+            ResetPasswordRequest(token=reset_token, password=reset_password),
+            reset_db,
+        )
+
+        with SessionLocal() as db:
+            final_user = db.get(User, user_id)
+            assert final_user.token_version == initial_token_version + 2
+            assert verify_password(reset_password, final_user.password_hash)
+        assert client.get(
+            "/api/auth/me",
+            headers={"Authorization": f"Bearer {changed['token']}"},
+        ).status_code == 401
+    finally:
+        change_db.rollback()
+        reset_db.rollback()
+        change_db.close()
+        reset_db.close()
+        with SessionLocal() as db:
+            db.query(UsageLog).filter(UsageLog.user_id == user_id).delete()
+            db.query(PasswordResetToken).filter(
+                PasswordResetToken.user_id == user_id
+            ).delete()
+            db.query(User).filter(User.id == user_id).delete()
+            db.commit()
+
+
 def test_cloudflare_registration_is_explicit(client: TestClient) -> None:
     email = f"cf_register_{secrets.token_hex(6)}@aisg.sg"
     main.app.dependency_overrides[main.get_cloudflare_email] = lambda: email
@@ -236,7 +621,7 @@ def test_deletion_rejects_wrong_password_and_active_sessions_then_rolls_back(
     monkeypatch,
 ) -> None:
     email, password, verification_token = _signup(client, verification_mail)
-    bearer = _verify(client, verification_token)
+    bearer = _verify(client, verification_token, password)
     headers = {"Authorization": f"Bearer {bearer}"}
     with SessionLocal() as db:
         user = db.query(User).filter(User.email == email).one()
@@ -270,6 +655,21 @@ def test_deletion_rejects_wrong_password_and_active_sessions_then_rolls_back(
         agent_session._active_runs.pop(owner_key, None)
     assert active.status_code == 409
 
+    from tailoring_pipeline import PipelineState, _active_pipelines
+
+    active_pipeline = PipelineState("active-deletion-check", owner_key=owner_key)
+    _active_pipelines[active_pipeline.session_id] = active_pipeline
+    try:
+        active_tailoring = client.request(
+            "DELETE",
+            "/api/account",
+            headers=headers,
+            json={"confirm_email": email, "current_password": password},
+        )
+    finally:
+        _active_pipelines.pop(active_pipeline.session_id, None)
+    assert active_tailoring.status_code == 409
+
     original_delete = main._delete_owned_account_rows
 
     def fail_after_deletes(user: User, db) -> None:
@@ -290,12 +690,296 @@ def test_deletion_rejects_wrong_password_and_active_sessions_then_rolls_back(
         assert db.query(UserMemory).filter(UserMemory.user_id == user_id).count() == 1
 
 
+def test_agent_admission_and_account_deletion_share_a_lifecycle_barrier(
+    monkeypatch,
+) -> None:
+    from auth import hash_password
+    from resume_agent.session import release_owner_run
+    from schemas import DeleteAccountRequest
+
+    email = f"lifecycle-race-{secrets.token_hex(6)}@aisg.sg"
+    password = "LifecyclePassword123!"  # pragma: allowlist secret
+    with SessionLocal() as db:
+        user = User(
+            email=email,
+            password_hash=hash_password(password),
+            name="Lifecycle Race",
+            email_verified_at=datetime.now(timezone.utc),
+        )
+        db.add(user)
+        db.commit()
+        user_id = user.id
+
+    agent_db = SessionLocal()
+    deletion_db = SessionLocal()
+    agent_user = agent_db.get(User, user_id)
+    deletion_user = deletion_db.get(User, user_id)
+    credit_started = threading.Event()
+    release_credit = threading.Event()
+    deletion_started = threading.Event()
+    owner_key = f"user:{user_id}"
+
+    def blocked_credit(*_args, **_kwargs) -> None:
+        credit_started.set()
+        assert release_credit.wait(5)
+
+    def run_deletion():
+        deletion_started.set()
+        return main.delete_account(
+            DeleteAccountRequest(
+                confirm_email=email,
+                current_password=password,
+            ),
+            deletion_user,
+            deletion_db,
+        )
+
+    monkeypatch.setattr(main, "_consume_ai_credit", blocked_credit)
+    monkeypatch.setattr(main._PUBLIC_RATE_LIMITER, "allow", lambda *_args, **_kwargs: True)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            admitted = pool.submit(main.resume_agent_chat, {}, agent_user, agent_db)
+            assert credit_started.wait(5)
+            deleting = pool.submit(run_deletion)
+            assert deletion_started.wait(5)
+            with pytest.raises(TimeoutError):
+                deleting.result(timeout=0.2)
+            release_credit.set()
+            assert admitted.result(timeout=5).media_type == "text/event-stream"
+            with pytest.raises(HTTPException) as exc_info:
+                deleting.result(timeout=5)
+            assert exc_info.value.status_code == 409
+    finally:
+        release_credit.set()
+        release_owner_run(owner_key)
+        agent_db.rollback()
+        deletion_db.rollback()
+        agent_db.close()
+        deletion_db.close()
+        with SessionLocal() as db:
+            db.query(User).filter(User.id == user_id).delete()
+            db.commit()
+
+
+def test_completed_deletion_rejects_an_agent_request_already_waiting_for_admission(
+    monkeypatch,
+) -> None:
+    from auth import hash_password
+    from schemas import DeleteAccountRequest
+
+    email = f"deletion-first-{secrets.token_hex(6)}@aisg.sg"
+    password = "DeletionFirstPassword123!"  # pragma: allowlist secret
+    with SessionLocal() as db:
+        user = User(
+            email=email,
+            password_hash=hash_password(password),
+            name="Deletion First",
+            email_verified_at=datetime.now(timezone.utc),
+        )
+        db.add(user)
+        db.commit()
+        user_id = user.id
+
+    deletion_db = SessionLocal()
+    agent_db = SessionLocal()
+    deletion_user = deletion_db.get(User, user_id)
+    deletion_started = threading.Event()
+    release_deletion = threading.Event()
+    agent_started = threading.Event()
+    real_delete = main._delete_owned_account_rows
+
+    def blocked_delete(user, db) -> None:
+        deletion_started.set()
+        assert release_deletion.wait(5)
+        real_delete(user, db)
+
+    def run_agent():
+        agent_started.set()
+        return main.resume_agent_chat({}, SimpleNamespace(id=user_id), agent_db)
+
+    monkeypatch.setattr(main, "_delete_owned_account_rows", blocked_delete)
+    monkeypatch.setattr(main._PUBLIC_RATE_LIMITER, "allow", lambda *_args, **_kwargs: True)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            deleting = pool.submit(
+                main.delete_account,
+                DeleteAccountRequest(
+                    confirm_email=email,
+                    current_password=password,
+                ),
+                deletion_user,
+                deletion_db,
+            )
+            assert deletion_started.wait(5)
+            agent = pool.submit(run_agent)
+            assert agent_started.wait(5)
+            with pytest.raises(TimeoutError):
+                agent.result(timeout=0.2)
+            release_deletion.set()
+            assert deleting.result(timeout=5) == {"message": "Account deleted."}
+            with pytest.raises(HTTPException) as exc_info:
+                agent.result(timeout=5)
+            assert exc_info.value.status_code == 401
+    finally:
+        release_deletion.set()
+        deletion_db.rollback()
+        agent_db.rollback()
+        deletion_db.close()
+        agent_db.close()
+        with SessionLocal() as db:
+            db.query(User).filter(User.id == user_id).delete()
+            db.commit()
+
+
+def test_lifecycle_barrier_does_not_block_another_account(monkeypatch) -> None:
+    from auth import hash_password
+    from resume_agent.session import release_owner_run
+    from schemas import DeleteAccountRequest
+
+    password = "LifecyclePassword123!"  # pragma: allowlist secret
+    with SessionLocal() as db:
+        agent_user = User(
+            email=f"agent-{secrets.token_hex(6)}@aisg.sg",
+            password_hash=hash_password(password),
+            name="Agent Account",
+            email_verified_at=datetime.now(timezone.utc),
+        )
+        deleting_user = User(
+            email=f"deleting-{secrets.token_hex(6)}@aisg.sg",
+            password_hash=hash_password(password),
+            name="Deleting Account",
+            email_verified_at=datetime.now(timezone.utc),
+        )
+        db.add_all([agent_user, deleting_user])
+        db.commit()
+        agent_user_id = agent_user.id
+        deleting_user_id = deleting_user.id
+        deleting_email = deleting_user.email
+
+    agent_db = SessionLocal()
+    deletion_db = SessionLocal()
+    agent_user = agent_db.get(User, agent_user_id)
+    deleting_user = deletion_db.get(User, deleting_user_id)
+    credit_started = threading.Event()
+    release_credit = threading.Event()
+    owner_key = f"user:{agent_user_id}"
+
+    def blocked_credit(*_args, **_kwargs) -> None:
+        credit_started.set()
+        assert release_credit.wait(5)
+
+    monkeypatch.setattr(main, "_consume_ai_credit", blocked_credit)
+    monkeypatch.setattr(main._PUBLIC_RATE_LIMITER, "allow", lambda *_args, **_kwargs: True)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            admitted = pool.submit(main.resume_agent_chat, {}, agent_user, agent_db)
+            assert credit_started.wait(5)
+            deleting = pool.submit(
+                main.delete_account,
+                DeleteAccountRequest(
+                    confirm_email=deleting_email,
+                    current_password=password,
+                ),
+                deleting_user,
+                deletion_db,
+            )
+            assert deleting.result(timeout=2) == {"message": "Account deleted."}
+            release_credit.set()
+            assert admitted.result(timeout=5).media_type == "text/event-stream"
+    finally:
+        release_credit.set()
+        release_owner_run(owner_key)
+        agent_db.rollback()
+        deletion_db.rollback()
+        agent_db.close()
+        deletion_db.close()
+        with SessionLocal() as db:
+            db.query(User).filter(User.id.in_([agent_user_id, deleting_user_id])).delete(
+                synchronize_session=False
+            )
+            db.commit()
+
+
+def test_concurrent_tailoring_result_fetch_saves_one_resume_version() -> None:
+    from auth import hash_password
+    from tailoring_pipeline import PipelineState, _active_pipelines, _pipelines_lock
+
+    session_id = f"tailor-{secrets.token_hex(8)}"
+    with SessionLocal() as db:
+        user = User(
+            email=f"tailor-{secrets.token_hex(6)}@aisg.sg",
+            password_hash=hash_password("TailorPassword123!"),  # pragma: allowlist secret
+            name="Tailor Race",
+            email_verified_at=datetime.now(timezone.utc),
+        )
+        db.add(user)
+        db.commit()
+        user_id = user.id
+
+    state = PipelineState(session_id, owner_key=f"user:{user_id}")
+    state.set_result(
+        {
+            "tailored_text": "Built secure services with measurable results. " * 4,
+            "score": {"after": 90},
+        }
+    )
+    with _pipelines_lock:
+        _active_pipelines[session_id] = state
+
+    first_db = SessionLocal()
+    second_db = SessionLocal()
+    first_user = first_db.get(User, user_id)
+    second_user = second_db.get(User, user_id)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = [
+                future.result(timeout=5)
+                for future in (
+                    pool.submit(
+                        main.get_tailoring_result,
+                        session_id,
+                        first_user,
+                        first_db,
+                    ),
+                    pool.submit(
+                        main.get_tailoring_result,
+                        session_id,
+                        second_user,
+                        second_db,
+                    ),
+                )
+            ]
+
+        assert results[0]["version_id"] == results[1]["version_id"]
+        with SessionLocal() as db:
+            assert (
+                db.query(ResumeVersion)
+                .filter(
+                    ResumeVersion.user_id == user_id,
+                    ResumeVersion.source == "tailored",
+                )
+                .count()
+                == 1
+            )
+    finally:
+        with _pipelines_lock:
+            _active_pipelines.pop(session_id, None)
+        first_db.rollback()
+        second_db.rollback()
+        first_db.close()
+        second_db.close()
+        with SessionLocal() as db:
+            db.query(ResumeVersion).filter(ResumeVersion.user_id == user_id).delete()
+            db.query(User).filter(User.id == user_id).delete()
+            db.commit()
+
+
 def test_account_deletion_removes_every_owned_row_but_retains_jobs(
     client: TestClient,
     verification_mail: list[str],
 ) -> None:
     email, password, verification_token = _signup(client, verification_mail)
-    bearer = _verify(client, verification_token)
+    bearer = _verify(client, verification_token, password)
     now = datetime.now(timezone.utc)
 
     with SessionLocal() as db:

@@ -63,7 +63,10 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
         limit: "8",
         direct_employers_only: String(directOnly),
       });
-      const resp = await apiFetch(`/api/jobs/power-match?${params}`, { timeoutMs: 45000 });
+      const resp = await apiFetch(`/api/jobs/power-match?${params}`, {
+        method: "POST",
+        timeoutMs: 45000,
+      });
       const payload = await resp.json();
       setData(payload);
     } catch (err) {

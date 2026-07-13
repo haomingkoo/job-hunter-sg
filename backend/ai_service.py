@@ -117,6 +117,7 @@ _limiter = _RateLimiter(
     max_tokens=max(1, SEALION_REQ_PER_MIN * len(_api_keys)),
     refill_seconds=60,
 )
+_AI_CALL_SLOTS = threading.BoundedSemaphore(8)
 
 log.info(
     f"[AI] Loaded {len(_api_keys)} SEA-LION API key(s) → "
@@ -230,11 +231,14 @@ def _call_sealion(
         log.warning("[AI] SEA-LION API key not set (sealion_api)")
         return None
 
-    if not _limiter.acquire(timeout=30):
-        log.warning("[AI] Rate limit — could not acquire token in 30s")
+    if not _AI_CALL_SLOTS.acquire(blocking=False):
+        log.warning("[AI] Concurrent call limit reached")
         return None
 
     try:
+        if not _limiter.acquire(timeout=0):
+            log.warning("[AI] Rate limit reached")
+            return None
         body = {
             "model": model,
             "messages": messages,
@@ -284,6 +288,8 @@ def _call_sealion(
         log.warning(f"[AI] SEA-LION parse error: {type(e).__name__}: {e}")
         _track_failure("ParseError", str(e)[:50])
         return None
+    finally:
+        _AI_CALL_SLOTS.release()
 
 
 # ── JSON-safe call with progressive retry ──────────────────────────────────

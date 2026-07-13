@@ -526,6 +526,114 @@ def test_concurrent_pipelines_keep_separate_results(monkeypatch):
     assert second.result["tailored_text"] == "Resume B"
 
 
+def test_pipeline_admission_caps_owner_and_global_concurrency(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    import tailoring_pipeline as pipeline
+
+    release = threading.Event()
+
+    def blocked_execute(_resume_text, _jd_text, _parsed_jd, _intensity, state):
+        release.wait()
+        state.set_result({"tailored_text": "done"})
+
+    monkeypatch.setattr(pipeline, "_active_pipelines", {})
+    monkeypatch.setattr(pipeline, "_MAX_ACTIVE_PIPELINES", 2)
+    monkeypatch.setattr(pipeline, "_execute_pipeline", blocked_execute)
+
+    start_together = threading.Barrier(2)
+
+    def start_for_same_owner(label):
+        start_together.wait()
+        try:
+            return pipeline.run_pipeline(label, "JD", {}, owner_key="user:1")
+        except pipeline.PipelineCapacityError as exc:
+            return exc
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            same_owner_results = list(pool.map(start_for_same_owner, ("Resume A", "Resume B")))
+        admitted = [
+            result for result in same_owner_results if isinstance(result, pipeline.PipelineState)
+        ]
+        rejected = [
+            result
+            for result in same_owner_results
+            if isinstance(result, pipeline.PipelineCapacityError)
+        ]
+        assert len(admitted) == len(rejected) == 1
+        assert "already running" in str(rejected[0])
+        first = admitted[0]
+
+        second = pipeline.run_pipeline("Resume B", "JD B", {}, owner_key="user:2")
+        with pytest.raises(pipeline.PipelineCapacityError, match="busy"):
+            pipeline.run_pipeline("Resume C", "JD C", {}, owner_key="user:3")
+    finally:
+        release.set()
+
+    assert _wait_for_pipeline(first, attempts=20, sleep_seconds=0.05)["complete"]
+    assert _wait_for_pipeline(second, attempts=20, sleep_seconds=0.05)["complete"]
+
+    replacement = pipeline.run_pipeline("Resume D", "JD D", {}, owner_key="user:1")
+    assert _wait_for_pipeline(replacement, attempts=20, sleep_seconds=0.05)["complete"]
+
+
+def test_pipeline_admission_evicts_oldest_finished_session(monkeypatch):
+    import tailoring_pipeline as pipeline
+
+    retained = {}
+    for index, session_id in enumerate(("oldest", "middle", "newest")):
+        state = pipeline.PipelineState(session_id)
+        state.set_result({"tailored_text": session_id})
+        state._completed_at = time.monotonic() - (3 - index)
+        retained[session_id] = state
+
+    monkeypatch.setattr(pipeline, "_active_pipelines", retained)
+    monkeypatch.setattr(pipeline, "_MAX_RETAINED_PIPELINES", 3)
+    monkeypatch.setattr(
+        pipeline,
+        "_execute_pipeline",
+        lambda _resume, _jd, _parsed, _intensity, state: state.set_result(
+            {"tailored_text": "replacement"}
+        ),
+    )
+
+    replacement = pipeline.run_pipeline(
+        "Resume", "JD", {}, session_id="replacement", owner_key="user:1"
+    )
+    assert _wait_for_pipeline(replacement, attempts=20, sleep_seconds=0.05)["complete"]
+
+    assert set(pipeline._active_pipelines) == {"middle", "newest", "replacement"}
+
+
+def test_pipeline_retention_never_evicts_running_sessions(monkeypatch):
+    import tailoring_pipeline as pipeline
+
+    running = pipeline.PipelineState("running", owner_key="user:1")
+    finished = pipeline.PipelineState("finished", owner_key="user:0")
+    finished.set_result({"tailored_text": "done"})
+
+    monkeypatch.setattr(
+        pipeline,
+        "_active_pipelines",
+        {running.session_id: running, finished.session_id: finished},
+    )
+    monkeypatch.setattr(pipeline, "_MAX_RETAINED_PIPELINES", 2)
+    monkeypatch.setattr(pipeline, "_MAX_ACTIVE_PIPELINES", 2)
+    monkeypatch.setattr(pipeline, "_execute_pipeline", lambda *_args: None)
+
+    admitted = pipeline.run_pipeline(
+        "Resume", "JD", {}, session_id="second-running", owner_key="user:2"
+    )
+
+    assert set(pipeline._active_pipelines) == {"running", "second-running"}
+    assert pipeline._active_pipelines["running"] is running
+    assert pipeline._active_pipelines["second-running"] is admitted
+    with pytest.raises(pipeline.PipelineCapacityError, match="busy"):
+        pipeline.run_pipeline("Resume", "JD", {}, owner_key="user:3")
+
+
 def test_auth_generates_ephemeral_secret_without_hardcoded_fallback(monkeypatch):
     monkeypatch.delenv("JWT_SECRET", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)

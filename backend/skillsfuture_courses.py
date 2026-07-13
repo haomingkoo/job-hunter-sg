@@ -18,7 +18,7 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from xml.etree import ElementTree as ET
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import requests
 
@@ -30,6 +30,11 @@ HEADERS = {"User-Agent": "JobHunterSG/1.0 (+https://jobhunter.kooexperience.com)
 CACHE_TTL_SECONDS = 24 * 3600
 ERROR_RETRY_SECONDS = 30 * 60
 DISK_CACHE_PATH = Path(os.environ.get("SKILLSFUTURE_COURSE_CACHE", "/tmp/jobhunter_skillsfuture_courses.xlsx"))
+EXPECTED_DOWNLOAD_HOSTS = {"s3.ap-southeast-1.amazonaws.com"}
+MAX_DOWNLOAD_BYTES = 32 * 1024 * 1024
+MAX_XLSX_ENTRIES = 2_000
+MAX_XLSX_UNCOMPRESSED_BYTES = 128 * 1024 * 1024
+MAX_XLSX_COMPRESSION_RATIO = 100
 
 _cache_lock = threading.Lock()
 _refresh_lock = threading.Lock()
@@ -129,11 +134,26 @@ def _iter_sheet_rows(workbook: zipfile.ZipFile, shared_strings: list[str]):
             row.clear()
 
 
-def _get_with_retries(url: str, *, timeout: int, attempts: int = 2) -> requests.Response:
+def _get_with_retries(
+    url: str,
+    *,
+    timeout: int,
+    attempts: int = 2,
+    stream: bool = False,
+) -> requests.Response:
     last_exc: Exception | None = None
     for attempt in range(attempts):
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=timeout)
+            resp = requests.get(
+                url,
+                headers=HEADERS,
+                timeout=timeout,
+                stream=stream,
+                allow_redirects=False,
+            )
+            if 300 <= resp.status_code < 400:
+                resp.close()
+                raise RuntimeError("Unexpected redirect from SkillsFuture dataset service")
             if resp.status_code not in {429, 500, 502, 503, 504}:
                 resp.raise_for_status()
                 return resp
@@ -141,9 +161,11 @@ def _get_with_retries(url: str, *, timeout: int, attempts: int = 2) -> requests.
         except requests.HTTPError as exc:
             last_exc = exc
             status = exc.response.status_code if exc.response is not None else 0
+            retry_after = exc.response.headers.get("Retry-After") if exc.response is not None else ""
+            if exc.response is not None:
+                exc.response.close()
             if status not in {429, 500, 502, 503, 504} or attempt == attempts - 1:
                 raise
-            retry_after = exc.response.headers.get("Retry-After") if exc.response is not None else ""
             try:
                 wait = min(2.0, max(0.25, float(retry_after)))
             except ValueError:
@@ -157,9 +179,59 @@ def _get_with_retries(url: str, *, timeout: int, attempts: int = 2) -> requests.
     raise RuntimeError(f"Request failed: {last_exc}")
 
 
+def _validate_download_url(url: str) -> str:
+    parsed = urlsplit(str(url or ""))
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("SkillsFuture dataset download URL is invalid") from exc
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in EXPECTED_DOWNLOAD_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in {None, 443}
+    ):
+        raise ValueError("SkillsFuture dataset download URL is not trusted")
+    return parsed.geturl()
+
+
+def _read_limited_response(response: requests.Response) -> bytes:
+    raw_length = response.headers.get("Content-Length", "")
+    try:
+        content_length = int(raw_length) if raw_length else None
+    except ValueError:
+        content_length = None
+    if content_length is not None and content_length > MAX_DOWNLOAD_BYTES:
+        raise ValueError("SkillsFuture dataset download is too large")
+
+    content = bytearray()
+    for chunk in response.iter_content(chunk_size=64 * 1024):
+        content.extend(chunk)
+        if len(content) > MAX_DOWNLOAD_BYTES:
+            raise ValueError("SkillsFuture dataset download is too large")
+    return bytes(content)
+
+
+def _validate_workbook_archive(workbook: zipfile.ZipFile) -> None:
+    entries = workbook.infolist()
+    if len(entries) > MAX_XLSX_ENTRIES:
+        raise ValueError("SkillsFuture workbook contains too many files")
+    if sum(entry.file_size for entry in entries) > MAX_XLSX_UNCOMPRESSED_BYTES:
+        raise ValueError("SkillsFuture workbook expands beyond the safe size limit")
+    if any(
+        entry.file_size / max(entry.compress_size, 1) > MAX_XLSX_COMPRESSION_RATIO
+        for entry in entries
+    ):
+        raise ValueError("SkillsFuture workbook compression ratio is unsafe")
+
+
 def _parse_course_rows(xlsx_content: bytes) -> list[dict]:
+    if len(xlsx_content) > MAX_DOWNLOAD_BYTES:
+        raise ValueError("SkillsFuture dataset download is too large")
     rows: list[dict] = []
     with zipfile.ZipFile(io.BytesIO(xlsx_content)) as workbook:
+        _validate_workbook_archive(workbook)
         shared_strings = _read_shared_strings(workbook)
         iterator = _iter_sheet_rows(workbook, shared_strings)
         headers = [value.strip().lower() for value in next(iterator, [])]
@@ -194,27 +266,30 @@ def _parse_course_rows(xlsx_content: bytes) -> list[dict]:
 
 
 def _download_course_rows() -> list[dict]:
-    poll_resp = _get_with_retries(POLL_URL, timeout=10, attempts=3)
-    payload = poll_resp.json()
+    with _get_with_retries(POLL_URL, timeout=10, attempts=3) as poll_resp:
+        payload = poll_resp.json()
     if payload.get("code") != 0:
         raise RuntimeError(payload.get("errMsg") or "SkillsFuture dataset unavailable")
     download_url = payload.get("data", {}).get("url")
     if not download_url:
         raise RuntimeError("SkillsFuture dataset download URL missing")
 
-    xlsx_resp = _get_with_retries(download_url, timeout=35, attempts=2)
-    content = xlsx_resp.content
+    trusted_url = _validate_download_url(download_url)
+    with _get_with_retries(trusted_url, timeout=35, attempts=2, stream=True) as xlsx_resp:
+        content = _read_limited_response(xlsx_resp)
+    rows = _parse_course_rows(content)
     try:
         DISK_CACHE_PATH.write_bytes(content)
     except OSError:
         pass
-    return _parse_course_rows(content)
+    return rows
 
 
 def _load_disk_course_rows() -> list[dict]:
     if not DISK_CACHE_PATH.exists():
         return []
-    return _parse_course_rows(DISK_CACHE_PATH.read_bytes())
+    with DISK_CACHE_PATH.open("rb") as handle:
+        return _parse_course_rows(handle.read(MAX_DOWNLOAD_BYTES + 1))
 
 
 def _disk_cache_is_fresh() -> bool:
@@ -233,7 +308,11 @@ def load_courses() -> tuple[list[dict], str]:
         if not _course_cache and _last_error and now - _last_attempt_ts < ERROR_RETRY_SECONDS:
             return _course_cache, _last_error
 
-    with _refresh_lock:
+    if not _refresh_lock.acquire(blocking=False):
+        with _cache_lock:
+            return _course_cache, _last_error or "Course dataset refresh is already in progress"
+
+    try:
         with _cache_lock:
             if _course_cache and time.time() - _course_cache_ts < CACHE_TTL_SECONDS:
                 return _course_cache, _last_error
@@ -285,6 +364,8 @@ def load_courses() -> tuple[list[dict], str]:
             _course_cache_ts = time.time()
             _last_error = ""
             return _course_cache, _last_error
+    finally:
+        _refresh_lock.release()
 
 
 def _query_terms(skill: str) -> list[str]:

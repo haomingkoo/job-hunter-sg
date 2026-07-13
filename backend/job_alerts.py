@@ -133,31 +133,43 @@ def _unsubscribe_secret() -> str:
     return secret
 
 
-def create_unsubscribe_token(user_id: int) -> str:
-    payload = str(int(user_id))
+def create_unsubscribe_token(user: User) -> str:
+    payload = str(int(user.id))
+    signed_payload = f"{payload}:{user.api_key}"
     signature = hmac.new(
         _unsubscribe_secret().encode("utf-8"),
-        payload.encode("utf-8"),
+        signed_payload.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
     return f"{payload}.{signature}"
 
 
-def verify_unsubscribe_token(token: str) -> int | None:
+def verify_unsubscribe_token(token: str, db: Session) -> int | None:
     raw = str(token or "").strip()
     if "." not in raw:
         return None
     payload, signature = raw.split(".", 1)
-    if not payload.isdigit() or not signature:
+    if not payload.isascii() or not payload.isdigit() or len(payload) > 19 or not signature:
+        return None
+    user_id = int(payload)
+    if user_id <= 0 or user_id > 2**63 - 1:
+        return None
+    user = (
+        db.query(User)
+        .filter(User.id == user_id)
+        .populate_existing()
+        .first()
+    )
+    if not user:
         return None
     expected = hmac.new(
         _unsubscribe_secret().encode("utf-8"),
-        payload.encode("utf-8"),
+        f"{payload}:{user.api_key}".encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
     if not hmac.compare_digest(signature, expected):
         return None
-    return int(payload)
+    return user_id
 
 
 def _normalise_text(value: str) -> str:
@@ -485,7 +497,7 @@ def _job_url(job: ScrapedJob) -> str:
 
 def render_alert_email(user: User, pref: JobAlertPreference, matches: list[AlertMatch]) -> tuple[str, str, str, str]:
     app_base_url = os.environ.get("APP_BASE_URL", "https://job.kooexperience.com").rstrip("/")
-    unsubscribe_url = f"{app_base_url}/api/job-alerts/unsubscribe?token={create_unsubscribe_token(user.id)}"
+    unsubscribe_url = f"{app_base_url}/api/job-alerts/unsubscribe?token={create_unsubscribe_token(user)}"
     subject = f"{len(matches)} new Job Hunter SG matches above {pref.min_score}"
 
     text_lines = [

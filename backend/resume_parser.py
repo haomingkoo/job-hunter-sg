@@ -6,8 +6,14 @@ Returns the full text without truncation.
 from __future__ import annotations
 
 import io
+import json
 import logging
+import os
+from pathlib import Path
 import re
+import subprocess
+import sys
+import tempfile
 import zipfile
 from typing import Optional
 
@@ -21,6 +27,8 @@ MAX_PDF_PAGES = 50
 MAX_DOCX_ENTRIES = 2_000
 MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
 MAX_DOCX_COMPRESSION_RATIO = 100
+MAX_PARSER_OUTPUT_BYTES = 2 * 1024 * 1024
+PARSER_WALL_TIMEOUT_SECONDS = 8
 ALLOWED_TYPES = {
     "application/pdf": "pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
@@ -432,7 +440,13 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
             total_uncompressed = sum(entry.file_size for entry in entries)
             if total_uncompressed > MAX_DOCX_UNCOMPRESSED_BYTES:
                 raise ValueError("DOCX expands beyond the safe size limit.")
-            if total_uncompressed / total_compressed > MAX_DOCX_COMPRESSION_RATIO:
+            if (
+                total_uncompressed / total_compressed > MAX_DOCX_COMPRESSION_RATIO
+                or any(
+                    entry.file_size / max(entry.compress_size, 1) > MAX_DOCX_COMPRESSION_RATIO
+                    for entry in entries
+                )
+            ):
                 raise ValueError("DOCX compression ratio is unsafe.")
         doc = Document(io.BytesIO(file_bytes))
     except ValueError:
@@ -539,3 +553,53 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
         "phone": phone_match.group().strip() if phone_match else None,
         "page_estimate": max(1, word_count // 500),
     }
+
+
+def parse_resume_isolated(filename: str, content_type: str, file_bytes: bytes) -> dict:
+    """Parse an upload in a resource-limited, short-lived subprocess."""
+    validate_upload(filename, content_type, len(file_bytes))
+    header = json.dumps(
+        {"filename": filename, "content_type": content_type, "size": len(file_bytes)},
+        separators=(",", ":"),
+    ).encode()
+    if len(header) > 16 * 1024:
+        raise ValueError("Resume filename is too long.")
+
+    worker = Path(__file__).with_name("resume_parser_worker.py")
+    with tempfile.TemporaryFile() as output:
+        try:
+            process = subprocess.Popen(
+                [sys.executable, str(worker)],
+                stdin=subprocess.PIPE,
+                stdout=output,
+                stderr=subprocess.DEVNULL,
+                env={"PATH": os.defpath, "PYTHONHASHSEED": "random"},
+            )
+            process.communicate(header + b"\n" + file_bytes, timeout=PARSER_WALL_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            raise ValueError("Resume parsing took too long. Please try a simpler PDF or DOCX.") from None
+        except (OSError, subprocess.SubprocessError):
+            raise ValueError("Could not safely parse this resume.") from None
+
+        output.seek(0)
+        raw_result = output.read(MAX_PARSER_OUTPUT_BYTES + 1)
+
+    if process.returncode != 0 or len(raw_result) > MAX_PARSER_OUTPUT_BYTES:
+        raise ValueError("Could not safely parse this resume.")
+
+    try:
+        response = json.loads(raw_result)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise ValueError("Could not safely parse this resume.") from None
+
+    if not isinstance(response, dict):
+        raise ValueError("Could not safely parse this resume.")
+    if not response.get("ok"):
+        error = response.get("error")
+        raise ValueError(error if isinstance(error, str) and len(error) <= 500 else "Could not safely parse this resume.")
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("Could not safely parse this resume.")
+    return result

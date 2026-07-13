@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AUTH_EXPIRED_EVENT, apiFetch, clearResumeDraftStorage } from "../api.js";
+import {
+  AUTH_EXPIRED_EVENT,
+  apiFetch,
+  bindResumeDraftStorageToUser,
+  clearResumeDraftStorage,
+} from "../api.js";
 
 describe("apiFetch", () => {
   beforeEach(() => {
@@ -17,7 +22,7 @@ describe("apiFetch", () => {
     );
   });
 
-  it("keeps resume drafts when auth expires", async () => {
+  it("clears resume drafts when auth expires", async () => {
     localStorage.setItem("token", "expired-token");
     sessionStorage.setItem("jh_resume_text", "draft");
     sessionStorage.setItem("jh_wizard_step", "3");
@@ -33,8 +38,8 @@ describe("apiFetch", () => {
     await expect(apiFetch("/api/auth/me")).rejects.toThrow("Session expired. Please sign in again.");
 
     expect(localStorage.getItem("token")).toBeNull();
-    expect(sessionStorage.getItem("jh_resume_text")).toBe("draft");
-    expect(sessionStorage.getItem("jh_wizard_step")).toBe("3");
+    expect(sessionStorage.getItem("jh_resume_text")).toBeNull();
+    expect(sessionStorage.getItem("jh_wizard_step")).toBeNull();
     expect(listener).toHaveBeenCalledTimes(1);
     window.removeEventListener(AUTH_EXPIRED_EVENT, listener);
   });
@@ -51,5 +56,15 @@ describe("apiFetch", () => {
     expect(sessionStorage.getItem("jh_resume_text")).toBeNull();
     expect(sessionStorage.getItem("jh_resume_template")).toBeNull();
     expect(sessionStorage.getItem("jh_wizard_step")).toBeNull();
+  });
+
+  it("preserves an anonymous draft for its first account but clears it on an account switch", () => {
+    sessionStorage.setItem("jh_resume_text", "anonymous draft");
+
+    bindResumeDraftStorageToUser(1);
+    expect(sessionStorage.getItem("jh_resume_text")).toBe("anonymous draft");
+
+    bindResumeDraftStorageToUser(2);
+    expect(sessionStorage.getItem("jh_resume_text")).toBeNull();
   });
 });
