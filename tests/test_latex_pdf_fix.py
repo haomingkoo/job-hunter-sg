@@ -4,10 +4,8 @@ Playwright test: verify LaTeX PDF space-stripping fix.
 Creates a synthetic PDF where pdfplumber strips spaces (mimicking LaTeX behavior),
 uploads it to /api/resume/upload, and asserts that the parsed text has proper spaces.
 
-The fix has two components:
-1. _has_missing_spaces(): camelCase merge detection (e.g. 'VikneshJayaKumar')
-2. _extract_text_from_chars(): space insertion using char x-positions with a low
-   threshold (15% of avg char width) to catch tight LaTeX word spacing (1.5-2pt gaps)
+The parser uses pdfplumber's proportional x-tolerance to recognise tight word
+gaps without maintaining custom character-position reconstruction code.
 
 Run:
     /opt/anaconda3/bin/python3 tests/test_latex_pdf_fix.py
@@ -134,26 +132,27 @@ def test_has_missing_spaces_detection(pdf_bytes: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 3: _extract_text_from_chars() restores spaces
+# Test 3: pdfplumber's proportional tolerance restores spaces
 # ---------------------------------------------------------------------------
 
 
-def test_char_level_fix_restores_spaces(pdf_bytes: bytes) -> None:
+def test_native_spacing_tolerance_restores_spaces(pdf_bytes: bytes) -> None:
     import pdfplumber
-    from resume_parser import _has_missing_spaces, _extract_text_from_chars
+    from resume_parser import PDF_X_TOLERANCE_RATIO, _has_missing_spaces
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        page = pdf.pages[0]
-        fixed = _extract_text_from_chars(page)
+        fixed = pdf.pages[0].extract_text(
+            x_tolerance_ratio=PDF_X_TOLERANCE_RATIO,
+        ) or ""
 
     print(f"  Fixed text sample: {fixed[:100]!r}")
     assert not _has_missing_spaces(fixed), (
-        f"_extract_text_from_chars() should restore spaces but got:\n{fixed[:300]!r}"
+        f"pdfplumber's native tolerance should restore spaces but got:\n{fixed[:300]!r}"
     )
     assert "Viknesh" in fixed and "Jaya" in fixed and "Kumar" in fixed, (
         f"Expected individual name tokens in fixed text, got: {fixed[:100]!r}"
     )
-    print("  [OK] _extract_text_from_chars() restored spaces")
+    print("  [OK] pdfplumber's native tolerance restored spaces")
 
 
 # ---------------------------------------------------------------------------
@@ -227,8 +226,8 @@ def main() -> None:
     print("\n[2] Detection: _has_missing_spaces() sees camelCase merges:")
     test_has_missing_spaces_detection(pdf_bytes)
 
-    print("\n[3] Fix: _extract_text_from_chars() restores spaces:")
-    test_char_level_fix_restores_spaces(pdf_bytes)
+    print("\n[3] Fix: pdfplumber's native spacing tolerance restores spaces:")
+    test_native_spacing_tolerance_restores_spaces(pdf_bytes)
 
     print("\n[4] End-to-end: extract_text_from_pdf():")
     test_end_to_end_parser(pdf_bytes)

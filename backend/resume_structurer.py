@@ -212,20 +212,6 @@ def _is_section_heading(line: str) -> str | None:
     if lower in SHARED_HEADINGS or lower in (s.lower() for s in STANDARD_SECTIONS):
         return _section_key(stripped)
 
-    # ALL-CAPS short line with at least one letter
-    # Exclude lines ending with period/comma (sentence fragments like "HBM." or "DNS.")
-    # Exclude very short lines (< 4 chars) that are likely abbreviations
-    if (
-        len(stripped) >= 4
-        and stripped == stripped.upper()
-        and re.search(r"[A-Z]", stripped)
-        and len(stripped.split()) <= 6
-        and not stripped.endswith(".")
-        and not stripped.endswith(",")
-        and not stripped.endswith(")")
-    ):
-        return _section_key(stripped)
-
     # Line ending with colon and short enough to be a header
     if stripped.endswith(":") and len(stripped.split()) <= 5:
         return _section_key(lower)
@@ -416,7 +402,12 @@ def _parse_entry_heading(
 
         cleaned = stripped.strip().strip(",").strip("|").strip("-").strip()
         if cleaned:
-            info_lines.append(cleaned)
+            if "|" in cleaned:
+                info_lines.extend(
+                    part.strip() for part in cleaned.split("|") if part.strip()
+                )
+            else:
+                info_lines.append(cleaned)
 
     expanded_info_lines: list[str] = []
     for info_line in info_lines:
@@ -511,10 +502,29 @@ def _parse_education_entry(
         if not stripped:
             continue
 
-        # Extract date range from any line
-        date_match = _DATE_RANGE_RE.search(stripped)
-        single_date_match = _SINGLE_DATE_RE.search(stripped) if not date_match else None
-        year_match = _YEAR_ONLY_RE.search(stripped) if not date_match and not single_date_match else None
+        is_degree_line = bool(_DEGREE_PREFIX_RE.match(stripped))
+        is_institution_line = bool(
+            _INSTITUTION_RE.search(stripped)
+            and not _EDUCATION_DETAIL_RE.search(stripped)
+        )
+        is_detail_line = bool(_EDUCATION_DETAIL_RE.search(stripped))
+        should_extract_date = (
+            is_degree_line
+            or is_institution_line
+            or _is_date_only_line(stripped)
+        )
+
+        date_match = _DATE_RANGE_RE.search(stripped) if should_extract_date else None
+        single_date_match = (
+            _SINGLE_DATE_RE.search(stripped)
+            if should_extract_date and not date_match
+            else None
+        )
+        year_match = (
+            re.search(r"\b(?:19|20)\d{2}\b", stripped)
+            if should_extract_date and not date_match and not single_date_match
+            else None
+        )
         line_date = ""
         if date_match:
             line_date = date_match.group(0).strip()
@@ -532,17 +542,12 @@ def _parse_education_entry(
             gpa = gpa_match.group(0).strip()
 
         # Classify the line
-        text_no_date = _DATE_RANGE_RE.sub("", stripped).strip()
-        text_no_date = _SINGLE_DATE_RE.sub("", text_no_date).strip()
-        text_no_date = re.sub(r"\b(?:19|20)\d{2}\b", "", text_no_date).strip()
-        text_no_date = text_no_date.strip(",").strip()
-
-        is_degree_line = bool(_DEGREE_PREFIX_RE.match(stripped))
-        is_institution_line = bool(
-            _INSTITUTION_RE.search(stripped)
-            and not _EDUCATION_DETAIL_RE.search(stripped)
-        )
-        is_detail_line = bool(_EDUCATION_DETAIL_RE.search(stripped))
+        text_no_date = stripped
+        if line_date:
+            text_no_date = _DATE_RANGE_RE.sub("", text_no_date).strip()
+            text_no_date = _SINGLE_DATE_RE.sub("", text_no_date).strip()
+            text_no_date = re.sub(r"\b(?:19|20)\d{2}\b", "", text_no_date).strip()
+        text_no_date = re.sub(r"\s+", " ", text_no_date).strip(",").strip()
 
         if is_degree_line and not degree:
             # Remove date from degree text
@@ -625,6 +630,12 @@ def _build_education_entries(
         # Strip bullet prefix for education lines
         is_bullet = bool(_BULLET_CHAR_RE.match(line))
         clean_text = _strip_bullet_prefix(line) if is_bullet else stripped
+
+        if is_bullet and current_lines:
+            _flush()
+        elif current_lines and clean_text[:1].islower():
+            current_lines[-1] = f"{current_lines[-1]} {clean_text}"
+            continue
 
         if _is_education_entry_start(clean_text) and current_lines:
             # Check if this line belongs to the current entry
@@ -787,6 +798,22 @@ def _build_entries(
             and len(stripped.split()) >= 5
         ):
             # Implicit bullet (no marker but starts with action verb)
+            current_bullets.append(stripped)
+        elif (
+            current_heading_lines
+            and not current_bullets
+            and any(
+                _DATE_RANGE_RE.search(_clean_line(item))
+                or _SINGLE_DATE_RE.search(_clean_line(item))
+                for item in current_heading_lines
+            )
+            and not (
+                _is_date_only_line(stripped)
+                or _looks_like_title_line(stripped)
+                or _looks_like_company_line(stripped)
+            )
+        ):
+            # A long paragraph after a dated role is role context, not a company.
             current_bullets.append(stripped)
         elif current_heading_lines and not current_bullets and _should_append_heading_line(
             current_heading_lines, line, section_key_str,

@@ -366,7 +366,32 @@ class TestResumeParser:
 
         text = "Led cross-\nfunctional delivery"
         result = _join_broken_lines(text)
-        assert "crossfunctional" in result or "cross-functional" in result.replace("\n", "")
+        assert result == "Led cross-functional delivery"
+
+    def test_join_broken_lines_preserves_pdf_bullets_without_spaces(self):
+        from resume_parser import _join_broken_lines, _parse_quality
+
+        text = (
+            "Selected for an industry project targeting a 90% improvement.\n"
+            "•Built the production agent scaffold.\n"
+            "•Designed the validation workflow."
+        )
+
+        result = _join_broken_lines(text)
+
+        assert result.splitlines() == [
+            "Selected for an industry project targeting a 90% improvement.",
+            "• Built the production agent scaffold.",
+            "• Designed the validation workflow.",
+        ]
+        assert _parse_quality(result, "pdf")["signals"]["bullet_line_count"] == 2
+
+    def test_join_broken_lines_preserves_meaningful_hyphen(self):
+        from resume_parser import _join_broken_lines
+
+        assert _join_broken_lines("Produced evidence-\nbacked reports") == (
+            "Produced evidence-backed reports"
+        )
 
     def test_join_broken_lines_preserves_sections(self):
         """Section headers should stay on their own lines."""
@@ -391,24 +416,16 @@ class TestResumeParser:
         assert lines[0].strip() == "EXECUTIVE SUMMARY"
         assert lines[1].startswith("Transformation leader")
 
-    def test_extract_text_from_chars_clusters_nearby_tops_into_one_line(self):
-        """Small top offsets on the same visual line should not split the line."""
-        from resume_parser import _extract_text_from_chars
+    def test_join_broken_lines_does_not_guess_semantic_paragraphs(self):
+        from resume_parser import _join_broken_lines
 
-        page = SimpleNamespace(chars=[
-            {"text": "Bachelor", "x0": 0.0, "x1": 8.0, "top": 251.29},
-            {"text": "of", "x0": 10.0, "x1": 12.0, "top": 251.29},
-            {"text": "Science,", "x0": 14.0, "x1": 21.0, "top": 249.27},
-            {"text": "Aug", "x0": 40.0, "x1": 43.0, "top": 249.27},
-            {"text": "2018", "x0": 45.0, "x1": 49.0, "top": 249.27},
-            {"text": "Major", "x0": 0.0, "x1": 5.0, "top": 261.22},
-        ])
+        text = (
+            "CORE SKILLS\n"
+            "Leadership and Delivery: programme management and adoption\n"
+            "Agentic AI and LLM Engineering: LangGraph and RAG"
+        )
 
-        result = _extract_text_from_chars(page)
-        lines = result.splitlines()
-
-        assert lines[0] == "Bachelor of Science, Aug 2018"
-        assert lines[1] == "Major"
+        assert _join_broken_lines(text) == text
 
     def test_name_detection(self):
         """parse_resume metadata should extract a name from the first lines."""
@@ -420,14 +437,14 @@ class TestResumeParser:
             from docx import Document
 
             doc = Document()
-            doc.add_paragraph("John Smith")
+            doc.add_paragraph("JOHN SMITH")
             doc.add_paragraph("john@example.com")
             doc.add_paragraph("EXPERIENCE")
             doc.add_paragraph("Software Engineer at Google")
             buf = io.BytesIO()
             doc.save(buf)
             result = parse_resume("test.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buf.getvalue())
-            assert result["name"] == "John Smith"
+            assert result["name"] == "JOHN SMITH"
         except ImportError:
             pytest.skip("python-docx not installed")
 

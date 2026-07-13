@@ -275,7 +275,7 @@ export const BULLET_ACTION_SUGGESTIONS = [
 ];
 
 export const RESUME_WEAK_STARTS = ["responsible for", "helped", "assisted"];
-export const RESUME_BULLET_RE = /^(\s*(?:[-*o\u2022\u2023\u25E6\u2043\u2219\u00B7\u25AA\u25AB\u25CF\uF0B7▪●]|\d+[.)]))\s*(.*)$/;
+export const RESUME_BULLET_RE = /^(\s*(?:(?:[-*\u2022\u2023\u25E6\u2043\u2219\u00B7\u25AA\u25AB\u25CF\uF0B7▪●]|\d+[.)])\s*|o\s+))(.*)$/;
 export const RESUME_METRIC_RE = /\d+%|\$[\d,]+|\d+\s*(?:users|user|team|people|projects|systems|clients|hours|weeks|months|years)|\d+[kKmMbB]\b|\d{1,3}(?:,\d{3})+/;
 export const RESUME_SCALE_CUE_PATTERNS = [
   /\bteam of \d+\b/gi,

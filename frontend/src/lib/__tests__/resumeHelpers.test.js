@@ -5,6 +5,7 @@ import {
   parseResumeToSections,
   groupEducationSections,
   stripResumeMarkdown,
+  splitInlineHeadingContent,
   isHeadingLine,
   getResumeSectionKey,
   parseSubheadingParts,
@@ -137,6 +138,21 @@ describe("isHeadingLine", () => {
     expect(isHeadingLine("PROFESSIONAL EXPERIENCE")).toBe(true);
   });
 
+  it("detects configured compound headings", () => {
+    expect(isHeadingLine("SELECTED TECHNICAL PROJECTS")).toBe(true);
+    expect(isHeadingLine("EDUCATION AND CERTIFICATIONS")).toBe(true);
+  });
+
+  it("does not treat an uppercase name as a heading", () => {
+    expect(isHeadingLine("HAOMING KOO")).toBe(false);
+  });
+
+  it("does not split a skills label on an ordinary space", () => {
+    expect(splitInlineHeadingContent(
+      "Leadership and Delivery: programme management and adoption",
+    )).toBeNull();
+  });
+
   it("does not detect bullet lines", () => {
     expect(isHeadingLine("• Led a team of 5 engineers")).toBe(false);
   });
@@ -233,6 +249,44 @@ describe("getDisplaySubheadingText", () => {
 });
 
 describe("parseResumeToSections - fixture regressions", () => {
+  it("preserves real PDF boundaries without inventing headings or o-bullets", () => {
+    const text = [
+      "HAOMING KOO",
+      "CORE SKILLS",
+      "Leadership and Delivery: programme management and adoption",
+      "Agentic AI and LLM Engineering: LangGraph and RAG",
+      "PROFESSIONAL EXPERIENCE",
+      "Associate AI Engineer | AI Singapore | Jan 2026 - Present",
+      "Selected for an industry project delivered with a three-person team.",
+      "• Built the production agent scaffold across four services",
+      "and wrote the phased redesign plan.",
+      "• Designed the validation workflow.",
+      "SELECTED TECHNICAL PROJECTS",
+      "• smart-buoy: streamed positioning data through an ML pipeline",
+      "operational dashboards in Tableau.",
+      "EDUCATION AND CERTIFICATIONS",
+      "• M.Sc., National University of Singapore, 2022",
+      "• Languages - English and Mandarin; available from October 2026",
+      "and travel",
+    ].join("\n");
+
+    const sections = parseResumeToSections(text, []);
+    const headingKeys = sections
+      .filter((section) => section.type === "heading")
+      .map((section) => section.sectionKey);
+    const bullets = sections.filter((section) => section.type === "bullet");
+    const skillParagraphs = sections.filter(
+      (section) => section.type === "paragraph" && section.sectionKey === "skills",
+    );
+
+    expect(headingKeys).toEqual(["skills", "experience", "projects", "education"]);
+    expect(skillParagraphs).toHaveLength(2);
+    expect(bullets.some((section) => section.text.startsWith("perational"))).toBe(false);
+    expect(bullets.filter((section) => section.sectionKey === "experience")).toHaveLength(3);
+    expect(bullets.find((section) => section.text.startsWith("Built"))?.text).toContain("phased redesign plan");
+    expect(bullets.find((section) => section.text.startsWith("Languages"))?.text).toContain("and travel");
+  });
+
   it("groups Dyson company, title, and standalone date into one experience subheading", () => {
     const sections = parseResumeToSections(getFixtureText("Haoming_Koo_Dyson_Resume.txt"), []);
     const experienceSubheadings = sections.filter((section) => section.type === "subheading" && section.sectionKey === "experience");
