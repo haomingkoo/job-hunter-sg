@@ -29,6 +29,7 @@ from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import case, func, or_, text
 from sqlalchemy.orm import Session, load_only
 
@@ -94,7 +95,8 @@ from schemas import (
 from ai_service import SEALION_MODEL, _call_sealion, apply_uk_spelling, coach_resume, get_ai_health, get_ai_status, integrate_keywords, rewrite_bullet
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms, merge_job_terms_with_match
 from career_agent import build_application_pack
-from resume_parser import parse_resume
+from resume_parser import MAX_FILE_SIZE, parse_resume_isolated
+from security import RequestBodyLimitMiddleware
 from resume_scorer import ResumeScorer
 from resume_templates import generate_docx, inspect_resume_export, list_templates
 from skill_extractor import extract_skill_phrases
@@ -124,6 +126,7 @@ _CAREERSGOV_PATH_RE = re.compile(r"/en-US/PublicServiceCareers(/job/.+)$")
 _JD_ENRICHMENT_IN_FLIGHT: set[int] = set()
 _JD_ENRICHMENT_LOCK = threading.Lock()
 _JD_ENRICHMENT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3)
+_RESUME_PARSE_SLOTS = threading.BoundedSemaphore(1)
 _FAILED_RETRY_SECONDS = 300  # retry failed/unavailable summaries after 5 min
 _STARTUP_ANALYTICS_WARM_DELAY_SECONDS = 5
 _STARTUP_MAINTENANCE_WARM_WAIT_SECONDS = 300
@@ -408,6 +411,11 @@ app = FastAPI(
     docs_url=None if _is_production else "/docs",
     redoc_url=None if _is_production else "/redoc",
     openapi_url=None if _is_production else "/openapi.json",
+)
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    default_max_bytes=1024 * 1024,
+    path_limits={"/api/resume/upload": MAX_FILE_SIZE + 256 * 1024},
 )
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
@@ -6554,15 +6562,29 @@ async def upload_resume(
     Upload a PDF or DOCX resume. Returns full extracted text + metadata.
     No truncation — everything is returned.
     """
-    file_bytes = await file.read()
     try:
-        result = parse_resume(
+        file_bytes = await file.read(MAX_FILE_SIZE + 1)
+    finally:
+        await file.close()
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum is 5MB.")
+    if not _RESUME_PARSE_SLOTS.acquire(blocking=False):
+        raise HTTPException(
+            status_code=503,
+            detail="Resume parsing is busy. Please try again shortly.",
+            headers={"Retry-After": "2"},
+        )
+    try:
+        result = await run_in_threadpool(
+            parse_resume_isolated,
             filename=file.filename or "resume",
             content_type=file.content_type or "",
             file_bytes=file_bytes,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        _RESUME_PARSE_SLOTS.release()
 
     parse_quality = result.get("parse_quality", {})
     db.add(UsageLog(
