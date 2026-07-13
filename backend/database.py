@@ -139,6 +139,12 @@ def _apply_lightweight_migrations() -> None:
             statements.append("ALTER TABLE tracked_jobs ADD COLUMN resume_version_id INTEGER")
         if "stage_history" not in tracked_columns:
             statements.append("ALTER TABLE tracked_jobs ADD COLUMN stage_history JSON")
+        if "source_url" not in tracked_columns:
+            statements.append("ALTER TABLE tracked_jobs ADD COLUMN source_url TEXT DEFAULT ''")
+        if "job_description" not in tracked_columns:
+            statements.append("ALTER TABLE tracked_jobs ADD COLUMN job_description TEXT DEFAULT ''")
+        if "role_metadata" not in tracked_columns:
+            statements.append("ALTER TABLE tracked_jobs ADD COLUMN role_metadata JSON")
 
     # user_memories: embedding vector for semantic matching
     if "user_memories" in inspector.get_table_names():

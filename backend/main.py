@@ -28,7 +28,7 @@ from typing import Optional
 
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -74,6 +74,7 @@ from models import (
     JobAlertPreference,
     PasswordResetToken,
     PowerMatchSnapshot,
+    ResumeVersion,
     ScrapedJob,
     StoryUsage,
     TailoredResume,
@@ -85,6 +86,8 @@ from models import (
 )
 from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
 from schemas import (
+    ApplicationWorkspaceCreate,
+    ApplicationWorkspaceOut,
     ApplicationPackRequest,
     AuthResponse,
     ChangePasswordRequest,
@@ -135,6 +138,7 @@ from jd_summary import summarize_job_description
 from mcp_public import create_mcp as create_public_mcp
 from security import FixedWindowRateLimiter, RequestBodyLimitMiddleware, SecurityHeadersMiddleware
 import config as app_config
+import application_workspace as workspace_module
 
 # Route Python logs to stdout so Railway tags them [inf] instead of [err].
 # force=True overrides any basicConfig set at import time by CLI modules
@@ -543,7 +547,10 @@ app = FastAPI(
 app.add_middleware(
     RequestBodyLimitMiddleware,
     default_max_bytes=1024 * 1024,
-    path_limits={"/api/resume/upload": MAX_FILE_SIZE + 256 * 1024},
+    path_limits={
+        "/api/resume/upload": MAX_FILE_SIZE + 256 * 1024,
+        "/api/applications/workspaces/*": MAX_FILE_SIZE + 256 * 1024,
+    },
 )
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
@@ -5791,18 +5798,6 @@ def unsubscribe_job_alerts(
 # TRACKED JOBS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _tracked_stage_event(stage: str, source: str, date: str | None = None, notes: str = "") -> dict:
-    return {
-        "stage": stage,
-        "date": date or datetime.now(timezone.utc).date().isoformat(),
-        "source": source,
-        "notes": notes,
-    }
-
-
-_MAX_TRACKED_STAGE_EVENTS = 200
-
-
 @app.get("/api/tracked", response_model=list[TrackedJobOut])
 def list_tracked(
     user: User = Depends(get_current_user),
@@ -5816,45 +5811,29 @@ def list_tracked(
     )
 
 
+@app.get("/api/applications/outcomes")
+def application_outcomes(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return workspace_module.application_outcomes(db, user.id)
+
+
 @app.post("/api/tracked", response_model=TrackedJobOut, status_code=201)
 def create_tracked(
     body: TrackedJobCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TrackedJob:
-    with _locked_account_storage(user.id, db):
-        limits = get_account_limits(user)
-        current_count = (
-            db.query(func.count(TrackedJob.id))
-            .filter(TrackedJob.user_id == user.id)
-            .scalar()
-            or 0
-        )
-        if current_count >= limits["max_tracked_jobs"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Tracked job limit reached ({limits['max_tracked_jobs']})",
-            )
-
-        tracked = TrackedJob(
-            user_id=user.id,
-            company=sanitize_user_input(body.company),
-            role=sanitize_user_input(body.role),
-            date_applied=body.date_applied,
-            status=body.status,
-            source=sanitize_user_input(body.source),
-            follow_up_date=body.follow_up_date,
-            notes=sanitize_user_input(body.notes),
-            scraped_job_id=body.scraped_job_id,
-            stage_history=[
-                _tracked_stage_event(body.status, "created", body.date_applied)
-            ],
-        )
-        db.add(tracked)
-        _mark_job_alert_delivery_action(db, user.id, body.scraped_job_id, "tracked")
-        db.commit()
-        db.refresh(tracked)
-    return tracked
+    return workspace_module.create_tracked_job(
+        db,
+        user,
+        body,
+        on_tracked=lambda tracked: _mark_job_alert_delivery_action(
+            db, user.id, tracked.scraped_job_id, "tracked"
+        ),
+        storage_lock=lambda: _locked_account_storage(user.id, db),
+    )
 
 
 @app.put("/api/tracked/{job_id}", response_model=TrackedJobOut)
@@ -5864,32 +5843,90 @@ def update_tracked(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TrackedJob:
-    tracked = (
-        db.query(TrackedJob)
-        .filter(TrackedJob.id == job_id, TrackedJob.user_id == user.id)
-        .first()
+    return workspace_module.update_tracked_job(db, user, job_id, body)
+
+
+@app.post("/api/applications/workspaces", response_model=ApplicationWorkspaceOut, status_code=201)
+def create_application_workspace(
+    body: ApplicationWorkspaceCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return workspace_module.create_application_workspace(
+        db,
+        user,
+        body,
+        on_tracked=lambda tracked: _mark_job_alert_delivery_action(
+            db, user.id, tracked.scraped_job_id, "tracked"
+        ),
+        storage_lock=lambda: _locked_account_storage(user.id, db),
     )
-    if not tracked:
-        raise HTTPException(status_code=404, detail="Tracked job not found")
 
-    updates = body.model_dump(exclude_unset=True)
-    previous_status = tracked.status
-    sanitize_fields = ("company", "role", "source", "notes")
-    for key, val in updates.items():
-        if key in sanitize_fields and isinstance(val, str):
-            val = sanitize_user_input(val)
-        setattr(tracked, key, val)
 
-    next_status = updates.get("status")
-    if next_status and next_status != previous_status:
-        tracked.stage_history = (
-            list(tracked.stage_history or [])
-            + [_tracked_stage_event(next_status, "manual")]
-        )[-_MAX_TRACKED_STAGE_EVENTS:]
+@app.get("/api/applications/workspaces/{workspace_id}", response_model=ApplicationWorkspaceOut)
+def get_application_workspace(
+    workspace_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return workspace_module.get_application_workspace(db, user.id, workspace_id)
 
-    db.commit()
-    db.refresh(tracked)
-    return tracked
+
+@app.post("/api/applications/workspaces/{workspace_id}/agent-review", response_model=ApplicationWorkspaceOut)
+def run_application_workspace_agent_review(
+    workspace_id: int,
+    body: dict | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return workspace_module.run_agent_review(
+        db,
+        user,
+        workspace_id,
+        body,
+        stream_events=_stream_resume_agent_events,
+        get_agent_state=_get_resume_agent_state,
+    )
+
+
+@app.post("/api/applications/workspaces/{workspace_id}/submitted-resume", response_model=ApplicationWorkspaceOut)
+async def upload_workspace_submitted_resume(
+    workspace_id: int,
+    file: UploadFile = File(...),
+    submitted_date: str = Form(""),
+    notes: str = Form(""),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    file_bytes = await file.read(MAX_FILE_SIZE + 1)
+    await file.close()
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File exceeds 5 MB limit")
+    if not _RESUME_PARSE_SLOTS.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="Resume parser is busy; try again shortly")
+    try:
+        try:
+            parsed_resume = await run_in_threadpool(
+                parse_resume_isolated,
+                filename=file.filename or "resume",
+                content_type=file.content_type or "",
+                file_bytes=file_bytes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        _RESUME_PARSE_SLOTS.release()
+    return workspace_module.save_submitted_resume(
+        db,
+        user,
+        workspace_id,
+        filename=file.filename or "resume",
+        content_type=file.content_type or "",
+        file_bytes=file_bytes,
+        parsed_resume=parsed_resume,
+        submitted_date=submitted_date,
+        notes=notes,
+    )
 
 
 @app.delete("/api/tracked/{job_id}")

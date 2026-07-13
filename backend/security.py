@@ -24,7 +24,17 @@ class RequestBodyLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        limit = self.path_limits.get(scope.get("path", ""), self.default_max_bytes)
+        path = scope.get("path", "")
+        limit = self.path_limits.get(path)
+        if limit is None:
+            limit = next(
+                (
+                    path_limit
+                    for prefix, path_limit in self.path_limits.items()
+                    if prefix.endswith("*") and path.startswith(prefix[:-1])
+                ),
+                self.default_max_bytes,
+            )
         headers = dict(scope.get("headers") or [])
         raw_length = headers.get(b"content-length", b"")
         try:

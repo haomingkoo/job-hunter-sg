@@ -6,9 +6,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-import config
+import agent_tool_contract as contract
 from database import SessionLocal
 from embedding_service import encode_text, find_similar_jobs
+from job_visibility import apply_public_job_visibility
 from langchain_core.tools import tool
 from models import ScrapedJob
 
@@ -28,101 +29,78 @@ def bullet_context(bullets: dict[str, str]):
         _current_bullets.reset(token)
 
 
-def _limit_jobs(n: int | None) -> int:
-    if n is None:
-        return config.AGENT_SEARCH_JOBS_LIMIT
-    try:
-        requested = int(n)
-    except (TypeError, ValueError):
-        return config.AGENT_SEARCH_JOBS_LIMIT
-    if requested <= 0:
-        return config.AGENT_SEARCH_JOBS_LIMIT
-    return min(requested, config.AGENT_SEARCH_JOBS_LIMIT)
-
-
-def _skills_list(skills: Any) -> list[str]:
-    if isinstance(skills, list):
-        return [str(skill) for skill in skills if skill]
-    if isinstance(skills, dict):
-        values: list[str] = []
-        for value in skills.values():
-            if isinstance(value, list):
-                values.extend(str(skill) for skill in value if skill)
-            elif value:
-                values.append(str(value))
-        return values
-    if isinstance(skills, str) and skills.strip():
-        return [skills.strip()]
-    return []
-
-
-def _job_result(job: ScrapedJob, score: float) -> dict:
-    return {
-        "data_classification": "untrusted_job_data",
-        "id": job.id,
-        "title": job.title,
-        "company": job.company,
-        "location": job.location,
-        "source": job.source,
-        "score": score,
-        "jd_summary": job.jd_summary or "",
-        "skills": _skills_list(job.skills),
-    }
-
-
 @tool
-def search_jobs(query: str, n: int | None = None) -> list[dict]:
-    """Search the internal jobs database semantically for matching roles."""
+def search_jobs(query: str, n: int | None = None, detail: bool = False) -> dict:
+    """Search matching jobs. Use detail=True only when full descriptions are needed."""
     clean_query = (query or "").strip()
     if not clean_query:
-        return []
+        return contract.tool_error(
+            contract.SEARCH_JOBS_TOOL,
+            "empty_query",
+            "search_jobs requires a non-empty query.",
+        )
 
-    limit = _limit_jobs(n)
-    db = SessionLocal()
+    limit = contract.limit_jobs(n)
+    db = None
     try:
+        db = SessionLocal()
         query_vector = encode_text(clean_query)
-        similar = find_similar_jobs(query_vector, db, top_k=limit)
+        similar = find_similar_jobs(query_vector, db, top_k=max(limit * 10, limit))
         if not similar:
-            return []
+            return contract.search_jobs_result(clean_query, limit, [], detail=detail)
 
-        scores = {job_id: score for job_id, score in similar[:limit]}
+        scores = {job_id: score for job_id, score in similar}
         jobs = (
-            db.query(ScrapedJob)
+            apply_public_job_visibility(db.query(ScrapedJob))
             .filter(ScrapedJob.id.in_(scores.keys()))
             .all()
         )
         by_id = {job.id: job for job in jobs}
-        return [
-            _job_result(by_id[job_id], scores[job_id])
-            for job_id, _score in similar[:limit]
+        results = [
+            contract.job_payload(by_id[job_id], scores[job_id], detail=detail)
+            for job_id, _score in similar
             if job_id in by_id
-        ]
+        ][:limit]
+        return contract.search_jobs_result(clean_query, limit, results, detail=detail)
+    except Exception as exc:
+        return contract.tool_error(
+            contract.SEARCH_JOBS_TOOL,
+            "search_failed",
+            str(exc) or "Job search failed.",
+            query=clean_query,
+        )
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 @tool
 def get_job(job_id: int) -> dict:
     """Return parsed job context for one internal job id."""
-    db = SessionLocal()
+    db = None
     try:
-        job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+        db = SessionLocal()
+        job = apply_public_job_visibility(
+            db.query(ScrapedJob).filter(ScrapedJob.id == job_id)
+        ).first()
         if not job:
-            return {"found": False, "id": job_id}
-        return {
-            "data_classification": "untrusted_job_data",
-            "found": True,
-            "id": job.id,
-            "title": job.title,
-            "company": job.company,
-            "location": job.location,
-            "description": job.description or "",
-            "parsed_jd": job.parsed_jd or {},
-            "jd_summary": job.jd_summary or "",
-            "skills": _skills_list(job.skills),
-        }
+            return contract.tool_error(
+                contract.GET_JOB_TOOL,
+                "job_not_found",
+                "No job exists for this id.",
+                job_id=job_id,
+            )
+        return contract.get_job_result(contract.job_payload(job, detail=True))
+    except Exception as exc:
+        return contract.tool_error(
+            contract.GET_JOB_TOOL,
+            "get_job_failed",
+            str(exc) or "Job lookup failed.",
+            job_id=job_id,
+        )
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 @tool

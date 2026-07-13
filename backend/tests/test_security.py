@@ -113,6 +113,29 @@ def test_body_limit_uses_path_specific_override():
     assert responses[1]["body"] == b"abcdef"
 
 
+def test_body_limit_supports_dynamic_path_prefixes():
+    from security import RequestBodyLimitMiddleware
+
+    app = RequestBodyLimitMiddleware(
+        _read_request_body,
+        default_max_bytes=3,
+        path_limits={"/api/applications/workspaces/*": 6},
+    )
+    scope = _http_scope(headers=[(b"content-length", b"6")])
+    scope["path"] = "/api/applications/workspaces/42/submitted-resume"
+    scope["raw_path"] = scope["path"].encode()
+    responses = asyncio.run(
+        _run_asgi(
+            app,
+            scope,
+            [{"type": "http.request", "body": b"abcdef", "more_body": False}],
+        )
+    )
+
+    assert responses[0]["status"] == 200
+    assert responses[1]["body"] == b"abcdef"
+
+
 def test_fixed_window_rate_limiter_enforces_limit_and_resets():
     from security import FixedWindowRateLimiter
 

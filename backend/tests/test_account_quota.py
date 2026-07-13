@@ -196,11 +196,24 @@ def test_cross_account_agent_chat_and_tailoring_return_404(monkeypatch):
     from auth import get_current_user
     from resume_agent import session as agent_session
     from fastapi.testclient import TestClient
+    from database import SessionLocal
+    from models import User
 
-    user = SimpleNamespace(id=2, tier="user")
+    with SessionLocal() as db:
+        persisted_user = User(
+            email=f"intruder-{secrets.token_hex(8)}@example.com",
+            password_hash="test-only",  # pragma: allowlist secret
+            name="Intruder",
+        )
+        db.add(persisted_user)
+        db.commit()
+        db.refresh(persisted_user)
+        user_id = persisted_user.id
+    user = SimpleNamespace(id=user_id, tier="user")
+    other_owner = f"user:{user_id + 1_000_000}"
     agent_state = agent_session._new_state("private-agent")
-    agent_state["_owner_key"] = "user:1"
-    tailor_state = tailoring_pipeline.PipelineState("private-tailor", owner_key="user:1")
+    agent_state["_owner_key"] = other_owner
+    tailor_state = tailoring_pipeline.PipelineState("private-tailor", owner_key=other_owner)
 
     with agent_session._sessions_lock:
         agent_session._sessions["private-agent"] = agent_state

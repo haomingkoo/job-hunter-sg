@@ -221,6 +221,8 @@ shared/resume-classification.json ← single source of truth for both backend + 
 ```bash
 DATABASE_URL=sqlite:///./jobhunter.db
 JWT_SECRET=your-secret
+AUTH_MODE=password
+ACCOUNT_AI_PER_DAY=500
 sealion_api=your-sealion-key          # supports sealion_api2 through sealion_api5
 ALLOWED_EMAIL_DOMAINS=*               # or comma-separated domains
 ALLOWED_ORIGINS=http://localhost:5173  # CORS

@@ -75,6 +75,7 @@ def test_search_jobs_caps_and_shapes_results(monkeypatch):
         source = "test"
         url = "https://example.com/job"
         description = "Build Python data pipelines"
+        jd_summary = "Build data platforms."
         skills = ["Python", "SQL"]
         parsed_jd = {"required_skills": ["Python"]}
 
@@ -100,8 +101,45 @@ def test_search_jobs_caps_and_shapes_results(monkeypatch):
 
     data = json.loads(mcp_tools.search_jobs("python data", limit=999))
 
-    assert data["jobs"][0]["id"] == 7
-    assert data["jobs"][0]["similarity"] == 0.9877
+    assert data["ok"] is True
+    assert data["limit"] == config.AGENT_SEARCH_JOBS_LIMIT
+    assert data["detail"] is False
+    assert data["results"][0]["id"] == 7
+    assert data["results"][0]["score"] == 0.98765
+    assert "description" not in data["results"][0]
+
+    detailed = json.loads(mcp_tools.search_jobs("python data", limit=999, detail=True))
+
+    assert detailed["detail"] is True
+    assert detailed["results"][0]["description"] == "Build Python data pipelines"
+    assert detailed["results"][0]["parsed_jd"] == {"required_skills": ["Python"]}
+
+
+def test_mcp_search_jobs_empty_and_error_are_structured(monkeypatch):
+    import mcp_tools
+
+    class FakeDb:
+        def close(self):
+            return None
+
+    monkeypatch.setattr(mcp_tools, "SessionLocal", lambda: FakeDb())
+    monkeypatch.setattr(mcp_tools, "encode_text", lambda query: [0.1, 0.2])
+    monkeypatch.setattr(mcp_tools, "find_similar_jobs", lambda *_args, **_kwargs: [])
+
+    empty = json.loads(mcp_tools.search_jobs("missing role"))
+
+    assert empty["ok"] is True
+    assert empty["empty"] is True
+    assert empty["results"] == []
+
+    def broken_search(*_args, **_kwargs):
+        raise RuntimeError("index unavailable")
+
+    monkeypatch.setattr(mcp_tools, "find_similar_jobs", broken_search)
+    failed = json.loads(mcp_tools.search_jobs("python data"))
+
+    assert failed["ok"] is False
+    assert failed["error"]["code"] == "search_failed"
 
 
 def test_get_job_does_not_return_hidden_job(monkeypatch):
@@ -116,7 +154,9 @@ def test_get_job_does_not_return_hidden_job(monkeypatch):
 
     data = json.loads(mcp_tools.get_job(7))
 
-    assert data == {"error": "job_not_found", "job_id": 7}
+    assert data["ok"] is False
+    assert data["error"]["code"] == "job_not_found"
+    assert data["context"]["job_id"] == 7
 
 
 def test_latest_jobs_returns_compact_public_jobs(monkeypatch):

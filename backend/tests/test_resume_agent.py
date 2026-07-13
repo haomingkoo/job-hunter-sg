@@ -1,11 +1,28 @@
 from __future__ import annotations
 
 import os
+import secrets
 import sys
 import threading
 from typing import ClassVar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+
+def _persisted_user_id() -> int:
+    from database import SessionLocal
+    from models import User
+
+    with SessionLocal() as db:
+        user = User(
+            email=f"agent-{secrets.token_hex(8)}@example.com",
+            password_hash="test-only",  # pragma: allowlist secret
+            name="Agent Test",
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user.id
 
 
 def test_model_factory_builds_agent_and_smart_models(monkeypatch):
@@ -20,6 +37,7 @@ def test_model_factory_builds_agent_and_smart_models(monkeypatch):
     assert agent.model_name == config.SEALION_AGENT_MODEL
     assert smart.model_name == config.SEALION_SMART_MODEL
     assert smart.max_tokens >= config.SMART_MIN_MAX_TOKENS
+    assert agent.extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
 
 
 def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
@@ -34,6 +52,10 @@ def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
             self.location = "Singapore"
             self.source = "careers.gov.sg"
             self.jd_summary = "Build data platforms."
+            self.salary = "S$8k-S$10k"
+            self.url = f"https://example.com/jobs/{job_id}"
+            self.description = "Full job description with responsibilities."
+            self.parsed_jd = {"required_skills": ["Python"]}
             self.skills = ["Python", "SQL"]
 
     class Query:
@@ -64,12 +86,15 @@ def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
         ],
     )
 
-    results = agent_tools.search_jobs.invoke(
+    result = agent_tools.search_jobs.invoke(
         {"query": "data engineer", "n": config.AGENT_SEARCH_JOBS_LIMIT + 20}
     )
 
-    assert len(results) == config.AGENT_SEARCH_JOBS_LIMIT
-    assert results[0] == {
+    assert result["ok"] is True
+    assert result["count"] == config.AGENT_SEARCH_JOBS_LIMIT
+    assert result["empty"] is False
+    assert result["detail"] is False
+    assert result["results"][0] == {
         "data_classification": "untrusted_job_data",
         "id": 1,
         "title": "Data Engineer 1",
@@ -80,6 +105,88 @@ def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
         "jd_summary": "Build data platforms.",
         "skills": ["Python", "SQL"],
     }
+    assert "description" not in result["results"][0]
+
+
+def test_search_jobs_detail_expands_job_payload(monkeypatch):
+    import resume_agent.tools as agent_tools
+
+    class Job:
+        id = 7
+        title = "AI Engineer"
+        company = "GovTech"
+        location = "Singapore"
+        source = "careers.gov.sg"
+        jd_summary = "Build AI services."
+        salary = "S$8k-S$10k"
+        url = "https://example.com/jobs/7"
+        description = "Build agentic AI workflows for public services."
+        parsed_jd = {"required_skills": ["Python"]}
+        skills = ["Python"]
+
+    class Query:
+        def filter(self, *_args):
+            return self
+
+        def all(self):
+            return [Job()]
+
+    class FakeDb:
+        def query(self, *_args):
+            return Query()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(agent_tools, "SessionLocal", lambda: FakeDb())
+    monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
+    monkeypatch.setattr(agent_tools, "find_similar_jobs", lambda *_args, **_kwargs: [(7, 0.9)])
+
+    result = agent_tools.search_jobs.invoke({"query": "ai engineer", "detail": True})
+
+    assert result["detail"] is True
+    assert result["results"][0]["description"] == "Build agentic AI workflows for public services."
+    assert result["results"][0]["parsed_jd"] == {"required_skills": ["Python"]}
+
+
+def test_search_jobs_empty_results_are_explicit(monkeypatch):
+    import resume_agent.tools as agent_tools
+
+    class FakeDb:
+        def close(self):
+            return None
+
+    monkeypatch.setattr(agent_tools, "SessionLocal", lambda: FakeDb())
+    monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
+    monkeypatch.setattr(agent_tools, "find_similar_jobs", lambda *_args, **_kwargs: [])
+
+    result = agent_tools.search_jobs.invoke({"query": "rare role"})
+
+    assert result["ok"] is True
+    assert result["empty"] is True
+    assert result["count"] == 0
+    assert result["results"] == []
+
+
+def test_search_jobs_errors_are_structured(monkeypatch):
+    import resume_agent.tools as agent_tools
+
+    class FakeDb:
+        def close(self):
+            return None
+
+    def broken_search(*_args, **_kwargs):
+        raise RuntimeError("vector index unavailable")
+
+    monkeypatch.setattr(agent_tools, "SessionLocal", lambda: FakeDb())
+    monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
+    monkeypatch.setattr(agent_tools, "find_similar_jobs", broken_search)
+
+    result = agent_tools.search_jobs.invoke({"query": "data engineer"})
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "search_failed"
+    assert "vector index unavailable" in result["error"]["message"]
 
 
 def test_agent_prompt_marks_job_tool_results_as_untrusted():
@@ -679,7 +786,8 @@ def test_chat_endpoint_streams_token_and_tool_events(monkeypatch):
             ]
         ),
     )
-    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1, tier="user")
+    user_id = _persisted_user_id()
+    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id, tier="user")
     monkeypatch.setattr(main, "_consume_ai_credit", lambda *args: None)
 
     try:
@@ -691,7 +799,7 @@ def test_chat_endpoint_streams_token_and_tool_events(monkeypatch):
         main.app.dependency_overrides.pop(get_current_user, None)
         from resume_agent.session import release_owner_run
 
-        release_owner_run("user:1")
+        release_owner_run(f"user:{user_id}")
 
     assert response.status_code == 200
     body = response.text
@@ -736,7 +844,8 @@ def test_state_endpoint_returns_draft_todos_and_pending_diffs(monkeypatch):
             "pending_diffs": [{"bullet_id": "exp-0-b0", "status": "pending"}],
         },
     )
-    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1, tier="user")
+    user_id = _persisted_user_id()
+    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id, tier="user")
 
     try:
         response = TestClient(main.app).get("/api/resume/agent/sid-1/state")
@@ -770,7 +879,8 @@ def test_explicit_missing_agent_session_returns_404_before_quota(monkeypatch):
         "_stream_resume_agent_events",
         lambda body: stream_calls.append(body) or iter(()),
     )
-    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1, tier="user")
+    user_id = _persisted_user_id()
+    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id, tier="user")
 
     try:
         client = TestClient(main.app)

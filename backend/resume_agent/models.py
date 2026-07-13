@@ -35,6 +35,12 @@ def _api_key() -> str:
     return key
 
 
+def _model_kwargs(model: str) -> dict:
+    if model in config.SEALION_DISABLE_THINKING_MODELS:
+        return {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+    return {}
+
+
 def create_agent_model(temperature: float = 0.0):
     """Return the agentic model used by the orchestrator and tool-calling loop."""
     from langchain_openai import ChatOpenAI
@@ -47,6 +53,7 @@ def create_agent_model(temperature: float = 0.0):
         timeout=config.SEALION_HTTP_TIMEOUT,
         max_retries=1,
         rate_limiter=_rate_limiter,
+        **_model_kwargs(config.SEALION_AGENT_MODEL),
     )
 
 
@@ -66,4 +73,5 @@ def create_smart_model(temperature: float = 0.0):
         timeout=config.SEALION_HTTP_TIMEOUT,
         max_retries=1,
         rate_limiter=_rate_limiter,
+        **_model_kwargs(config.SEALION_SMART_MODEL),
     )

@@ -133,6 +133,9 @@ class TrackedJob(Base):
     date_applied: Mapped[str | None] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="applied")
     source: Mapped[str] = mapped_column(String(200), default="")
+    source_url: Mapped[str] = mapped_column(Text, default="")
+    job_description: Mapped[str] = mapped_column(Text, default="")
+    role_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
     follow_up_date: Mapped[str | None] = mapped_column(String(50), nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     scraped_job_id: Mapped[int | None] = mapped_column(

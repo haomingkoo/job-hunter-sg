@@ -43,7 +43,7 @@ def _csv_env(name: str, default: str) -> tuple[str, ...]:
 # ── SEA-LION model tiers ──────────────────────────────────────────────────────
 # FAST: interactive rewrites, JD summaries, default classic pipeline tier.
 SEALION_FAST_MODEL: str = os.getenv(
-    "SEALION_FAST_MODEL", "aisingapore/Qwen-SEA-LION-v4-32B-IT"
+    "SEALION_FAST_MODEL", "aisingapore/Qwen-SEA-LION-v4-32B-IT"  # pragma: allowlist secret
 )
 # Classic tailoring pipeline model. Defaults to FAST because v4.5 Qwen currently
 # leaks reasoning text into strict JSON/prose prompts on this path.
@@ -83,6 +83,17 @@ AGENT_MAX_SESSIONS: int = _int_env("AGENT_MAX_SESSIONS", 200)
 AGENT_MAX_DRAFT_CHARS: int = _int_env("AGENT_MAX_DRAFT_CHARS", 50000)
 AGENT_MAX_PROFILE_CONTEXT_CHARS: int = _int_env("AGENT_MAX_PROFILE_CONTEXT_CHARS", 12000)
 AGENT_PENDING_DIFFS_LIMIT: int = _int_env("AGENT_PENDING_DIFFS_LIMIT", 30)
+WORKSPACE_AGENT_DRAFT_MIN_CHARS: int = _int_env("WORKSPACE_AGENT_DRAFT_MIN_CHARS", 50)
+WORKSPACE_AGENT_DRAFT_LABEL_ROLE_CHARS: int = _int_env(
+    "WORKSPACE_AGENT_DRAFT_LABEL_ROLE_CHARS", 80
+)
+WORKSPACE_SUBMITTED_ARTIFACT_TOKEN_BYTES: int = _int_env(
+    "WORKSPACE_SUBMITTED_ARTIFACT_TOKEN_BYTES", 12
+)
+WORKSPACE_AGENT_REVIEW_DEFAULT_ROLES: tuple[str, ...] = _csv_env(
+    "WORKSPACE_AGENT_REVIEW_DEFAULT_ROLES",
+    "recruiter,hiring_manager,ats,skeptic,market_researcher",
+)
 
 # ── SEA-LION throughput / network knobs ───────────────────────────────────────
 # Free tier is 10 req/min/key; default kept at 9 for headroom against 429s.

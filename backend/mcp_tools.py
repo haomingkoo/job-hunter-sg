@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import func
 
+import agent_tool_contract as contract
 import config
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms
 from database import SessionLocal
@@ -66,7 +67,7 @@ def score_resume(
     if job_id:
         db = SessionLocal()
         try:
-            job = db.get(ScrapedJob, job_id)
+            job = _get_public_job(db, job_id)
             if job:
                 parsed_jd = job.parsed_jd if isinstance(job.parsed_jd, dict) else None
                 if not job_description:
@@ -127,37 +128,82 @@ def compare_candidate_profile(resume_text: str, profile_context: str) -> str:
 
 def get_job(job_id: int, include_old: bool = False) -> str:
     """Fetch one job from the internal jobs DB."""
-    db = SessionLocal()
+    db = None
     try:
+        db = SessionLocal()
         job = _get_public_job(db, job_id, include_old=include_old)
         if not job:
-            return _json({"error": "job_not_found", "job_id": job_id})
-        return _json(_job_payload(job))
+            return _json(
+                contract.tool_error(
+                    contract.GET_JOB_TOOL,
+                    "job_not_found",
+                    "No job exists for this id.",
+                    job_id=job_id,
+                )
+            )
+        return _json(contract.get_job_result(contract.job_payload(job, detail=True)))
+    except Exception as exc:
+        return _json(
+            contract.tool_error(
+                contract.GET_JOB_TOOL,
+                "get_job_failed",
+                str(exc) or "Job lookup failed.",
+                job_id=job_id,
+            )
+        )
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
-def search_jobs(query: str, limit: int = config.AGENT_SEARCH_JOBS_LIMIT) -> str:
-    """Search internal jobs DB semantically."""
-    cleaned_query = re.sub(r"\s+", " ", query or "").strip()
-    if not cleaned_query:
-        return _json({"error": "query_required"})
-    if len(cleaned_query) > 200:
-        return _json({"error": "query_too_long", "max_characters": 200})
-    capped = max(1, min(int(limit or 1), config.AGENT_SEARCH_JOBS_LIMIT))
-    db = SessionLocal()
+def search_jobs(query: str, limit: int | None = None, detail: bool = False) -> str:
+    """Search internal jobs DB semantically. Use detail=true for full job text."""
+    clean_query = re.sub(r"\s+", " ", query or "").strip()
+    if not clean_query:
+        return _json(
+            contract.tool_error(
+                contract.SEARCH_JOBS_TOOL,
+                "empty_query",
+                "search_jobs requires a non-empty query.",
+            )
+        )
+    if len(clean_query) > 200:
+        return _json(
+            contract.tool_error(
+                contract.SEARCH_JOBS_TOOL,
+                "query_too_long",
+                "search_jobs query exceeds 200 characters.",
+                max_characters=200,
+            )
+        )
+
+    capped = contract.limit_jobs(limit)
+    db = None
     try:
-        matches = find_similar_jobs(encode_text(cleaned_query), db, top_k=max(capped * 10, capped))
+        db = SessionLocal()
+        matches = find_similar_jobs(
+            encode_text(clean_query), db, top_k=max(capped * 10, capped)
+        )
         jobs = []
         for job_id, similarity in matches:
             job = _get_public_job(db, job_id)
             if job:
-                jobs.append({**_job_payload(job), "similarity": round(similarity, 4)})
+                jobs.append(contract.job_payload(job, similarity, detail=detail))
             if len(jobs) >= capped:
                 break
-        return _json({"jobs": jobs})
+        return _json(contract.search_jobs_result(clean_query, capped, jobs, detail=detail))
+    except Exception as exc:
+        return _json(
+            contract.tool_error(
+                contract.SEARCH_JOBS_TOOL,
+                "search_failed",
+                str(exc) or "Job search failed.",
+                query=clean_query,
+            )
+        )
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 def latest_jobs(limit: int = 10, source: str | None = None) -> str:
@@ -385,8 +431,6 @@ def propose_resume_diff(
             "rewrite": rewrite,
         }
     )
-
-
 def _job_payload(job: ScrapedJob) -> dict[str, Any]:
     return {
         "id": job.id,

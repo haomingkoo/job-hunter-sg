@@ -7,6 +7,7 @@ BACKEND_DIR = Path(__file__).resolve().parent
 PROJECT_DIR = BACKEND_DIR.parent
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{PROJECT_DIR / 'jobhunter.db'}")
 
+import config
 import mcp_tools as tools
 
 from mcp.server.fastmcp import FastMCP
@@ -52,9 +53,13 @@ def jobhunter_get_job(job_id: int) -> str:
 
 
 @mcp.tool()
-def search_jobs(query: str, limit: int = 7) -> str:
+def search_jobs(
+    query: str,
+    limit: int = config.AGENT_SEARCH_JOBS_LIMIT,
+    detail: bool = False,
+) -> str:
     """Search internal jobs DB semantically."""
-    return tools.search_jobs(query, limit)
+    return tools.search_jobs(query, limit, detail)
 
 
 @mcp.tool(name="jobhunter.search_jobs")

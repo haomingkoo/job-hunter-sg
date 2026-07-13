@@ -202,9 +202,13 @@ class TrackedJobCreate(BaseModel):
     date_applied: Optional[str] = Field(None, max_length=50)
     status: _STATUS = "applied"
     source: str = Field("", max_length=200)
+    source_url: str = Field("", max_length=2000)
+    job_description: str = Field("", max_length=50000)
+    role_metadata: dict[str, Any] = Field(default_factory=dict)
     follow_up_date: Optional[str] = Field(None, max_length=50)
     notes: str = Field("", max_length=5000)
     scraped_job_id: Optional[int] = None
+    resume_version_id: Optional[int] = None
 
 
 class TrackedJobUpdate(BaseModel):
@@ -213,8 +217,12 @@ class TrackedJobUpdate(BaseModel):
     date_applied: Optional[str] = Field(None, max_length=50)
     status: Optional[_STATUS] = None
     source: Optional[str] = Field(None, max_length=200)
+    source_url: Optional[str] = Field(None, max_length=2000)
+    job_description: Optional[str] = Field(None, max_length=50000)
+    role_metadata: Optional[dict[str, Any]] = None
     follow_up_date: Optional[str] = Field(None, max_length=50)
     notes: Optional[str] = Field(None, max_length=5000)
+    resume_version_id: Optional[int] = None
 
 
 class TrackedJobOut(BaseModel):
@@ -227,11 +235,50 @@ class TrackedJobOut(BaseModel):
     date_applied: Optional[str]
     status: str
     source: str
+    source_url: str = ""
+    job_description: str = ""
+    role_metadata: Optional[dict[str, Any]] = None
     follow_up_date: Optional[str]
     notes: str
     scraped_job_id: Optional[int]
     resume_version_id: Optional[int] = None
     stage_history: Optional[list] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ApplicationWorkspaceCreate(BaseModel):
+    company: str = Field(..., min_length=1, max_length=500)
+    title: str = Field(..., min_length=1, max_length=500)
+    job_description: str = Field(..., min_length=1, max_length=50000)
+    source_url: str = Field("", max_length=2000)
+    source: str = Field("", max_length=200)
+    status: _STATUS = "saved"
+    date_applied: Optional[str] = Field(None, max_length=50)
+    follow_up_date: Optional[str] = Field(None, max_length=50)
+    notes: str = Field("", max_length=5000)
+    scraped_job_id: Optional[int] = None
+    resume_version_id: Optional[int] = None
+    role_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ApplicationWorkspaceOut(BaseModel):
+    id: int
+    user_id: int
+    company: str
+    title: str
+    role: str
+    job_description: str
+    source_url: str
+    source: str
+    status: str
+    date_applied: Optional[str]
+    follow_up_date: Optional[str]
+    notes: str
+    scraped_job_id: Optional[int]
+    resume_version_id: Optional[int] = None
+    role_metadata: dict[str, Any] = Field(default_factory=dict)
+    stage_history: list = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 
