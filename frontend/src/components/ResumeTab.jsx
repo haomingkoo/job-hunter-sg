@@ -1069,9 +1069,11 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       if (data.session_id) setSessionId(data.session_id);
       openMobileFeedbackPanel();
     } catch (err) {
-      const message = err.message?.includes("429")
-        ? "You’ve reached today’s AI coaching limit."
-        : "AI is busy right now. Please try again in a moment.";
+      const message = /sign in/i.test(err.message || "")
+        ? err.message
+        : err.message?.includes("429")
+          ? "You’ve reached today’s AI coaching limit."
+          : "AI is busy right now. Please try again in a moment.";
       setCoachError(message);
     } finally {
       setCoachLoading(false);

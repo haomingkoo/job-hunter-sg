@@ -282,9 +282,35 @@ describe("parseResumeToSections - fixture regressions", () => {
     expect(headingKeys).toEqual(["skills", "experience", "projects", "education"]);
     expect(skillParagraphs).toHaveLength(2);
     expect(bullets.some((section) => section.text.startsWith("perational"))).toBe(false);
-    expect(bullets.filter((section) => section.sectionKey === "experience")).toHaveLength(3);
+    expect(bullets.filter((section) => section.sectionKey === "experience")).toHaveLength(2);
+    expect(sections).toContainEqual(expect.objectContaining({
+      type: "paragraph",
+      sectionKey: "experience",
+      text: "Selected for an industry project delivered with a three-person team.",
+    }));
     expect(bullets.find((section) => section.text.startsWith("Built"))?.text).toContain("phased redesign plan");
     expect(bullets.find((section) => section.text.startsWith("Languages"))?.text).toContain("and travel");
+  });
+
+  it("keeps mixed unmarked and explicit achievement bullets editable", () => {
+    const text = [
+      "PROFESSIONAL EXPERIENCE",
+      "AI Engineer | Example Labs | Jan 2024 - Present",
+      "Built a retrieval platform used by operations teams.",
+      "Reduced investigation time through deterministic validation.",
+      "• Led release testing across three workflows.",
+    ].join("\n");
+
+    const sections = parseResumeToSections(text, []);
+    const bullets = sections
+      .filter((section) => section.type === "bullet")
+      .map((section) => section.text);
+
+    expect(bullets).toEqual([
+      "Built a retrieval platform used by operations teams.",
+      "Reduced investigation time through deterministic validation.",
+      "Led release testing across three workflows.",
+    ]);
   });
 
   it("groups Dyson company, title, and standalone date into one experience subheading", () => {

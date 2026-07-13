@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import argparse
 import gc
+import hashlib
 import logging
 import os
+import re
 import sys
 import time
 from dataclasses import asdict
@@ -50,7 +52,6 @@ def _build_term_preview(job_row: ScrapedJob, db) -> None:
         return
     if job_row.job_terms_preview:
         return
-    import re
     parsed_jd = job_row.parsed_jd if isinstance(job_row.parsed_jd, dict) else None
     db_skills = [str(s).strip() for s in (job_row.skills or []) if str(s).strip()] if isinstance(job_row.skills, list) else []
     terms = build_job_ats_terms(
@@ -88,6 +89,27 @@ CAREERSGOV_MIN_HEALTHY_JOBS = 500
 def _posted_sort_iso(posted_date: str, scraped_at: str = "") -> str:
     from main import _parse_job_posted_at
     return _parse_job_posted_at(posted_date, scraped_at).isoformat()
+
+
+def _crawl_semantic_key(job) -> str:
+    """Collapse same-content source spam without merging distinct real roles."""
+    description = re.sub(r"\s+", " ", (job.description or "")).strip().casefold()
+    if not description:
+        return ""
+    fields = (
+        job.source,
+        job.company,
+        job.agency,
+        job.title,
+        job.location,
+        job.salary,
+        job.posted_date,
+        job.closing_date,
+        job.employment_type,
+        description,
+    )
+    normalized = [re.sub(r"\s+", " ", str(value or "")).strip().casefold() for value in fields]
+    return hashlib.sha256("\x1f".join(normalized).encode()).hexdigest()
 
 
 def _retire_stale_jobs(db, source: str, crawl_marker: str) -> int:
@@ -257,6 +279,7 @@ def crawl_all_jobs() -> dict:
         "pages": 0,
         "retired": 0,
         "reactivated": 0,
+        "duplicates_collapsed": 0,
     }
     start = time.time()
 
@@ -271,15 +294,18 @@ def crawl_all_jobs() -> dict:
     mcf_crawl_marker = datetime.now().isoformat()
     mcf_complete = True
     mcf_seen = 0
+    mcf_seen_semantic_keys: set[str] = set()
     mcf_terminal_page_seen = False
     page = 0
     while True:
         try:
             jobs = mcf.search("", limit=100, page=page)  # Empty string = all jobs
             if not jobs:
-                if mcf_seen < MCF_MIN_HEALTHY_JOBS:
+                healthy_mcf_jobs = len(mcf_seen_semantic_keys)
+                if healthy_mcf_jobs < MCF_MIN_HEALTHY_JOBS:
                     log.warning(
-                        f"[MCF] Only {mcf_seen} jobs — data may be stale or incomplete; "
+                        f"[MCF] Only {healthy_mcf_jobs} unique jobs with descriptions "
+                        f"({mcf_seen} processed) — data may be stale or incomplete; "
                         "skipping stale-job retirement"
                     )
                     stats["errors"] += 1
@@ -304,6 +330,10 @@ def crawl_all_jobs() -> dict:
             page_updated = 0
             page_reactivated = 0
             for job in jobs:
+                semantic_key = _crawl_semantic_key(job)
+                if semantic_key and semantic_key in mcf_seen_semantic_keys:
+                    stats["duplicates_collapsed"] += 1
+                    continue
                 try:
                     is_new = False
                     was_hidden = False
@@ -325,9 +355,15 @@ def crawl_all_jobs() -> dict:
                                 if key != "id":
                                     setattr(existing, key, val)
                             existing.hidden = 0
+                            _build_term_preview(existing, db)
                         else:
-                            db.add(ScrapedJob(**clean))
+                            job_row = ScrapedJob(**clean)
+                            db.add(job_row)
+                            db.flush()
+                            _build_term_preview(job_row, db)
                             is_new = True
+                    if semantic_key:
+                        mcf_seen_semantic_keys.add(semantic_key)
                     page_new += int(is_new)
                     page_updated += int(not is_new)
                     page_reactivated += int(was_hidden)
@@ -392,10 +428,18 @@ def crawl_all_jobs() -> dict:
         cgov_jobs = cgov.fetch_all()
         cgov_crawl_marker = datetime.now().isoformat()
 
-        # Health check: ensure data is fresh and reasonable
-        cgov_complete = len(cgov_jobs) >= CAREERSGOV_MIN_HEALTHY_JOBS
+        # Health check unique postings so repeated source spam cannot retire the corpus.
+        cgov_unique_keys = {
+            semantic_key
+            for job in cgov_jobs
+            if (semantic_key := _crawl_semantic_key(job))
+        }
+        cgov_complete = len(cgov_unique_keys) >= CAREERSGOV_MIN_HEALTHY_JOBS
         if not cgov_complete:
-            log.warning(f"[CareersGov] Only {len(cgov_jobs)} jobs — data may be stale or incomplete, skipping")
+            log.warning(
+                f"[CareersGov] Only {len(cgov_unique_keys)} unique jobs "
+                f"({len(cgov_jobs)} raw) — data may be stale or incomplete, skipping"
+            )
             stats["errors"] += 1
             cgov_jobs = []
         else:
@@ -403,11 +447,16 @@ def crawl_all_jobs() -> dict:
 
         # Upsert approach (can't DELETE all — resume_versions has FK refs)
         seen_keys: set[str] = set()
+        seen_semantic_keys: set[str] = set()
         cgov_new = 0
         cgov_updated = 0
         cgov_reactivated = 0
         cgov_retired = 0
         for job in cgov_jobs:
+            semantic_key = _crawl_semantic_key(job)
+            if semantic_key and semantic_key in seen_semantic_keys:
+                stats["duplicates_collapsed"] += 1
+                continue
             try:
                 is_new = False
                 was_hidden = False
@@ -444,6 +493,8 @@ def crawl_all_jobs() -> dict:
                         db.add(job_row)
                         _build_term_preview(job_row, db)
                         is_new = True
+                if semantic_key:
+                    seen_semantic_keys.add(semantic_key)
                 cgov_new += int(is_new)
                 cgov_updated += int(not is_new)
                 cgov_reactivated += int(was_hidden)
@@ -482,6 +533,7 @@ def crawl_all_jobs() -> dict:
     log.info(f"  Jobs updated:     {stats['updated']}")
     log.info(f"  Jobs retired:     {stats['retired']}")
     log.info(f"  Jobs reactivated: {stats['reactivated']}")
+    log.info(f"  Duplicates hidden: {stats['duplicates_collapsed']}")
     log.info(f"  Errors:           {stats['errors']}")
     log.info(f"  Duration:         {duration}s ({round(duration/60, 1)} min)")
     log.info(f"  Total jobs in DB: {total_in_db}")

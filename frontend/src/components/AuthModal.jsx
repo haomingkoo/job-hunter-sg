@@ -203,7 +203,16 @@ export default function AuthModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!resp.ok) throw new Error(await readAuthError(resp));
+      if (!resp.ok) {
+        const message = await readAuthError(resp);
+        if (mode === "login" && resp.status === 403) {
+          setPassword("");
+          setMode("signup-sent");
+          setError(message);
+          return;
+        }
+        throw new Error(message);
+      }
       if (mode === "signup") {
         const data = await resp.json();
         if (!mountedRef.current) return;

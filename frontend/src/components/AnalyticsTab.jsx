@@ -312,7 +312,7 @@ export default function AnalyticsTab() {
           Market Insights
         </h2>
         <p className="mt-1 text-sm text-[#6A89A7]">
-          Skill and salary trends from {data?.total_jobs_with_terms?.toLocaleString() || "..."} Singapore job listings.
+          Skill and salary trends from {data?.total_jobs_with_terms?.toLocaleString() || "..."} listings with extracted skill signals, not the live Jobs total.
         </p>
         {!loading && !error && data?.partial && (
           <p className="mt-1 text-xs text-[#6A89A7]">

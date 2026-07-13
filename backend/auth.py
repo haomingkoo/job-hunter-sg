@@ -338,7 +338,12 @@ def _validate_cloudflare_assertion(
 def _get_cf_user(email: str, db) -> User:
     """Return an explicitly registered Cloudflare account."""
     user = db.query(User).filter(User.email == email).first()
-    if not user or user.password_hash != CLOUDFLARE_PASSWORD_SENTINEL:
+    if (
+        not user
+        or user.password_hash != CLOUDFLARE_PASSWORD_SENTINEL
+        or user.terms_accepted_at is None
+        or user.privacy_accepted_at is None
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Account registration required",
@@ -393,14 +398,21 @@ def _get_jwt_user(token: str, db: Session) -> User:
     payload = decode_token(token)
     try:
         user_id = int(payload["sub"])
-        token_version = int(payload["ver"])
+        # Tokens issued before account-wide revocation existed had no version.
+        # They remain valid only for legacy rows at version 0 and expire within
+        # the normal seven-day JWT lifetime.
+        token_version = int(payload.get("ver", 0))
     except (KeyError, TypeError, ValueError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
         )
     user = db.query(User).filter(User.id == user_id).first()
-    if not user or user.token_version != token_version:
+    if (
+        not user
+        or user.token_version != token_version
+        or user.email_verified_at is None
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",

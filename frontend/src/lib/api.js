@@ -101,11 +101,18 @@ export async function apiFetch(path, options = {}) {
   }
 
   if (resp.status === 401) {
+    if (!token) {
+      window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, {
+        detail: { reason: "required" },
+      }));
+      throw new Error("Please sign in to use this feature.");
+    }
     localStorage.removeItem("token");
-    if (token) clearResumeDraftStorage();
-    else bindResumeDraftStorageToUser(null);
+    clearResumeDraftStorage();
     broadcastAuthChange("logout");
-    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, {
+      detail: { reason: "expired" },
+    }));
     throw new Error("Session expired. Please sign in again.");
   }
   if (!resp.ok) throw new Error(await readApiError(resp));

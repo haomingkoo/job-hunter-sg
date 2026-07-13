@@ -7,8 +7,8 @@ vi.mock("framer-motion", async (importOriginal) => ({
   AnimatePresence: ({ children }) => children,
 }));
 
-import JobHunterSG from "../App.jsx";
-import { AUTH_SYNC_KEY } from "../lib/api.js";
+import JobHunterSG, { readActiveTab } from "../App.jsx";
+import { AUTH_EXPIRED_EVENT, AUTH_SYNC_KEY } from "../lib/api.js";
 
 function jsonResponse(data, status = 200) {
   return {
@@ -62,6 +62,61 @@ describe("JobHunterSG app shell", () => {
 
     expect(container.textContent).toContain("Job Hunter SG");
     expect(container.textContent).toContain("Sign In");
+  });
+
+  it("keeps the reminders route reachable", () => {
+    expect(readActiveTab("#reminders")).toBe("reminders");
+  });
+
+  it("opens the tab named by a direct hash URL", async () => {
+    window.history.replaceState({}, "", "/#resume");
+    global.fetch = vi.fn(async (url) => {
+      const path = String(url);
+      if (path.endsWith("/api/auth/config")) return jsonResponse({ mode: "password" });
+      if (path.endsWith("/api/auth/me")) return jsonResponse({ detail: "Not authenticated" }, 401);
+      if (path.endsWith("/api/resume/templates")) return jsonResponse({ templates: [] });
+      if (path.endsWith("/api/resume/versions")) return jsonResponse({ versions: [] });
+      if (path.endsWith("/api/ai/status")) return jsonResponse({ status: "available" });
+      return jsonResponse({});
+    });
+
+    await act(async () => {
+      root.render(<JobHunterSG />);
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain("How would you like to start?");
+    expect(container.textContent).not.toContain("Find the role that fits you best");
+  });
+
+  it("opens sign-in without leaving the resume when an anonymous AI action is gated", async () => {
+    window.history.replaceState({}, "", "/#resume");
+    sessionStorage.setItem("jh_resume_text", "anonymous draft");
+    global.fetch = vi.fn(async (url) => {
+      const path = String(url);
+      if (path.endsWith("/api/auth/config")) return jsonResponse({ mode: "password" });
+      if (path.endsWith("/api/auth/me")) return jsonResponse({ detail: "Not authenticated" }, 401);
+      if (path.endsWith("/api/resume/templates")) return jsonResponse({ templates: [] });
+      if (path.endsWith("/api/resume/versions")) return jsonResponse({ versions: [] });
+      if (path.endsWith("/api/ai/status")) return jsonResponse({ status: "available" });
+      return jsonResponse({});
+    });
+
+    await act(async () => {
+      root.render(<JobHunterSG />);
+    });
+    await flushEffects();
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, {
+        detail: { reason: "required" },
+      }));
+    });
+
+    expect(window.location.hash).toBe("#resume");
+    expect(container.textContent).toContain("Welcome back");
+    expect(container.textContent).toContain("Resume Workspace");
+    expect(container.textContent).toContain("anonymous draft");
+    expect(sessionStorage.getItem("jh_resume_text")).toBe("anonymous draft");
   });
 
   it("removes email-link secrets before app requests run", async () => {

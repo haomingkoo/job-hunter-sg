@@ -44,6 +44,29 @@ describe("apiFetch", () => {
     window.removeEventListener(AUTH_EXPIRED_EVENT, listener);
   });
 
+  it("preserves an anonymous draft and requests sign-in for an account-only feature", async () => {
+    sessionStorage.setItem("jh_resume_text", "anonymous draft");
+    sessionStorage.setItem("jh_wizard_step", "3");
+    const listener = vi.fn();
+    window.addEventListener(AUTH_EXPIRED_EVENT, listener);
+    global.fetch = vi.fn(() => Promise.resolve({
+      ok: false,
+      status: 401,
+      text: () => Promise.resolve(""),
+      headers: { get: () => "" },
+    }));
+
+    await expect(apiFetch("/api/ai/coach")).rejects.toThrow(
+      "Please sign in to use this feature.",
+    );
+
+    expect(sessionStorage.getItem("jh_resume_text")).toBe("anonymous draft");
+    expect(sessionStorage.getItem("jh_wizard_step")).toBe("3");
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener.mock.calls[0][0].detail).toEqual({ reason: "required" });
+    window.removeEventListener(AUTH_EXPIRED_EVENT, listener);
+  });
+
   it("clears the full resume draft when explicitly requested", () => {
     sessionStorage.setItem("jh_resume_profile", "{}");
     sessionStorage.setItem("jh_resume_text", "draft");

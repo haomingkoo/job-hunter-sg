@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -30,6 +30,7 @@ def test_jobs_can_be_filtered_by_exact_source():
                 dedup_key="mcf-key",
                 posted_at_sort=now,
                 scraped_at=now,
+                job_terms_preview=["Python"],
             ),
             ScrapedJob(
                 title="Policy Analyst",
@@ -39,6 +40,36 @@ def test_jobs_can_be_filtered_by_exact_source():
                 dedup_key="cgov-key",
                 posted_at_sort=now,
                 scraped_at=now,
+                job_terms_preview=["Policy"],
+            ),
+            ScrapedJob(
+                title="Hidden duplicate",
+                company="Example One",
+                source="MyCareersFuture",
+                source_posting_id="mcf-hidden",
+                dedup_key="mcf-hidden-key",
+                posted_at_sort=now,
+                scraped_at=now,
+                hidden=1,
+            ),
+            ScrapedJob(
+                title="Old listing",
+                company="Example One",
+                source="MyCareersFuture",
+                source_posting_id="mcf-old",
+                dedup_key="mcf-old-key",
+                posted_at_sort=(datetime.now(timezone.utc) - timedelta(days=61)).isoformat(),
+                scraped_at=now,
+            ),
+            ScrapedJob(
+                title="Expired policy role",
+                company="Singapore Public Service",
+                source="Careers@Gov",
+                source_posting_id="cgov-expired",
+                dedup_key="cgov-expired-key",
+                posted_at_sort=now,
+                scraped_at=now,
+                closing_date=(datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat(),
             ),
         ]
     )
@@ -50,13 +81,35 @@ def test_jobs_can_be_filtered_by_exact_source():
         finally:
             pass
 
-    main._filter_meta_cache = {}
-    main._filter_meta_ts = 0.0
+    main._clear_analytics_cache()
     main.app.dependency_overrides[get_db] = override_db
     try:
-        response = TestClient(main.app).get("/api/jobs", params={"source": "Careers@Gov"})
+        client = TestClient(main.app)
+        response = client.get("/api/jobs", params={"source": "Careers@Gov"})
+        source_counts = {
+            item["value"]: item["count"]
+            for item in response.json()["filter_meta"]["sources"]
+        }
+        assert source_counts == {"Careers@Gov": 1, "MyCareersFuture": 1}
+        assert sum(source_counts.values()) == 2
+        analytics = client.get("/api/analytics/skills")
+        assert analytics.json()["total_jobs_with_terms"] == 2
+
+        db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "mcf-1").update(
+            {"hidden": 1}
+        )
+        db.commit()
+        refreshed = client.get("/api/jobs", params={"source": "Careers@Gov"})
+        refreshed_counts = {
+            item["value"]: item["count"]
+            for item in refreshed.json()["filter_meta"]["sources"]
+        }
+        assert refreshed_counts == {"Careers@Gov": 1}
+        refreshed_analytics = client.get("/api/analytics/skills")
+        assert refreshed_analytics.json()["total_jobs_with_terms"] == 1
     finally:
         main.app.dependency_overrides.pop(get_db, None)
+        main._clear_analytics_cache()
         db.close()
         engine.dispose()
 

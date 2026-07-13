@@ -273,7 +273,11 @@ def test_invalid_issuer_audience_or_header_email_fails_closed(
 
 def test_app_jwt_fallback_is_unchanged_without_cloudflare_headers(monkeypatch):
     monkeypatch.setattr(auth, "AUTH_MODE", "password")
-    expected_user = type("ExpectedUser", (), {"token_version": 0})()
+    expected_user = type(
+        "ExpectedUser",
+        (),
+        {"token_version": 0, "email_verified_at": object()},
+    )()
 
     class Query:
         def filter(self, _condition):
@@ -373,3 +377,32 @@ def test_cloudflare_identity_does_not_recreate_a_missing_account():
         auth._get_cf_user("deleted@example.com", DB())
 
     assert exc_info.value.status_code == 401
+
+
+def test_cloudflare_identity_requires_recorded_account_consent():
+    existing = type(
+        "ExistingUser",
+        (),
+        {
+            "password_hash": auth.CLOUDFLARE_PASSWORD_SENTINEL,
+            "terms_accepted_at": None,
+            "privacy_accepted_at": None,
+        },
+    )()
+
+    class Query:
+        def filter(self, _condition):
+            return self
+
+        def first(self):
+            return existing
+
+    class DB:
+        def query(self, _model):
+            return Query()
+
+    with pytest.raises(HTTPException) as exc_info:
+        auth._get_cf_user("legacy@example.com", DB())
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Account registration required"

@@ -385,27 +385,24 @@ def _parse_sections(resume_text: str) -> dict[str, str]:
     """
     # Common section header patterns
     header_patterns = [
-        (r"(?i)^(professional\s+)?summary", "summary"),
-        (r"(?i)^(professional\s+)?experience", "experience"),
-        (r"(?i)^(work\s+)?experience", "experience"),
-        (r"(?i)^(career\s+break)", "experience"),
-        (r"(?i)^education", "education"),
-        (r"(?i)^(technical\s+)?skills", "skills"),
-        (r"(?i)^(core\s+)?skills", "skills"),
-        (r"(?i)^(core\s+)?competenc", "skills"),
-        (r"(?i)^certif", "certifications"),
-        (r"(?i)^(licen[cs]es?\s+(&|and)\s+)?certif", "certifications"),
-        (r"(?i)^project", "projects"),
-        (r"(?i)^activit", "activities"),
-        (r"(?i)^volunteer", "activities"),
-        (r"(?i)^leadership", "activities"),
-        (r"(?i)^personal", "personal"),
-        (r"(?i)^additional\s+info", "additional"),
-        (r"(?i)^language", "languages"),
-        (r"(?i)^interest", "interests"),
-        (r"(?i)^award", "awards"),
-        (r"(?i)^honor", "awards"),
-        (r"(?i)^publication", "publications"),
+        (r"(?i)^(?:(?:professional|executive)\s+)?summary\s*:?$", "summary"),
+        (r"(?i)^(?:(?:professional|work)\s+)?experience\s*:?$", "experience"),
+        (r"(?i)^career\s+break\s*:?$", "experience"),
+        (r"(?i)^education(?:\s+(?:&|and)\s+(?:certifications?|training))?\s*:?$", "education"),
+        (r"(?i)^(?:(?:technical|core)\s+)?skills(?:\s+(?:&|and)\s+(?:competenc(?:e|ies)|expertise|tools|technolog(?:y|ies)))?\s*:?$", "skills"),
+        (r"(?i)^(?:core\s+)?competenc(?:e|ies)\s*:?$", "skills"),
+        (r"(?i)^(?:(?:licen[cs]es?\s+(?:&|and)\s+)?certifications?|certifications?\s+(?:&|and)\s+licen[cs]es?)\s*:?$", "certifications"),
+        (r"(?i)^(?:(?:selected|technical)\s+)*projects?(?:\s+experience)?\s*:?$", "projects"),
+        (r"(?i)^activities?(?:\s+(?:&|and)\s+leadership)?\s*:?$", "activities"),
+        (r"(?i)^volunteer(?:ing|\s+(?:work|experience))?\s*:?$", "activities"),
+        (r"(?i)^leadership(?:\s+(?:&|and)\s+activities)?\s*:?$", "activities"),
+        (r"(?i)^personal(?:\s+particulars?)?\s*:?$", "personal"),
+        (r"(?i)^additional\s+info(?:rmation)?\s*:?$", "additional"),
+        (r"(?i)^languages?\s*:?$", "languages"),
+        (r"(?i)^interests?\s*:?$", "interests"),
+        (r"(?i)^awards?(?:\s+(?:&|and)\s+hono(?:u)?rs?)?\s*:?$", "awards"),
+        (r"(?i)^hono(?:u)?rs?(?:\s+(?:&|and)\s+awards?)?\s*:?$", "awards"),
+        (r"(?i)^publications?\s*:?$", "publications"),
     ]
 
     lines = resume_text.split("\n")
@@ -434,6 +431,48 @@ def _parse_sections(resume_text: str) -> dict[str, str]:
 
     # Convert lists to strings
     return {k: "\n".join(v) for k, v in sections.items() if v}
+
+
+_EXPORT_BULLET_RE = re.compile(r"^[\s]*[-*•–]\s*")
+_EXPORT_SKILL_LABEL_RE = re.compile(r"^[A-Z][^:\n]{1,60}:\s+\S")
+
+
+def _group_export_lines(content: str, section_key: str) -> list[str]:
+    """Join physical PDF wraps without changing resume content."""
+    grouped: list[str] = []
+    pending = ""
+
+    def flush() -> None:
+        nonlocal pending
+        if pending:
+            grouped.append(pending)
+            pending = ""
+
+    for line in (value.strip() for value in content.splitlines()):
+        if not line:
+            continue
+        is_bullet = bool(_EXPORT_BULLET_RE.match(line) or re.match(r"^\d+[.)]\s+", line))
+        is_entry_heading = (
+            section_key in {"experience", "education", "projects", "activities"}
+            and not is_bullet
+            and not line.endswith((".", ";"))
+            and _is_entry_heading_line(line)
+        )
+        starts_skill = section_key == "skills" and bool(_EXPORT_SKILL_LABEL_RE.match(line))
+
+        if is_entry_heading:
+            flush()
+            grouped.append(line)
+        elif is_bullet or starts_skill:
+            flush()
+            pending = line
+        elif pending:
+            pending = f"{pending} {line}"
+        else:
+            pending = line
+
+    flush()
+    return grouped
 
 
 def inspect_resume_export(resume_text: str, template_id: str = "modern") -> dict[str, object]:
@@ -531,7 +570,7 @@ def generate_docx(
         _add_section_header(doc, display_names.get(section_key, section_key.title()))
 
         # Add content — smart detection of entry headings, bullets, paragraphs
-        content_lines = [ln.strip() for ln in content.split("\n") if ln.strip()]
+        content_lines = _group_export_lines(content, section_key)
         is_entry_section = section_key in ("experience", "education", "projects", "activities")
         prev_was_bullet = False
 

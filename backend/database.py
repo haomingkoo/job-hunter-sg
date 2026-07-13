@@ -131,9 +131,6 @@ def _apply_lightweight_migrations() -> None:
             statements.append(
                 "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0"
             )
-        statements.append(
-            "UPDATE users SET tier = 'user' WHERE tier NOT IN ('user', 'admin')"
-        )
 
     # tracked_jobs: new columns for resume versioning and stage history
     if "tracked_jobs" in inspector.get_table_names():

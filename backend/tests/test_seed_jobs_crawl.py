@@ -45,12 +45,26 @@ def _seed(db, job: Job, *, hidden: int = 0) -> None:
             source=job.source,
             source_posting_id=job.source_posting_id,
             url=job.url,
+            description=job.description,
             dedup_key=job.dedup_key,
             scraped_at="2020-01-01T00:00:00",
             hidden=hidden,
         )
     )
     db.commit()
+
+
+def test_crawl_semantic_key_only_collapses_same_nonempty_content():
+    first = _job("MyCareersFuture", "first")
+    duplicate = _job("MyCareersFuture", "second")
+    distinct = _job("MyCareersFuture", "third")
+    first.description = "Build the platform."
+    duplicate.description = "  BUILD   the platform. "
+    distinct.description = "Operate the platform."
+
+    assert seed_jobs._crawl_semantic_key(first) == seed_jobs._crawl_semantic_key(duplicate)
+    assert seed_jobs._crawl_semantic_key(first) != seed_jobs._crawl_semantic_key(distinct)
+    assert seed_jobs._crawl_semantic_key(_job("MyCareersFuture", "empty")) == ""
 
 
 def test_mcf_bad_job_does_not_rollback_siblings_or_retire_stale_rows(monkeypatch):
@@ -88,6 +102,7 @@ def test_mcf_completed_crawl_retires_unseen_and_reactivates_seen(monkeypatch):
     engine, testing_session = _prepare_crawl(monkeypatch)
     stale = _job("MyCareersFuture", "stale")
     seen = _job("MyCareersFuture", "seen")
+    seen.description = "Build and operate a software platform."
     db = testing_session()
     _seed(db, stale)
     _seed(db, seen, hidden=1)
@@ -107,6 +122,41 @@ def test_mcf_completed_crawl_retires_unseen_and_reactivates_seen(monkeypatch):
     assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "seen").one().hidden == 0
     assert stats["retired"] == 1
     assert stats["reactivated"] == 1
+    db.close()
+    engine.dispose()
+
+
+def test_mcf_completed_crawl_collapses_semantic_spam_and_builds_preview(monkeypatch):
+    engine, testing_session = _prepare_crawl(monkeypatch)
+    canonical = _job("MyCareersFuture", "canonical")
+    duplicate = _job("MyCareersFuture", "legacy-copy")
+    canonical.description = duplicate.description = "Build and operate the same platform."
+
+    db = testing_session()
+    _seed(db, duplicate)
+    db.close()
+
+    monkeypatch.setattr(
+        MyCareersFutureScraper,
+        "search",
+        lambda self, keyword, limit, page: [canonical, duplicate] if page == 0 else [],
+    )
+    monkeypatch.setattr(CareersGovScraper, "fetch_all", lambda self: [])
+    preview_ids = []
+    monkeypatch.setattr(
+        seed_jobs,
+        "_build_term_preview",
+        lambda job, _db: preview_ids.append(job.source_posting_id),
+    )
+
+    stats = seed_jobs.crawl_all_jobs()
+
+    db = testing_session()
+    rows = db.query(ScrapedJob).filter(ScrapedJob.source == "MyCareersFuture").all()
+    assert sum(not row.hidden for row in rows) == 1
+    assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "legacy-copy").one().hidden == 1
+    assert stats["duplicates_collapsed"] == 1
+    assert preview_ids == ["canonical"]
     db.close()
     engine.dispose()
 
@@ -163,10 +213,67 @@ def test_mcf_ambiguous_empty_page_skips_retirement(monkeypatch):
     engine.dispose()
 
 
+def test_mcf_duplicate_spam_cannot_pass_retirement_health_check(monkeypatch):
+    engine, testing_session = _prepare_crawl(monkeypatch)
+    stale = _job("MyCareersFuture", "stale")
+    first = _job("MyCareersFuture", "duplicate-1")
+    duplicate = _job("MyCareersFuture", "duplicate-2")
+    first.description = duplicate.description = "The same upstream posting."
+    db = testing_session()
+    _seed(db, stale)
+    db.close()
+
+    monkeypatch.setattr(seed_jobs, "MCF_MIN_HEALTHY_JOBS", 2)
+    monkeypatch.setattr(
+        MyCareersFutureScraper,
+        "search",
+        lambda self, keyword, limit, page: [first, duplicate] if page == 0 else [],
+    )
+    monkeypatch.setattr(CareersGovScraper, "fetch_all", lambda self: [])
+
+    stats = seed_jobs.crawl_all_jobs()
+
+    db = testing_session()
+    assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "stale").one().hidden == 0
+    assert stats["retired"] == 0
+    assert stats["errors"] >= 1
+    db.close()
+    engine.dispose()
+
+
+def test_mcf_empty_description_rows_cannot_pass_retirement_health_check(monkeypatch):
+    engine, testing_session = _prepare_crawl(monkeypatch)
+    stale = _job("MyCareersFuture", "stale")
+    db = testing_session()
+    _seed(db, stale)
+    db.close()
+
+    monkeypatch.setattr(seed_jobs, "MCF_MIN_HEALTHY_JOBS", 2)
+    monkeypatch.setattr(
+        MyCareersFutureScraper,
+        "search",
+        lambda self, keyword, limit, page: [
+            _job("MyCareersFuture", "empty-1"),
+            _job("MyCareersFuture", "empty-2"),
+        ] if page == 0 else [],
+    )
+    monkeypatch.setattr(CareersGovScraper, "fetch_all", lambda self: [])
+
+    stats = seed_jobs.crawl_all_jobs()
+
+    db = testing_session()
+    assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "stale").one().hidden == 0
+    assert stats["retired"] == 0
+    assert stats["errors"] >= 1
+    db.close()
+    engine.dispose()
+
+
 def test_careersgov_completed_crawl_retires_unseen_and_reactivates_seen(monkeypatch):
     engine, testing_session = _prepare_crawl(monkeypatch)
     stale = _job("Careers@Gov", "stale")
     seen = _job("Careers@Gov", "seen")
+    seen.description = "Deliver public digital services."
     db = testing_session()
     _seed(db, stale)
     _seed(db, seen, hidden=1)
@@ -183,6 +290,58 @@ def test_careersgov_completed_crawl_retires_unseen_and_reactivates_seen(monkeypa
     assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "seen").one().hidden == 0
     assert stats["retired"] == 1
     assert stats["reactivated"] == 1
+    db.close()
+    engine.dispose()
+
+
+def test_careersgov_duplicate_spam_cannot_pass_retirement_health_check(monkeypatch):
+    engine, testing_session = _prepare_crawl(monkeypatch)
+    stale = _job("Careers@Gov", "stale")
+    first = _job("Careers@Gov", "duplicate-1")
+    duplicate = _job("Careers@Gov", "duplicate-2")
+    first.description = duplicate.description = "The same upstream posting."
+    db = testing_session()
+    _seed(db, stale)
+    db.close()
+
+    monkeypatch.setattr(MyCareersFutureScraper, "search", lambda self, keyword, limit, page: [])
+    monkeypatch.setattr(CareersGovScraper, "fetch_all", lambda self: [first, duplicate])
+    monkeypatch.setattr(seed_jobs, "CAREERSGOV_MIN_HEALTHY_JOBS", 2)
+
+    stats = seed_jobs.crawl_all_jobs()
+
+    db = testing_session()
+    assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "stale").one().hidden == 0
+    assert stats["retired"] == 0
+    assert stats["errors"] >= 1
+    db.close()
+    engine.dispose()
+
+
+def test_careersgov_empty_description_rows_cannot_pass_health_check(monkeypatch):
+    engine, testing_session = _prepare_crawl(monkeypatch)
+    stale = _job("Careers@Gov", "stale")
+    db = testing_session()
+    _seed(db, stale)
+    db.close()
+
+    monkeypatch.setattr(MyCareersFutureScraper, "search", lambda self, keyword, limit, page: [])
+    monkeypatch.setattr(
+        CareersGovScraper,
+        "fetch_all",
+        lambda self: [
+            _job("Careers@Gov", "empty-1"),
+            _job("Careers@Gov", "empty-2"),
+        ],
+    )
+    monkeypatch.setattr(seed_jobs, "CAREERSGOV_MIN_HEALTHY_JOBS", 2)
+
+    stats = seed_jobs.crawl_all_jobs()
+
+    db = testing_session()
+    assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "stale").one().hidden == 0
+    assert stats["retired"] == 0
+    assert stats["errors"] >= 1
     db.close()
     engine.dispose()
 

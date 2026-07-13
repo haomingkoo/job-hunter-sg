@@ -116,6 +116,7 @@ from schemas import (
 from ai_service import SEALION_MODEL, _call_sealion, apply_uk_spelling, coach_resume, get_ai_health, get_ai_status, integrate_keywords, rewrite_bullet
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms, merge_job_terms_with_match
 from career_agent import build_application_pack
+from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
 from resume_parser import MAX_FILE_SIZE, parse_resume_isolated
 from resume_scorer import ResumeScorer
 from resume_templates import generate_docx, inspect_resume_export, list_templates
@@ -128,6 +129,7 @@ from tailoring_pipeline import (
     owner_has_active_pipelines,
     run_pipeline,
 )
+from validation_gates import numeric_metric_claims_verifiable
 from jd_preparser import preparse_job_description as preparse_jd
 from jd_summary import summarize_job_description
 from mcp_public import create_mcp as create_public_mcp
@@ -162,6 +164,7 @@ _STARTUP_MAINTENANCE_WARM_WAIT_SECONDS = app_config.STARTUP_MAINTENANCE_WARM_WAI
 # ── Cached filter metadata (avoid 3 GROUP BY queries per page 1 load) ────────
 _filter_meta_cache: dict = {}
 _filter_meta_ts: float = 0.0
+_filter_meta_marker: str = ""
 _FILTER_META_TTL = app_config.ANALYTICS_FILTER_META_TTL_SECONDS
 
 # ── Cached analytics/skills response (avoid 70K row scan per request) ─────────
@@ -253,11 +256,15 @@ _mcp_mount_proxy = _ASGIProxy()
 
 def _clear_analytics_cache() -> None:
     global _analytics_cache, _analytics_cache_ts, _analytics_cache_generation
+    global _filter_meta_cache, _filter_meta_ts, _filter_meta_marker
     with _ANALYTICS_CACHE_LOCK:
         _analytics_cache = None
         _analytics_cache_ts = 0
         _analytics_query_cache.clear()
         _analytics_cache_generation += 1
+        _filter_meta_cache = {}
+        _filter_meta_ts = 0.0
+        _filter_meta_marker = ""
 
 
 def _store_analytics_query_cache(cache_key: tuple, cache_ts: float, result: dict, generation: int) -> None:
@@ -578,8 +585,6 @@ async def reject_cross_site_cloudflare_writes(request: Request, call_next):
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
     return await call_next(request)
 
-
-app.add_middleware(SecurityHeadersMiddleware, hsts=_is_production)
 
 # Streamable HTTP MCP endpoint. In production this uses the same Railway
 # DATABASE_URL-backed SQLAlchemy engine as the API, without exposing DB creds.
@@ -2466,6 +2471,16 @@ def register_cloudflare_account(
     if existing:
         if existing.password_hash != CLOUDFLARE_PASSWORD_SENTINEL:
             raise HTTPException(status_code=409, detail="Email already registered with password")
+        now = datetime.now(timezone.utc)
+        name = sanitize_user_input(body.name or "")
+        if name:
+            existing.name = name
+        existing.email_verified_at = existing.email_verified_at or now
+        existing.terms_accepted_at = existing.terms_accepted_at or now
+        existing.privacy_accepted_at = existing.privacy_accepted_at or now
+        existing.last_login = now
+        db.commit()
+        db.refresh(existing)
         return existing
 
     now = datetime.now(timezone.utc)
@@ -2971,6 +2986,21 @@ def me(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+@app.post("/api/auth/logout")
+def logout(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_password_auth()
+    authenticated_version = user.token_version
+    with _locked_credential_user(user.id, db) as locked_user:
+        if not locked_user or locked_user.token_version != authenticated_version:
+            raise HTTPException(status_code=401, detail="Session expired")
+        locked_user.token_version += 1
+        db.commit()
+    return {"message": "Signed out."}
+
+
 @app.post("/api/auth/change-password")
 def change_password(
     body: ChangePasswordRequest,
@@ -3066,34 +3096,42 @@ def delete_account(
         window_seconds=900,
     ):
         raise HTTPException(status_code=429, detail="Too many account deletion attempts")
-    if body.confirm_email != user.email:
-        raise HTTPException(status_code=400, detail="Email confirmation does not match")
-    if password_auth_enabled() and (
-        not body.current_password
-        or user.password_hash == CLOUDFLARE_PASSWORD_SENTINEL
-        or not verify_password(body.current_password, user.password_hash)
-    ):
-        raise HTTPException(status_code=400, detail="Current password is incorrect")
 
     owner_key = f"user:{user.id}"
     from resume_agent.session import owner_has_active_sessions, purge_owner_sessions
     from tailoring_pipeline import owner_has_active_pipelines, purge_owner_pipelines
 
     user_id = user.id
+    authenticated_version = user.token_version
     with _account_lifecycle_lock(user.id):
-        if owner_has_active_sessions(owner_key) or owner_has_active_pipelines(owner_key):
-            raise HTTPException(
-                status_code=409,
-                detail="Wait for the active AI session to finish before deleting your account",
-            )
+        with _locked_credential_user(user_id, db) as locked_user:
+            if not locked_user or locked_user.token_version != authenticated_version:
+                db.rollback()
+                raise HTTPException(status_code=401, detail="Session expired")
+            if body.confirm_email != locked_user.email:
+                db.rollback()
+                raise HTTPException(status_code=400, detail="Email confirmation does not match")
+            if password_auth_enabled() and (
+                not body.current_password
+                or locked_user.password_hash == CLOUDFLARE_PASSWORD_SENTINEL
+                or not verify_password(body.current_password, locked_user.password_hash)
+            ):
+                db.rollback()
+                raise HTTPException(status_code=400, detail="Current password is incorrect")
+            if owner_has_active_sessions(owner_key) or owner_has_active_pipelines(owner_key):
+                db.rollback()
+                raise HTTPException(
+                    status_code=409,
+                    detail="Wait for the active AI session to finish before deleting your account",
+                )
 
-        try:
-            _delete_owned_account_rows(user, db)
-            db.commit()
-        except Exception as exc:
-            db.rollback()
-            log.warning("Account deletion failed for user_id=%s: %s", user_id, type(exc).__name__)
-            raise
+            try:
+                _delete_owned_account_rows(locked_user, db)
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                log.warning("Account deletion failed for user_id=%s: %s", user_id, type(exc).__name__)
+                raise
 
         _power_match_cache.pop(user_id, None)
         try:
@@ -4119,7 +4157,9 @@ def analytics_skills(
     agency_subset_key = _normalise_agency_subset_id(agency_subset)
     has_filter = source or sector or company or title or agency_subset_key or direct_employers_only
     now = time.time()
+    corpus_marker = _job_corpus_marker(db)
     query_cache_key = (
+        corpus_marker,
         limit,
         source or "",
         q or "",
@@ -4140,6 +4180,7 @@ def analytics_skills(
             _analytics_cache
             if not has_filter
             and _analytics_cache is not None
+            and _analytics_cache.get("_corpus_marker") == corpus_marker
             and now - _analytics_cache_ts < _ANALYTICS_CACHE_TTL
             else None
         )
@@ -4496,6 +4537,7 @@ def analytics_skills(
     cache_payload = None
     if not has_filter:
         cache_payload = {
+            "_corpus_marker": corpus_marker,
             "_all_skills": all_skills,
             "_skill_counts": skill_count_numbers,
             "total_jobs_with_terms": total_jobs,
@@ -4596,6 +4638,7 @@ def analytics_trends(
     agency_subset_key = _normalise_agency_subset_id(agency_subset)
     cache_key = (
         "trends",
+        _job_corpus_marker(db),
         source or "",
         sector or "",
         company or "",
@@ -4930,9 +4973,14 @@ def list_cached_jobs(
     # Build filter metadata (cached for 5 min to avoid 3 GROUP BY per page 1)
     filter_meta = {}
     if page == 1:
-        global _filter_meta_cache, _filter_meta_ts
+        global _filter_meta_cache, _filter_meta_ts, _filter_meta_marker
         now = time.monotonic()
-        if _filter_meta_cache and (now - _filter_meta_ts) < _FILTER_META_TTL:
+        corpus_marker = _job_corpus_marker(db)
+        if (
+            _filter_meta_cache
+            and _filter_meta_marker == corpus_marker
+            and (now - _filter_meta_ts) < _FILTER_META_TTL
+        ):
             filter_meta = _filter_meta_cache
         else:
             source_counts = (
@@ -5000,6 +5048,7 @@ def list_cached_jobs(
             }
             _filter_meta_cache = filter_meta
             _filter_meta_ts = now
+            _filter_meta_marker = corpus_marker
 
     result = {
         "jobs": [
@@ -6246,7 +6295,8 @@ def generate_stories_from_resume(
         '    "source_bullets": ["copy the exact resume bullet(s) this story is based on"]\n'
         "  }\n"
         "]\n\n"
-        "Return ONLY the JSON array. No markdown, no explanation, no code blocks."
+        "Return ONLY the JSON array. No markdown, no explanation, no code blocks.\n\n"
+        f"SECURITY: {UNTRUSTED_DATA_RULE}"
     )
 
     from ai_service import _call_sealion, SEALION_MODEL
@@ -6254,7 +6304,11 @@ def generate_stories_from_resume(
     content = _call_sealion(
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Extract STAR+R interview stories from this resume:\n\n{resume_text[:6000]}"},
+            {
+                "role": "user",
+                "content": "Extract STAR+R interview stories from this resume:\n\n"
+                + xml_data_block("resume_data", resume_text, 6000),
+            },
         ],
         max_tokens=3500,
         model=SEALION_MODEL,
@@ -6826,15 +6880,6 @@ def ai_regenerate_summary(
                 job.parsed_jd = parsed_jd
                 db.commit()
 
-    # Build bullet context from the resume (first ~15 non-empty lines that look like bullets or content)
-    bullet_lines = []
-    for line in resume_text.split("\n"):
-        stripped = line.strip()
-        if stripped and len(stripped) > 15:
-            bullet_lines.append(f"- {stripped}")
-        if len(bullet_lines) >= 15:
-            break
-
     # Build the prompt (mirrors Stage 5 logic from tailoring_pipeline.py)
     system = """You are an expert resume writer specializing in Singapore's job market.
 
@@ -6845,50 +6890,57 @@ Generate a compelling professional summary (2-4 sentences, ~40-60 words) that:
 4. Sounds natural, not AI-generated
 
 CRITICAL RULES:
-- Only reference achievements and skills that appear in the bullet points below. Do NOT invent.
+- Only reference achievements and skills that appear in the resume below. Do NOT invent.
 - NEVER change numbers, years of experience, dollar amounts, or metrics from the original resume.
   If the resume says "7+ years", keep "7+ years". Do NOT calculate or infer different numbers.
+- Keep each metric's meaning and relationship unchanged. For example, an amount "realised" must not be relabelled as "savings".
+- A project sponsor or client is not the candidate's employer. Take employer and current-role claims from the matching role header.
 - Preserve all factual claims exactly as stated in the resume.
 
 Return ONLY the summary text, nothing else."""
+    system += f"\n\nSECURITY: {UNTRUSTED_DATA_RULE}"
 
     user_msg = ""
     if parsed_jd:
         skills = parsed_jd.get("required_skills", [])[:8]
         exp = parsed_jd.get("experience_years", "")
         if skills:
-            user_msg += f"TARGET ROLE SKILLS: {', '.join(skills)}\n"
+            user_msg += xml_data_block(
+                "required_skills_data", json.dumps(skills, ensure_ascii=False)
+            ) + "\n"
         if exp:
-            user_msg += f"EXPERIENCE LEVEL: {exp}\n"
+            user_msg += xml_data_block("job_experience_requirement_data", exp) + "\n"
     if jd_text and not parsed_jd:
-        user_msg += f"TARGET JOB DESCRIPTION (excerpt):\n{jd_text[:1500]}\n\n"
+        user_msg += xml_data_block("job_description_data", jd_text, 1500) + "\n\n"
 
     if body.user_direction:
-        user_msg += f"USER INSTRUCTION: {body.user_direction}\n\n"
+        user_msg += xml_data_block("user_request", body.user_direction) + "\n\n"
 
-    user_msg += f"KEY CONTENT FROM RESUME:\n" + "\n".join(bullet_lines)
+    user_msg += xml_data_block("resume_data", resume_text)
 
-    content = _call_sealion(
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_msg},
-        ],
-        max_tokens=200,
-        model=SEALION_MODEL,
-        temperature=0.3,
-    )
-
-    if not content:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service unavailable — rate limit or API error. Try again shortly.",
+    summary = ""
+    for attempt in range(2):
+        retry_note = (
+            "\n\nRETRY: The previous draft changed a numeric claim. Preserve every "
+            "metric's original qualifier, status, and meaning."
+            if attempt else ""
         )
-
-    summary = content.strip().strip('"')
-    if len(summary) < 30:
+        content = _call_sealion(
+            messages=[
+                {"role": "system", "content": system + retry_note},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=200,
+            model=SEALION_MODEL,
+            temperature=0.3,
+        )
+        summary = (content or "").strip().strip('"')
+        if len(summary) >= 30 and numeric_metric_claims_verifiable(resume_text, summary):
+            break
+    else:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI returned an unusable summary. Please try again.",
+            detail="AI could not produce a fact-verifiable summary. Please try again.",
         )
 
     return {"summary": summary}
@@ -6944,15 +6996,6 @@ def generate_cover_letter(
                 jd_context = (target_job.description or "")[:1500]
                 job_description = job_description or jd_context
 
-    # Extract key bullets from resume (first 15 non-empty lines >15 chars)
-    bullet_lines = []
-    for line in resume_text.split("\n"):
-        stripped = line.strip()
-        if stripped and len(stripped) > 15:
-            bullet_lines.append(f"- {stripped}")
-        if len(bullet_lines) >= 15:
-            break
-
     # Build the prompt
     system = """You are an expert cover letter writer for the Singapore job market.
 
@@ -6965,6 +7008,8 @@ Generate a professional cover letter (250-350 words) with this structure:
 CRITICAL RULES:
 - Address "Dear Hiring Team" unless a specific hiring manager is mentioned
 - NEVER invent achievements, numbers, skills, or experience not present in the resume
+- Keep each metric's meaning and relationship unchanged; do not relabel an amount as savings unless the resume says it was savings
+- A project sponsor or client is not the candidate's employer. Take employer and current-role claims from the matching role header
 - Reference specific, concrete accomplishments from the resume that match the JD
 - Sound professional but natural — avoid generic, AI-sounding phrases
 - Do NOT use phrases like "I am writing to express my interest" or "I believe I would be a great fit"
@@ -6972,46 +7017,50 @@ CRITICAL RULES:
 - If the company name is known, mention it naturally
 
 Return ONLY the cover letter text. No subject lines, no labels, no markdown formatting."""
+    system += f"\n\nSECURITY: {UNTRUSTED_DATA_RULE}"
 
     user_msg = ""
     if job_title:
-        user_msg += f"TARGET ROLE: {job_title}\n"
+        user_msg += xml_data_block("job_title_data", job_title) + "\n"
     if job_company:
-        user_msg += f"COMPANY: {job_company}\n"
+        user_msg += xml_data_block("company_data", job_company) + "\n"
     if jd_context:
-        user_msg += f"JOB REQUIREMENTS: {jd_context}\n"
+        user_msg += xml_data_block("job_requirements_data", jd_context) + "\n"
     elif job_description:
-        user_msg += (
-            f"JOB DESCRIPTION:\n{job_description[:1500]}\n"
-        )
+        user_msg += xml_data_block(
+            "job_description_data", job_description, 1500
+        ) + "\n"
     if body.user_direction:
-        user_msg += f"\nUSER INSTRUCTION: {body.user_direction}\n"
+        user_msg += "\n" + xml_data_block("user_request", body.user_direction) + "\n"
 
-    user_msg += (
-        f"\nKEY CONTENT FROM RESUME:\n" + "\n".join(bullet_lines)
-    )
+    user_msg += "\n" + xml_data_block("resume_data", resume_text)
 
-    content = _call_sealion(
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_msg},
-        ],
-        max_tokens=600,
-        model=SEALION_MODEL,
-        temperature=0.4,
-    )
-
-    if not content:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service unavailable — rate limit or API error. Try again shortly.",
+    cover_letter = ""
+    for attempt in range(2):
+        retry_note = (
+            "\n\nRETRY: The previous draft changed a numeric claim. Preserve every "
+            "metric's original qualifier, status, and meaning."
+            if attempt else ""
         )
-
-    cover_letter = content.strip().strip('"')
-    if len(cover_letter) < 100:
+        content = _call_sealion(
+            messages=[
+                {"role": "system", "content": system + retry_note},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=600,
+            model=SEALION_MODEL,
+            temperature=0.4,
+        )
+        cover_letter = (content or "").strip().strip('"')
+        if (
+            len(cover_letter) >= 100
+            and numeric_metric_claims_verifiable(resume_text, cover_letter)
+        ):
+            break
+    else:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI returned an unusable cover letter. Please try again.",
+            detail="AI could not produce a fact-verifiable cover letter. Please try again.",
         )
 
     word_count = len(cover_letter.split())
@@ -7460,10 +7509,11 @@ Return a JSON array:
   {"original": "exact bullet text", "status": "improve", "issue": "Weak opening verb", "suggested": "Rewritten version here", "reason": "Replaced 'Responsible for' with 'Directed'"},
   ...
 ]"""
+    system += f"\n\nSECURITY: {UNTRUSTED_DATA_RULE}"
 
-    user_msg = f"Resume:\n{resume_text}"
+    user_msg = xml_data_block("resume_data", resume_text)
     if jd:
-        user_msg += f"\n\nTarget job description:\n{jd}"
+        user_msg += "\n\n" + xml_data_block("job_description_data", jd)
         user_msg += "\n\nWeave in missing keywords from the JD where they fit naturally. Keywords must be EXACT MATCH."
 
     content = _call_sealion(
@@ -7658,14 +7708,14 @@ def download_resume_pdf(
 
 def _parse_sections_for_pdf(text: str) -> list[dict]:
     """Parse resume text into sections for HTML rendering."""
-    from resume_templates import _parse_sections, normalize_for_ats
+    from resume_templates import _group_export_lines, _parse_sections, normalize_for_ats
     text = normalize_for_ats(text)
     raw = _parse_sections(text)
     result = []
     for key, content in raw.items():
         if key == "header":
             continue
-        lines = [ln.strip() for ln in content.split("\n") if ln.strip()]
+        lines = _group_export_lines(content, key)
         result.append({"key": key, "lines": lines})
     return result
 
@@ -7753,22 +7803,54 @@ def get_templates() -> list[dict]:
 # ═════════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/contact", status_code=201)
-def contact(request: Request, body: ContactRequest, db: Session = Depends(get_db)) -> dict:
+def contact(
+    request: Request,
+    body: ContactRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
     if not _PUBLIC_RATE_LIMITER.allow(
-        f"contact:{_get_client_ip(request)}",
+        f"contact:{user.id}",
         limit=5,
         window_seconds=3600,
     ):
         raise HTTPException(status_code=429, detail="Too many messages. Please try again later.")
-    log.info("Contact form submission received")
+    if str(body.email).strip().lower() != user.email.strip().lower():
+        raise HTTPException(status_code=400, detail="Use the email address on your account")
+    contact_email = (
+        os.environ.get("CONTACT_EMAIL")
+        or os.environ.get("ADMIN_EMAIL")
+        or ""
+    ).strip()
+    if not contact_email or not email_configured():
+        raise HTTPException(status_code=503, detail="Contact email is temporarily unavailable")
+
+    message = body.message.strip()
+    text_body = f"From: {user.name} <{user.email}>\n\n{message}"
+    html_body = (
+        f"<p><strong>From:</strong> {html.escape(user.name)} "
+        f"&lt;{html.escape(user.email)}&gt;</p>"
+        f"<p>{html.escape(message).replace(chr(10), '<br>')}</p>"
+    )
+    try:
+        send_email(
+            contact_email,
+            "Job Hunter SG contact form",
+            text_body,
+            html_body,
+        )
+    except Exception as exc:
+        log.warning("Contact email failed for user_id=%s: %s", user.id, type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Message could not be sent")
+
     usage = UsageLog(
-        user_id=None,
+        user_id=user.id,
         action="contact",
         detail="contact_form_submission",
     )
     db.add(usage)
     db.commit()
-    return {"message": "Thanks! We'll get back to you soon."}
+    return {"message": "Message sent."}
 
 
 @app.get("/api/admin/metrics")
@@ -8700,8 +8782,8 @@ def apply_tailoring_changes(
     original_text = state.result.get("original_text", "")
     changes = state.result.get("changes", [])
 
-    # Start from original text and apply only accepted changes
-    lines = original_text.replace("\r\n", "\n").split("\n")
+    # Start from original text and apply only accepted changes.
+    tailored_text = original_text.replace("\r\n", "\n")
 
     applied_count = 0
     rejected_count = 0
@@ -8725,26 +8807,12 @@ def apply_tailoring_changes(
         if not original or not final_text:
             continue
 
-        # Find and replace in lines
-        normalize = lambda s: re.sub(r"\s+", " ", s.strip().lower())
-        for i, line in enumerate(lines):
-            # Strip bullet markers for comparison
-            stripped = re.sub(
-                r"^[\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)]\s)\s*",
-                "", line,
-            ).strip()
-            if normalize(stripped) == normalize(original):
-                # Preserve the original bullet marker
-                marker_match = re.match(
-                    r"^([\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)]\s)\s*)",
-                    line,
-                )
-                marker = marker_match.group(1) if marker_match else ""
-                lines[i] = f"{marker}{final_text}"
-                applied_count += 1
-                break
-
-    tailored_text = "\n".join(lines)
+        tailored_text, replaced = _replace_wrapped_resume_change(
+            tailored_text,
+            original,
+            final_text,
+        )
+        applied_count += int(replaced)
 
     # Re-score the final version
     scorer = ResumeScorer()
@@ -8758,6 +8826,29 @@ def apply_tailoring_changes(
         "score_after": final_score.get("overall_score", 0),
         "ats_gaps": state.result.get("ats_gaps", []),
     }
+
+
+def _replace_wrapped_resume_change(
+    resume_text: str,
+    original: str,
+    replacement: str,
+) -> tuple[str, bool]:
+    """Replace one logical resume line even when a PDF wrapped it physically."""
+    words = original.split()
+    if not words:
+        return resume_text, False
+    body_pattern = r"\s+".join(re.escape(word) for word in words)
+    marker_pattern = r"(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)])"
+    pattern = re.compile(
+        rf"^(?P<prefix>[ \t]*(?:{marker_pattern}[ \t]*)?){body_pattern}[ \t]*$",
+        re.MULTILINE,
+    )
+    updated, count = pattern.subn(
+        lambda match: f"{match.group('prefix')}{replacement}",
+        resume_text,
+        count=1,
+    )
+    return updated, count == 1
 
 
 # ── Static frontend (single-service deploy) ─────────────────────────────────
@@ -8804,6 +8895,9 @@ if _static_dir.is_dir():
         return response
 
     app.mount("/", StaticFiles(directory=str(_static_dir)), name="static")
+
+# Register this last so it also wraps responses replaced by the SPA fallback.
+app.add_middleware(SecurityHeadersMiddleware, hsts=_is_production)
 
 
 # ── Run ──────────────────────────────────────────────────────────────────────

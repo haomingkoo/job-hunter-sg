@@ -30,6 +30,15 @@ import ResumeTab from "./components/ResumeTab.jsx";
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const AUTH_LINK_TOKEN_NAMES = ["reset_token", "verify_token"];
+const APP_TABS = new Set(["jobs", "resume", "stories", "tracker", "reminders", "analytics", "power", "account"]);
+
+export function readActiveTab(hash = window.location.hash) {
+  const fragment = hash.replace(/^#/, "");
+  const candidate = fragment.includes("=")
+    ? new URLSearchParams(fragment).get("tab")
+    : fragment;
+  return APP_TABS.has(candidate) ? candidate : "home";
+}
 
 export function readAuthLinkTokens(href = window.location.href) {
   const url = new URL(href);
@@ -63,7 +72,7 @@ export function removeAuthLinkTokensFromUrl(names = AUTH_LINK_TOKEN_NAMES) {
 }
 
 export default function JobHunterSG() {
-  const [activeTab, setActiveTab] = useState("home");
+  const [activeTab, setActiveTab] = useState(readActiveTab);
   const [trackedJobs, setTrackedJobs] = useState([]);
   const [trackedJobsError, setTrackedJobsError] = useState("");
   const [selectedJob, setSelectedJob] = useState(null);
@@ -106,7 +115,12 @@ export default function JobHunterSG() {
   }, [resetToken, verifyToken]);
 
   useEffect(() => {
-    const handleAuthExpired = () => {
+    const handleAuthExpired = (event) => {
+      if (event.detail?.reason === "required") {
+        setAuthLoading(false);
+        setShowAuthModal(true);
+        return;
+      }
       identityGenerationRef.current += 1;
       bindResumeDraftStorageToUser(null);
       setUser(null);
@@ -262,19 +276,27 @@ export default function JobHunterSG() {
     if (!authToken) broadcastAuthChange("login");
   };
 
-  const handleLogout = () => {
-    identityGenerationRef.current += 1;
-    localStorage.removeItem("token");
-    broadcastAuthChange("logout");
-    clearResumeDraftStorage();
-    setUser(null);
-    setToken(null);
-    setTrackedJobs([]);
-    setTrackedJobsError("");
-    setActiveTab("home");
-    setCloudflareIdentityReady(false);
-    if (authConfig?.mode === "cloudflare" && authConfig.cloudflare_logout_url) {
-      window.location.assign(authConfig.cloudflare_logout_url);
+  const handleLogout = async () => {
+    try {
+      if (authConfig?.mode === "password" && token) {
+        await apiFetch("/api/auth/logout", { method: "POST", timeoutMs: 3000 });
+      }
+    } catch {
+      // Local sign-out still completes if the backend is unavailable.
+    } finally {
+      identityGenerationRef.current += 1;
+      localStorage.removeItem("token");
+      broadcastAuthChange("logout");
+      clearResumeDraftStorage();
+      setUser(null);
+      setToken(null);
+      setTrackedJobs([]);
+      setTrackedJobsError("");
+      setActiveTab("home");
+      setCloudflareIdentityReady(false);
+      if (authConfig?.mode === "cloudflare" && authConfig.cloudflare_logout_url) {
+        window.location.assign(authConfig.cloudflare_logout_url);
+      }
     }
   };
 
@@ -312,16 +334,16 @@ export default function JobHunterSG() {
   const navigateTo = (tab) => {
     setActiveTab(tab);
     window.scrollTo({ top: 0, behavior: "smooth" });
-    // Push to browser history so Back button goes to home, not leaves site
-    if (tab !== "home") {
-      window.history.pushState({ tab }, "", `#${tab}`);
-    }
+    const url = tab === "home"
+      ? `${window.location.pathname}${window.location.search}`
+      : `#${tab}`;
+    window.history.pushState({ tab }, "", url);
   };
 
   // Handle browser back button
   useEffect(() => {
     const handlePopState = () => {
-      setActiveTab("home");
+      setActiveTab(readActiveTab());
       window.scrollTo({ top: 0 });
     };
     window.addEventListener("popstate", handlePopState);

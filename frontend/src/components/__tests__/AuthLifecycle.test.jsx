@@ -10,6 +10,12 @@ const response = (data) => ({
   text: () => Promise.resolve(JSON.stringify(data)),
 });
 
+const errorResponse = (status, detail) => ({
+  ok: false,
+  status,
+  text: () => Promise.resolve(JSON.stringify({ detail })),
+});
+
 describe("account authentication lifecycle", () => {
   let container;
   let root;
@@ -70,6 +76,34 @@ describe("account authentication lifecycle", () => {
       expect.objectContaining({ body: JSON.stringify({ email: "asha@example.com" }) }),
     );
     expect(container.textContent).toContain("If your account is awaiting verification");
+  });
+
+  it("offers legacy unverified accounts a resend link after sign in", async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(errorResponse(403, "Verify your email before signing in"))
+      .mockResolvedValueOnce(response({ message: "If the account exists, an email was sent." }));
+
+    await act(async () => {
+      root.render(<AuthModal onAuth={vi.fn()} onClose={vi.fn()} />);
+    });
+    setInput("Email", "legacy@example.com");
+    setInput("Password", "correct-horse");
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    });
+
+    expect(container.textContent).toContain("Check your email");
+    expect(container.textContent).toContain("Verify your email before signing in");
+    const resendButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Resend Verification Email"));
+    await act(async () => resendButton.click());
+
+    expect(global.fetch).toHaveBeenLastCalledWith(
+      "/api/auth/resend-verification",
+      expect.objectContaining({ body: JSON.stringify({ email: "legacy@example.com" }) }),
+    );
   });
 
   it("verifies an email-link token and signs the account in", async () => {

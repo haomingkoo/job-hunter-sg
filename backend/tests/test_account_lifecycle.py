@@ -4,6 +4,7 @@ import hashlib
 import secrets
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -615,6 +616,119 @@ def test_cloudflare_registration_is_explicit(client: TestClient) -> None:
         db.commit()
 
 
+def test_cloudflare_registration_records_consent_for_a_legacy_sentinel_account(
+    client: TestClient,
+) -> None:
+    email = f"cf_legacy_{secrets.token_hex(6)}@aisg.sg"
+    with SessionLocal() as db:
+        db.add(
+            User(
+                email=email,
+                password_hash=CLOUDFLARE_PASSWORD_SENTINEL,
+                name="Legacy Cloudflare User",
+                email_verified_at=None,
+                terms_accepted_at=None,
+                privacy_accepted_at=None,
+            )
+        )
+        db.commit()
+
+    main.app.dependency_overrides[main.get_cloudflare_email] = lambda: email
+    try:
+        response = client.post(
+            "/api/auth/cloudflare/register",
+            json={"name": "Legacy Cloudflare User", "accepted_terms": True},
+        )
+    finally:
+        main.app.dependency_overrides.pop(main.get_cloudflare_email, None)
+
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == email).one()
+        assert user.email_verified_at is not None
+        assert user.terms_accepted_at is not None
+        assert user.privacy_accepted_at is not None
+        db.delete(user)
+        db.commit()
+
+
+def test_contact_form_delivers_the_authenticated_users_message(
+    monkeypatch,
+) -> None:
+    from schemas import ContactRequest
+
+    email = f"contact-{secrets.token_hex(6)}@example.com"
+    delivered = {}
+    monkeypatch.setenv("CONTACT_EMAIL", "support@example.com")
+    monkeypatch.setattr(main, "email_configured", lambda: True)
+    monkeypatch.setattr(main._PUBLIC_RATE_LIMITER, "allow", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        main,
+        "send_email",
+        lambda to, subject, text, html: delivered.update(
+            to=to,
+            subject=subject,
+            text=text,
+            html=html,
+        ),
+    )
+
+    with SessionLocal() as db:
+        user = User(
+            name="Account User",
+            email=email,
+            password_hash="not-used",  # pragma: allowlist secret
+            email_verified_at=datetime.now(timezone.utc),
+        )
+        db.add(user)
+        db.commit()
+        response = main.contact(
+            SimpleNamespace(client=SimpleNamespace(host="127.0.0.1")),
+            ContactRequest(
+                name=user.name,
+                email=user.email,
+                message="Please help with my saved resume.",
+            ),
+            user,
+            db,
+        )
+        db.query(UsageLog).filter(UsageLog.user_id == user.id).delete()
+        db.delete(user)
+        db.commit()
+
+    assert response == {"message": "Message sent."}
+    assert delivered["to"] == "support@example.com"
+    assert "Please help with my saved resume." in delivered["text"]
+    assert email in delivered["text"]
+
+
+def test_contact_form_is_not_public(client: TestClient) -> None:
+    response = client.post(
+        "/api/contact",
+        json={
+            "name": "Anonymous",
+            "email": "anonymous@example.com",
+            "message": "This should not be accepted anonymously.",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_logout_revokes_the_presented_password_session(
+    client: TestClient,
+    verification_mail: list[str],
+) -> None:
+    _email, password, verification_token = _signup(client, verification_mail)
+    bearer = _verify(client, verification_token, password)
+    headers = {"Authorization": f"Bearer {bearer}"}
+
+    response = client.post("/api/auth/logout", headers=headers)
+
+    assert response.status_code == 200
+    assert client.get("/api/auth/me", headers=headers).status_code == 401
+
+
 def test_deletion_rejects_wrong_password_and_active_sessions_then_rolls_back(
     client: TestClient,
     verification_mail: list[str],
@@ -759,6 +873,77 @@ def test_agent_admission_and_account_deletion_share_a_lifecycle_barrier(
         with SessionLocal() as db:
             db.query(User).filter(User.id == user_id).delete()
             db.commit()
+
+
+def test_password_change_revokes_a_delete_request_waiting_on_old_credentials(
+    monkeypatch,
+) -> None:
+    import tailoring_pipeline as _tailoring_pipeline  # noqa: F401
+    from resume_agent import session as _agent_session  # noqa: F401
+    from schemas import DeleteAccountRequest
+
+    user_id = 9_700_001
+    email = "delete-credential-race@example.com"
+    old_password = "StartingPassword123!"  # pragma: allowlist secret
+    dependency_user = SimpleNamespace(id=user_id, token_version=0)
+    locked_user = SimpleNamespace(
+        id=user_id,
+        token_version=0,
+        email=email,
+        password_hash="old-hash",  # pragma: allowlist secret
+    )
+    credential_lock = threading.Lock()
+    change_started = threading.Event()
+    release_change = threading.Event()
+    deletion_started = threading.Event()
+
+    class FakeDb:
+        rolled_back = False
+
+        def rollback(self):
+            self.rolled_back = True
+
+    @contextmanager
+    def locked_credential_user(_user_id, _db):
+        with credential_lock:
+            yield locked_user
+
+    def run_change():
+        with credential_lock:
+            change_started.set()
+            assert release_change.wait(5)
+            locked_user.token_version += 1
+            locked_user.password_hash = "new-hash"  # pragma: allowlist secret
+
+    def run_deletion():
+        deletion_started.set()
+        return main.delete_account(
+            DeleteAccountRequest(
+                confirm_email=email,
+                current_password=old_password,
+            ),
+            dependency_user,
+            FakeDb(),
+        )
+
+    monkeypatch.setattr(main, "_locked_credential_user", locked_credential_user)
+    monkeypatch.setattr(main._PUBLIC_RATE_LIMITER, "allow", lambda *_args, **_kwargs: True)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            changing = pool.submit(run_change)
+            assert change_started.wait(5)
+            deleting = pool.submit(run_deletion)
+            assert deletion_started.wait(5)
+            with pytest.raises(TimeoutError):
+                deleting.result(timeout=0.2)
+            release_change.set()
+            changed = changing.result(timeout=5)
+            with pytest.raises(HTTPException) as exc_info:
+                deleting.result(timeout=5)
+            assert exc_info.value.status_code == 401
+            assert changed is None
+    finally:
+        release_change.set()
 
 
 def test_completed_deletion_rejects_an_agent_request_already_waiting_for_admission(

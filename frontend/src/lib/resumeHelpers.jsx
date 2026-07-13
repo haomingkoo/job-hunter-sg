@@ -1644,7 +1644,22 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
     }
 
     const previousParsedSection = [...parsed].reverse().find((section) => section.type !== "spacer");
-    const inferredBullets = inferWordBulletLines(normalizedLine, currentSectionKey, previousParsedSection);
+    let explicitBulletAhead = false;
+    for (let futureIndex = lineIndex + 1; futureIndex < lines.length; futureIndex += 1) {
+      const futureRaw = lines[futureIndex];
+      const futureText = stripResumeMarkdown(futureRaw);
+      if (!futureText) continue;
+      if (RESUME_BULLET_RE.test(futureRaw)) {
+        explicitBulletAhead = true;
+        break;
+      }
+      if (isHeadingLine(futureText) || parseSubheadingParts(futureText, currentSectionKey)) break;
+    }
+    const isRoleIntroParagraph = previousParsedSection?.type === "subheading"
+      && /^(?:selected\s+(?:into|for|as)\b|currently\b|joined\b|appointed\b)/i.test(normalizedLine);
+    const inferredBullets = explicitBulletAhead && isRoleIntroParagraph
+      ? null
+      : inferWordBulletLines(normalizedLine, currentSectionKey, previousParsedSection);
     if (inferredBullets) {
       inferredBullets.forEach((bulletText, inferredIndex) => {
         parsed.push({

@@ -174,6 +174,13 @@ def test_security_headers_harden_private_responses():
     assert b"max-age=31536000" in headers[b"strict-transport-security"]
 
 
+def test_security_headers_wrap_spa_fallback():
+    import main
+    from security import SecurityHeadersMiddleware
+
+    assert main.app.user_middleware[0].cls is SecurityHeadersMiddleware
+
+
 @pytest.mark.parametrize(
     "path",
     [

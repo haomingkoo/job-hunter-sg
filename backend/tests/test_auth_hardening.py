@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi import HTTPException
 
@@ -145,3 +147,52 @@ def test_new_account_nonce_rejects_a_stale_same_id_token() -> None:
 
         db.delete(user)
         db.commit()
+
+
+def test_legacy_token_without_version_only_matches_legacy_account(monkeypatch) -> None:
+    legacy_user = type(
+        "LegacyUser",
+        (),
+        {"token_version": 0, "email_verified_at": datetime.now(timezone.utc)},
+    )()
+
+    class Query:
+        def filter(self, _condition):
+            return self
+
+        def first(self):
+            return legacy_user
+
+    class DB:
+        def query(self, _model):
+            return Query()
+
+    monkeypatch.setattr(auth, "decode_token", lambda _token: {"sub": "42"})
+    assert auth._get_jwt_user("legacy-token", DB()) is legacy_user
+
+    legacy_user.token_version = 1
+    with pytest.raises(HTTPException) as exc_info:
+        auth._get_jwt_user("legacy-token", DB())
+    assert exc_info.value.status_code == 401
+
+
+def test_unverified_password_account_cannot_use_an_existing_jwt(monkeypatch) -> None:
+    user = type("LegacyUser", (), {"token_version": 0, "email_verified_at": None})()
+
+    class Query:
+        def filter(self, _condition):
+            return self
+
+        def first(self):
+            return user
+
+    class DB:
+        def query(self, _model):
+            return Query()
+
+    monkeypatch.setattr(auth, "decode_token", lambda _token: {"sub": "42", "ver": 0})
+
+    with pytest.raises(HTTPException) as exc_info:
+        auth._get_jwt_user("legacy-token", DB())
+
+    assert exc_info.value.status_code == 401

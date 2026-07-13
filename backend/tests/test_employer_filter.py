@@ -14,6 +14,13 @@ def test_verified_agencies_and_ea_licence_markers_are_recruiters():
         "Starsearch",
         "Placement Professionals",
         "BGC Group Pte. Ltd.",
+        "Ethos Search Associates Pte. Ltd.",
+        "SKILMATCH RECRUIMENT",
+        "Talent Spot Group Private Ltd.",
+        "J&L Apex Advisory Pte. Ltd.",
+        "ADABA Pte. Ltd.",
+        "APBA TG Human Resource Pte. Ltd.",
+        "First Konnection Pte. Ltd.",
     ):
         assert is_recruitment_employer(company)
 
@@ -29,6 +36,10 @@ def test_verified_agencies_and_ea_licence_markers_are_recruiters():
         "Example Services Pte Ltd",
         description="EA/ Licence No: 12C3456",
     )
+    assert is_recruitment_employer(
+        "Opaque Advisory Pte Ltd",
+        description="EA No. 26S3529 | EA Personnel No. R1329267",
+    )
 
 
 def test_alias_and_description_checks_avoid_nearby_false_positives():
@@ -41,6 +52,10 @@ def test_alias_and_description_checks_avoid_nearby_false_positives():
     assert not is_recruitment_employer(
         "Example Shipping Pte Ltd",
         description="A valid sea licence is required.",
+    )
+    assert not is_recruitment_employer(
+        "Example Marine Pte Ltd",
+        description="SEA personnel coordinate vessel operations.",
     )
 
 
@@ -60,6 +75,21 @@ def test_sql_condition_matches_python_classification():
             "company": "Direct Search Asia Pte. Ltd.",
             "ssic": "",
             "description": "Technology role.",
+        },
+        {
+            "company": "J&L Apex Advisory Pte. Ltd.",
+            "ssic": "",
+            "description": "EA No. 26S3529 | EA Personnel No. R1329267",
+        },
+        {
+            "company": "SKILMATCH RECRUIMENT",
+            "ssic": "",
+            "description": "Sales role.",
+        },
+        {
+            "company": "APBA TG Human Resource Pte. Ltd.",
+            "ssic": "",
+            "description": "Recruitment consultant role.",
         },
         {
             "company": "Example Services Pte Ltd",

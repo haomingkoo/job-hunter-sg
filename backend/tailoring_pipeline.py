@@ -37,6 +37,7 @@ from ai_service import (
     call_sealion_json,
 )
 from jd_preparser import preparse_job_description
+from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
 from resume_scorer import ResumeScorer
 from resume_structurer import flatten_to_text, get_all_bullets, structure_resume
 from validation_gates import validate_and_fix
@@ -341,13 +342,22 @@ Return ONLY valid JSON with this structure:
 
 Priority levels: "high" (rewrite needed + JD relevant), "medium" (fixable issues), "low" (minor), "skip" (already strong or irrelevant).
 Only include bullets that need work in bullet_priorities. Skip strong bullets."""
+    system += f"\n\nSECURITY: {UNTRUSTED_DATA_RULE}"
 
-    user_msg = (
-        f"BULLETS:\n" + "\n".join(bullet_summary[:25]) +
-        f"\n\nJD REQUIRED SKILLS: {', '.join(parsed_jd.get('required_skills', [])[:10])}"
-        f"\nJD PREFERRED: {', '.join(parsed_jd.get('preferred_skills', [])[:5])}"
-        f"\nINJECTABLE KEYWORDS: {', '.join(analysis['injectable_keywords'][:8])}"
-        f"\nEXPERIENCE REQUIRED: {parsed_jd.get('experience_years', 'not specified')}"
+    user_msg = "Create the strategy from this context:\n" + xml_data_block(
+        "strategy_context_data",
+        json.dumps(
+            {
+                "bullets": bullet_summary[:25],
+                "required_skills": parsed_jd.get("required_skills", [])[:10],
+                "preferred_skills": parsed_jd.get("preferred_skills", [])[:5],
+                "injectable_keywords": analysis["injectable_keywords"][:8],
+                "job_experience_requirement": parsed_jd.get(
+                    "experience_years", "not specified"
+                ),
+            },
+            ensure_ascii=False,
+        ),
     )
 
     content = call_sealion_json(
@@ -531,14 +541,25 @@ QUALITY RULES:
 - Align wording with JD terminology where natural (don't force it)
 - The resume should read well as a whole — varied verbs, concrete results, clear story
 
-JD REQUIRED SKILLS: {', '.join(parsed_jd.get('required_skills', [])[:8])}
-JD PREFERRED SKILLS: {', '.join(parsed_jd.get('preferred_skills', [])[:5])}
-EXPERIENCE LEVEL: {parsed_jd.get('experience_years', '')}
-
 Return ONLY a JSON object: {{"rewrites": ["rewritten bullet 1", "rewritten bullet 2", ...]}}
-The array MUST have exactly {len(batch)} items, one per input bullet, in the same order."""
+The array MUST have exactly {len(batch)} items, one per input bullet, in the same order.
 
-        user_msg = "Rewrite these bullets:\n" + "\n".join(bullet_lines)
+SECURITY: {UNTRUSTED_DATA_RULE}"""
+
+        user_msg = "Rewrite these bullets from this context:\n" + xml_data_block(
+            "rewrite_context_data",
+            json.dumps(
+                {
+                    "bullets": bullet_lines,
+                    "required_skills": parsed_jd.get("required_skills", [])[:8],
+                    "preferred_skills": parsed_jd.get("preferred_skills", [])[:5],
+                    "job_experience_requirement": parsed_jd.get(
+                        "experience_years", ""
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+        )
 
         content = call_sealion_json(
             messages=[
@@ -766,11 +787,18 @@ CRITICAL RULES:
 - Preserve all factual claims exactly as stated in the resume.
 
 Return ONLY the summary text, nothing else."""
+    system += f"\n\nSECURITY: {UNTRUSTED_DATA_RULE}"
 
-    user_msg = (
-        f"TARGET ROLE: {parsed_jd.get('required_skills', [])[:5]}"
-        f"\nDIRECTION: {summary_direction}"
-        f"\n\nKEY BULLETS FROM RESUME:\n" + "\n".join(bullet_context)
+    user_msg = "Write the summary from this context:\n" + xml_data_block(
+        "summary_context_data",
+        json.dumps(
+            {
+                "target_role_skills": parsed_jd.get("required_skills", [])[:5],
+                "summary_direction": summary_direction,
+                "resume_bullets": bullet_context,
+            },
+            ensure_ascii=False,
+        ),
     )
 
     content = _call_sealion(

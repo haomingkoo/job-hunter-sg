@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import threading
 import time
+from datetime import datetime
 from typing import Any, Iterator
+from zoneinfo import ZoneInfo
 
 import config as app_config
 from langchain_core.messages import AIMessage, ToolMessage
+from prompt_safety import xml_data_block
 from resume_structurer import get_all_bullets, structure_resume
 
 from .agent import create_resume_agent, run_agent_turn
@@ -17,6 +21,7 @@ from .models import ResumeAgentConfigurationError
 from .tools import bullet_context
 
 
+log = logging.getLogger("jobhunter.resume_agent")
 _sessions: dict[str, dict] = {}
 _checkpointer: Any | None = None
 _active_runs: dict[str, int] = {}
@@ -142,22 +147,33 @@ def _build_prompt(body: dict) -> str:
     job_id = body.get("job_id")
 
     parts = [
+        (
+            "Current Singapore date: "
+            f"{datetime.now(ZoneInfo('Asia/Singapore')).date().isoformat()}. "
+            "Judge resume dates relative to this date; do not call a past or "
+            "current date future-dated."
+        ),
         "Review this like a senior recruiter and Head of HR. Be direct, evidence-bound, and practical.",
         message,
     ]
     if resume_text:
-        parts.append(f"Resume:\n{resume_text}")
+        parts.append(xml_data_block("resume_data", resume_text))
         bullet_texts, _bullet_meta = _resume_bullet_maps(resume_text)
         if bullet_texts:
             parts.append(
-                "Resume bullet IDs:\n"
-                + "\n".join(f"- {bullet_id}: {text}" for bullet_id, text in bullet_texts.items())
+                xml_data_block(
+                    "resume_bullet_ids_data",
+                    "\n".join(
+                        f"- {bullet_id}: {text}"
+                        for bullet_id, text in bullet_texts.items()
+                    ),
+                )
             )
     if profile_context:
         parts.append(
             "Optional LinkedIn/profile context for consistency review only. "
             "Do not turn this into resume claims unless the resume already supports them or the user confirms them:\n"
-            f"{profile_context}"
+            f"{xml_data_block('profile_data', profile_context)}"
         )
     if job_id:
         parts.append(f"Target job id: {job_id}")
@@ -349,6 +365,7 @@ def _stream_chat_events(
             "message": str(exc),
         }
     except Exception:
+        log.exception("Resume agent run failed for session_id=%s", session_id)
         yield {
             "event": "error",
             "session_id": session_id,

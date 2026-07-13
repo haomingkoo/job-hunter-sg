@@ -58,6 +58,7 @@ def _skills_list(skills: Any) -> list[str]:
 
 def _job_result(job: ScrapedJob, score: float) -> dict:
     return {
+        "data_classification": "untrusted_job_data",
         "id": job.id,
         "title": job.title,
         "company": job.company,
@@ -109,6 +110,7 @@ def get_job(job_id: int) -> dict:
         if not job:
             return {"found": False, "id": job_id}
         return {
+            "data_classification": "untrusted_job_data",
             "found": True,
             "id": job.id,
             "title": job.title,

@@ -44,6 +44,13 @@ RECRUITER_COMPANY_KEYWORDS = (
     "hr management",
     "hr advisory",
     "rn care",
+    "skilmatch recruiment",
+    "talent spot",
+    "j&l apex",
+    "j and l apex",
+    "adaba",
+    "apba tg human resource",
+    "first konnection",
 )
 
 RECRUITER_COMPANY_ALIASES = (
@@ -56,6 +63,7 @@ RECRUITER_COMPANY_ALIASES = (
     "starsearch",
     "placement professionals",
     "bgc group",
+    "ethos search",
 )
 
 RECRUITER_SSIC_KEYWORDS = (
@@ -70,6 +78,11 @@ RECRUITER_SSIC_KEYWORDS = (
 RECRUITER_DESCRIPTION_MARKERS = (
     "ea licence",
     "ea license",
+    "ea no",
+    "ea personnel",
+    "eapersonnel",
+    "ea registration",
+    "ea reg no",
     "employment agency licence",
     "employment agency license",
 )

@@ -84,6 +84,7 @@ const formatApplicationPack = (pack) => {
   appendList("Risks", verdict.risks);
   appendList("Missing Terms", pack.ats?.missing_terms);
   appendList("Evidence Questions", (pack.evidence_questions || []).map((q) => q.prompt));
+  appendList("Before You Use This", pack.guardrails);
   if (pack.resume?.summary) lines.push("", "Tailored Summary", pack.resume.summary);
   appendList("Bullet Upgrades", (pack.resume?.bullet_upgrades || []).map((b) => `${b.original} -> ${b.rewrite}`));
   if (pack.application_assets?.cover_letter) lines.push("", "Cover Letter", pack.application_assets.cover_letter);
@@ -1416,6 +1417,15 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
                         The model was unavailable, so this pack uses local ATS signals. Rerun before using final copy.
                       </div>
+                    )}
+
+                    {(applicationPack.guardrails || []).length > 0 && (
+                      <section className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                        <h4 className="text-sm font-semibold text-amber-900">Before You Use This</h4>
+                        <ul className="mt-1 space-y-1 text-sm text-amber-800">
+                          {applicationPack.guardrails.map((item, index) => <li key={index}>• {item}</li>)}
+                        </ul>
+                      </section>
                     )}
 
                     <div className="grid gap-3 md:grid-cols-3">
