@@ -234,7 +234,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       setExpandedJobId(null);
       const totalCountValue = Number(data.total);
       const totalCount = Number.isFinite(totalCountValue) && totalCountValue >= 0 ? totalCountValue : mapped.length;
-      const total = `${Math.max(totalCount, 0).toLocaleString()} jobs`;
+      const total = `${Math.max(totalCount, 0).toLocaleString()} unique active postings`;
       setTotalLabel(total);
     } catch (err) {
       setError(err.message || "Failed to load jobs. Please try again.");
