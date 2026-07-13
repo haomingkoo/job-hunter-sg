@@ -76,6 +76,36 @@ class ResetPasswordRequest(BaseModel):
         return v
 
 
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(..., min_length=20, max_length=300)
+
+
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class DeleteAccountRequest(BaseModel):
+    confirm_email: str = Field(..., min_length=3, max_length=255)
+    current_password: Optional[str] = Field(None, max_length=128)
+
+
+class CloudflareRegisterRequest(BaseModel):
+    name: Optional[str] = Field(None, max_length=255)
+    accepted_terms: bool = False
+
+    @field_validator("accepted_terms")
+    @classmethod
+    def accepted_terms_required(cls, v: bool) -> bool:
+        if not v:
+            raise ValueError("You must accept the Terms of Service and Privacy Notice")
+        return v
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -85,6 +115,7 @@ class UserOut(BaseModel):
     tier: str
     api_key: Optional[str] = None
     created_at: datetime
+    email_verified_at: Optional[datetime] = None
     terms_accepted_at: Optional[datetime] = None
     privacy_accepted_at: Optional[datetime] = None
 
@@ -239,13 +270,6 @@ class ContactRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     email: EmailStr
     message: str = Field(..., min_length=1, max_length=5000)
-
-
-class TierInfo(BaseModel):
-    name: str
-    price: str
-    limits: dict[str, Any]
-    features: list[str]
 
 
 class ResumeScoreRequest(BaseModel):

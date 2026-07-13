@@ -488,6 +488,18 @@ def test_get_pipeline_state_cleans_expired_sessions():
     assert pipeline.get_pipeline_state(state.session_id) is None
 
 
+def test_pipeline_state_is_visible_only_to_its_owner():
+    import tailoring_pipeline as pipeline
+
+    state = pipeline.PipelineState("private-session", owner_key="user:1")
+    with pipeline._pipelines_lock:
+        pipeline._active_pipelines[state.session_id] = state
+
+    assert pipeline.get_pipeline_state(state.session_id, owner_key="user:1") is state
+    assert pipeline.get_pipeline_state(state.session_id, owner_key="user:2") is None
+    assert pipeline.get_pipeline_state(state.session_id) is None
+
+
 def test_concurrent_pipelines_keep_separate_results(monkeypatch):
     import tailoring_pipeline as pipeline
 

@@ -13,8 +13,23 @@ roles, generate cover letters, and track applications.
 ## Key Pages
 
 - Home and app: https://job.kooexperience.com/
+- AI/MCP summary: https://job.kooexperience.com/llms.txt
 - Project write-up: https://kooexperience.com/blog/posts/job-hunter.html
 - Source code: https://github.com/haomingkoo/job-hunter-sg
+
+## Public MCP
+
+- Name: Job Hunter SG Jobs
+- MCP endpoint: https://job.kooexperience.com/mcp
+- Smithery listing: https://smithery.ai/servers/haomingkoo/job-hunter-sg
+- Use this for public Singapore job search across MyCareersFuture and
+  Careers@Gov.
+- MCP tools require an MCP-capable client or a connected app/connector. Normal
+  web search can cite this page but cannot call the MCP tools directly.
+- Public tools: jobhunter.source_stats, jobhunter.latest_jobs,
+  jobhunter.latest_careersgov_jobs, jobhunter.latest_mycareersfuture_jobs,
+  jobhunter.search_jobs, jobhunter.get_job, jobhunter.ats_precompute_status,
+  jobhunter.recommend_skillsfuture_courses.
 
 ## Capabilities
 

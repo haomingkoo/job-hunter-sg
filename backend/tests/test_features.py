@@ -725,14 +725,25 @@ class TestAPIEndpoints:
         stale = _parse_job_posted_at("Posted 30+ Days Ago")
         assert recent > stale
 
-    def test_tiers_endpoint(self, client):
-        resp = client.get("/api/tiers")
-        assert resp.status_code == 200
-
     def test_trending_skills_endpoint(self, client):
         resp = client.get("/api/skills/trending")
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
+
+    def test_analytics_trends_endpoint(self, client):
+        from main import _ANALYTICS_CACHE_LOCK, _analytics_query_cache, _clear_analytics_cache
+
+        _clear_analytics_cache()
+        resp = client.get("/api/analytics/trends?weeks=4")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "series" in data
+        assert "recent_top_titles" in data
+        assert "recent_ats_terms" in data
+        second = client.get("/api/analytics/trends?weeks=4")
+        assert second.json() == data
+        with _ANALYTICS_CACHE_LOCK:
+            assert any(key[0] == "trends" and key[-1] == 4 for key in _analytics_query_cache)
 
     def test_resume_score_requires_text(self, client):
         resp = client.post("/api/resume/score", json={
@@ -750,10 +761,18 @@ class TestAPIEndpoints:
         )
         assert resp.status_code == 403
 
-    def test_signup_and_login_flow(self, client):
+    def test_signup_and_login_flow(self, client, monkeypatch):
         import secrets
+        import main
         email = f"test_{secrets.token_hex(4)}@aisg.sg"
         pw = "TestPassword123!"
+        sent = {}
+        monkeypatch.setattr(main, "email_configured", lambda: True)
+        monkeypatch.setattr(
+            main,
+            "_send_verification_email",
+            lambda _user, token: sent.setdefault("token", token),
+        )
 
         # Signup
         resp = client.post("/api/auth/signup", json={
@@ -763,9 +782,12 @@ class TestAPIEndpoints:
             "accepted_terms": True,
         })
         assert resp.status_code == 200
-        data = resp.json()
-        assert "token" in data
-        assert data["user"]["email"] == email
+        assert "token" not in resp.json()
+
+        resp = client.post("/api/auth/verify-email", json={"token": sent["token"]})
+        assert resp.status_code == 200
+        assert resp.json()["user"]["email"] == email
+        assert resp.json()["user"]["tier"] == "user"
 
         # Login
         resp = client.post("/api/auth/login", json={
@@ -775,14 +797,22 @@ class TestAPIEndpoints:
         assert resp.status_code == 200
         assert "token" in resp.json()
 
-    def test_tracked_status_history_is_append_only(self, client):
+    def test_tracked_status_history_is_append_only(self, client, monkeypatch):
         import secrets
+        import main
         from database import init_db
 
         init_db()
 
         email = f"tracked_{secrets.token_hex(4)}@aisg.sg"
         pw = "TestPassword123!"
+        sent = {}
+        monkeypatch.setattr(main, "email_configured", lambda: True)
+        monkeypatch.setattr(
+            main,
+            "_send_verification_email",
+            lambda _user, token: sent.setdefault("token", token),
+        )
         signup = client.post("/api/auth/signup", json={
             "email": email,
             "password": pw,
@@ -790,7 +820,11 @@ class TestAPIEndpoints:
             "accepted_terms": True,
         })
         assert signup.status_code == 200
-        headers = {"Authorization": f"Bearer {signup.json()['token']}"}
+        verification = client.post(
+            "/api/auth/verify-email", json={"token": sent["token"]}
+        )
+        assert verification.status_code == 200
+        headers = {"Authorization": f"Bearer {verification.json()['token']}"}
 
         created = client.post("/api/tracked", json={
             "company": "Example Co",

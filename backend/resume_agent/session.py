@@ -97,6 +97,25 @@ def get_state(session_id: str, owner_key: str | None = None) -> dict:
         return _public_state(state)
 
 
+def owner_has_active_sessions(owner_key: str) -> bool:
+    with _active_runs_lock:
+        return _active_runs.get(owner_key, 0) > 0
+
+
+def purge_owner_sessions(owner_key: str) -> None:
+    with _sessions_lock:
+        session_ids = [
+            session_id
+            for session_id, state in _sessions.items()
+            if state.get("_owner_key") == owner_key
+        ]
+        for session_id in session_ids:
+            _sessions.pop(session_id, None)
+    if _checkpointer is not None:
+        for session_id in session_ids:
+            _checkpointer.delete_thread(session_id)
+
+
 def _append_message(state: dict, message: dict) -> None:
     messages = state.setdefault("messages", [])
     messages.append(message)

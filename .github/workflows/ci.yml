@@ -19,7 +19,7 @@ jobs:
     name: Backend lint, type check, tests
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: sqlite:///./ci_test.db
+      TEST_DATABASE_URL: sqlite:///./ci_test.db
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -44,11 +44,8 @@ jobs:
       - name: ty baseline type check
         run: ty check --output-format github
 
-      - name: Initialize test database
-        run: PYTHONPATH=backend python -c "from database import init_db; init_db()"
-
       - name: Backend tests
-        run: PYTHONPATH=backend python -m pytest backend/tests -q
+        run: PYTHONPATH=backend python -m pytest backend/tests tests -q
 
   frontend-build:
     name: Frontend tests and build

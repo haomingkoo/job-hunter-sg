@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from typing import ClassVar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -471,8 +472,10 @@ def test_active_run_gate_rejects_concurrent_same_owner():
 
 def test_chat_endpoint_streams_token_and_tool_events(monkeypatch):
     from fastapi.testclient import TestClient
+    from types import SimpleNamespace
 
     import main
+    from auth import get_current_user
 
     monkeypatch.setattr(
         main,
@@ -495,23 +498,48 @@ def test_chat_endpoint_streams_token_and_tool_events(monkeypatch):
             ]
         ),
     )
+    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1, tier="user")
+    monkeypatch.setattr(main, "_consume_ai_credit", lambda *args: None)
 
-    response = TestClient(main.app).post(
-        "/api/resume/agent/chat",
-        json={"message": "Find data jobs"},
-    )
+    try:
+        response = TestClient(main.app).post(
+            "/api/resume/agent/chat",
+            json={"message": "Find data jobs"},
+        )
+    finally:
+        main.app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 200
     body = response.text
     assert body.index("event: tool") < body.index("event: token")
     assert '"name": "search_jobs"' in body
     assert '"content": "Found a role."' in body
+    assert response.headers["cache-control"] == "no-cache"
+
+
+def test_resume_agent_sse_sends_keepalive_while_agent_runs(monkeypatch):
+    import main
+
+    release = threading.Event()
+
+    def slow_events(_body):
+        release.wait()
+        yield {"event": "done", "session_id": "sid-1"}
+
+    monkeypatch.setattr(main, "_stream_resume_agent_events", slow_events)
+    stream = main._resume_agent_sse({}, heartbeat_seconds=0.001)
+
+    assert next(stream) == ": keepalive\n\n"
+    release.set()
+    assert "event: done" in next(stream)
 
 
 def test_state_endpoint_returns_draft_todos_and_pending_diffs(monkeypatch):
     from fastapi.testclient import TestClient
+    from types import SimpleNamespace
 
     import main
+    from auth import get_current_user
 
     monkeypatch.setattr(
         main,
@@ -524,8 +552,12 @@ def test_state_endpoint_returns_draft_todos_and_pending_diffs(monkeypatch):
             "pending_diffs": [{"bullet_id": "exp-0-b0", "status": "pending"}],
         },
     )
+    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1, tier="user")
 
-    response = TestClient(main.app).get("/api/resume/agent/sid-1/state")
+    try:
+        response = TestClient(main.app).get("/api/resume/agent/sid-1/state")
+    finally:
+        main.app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 200
     data = response.json()
@@ -592,19 +624,25 @@ GovTech | Data Engineer | Jan 2020 - Present
 
 def test_existing_pipeline_endpoints_unchanged():
     from fastapi.testclient import TestClient
+    from types import SimpleNamespace
 
     import main
+    from auth import get_current_user
 
     client = TestClient(main.app)
+    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=1, tier="user")
 
-    tailor_response = client.post(
-        "/api/resume/tailor",
-        json={"resume_text": "too short", "job_id": 1, "intensity": "full"},
-    )
-    score_response = client.post(
-        "/api/resume/score",
-        json={"resume_text": "", "job_description": ""},
-    )
+    try:
+        tailor_response = client.post(
+            "/api/resume/tailor",
+            json={"resume_text": "too short", "job_id": 1, "intensity": "full"},
+        )
+        score_response = client.post(
+            "/api/resume/score",
+            json={"resume_text": "", "job_description": ""},
+        )
+    finally:
+        main.app.dependency_overrides.pop(get_current_user, None)
 
     assert tailor_response.status_code == 400
     assert score_response.status_code in (200, 422)

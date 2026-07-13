@@ -9,7 +9,7 @@ import { STATUS_CONFIG, SG_JOB_PORTALS } from "../lib/constants.js";
 import { todayStr, daysBetween } from "../lib/helpers.js";
 import StatusBadge from "./StatusBadge.jsx";
 
-export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, setActiveTab }) {
+export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiveTab }) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [filterStatus, setFilterStatus] = useState("all");
@@ -105,10 +105,6 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
     closed: jobs.filter((j) => ["rejected", "withdrawn", "no_response"].includes(j.status)).length,
   };
 
-  const isPro = user?.tier === "pro" || user?.tier === "admin";
-  const isFree = user?.tier === "free";
-  const atLimit = isFree;
-
   // Show onboarding empty state when no jobs tracked at all
   if (jobs.length === 0 && !showForm) {
     return (
@@ -173,13 +169,6 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
         ))}
       </div>
 
-      {atLimit && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-800">
-          <div className="font-medium mb-1">Application tracking is unlocked on AISG Tier</div>
-          <p>Upgrade to unlock unlimited tracked jobs, CSV export, and follow-up reminders.</p>
-        </div>
-      )}
-
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2">
           <Filter size={14} className="text-[#6A89A7]" />
@@ -189,16 +178,14 @@ export default function TrackerTab({ user, jobs, loadError = "", refreshJobs, se
           </select>
         </div>
         <div className="flex items-center gap-2">
-          {isPro && (
-            <button onClick={handleExport} className="flex items-center gap-2 border border-[#BDDDFC]/30 text-[#6A89A7] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#f0f4f8] transition">
-              <Download size={14} /> Export CSV
-            </button>
-          )}
+          <button onClick={handleExport} className="flex items-center gap-2 border border-[#BDDDFC]/30 text-[#6A89A7] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#f0f4f8] transition">
+            <Download size={14} /> Export CSV
+          </button>
           <button onClick={() => refreshJobs()} className="flex items-center gap-2 border border-[#BDDDFC]/30 text-[#6A89A7] px-3 py-2 rounded-lg text-sm hover:bg-[#f0f4f8] transition">
             <RefreshCw size={14} />
           </button>
-          <button onClick={() => { resetForm(); setShowForm(true); }} disabled={atLimit}
-            className="flex items-center gap-2 bg-[#384959] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2d3a47] disabled:opacity-40 transition">
+          <button onClick={() => { resetForm(); setShowForm(true); }}
+            className="flex items-center gap-2 bg-[#384959] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2d3a47] transition">
             <Plus size={16} /> Add
           </button>
         </div>

@@ -8,6 +8,7 @@ from __future__ import annotations
 import io
 import logging
 import re
+import zipfile
 from typing import Optional
 
 from shared_classification import SHARED_HEADINGS
@@ -15,12 +16,16 @@ from shared_classification import SHARED_HEADINGS
 log = logging.getLogger("jobhunter.parser")
 
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+MAX_EXTRACTED_CHARS = 200_000
+MAX_PDF_PAGES = 50
+MAX_DOCX_ENTRIES = 2_000
+MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+MAX_DOCX_COMPRESSION_RATIO = 100
 ALLOWED_TYPES = {
     "application/pdf": "pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-    "application/msword": "doc",
 }
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 
 SECTION_HEADER_ALIASES = {
     "experience", "professional experience", "work experience", "employment history",
@@ -386,6 +391,8 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     text_parts = []
     try:
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            if len(pdf.pages) > MAX_PDF_PAGES:
+                raise ValueError(f"PDF has too many pages. Maximum is {MAX_PDF_PAGES}.")
             for page in pdf.pages:
                 page_text = page.extract_text()
                 if page_text:
@@ -396,6 +403,10 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
                             log.info("PDF page %d: LaTeX space fix applied", page.page_number)
                             page_text = char_text
                     text_parts.append(page_text)
+                    if sum(len(part) for part in text_parts) > MAX_EXTRACTED_CHARS:
+                        raise ValueError("PDF contains too much text.")
+    except ValueError:
+        raise
     except Exception as e:
         log.warning(f"PDF extraction failed: {e}")
         raise ValueError("Could not read this PDF. Make sure it's not a scanned image — we need text-based PDFs.")
@@ -413,7 +424,21 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     from docx import Document
 
     try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
+            entries = archive.infolist()
+            if len(entries) > MAX_DOCX_ENTRIES:
+                raise ValueError("DOCX contains too many files.")
+            total_compressed = sum(max(entry.compress_size, 1) for entry in entries)
+            total_uncompressed = sum(entry.file_size for entry in entries)
+            if total_uncompressed > MAX_DOCX_UNCOMPRESSED_BYTES:
+                raise ValueError("DOCX expands beyond the safe size limit.")
+            if total_uncompressed / total_compressed > MAX_DOCX_COMPRESSION_RATIO:
+                raise ValueError("DOCX compression ratio is unsafe.")
         doc = Document(io.BytesIO(file_bytes))
+    except ValueError:
+        raise
+    except zipfile.BadZipFile:
+        raise ValueError("Could not read this DOCX file. It may be corrupted.") from None
     except Exception as e:
         log.warning(f"DOCX extraction failed: {e}")
         raise ValueError("Could not read this DOCX file. It may be corrupted.")
@@ -444,6 +469,8 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     if not full_text.strip():
         raise ValueError("No text found in DOCX file.")
 
+    if len(full_text) > MAX_EXTRACTED_CHARS:
+        raise ValueError("DOCX contains too much text.")
     return _join_broken_lines(full_text)
 
 
@@ -456,7 +483,7 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
 
     if file_type in ("pdf",):
         text = extract_text_from_pdf(file_bytes)
-    elif file_type in ("docx", "doc"):
+    elif file_type == "docx":
         text = extract_text_from_docx(file_bytes)
     else:
         raise ValueError(f"Unsupported file type: {file_type}")

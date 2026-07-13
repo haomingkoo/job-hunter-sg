@@ -36,12 +36,15 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    tier: Mapped[str] = mapped_column(String(20), default="free", nullable=False)
+    # Normal accounts use "user"; "admin" is an authorization role, not a plan.
+    tier: Mapped[str] = mapped_column(String(20), default="user", nullable=False)
     api_key: Mapped[str] = mapped_column(
         String(64), unique=True, default=_generate_api_key, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     terms_accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     privacy_accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -183,6 +186,23 @@ class PasswordResetToken(Base):
     __table_args__ = (
         Index("ix_password_reset_tokens_user", "user_id", "created_at"),
         Index("ix_password_reset_tokens_hash", "token_hash"),
+    )
+
+
+class EmailVerificationToken(Base):
+    """One-time email verification token. Only the token hash is stored."""
+    __tablename__ = "email_verification_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        Index("ix_email_verification_tokens_user", "user_id", "created_at"),
+        Index("ix_email_verification_tokens_hash", "token_hash"),
     )
 
 

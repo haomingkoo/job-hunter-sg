@@ -117,7 +117,7 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 | Embeddings | sentence-transformers/all-MiniLM-L6-v2 |
 | Skills | SSG-WSG Skills Framework + data.gov.sg MySkillsFuture Course Directory |
 | Rate Limiting | In-memory token bucket, 5 API keys cycled (~45 req/min) |
-| Auth | JWT + bcrypt, tier-based rate limiting |
+| Auth | Verified email/password accounts (JWT + bcrypt), optional Cloudflare Access, per-account throttling |
 | Deploy | Railway (Docker), persistent PostgreSQL |
 | Quality | GitHub Actions, Ruff, Gitleaks, Dependabot, pre-commit hooks |
 

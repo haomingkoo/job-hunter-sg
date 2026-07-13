@@ -12,10 +12,6 @@ Sources:
 - SkillsFuture Singapore: 16 CCS, 38 sectors, 336 SG-specific terms
 - Curated: business, healthcare, engineering, finance terms
 
-Data files stored in backend/data/:
-- Skills.xlsx, Knowledge.xlsx, Technology Skills.xlsx, Tools Used.xlsx
-- onet_extracted.json (processed unique names)
-
 Last updated: 2026-03-25
 """
 

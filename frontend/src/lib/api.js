@@ -55,6 +55,7 @@ export async function apiFetch(path, options = {}) {
   let resp;
   try {
     resp = await fetch(`${API_BASE}${path}`, {
+      credentials: "include",
       ...fetchOptions,
       headers,
       signal: controller?.signal || fetchOptions.signal,

@@ -8,7 +8,6 @@ job-hunter-sg/
 │   ├── main.py           ← API server (FastAPI + SQLAlchemy)
 │   ├── scraper.py        ← Multi-portal job scraper
 │   ├── requirements.txt
-│   └── .env.example
 ├── frontend/             ← React + Vite + Tailwind
 │   ├── src/App.jsx       ← Main React app
 │   ├── package.json
@@ -38,7 +37,12 @@ of doing full-result filtering in Python.
 | `DATABASE_URL` | No | `sqlite:///./jobhunter.db` | DB connection string. Use Postgres URL on Railway. |
 | `JWT_SECRET` | **Yes** (prod) | — | Secret key for signing JWT tokens. Generate a random string. |
 | `PORT` | No | `8000` | Server port. Railway sets this automatically. |
-| `ALLOWED_ORIGINS` | No | `*` | Comma-separated CORS origins. Set to frontend URL in production. |
+| `ALLOWED_ORIGINS` | No | local frontend URLs | Comma-separated CORS origins. Wildcards are rejected in production. |
+| `AUTH_MODE` | No | `password` | Use verified email/password accounts for public signup, or `cloudflare` for a restricted Access deployment. |
+| `CF_ACCESS_TEAM_DOMAIN` | Cloudflare mode | — | Cloudflare Access team domain used to validate JWT issuer and keys. |
+| `CF_ACCESS_AUD` | Cloudflare mode | — | Access application audience tag. |
+| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Password signup | — | Required to deliver verification and password-reset links. Signup fails closed when email is unavailable. |
+| `ACCOUNT_AI_PER_DAY` | No | `500` | Daily AI/RAG requests allowed per account. |
 | `VITE_API_URL` | No | `""` | (Frontend) Backend API URL. Empty = same-origin. |
 
 ## Deploy to Railway
@@ -61,6 +65,7 @@ Set environment variables:
 railway variables set JWT_SECRET=<your-random-secret>
 railway variables set DATABASE_URL=<postgres-url-from-railway>
 railway variables set ALLOWED_ORIGINS=https://job.kooexperience.com
+railway variables set AUTH_MODE=password
 ```
 
 Railway uses `railway.toml`, which points at the root `Dockerfile`. The image
@@ -101,17 +106,19 @@ cd frontend && npm test -- --run && npm run build
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/api/auth/signup` | POST | No | Create account |
+| `/api/auth/signup` | POST | No | Create an unverified account and send a verification link |
+| `/api/auth/verify-email` | POST | No | Verify email and return the first JWT |
 | `/api/auth/login` | POST | No | Login, returns JWT |
 | `/api/auth/me` | GET | Yes | Current user info |
-| `/api/search?q=keyword` | GET | Optional | Search all SG job portals (rate-limited) |
+| `/api/auth/change-password` | POST | Yes | Change password and invalidate older JWTs |
+| `/api/account` | DELETE | Yes | Permanently delete the account and user-owned data |
+| `/api/search?q=keyword` | GET | Admin | Run a live multi-source refresh |
 | `/api/jobs` | GET | No | Cached job listings |
 | `/api/tracked` | GET | Yes | User's tracked jobs |
 | `/api/tracked` | POST | Yes | Track a job |
 | `/api/tracked/{id}` | PUT | Yes | Update tracked job |
 | `/api/tracked/{id}` | DELETE | Yes | Remove tracked job |
-| `/api/tracked/export` | GET | Pro | CSV export of tracked jobs |
-| `/api/tiers` | GET | No | Pricing/tier info |
+| `/api/tracked/export` | GET | Yes | CSV export of tracked jobs |
 | `/api/contact` | POST | No | Contact form submission |
 
 ## Sources Scraped
@@ -119,29 +126,24 @@ cd frontend && npm test -- --run && npm run build
 | Source | Key | Method |
 |--------|-----|--------|
 | MyCareersFuture | `mcf` | API: `api.mycareersfuture.gov.sg/v2/search` |
-| Careers@Gov | `careersgov` | API: Workday backend |
+| Careers@Gov | `careersgov` | OpenGovSG pre-parsed JSON |
 | NodeFlair | `nodeflair` | HTML scrape |
 | Indeed SG | `indeed` | HTML scrape |
 | JobStreet | `jobstreet` | HTML scrape |
 
-## Tiers & Pricing
+## Accounts
 
-| Feature | Free | Pro ($5/mo) |
-|---------|------|-------------|
-| Searches per day | 5 | 50 |
-| Tracked jobs | 20 | Unlimited |
-| CSV export | No | Yes |
-
-Tier limits are enforced server-side. Users default to the Free tier on signup. To upgrade a user to Pro, update their `tier` field in the database (payment integration TBD).
+There is one normal account type. Expensive RAG and AI work is authenticated
+and throttled per account. `admin` is an operational role, not a paid plan.
 
 ## Admin Setup
 
-There is no admin UI yet. To manage users or tiers directly:
+Use the Account admin view for metrics. To assign the operational admin role directly:
 
 - **SQLite (local)**: Use `sqlite3 jobhunter.db` in the backend directory.
 - **PostgreSQL (Railway)**: Connect via `railway connect postgres` or use the Railway dashboard SQL editor.
 
-Example: upgrade a user to Pro:
+Example: assign the admin role:
 ```sql
-UPDATE users SET tier = 'pro' WHERE email = 'user@example.com';
+UPDATE users SET tier = 'admin' WHERE email = 'admin@example.com';
 ```

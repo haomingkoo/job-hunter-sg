@@ -60,8 +60,9 @@ STAGES = [
 class PipelineState:
     """Thread-safe pipeline progress tracker."""
 
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str, owner_key: str | None = None):
         self.session_id = session_id
+        self.owner_key = owner_key
         self.stage_index = 0
         self.stage_name = STAGES[0]
         self.progress = {"completed": 0, "total": 0}
@@ -118,11 +119,38 @@ _pipelines_lock = threading.Lock()
 _PIPELINE_TTL_SECONDS = 1800  # 30 minutes
 
 
-def get_pipeline_state(session_id: str) -> PipelineState | None:
+def get_pipeline_state(
+    session_id: str,
+    owner_key: str | None = None,
+) -> PipelineState | None:
     # Piggyback cleanup on reads (cheap, no extra thread needed)
     _cleanup_expired_pipelines()
     with _pipelines_lock:
-        return _active_pipelines.get(session_id)
+        state = _active_pipelines.get(session_id)
+        if state and state.owner_key and state.owner_key != owner_key:
+            return None
+        return state
+
+
+def owner_has_active_pipelines(owner_key: str) -> bool:
+    with _pipelines_lock:
+        return any(
+            state.owner_key == owner_key
+            and state.stage_name != "complete"
+            and state.error is None
+            for state in _active_pipelines.values()
+        )
+
+
+def purge_owner_pipelines(owner_key: str) -> None:
+    with _pipelines_lock:
+        session_ids = [
+            session_id
+            for session_id, state in _active_pipelines.items()
+            if state.owner_key == owner_key
+        ]
+        for session_id in session_ids:
+            _active_pipelines.pop(session_id, None)
 
 
 def _cleanup_expired_pipelines() -> None:
@@ -957,6 +985,7 @@ def run_pipeline(
     parsed_jd: dict | None,
     intensity: str = "full",
     session_id: str | None = None,
+    owner_key: str | None = None,
 ) -> PipelineState:
     """Start the tailoring pipeline in a background thread.
 
@@ -974,7 +1003,7 @@ def run_pipeline(
     if not session_id:
         session_id = secrets.token_hex(16)
 
-    state = PipelineState(session_id)
+    state = PipelineState(session_id, owner_key=owner_key)
 
     # Sweep before inserting so the dict can't grow without bound even if
     # nobody polls get_pipeline_state (the only other cleanup trigger).

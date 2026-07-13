@@ -158,7 +158,7 @@ cd frontend && npx vitest run
 ## Database
 
 ### Tables
-- `users` -- accounts with email, password hash, tier
+- `users` -- accounts with email, password hash, and the internal admin role marker
 - `scraped_jobs` -- cached jobs from all sources
   - `parsed_jd` JSON -- pre-parsed skills, experience, education, responsibilities, `_analysis` (quality score, red flags, content hash)
   - `job_terms_preview` JSON -- cached 8 ATS skill labels for fast list rendering
@@ -191,7 +191,7 @@ cd frontend && npx vitest run
 
 - All scraped data is sanitized (HTML stripped) before storage and display
 - JWT auth with bcrypt password hashing
-- Rate limiting by tier
+- Per-account throttling for RAG and AI work
 - No raw HTML rendering in frontend
 - Validation gates prevent AI from fabricating metrics or skills
 - API keys loaded from env vars, never logged or echoed

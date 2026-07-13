@@ -1,19 +1,18 @@
-"""MCP stdio server for Job Hunter SG resume/job tools."""
+"""MCP server for Job Hunter SG resume/job tools."""
 
 import os
 from pathlib import Path
 
-os.chdir(Path(__file__).resolve().parent)
+BACKEND_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = BACKEND_DIR.parent
+os.environ.setdefault("DATABASE_URL", f"sqlite:///{PROJECT_DIR / 'jobhunter.db'}")
 
 import mcp_tools as tools
 
-try:
-    from mcp.server.mcpserver import MCPServer
-except ImportError:  # mcp 1.x
-    from mcp.server.fastmcp import FastMCP as MCPServer
+from mcp.server.fastmcp import FastMCP
 
 
-mcp = MCPServer("Job Hunter SG")
+mcp = FastMCP("Job Hunter SG", host="0.0.0.0", streamable_http_path="/")
 
 
 @mcp.tool()
@@ -46,10 +45,64 @@ def get_job(job_id: int) -> str:
     return tools.get_job(job_id)
 
 
+@mcp.tool(name="jobhunter.get_job")
+def jobhunter_get_job(job_id: int) -> str:
+    """Fetch one public job by ID from the internal jobs DB."""
+    return tools.get_job(job_id)
+
+
 @mcp.tool()
 def search_jobs(query: str, limit: int = 7) -> str:
     """Search internal jobs DB semantically."""
     return tools.search_jobs(query, limit)
+
+
+@mcp.tool(name="jobhunter.search_jobs")
+def jobhunter_search_jobs(query: str, limit: int = 7) -> str:
+    """Search public jobs semantically. Call jobhunter.get_job for full details."""
+    return tools.search_jobs(query, limit)
+
+
+@mcp.tool(name="jobhunter.latest_jobs")
+def jobhunter_latest_jobs(limit: int = 10) -> str:
+    """Fetch the latest public jobs from the internal jobs DB."""
+    return tools.latest_jobs(limit)
+
+
+@mcp.tool(name="jobhunter.latest_careersgov_jobs")
+def jobhunter_latest_careersgov_jobs(limit: int = 10) -> str:
+    """Fetch the latest public Careers@Gov jobs."""
+    return tools.latest_careersgov_jobs(limit)
+
+
+@mcp.tool(name="jobhunter.latest_mycareersfuture_jobs")
+def jobhunter_latest_mycareersfuture_jobs(limit: int = 10) -> str:
+    """Fetch the latest public MyCareersFuture jobs."""
+    return tools.latest_mycareersfuture_jobs(limit)
+
+
+@mcp.tool(name="jobhunter.source_stats")
+def jobhunter_source_stats() -> str:
+    """Report public job counts and freshness by source."""
+    return tools.source_stats()
+
+
+@mcp.tool(name="jobhunter.recommend_skillsfuture_courses")
+def jobhunter_recommend_skillsfuture_courses(skills: list[str], per_skill: int = 3) -> str:
+    """Recommend official MySkillsFuture courses for skill gaps."""
+    return tools.recommend_skillsfuture_courses(skills, per_skill)
+
+
+@mcp.tool(name="jobhunter.match_resume_to_jobs")
+def jobhunter_match_resume_to_jobs(resume_text: str, limit: int = 10) -> str:
+    """Rank public jobs against pasted resume text without storing it."""
+    return tools.match_resume_to_jobs(resume_text, limit)
+
+
+@mcp.tool(name="jobhunter.ats_precompute_status")
+def jobhunter_ats_precompute_status() -> str:
+    """Report public job ATS precompute readiness."""
+    return tools.ats_precompute_status()
 
 
 @mcp.tool()

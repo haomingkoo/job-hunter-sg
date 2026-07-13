@@ -14,10 +14,11 @@ Run:
 """
 from __future__ import annotations
 
-import asyncio
 import io
 import os
 import sys
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
@@ -63,6 +64,11 @@ def _make_latex_style_pdf(word_gap: float = 2.0) -> bytes:
     c.showPage()
     c.save()
     return buf.getvalue()
+
+
+@pytest.fixture(scope="module")
+def pdf_bytes() -> bytes:
+    return _make_latex_style_pdf(word_gap=2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -170,52 +176,36 @@ def test_end_to_end_parser(pdf_bytes: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 5: Playwright API test
+# Test 5: API test
 # ---------------------------------------------------------------------------
 
 
-async def test_api_upload(pdf_bytes: bytes) -> None:
-    """Upload the space-stripped PDF to the live API and verify the response."""
-    from playwright.async_api import async_playwright
+def test_api_upload(pdf_bytes: bytes) -> None:
+    """Upload the space-stripped PDF through the in-process API."""
+    from fastapi.testclient import TestClient
 
-    async with async_playwright() as pw:
-        request = await pw.request.new_context(base_url="http://localhost:8001")
-        try:
-            resp = await request.post(
-                "/api/resume/upload",
-                multipart={
-                    "file": {
-                        "name": "viknesh_resume.pdf",
-                        "mimeType": "application/pdf",
-                        "buffer": pdf_bytes,
-                    }
-                },
-            )
+    from main import app
 
-            assert resp.ok, (
-                f"Upload failed: HTTP {resp.status}\n{await resp.text()}"
-            )
-            body = await resp.json()
-            text: str = body.get("text", "")
+    resp = TestClient(app).post(
+        "/api/resume/upload",
+        files={"file": ("viknesh_resume.pdf", pdf_bytes, "application/pdf")},
+    )
 
-            print(f"  API response sample: {text[:120]!r}")
+    assert resp.is_success, f"Upload failed: HTTP {resp.status_code}\n{resp.text}"
+    body = resp.json()
+    text: str = body.get("text", "")
 
-            assert not _has_missing_spaces_str(text), (
-                f"API returned space-stripped text — fix not applied on server.\n"
-                f"Text: {text[:300]!r}"
-            )
-            print("  [OK] API returned properly spaced text")
+    print(f"  API response sample: {text[:120]!r}")
 
-            # Spot-check individual tokens are present and separated
-            for token in ["Viknesh", "Jaya", "Kumar"]:
-                assert token in text, (
-                    f"Token '{token}' missing from API response — may still be merged.\n"
-                    f"Text: {text[:200]!r}"
-                )
-            print("  [OK] Name tokens are individually present in API response")
-
-        finally:
-            await request.dispose()
+    assert not _has_missing_spaces_str(text), (
+        "API returned space-stripped text — fix not applied.\n"
+        f"Text: {text[:300]!r}"
+    )
+    for token in ["Viknesh", "Jaya", "Kumar"]:
+        assert token in text, (
+            f"Token '{token}' missing from API response — may still be merged.\n"
+            f"Text: {text[:200]!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -243,8 +233,8 @@ def main() -> None:
     print("\n[4] End-to-end: extract_text_from_pdf():")
     test_end_to_end_parser(pdf_bytes)
 
-    print("\n[5] Playwright: live API upload and parse:")
-    asyncio.run(test_api_upload(pdf_bytes))
+    print("\n[5] In-process API upload and parse:")
+    test_api_upload(pdf_bytes)
 
     print("\n" + "=" * 65)
     print("ALL TESTS PASSED")

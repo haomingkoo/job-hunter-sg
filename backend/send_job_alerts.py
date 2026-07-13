@@ -18,7 +18,7 @@ def main() -> int:
     init_db()
     stats = run_job_alerts(dry_run=args.dry_run, limit_users=args.limit_users)
     print(json.dumps(stats, indent=2, sort_keys=True, default=str))
-    if not args.dry_run and not stats.get("smtp_configured"):
+    if not args.dry_run and not stats.get("email_configured"):
         return 2
     if stats.get("errors"):
         return 1

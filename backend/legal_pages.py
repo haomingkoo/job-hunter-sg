@@ -141,7 +141,7 @@ def render_privacy_html(contact_line: str) -> str:
 
 <h2>1. Data We Collect</h2>
 <ul>
-  <li>Account data such as name, email address, tier, signup time, and login activity.</li>
+  <li>Account data such as name, email address, signup time, and login activity.</li>
   <li>Authentication data such as hashed passwords for password accounts. We do not store plain-text passwords.</li>
   <li>Resume and profile data you upload, paste, edit, score, or save.</li>
   <li>Tracked jobs, application statuses, notes, saved resume versions, stories, and related usage data.</li>

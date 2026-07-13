@@ -1,0 +1,156 @@
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import AuthModal from "../AuthModal.jsx";
+
+const response = (data) => ({
+  ok: true,
+  json: () => Promise.resolve(data),
+  text: () => Promise.resolve(JSON.stringify(data)),
+});
+
+describe("account authentication lifecycle", () => {
+  let container;
+  let root;
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.restoreAllMocks();
+  });
+
+  const setInput = (placeholder, value) => {
+    const input = [...container.querySelectorAll("input")]
+      .find((candidate) => candidate.placeholder === placeholder);
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  it("asks a password signup to verify email instead of expecting a JWT", async () => {
+    const onAuth = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue(response({ message: "Verification email sent." }));
+
+    await act(async () => {
+      root.render(<AuthModal onAuth={onAuth} onClose={vi.fn()} />);
+    });
+    const signupButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Don't have an account"));
+    act(() => signupButton.click());
+    setInput("Full Name", "Asha Tan");
+    setInput("Email", "asha@example.com");
+    setInput("Password", "correct-horse");
+    act(() => container.querySelector('input[type="checkbox"]').click());
+
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith("/api/auth/signup", expect.objectContaining({ method: "POST" }));
+    expect(container.textContent).toContain("Verification email sent.");
+    expect(container.textContent).toContain("Check your email");
+    expect(localStorage.getItem("token")).toBeNull();
+    expect(onAuth).not.toHaveBeenCalled();
+
+    const resendButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Resend Verification Email"));
+    await act(async () => resendButton.click());
+    expect(global.fetch).toHaveBeenLastCalledWith(
+      "/api/auth/resend-verification",
+      expect.objectContaining({ body: JSON.stringify({ email: "asha@example.com" }) }),
+    );
+    expect(container.textContent).toContain("If your account is awaiting verification");
+  });
+
+  it("verifies an email-link token and signs the account in", async () => {
+    const user = { id: 7, name: "Asha", email: "asha@example.com" };
+    const onAuth = vi.fn();
+    const onVerifyComplete = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue(response({ token: "verified-token", user }));
+
+    await act(async () => {
+      root.render(
+        <AuthModal
+          initialVerifyToken="email-token"
+          onAuth={onAuth}
+          onVerifyComplete={onVerifyComplete}
+        />,
+      );
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/auth/verify-email",
+      expect.objectContaining({ body: JSON.stringify({ token: "email-token" }) }),
+    );
+    expect(localStorage.getItem("token")).toBe("verified-token");
+    expect(onVerifyComplete).toHaveBeenCalledOnce();
+    expect(onAuth).toHaveBeenCalledWith(user, "verified-token");
+  });
+
+  it("navigates to Cloudflare before attempting registration", async () => {
+    global.fetch = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <AuthModal
+          authConfig={{
+            mode: "cloudflare",
+            cloudflare_login_url: "https://access.example.com/login",
+          }}
+          onAuth={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.querySelector("form")).toBeNull();
+    expect(container.querySelector('a[href="https://access.example.com/login"]')?.textContent)
+      .toContain("Continue with Cloudflare");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("uses explicit Cloudflare account consent without a password after identity verification", async () => {
+    const user = { id: 8, name: "Asha", email: "asha@example.com" };
+    const onAuth = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue(response(user));
+
+    await act(async () => {
+      root.render(
+        <AuthModal
+          authConfig={{
+            mode: "cloudflare",
+            cloudflare_login_url: "https://access.example.com/login",
+          }}
+          cloudflareIdentityReady
+          onAuth={onAuth}
+        />,
+      );
+    });
+
+    expect(container.querySelector('input[type="password"]')).toBeNull();
+    expect(container.querySelector('a[href="https://access.example.com/login"]')).toBeNull();
+    setInput("Full Name", "Asha Tan");
+    act(() => container.querySelector('input[type="checkbox"]').click());
+    await act(async () => {
+      container.querySelector("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "/api/auth/cloudflare/register",
+      expect.objectContaining({
+        credentials: "include",
+        body: JSON.stringify({ name: "Asha Tan", accepted_terms: true }),
+      }),
+    );
+    expect(onAuth).toHaveBeenCalledWith(user, null);
+  });
+});

@@ -37,9 +37,8 @@ frontend/dist/
 !package-lock.json
 !manifest.json
 !tsconfig.json
+!smithery.remote-config.json
 !.env.example
-!backend/.env.example
-!backend/data/onet_extracted.json
 !shared/resume-classification.json
 backend/data/*.xlsx
 backend/data/company_ssic_cache.json

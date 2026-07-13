@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session, load_only
 
 from ats_terms import ATS_ALLOWED_SINGLE_TERMS
 from database import SessionLocal
-from email_service import send_email, smtp_configured
+from email_service import email_configured, email_provider, send_email, smtp_configured
 from employer_filter import direct_employer_condition, normalize_employer_name
 from models import JobAlertDelivery, JobAlertPreference, ScrapedJob, TrackedJob, User, UserMemory
 from skill_extractor import extract_skill_phrases
@@ -427,7 +427,11 @@ def find_alert_matches(
 
     if pref.direct_employers_only:
         query = query.filter(
-            direct_employer_condition(ScrapedJob.company, ScrapedJob.company_ssic_description)
+            direct_employer_condition(
+                ScrapedJob.company,
+                ScrapedJob.company_ssic_description,
+                ScrapedJob.description,
+            )
         )
 
     if keywords:
@@ -470,8 +474,6 @@ def find_alert_matches(
             continue
         seen_keys.add(duplicate_key)
         matches.append(scored)
-        if len(matches) >= pref.max_jobs:
-            break
 
     matches.sort(key=lambda item: (item.score, item.job.id), reverse=True)
     return matches[: pref.max_jobs]
@@ -560,6 +562,8 @@ def render_alert_email(user: User, pref: JobAlertPreference, matches: list[Alert
 
 def run_job_alerts(dry_run: bool = False, limit_users: int | None = None) -> dict:
     stats = {
+        "email_configured": email_configured(),
+        "email_provider": email_provider(),
         "smtp_configured": smtp_configured(),
         "dry_run": dry_run,
         "users_checked": 0,
@@ -570,7 +574,7 @@ def run_job_alerts(dry_run: bool = False, limit_users: int | None = None) -> dic
         "skipped_not_due": 0,
         "errors": [],
     }
-    if not dry_run and not stats["smtp_configured"]:
+    if not dry_run and not stats["email_configured"]:
         return stats
 
     now = _utcnow()

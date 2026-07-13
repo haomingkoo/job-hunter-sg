@@ -21,6 +21,8 @@ import time
 from dataclasses import asdict
 from datetime import datetime
 
+from sqlalchemy import or_
+
 # Setup path so imports work
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -79,10 +81,29 @@ logging.basicConfig(
 )
 log = logging.getLogger("seed")
 
+MCF_MIN_HEALTHY_JOBS = 5000
+CAREERSGOV_MIN_HEALTHY_JOBS = 500
+
 
 def _posted_sort_iso(posted_date: str, scraped_at: str = "") -> str:
     from main import _parse_job_posted_at
     return _parse_job_posted_at(posted_date, scraped_at).isoformat()
+
+
+def _retire_stale_jobs(db, source: str, crawl_marker: str) -> int:
+    """Hide visible source rows not refreshed by this completed crawl."""
+    return (
+        db.query(ScrapedJob)
+        .filter(
+            ScrapedJob.source == source,
+            ScrapedJob.hidden == 0,
+            or_(
+                ScrapedJob.scraped_at < crawl_marker,
+                ScrapedJob.scraped_at.is_(None),
+            ),
+        )
+        .update({ScrapedJob.hidden: 1}, synchronize_session=False)
+    )
 
 # Popular SG job search keywords to pre-cache
 DEFAULT_KEYWORDS = [
@@ -229,7 +250,14 @@ def crawl_all_jobs() -> dict:
     init_db()
     db = SessionLocal()
 
-    stats = {"new": 0, "updated": 0, "errors": 0, "pages": 0}
+    stats = {
+        "new": 0,
+        "updated": 0,
+        "errors": 0,
+        "pages": 0,
+        "retired": 0,
+        "reactivated": 0,
+    }
     start = time.time()
 
     # ── MCF: paginate through all jobs ──────────────────────────────
@@ -240,39 +268,80 @@ def crawl_all_jobs() -> dict:
     log.info("FULL CRAWL: MyCareersFuture")
     log.info("=" * 60)
 
+    mcf_crawl_marker = datetime.now().isoformat()
+    mcf_complete = True
+    mcf_seen = 0
+    mcf_terminal_page_seen = False
     page = 0
     while True:
         try:
             jobs = mcf.search("", limit=100, page=page)  # Empty string = all jobs
             if not jobs:
+                if mcf_seen < MCF_MIN_HEALTHY_JOBS:
+                    log.warning(
+                        f"[MCF] Only {mcf_seen} jobs — data may be stale or incomplete; "
+                        "skipping stale-job retirement"
+                    )
+                    stats["errors"] += 1
+                    mcf_complete = False
+                elif not mcf_terminal_page_seen:
+                    log.warning(
+                        "[MCF] Crawl ended after a full page; the scraper may have hidden "
+                        "an upstream error, so stale-job retirement is skipped"
+                    )
+                    stats["errors"] += 1
+                    mcf_complete = False
                 log.info(f"[MCF] Page {page}: no results, stopping")
                 break
 
-            for job in jobs:
-                raw = asdict(job)
-                raw["dedup_key"] = job.dedup_key
-                clean = sanitize_job(raw)
-                clean["search_keyword"] = "all"
-                clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
-                apply_job_precomputes(clean)
+            if mcf_terminal_page_seen:
+                log.warning("[MCF] Received jobs after a short page; treating crawl as incomplete")
+                stats["errors"] += 1
+                mcf_complete = False
+            mcf_terminal_page_seen = len(jobs) < 100
 
+            page_new = 0
+            page_updated = 0
+            page_reactivated = 0
+            for job in jobs:
                 try:
-                    existing = find_existing_scraped_job(db, clean)
-                    if existing:
-                        for key, val in clean.items():
-                            if key != "id":
-                                setattr(existing, key, val)
-                        stats["updated"] += 1
-                    else:
-                        db.add(ScrapedJob(**clean))
-                        db.flush()
-                        stats["new"] += 1
-                except Exception:
-                    db.rollback()
-                    stats["updated"] += 1  # Likely a dupe
+                    is_new = False
+                    was_hidden = False
+                    with db.begin_nested():
+                        raw = asdict(job)
+                        raw["dedup_key"] = job.dedup_key
+                        clean = sanitize_job(raw)
+                        clean["search_keyword"] = "all"
+                        clean["scraped_at"] = mcf_crawl_marker
+                        clean["posted_at_sort"] = _posted_sort_iso(
+                            clean.get("posted_date", ""), clean.get("scraped_at", "")
+                        )
+                        apply_job_precomputes(clean)
+
+                        existing = find_existing_scraped_job(db, clean)
+                        if existing:
+                            was_hidden = bool(existing.hidden)
+                            for key, val in clean.items():
+                                if key != "id":
+                                    setattr(existing, key, val)
+                            existing.hidden = 0
+                        else:
+                            db.add(ScrapedJob(**clean))
+                            is_new = True
+                    page_new += int(is_new)
+                    page_updated += int(not is_new)
+                    page_reactivated += int(was_hidden)
+                    mcf_seen += 1
+                except Exception as e:
+                    log.error(f"[MCF] Page {page} job failed: {e}")
+                    stats["errors"] += 1
+                    mcf_complete = False
 
             db.commit()
             db.expunge_all()  # Release ORM objects from session to free memory
+            stats["new"] += page_new
+            stats["updated"] += page_updated
+            stats["reactivated"] += page_reactivated
             stats["pages"] += 1
             log.info(f"[MCF] Page {page}: {len(jobs)} jobs (new: {stats['new']}, updated: {stats['updated']})")
 
@@ -286,14 +355,29 @@ def crawl_all_jobs() -> dict:
 
             if page >= 1000:
                 log.info("[MCF] Hit 1000 page limit, stopping")
+                mcf_complete = False
                 break
 
         except Exception as e:
             log.error(f"[MCF] Page {page} failed: {e}")
             stats["errors"] += 1
+            mcf_complete = False
             db.rollback()
             page += 1
             time.sleep(1)
+
+    if mcf_complete:
+        try:
+            retired = _retire_stale_jobs(db, "MyCareersFuture", mcf_crawl_marker)
+            db.commit()
+            stats["retired"] += retired
+            log.info(f"[MCF] Retired {retired} stale jobs")
+        except Exception as e:
+            log.error(f"[MCF] Stale-job retirement failed: {e}")
+            stats["errors"] += 1
+            db.rollback()
+    else:
+        log.warning("[MCF] Crawl was incomplete; stale-job retirement skipped")
 
     # ── CareersGov: single JSON fetch via OpenGovSG ─────────────────
     from scraper import CareersGovScraper
@@ -306,49 +390,79 @@ def crawl_all_jobs() -> dict:
 
     try:
         cgov_jobs = cgov.fetch_all()
+        cgov_crawl_marker = datetime.now().isoformat()
 
         # Health check: ensure data is fresh and reasonable
-        if len(cgov_jobs) < 500:
+        cgov_complete = len(cgov_jobs) >= CAREERSGOV_MIN_HEALTHY_JOBS
+        if not cgov_complete:
             log.warning(f"[CareersGov] Only {len(cgov_jobs)} jobs — data may be stale or incomplete, skipping")
+            stats["errors"] += 1
             cgov_jobs = []
         else:
             log.info(f"[CareersGov] Health check passed: {len(cgov_jobs)} jobs")
 
         # Upsert approach (can't DELETE all — resume_versions has FK refs)
         seen_keys: set[str] = set()
+        cgov_new = 0
+        cgov_updated = 0
+        cgov_reactivated = 0
+        cgov_retired = 0
         for job in cgov_jobs:
-            raw = asdict(job)
-            raw["dedup_key"] = job.dedup_key
-            if raw["dedup_key"] in seen_keys:
-                continue  # skip duplicate source postings in same batch
-            seen_keys.add(raw["dedup_key"])
-            clean = sanitize_job(raw)
-            clean["search_keyword"] = "all"
-            clean["posted_at_sort"] = _posted_sort_iso(clean.get("posted_date", ""), clean.get("scraped_at", ""))
-            apply_job_precomputes(clean)
+            try:
+                is_new = False
+                was_hidden = False
+                with db.begin_nested():
+                    raw = asdict(job)
+                    raw["dedup_key"] = job.dedup_key
+                    if raw["dedup_key"] in seen_keys:
+                        continue  # skip duplicate source postings in same batch
+                    seen_keys.add(raw["dedup_key"])
+                    clean = sanitize_job(raw)
+                    clean["search_keyword"] = "all"
+                    clean["scraped_at"] = cgov_crawl_marker
+                    clean["posted_at_sort"] = _posted_sort_iso(
+                        clean.get("posted_date", ""), clean.get("scraped_at", "")
+                    )
+                    apply_job_precomputes(clean)
 
-            # Pre-parse JD at insert time
-            if preparse_job_description and clean.get("description"):
-                clean["parsed_jd"] = preparse_job_description(
-                    clean["description"], job_title=clean.get("title", "")
-                )
+                    # Pre-parse JD at insert time
+                    if preparse_job_description and clean.get("description"):
+                        clean["parsed_jd"] = preparse_job_description(
+                            clean["description"], job_title=clean.get("title", "")
+                        )
 
-            existing = find_existing_scraped_job(db, clean)
-            if existing:
-                for key, val in clean.items():
-                    if key != "id":
-                        setattr(existing, key, val)
-                _build_term_preview(existing, db)
-                stats["updated"] += 1
-            else:
-                job_row = ScrapedJob(**clean)
-                db.add(job_row)
-                _build_term_preview(job_row, db)
-                stats["new"] += 1
+                    existing = find_existing_scraped_job(db, clean)
+                    if existing:
+                        was_hidden = bool(existing.hidden)
+                        for key, val in clean.items():
+                            if key != "id":
+                                setattr(existing, key, val)
+                        existing.hidden = 0
+                        _build_term_preview(existing, db)
+                    else:
+                        job_row = ScrapedJob(**clean)
+                        db.add(job_row)
+                        _build_term_preview(job_row, db)
+                        is_new = True
+                cgov_new += int(is_new)
+                cgov_updated += int(not is_new)
+                cgov_reactivated += int(was_hidden)
+            except Exception as e:
+                log.error(f"[CareersGov] Job failed: {e}")
+                stats["errors"] += 1
+                cgov_complete = False
+
+        if cgov_complete:
+            cgov_retired = _retire_stale_jobs(db, "Careers@Gov", cgov_crawl_marker)
+            log.info(f"[CareersGov] Retired {cgov_retired} stale jobs")
 
         db.commit()
         db.expunge_all()
-        stats["pages"] += 1
+        stats["new"] += cgov_new
+        stats["updated"] += cgov_updated
+        stats["reactivated"] += cgov_reactivated
+        stats["retired"] += cgov_retired
+        stats["pages"] += int(cgov_complete)
         log.info(f"[CareersGov] Loaded {len(cgov_jobs)} jobs (new: {stats['new']}, updated: {stats['updated']})")
 
     except Exception as e:
@@ -366,6 +480,8 @@ def crawl_all_jobs() -> dict:
     log.info(f"  Pages fetched:    {stats['pages']}")
     log.info(f"  New jobs added:   {stats['new']}")
     log.info(f"  Jobs updated:     {stats['updated']}")
+    log.info(f"  Jobs retired:     {stats['retired']}")
+    log.info(f"  Jobs reactivated: {stats['reactivated']}")
     log.info(f"  Errors:           {stats['errors']}")
     log.info(f"  Duration:         {duration}s ({round(duration/60, 1)} min)")
     log.info(f"  Total jobs in DB: {total_in_db}")

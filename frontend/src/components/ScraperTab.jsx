@@ -103,7 +103,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [employmentFilter, setEmploymentFilter] = useState(new Set());
   const [expYearsFilter, setExpYearsFilter] = useState(new Set());
   const [minSalaryFilter, setMinSalaryFilter] = useState("");
-  const [filterMeta, setFilterMeta] = useState({ employment_types: [] });
+  const [filterMeta, setFilterMeta] = useState({ employment_types: [], locations: [], sources: [] });
   const [sortBy, setSortBy] = useState("newest");
   const [error, setError] = useState("");
   const [trackError, setTrackError] = useState("");
@@ -116,6 +116,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [locationFilter, setLocationFilter] = useState(new Set());
   const [sectorFilter, setSectorFilter] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("");
   const [directEmployersOnly, setDirectEmployersOnly] = useState(false);
   const activeSearchQuery = submittedQuery;
 
@@ -159,18 +160,30 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       const params = new URLSearchParams({ page: String(pageNum), per_page: "20" });
       const activeLevel = nextFilters.levelFilter ?? levelFilter;
       const activeEmployment = nextFilters.employmentFilter ?? employmentFilter;
+      const activeExperience = nextFilters.expYearsFilter ?? expYearsFilter;
+      const activeLocations = nextFilters.locationFilter ?? locationFilter;
       const activeMinSalary = nextFilters.minSalaryFilter ?? minSalaryFilter;
+      const activeSource = nextFilters.sourceFilter ?? sourceFilter;
+      const activeSort = nextFilters.sortBy ?? sortBy;
       const activeDirectEmployersOnly = nextFilters.directEmployersOnly ?? directEmployersOnly;
 
       if (normalizedQuery) params.set("q", normalizedQuery);
       if (activeLevel !== "all") params.set("seniority", activeLevel);
+      if (activeSource) params.set("source", activeSource);
       if (activeDirectEmployersOnly) params.set("direct_employers_only", "true");
       if (activeEmployment instanceof Set && activeEmployment.size > 0) {
         params.set("employment_type", employmentQueryValuesFor(activeEmployment, employmentTypeOptions).join(","));
       } else if (typeof activeEmployment === "string" && activeEmployment !== "all") {
         params.set("employment_type", activeEmployment);
       }
+      if (activeExperience instanceof Set) {
+        activeExperience.forEach((value) => params.append("experience", value));
+      }
+      if (activeLocations instanceof Set) {
+        activeLocations.forEach((value) => params.append("location", value));
+      }
       if (String(activeMinSalary).trim()) params.set("min_salary", String(activeMinSalary).trim());
+      if (activeSort !== "newest") params.set("sort", activeSort);
       const activeSector = nextFilters.sectorFilter ?? sectorFilter;
       if (activeSector) params.set("sector", activeSector);
 
@@ -208,6 +221,8 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       if (pageNum === 1 && data.filter_meta && typeof data.filter_meta === "object") {
         setFilterMeta({
           employment_types: Array.isArray(data.filter_meta.employment_types) ? data.filter_meta.employment_types : [],
+          locations: Array.isArray(data.filter_meta.locations) ? data.filter_meta.locations : [],
+          sources: Array.isArray(data.filter_meta.sources) ? data.filter_meta.sources : [],
           sectors: Array.isArray(data.filter_meta.sectors) ? data.filter_meta.sectors : [],
         });
       }
@@ -235,42 +250,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     loadJobs(query, 1);
   };
 
-  const filtered = useMemo(() => {
-    let r = [...results];
-    if (expYearsFilter.size > 0) {
-      r = r.filter((job) => {
-        const raw = String(job.experienceYears || "").trim();
-        if (!raw) return true; // No experience stated = show (don't exclude)
-        const minMatch = raw.match(/^(\d+)/);
-        if (!minMatch) return true;
-        const minYrs = parseInt(minMatch[1], 10);
-        for (const label of expYearsFilter) {
-          if (label === "0-2 yrs" && minYrs >= 0 && minYrs <= 2) return true;
-          if (label === "3-5 yrs" && minYrs >= 3 && minYrs <= 5) return true;
-          if (label === "6-10 yrs" && minYrs >= 6 && minYrs <= 10) return true;
-          if (label === "10+ yrs" && minYrs > 10) return true;
-        }
-        return false;
-      });
-    }
-    if (locationFilter.size > 0) {
-      r = r.filter((job) => {
-        const loc = (job.location || "").trim();
-        if (!loc) return true; // No location stated = show
-        return locationFilter.has(loc);
-      });
-    }
-    if (sortBy === "salary") r.sort((a, b) => {
-      const getMax = (s) => {
-        const matches = String(s || "").match(/\d[\d,]*/g) || [];
-        const last = matches[matches.length - 1];
-        return last ? parseInt(last.replace(/,/g, ""), 10) : 0;
-      };
-      return getMax(b.salary) - getMax(a.salary);
-    });
-    return r;
-  }, [results, sortBy, expYearsFilter, locationFilter]);
-
   const employmentTypeOptions = useMemo(
     () => buildEmploymentTypeOptions(
       filterMeta.employment_types.length > 0
@@ -280,17 +259,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     [results, filterMeta.employment_types],
   );
 
-  const locationOptions = useMemo(() => {
-    const counts = {};
-    for (const job of results) {
-      const loc = (job.location || "").trim();
-      if (loc) counts[loc] = (counts[loc] || 0) + 1;
-    }
-    return Object.entries(counts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 12)
-      .map(([loc]) => loc);
-  }, [results]);
+  const locationOptions = (filterMeta.locations || []).slice(0, 12);
 
   const trackJob = async (scrapedJob) => {
     if (!user) {
@@ -576,6 +545,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     locationFilter.size > 0,
     String(minSalaryFilter).trim() !== "",
     sectorFilter !== "",
+    sourceFilter !== "",
     directEmployersOnly,
   ].filter(Boolean).length;
 
@@ -586,13 +556,17 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     setLocationFilter(new Set());
     setMinSalaryFilter("");
     setSectorFilter("");
+    setSourceFilter("");
     setDirectEmployersOnly(false);
     setExpandedJobId(null);
     loadJobs(activeSearchQuery, 1, {
       levelFilter: "all",
       employmentFilter: new Set(),
+      expYearsFilter: new Set(),
+      locationFilter: new Set(),
       minSalaryFilter: "",
       sectorFilter: "",
+      sourceFilter: "",
       directEmployersOnly: false,
     });
   };
@@ -631,6 +605,49 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           </button>
         </div>
       </div>
+
+      {/* Data Source */}
+      {(filterMeta.sources || []).length > 0 && (
+        <div>
+          <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Data Source</label>
+          <div className="space-y-0.5">
+            <label
+              className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${!sourceFilter ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+            >
+              <input
+                type="radio"
+                name="source"
+                checked={!sourceFilter}
+                onChange={() => {
+                  setSourceFilter("");
+                  loadJobs(activeSearchQuery, 1, { sourceFilter: "" });
+                }}
+                className="w-3.5 h-3.5 accent-[#384959]"
+              />
+              <span className="flex-1">All sources</span>
+            </label>
+            {filterMeta.sources.map((source) => (
+              <label
+                key={source.value}
+                className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${sourceFilter === source.value ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+              >
+                <input
+                  type="radio"
+                  name="source"
+                  checked={sourceFilter === source.value}
+                  onChange={() => {
+                    setSourceFilter(source.value);
+                    loadJobs(activeSearchQuery, 1, { sourceFilter: source.value });
+                  }}
+                  className="w-3.5 h-3.5 accent-[#384959]"
+                />
+                <span className="flex-1">{source.label || source.value}</span>
+                <span className="text-[11px] tabular-nums text-[#6A89A7]">{Number(source.count || 0).toLocaleString()}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Employer Type */}
       <div>
@@ -743,6 +760,38 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </div>
       )}
 
+      {/* Location */}
+      {locationOptions.length > 0 && (
+        <div>
+          <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Location</label>
+          <div className="space-y-0.5">
+            {locationOptions.map((location) => {
+              const active = locationFilter.has(location.value);
+              return (
+                <label
+                  key={location.value}
+                  className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${active ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    onChange={() => {
+                      const next = new Set(locationFilter);
+                      if (active) next.delete(location.value); else next.add(location.value);
+                      setLocationFilter(next);
+                      loadJobs(activeSearchQuery, 1, { locationFilter: next });
+                    }}
+                    className="w-3.5 h-3.5 accent-[#384959] rounded"
+                  />
+                  <span className="flex-1">{location.label || location.value}</span>
+                  <span className="text-[11px] tabular-nums text-[#6A89A7]">{Number(location.count || 0).toLocaleString()}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Experience Years */}
       <div>
         <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Experience</label>
@@ -761,6 +810,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                     const next = new Set(expYearsFilter);
                     if (active) next.delete(label); else next.add(label);
                     setExpYearsFilter(next);
+                    loadJobs(activeSearchQuery, 1, { expYearsFilter: next });
                   }}
                   className="w-3.5 h-3.5 accent-[#384959] rounded"
                 />
@@ -806,7 +856,10 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-1.5">Sort By</label>
         <select
           value={sortBy}
-          onChange={(e) => setSortBy(e.target.value)}
+          onChange={(e) => {
+            setSortBy(e.target.value);
+            loadJobs(activeSearchQuery, 1, { sortBy: e.target.value });
+          }}
           className="w-full text-sm border border-[#BDDDFC]/30 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
         >
           <option value="newest">Newest first</option>
@@ -969,7 +1022,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             variants={{ visible: { transition: { staggerChildren: 0.04 } } }}
             className="space-y-4"
           >
-          {filtered.map((job, index) => {
+          {results.map((job, index) => {
             const isExpanded = expandedJobId === job.id;
             const skillDisplay = buildJobSkillDisplay(job.jobTermsPreview?.length ? job.jobTermsPreview : job.skills, job.description);
             const parsedMeta = parsedJobMeta[job.id] || null;

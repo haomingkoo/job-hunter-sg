@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 import config as app_config
@@ -33,6 +33,13 @@ if not DATABASE_URL.startswith("sqlite"):
     )
 
 engine = create_engine(DATABASE_URL, **engine_kwargs)
+if DATABASE_URL.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
@@ -118,6 +125,15 @@ def _apply_lightweight_migrations() -> None:
             statements.append("ALTER TABLE users ADD COLUMN terms_accepted_at TIMESTAMP")
         if "privacy_accepted_at" not in user_columns:
             statements.append("ALTER TABLE users ADD COLUMN privacy_accepted_at TIMESTAMP")
+        if "email_verified_at" not in user_columns:
+            statements.append("ALTER TABLE users ADD COLUMN email_verified_at TIMESTAMP")
+        if "token_version" not in user_columns:
+            statements.append(
+                "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0"
+            )
+        statements.append(
+            "UPDATE users SET tier = 'user' WHERE tier NOT IN ('user', 'admin')"
+        )
 
     # tracked_jobs: new columns for resume versioning and stage history
     if "tracked_jobs" in inspector.get_table_names():
@@ -172,10 +188,7 @@ def _apply_lightweight_migrations() -> None:
 
     with engine.begin() as connection:
         for statement in statements:
-            try:
-                connection.execute(text(statement))
-            except Exception:
-                pass  # Skip if already applied
+            connection.execute(text(statement))
 
 
 def get_db() -> Generator[Session, None, None]:
