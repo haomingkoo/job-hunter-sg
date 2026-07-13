@@ -87,11 +87,12 @@ RECRUITER_DESCRIPTION_MARKERS = (
     "employment agency license",
 )
 
-RECRUITER_DESCRIPTION_SQL_MARKERS = RECRUITER_DESCRIPTION_MARKERS + (
-    "ea/ licence",
-    "ea/ license",
-    "employment agency (licence",
-    "employment agency (license",
+RECRUITER_DESCRIPTION_SQL_PATTERN = (
+    r"(^|[^a-z])(?:"
+    r"ea\s*[/|:]?\s*(?:licen[cs]e|no|personnel|registration|reg(?:istration)?\s*no)"
+    r"|eapersonnel"
+    r"|employment\s+agency\s*\(?\s*licen[cs]e"
+    r")\b"
 )
 
 
@@ -133,21 +134,6 @@ def _sql_phrase_condition(lowered_column, phrase: str):
     )
 
 
-def _sql_description_marker_condition(lowered_column, marker: str):
-    return or_(
-        lowered_column.like(f"{marker}%"),
-        lowered_column.like(f"% {marker}%"),
-        lowered_column.like(f"%({marker}%"),
-        lowered_column.like(f"%[{marker}%"),
-        lowered_column.like(f"%/{marker}%"),
-        lowered_column.like(f"%|{marker}%"),
-        lowered_column.like(f"%:{marker}%"),
-        lowered_column.like(f"%-{marker}%"),
-        lowered_column.like(f"%\n{marker}%"),
-        lowered_column.like(f"%\t{marker}%"),
-    )
-
-
 def direct_employer_condition(
     company_column,
     ssic_description_column=None,
@@ -161,8 +147,7 @@ def direct_employer_condition(
         recruiter_conditions.extend(ssic_lower.like(f"%{keyword}%") for keyword in RECRUITER_SSIC_KEYWORDS)
     if description_column is not None:
         description_lower = func.lower(func.coalesce(description_column, ""))
-        recruiter_conditions.extend(
-            _sql_description_marker_condition(description_lower, marker)
-            for marker in RECRUITER_DESCRIPTION_SQL_MARKERS
+        recruiter_conditions.append(
+            description_lower.regexp_match(RECRUITER_DESCRIPTION_SQL_PATTERN)
         )
     return ~or_(*recruiter_conditions)
