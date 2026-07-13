@@ -4,20 +4,19 @@ Playwright test: verify LaTeX PDF space-stripping fix.
 Creates a synthetic PDF where pdfplumber strips spaces (mimicking LaTeX behavior),
 uploads it to /api/resume/upload, and asserts that the parsed text has proper spaces.
 
-The fix has two components:
-1. _has_missing_spaces(): camelCase merge detection (e.g. 'VikneshJayaKumar')
-2. _extract_text_from_chars(): space insertion using char x-positions with a low
-   threshold (15% of avg char width) to catch tight LaTeX word spacing (1.5-2pt gaps)
+The parser uses pdfplumber's proportional x-tolerance to recognise tight word
+gaps without maintaining custom character-position reconstruction code.
 
 Run:
     /opt/anaconda3/bin/python3 tests/test_latex_pdf_fix.py
 """
 from __future__ import annotations
 
-import asyncio
 import io
 import os
 import sys
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
@@ -63,6 +62,11 @@ def _make_latex_style_pdf(word_gap: float = 2.0) -> bytes:
     c.showPage()
     c.save()
     return buf.getvalue()
+
+
+@pytest.fixture(scope="module")
+def pdf_bytes() -> bytes:
+    return _make_latex_style_pdf(word_gap=2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -128,26 +132,27 @@ def test_has_missing_spaces_detection(pdf_bytes: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 3: _extract_text_from_chars() restores spaces
+# Test 3: pdfplumber's proportional tolerance restores spaces
 # ---------------------------------------------------------------------------
 
 
-def test_char_level_fix_restores_spaces(pdf_bytes: bytes) -> None:
+def test_native_spacing_tolerance_restores_spaces(pdf_bytes: bytes) -> None:
     import pdfplumber
-    from resume_parser import _has_missing_spaces, _extract_text_from_chars
+    from resume_parser import PDF_X_TOLERANCE_RATIO, _has_missing_spaces
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        page = pdf.pages[0]
-        fixed = _extract_text_from_chars(page)
+        fixed = pdf.pages[0].extract_text(
+            x_tolerance_ratio=PDF_X_TOLERANCE_RATIO,
+        ) or ""
 
     print(f"  Fixed text sample: {fixed[:100]!r}")
     assert not _has_missing_spaces(fixed), (
-        f"_extract_text_from_chars() should restore spaces but got:\n{fixed[:300]!r}"
+        f"pdfplumber's native tolerance should restore spaces but got:\n{fixed[:300]!r}"
     )
     assert "Viknesh" in fixed and "Jaya" in fixed and "Kumar" in fixed, (
         f"Expected individual name tokens in fixed text, got: {fixed[:100]!r}"
     )
-    print("  [OK] _extract_text_from_chars() restored spaces")
+    print("  [OK] pdfplumber's native tolerance restored spaces")
 
 
 # ---------------------------------------------------------------------------
@@ -170,52 +175,36 @@ def test_end_to_end_parser(pdf_bytes: bytes) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 5: Playwright API test
+# Test 5: API test
 # ---------------------------------------------------------------------------
 
 
-async def test_api_upload(pdf_bytes: bytes) -> None:
-    """Upload the space-stripped PDF to the live API and verify the response."""
-    from playwright.async_api import async_playwright
+def test_api_upload(pdf_bytes: bytes) -> None:
+    """Upload the space-stripped PDF through the in-process API."""
+    from fastapi.testclient import TestClient
 
-    async with async_playwright() as pw:
-        request = await pw.request.new_context(base_url="http://localhost:8001")
-        try:
-            resp = await request.post(
-                "/api/resume/upload",
-                multipart={
-                    "file": {
-                        "name": "viknesh_resume.pdf",
-                        "mimeType": "application/pdf",
-                        "buffer": pdf_bytes,
-                    }
-                },
-            )
+    from main import app
 
-            assert resp.ok, (
-                f"Upload failed: HTTP {resp.status}\n{await resp.text()}"
-            )
-            body = await resp.json()
-            text: str = body.get("text", "")
+    resp = TestClient(app).post(
+        "/api/resume/upload",
+        files={"file": ("viknesh_resume.pdf", pdf_bytes, "application/pdf")},
+    )
 
-            print(f"  API response sample: {text[:120]!r}")
+    assert resp.is_success, f"Upload failed: HTTP {resp.status_code}\n{resp.text}"
+    body = resp.json()
+    text: str = body.get("text", "")
 
-            assert not _has_missing_spaces_str(text), (
-                f"API returned space-stripped text — fix not applied on server.\n"
-                f"Text: {text[:300]!r}"
-            )
-            print("  [OK] API returned properly spaced text")
+    print(f"  API response sample: {text[:120]!r}")
 
-            # Spot-check individual tokens are present and separated
-            for token in ["Viknesh", "Jaya", "Kumar"]:
-                assert token in text, (
-                    f"Token '{token}' missing from API response — may still be merged.\n"
-                    f"Text: {text[:200]!r}"
-                )
-            print("  [OK] Name tokens are individually present in API response")
-
-        finally:
-            await request.dispose()
+    assert not _has_missing_spaces_str(text), (
+        "API returned space-stripped text — fix not applied.\n"
+        f"Text: {text[:300]!r}"
+    )
+    for token in ["Viknesh", "Jaya", "Kumar"]:
+        assert token in text, (
+            f"Token '{token}' missing from API response — may still be merged.\n"
+            f"Text: {text[:200]!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -237,14 +226,14 @@ def main() -> None:
     print("\n[2] Detection: _has_missing_spaces() sees camelCase merges:")
     test_has_missing_spaces_detection(pdf_bytes)
 
-    print("\n[3] Fix: _extract_text_from_chars() restores spaces:")
-    test_char_level_fix_restores_spaces(pdf_bytes)
+    print("\n[3] Fix: pdfplumber's native spacing tolerance restores spaces:")
+    test_native_spacing_tolerance_restores_spaces(pdf_bytes)
 
     print("\n[4] End-to-end: extract_text_from_pdf():")
     test_end_to_end_parser(pdf_bytes)
 
-    print("\n[5] Playwright: live API upload and parse:")
-    asyncio.run(test_api_upload(pdf_bytes))
+    print("\n[5] In-process API upload and parse:")
+    test_api_upload(pdf_bytes)
 
     print("\n" + "=" * 65)
     print("ALL TESTS PASSED")

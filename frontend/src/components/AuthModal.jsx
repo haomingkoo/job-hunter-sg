@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { X, Briefcase, Loader2, Mail, KeyRound } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { X, Briefcase, Loader2, Mail, KeyRound, ShieldCheck } from "lucide-react";
 import { API_BASE } from "../lib/api.js";
 
 async function readAuthError(resp) {
@@ -16,8 +16,17 @@ async function readAuthError(resp) {
   return text || `Request failed (${resp.status})`;
 }
 
-export default function AuthModal({ onAuth, onClose, initialResetToken = "", onResetComplete }) {
-  const [mode, setMode] = useState(initialResetToken ? "reset" : "login");
+export default function AuthModal({
+  onAuth,
+  onClose,
+  authConfig = { mode: "password" },
+  cloudflareIdentityReady = false,
+  initialResetToken = "",
+  initialVerifyToken = "",
+  onResetComplete,
+  onVerifyComplete,
+}) {
+  const [mode, setMode] = useState(initialVerifyToken ? "verify" : initialResetToken ? "reset" : "login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -28,6 +37,14 @@ export default function AuthModal({ onAuth, onClose, initialResetToken = "", onR
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (initialResetToken) {
@@ -38,10 +55,38 @@ export default function AuthModal({ onAuth, onClose, initialResetToken = "", onR
     }
   }, [initialResetToken]);
 
+  useEffect(() => {
+    if (!initialVerifyToken) return;
+    setMode("verify");
+    setError("");
+    setSuccess("");
+  }, [initialVerifyToken]);
+
   const copy = useMemo(() => {
+    if (mode === "verify") {
+      return {
+        title: "Verify your email",
+        subtitle: "Choose the password for this account.",
+        icon: Mail,
+      };
+    }
+    if (mode === "signup-sent") {
+      return {
+        title: "Check your email",
+        subtitle: "Open the verification link to activate your account.",
+        icon: Mail,
+      };
+    }
+    if (authConfig.mode === "cloudflare") {
+      return {
+        title: "Continue with Cloudflare",
+        subtitle: "Verify your email, then create your Job Hunter SG account.",
+        icon: ShieldCheck,
+      };
+    }
     if (mode === "signup") {
       return {
-        title: "Create your free account",
+        title: "Create your account",
         subtitle: "Save applications, resumes, matches, and alert preferences.",
         icon: Briefcase,
       };
@@ -65,7 +110,7 @@ export default function AuthModal({ onAuth, onClose, initialResetToken = "", onR
       subtitle: "Sign in to continue your job search workspace.",
       icon: Briefcase,
     };
-  }, [mode]);
+  }, [authConfig.mode, loading, mode]);
 
   const switchMode = (nextMode) => {
     setMode(nextMode);
@@ -83,6 +128,28 @@ export default function AuthModal({ onAuth, onClose, initialResetToken = "", onR
     setSuccess("");
     setLoading(true);
     try {
+      if (mode === "verify") {
+        if (!initialVerifyToken) throw new Error("Verification link is missing. Request a new email.");
+        if (password !== confirmPassword) throw new Error("Passwords do not match.");
+        const resp = await fetch(`${API_BASE}/api/auth/verify-email`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            token: initialVerifyToken,
+            password,
+            name,
+            accepted_terms: acceptedTerms,
+          }),
+        });
+        if (!resp.ok) throw new Error(await readAuthError(resp));
+        const data = await resp.json();
+        if (!mountedRef.current) return;
+        localStorage.setItem("token", data.token);
+        onVerifyComplete?.();
+        onAuth(data.user, data.token);
+        return;
+      }
+
       if (mode === "forgot") {
         const resp = await fetch(`${API_BASE}/api/auth/forgot-password`, {
           method: "POST",
@@ -90,6 +157,7 @@ export default function AuthModal({ onAuth, onClose, initialResetToken = "", onR
           body: JSON.stringify({ email }),
         });
         if (!resp.ok) throw new Error(await readAuthError(resp));
+        if (!mountedRef.current) return;
         setSuccess("If that email is registered, a reset link has been sent.");
         return;
       }
@@ -103,12 +171,28 @@ export default function AuthModal({ onAuth, onClose, initialResetToken = "", onR
           body: JSON.stringify({ token: resetToken, password: newPassword }),
         });
         if (!resp.ok) throw new Error(await readAuthError(resp));
+        if (!mountedRef.current) return;
         setSuccess("Password updated. Sign in with your new password.");
         setResetToken("");
         setNewPassword("");
         setConfirmPassword("");
         setMode("login");
         onResetComplete?.();
+        return;
+      }
+
+      if (authConfig.mode === "cloudflare") {
+        const resp = await fetch(`${API_BASE}/api/auth/cloudflare/register`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, accepted_terms: acceptedTerms }),
+        });
+        if (!resp.ok) throw new Error(await readAuthError(resp));
+        const data = await resp.json();
+        if (!mountedRef.current) return;
+        localStorage.removeItem("token");
+        onAuth(data, null);
         return;
       }
 
@@ -119,14 +203,53 @@ export default function AuthModal({ onAuth, onClose, initialResetToken = "", onR
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!resp.ok) throw new Error(await readAuthError(resp));
+      if (!resp.ok) {
+        const message = await readAuthError(resp);
+        if (mode === "login" && resp.status === 403) {
+          setPassword("");
+          setMode("signup-sent");
+          setError(message);
+          return;
+        }
+        throw new Error(message);
+      }
+      if (mode === "signup") {
+        const data = await resp.json();
+        if (!mountedRef.current) return;
+        setPassword("");
+        setMode("signup-sent");
+        setSuccess(data.message || "Check your email for a verification link before signing in.");
+        return;
+      }
       const data = await resp.json();
+      if (!mountedRef.current) return;
       localStorage.setItem("token", data.token);
       onAuth(data.user, data.token);
     } catch (err) {
-      setError(err.message);
+      if (mountedRef.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
+    }
+  };
+
+  const resendVerification = async () => {
+    setError("");
+    setSuccess("");
+    setLoading(true);
+    try {
+      const resp = await fetch(`${API_BASE}/api/auth/resend-verification`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      if (!resp.ok) throw new Error(await readAuthError(resp));
+      await resp.json();
+      if (!mountedRef.current) return;
+      setSuccess("If your account is awaiting verification, a new link has been sent.");
+    } catch (err) {
+      if (mountedRef.current) setError(err.message);
+    } finally {
+      if (mountedRef.current) setLoading(false);
     }
   };
 
@@ -135,7 +258,7 @@ export default function AuthModal({ onAuth, onClose, initialResetToken = "", onR
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}>
       <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 relative">
-        {onClose && <button onClick={onClose} className="absolute top-4 right-4 text-[#6A89A7] hover:text-[#384959]"><X size={20} /></button>}
+        {onClose && <button type="button" aria-label="Close" onClick={onClose} className="absolute top-4 right-4 text-[#6A89A7] hover:text-[#384959]"><X size={20} /></button>}
         <div className="text-center mb-6">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Icon size={24} className="text-[#384959]" />
@@ -156,44 +279,80 @@ export default function AuthModal({ onAuth, onClose, initialResetToken = "", onR
           </div>
         )}
 
+        {mode === "signup-sent" ? (
+          <div className="space-y-3">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={resendVerification}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#384959] py-2.5 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-50"
+            >
+              {loading && <Loader2 size={14} className="animate-spin" />}
+              Resend Verification Email
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode("login")}
+              className="w-full text-sm font-medium text-[#384959] hover:underline"
+            >
+              Back to Sign In
+            </button>
+          </div>
+        ) : authConfig.mode === "cloudflare" && authConfig.cloudflare_login_url && !cloudflareIdentityReady ? (
+          <a
+            href={authConfig.cloudflare_login_url}
+            className="block w-full rounded-lg bg-[#384959] py-2.5 text-center text-sm font-medium text-white transition hover:bg-[#2d3a47]"
+          >
+            Continue with Cloudflare
+          </a>
+        ) : (
         <form onSubmit={handleSubmit} className="space-y-4">
-          {mode === "signup" && (
+          {(mode === "signup" || mode === "verify" || authConfig.mode === "cloudflare") && (
             <input
-              type="text" placeholder="Full Name" value={name}
+              type="text" aria-label="Full name" placeholder="Full Name" value={name}
               onChange={(e) => setName(e.target.value)} required
               autoComplete="name"
               className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
             />
           )}
 
-          {(mode === "login" || mode === "signup" || mode === "forgot") && (
+          {authConfig.mode === "password" && (mode === "login" || mode === "signup" || mode === "forgot") && (
             <input
-              type="email" placeholder="Email" value={email}
+              type="email" aria-label="Email" placeholder="Email" value={email}
               onChange={(e) => setEmail(e.target.value)} required
               autoComplete="email"
               className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
             />
           )}
 
-          {(mode === "login" || mode === "signup") && (
+          {authConfig.mode === "password" && (mode === "login" || mode === "signup" || mode === "verify") && (
             <input
-              type="password" placeholder="Password" value={password}
+              type="password" aria-label="Password" placeholder={mode === "verify" ? "Choose password" : "Password"} value={password}
               onChange={(e) => setPassword(e.target.value)} required minLength={8}
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              autoComplete={mode === "signup" || mode === "verify" ? "new-password" : "current-password"}
               className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
             />
           )}
 
-          {mode === "reset" && (
+          {authConfig.mode === "password" && mode === "verify" && (
+            <input
+              type="password" aria-label="Confirm password" placeholder="Confirm password" value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)} required minLength={8}
+              autoComplete="new-password"
+              className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
+            />
+          )}
+
+          {authConfig.mode === "password" && mode === "reset" && (
             <>
               <input
-                type="password" placeholder="New password" value={newPassword}
+                type="password" aria-label="New password" placeholder="New password" value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)} required minLength={8}
                 autoComplete="new-password"
                 className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
               />
               <input
-                type="password" placeholder="Confirm new password" value={confirmPassword}
+                type="password" aria-label="Confirm new password" placeholder="Confirm new password" value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)} required minLength={8}
                 autoComplete="new-password"
                 className="w-full border border-[#BDDDFC]/30 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
@@ -201,7 +360,7 @@ export default function AuthModal({ onAuth, onClose, initialResetToken = "", onR
             </>
           )}
 
-          {mode === "signup" && (
+          {(mode === "signup" || mode === "verify" || authConfig.mode === "cloudflare") && (
             <label className="flex items-start gap-3 rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3 text-left">
               <input
                 type="checkbox"
@@ -227,19 +386,23 @@ export default function AuthModal({ onAuth, onClose, initialResetToken = "", onR
           <button type="submit" disabled={loading}
             className="w-full bg-[#384959] text-white py-2.5 rounded-lg text-sm font-medium hover:bg-[#2d3a47] disabled:opacity-50 transition flex items-center justify-center gap-2 active:scale-[0.98]">
             {loading && <Loader2 size={14} className="animate-spin" />}
-            {mode === "login" && "Sign In"}
+            {authConfig.mode === "cloudflare" && "Create Account"}
+            {authConfig.mode === "password" && mode === "login" && "Sign In"}
             {mode === "signup" && "Create Account"}
+            {mode === "verify" && "Activate Account"}
             {mode === "forgot" && "Send Reset Link"}
             {mode === "reset" && "Update Password"}
           </button>
         </form>
+        )}
 
-        {mode === "signup" && (
+        {(mode === "signup" || (authConfig.mode === "cloudflare" && (cloudflareIdentityReady || !authConfig.cloudflare_login_url))) && (
           <p className="text-xs text-[#6A89A7] text-center mt-3">
             This is a hobby project. Resume feedback, job matching, and alerts are informational and may be wrong.
           </p>
         )}
 
+        {authConfig.mode === "password" && mode !== "verify" && mode !== "signup-sent" && (
         <div className="text-center mt-4 space-y-2">
           {mode === "login" && (
             <button onClick={() => switchMode("forgot")} className="block w-full text-sm text-[#6A89A7] hover:text-[#384959] hover:underline">
@@ -258,6 +421,7 @@ export default function AuthModal({ onAuth, onClose, initialResetToken = "", onR
             </button>
           )}
         </div>
+        )}
       </div>
     </div>
   );

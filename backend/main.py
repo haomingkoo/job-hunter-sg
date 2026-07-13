@@ -7,45 +7,57 @@ from __future__ import annotations
 import csv
 import html
 import hashlib
+import ipaddress
 import io
 import json
 import logging
 import os
+import queue
 import sys
 import time
 import concurrent.futures
 import re
 import secrets
 import threading
+import weakref
 from collections import Counter
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from pathlib import Path
 
-from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import case, func, or_, text
+from sqlalchemy import and_, case, func, or_, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, load_only
+from starlette.concurrency import run_in_threadpool
+from starlette.routing import Route
 
 from auth import (
-    TIER_LIMITS,
-    _PRO_DOMAINS,
+    CLOUDFLARE_PASSWORD_SENTINEL,
+    auth_config,
     check_login_rate_limit,
     check_rate_limit,
     create_token,
+    get_account_limits,
     get_current_user,
+    get_cloudflare_email,
     get_optional_user,
     hash_password,
+    is_production_environment,
+    password_auth_enabled,
+    validate_cloudflare_unsafe_origin,
     validate_password,
     verify_password,
+    verify_password_or_dummy,
 )
 from database import SessionLocal, get_db, init_db
-from email_service import send_email, smtp_configured
+from email_service import email_configured, send_email
 from employer_filter import direct_employer_condition, is_recruitment_employer
 from job_precompute import (
     apply_job_precomputes as _apply_job_precomputes,
@@ -53,24 +65,36 @@ from job_precompute import (
 )
 from job_alerts import verify_unsubscribe_token
 from job_store import find_existing_scraped_job
+from job_visibility import apply_public_job_visibility
 from legal_pages import render_privacy_html, render_terms_html
 from models import (
+    EmailVerificationToken,
+    InterviewStory,
     JobAlertDelivery,
     JobAlertPreference,
     PasswordResetToken,
     PowerMatchSnapshot,
+    ResumeVersion,
     ScrapedJob,
+    StoryUsage,
+    TailoredResume,
     TrackedJob,
     UsageLog,
     User,
     UserMemory,
+    ResumeVersion,
 )
 from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
 from schemas import (
+    ApplicationWorkspaceCreate,
+    ApplicationWorkspaceOut,
     ApplicationPackRequest,
     AuthResponse,
+    ChangePasswordRequest,
+    CloudflareRegisterRequest,
     ContactRequest,
     CoverLetterRequest,
+    DeleteAccountRequest,
     ForgotPasswordRequest,
     IntegrateKeywordsRequest,
     JobAlertPreferenceOut,
@@ -79,14 +103,15 @@ from schemas import (
     JobOut,
     LoginRequest,
     RegenerateSummaryRequest,
+    ResendVerificationRequest,
     ResetPasswordRequest,
     ResumeScoreRequest,
     RewriteBulletRequest,
     SearchResponse,
     SkillsFutureRecommendRequest,
     SignupRequest,
-    TierInfo,
     TrackedJobCreate,
+    VerifyEmailRequest,
     TrackedJobOut,
     TrackedJobUpdate,
     UserOut,
@@ -94,15 +119,26 @@ from schemas import (
 from ai_service import SEALION_MODEL, _call_sealion, apply_uk_spelling, coach_resume, get_ai_health, get_ai_status, integrate_keywords, rewrite_bullet
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms, merge_job_terms_with_match
 from career_agent import build_application_pack
-from resume_parser import parse_resume
+from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
+from resume_parser import MAX_FILE_SIZE, parse_resume_isolated
 from resume_scorer import ResumeScorer
 from resume_templates import generate_docx, inspect_resume_export, list_templates
 from skill_extractor import extract_skill_phrases
-from scraper import CareersGovScraper, JobAggregator, SSGSkillsFrameworkAPI, _clean_html
+from scraper import CareersGovScraper, JobAggregator, _clean_html
 from skillsfuture_courses import recommend_courses_for_skills
-from tailoring_pipeline import get_pipeline_state, run_pipeline
+from tailoring_pipeline import (
+    PipelineCapacityError,
+    get_pipeline_state,
+    owner_has_active_pipelines,
+    run_pipeline,
+)
+from validation_gates import numeric_metric_claims_verifiable
 from jd_preparser import preparse_job_description as preparse_jd
 from jd_summary import summarize_job_description
+from mcp_public import create_mcp as create_public_mcp
+from security import FixedWindowRateLimiter, RequestBodyLimitMiddleware, SecurityHeadersMiddleware
+import config as app_config
+import application_workspace as workspace_module
 
 # Route Python logs to stdout so Railway tags them [inf] instead of [err].
 # force=True overrides any basicConfig set at import time by CLI modules
@@ -117,30 +153,35 @@ logging.basicConfig(
 
 log = logging.getLogger("jobhunter")
 
-# Disable OpenAPI docs in production to reduce attack surface
-_is_production = "postgresql" in os.environ.get("DATABASE_URL", "")
+# Disable development defaults in production. Railway presence fails closed
+# even before APP_ENV is configured.
+_is_production = is_production_environment()
 
-_CAREERSGOV_PATH_RE = re.compile(r"/en-US/PublicServiceCareers(/job/.+)$")
+_CAREERSGOV_PATH_RE = re.compile(r"(?:/en-US/PublicServiceCareers(/job/.+)$|(/jobs/hrp/[^?#]+))")
 _JD_ENRICHMENT_IN_FLIGHT: set[int] = set()
 _JD_ENRICHMENT_LOCK = threading.Lock()
-_JD_ENRICHMENT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=3)
-_FAILED_RETRY_SECONDS = 300  # retry failed/unavailable summaries after 5 min
-_STARTUP_ANALYTICS_WARM_DELAY_SECONDS = 5
-_STARTUP_MAINTENANCE_WARM_WAIT_SECONDS = 300
+_JD_ENRICHMENT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=app_config.JD_ENRICHMENT_MAX_WORKERS)
+_FAILED_RETRY_SECONDS = app_config.FAILED_SUMMARY_RETRY_SECONDS
+_STARTUP_ANALYTICS_WARM_DELAY_SECONDS = app_config.STARTUP_ANALYTICS_WARM_DELAY_SECONDS
+_STARTUP_MAINTENANCE_WARM_WAIT_SECONDS = app_config.STARTUP_MAINTENANCE_WARM_WAIT_SECONDS
 
 # ── Cached filter metadata (avoid 3 GROUP BY queries per page 1 load) ────────
 _filter_meta_cache: dict = {}
 _filter_meta_ts: float = 0.0
-_FILTER_META_TTL = 300  # 5 minutes
+_filter_meta_marker: str = ""
+_FILTER_META_TTL = app_config.ANALYTICS_FILTER_META_TTL_SECONDS
 
 # ── Cached analytics/skills response (avoid 70K row scan per request) ─────────
 _analytics_cache: dict | None = None
 _analytics_cache_ts: float = 0
-_ANALYTICS_CACHE_TTL = 86400  # 24 hours - refreshed daily, invalidated on new scrape
+_ANALYTICS_CACHE_TTL = app_config.ANALYTICS_CACHE_TTL_SECONDS
 _analytics_query_cache: dict[tuple, tuple[float, dict]] = {}
-_ANALYTICS_QUERY_CACHE_TTL = 3600
-_ANALYTICS_QUERY_CACHE_MAX = 64
+_ANALYTICS_QUERY_CACHE_TTL = app_config.ANALYTICS_QUERY_CACHE_TTL_SECONDS
+_ANALYTICS_QUERY_CACHE_MAX = app_config.ANALYTICS_QUERY_CACHE_MAX
+_ANALYTICS_MAX_ROWS = app_config.ANALYTICS_MAX_ROWS
+_ANALYTICS_YIELD_PER = app_config.ANALYTICS_YIELD_PER
 _ANALYTICS_CACHE_LOCK = threading.Lock()
+_ANALYTICS_COMPUTE_SLOTS = threading.BoundedSemaphore(2)
 _analytics_cache_generation = 0
 _ANALYTICS_UNCLASSIFIED_SECTOR = "Unclassified"
 _ANALYTICS_SALARY_MAX = 1_000_000
@@ -161,15 +202,73 @@ _ANALYTICS_MARKET_MOVER_LIMIT = 8
 _ANALYTICS_LABEL_MOVER_MIN_COUNT = 3
 _ANALYTICS_LABEL_MOVER_MIN_SHARE = 0.002
 _ANALYTICS_SOURCE_OTHER_LABEL = "Unknown"
+jobhunter_mcp = create_public_mcp()
+_PUBLIC_RATE_LIMITER = FixedWindowRateLimiter()
+_AI_QUOTA_LOCK = threading.Lock()
+_ACCOUNT_STORAGE_LOCK = threading.Lock()
+_ACCOUNT_LIFECYCLE_LOCKS = weakref.WeakValueDictionary()
+_ACCOUNT_LIFECYCLE_LOCKS_GUARD = threading.Lock()
+_CREDENTIAL_MUTATION_LOCK = threading.Lock()
+_RESUME_PARSE_SLOTS = threading.BoundedSemaphore(1)
+_COURSE_RECOMMEND_SLOTS = threading.BoundedSemaphore(2)
+_SEED_RUN_LOCK = threading.Lock()
+_TRUST_CLOUDFLARE_IP_HEADER = os.environ.get(
+    "TRUST_CLOUDFLARE_IP_HEADER",
+    "0",
+).strip().lower() in {"1", "true", "yes"}
+_MCP_REQUESTS_PER_MINUTE = int(os.environ.get("MCP_REQUESTS_PER_MINUTE", "60"))
+
+
+class _ASGIProxy:
+    def __init__(self):
+        self.target = None
+
+    async def __call__(self, scope, receive, send):
+        expected_key = os.environ.get("MCP_API_KEY", "").strip()
+        if not expected_key:
+            await Response("MCP endpoint is disabled", status_code=503)(scope, receive, send)
+            return
+        headers = dict(scope.get("headers") or [])
+        authorization = headers.get(b"authorization", b"").decode("latin-1")
+        scheme, _, provided_key = authorization.partition(" ")
+        if scheme.lower() != "bearer" or not secrets.compare_digest(provided_key, expected_key):
+            await Response(
+                "MCP authentication required",
+                status_code=401,
+                headers={"WWW-Authenticate": "Bearer"},
+            )(scope, receive, send)
+            return
+        client = scope.get("client") or ("unknown", 0)
+        if not _PUBLIC_RATE_LIMITER.allow(
+            f"mcp:{client[0]}",
+            limit=_MCP_REQUESTS_PER_MINUTE,
+            window_seconds=60,
+        ):
+            await Response("MCP rate limit exceeded", status_code=429, headers={"Retry-After": "60"})(
+                scope, receive, send
+            )
+            return
+        if self.target is None:
+            await Response("MCP endpoint is starting", status_code=503)(scope, receive, send)
+            return
+        await self.target(scope, receive, send)
+
+
+_mcp_exact_proxy = _ASGIProxy()
+_mcp_mount_proxy = _ASGIProxy()
 
 
 def _clear_analytics_cache() -> None:
     global _analytics_cache, _analytics_cache_ts, _analytics_cache_generation
+    global _filter_meta_cache, _filter_meta_ts, _filter_meta_marker
     with _ANALYTICS_CACHE_LOCK:
         _analytics_cache = None
         _analytics_cache_ts = 0
         _analytics_query_cache.clear()
         _analytics_cache_generation += 1
+        _filter_meta_cache = {}
+        _filter_meta_ts = 0.0
+        _filter_meta_marker = ""
 
 
 def _store_analytics_query_cache(cache_key: tuple, cache_ts: float, result: dict, generation: int) -> None:
@@ -186,6 +285,19 @@ def _store_analytics_query_cache(cache_key: tuple, cache_ts: float, result: dict
             oldest_key = min(_analytics_query_cache, key=lambda key: _analytics_query_cache[key][0])
             _analytics_query_cache.pop(oldest_key, None)
         _analytics_query_cache[cache_key] = (cache_ts, result)
+
+
+def _admit_analytics_request():
+    if not _ANALYTICS_COMPUTE_SLOTS.acquire(blocking=False):
+        raise HTTPException(
+            status_code=503,
+            detail="Analytics is busy. Try again shortly.",
+            headers={"Retry-After": "2"},
+        )
+    try:
+        yield
+    finally:
+        _ANALYTICS_COMPUTE_SLOTS.release()
 
 # ── Per-user power-match cache (avoid recomputing every request) ──────────────
 _power_match_cache: dict[int, dict] = {}
@@ -207,22 +319,23 @@ async def lifespan(application: FastAPI):
     from database import SessionLocal
     startup_maintenance_done = threading.Event()
 
-    # Auto-cleanup jobs older than 30 days (run in background to not block health check)
+    # Retire jobs older than 30 days (run in background to not block health check).
+    # Keep rows because user-owned records can reference them.
     def _startup_maintenance() -> None:
         try:
             db = SessionLocal()
             cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-            stale = db.query(ScrapedJob).filter(
-                ScrapedJob.scraped_at < cutoff.isoformat()
-            ).count()
+            stale_query = db.query(ScrapedJob).filter(
+                ScrapedJob.hidden == 0,
+                ScrapedJob.scraped_at < cutoff.isoformat(),
+            )
+            stale = stale_query.count()
             if stale > 0:
-                log.info(f"[STARTUP] Cleaning up {stale} stale jobs...")
-                db.query(ScrapedJob).filter(
-                    ScrapedJob.scraped_at < cutoff.isoformat()
-                ).delete()
+                log.info(f"[STARTUP] Retiring {stale} stale jobs...")
+                stale_query.update({ScrapedJob.hidden: 1}, synchronize_session=False)
                 db.commit()
                 _clear_analytics_cache()
-                log.info(f"[STARTUP] Cleaned up {stale} stale jobs")
+                log.info(f"[STARTUP] Retired {stale} stale jobs")
             db.close()
         except Exception as e:
             log.warning(f"[STARTUP] Stale job cleanup failed: {e}")
@@ -272,14 +385,20 @@ async def lifespan(application: FastAPI):
     # Auto-create admin account if configured
     try:
         db2 = SessionLocal()
-        admin_email = os.environ.get("ADMIN_EMAIL", "")
+        admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
         admin_pw = os.environ.get("ADMIN_PASSWORD", "")
-        if admin_email and admin_pw and not db2.query(User).filter(User.email == admin_email).first():
+        if (
+            password_auth_enabled()
+            and admin_email
+            and admin_pw
+            and not db2.query(User).filter(User.email == admin_email).first()
+        ):
             admin = User(
                 email=admin_email,
                 password_hash=hash_password(admin_pw),
                 name="Admin",
                 tier="admin",
+                email_verified_at=datetime.now(timezone.utc),
             )
             db2.add(admin)
             db2.commit()
@@ -386,13 +505,29 @@ async def lifespan(application: FastAPI):
             import requests as _req
             port = int(os.environ.get("PORT", 8000))
             _req.get(f"http://127.0.0.1:{port}/api/analytics/skills?limit=50", timeout=60)
+            _req.get(f"http://127.0.0.1:{port}/api/analytics/trends?weeks=52", timeout=60)
             log.info("[STARTUP] Analytics cache warmed")
         except Exception as exc:
             log.warning(f"[STARTUP] Analytics warm failed: {exc}")
 
     threading.Thread(target=_warm_analytics, daemon=True).start()
 
-    yield  # App is running
+    global jobhunter_mcp
+    jobhunter_mcp = create_public_mcp()
+    mcp_http_app = jobhunter_mcp.streamable_http_app()
+    mcp_root_route = next(
+        route for route in mcp_http_app.routes
+        if getattr(route, "path", None) == "/"
+    )
+    _mcp_exact_proxy.target = mcp_root_route.endpoint
+    _mcp_mount_proxy.target = mcp_http_app
+
+    try:
+        async with jobhunter_mcp.session_manager.run():
+            yield  # App is running
+    finally:
+        _mcp_exact_proxy.target = None
+        _mcp_mount_proxy.target = None
 
     _idle_filler_stop.set()
 
@@ -408,6 +543,14 @@ app = FastAPI(
     docs_url=None if _is_production else "/docs",
     redoc_url=None if _is_production else "/redoc",
     openapi_url=None if _is_production else "/openapi.json",
+)
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    default_max_bytes=1024 * 1024,
+    path_limits={
+        "/api/resume/upload": MAX_FILE_SIZE + 256 * 1024,
+        "/api/applications/workspaces/*": MAX_FILE_SIZE + 256 * 1024,
+    },
 )
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
@@ -428,13 +571,36 @@ app.add_middleware(
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "MCP-Protocol-Version",
+        "Mcp-Session-Id",
+        "Last-Event-ID",
+    ],
 )
+
+
+@app.middleware("http")
+async def reject_cross_site_cloudflare_writes(request: Request, call_next):
+    try:
+        validate_cloudflare_unsafe_origin(
+            request.method,
+            request.headers.get("origin"),
+        )
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    return await call_next(request)
+
+
+# Streamable HTTP MCP endpoint. In production this uses the same Railway
+# DATABASE_URL-backed SQLAlchemy engine as the API, without exposing DB creds.
+app.router.routes.append(Route("/mcp", endpoint=_mcp_exact_proxy, name="jobhunter-mcp-exact"))
+app.mount("/mcp", _mcp_mount_proxy, name="jobhunter-mcp")
 
 # ── Singletons ───────────────────────────────────────────────────────────────
 
 aggregator = JobAggregator()
-ssg_api = SSGSkillsFrameworkAPI()
 _scorer = ResumeScorer()
 
 POWER_SKILL_TERMS = {
@@ -846,7 +1012,9 @@ def _persist_resume_to_memory(user: Optional[User], db: Session, resume_text: st
 
 def _extract_careersgov_external_path(url: str) -> str:
     match = _CAREERSGOV_PATH_RE.search(url or "")
-    return match.group(1) if match else ""
+    if not match:
+        return ""
+    return next((part for part in match.groups() if part), "")
 
 
 def _extract_careersgov_skills(detail: dict) -> list[str]:
@@ -1159,82 +1327,6 @@ def _enrich_careersgov_job(job: ScrapedJob, db: Session) -> bool:
     return updated
 
 
-def _hydrate_missing_careersgov_jobs(jobs: list, db: Session) -> int:
-    target_ids: list[int] = []
-    for job in jobs:
-        source = getattr(job, "source", None)
-        description = getattr(job, "description", None)
-        job_id = getattr(job, "id", None)
-        skills = getattr(job, "skills", None)
-        parsed_jd = getattr(job, "parsed_jd", None)
-        if (
-            source == "Careers@Gov"
-            and job_id is not None
-            and (
-                not (description or "").strip()
-                or not (skills or [])
-                or parsed_jd in (None, {})
-            )
-        ):
-            target_ids.append(job_id)
-    if not target_ids:
-        return 0
-
-    targets = (
-        db.query(ScrapedJob)
-        .filter(ScrapedJob.id.in_(target_ids))
-        .all()
-    )
-    if not targets:
-        return 0
-
-    log.info("Hydrating %s Careers@Gov jobs with missing descriptions", len(targets))
-    detail_results: dict[int, dict] = {}
-
-    with ThreadPoolExecutor(max_workers=min(4, len(targets))) as pool:
-        future_map = {}
-        for job in targets:
-            external_path = _extract_careersgov_external_path(job.url or "")
-            if not external_path:
-                continue
-            future = pool.submit(CareersGovScraper().get_job_detail, external_path)
-            future_map[future] = job.id
-
-        for future in as_completed(future_map):
-            job_id = future_map[future]
-            try:
-                detail_results[job_id] = future.result() or {}
-            except Exception as exc:
-                log.warning("Careers@Gov hydration failed for job_id=%s: %s", job_id, exc)
-
-    updated = 0
-    for job in targets:
-        detail = detail_results.get(job.id)
-        if not detail:
-            continue
-        description = _clean_html(detail.get("jobDescription", ""))
-        if description:
-            job.description = description
-        skills = _extract_careersgov_skills(detail)
-        if skills:
-            job.skills = skills
-        agency = detail.get("companyName", "") or detail.get("company", "")
-        if agency:
-            job.agency = agency
-        if description:
-            skills_list = job.skills if isinstance(job.skills, list) else []
-            job.parsed_jd = preparse_jd(description, skills=skills_list)
-        expected_sort = _posted_sort_iso(job.posted_date, job.scraped_at)
-        if expected_sort != (job.posted_at_sort or ""):
-            job.posted_at_sort = expected_sort
-        updated += 1
-
-    if updated:
-        db.commit()
-        log.info("Hydrated %s Careers@Gov jobs on-demand", updated)
-    return updated
-
-
 def _extract_resume_skills(resume_text: str, db: Session) -> tuple[list[str], str]:
     lower_text = resume_text.lower()
     extracted = extract_skill_phrases(
@@ -1294,10 +1386,15 @@ def _select_power_match_candidates(
             ScrapedJob.job_terms_preview,
             ScrapedJob.skills_flat,
         )
-    ).filter(ScrapedJob.hidden == 0)
+    )
+    base_query = apply_public_job_visibility(base_query)
     if direct_employers_only:
         base_query = base_query.filter(
-            direct_employer_condition(ScrapedJob.company, ScrapedJob.company_ssic_description)
+            direct_employer_condition(
+                ScrapedJob.company,
+                ScrapedJob.company_ssic_description,
+                ScrapedJob.description,
+            )
         )
     hard_resume_terms = [
         skill for skill in resume_skills
@@ -1349,15 +1446,12 @@ def _resume_snapshot_hash(resume_text: str) -> str:
 
 
 def _job_corpus_marker(db: Session) -> str:
-    count, max_id, max_scraped_at = (
-        db.query(
-            func.count(ScrapedJob.id),
-            func.max(ScrapedJob.id),
-            func.max(ScrapedJob.scraped_at),
-        )
-        .filter(ScrapedJob.hidden == 0)
-        .one()
+    corpus_query = db.query(
+        func.count(ScrapedJob.id),
+        func.max(ScrapedJob.id),
+        func.max(ScrapedJob.scraped_at),
     )
+    count, max_id, max_scraped_at = apply_public_job_visibility(corpus_query).one()
     return f"{int(count or 0)}:{int(max_id or 0)}:{max_scraped_at or ''}"
 
 
@@ -1577,7 +1671,7 @@ def _require_admin(authorization: Optional[str]) -> None:
         parts = authorization.split()
         if len(parts) == 2 and parts[0].lower() == "bearer":
             token = parts[1]
-    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
+    if not _ADMIN_API_KEY or not secrets.compare_digest(token, _ADMIN_API_KEY):
         raise HTTPException(status_code=403, detail="Invalid admin API key")
 
 
@@ -1779,6 +1873,26 @@ def admin_stats(
     }
 
 
+def _start_seed_task(target) -> bool:
+    if not _SEED_RUN_LOCK.acquire(blocking=False):
+        return False
+
+    def guarded_target() -> None:
+        try:
+            target()
+        except Exception:
+            log.exception("Background seed failed")
+        finally:
+            _SEED_RUN_LOCK.release()
+
+    try:
+        threading.Thread(target=guarded_target, daemon=True).start()
+    except Exception:
+        _SEED_RUN_LOCK.release()
+        raise
+    return True
+
+
 @app.post("/api/admin/seed")
 def admin_seed_jobs(
     body: dict,
@@ -1791,16 +1905,8 @@ def admin_seed_jobs(
 
     Can be called by a Railway cron job or manually.
     """
-    # Check admin API key
-    token = ""
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            token = parts[1]
-    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid admin API key")
+    _require_admin(authorization)
 
-    import threading
     from seed_jobs import seed_jobs, crawl_all_jobs
 
     if body.get("full"):
@@ -1809,7 +1915,8 @@ def admin_seed_jobs(
             crawl_all_jobs()
             _clear_analytics_cache()
 
-        threading.Thread(target=run_full_crawl, daemon=True).start()
+        if not _start_seed_task(run_full_crawl):
+            raise HTTPException(status_code=409, detail="A seed is already running")
         return {"status": "started", "mode": "full_crawl", "message": "Full crawl started in background"}
     elif body.get("careersgov_only"):
         # Quick refresh: CareersGov only via OpenGovSG JSON (~3 seconds)
@@ -1869,7 +1976,8 @@ def admin_seed_jobs(
                 log.error(f"[CareersGov] Refresh failed, rolled back: {e}")
             finally:
                 db.close()
-        threading.Thread(target=run_cgov, daemon=True).start()
+        if not _start_seed_task(run_cgov):
+            raise HTTPException(status_code=409, detail="A seed is already running")
         return {"status": "started", "mode": "careersgov_only", "message": "CareersGov refresh started (~3s)"}
     else:
         sources = body.get("sources", "mcf,careersgov").split(",")
@@ -1881,7 +1989,8 @@ def admin_seed_jobs(
             if stats.get("new_jobs") or stats.get("updated_jobs"):
                 _clear_analytics_cache()
 
-        threading.Thread(target=run_seed, daemon=True).start()
+        if not _start_seed_task(run_seed):
+            raise HTTPException(status_code=409, detail="A seed is already running")
         return {"status": "started", "mode": "keyword_seed", "sources": sources, "limit": limit}
 
 
@@ -1915,13 +2024,7 @@ def admin_backfill_status(
     Get enrichment status. Protected by ADMIN_API_KEY.
     Returns progress, coverage stats, and ETA.
     """
-    token = ""
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            token = parts[1]
-    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid admin API key")
+    _require_admin(authorization)
 
     from database import SessionLocal as _SessionLocal
     db = _SessionLocal()
@@ -1979,13 +2082,7 @@ def admin_jd_analysis(
     Get flagged JDs and quality stats. Protected by ADMIN_API_KEY.
     flag_type: "all", "injection", "red_flag", "low_quality", "duplicates"
     """
-    token = ""
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            token = parts[1]
-    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid admin API key")
+    _require_admin(authorization)
 
     from jd_analyzer import compute_content_hash
 
@@ -2099,13 +2196,7 @@ def admin_backfill_enrichment(
            {summary_limit: 500} -- limit summary generation count
            {}                   -- full backfill (preview + all summaries)
     """
-    token = ""
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            token = parts[1]
-    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid admin API key")
+    _require_admin(authorization)
 
     with _backfill_progress_lock:
         if _backfill_progress.get("running"):
@@ -2159,13 +2250,7 @@ def admin_backfill_embeddings(
     authorization: Optional[str] = Header(None),
 ) -> dict:
     """Trigger embedding backfill for all jobs. Protected by ADMIN_API_KEY."""
-    token = ""
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            token = parts[1]
-    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid admin API key")
+    _require_admin(authorization)
 
     if _embedding_backfill_progress.get("running"):
         return {"status": "already_running", **_embedding_backfill_progress}
@@ -2235,8 +2320,11 @@ def admin_backfill_embeddings(
 
 
 @app.get("/api/admin/backfill-embeddings/status")
-def admin_backfill_embeddings_status() -> dict:
+def admin_backfill_embeddings_status(
+    authorization: Optional[str] = Header(None),
+) -> dict:
     """Check embedding backfill progress."""
+    _require_admin(authorization)
     return dict(_embedding_backfill_progress)
 
 
@@ -2250,13 +2338,7 @@ def admin_rebuild_skills_taxonomy(
     Scans all job_terms_preview data and saves terms appearing in 50+ jobs.
     Body: {threshold: 50}  -- optional custom threshold
     """
-    token = ""
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            token = parts[1]
-    if not _ADMIN_API_KEY or token != _ADMIN_API_KEY:
-        raise HTTPException(status_code=403, detail="Invalid admin API key")
+    _require_admin(authorization)
 
     from build_learned_skills import build_learned_skills, save_learned_skills
     from database import SessionLocal
@@ -2287,6 +2369,7 @@ def sitemap_xml() -> Response:
         {"loc": "https://job.kooexperience.com/", "priority": "1.0", "changefreq": "daily"},
         {"loc": "https://job.kooexperience.com/#jobs", "priority": "0.9", "changefreq": "daily"},
         {"loc": "https://job.kooexperience.com/#resume", "priority": "0.8", "changefreq": "weekly"},
+        {"loc": "https://job.kooexperience.com/llms.txt", "priority": "0.7", "changefreq": "weekly"},
     ]
     urls = "\n".join(
         f"  <url>\n    <loc>{p['loc']}</loc>\n    <changefreq>{p['changefreq']}</changefreq>\n    <priority>{p['priority']}</priority>\n  </url>"
@@ -2305,10 +2388,20 @@ def sitemap_xml() -> Response:
 def health(db: Session = Depends(get_db)) -> dict:
     try:
         db.execute(text("SELECT 1"))
-        db_status = "connected"
     except Exception:
-        db_status = "error"
-    return {"status": "ok", "service": "Job Hunter SG API", "db": db_status}
+        raise HTTPException(status_code=503, detail="Database unavailable") from None
+    return {"status": "ok", "service": "Job Hunter SG API", "db": "connected"}
+
+
+@app.get("/health")
+def public_health(db: Session = Depends(get_db)) -> dict:
+    data = health(db)
+    return {
+        **data,
+        "server": "Job Hunter SG Jobs",
+        "version": app.version,
+        "mcp_enabled": bool(os.environ.get("MCP_API_KEY", "").strip()),
+    }
 
 
 @app.get("/api/privacy")
@@ -2331,49 +2424,352 @@ def terms() -> Response:
 # AUTH
 # ═════════════════════════════════════════════════════════════════════════════
 
-@app.post("/api/auth/signup", response_model=AuthResponse)
-def signup(body: SignupRequest, db: Session = Depends(get_db)) -> dict:
-    # Rate limit signup attempts (abuse prevention)
-    check_rate_limit(None, "search", db)
-    if not body.accepted_terms:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="You must accept the Terms of Service and Privacy Notice",
-        )
-    validate_password(body.password)
-    existing = db.query(User).filter(User.email == body.email).first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Email already registered",
-        )
-    # Pro-tier email domains get upgraded automatically
-    domain = body.email.split("@")[-1].lower()
-    tier = "pro" if domain in _PRO_DOMAINS else "free"
 
+def _require_password_auth() -> None:
+    if not password_auth_enabled():
+        raise HTTPException(status_code=404, detail="Password authentication is disabled")
+
+
+@contextmanager
+def _locked_credential_user(user_id: int, db: Session):
+    """Reload and lock one user until the caller commits its credential change."""
+    dialect = db.get_bind().dialect.name
+    local_lock = _CREDENTIAL_MUTATION_LOCK if dialect == "sqlite" else nullcontext()
+    with local_lock:
+        query = db.query(User).filter(User.id == user_id).populate_existing()
+        if dialect == "postgresql":
+            query = query.with_for_update()
+        yield query.first()
+
+
+@contextmanager
+def _locked_account_storage(user_id: int, db: Session):
+    with _ACCOUNT_STORAGE_LOCK:
+        if db.get_bind().dialect.name == "postgresql":
+            db.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"),
+                {"key": 0x4A490000 + user_id},
+            )
+        yield
+
+
+def _account_lifecycle_lock(user_id: int):
+    """Return the process-local admission lock for one account."""
+    with _ACCOUNT_LIFECYCLE_LOCKS_GUARD:
+        lock = _ACCOUNT_LIFECYCLE_LOCKS.get(user_id)
+        if lock is None:
+            lock = threading.Lock()
+            _ACCOUNT_LIFECYCLE_LOCKS[user_id] = lock
+        return lock
+
+
+@app.get("/api/auth/config")
+def get_auth_config() -> dict:
+    return auth_config()
+
+
+@app.post("/api/auth/cloudflare/register", response_model=UserOut)
+def register_cloudflare_account(
+    body: CloudflareRegisterRequest,
+    email: str = Depends(get_cloudflare_email),
+    db: Session = Depends(get_db),
+) -> User:
+    existing = db.query(User).filter(User.email == email).first()
+    if existing:
+        if existing.password_hash != CLOUDFLARE_PASSWORD_SENTINEL:
+            raise HTTPException(status_code=409, detail="Email already registered with password")
+        now = datetime.now(timezone.utc)
+        name = sanitize_user_input(body.name or "")
+        if name:
+            existing.name = name
+        existing.email_verified_at = existing.email_verified_at or now
+        existing.terms_accepted_at = existing.terms_accepted_at or now
+        existing.privacy_accepted_at = existing.privacy_accepted_at or now
+        existing.last_login = now
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    now = datetime.now(timezone.utc)
+    configured_admin = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+    name = sanitize_user_input(body.name or "")
+    if not name:
+        name = email.split("@", 1)[0].replace(".", " ").replace("_", " ").title()
     user = User(
-        email=body.email,
-        password_hash=hash_password(body.password),
-        name=sanitize_user_input(body.name),
-        tier=tier,
-        terms_accepted_at=datetime.now(timezone.utc),
-        privacy_accepted_at=datetime.now(timezone.utc),
+        email=email,
+        password_hash=CLOUDFLARE_PASSWORD_SENTINEL,
+        name=name,
+        tier="admin" if configured_admin and email == configured_admin else "user",
+        email_verified_at=now,
+        terms_accepted_at=now,
+        privacy_accepted_at=now,
+        last_login=now,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
-    token = create_token(user.id)
-    return {"token": token, "user": user}
+    return user
+
+
+_VERIFICATION_MESSAGE = {
+    "message": "Check your email to verify your account before signing in."
+}
+_VERIFICATION_RESEND_MESSAGE = {
+    "message": "If that account is awaiting verification, we sent a new link."
+}
+_VERIFICATION_EXPIRY_HOURS = 24
+_VERIFICATION_RESEND_COOLDOWN_MINUTES = 5
+
+
+def _auth_token_hash(token: str) -> str:
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
+def _issue_verification_token(user: User, db: Session) -> str:
+    now = datetime.now(timezone.utc)
+    db.query(EmailVerificationToken).filter(
+        EmailVerificationToken.user_id == user.id,
+        or_(
+            EmailVerificationToken.used_at.is_not(None),
+            EmailVerificationToken.expires_at <= now,
+        ),
+    ).delete(synchronize_session=False)
+    token = secrets.token_urlsafe(40)
+    db.add(
+        EmailVerificationToken(
+            user_id=user.id,
+            token_hash=_auth_token_hash(token),
+            expires_at=now + timedelta(hours=_VERIFICATION_EXPIRY_HOURS),
+        )
+    )
+    return token
+
+
+def _verification_token_is_due(user_id: int, db: Session) -> bool:
+    latest_created_at = (
+        db.query(EmailVerificationToken.created_at)
+        .filter(EmailVerificationToken.user_id == user_id)
+        .order_by(EmailVerificationToken.created_at.desc())
+        .limit(1)
+        .scalar()
+    )
+    if latest_created_at is None:
+        return True
+    if latest_created_at.tzinfo is None:
+        latest_created_at = latest_created_at.replace(tzinfo=timezone.utc)
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        minutes=_VERIFICATION_RESEND_COOLDOWN_MINUTES
+    )
+    return latest_created_at <= cutoff
+
+
+def _send_verification_email(user: User, verification_token: str) -> None:
+    app_base_url = os.environ.get("APP_BASE_URL", "https://job.kooexperience.com").rstrip("/")
+    verification_url = f"{app_base_url}/#verify_token={verification_token}"
+    subject = "Verify your Job Hunter SG account"
+    text_body = (
+        f"Hi {user.name},\n\n"
+        "Verify your email to finish creating your Job Hunter SG account. "
+        "This link expires in 24 hours.\n\n"
+        f"{verification_url}\n\n"
+        "If you did not create this account, you can ignore this email."
+    )
+    html_body = (
+        '<div style="font-family:Inter,Arial,sans-serif;background:#f6f9fc;padding:24px;color:#243447;">'
+        '<div style="max-width:560px;margin:0 auto;background:white;border:1px solid #dbe7f3;'
+        'border-radius:12px;padding:24px;">'
+        '<h1 style="font-size:20px;margin:0 0 8px;">Verify your email</h1>'
+        f'<p style="color:#4b6478;">Hi {html.escape(user.name)}, finish creating your account. '
+        "This link expires in 24 hours.</p>"
+        f'<a href="{html.escape(verification_url)}" style="display:inline-block;margin-top:12px;'
+        'background:#384959;color:white;text-decoration:none;border-radius:8px;padding:10px 14px;'
+        'font-size:14px;font-weight:700;">Verify email</a>'
+        '<p style="color:#6b7280;font-size:13px;margin-top:20px;">'
+        "If you did not create this account, you can ignore this email."
+        "</p></div></div>"
+    )
+    send_email(user.email, subject, text_body, html_body)
+
+
+@app.post("/api/auth/signup")
+def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db)) -> dict:
+    _require_password_auth()
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"signup:{_get_client_ip(request)}",
+        limit=10,
+        window_seconds=3600,
+    ):
+        raise HTTPException(status_code=429, detail="Too many signup attempts. Please try again later.")
+    if not email_configured():
+        raise HTTPException(status_code=503, detail="Email verification is temporarily unavailable")
+    validate_password(body.password)
+    submitted_password_hash = hash_password(body.password)
+    email = str(body.email).strip().lower()
+    existing = db.query(User).filter(func.lower(User.email) == email).first()
+    if existing:
+        # The mailbox link, not the last anonymous signup request, decides the
+        # account password. Resend is a separate per-address throttled action.
+        return _VERIFICATION_MESSAGE
+    user = User(
+        email=email,
+        password_hash=submitted_password_hash,
+        name=sanitize_user_input(body.name),
+        tier="user",
+    )
+    db.add(user)
+    try:
+        db.flush()
+        verification_token = _issue_verification_token(user, db)
+        db.commit()
+    except IntegrityError:
+        # A concurrent request may have inserted the same email after our
+        # existence check. Keep the response generic and let its email win.
+        db.rollback()
+        if db.query(User.id).filter(func.lower(User.email) == email).first():
+            return _VERIFICATION_MESSAGE
+        raise
+    db.refresh(user)
+    try:
+        _send_verification_email(user, verification_token)
+    except Exception as exc:
+        log.warning("Verification email failed for user_id=%s: %s", user.id, type(exc).__name__)
+        db.query(EmailVerificationToken).filter(
+            EmailVerificationToken.token_hash == _auth_token_hash(verification_token)
+        ).delete(synchronize_session=False)
+        db.commit()
+        raise HTTPException(status_code=503, detail="Verification email could not be sent")
+    return _VERIFICATION_MESSAGE
+
+
+@app.post("/api/auth/resend-verification")
+def resend_verification(
+    request: Request,
+    body: ResendVerificationRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_password_auth()
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"resend-verification:{_get_client_ip(request)}", limit=10, window_seconds=3600
+    ):
+        return _VERIFICATION_RESEND_MESSAGE
+    email = str(body.email).strip().lower()
+    email_hash = hashlib.sha256(email.encode()).hexdigest()[:16]
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=15)
+    attempts = (
+        db.query(func.count(UsageLog.id))
+        .filter(
+            UsageLog.action == "email_verification_request",
+            UsageLog.detail == email_hash,
+            UsageLog.created_at >= cutoff,
+        )
+        .scalar()
+        or 0
+    )
+    if attempts >= 5:
+        return _VERIFICATION_RESEND_MESSAGE
+    db.add(UsageLog(user_id=None, action="email_verification_request", detail=email_hash))
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    if (
+        not user
+        or user.email_verified_at is not None
+        or user.password_hash == CLOUDFLARE_PASSWORD_SENTINEL
+        or not email_configured()
+    ):
+        db.commit()
+        return _VERIFICATION_RESEND_MESSAGE
+    verification_token = None
+    with _locked_credential_user(user.id, db) as locked_user:
+        if (
+            locked_user
+            and locked_user.email_verified_at is None
+            and locked_user.password_hash != CLOUDFLARE_PASSWORD_SENTINEL
+            and _verification_token_is_due(locked_user.id, db)
+        ):
+            verification_token = _issue_verification_token(locked_user, db)
+        db.commit()
+    if not verification_token:
+        return _VERIFICATION_RESEND_MESSAGE
+    try:
+        _send_verification_email(locked_user, verification_token)
+    except Exception as exc:
+        log.warning("Verification email failed for user_id=%s: %s", user.id, type(exc).__name__)
+    return _VERIFICATION_RESEND_MESSAGE
+
+
+@app.post("/api/auth/verify-email", response_model=AuthResponse)
+def verify_email(
+    request: Request,
+    body: VerifyEmailRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_password_auth()
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"verify-email:{_get_client_ip(request)}",
+        limit=20,
+        window_seconds=3600,
+    ):
+        raise HTTPException(status_code=429, detail="Too many verification attempts")
+    now = datetime.now(timezone.utc)
+    verification = (
+        db.query(EmailVerificationToken)
+        .filter(EmailVerificationToken.token_hash == _auth_token_hash(body.token))
+        .first()
+    )
+    if not verification or verification.used_at is not None:
+        raise HTTPException(status_code=400, detail="Verification link is invalid or expired")
+    validate_password(body.password)
+    name = sanitize_user_input(body.name)
+    if not name:
+        raise HTTPException(status_code=422, detail="Name is required")
+    submitted_password_hash = hash_password(body.password)
+    with _locked_credential_user(verification.user_id, db) as user:
+        verification = (
+            db.query(EmailVerificationToken)
+            .filter(EmailVerificationToken.id == verification.id)
+            .populate_existing()
+            .first()
+        )
+        if not verification or verification.used_at is not None:
+            raise HTTPException(status_code=400, detail="Verification link is invalid or expired")
+        expires_at = verification.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < now:
+            verification.used_at = now
+            db.commit()
+            raise HTTPException(status_code=400, detail="Verification link is invalid or expired")
+        if (
+            not user
+            or user.password_hash == CLOUDFLARE_PASSWORD_SENTINEL
+            or user.email_verified_at is not None
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Verification link is invalid or expired",
+            )
+        user.password_hash = submitted_password_hash
+        user.name = name
+        user.email_verified_at = user.email_verified_at or now
+        user.last_login = now
+        user.terms_accepted_at = now
+        user.privacy_accepted_at = now
+        user.token_version += 1
+        db.query(EmailVerificationToken).filter(
+            EmailVerificationToken.user_id == user.id,
+        ).delete(synchronize_session=False)
+        db.commit()
+        return {"token": create_token(user.id, user.token_version), "user": user}
 
 
 _PASSWORD_RESET_MESSAGE = {
     "message": "If that email is registered, we sent a password reset link."
 }
 _PASSWORD_RESET_EXPIRY_MINUTES = 60
+_PASSWORD_RESET_RESEND_COOLDOWN_MINUTES = 5
 
 
 def _password_reset_hash(token: str) -> str:
-    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+    return _auth_token_hash(token)
 
 
 def _password_reset_rate_limited(email_hash: str, db: Session) -> bool:
@@ -2391,9 +2787,27 @@ def _password_reset_rate_limited(email_hash: str, db: Session) -> bool:
     return attempts >= 5
 
 
+def _password_reset_token_is_due(user_id: int, db: Session) -> bool:
+    latest_created_at = (
+        db.query(PasswordResetToken.created_at)
+        .filter(PasswordResetToken.user_id == user_id)
+        .order_by(PasswordResetToken.created_at.desc())
+        .limit(1)
+        .scalar()
+    )
+    if latest_created_at is None:
+        return True
+    if latest_created_at.tzinfo is None:
+        latest_created_at = latest_created_at.replace(tzinfo=timezone.utc)
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        minutes=_PASSWORD_RESET_RESEND_COOLDOWN_MINUTES
+    )
+    return latest_created_at <= cutoff
+
+
 def _send_password_reset_email(user: User, reset_token: str) -> None:
     app_base_url = os.environ.get("APP_BASE_URL", "https://job.kooexperience.com").rstrip("/")
-    reset_url = f"{app_base_url}/?reset_token={reset_token}"
+    reset_url = f"{app_base_url}/#reset_token={reset_token}"
     subject = "Reset your Job Hunter SG password"
     text_body = (
         f"Hi {user.name},\n\n"
@@ -2419,7 +2833,16 @@ def _send_password_reset_email(user: User, reset_token: str) -> None:
 
 
 @app.post("/api/auth/forgot-password")
-def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)) -> dict:
+def forgot_password(
+    request: Request,
+    body: ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_password_auth()
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"forgot-password:{_get_client_ip(request)}", limit=10, window_seconds=3600
+    ):
+        return _PASSWORD_RESET_MESSAGE
     email = str(body.email).strip().lower()
     email_hash = hashlib.sha256(email.encode()).hexdigest()[:16]
     if _password_reset_rate_limited(email_hash, db):
@@ -2427,30 +2850,48 @@ def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)) 
 
     db.add(UsageLog(user_id=None, action="password_reset_request", detail=email_hash))
     user = db.query(User).filter(func.lower(User.email) == email).first()
-    if not user or not smtp_configured():
-        if user and not smtp_configured():
-            log.warning("Password reset requested but SMTP is not configured")
+    if (
+        not user
+        or user.email_verified_at is None
+        or user.password_hash == CLOUDFLARE_PASSWORD_SENTINEL
+        or not email_configured()
+    ):
+        if user and not email_configured():
+            log.warning("Password reset requested but email is not configured")
         db.commit()
         return _PASSWORD_RESET_MESSAGE
 
-    now = datetime.now(timezone.utc)
-    db.query(PasswordResetToken).filter(
-        PasswordResetToken.user_id == user.id,
-        PasswordResetToken.used_at.is_(None),
-    ).update({"used_at": now}, synchronize_session=False)
+    reset_token = None
+    with _locked_credential_user(user.id, db) as locked_user:
+        if (
+            not locked_user
+            or locked_user.email_verified_at is None
+            or locked_user.password_hash == CLOUDFLARE_PASSWORD_SENTINEL
+            or not _password_reset_token_is_due(locked_user.id, db)
+        ):
+            db.commit()
+            return _PASSWORD_RESET_MESSAGE
+        now = datetime.now(timezone.utc)
+        db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == locked_user.id,
+            or_(
+                PasswordResetToken.used_at.is_not(None),
+                PasswordResetToken.expires_at <= now,
+            ),
+        ).delete(synchronize_session=False)
 
-    reset_token = secrets.token_urlsafe(40)
-    db.add(
-        PasswordResetToken(
-            user_id=user.id,
-            token_hash=_password_reset_hash(reset_token),
-            expires_at=now + timedelta(minutes=_PASSWORD_RESET_EXPIRY_MINUTES),
+        reset_token = secrets.token_urlsafe(40)
+        db.add(
+            PasswordResetToken(
+                user_id=locked_user.id,
+                token_hash=_password_reset_hash(reset_token),
+                expires_at=now + timedelta(minutes=_PASSWORD_RESET_EXPIRY_MINUTES),
+            )
         )
-    )
-    db.commit()
+        db.commit()
 
     try:
-        _send_password_reset_email(user, reset_token)
+        _send_password_reset_email(locked_user, reset_token)
     except Exception as exc:
         log.warning("Password reset email failed for user_id=%s: %s", user.id, type(exc).__name__)
 
@@ -2458,7 +2899,16 @@ def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)) 
 
 
 @app.post("/api/auth/reset-password")
-def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)) -> dict:
+def reset_password(
+    request: Request,
+    body: ResetPasswordRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_password_auth()
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"reset-password:{_get_client_ip(request)}", limit=10, window_seconds=3600
+    ):
+        raise HTTPException(status_code=429, detail="Too many reset attempts")
     validate_password(body.password)
     now = datetime.now(timezone.utc)
     reset = (
@@ -2477,39 +2927,64 @@ def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)) ->
         db.commit()
         raise HTTPException(status_code=400, detail="Reset link is invalid or expired")
 
-    user = db.get(User, reset.user_id)
-    if not user:
-        reset.used_at = now
-        db.commit()
-        raise HTTPException(status_code=400, detail="Reset link is invalid or expired")
+    with _locked_credential_user(reset.user_id, db) as user:
+        if not user:
+            db.rollback()
+            raise HTTPException(status_code=400, detail="Reset link is invalid or expired")
+        consumed = (
+            db.query(PasswordResetToken)
+            .filter(
+                PasswordResetToken.id == reset.id,
+                PasswordResetToken.used_at.is_(None),
+            )
+            .update({"used_at": now}, synchronize_session=False)
+        )
+        if consumed != 1:
+            db.rollback()
+            raise HTTPException(status_code=400, detail="Reset link is invalid or expired")
 
-    user.password_hash = hash_password(body.password)
-    reset.used_at = now
-    user.last_login = None
-    db.query(PasswordResetToken).filter(
-        PasswordResetToken.user_id == user.id,
-        PasswordResetToken.used_at.is_(None),
-    ).update({"used_at": now}, synchronize_session=False)
-    db.add(UsageLog(user_id=user.id, action="password_reset_completed", detail="password_reset"))
-    db.commit()
+        user.password_hash = hash_password(body.password)
+        user.token_version += 1
+        user.last_login = None
+        db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == user.id,
+        ).delete(synchronize_session=False)
+        db.add(UsageLog(user_id=user.id, action="password_reset_completed", detail="password_reset"))
+        db.commit()
     return {"message": "Password updated. You can sign in with your new password."}
 
 
 @app.post("/api/auth/login", response_model=AuthResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)) -> dict:
-    _email_hash = hashlib.sha256(body.email.lower().encode()).hexdigest()[:16]
-    check_login_rate_limit(_email_hash, db)
-    user = db.query(User).filter(User.email == body.email).first()
-    if not user or not verify_password(body.password, user.password_hash):
-        db.add(UsageLog(user_id=None, action="login_failed", detail=_email_hash))
+def login(
+    request: Request,
+    body: LoginRequest,
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_password_auth()
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"login:{_get_client_ip(request)}", limit=20, window_seconds=900
+    ):
+        raise HTTPException(status_code=429, detail="Too many login attempts")
+    email = str(body.email).strip().lower()
+    email_hash = hashlib.sha256(email.encode()).hexdigest()[:16]
+    user = db.query(User).filter(func.lower(User.email) == email).first()
+    password_matches = verify_password_or_dummy(
+        body.password,
+        user.password_hash if user else None,
+    )
+    if not user or not password_matches:
+        check_login_rate_limit(email_hash, db)
+        db.add(UsageLog(user_id=None, action="login_failed", detail=email_hash))
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
+    if user.email_verified_at is None:
+        raise HTTPException(status_code=403, detail="Verify your email before signing in")
     user.last_login = datetime.now(timezone.utc)
     db.commit()
-    token = create_token(user.id)
+    token = create_token(user.id, user.token_version)
     return {"token": token, "user": user}
 
 
@@ -2518,11 +2993,172 @@ def me(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+@app.post("/api/auth/logout")
+def logout(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_password_auth()
+    authenticated_version = user.token_version
+    with _locked_credential_user(user.id, db) as locked_user:
+        if not locked_user or locked_user.token_version != authenticated_version:
+            raise HTTPException(status_code=401, detail="Session expired")
+        locked_user.token_version += 1
+        db.commit()
+    return {"message": "Signed out."}
+
+
+@app.post("/api/auth/change-password")
+def change_password(
+    body: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    _require_password_auth()
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"change-password:{user.id}",
+        limit=10,
+        window_seconds=900,
+    ):
+        raise HTTPException(status_code=429, detail="Too many password change attempts")
+    validate_password(body.new_password)
+    authenticated_version = user.token_version
+    with _locked_credential_user(user.id, db) as locked_user:
+        if not locked_user or locked_user.token_version != authenticated_version:
+            raise HTTPException(status_code=401, detail="Session expired")
+        if (
+            locked_user.password_hash == CLOUDFLARE_PASSWORD_SENTINEL
+            or not verify_password(body.current_password, locked_user.password_hash)
+        ):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+        locked_user.password_hash = hash_password(body.new_password)
+        locked_user.token_version += 1
+        next_token_version = locked_user.token_version
+        now = datetime.now(timezone.utc)
+        db.query(PasswordResetToken).filter(
+            PasswordResetToken.user_id == locked_user.id,
+            PasswordResetToken.used_at.is_(None),
+        ).update({"used_at": now}, synchronize_session=False)
+        db.commit()
+    return {
+        "message": "Password changed.",
+        "token": create_token(user.id, next_token_version),
+    }
+
+
+def _delete_owned_account_rows(user: User, db: Session) -> None:
+    user_id = user.id
+    email_hash = hashlib.sha256(user.email.lower().encode()).hexdigest()[:16]
+    db.query(StoryUsage).filter(StoryUsage.user_id == user_id).delete(synchronize_session=False)
+    db.query(JobAlertDelivery).filter(JobAlertDelivery.user_id == user_id).delete(
+        synchronize_session=False
+    )
+    db.query(TrackedJob).filter(TrackedJob.user_id == user_id).delete(synchronize_session=False)
+    db.query(PasswordResetToken).filter(PasswordResetToken.user_id == user_id).delete(
+        synchronize_session=False
+    )
+    db.query(EmailVerificationToken).filter(
+        EmailVerificationToken.user_id == user_id
+    ).delete(synchronize_session=False)
+    db.query(PowerMatchSnapshot).filter(PowerMatchSnapshot.user_id == user_id).delete(
+        synchronize_session=False
+    )
+    db.query(TailoredResume).filter(TailoredResume.user_id == user_id).delete(
+        synchronize_session=False
+    )
+    db.query(ResumeVersion).filter(ResumeVersion.user_id == user_id).delete(
+        synchronize_session=False
+    )
+    db.query(InterviewStory).filter(InterviewStory.user_id == user_id).delete(
+        synchronize_session=False
+    )
+    db.query(JobAlertPreference).filter(JobAlertPreference.user_id == user_id).delete(
+        synchronize_session=False
+    )
+    db.query(UserMemory).filter(UserMemory.user_id == user_id).delete(synchronize_session=False)
+    db.query(UsageLog).filter(
+        or_(
+            UsageLog.user_id == user_id,
+            and_(
+                UsageLog.user_id.is_(None),
+                UsageLog.action.in_(
+                    ("login_failed", "password_reset_request", "email_verification_request")
+                ),
+                UsageLog.detail == email_hash,
+            ),
+        )
+    ).delete(synchronize_session=False)
+    db.delete(user)
+
+
+@app.delete("/api/account")
+def delete_account(
+    body: DeleteAccountRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"delete-account:{user.id}",
+        limit=10,
+        window_seconds=900,
+    ):
+        raise HTTPException(status_code=429, detail="Too many account deletion attempts")
+
+    owner_key = f"user:{user.id}"
+    from resume_agent.session import owner_has_active_sessions, purge_owner_sessions
+    from tailoring_pipeline import owner_has_active_pipelines, purge_owner_pipelines
+
+    user_id = user.id
+    authenticated_version = user.token_version
+    with _account_lifecycle_lock(user.id):
+        with _locked_credential_user(user_id, db) as locked_user:
+            if not locked_user or locked_user.token_version != authenticated_version:
+                db.rollback()
+                raise HTTPException(status_code=401, detail="Session expired")
+            if body.confirm_email != locked_user.email:
+                db.rollback()
+                raise HTTPException(status_code=400, detail="Email confirmation does not match")
+            if password_auth_enabled() and (
+                not body.current_password
+                or locked_user.password_hash == CLOUDFLARE_PASSWORD_SENTINEL
+                or not verify_password(body.current_password, locked_user.password_hash)
+            ):
+                db.rollback()
+                raise HTTPException(status_code=400, detail="Current password is incorrect")
+            if owner_has_active_sessions(owner_key) or owner_has_active_pipelines(owner_key):
+                db.rollback()
+                raise HTTPException(
+                    status_code=409,
+                    detail="Wait for the active AI session to finish before deleting your account",
+                )
+
+            try:
+                _delete_owned_account_rows(locked_user, db)
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                log.warning("Account deletion failed for user_id=%s: %s", user_id, type(exc).__name__)
+                raise
+
+        _power_match_cache.pop(user_id, None)
+        try:
+            purge_owner_sessions(owner_key)
+            purge_owner_pipelines(owner_key)
+        except Exception:
+            log.exception("Failed to purge in-memory sessions for deleted user_id=%s", user_id)
+
+    response = {"message": "Account deleted."}
+    logout_url = auth_config().get("cloudflare_logout_url")
+    if logout_url:
+        response["logout_url"] = logout_url
+    return response
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # JOB SEARCH
 # ═════════════════════════════════════════════════════════════════════════════
 
-@app.get("/api/search", response_model=SearchResponse)
+@app.post("/api/search", response_model=SearchResponse)
 def search_jobs(
     q: str = Query(..., min_length=1, max_length=200, description="Search keyword"),
     sources: Optional[str] = Query(
@@ -2532,11 +3168,11 @@ def search_jobs(
     ),
     limit: int = Query(20, ge=1, le=100),
     skills: bool = Query(True, description="Enrich with SSG skills"),
-    user: Optional[User] = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    # Rate limit
-    check_rate_limit(user, "search", db)
+    if user.tier != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
 
     # Log usage (sanitize search query before storing)
     usage = UsageLog(
@@ -2630,10 +3266,17 @@ def search_jobs(
 
 @app.get("/api/skills/trending")
 def trending_skills(
+    request: Request,
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ) -> list[dict]:
     """Get most common skill phrases across all scraped JDs."""
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"trending-skills:{_get_client_ip(request)}",
+        limit=60,
+        window_seconds=60,
+    ):
+        raise HTTPException(status_code=429, detail="Too many analytics requests")
     from skill_extractor import get_trending_skills
     return get_trending_skills(db, limit=limit)
 
@@ -3091,9 +3734,9 @@ def _analytics_company_filter_condition(raw_company: str):
         return ScrapedJob.company.ilike("%%")
     return or_(*(
         or_(
-            ScrapedJob.company.ilike(f"%{term}%"),
-            ScrapedJob.agency.ilike(f"%{term}%"),
-            ScrapedJob.title.ilike(f"%{term}%"),
+            ScrapedJob.company.ilike(_contains_like_pattern(term), escape="\\"),
+            ScrapedJob.agency.ilike(_contains_like_pattern(term), escape="\\"),
+            ScrapedJob.title.ilike(_contains_like_pattern(term), escape="\\"),
         )
         for term in terms
     ))
@@ -3220,6 +3863,35 @@ def _parse_posted_sort(value: str) -> datetime | None:
         return parsed.astimezone(timezone.utc)
     except ValueError:
         return None
+
+
+def _trend_bucket_start(posted_at: datetime, bucket: str) -> datetime:
+    if bucket == "month":
+        return posted_at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start = posted_at - timedelta(days=posted_at.weekday())
+    return start.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _trend_bucket_label(start: datetime, bucket: str) -> str:
+    if bucket == "month":
+        return start.strftime("%b %Y")
+    year, week, _weekday = start.isocalendar()
+    return f"{year} W{week:02d}"
+
+
+def _trend_bucket_series(cutoff: datetime, now: datetime, bucket: str) -> list[datetime]:
+    current = _trend_bucket_start(cutoff, bucket)
+    end = _trend_bucket_start(now, bucket)
+    starts = []
+    while current <= end:
+        starts.append(current)
+        if bucket == "month":
+            year = current.year + (1 if current.month == 12 else 0)
+            month = 1 if current.month == 12 else current.month + 1
+            current = current.replace(year=year, month=month)
+        else:
+            current += timedelta(days=7)
+    return starts
 
 
 def _percentile(sorted_values: list[int], percentile: float) -> int:
@@ -3467,6 +4139,7 @@ def _build_label_movers(
 
 @app.get("/api/analytics/skills")
 def analytics_skills(
+    request: Request,
     limit: int = Query(50, ge=1, le=200),
     source: str | None = Query(None, max_length=50),
     q: str | None = Query(None, max_length=100),
@@ -3476,14 +4149,24 @@ def analytics_skills(
     agency_subset: str | None = Query(None, max_length=50),
     direct_employers_only: bool = Query(False),
     db: Session = Depends(get_db),
+    _admission: None = Depends(_admit_analytics_request),
 ) -> dict:
     """Aggregate ATS skill demand, top titles, and sectors from scraped jobs."""
     global _analytics_cache, _analytics_cache_ts
 
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"analytics-skills:{_get_client_ip(request)}",
+        limit=30,
+        window_seconds=60,
+    ):
+        raise HTTPException(status_code=429, detail="Too many analytics requests")
+
     agency_subset_key = _normalise_agency_subset_id(agency_subset)
     has_filter = source or sector or company or title or agency_subset_key or direct_employers_only
     now = time.time()
+    corpus_marker = _job_corpus_marker(db)
     query_cache_key = (
+        corpus_marker,
         limit,
         source or "",
         q or "",
@@ -3504,6 +4187,7 @@ def analytics_skills(
             _analytics_cache
             if not has_filter
             and _analytics_cache is not None
+            and _analytics_cache.get("_corpus_marker") == corpus_marker
             and now - _analytics_cache_ts < _ANALYTICS_CACHE_TTL
             else None
         )
@@ -3533,6 +4217,9 @@ def analytics_skills(
             "company_movers": cached.get("company_movers", {}),
             "salary_insights": cached.get("salary_insights", {}),
             "freshness": cached.get("freshness", {}),
+            "sampled_jobs": cached.get("sampled_jobs", cached["total_jobs_with_terms"]),
+            "sampled_job_limit": cached.get("sampled_job_limit", _ANALYTICS_MAX_ROWS),
+            "partial": cached.get("partial", False),
             "seniority_mix": cached.get("seniority_mix", []),
             "ssic_coverage": cached.get("ssic_coverage", {}),
             "sector_source_mix": cached.get("sector_source_mix", []),
@@ -3581,7 +4268,7 @@ def analytics_skills(
         db_query = db_query.filter(_analytics_company_filter_condition(company))
     if title:
         db_query = db_query.filter(
-            ScrapedJob.title.ilike(f"%{title}%")
+            ScrapedJob.title.ilike(_contains_like_pattern(title), escape="\\")
         )
     if sector:
         db_query = db_query.filter(_sector_filter_condition(sector))
@@ -3592,6 +4279,7 @@ def analytics_skills(
             direct_employer_condition(
                 ScrapedJob.company,
                 ScrapedJob.company_ssic_description,
+                ScrapedJob.description,
             )
         )
 
@@ -3621,9 +4309,16 @@ def analytics_skills(
     fresh_counts = {"last_7": 0, "last_14": 0, "last_30": 0}
     posted_count = 0
     total_jobs = 0
+    scanned_rows = 0
     utc_now = datetime.now(timezone.utc)
 
-    for job in db_query.yield_per(500):
+    scan_query = (
+        db_query
+        .order_by(ScrapedJob.posted_at_sort.desc().nullslast(), ScrapedJob.id.desc())
+        .limit(_ANALYTICS_MAX_ROWS)
+    )
+    for job in scan_query.yield_per(_ANALYTICS_YIELD_PER):
+        scanned_rows += 1
         preview = job.job_terms_preview
         if not isinstance(preview, list) or not preview:
             continue
@@ -3796,6 +4491,7 @@ def analytics_skills(
         "coverage_count": posted_count,
         "last_30_percent": round((fresh_counts["last_30"] / posted_count) * 100, 1) if posted_count else 0,
     }
+    partial = scanned_rows >= _ANALYTICS_MAX_ROWS
     seniority_order = {
         "Intern": 0,
         "Entry / Junior": 1,
@@ -3848,6 +4544,7 @@ def analytics_skills(
     cache_payload = None
     if not has_filter:
         cache_payload = {
+            "_corpus_marker": corpus_marker,
             "_all_skills": all_skills,
             "_skill_counts": skill_count_numbers,
             "total_jobs_with_terms": total_jobs,
@@ -3865,6 +4562,9 @@ def analytics_skills(
             "company_movers": company_movers,
             "salary_insights": salary_insights,
             "freshness": freshness,
+            "sampled_jobs": scanned_rows,
+            "sampled_job_limit": _ANALYTICS_MAX_ROWS,
+            "partial": partial,
             "seniority_mix": seniority_mix,
             "ssic_coverage": ssic_coverage,
             "sector_source_mix": sector_source_mix,
@@ -3898,6 +4598,9 @@ def analytics_skills(
         "company_movers": company_movers,
         "salary_insights": salary_insights,
         "freshness": freshness,
+        "sampled_jobs": scanned_rows,
+        "sampled_job_limit": _ANALYTICS_MAX_ROWS,
+        "partial": partial,
         "seniority_mix": seniority_mix,
         "ssic_coverage": ssic_coverage,
         "sector_source_mix": sector_source_mix,
@@ -3915,6 +4618,150 @@ def analytics_skills(
     return result
 
 
+@app.get("/api/analytics/trends")
+def analytics_trends(
+    request: Request,
+    source: str | None = Query(None, max_length=50),
+    sector: str | None = Query(None, max_length=100),
+    company: str | None = Query(None, max_length=200),
+    title: str | None = Query(None, max_length=200),
+    agency_subset: str | None = Query(None, max_length=50),
+    direct_employers_only: bool = Query(False),
+    bucket: str = Query("week", pattern="^(week|month)$"),
+    weeks: int = Query(26, ge=4, le=104),
+    db: Session = Depends(get_db),
+    _admission: None = Depends(_admit_analytics_request),
+) -> dict:
+    """Return posting-count trend buckets plus recent role and ATS-term mix."""
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"analytics-trends:{_get_client_ip(request)}",
+        limit=30,
+        window_seconds=60,
+    ):
+        raise HTTPException(status_code=429, detail="Too many analytics requests")
+    now_dt = datetime.now(timezone.utc)
+    now = time.time()
+    cutoff = now_dt - timedelta(weeks=weeks)
+    agency_subset_key = _normalise_agency_subset_id(agency_subset)
+    cache_key = (
+        "trends",
+        _job_corpus_marker(db),
+        source or "",
+        sector or "",
+        company or "",
+        title or "",
+        agency_subset_key,
+        int(direct_employers_only),
+        bucket,
+        weeks,
+    )
+    with _ANALYTICS_CACHE_LOCK:
+        cache_generation = _analytics_cache_generation
+        cached_query = _analytics_query_cache.get(cache_key)
+        if cached_query and now - cached_query[0] < _ANALYTICS_QUERY_CACHE_TTL:
+            return cached_query[1]
+
+    db_query = db.query(ScrapedJob).options(
+        load_only(
+            ScrapedJob.id,
+            ScrapedJob.title,
+            ScrapedJob.source,
+            ScrapedJob.company,
+            ScrapedJob.agency,
+            ScrapedJob.sector,
+            ScrapedJob.company_ssic_description,
+            ScrapedJob.job_terms_preview,
+            ScrapedJob.posted_at_sort,
+        )
+    ).filter(
+        ScrapedJob.hidden == 0,
+        ScrapedJob.posted_at_sort.isnot(None),
+        ScrapedJob.posted_at_sort != "",
+        ScrapedJob.posted_at_sort >= cutoff.isoformat(),
+    )
+    if source:
+        db_query = db_query.filter(ScrapedJob.source == source)
+    if company:
+        db_query = db_query.filter(_analytics_company_filter_condition(company))
+    if title:
+        db_query = db_query.filter(
+            ScrapedJob.title.ilike(_contains_like_pattern(title), escape="\\")
+        )
+    if sector:
+        db_query = db_query.filter(_sector_filter_condition(sector))
+    if agency_subset_key:
+        db_query = db_query.filter(_analytics_agency_subset_condition(agency_subset_key))
+    if direct_employers_only:
+        db_query = db_query.filter(
+            direct_employer_condition(
+                ScrapedJob.company,
+                ScrapedJob.company_ssic_description,
+                ScrapedJob.description,
+            )
+        )
+
+    bucket_starts = _trend_bucket_series(cutoff, now_dt, bucket)
+    bucket_counts = {start.date().isoformat(): 0 for start in bucket_starts}
+    recent_title_counts: dict[str, dict] = {}
+    recent_skill_counts: dict[str, dict] = {}
+    recent_cutoff = now_dt - timedelta(days=30)
+    total = 0
+    recent_total = 0
+
+    for job in (
+        db_query
+        .order_by(ScrapedJob.posted_at_sort.desc().nullslast(), ScrapedJob.id.desc())
+        .limit(_ANALYTICS_MAX_ROWS)
+        .yield_per(_ANALYTICS_YIELD_PER)
+    ):
+        posted_at = _parse_posted_sort(job.posted_at_sort or "")
+        if not posted_at or posted_at < cutoff:
+            continue
+        total += 1
+        bucket_key = _trend_bucket_start(posted_at, bucket).date().isoformat()
+        bucket_counts[bucket_key] = bucket_counts.get(bucket_key, 0) + 1
+
+        if posted_at >= recent_cutoff:
+            recent_total += 1
+            norm_title = _normalize_title(job.title or "")
+            if norm_title:
+                _increment_label_count(recent_title_counts, norm_title.lower(), norm_title)
+            preview = job.job_terms_preview
+            if isinstance(preview, list):
+                for term in preview:
+                    key = _analytics_skill_key(str(term))
+                    if key and not _is_generic_analytics_skill(key):
+                        _increment_analytics_skill(recent_skill_counts, key)
+
+    series = [
+        {
+            "start": start.date().isoformat(),
+            "label": _trend_bucket_label(start, bucket),
+            "count": bucket_counts.get(start.date().isoformat(), 0),
+        }
+        for start in bucket_starts
+    ]
+    peak = max(series, key=lambda item: item["count"], default=None)
+    result = {
+        "bucket": bucket,
+        "window_weeks": weeks,
+        "total_postings": total,
+        "recent_30_postings": recent_total,
+        "peak": peak,
+        "series": series,
+        "recent_top_titles": sorted(
+            [{"title": item["display"], "count": item["count"]} for item in recent_title_counts.values()],
+            key=lambda item: -item["count"],
+        )[:8],
+        "recent_ats_terms": sorted(
+            [{"skill": item["display"], "count": item["count"]} for item in recent_skill_counts.values()],
+            key=lambda item: -item["count"],
+        )[:8],
+    }
+    _store_analytics_query_cache(cache_key, now, result, cache_generation)
+    return result
+
+
 def _split_multi_value_filter(value: str | None) -> list[str]:
     seen: set[str] = set()
     terms: list[str] = []
@@ -3927,80 +4774,177 @@ def _split_multi_value_filter(value: str | None) -> list[str]:
     return terms
 
 
+def _bounded_filter_terms(
+    values: list[str],
+    *,
+    label: str,
+    max_terms: int,
+    max_length: int,
+) -> list[str]:
+    seen: set[str] = set()
+    terms: list[str] = []
+    for value in values:
+        cleaned = value.strip()
+        key = cleaned.lower()
+        if cleaned and key not in seen:
+            seen.add(key)
+            terms.append(cleaned)
+    if len(terms) > max_terms or any(len(term) > max_length for term in terms):
+        raise HTTPException(status_code=422, detail=f"Too many or oversized {label} filters")
+    return terms
+
+
+def _contains_like_pattern(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 @app.get("/api/jobs")
 def list_cached_jobs(
-    q: Optional[str] = Query(None, max_length=200, description="Filter by keyword"),
+    request: Request,
+    q: Optional[str] = Query(None, min_length=2, max_length=200, description="Filter by keyword"),
     employment_type: Optional[str] = Query(None, max_length=500),
     seniority: Optional[str] = Query(None, max_length=100),
     source: Optional[str] = Query(None, max_length=100),
-    location: Optional[str] = Query(None, max_length=200),
+    location: Optional[list[str]] = Query(None),
+    experience: Optional[list[str]] = Query(None),
     sector: Optional[str] = Query(None, max_length=100),
     min_salary: Optional[int] = Query(None, ge=0),
+    sort: str = Query("newest", pattern="^(newest|salary)$"),
     direct_employers_only: bool = Query(False),
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=500),
     per_page: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> dict:
-    query = db.query(ScrapedJob).filter(ScrapedJob.hidden == 0).options(
-        load_only(
-            ScrapedJob.id,
-            ScrapedJob.title,
-            ScrapedJob.company,
-            ScrapedJob.location,
-            ScrapedJob.salary,
-            ScrapedJob.source,
-            ScrapedJob.url,
-            ScrapedJob.posted_date,
-            ScrapedJob.employment_type,
-            ScrapedJob.seniority,
-            ScrapedJob.description,
-            ScrapedJob.skills,
-            ScrapedJob.agency,
-            ScrapedJob.source_posting_id,
-            ScrapedJob.openings,
-            ScrapedJob.scraped_at,
-            ScrapedJob.posted_at_sort,
-            ScrapedJob.parsed_jd,
-            ScrapedJob.jd_summary,
-            ScrapedJob.jd_summary_status,
-            ScrapedJob.jd_summary_generated_at,
-            ScrapedJob.job_terms_preview,
-            ScrapedJob.closing_date,
-            ScrapedJob.sector,
-            ScrapedJob.company_ssic_code,
-            ScrapedJob.company_ssic_description,
-            ScrapedJob.company_ssic_source,
-            ScrapedJob.salary_floor,
-            ScrapedJob.skills_flat,
-        )
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"jobs-list:{_get_client_ip(request)}",
+        limit=120,
+        window_seconds=60,
+    ):
+        raise HTTPException(status_code=429, detail="Too many job searches")
+    query = apply_public_job_visibility(
+        db.query(ScrapedJob).options(
+            load_only(
+                ScrapedJob.id,
+                ScrapedJob.title,
+                ScrapedJob.company,
+                ScrapedJob.location,
+                ScrapedJob.salary,
+                ScrapedJob.source,
+                ScrapedJob.url,
+                ScrapedJob.posted_date,
+                ScrapedJob.employment_type,
+                ScrapedJob.seniority,
+                ScrapedJob.description,
+                ScrapedJob.skills,
+                ScrapedJob.agency,
+                ScrapedJob.source_posting_id,
+                ScrapedJob.openings,
+                ScrapedJob.scraped_at,
+                ScrapedJob.posted_at_sort,
+                ScrapedJob.parsed_jd,
+                ScrapedJob.jd_summary,
+                ScrapedJob.jd_summary_status,
+                ScrapedJob.jd_summary_generated_at,
+                ScrapedJob.job_terms_preview,
+                ScrapedJob.closing_date,
+                ScrapedJob.sector,
+                ScrapedJob.company_ssic_code,
+                ScrapedJob.company_ssic_description,
+                ScrapedJob.company_ssic_source,
+                ScrapedJob.salary_floor,
+                ScrapedJob.skills_flat,
+            )
+        ),
     )
     if q:
         # Split query into words — match ALL words (AND logic)
         # "micron i4" matches jobs with BOTH "micron" AND "i4" anywhere
-        words = [w.strip() for w in q.split() if w.strip()]
+        words = _bounded_filter_terms(
+            q.split(),
+            label="keyword",
+            max_terms=8,
+            max_length=50,
+        )
         for word in words:
-            word_pattern = f"%{word}%"
+            word_pattern = _contains_like_pattern(word)
             query = query.filter(
                 or_(
-                    ScrapedJob.title.ilike(word_pattern),
-                    ScrapedJob.company.ilike(word_pattern),
-                    ScrapedJob.description.ilike(word_pattern),
-                    ScrapedJob.search_keyword.ilike(word_pattern),
-                    ScrapedJob.skills_flat.ilike(word_pattern),
+                    ScrapedJob.title.ilike(word_pattern, escape="\\"),
+                    ScrapedJob.company.ilike(word_pattern, escape="\\"),
+                    ScrapedJob.description.ilike(word_pattern, escape="\\"),
+                    ScrapedJob.search_keyword.ilike(word_pattern, escape="\\"),
+                    ScrapedJob.skills_flat.ilike(word_pattern, escape="\\"),
                 )
             )
     if employment_type:
-        employment_terms = _split_multi_value_filter(employment_type)
+        employment_terms = _bounded_filter_terms(
+            employment_type.split(","),
+            label="employment type",
+            max_terms=12,
+            max_length=80,
+        )
         if employment_terms:
             query = query.filter(
-                or_(*(ScrapedJob.employment_type.ilike(f"%{term}%") for term in employment_terms))
+                or_(
+                    *(
+                        ScrapedJob.employment_type.ilike(
+                            _contains_like_pattern(term),
+                            escape="\\",
+                        )
+                        for term in employment_terms
+                    )
+                )
             )
     if seniority:
-        query = query.filter(ScrapedJob.seniority.ilike(f"%{seniority}%"))
+        query = query.filter(
+            ScrapedJob.seniority.ilike(
+                _contains_like_pattern(seniority),
+                escape="\\",
+            )
+        )
     if source:
-        query = query.filter(ScrapedJob.source.ilike(f"%{source}%"))
-    if location:
-        query = query.filter(ScrapedJob.location.ilike(f"%{location}%"))
+        query = query.filter(ScrapedJob.source == source)
+    location_terms = _bounded_filter_terms(
+        location or [],
+        label="location",
+        max_terms=20,
+        max_length=100,
+    )
+    if location_terms:
+        query = query.filter(
+            or_(
+                ScrapedJob.location.in_(location_terms),
+                ScrapedJob.location.is_(None),
+                ScrapedJob.location == "",
+            )
+        )
+    experience_patterns = {
+        "0-2 yrs": r"^(0|1|2)([^0-9]|$)",
+        "3-5 yrs": r"^(3|4|5)([^0-9]|$)",
+        "6-10 yrs": r"^(6|7|8|9|10)([^0-9]|$)",
+        "10+ yrs": r"^(1[1-9]|[2-9][0-9]|[1-9][0-9][0-9]+)([^0-9]|$)",
+    }
+    experience_terms = _bounded_filter_terms(
+        experience or [],
+        label="experience",
+        max_terms=4,
+        max_length=20,
+    )
+    invalid_experience = [term for term in experience_terms if term not in experience_patterns]
+    if invalid_experience:
+        raise HTTPException(status_code=422, detail="Invalid experience filter")
+    if experience_terms:
+        experience_text = ScrapedJob.parsed_jd["experience_years"].as_string()
+        has_stated_years = experience_text.regexp_match(r"^[0-9]+")
+        query = query.filter(
+            or_(
+                experience_text.is_(None),
+                experience_text == "",
+                ~has_stated_years,
+                *(experience_text.regexp_match(experience_patterns[term]) for term in experience_terms),
+            )
+        )
     if sector:
         query = query.filter(_sector_filter_condition(sector))
     if direct_employers_only:
@@ -4008,6 +4952,7 @@ def list_cached_jobs(
             direct_employer_condition(
                 ScrapedJob.company,
                 ScrapedJob.company_ssic_description,
+                ScrapedJob.description,
             )
         )
     if min_salary is not None:
@@ -4024,77 +4969,47 @@ def list_cached_jobs(
     ordering = []
     if min_salary is not None:
         ordering.append(case((ScrapedJob.salary_floor >= min_salary, 0), else_=1))
+    if sort == "salary":
+        ordering.append(ScrapedJob.salary_floor.desc().nullslast())
     ordering.extend([ScrapedJob.posted_at_sort.desc(), ScrapedJob.id.desc()])
     ordered_query = query.order_by(*ordering)
 
     total = query.count()
     jobs = ordered_query.offset(offset).limit(per_page).all()
 
-    # Queue CareersGov hydration in background (don't block the response)
-    cgov_missing = [
-        j.id for j in jobs
-        if j.source == "Careers@Gov" and (
-            not (j.description or "").strip()
-            or not (j.skills or [])
-            or j.parsed_jd in (None, {})
-        )
-    ]
-    if cgov_missing:
-        def _bg_hydrate(job_ids: list[int]) -> None:
-            from database import SessionLocal as _SL
-            bg_db = _SL()
-            try:
-                _hydrate_missing_careersgov_jobs(
-                    bg_db.query(ScrapedJob).filter(ScrapedJob.id.in_(job_ids)).all(),
-                    bg_db,
-                )
-            finally:
-                bg_db.close()
-        _JD_ENRICHMENT_POOL.submit(_bg_hydrate, cgov_missing)
-
-    refreshed_terms = False
-    queued_count = 0
-    for job in jobs:
-        expected_sort = _posted_sort_iso(job.posted_date, job.scraped_at)
-        if expected_sort != (job.posted_at_sort or ""):
-            job.posted_at_sort = expected_sort
-            refreshed_terms = True
-        if job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(job, db):
-            refreshed_terms = True
-            job.job_terms_preview = None  # invalidate stale cache
-        if not (job.job_terms_preview or []) and (job.description or "").strip():
-            preview = _compute_and_cache_term_preview(job, db)
-            if preview:
-                refreshed_terms = True
-        if queued_count < 3 and _should_queue_enrichment(job):
-            _queue_enrichment_if_needed(job)
-            queued_count += 1
-
-    if refreshed_terms:
-        db.commit()
-
     # Build filter metadata (cached for 5 min to avoid 3 GROUP BY per page 1)
     filter_meta = {}
     if page == 1:
-        global _filter_meta_cache, _filter_meta_ts
+        global _filter_meta_cache, _filter_meta_ts, _filter_meta_marker
         now = time.monotonic()
-        if _filter_meta_cache and (now - _filter_meta_ts) < _FILTER_META_TTL:
+        corpus_marker = _job_corpus_marker(db)
+        if (
+            _filter_meta_cache
+            and _filter_meta_marker == corpus_marker
+            and (now - _filter_meta_ts) < _FILTER_META_TTL
+        ):
             filter_meta = _filter_meta_cache
         else:
             source_counts = (
-                db.query(ScrapedJob.source, func.count())
+                apply_public_job_visibility(
+                    db.query(ScrapedJob.source, func.count()),
+                )
                 .filter(ScrapedJob.source != "")
                 .group_by(ScrapedJob.source)
                 .all()
             )
             emp_counts = (
-                db.query(ScrapedJob.employment_type, func.count())
+                apply_public_job_visibility(
+                    db.query(ScrapedJob.employment_type, func.count()),
+                )
                 .filter(ScrapedJob.employment_type != "")
                 .group_by(ScrapedJob.employment_type)
                 .all()
             )
             loc_counts = (
-                db.query(ScrapedJob.location, func.count())
+                apply_public_job_visibility(
+                    db.query(ScrapedJob.location, func.count()),
+                )
                 .filter(ScrapedJob.location != "", ScrapedJob.location != "Singapore")
                 .group_by(ScrapedJob.location)
                 .order_by(func.count().desc())
@@ -4102,9 +5017,10 @@ def list_cached_jobs(
                 .all()
             )
             sector_counts = (
-                db.query(ScrapedJob.sector, func.count())
+                apply_public_job_visibility(
+                    db.query(ScrapedJob.sector, func.count()),
+                )
                 .filter(
-                    ScrapedJob.hidden == 0,
                     ScrapedJob.sector.isnot(None),
                     ScrapedJob.sector != "",
                     ScrapedJob.sector != "Other",
@@ -4139,6 +5055,7 @@ def list_cached_jobs(
             }
             _filter_meta_cache = filter_meta
             _filter_meta_ts = now
+            _filter_meta_marker = corpus_marker
 
     result = {
         "jobs": [
@@ -4181,7 +5098,11 @@ def get_similar_jobs(
     db: Session = Depends(get_db),
 ) -> list[ScrapedJob]:
     """Find similar jobs based on title keywords and skills overlap."""
-    job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+    job = (
+        apply_public_job_visibility(db.query(ScrapedJob))
+        .filter(ScrapedJob.id == job_id)
+        .first()
+    )
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -4193,9 +5114,12 @@ def get_similar_jobs(
         return []
 
     # Build query: match any title keyword, exclude the same job
-    conditions = [ScrapedJob.title.ilike(f"%{w}%") for w in title_words[:3]]
+    conditions = [
+        ScrapedJob.title.ilike(_contains_like_pattern(word), escape="\\")
+        for word in title_words[:3]
+    ]
     similar = (
-        db.query(ScrapedJob)
+        apply_public_job_visibility(db.query(ScrapedJob))
         .filter(ScrapedJob.id != job_id, or_(*conditions))
         .order_by(ScrapedJob.id.desc())
         .limit(limit)
@@ -4204,22 +5128,45 @@ def get_similar_jobs(
     return similar
 
 
-@app.get("/api/jobs/recommended", response_model=list[JobOut])
+@app.get("/api/jobs/recommended", include_in_schema=False)
+def reject_resume_in_query_string() -> None:
+    raise HTTPException(
+        status_code=405,
+        detail="Use POST so resume content is not placed in a URL",
+        headers={"Allow": "POST"},
+    )
+
+
+@app.post("/api/jobs/recommended", response_model=list[JobOut])
 def get_recommended_jobs(
-    resume_text: str = Query("", max_length=5000, description="Resume text or skills to match against"),
-    limit: int = Query(10, ge=1, le=50),
+    body: dict,
+    response: Response,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ScrapedJob]:
     """
     Recommend jobs based on resume text or skills.
     Searches cached jobs for keyword matches from the resume.
     """
+    response.headers["Cache-Control"] = "no-store"
+    resume_text = str(body.get("resume_text") or "")
+    try:
+        limit = int(body.get("limit", 10))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="limit must be an integer") from None
+    if not 1 <= limit <= 50:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 50")
+    if len(resume_text) > 5_000:
+        raise HTTPException(status_code=413, detail="resume_text is too large")
     if not resume_text or len(resume_text) < 20:
         raise HTTPException(
             status_code=400,
             detail="resume_text is required for recommendations. No fallback list is returned.",
         )
+    if not _PUBLIC_RATE_LIMITER.allow(f"recommend:{user.id}", limit=30, window_seconds=3600):
+        raise HTTPException(status_code=429, detail="Too many recommendation requests")
 
+    _consume_ai_credit(user, db, "job_recommendations")
     resume_skills, _resume_signal_mode = _extract_resume_skills(resume_text, db)
     if not resume_skills:
         return []
@@ -4242,7 +5189,16 @@ def get_recommended_jobs(
     return deduped[:limit]
 
 
-@app.get("/api/jobs/power-match")
+@app.get("/api/jobs/power-match", include_in_schema=False)
+def reject_power_match_get() -> None:
+    raise HTTPException(
+        status_code=405,
+        detail="Use POST because Smart Match consumes account quota and stores a snapshot",
+        headers={"Allow": "POST"},
+    )
+
+
+@app.post("/api/jobs/power-match")
 def get_power_match(
     limit: int = Query(8, ge=1, le=20),
     direct_employers_only: bool = Query(True),
@@ -4305,6 +5261,7 @@ def get_power_match(
         }
         return snapshot
 
+    _consume_ai_credit(user, db, "power_match")
     resume_skills, resume_signal_mode = _extract_resume_skills(resume_text, db)
     resume_skill_lookup = {skill.lower(): skill for skill in resume_skills}
     lower_resume = resume_text.lower()
@@ -4420,6 +5377,7 @@ def get_power_match(
         if not direct_employers_only and is_recruitment_employer(
             job.company,
             getattr(job, "company_ssic_description", "") or "",
+            getattr(job, "description", "") or "",
         ):
             suitability_score = max(0, suitability_score - 6)
 
@@ -4568,23 +5526,36 @@ def get_power_match(
 @app.post("/api/skillsfuture/recommend")
 def recommend_skillsfuture_courses(
     body: SkillsFutureRecommendRequest,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
 ) -> dict:
     """Recommend official MySkillsFuture courses for Smart Match skill gaps."""
-    return recommend_courses_for_skills(body.skills, per_skill=body.per_skill)
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"skillsfuture:{user.id}",
+        limit=20,
+        window_seconds=3600,
+    ):
+        raise HTTPException(status_code=429, detail="Too many course recommendation requests")
+    if not _COURSE_RECOMMEND_SLOTS.acquire(blocking=False):
+        raise HTTPException(
+            status_code=503,
+            detail="Course recommendations are busy. Try again shortly.",
+            headers={"Retry-After": "2"},
+        )
+    try:
+        return recommend_courses_for_skills(body.skills, per_skill=body.per_skill)
+    finally:
+        _COURSE_RECOMMEND_SLOTS.release()
 
 
 @app.get("/api/jobs/{job_id}", response_model=JobOut)
 def get_cached_job(job_id: int, db: Session = Depends(get_db)) -> ScrapedJob:
-    job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+    job = (
+        apply_public_job_visibility(db.query(ScrapedJob))
+        .filter(ScrapedJob.id == job_id)
+        .first()
+    )
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.source == "Careers@Gov" and not (job.description or "").strip():
-        _enrich_careersgov_job(job, db)
-        db.commit()
-    elif job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(job, db):
-        db.commit()
-    _queue_enrichment_if_needed(job)
     return job
 
 
@@ -4592,22 +5563,20 @@ def get_cached_job(job_id: int, db: Session = Depends(get_db)) -> ScrapedJob:
 def match_resume_to_job(
     job_id: int,
     body: ResumeScoreRequest,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     """Compare resume against a specific job's skills and description."""
     job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.source == "Careers@Gov" and not (job.description or "").strip():
-        if _enrich_careersgov_job(job, db):
-            db.commit()
-    elif job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(job, db):
-        db.commit()
+    if not _PUBLIC_RATE_LIMITER.allow(f"job-match:{user.id}", limit=30, window_seconds=60):
+        raise HTTPException(status_code=429, detail="Too many match requests")
 
     # Get skills from the job's database record + description
     db_skills = job.skills if isinstance(job.skills, list) else json.loads(job.skills) if job.skills else []
     jd_text = job.description or ""
-    canonical_terms = _build_canonical_job_terms(job, db)
+    canonical_terms = _build_canonical_job_terms(job)
 
     # Match against resume
     resume_text = sanitize_resume_text(body.resume_text)
@@ -4629,12 +5598,6 @@ def match_resume_to_job(
         "match_percent": result.get("match_percent", 0),
         "total_skills": len(canonical_terms),
     }
-
-
-@app.get("/api/skills")
-def get_skills(q: str = Query(..., min_length=1, max_length=200, description="Role keyword")) -> dict:
-    skills_list = ssg_api.get_skills_for_role(q)
-    return {"keyword": q, "skills": skills_list}
 
 
 @app.get("/api/sources")
@@ -4764,11 +5727,12 @@ def dismiss_job_alert(
 @app.get("/api/job-alerts/unsubscribe")
 @app.post("/api/job-alerts/unsubscribe")
 def unsubscribe_job_alerts(
+    request: Request,
     token: str = Query(..., min_length=20, max_length=200),
     db: Session = Depends(get_db),
 ) -> Response:
     try:
-        user_id = verify_unsubscribe_token(token)
+        user_id = verify_unsubscribe_token(token, db)
     except RuntimeError:
         user_id = None
     if not user_id:
@@ -4784,11 +5748,37 @@ def unsubscribe_job_alerts(
             status_code=400,
         )
 
-    pref = _get_or_create_job_alert_preference(db, user_id)
-    pref.enabled = False
-    pref.unsubscribed_at = datetime.now(timezone.utc)
-    pref.updated_at = datetime.now(timezone.utc)
-    db.commit()
+    if request.method == "GET":
+        escaped_token = html.escape(token, quote=True)
+        return Response(
+            content=(
+                "<!DOCTYPE html><html><body style=\"font-family:system-ui,sans-serif;"
+                "max-width:640px;margin:48px auto;line-height:1.6;color:#243447;\">"
+                "<h1>Unsubscribe from job alerts?</h1>"
+                "<p>Confirm below to stop receiving Job Hunter SG match alert emails.</p>"
+                f"<form method=\"post\" action=\"/api/job-alerts/unsubscribe?token={escaped_token}\">"
+                "<button type=\"submit\">Unsubscribe</button>"
+                "</form></body></html>"
+            ),
+            media_type="text/html",
+        )
+
+    with _account_lifecycle_lock(user_id):
+        try:
+            current_user_id = verify_unsubscribe_token(token, db)
+        except RuntimeError:
+            current_user_id = None
+        if current_user_id != user_id:
+            return Response(
+                content="Invalid or expired unsubscribe link.",
+                media_type="text/plain",
+                status_code=400,
+            )
+        pref = _get_or_create_job_alert_preference(db, user_id)
+        pref.enabled = False
+        pref.unsubscribed_at = datetime.now(timezone.utc)
+        pref.updated_at = datetime.now(timezone.utc)
+        db.commit()
     app_base_url = os.environ.get("APP_BASE_URL", "https://job.kooexperience.com").rstrip("/")
     return Response(
         content=(
@@ -4821,42 +5811,29 @@ def list_tracked(
     )
 
 
+@app.get("/api/applications/outcomes")
+def application_outcomes(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return workspace_module.application_outcomes(db, user.id)
+
+
 @app.post("/api/tracked", response_model=TrackedJobOut, status_code=201)
 def create_tracked(
     body: TrackedJobCreate,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TrackedJob:
-    # Check tier limit
-    limits = TIER_LIMITS.get(user.tier, TIER_LIMITS["free"])
-    current_count = (
-        db.query(func.count(TrackedJob.id))
-        .filter(TrackedJob.user_id == user.id)
-        .scalar()
-        or 0
+    return workspace_module.create_tracked_job(
+        db,
+        user,
+        body,
+        on_tracked=lambda tracked: _mark_job_alert_delivery_action(
+            db, user.id, tracked.scraped_job_id, "tracked"
+        ),
+        storage_lock=lambda: _locked_account_storage(user.id, db),
     )
-    if current_count >= limits["max_tracked_jobs"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Tracked job limit reached ({limits['max_tracked_jobs']}) for {user.tier} tier",
-        )
-
-    tracked = TrackedJob(
-        user_id=user.id,
-        company=sanitize_user_input(body.company),
-        role=sanitize_user_input(body.role),
-        date_applied=body.date_applied,
-        status=body.status,
-        source=sanitize_user_input(body.source),
-        follow_up_date=body.follow_up_date,
-        notes=sanitize_user_input(body.notes),
-        scraped_job_id=body.scraped_job_id,
-    )
-    db.add(tracked)
-    _mark_job_alert_delivery_action(db, user.id, body.scraped_job_id, "tracked")
-    db.commit()
-    db.refresh(tracked)
-    return tracked
 
 
 @app.put("/api/tracked/{job_id}", response_model=TrackedJobOut)
@@ -4866,22 +5843,90 @@ def update_tracked(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> TrackedJob:
-    tracked = db.query(TrackedJob).filter(TrackedJob.id == job_id).first()
-    if not tracked:
-        raise HTTPException(status_code=404, detail="Tracked job not found")
-    if tracked.user_id != user.id:
-        raise HTTPException(status_code=403, detail="Not your tracked job")
+    return workspace_module.update_tracked_job(db, user, job_id, body)
 
-    updates = body.model_dump(exclude_unset=True)
-    sanitize_fields = ("company", "role", "source", "notes")
-    for key, val in updates.items():
-        if key in sanitize_fields and isinstance(val, str):
-            val = sanitize_user_input(val)
-        setattr(tracked, key, val)
 
-    db.commit()
-    db.refresh(tracked)
-    return tracked
+@app.post("/api/applications/workspaces", response_model=ApplicationWorkspaceOut, status_code=201)
+def create_application_workspace(
+    body: ApplicationWorkspaceCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return workspace_module.create_application_workspace(
+        db,
+        user,
+        body,
+        on_tracked=lambda tracked: _mark_job_alert_delivery_action(
+            db, user.id, tracked.scraped_job_id, "tracked"
+        ),
+        storage_lock=lambda: _locked_account_storage(user.id, db),
+    )
+
+
+@app.get("/api/applications/workspaces/{workspace_id}", response_model=ApplicationWorkspaceOut)
+def get_application_workspace(
+    workspace_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return workspace_module.get_application_workspace(db, user.id, workspace_id)
+
+
+@app.post("/api/applications/workspaces/{workspace_id}/agent-review", response_model=ApplicationWorkspaceOut)
+def run_application_workspace_agent_review(
+    workspace_id: int,
+    body: dict | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return workspace_module.run_agent_review(
+        db,
+        user,
+        workspace_id,
+        body,
+        stream_events=_stream_resume_agent_events,
+        get_agent_state=_get_resume_agent_state,
+    )
+
+
+@app.post("/api/applications/workspaces/{workspace_id}/submitted-resume", response_model=ApplicationWorkspaceOut)
+async def upload_workspace_submitted_resume(
+    workspace_id: int,
+    file: UploadFile = File(...),
+    submitted_date: str = Form(""),
+    notes: str = Form(""),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    file_bytes = await file.read(MAX_FILE_SIZE + 1)
+    await file.close()
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File exceeds 5 MB limit")
+    if not _RESUME_PARSE_SLOTS.acquire(blocking=False):
+        raise HTTPException(status_code=503, detail="Resume parser is busy; try again shortly")
+    try:
+        try:
+            parsed_resume = await run_in_threadpool(
+                parse_resume_isolated,
+                filename=file.filename or "resume",
+                content_type=file.content_type or "",
+                file_bytes=file_bytes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        _RESUME_PARSE_SLOTS.release()
+    return workspace_module.save_submitted_resume(
+        db,
+        user,
+        workspace_id,
+        filename=file.filename or "resume",
+        content_type=file.content_type or "",
+        file_bytes=file_bytes,
+        parsed_resume=parsed_resume,
+        submitted_date=submitted_date,
+        notes=notes,
+    )
 
 
 @app.delete("/api/tracked/{job_id}")
@@ -4890,11 +5935,13 @@ def delete_tracked(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    tracked = db.query(TrackedJob).filter(TrackedJob.id == job_id).first()
+    tracked = (
+        db.query(TrackedJob)
+        .filter(TrackedJob.id == job_id, TrackedJob.user_id == user.id)
+        .first()
+    )
     if not tracked:
         raise HTTPException(status_code=404, detail="Tracked job not found")
-    if tracked.user_id != user.id:
-        raise HTTPException(status_code=403, detail="Not your tracked job")
     db.delete(tracked)
     db.commit()
     return {"ok": True}
@@ -4905,13 +5952,6 @@ def export_tracked(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
-    limits = TIER_LIMITS.get(user.tier, TIER_LIMITS["free"])
-    if not limits["can_export"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="CSV export requires Pro or Admin tier",
-        )
-
     jobs = (
         db.query(TrackedJob)
         .filter(TrackedJob.user_id == user.id)
@@ -4954,6 +5994,11 @@ STORY_TAGS = [
     "motivation", "proactiveness", "ambiguity", "perseverance",
     "conflict_resolution", "empathy", "growth", "communication",
 ]
+_MAX_ACTIVE_STORIES = 100
+_MAX_STORY_USAGES = 1_000
+_MAX_ACTIVE_RESUME_VERSIONS = 50
+_MAX_SAVED_RESUME_CHARS = 30_000
+_MAX_RESUME_STRUCTURED_BYTES = 200_000
 
 
 @app.get("/api/stories")
@@ -4997,7 +6042,16 @@ def create_story(
     """Create a new STAR+R story."""
     from models import InterviewStory
 
-    title = sanitize_user_input(body.get("title", "")).strip()
+    active_count = (
+        db.query(func.count(InterviewStory.id))
+        .filter(InterviewStory.user_id == user.id, InterviewStory.is_active == 1)
+        .scalar()
+        or 0
+    )
+    if active_count >= _MAX_ACTIVE_STORIES:
+        raise HTTPException(status_code=409, detail="Story limit reached")
+
+    title = sanitize_user_input(body.get("title", "")).strip()[:300]
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
 
@@ -5014,7 +6068,7 @@ def create_story(
     story = InterviewStory(
         user_id=user.id,
         title=title,
-        project_name=sanitize_user_input(body.get("project_name", "")),
+        project_name=sanitize_user_input(body.get("project_name", ""))[:300],
         situation=sanitize_user_input(body.get("situation", "")),
         task=sanitize_user_input(body.get("task", "")),
         action=sanitize_user_input(body.get("action", "")),
@@ -5051,7 +6105,12 @@ def update_story(
     updatable = ("title", "project_name", "situation", "task", "action", "result", "reflection")
     for field in updatable:
         if field in body:
-            setattr(story, field, sanitize_user_input(body[field]))
+            value = sanitize_user_input(body[field])
+            if field == "title":
+                value = value[:300]
+            elif field == "project_name":
+                value = value[:300]
+            setattr(story, field, value)
 
     if "tags" in body:
         tags = body["tags"]
@@ -5186,15 +6245,27 @@ def record_story_usage(
     if not story:
         raise HTTPException(status_code=404, detail="Story not found")
 
-    usage = StoryUsage(
-        story_id=story_id,
-        job_id=body.get("job_id"),
-        user_id=user.id,
-        question_asked=sanitize_user_input(body.get("question_asked", "")),
-        notes=sanitize_user_input(body.get("notes", "")),
-    )
-    db.add(usage)
-    db.commit()
+    if not _PUBLIC_RATE_LIMITER.allow(f"story-use:{user.id}", limit=60, window_seconds=60):
+        raise HTTPException(status_code=429, detail="Too many story usage requests")
+
+    with _locked_account_storage(user.id, db):
+        usage_count = (
+            db.query(func.count(StoryUsage.id))
+            .filter(StoryUsage.user_id == user.id)
+            .scalar()
+            or 0
+        )
+        if usage_count >= _MAX_STORY_USAGES:
+            raise HTTPException(status_code=409, detail="Story usage limit reached")
+        usage = StoryUsage(
+            story_id=story_id,
+            job_id=body.get("job_id"),
+            user_id=user.id,
+            question_asked=sanitize_user_input(body.get("question_asked", ""))[:1_000],
+            notes=sanitize_user_input(body.get("notes", ""))[:5_000],
+        )
+        db.add(usage)
+        db.commit()
     return {"message": "Usage recorded"}
 
 
@@ -5211,14 +6282,11 @@ def generate_stories_from_resume(
     - Numbers, dates, company names validated against resume (ISO 23894: self-verification)
     - Flagged if any content can't be verified (ISO 5259: data quality)
     """
-    check_rate_limit(user, "ai", db)
-
     resume_text = (body.get("resume_text") or "").strip()
     if not resume_text or len(resume_text) < 100:
         raise HTTPException(status_code=400, detail="Resume text too short. Upload or paste your resume first.")
 
-    db.add(UsageLog(user_id=user.id, action="ai", detail="story_generate"))
-    db.commit()
+    _consume_ai_credit(user, db, "story_generate")
 
     system_prompt = (
         "You are a strict interview coach that extracts STAR+R stories from a resume.\n\n"
@@ -5264,7 +6332,8 @@ def generate_stories_from_resume(
         '    "source_bullets": ["copy the exact resume bullet(s) this story is based on"]\n'
         "  }\n"
         "]\n\n"
-        "Return ONLY the JSON array. No markdown, no explanation, no code blocks."
+        "Return ONLY the JSON array. No markdown, no explanation, no code blocks.\n\n"
+        f"SECURITY: {UNTRUSTED_DATA_RULE}"
     )
 
     from ai_service import _call_sealion, SEALION_MODEL
@@ -5272,7 +6341,11 @@ def generate_stories_from_resume(
     content = _call_sealion(
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Extract STAR+R interview stories from this resume:\n\n{resume_text[:6000]}"},
+            {
+                "role": "user",
+                "content": "Extract STAR+R interview stories from this resume:\n\n"
+                + xml_data_block("resume_data", resume_text, 6000),
+            },
         ],
         max_tokens=3500,
         model=SEALION_MODEL,
@@ -5386,11 +6459,15 @@ def get_story_tags() -> dict:
 
 @app.post("/api/resume/score")
 def score_resume(
+    request: Request,
     body: ResumeScoreRequest,
     user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ) -> dict:
     started_at = datetime.now(timezone.utc)
+    owner = f"user:{user.id}" if user else f"ip:{_get_client_ip(request)}"
+    if not _PUBLIC_RATE_LIMITER.allow(f"resume-score:{owner}", limit=60, window_seconds=3600):
+        raise HTTPException(status_code=429, detail="Too many resume score requests")
     check_rate_limit(user, "search", db)
     db.add(UsageLog(user_id=user.id if user else None, action="resume_score"))
     resume_text = sanitize_resume_text(body.resume_text)
@@ -5597,83 +6674,51 @@ def ai_status() -> dict:
 
 
 def _get_client_ip(request: Request) -> str:
-    """Get client IP, respecting proxy headers."""
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """Return the visitor IP when the Cloudflare-only origin boundary is enabled."""
+    peer_ip = request.client.host if request.client else "unknown"
+    if not _TRUST_CLOUDFLARE_IP_HEADER:
+        return peer_ip
+    try:
+        return ipaddress.ip_address(
+            request.headers.get("cf-connecting-ip", "")
+        ).compressed
+    except ValueError:
+        return peer_ip
+
+
+def _consume_ai_credit(
+    user: User,
+    db: Session,
+    detail: str,
+) -> None:
+    with _AI_QUOTA_LOCK:
+        try:
+            if db.get_bind().dialect.name == "postgresql":
+                db.execute(
+                    text("SELECT pg_advisory_xact_lock(:key)"),
+                    {"key": 0x4A480000 + user.id},
+                )
+            check_rate_limit(user, "ai", db)
+            db.add(UsageLog(user_id=user.id, action="ai", detail=detail))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
 
 
 @app.post("/api/ai/coach")
 def ai_coach_resume(
-    request: Request,
-    response: Response,
     body: ResumeScoreRequest,
-    user: Optional[User] = Depends(get_optional_user),
-    jh_anon: str = Cookie(None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     """
     Start an AI resume review session. This counts as 1 credit.
-    Free: 3 sessions/day. AISG: 50/day.
-    Returns a session_id — all rewrites using that session are free.
+    Returns a session ID; every AI operation consumes the same account quota.
     """
 
-    free_limit = TIER_LIMITS["free"]["ai_per_day"]
-
-    # For anonymous users, track by BOTH cookie and IP
-    if not user:
-        anon_id = jh_anon or ""
-        client_ip = _get_client_ip(request)
-
-        if not anon_id:
-            anon_id = secrets.token_hex(16)
-            response.set_cookie(
-                "jh_anon", anon_id, max_age=86400, httponly=True, samesite="lax",
-            )
-
-        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-
-        # Check by cookie
-        cookie_count = (
-            db.query(func.count(UsageLog.id))
-            .filter(
-                UsageLog.action == "ai",
-                UsageLog.detail.contains(f"anon:{anon_id}"),
-                UsageLog.created_at >= today_start,
-            )
-            .scalar() or 0
-        )
-
-        # Check by IP (catches incognito / cleared cookies)
-        ip_count = (
-            db.query(func.count(UsageLog.id))
-            .filter(
-                UsageLog.action == "ai",
-                UsageLog.detail.contains(f"ip:{client_ip}"),
-                UsageLog.created_at >= today_start,
-            )
-            .scalar() or 0
-        )
-
-        if cookie_count >= free_limit or ip_count >= free_limit:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"You've used your {free_limit} free AI reviews today. Sign up with @aisg.sg for more!",
-            )
-        detail_prefix = f"anon:{anon_id}|ip:{client_ip}|session"
-    else:
-        check_rate_limit(user, "ai", db)
-        detail_prefix = "session"
-
     session_id = secrets.token_hex(16)
-
-    db.add(UsageLog(
-        user_id=user.id if user else None,
-        action="ai",
-        detail=f"{detail_prefix}:{session_id}",
-    ))
-    db.commit()
+    _consume_ai_credit(user, db, f"session:{session_id}")
 
     # Inject memory context for logged-in users
     memory_context = _get_memory_context(user, db)
@@ -5691,15 +6736,14 @@ def ai_coach_resume(
         )
 
     # Update memory for logged-in users (increment session count, store resume)
-    if user:
-        mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
-        if not mem:
-            mem = UserMemory(user_id=user.id)
-            db.add(mem)
-        mem.resume_text = resume_text[:10000]
-        mem.session_count = (mem.session_count or 0) + 1
-        _power_match_cache.pop(user.id, None)
-        db.commit()
+    mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
+    if not mem:
+        mem = UserMemory(user_id=user.id)
+        db.add(mem)
+    mem.resume_text = resume_text[:10000]
+    mem.session_count = (mem.session_count or 0) + 1
+    _power_match_cache.pop(user.id, None)
+    db.commit()
 
     result["session_id"] = session_id
     return result
@@ -5707,71 +6751,12 @@ def ai_coach_resume(
 
 @app.post("/api/ai/rewrite")
 def ai_rewrite_bullet(
-    request: Request,
     body: RewriteBulletRequest,
-    user: Optional[User] = Depends(get_optional_user),
-    jh_anon: str = Cookie(None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """
-    Rewrite a single resume bullet. Free if a valid session_id is provided
-    (from /api/ai/coach). Otherwise counts as a new AI credit.
-    """
-    # Check if this rewrite belongs to an active session
-    session_id = body.session_id or ""
-    session_valid = False
-    MAX_REWRITES_PER_SESSION = 999  # Essentially unlimited within a session — real protection is global rate limiter
-
-    if session_id:
-        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-        # Verify the session exists and was created today
-        session_log = db.query(UsageLog).filter(
-            UsageLog.action == "ai",
-            UsageLog.detail.contains(f"session:{session_id}"),
-            UsageLog.created_at >= today_start,
-        ).first()
-        if session_log:
-            session_owned = False
-            if user and session_log.user_id == user.id:
-                session_owned = True
-            elif not user and jh_anon:
-                detail = session_log.detail or ""
-                client_ip = _get_client_ip(request)
-                session_owned = (
-                    f"anon:{jh_anon}" in detail
-                    and f"ip:{client_ip}" in detail
-                )
-
-            # Count how many rewrites already used this session
-            rewrite_count = (
-                db.query(func.count(UsageLog.id))
-                .filter(
-                    UsageLog.action == "ai_rewrite",
-                    UsageLog.detail == f"session:{session_id}",
-                    UsageLog.created_at >= today_start,
-                )
-                .scalar() or 0
-            )
-            if session_owned and rewrite_count < MAX_REWRITES_PER_SESSION:
-                session_valid = True
-
-    if session_valid:
-        # Log the rewrite against the session (free, doesn't count as AI credit)
-        db.add(UsageLog(
-            user_id=user.id if user else None,
-            action="ai_rewrite",
-            detail=f"session:{session_id}",
-        ))
-        db.commit()
-    else:
-        # No valid session or session exhausted — counts as a new AI credit
-        check_rate_limit(user, "ai", db)
-        db.add(UsageLog(
-            user_id=user.id if user else None,
-            action="ai",
-            detail="rewrite:standalone",
-        ))
-        db.commit()
+    """Rewrite a single resume bullet and charge one account AI request."""
+    _consume_ai_credit(user, db, "rewrite")
 
     bullet = sanitize_user_input(body.bullet)
     job_title = sanitize_user_input(body.job_title)
@@ -5873,59 +6858,12 @@ def ai_rewrite_bullet(
 
 @app.post("/api/ai/integrate-keywords")
 def ai_integrate_keywords(
-    request: Request,
     body: IntegrateKeywordsRequest,
-    user: Optional[User] = Depends(get_optional_user),
-    jh_anon: str = Cookie(None),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    """
-    Smart keyword integration — suggests where and how to add missing keywords.
-    Free if a valid session_id is provided (from /api/ai/coach).
-    Otherwise counts as 1 AI credit.
-    """
-    # Check if this request belongs to an active session
-    session_id = body.session_id or ""
-    session_valid = False
-
-    if session_id:
-        today_start = datetime.now(timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0,
-        )
-        session_log = db.query(UsageLog).filter(
-            UsageLog.action == "ai",
-            UsageLog.detail.contains(f"session:{session_id}"),
-            UsageLog.created_at >= today_start,
-        ).first()
-        if session_log:
-            session_owned = False
-            if user and session_log.user_id == user.id:
-                session_owned = True
-            elif not user and jh_anon:
-                detail = session_log.detail or ""
-                client_ip = _get_client_ip(request)
-                session_owned = (
-                    f"anon:{jh_anon}" in detail
-                    and f"ip:{client_ip}" in detail
-                )
-            if session_owned:
-                session_valid = True
-
-    if session_valid:
-        db.add(UsageLog(
-            user_id=user.id if user else None,
-            action="ai_integrate",
-            detail=f"session:{session_id}",
-        ))
-        db.commit()
-    else:
-        check_rate_limit(user, "ai", db)
-        db.add(UsageLog(
-            user_id=user.id if user else None,
-            action="ai",
-            detail="integrate:standalone",
-        ))
-        db.commit()
+    """Suggest safe keyword placement and charge one account AI request."""
+    _consume_ai_credit(user, db, "integrate_keywords")
 
     resume_text = sanitize_resume_text(body.resume_text)
     job_title = sanitize_user_input(body.job_title)
@@ -5954,20 +6892,14 @@ def ai_integrate_keywords(
 @app.post("/api/ai/regenerate-summary")
 def ai_regenerate_summary(
     body: RegenerateSummaryRequest,
-    user: Optional[User] = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     """
     Generate a professional summary from the resume content,
     optionally tailored to a target job description.
     """
-    check_rate_limit(user, "ai", db)
-    db.add(UsageLog(
-        user_id=user.id if user else None,
-        action="ai",
-        detail="regenerate_summary",
-    ))
-    db.commit()
+    _consume_ai_credit(user, db, "regenerate_summary")
 
     resume_text = sanitize_resume_text(body.resume_text)
 
@@ -5985,15 +6917,6 @@ def ai_regenerate_summary(
                 job.parsed_jd = parsed_jd
                 db.commit()
 
-    # Build bullet context from the resume (first ~15 non-empty lines that look like bullets or content)
-    bullet_lines = []
-    for line in resume_text.split("\n"):
-        stripped = line.strip()
-        if stripped and len(stripped) > 15:
-            bullet_lines.append(f"- {stripped}")
-        if len(bullet_lines) >= 15:
-            break
-
     # Build the prompt (mirrors Stage 5 logic from tailoring_pipeline.py)
     system = """You are an expert resume writer specializing in Singapore's job market.
 
@@ -6004,50 +6927,57 @@ Generate a compelling professional summary (2-4 sentences, ~40-60 words) that:
 4. Sounds natural, not AI-generated
 
 CRITICAL RULES:
-- Only reference achievements and skills that appear in the bullet points below. Do NOT invent.
+- Only reference achievements and skills that appear in the resume below. Do NOT invent.
 - NEVER change numbers, years of experience, dollar amounts, or metrics from the original resume.
   If the resume says "7+ years", keep "7+ years". Do NOT calculate or infer different numbers.
+- Keep each metric's meaning and relationship unchanged. For example, an amount "realised" must not be relabelled as "savings".
+- A project sponsor or client is not the candidate's employer. Take employer and current-role claims from the matching role header.
 - Preserve all factual claims exactly as stated in the resume.
 
 Return ONLY the summary text, nothing else."""
+    system += f"\n\nSECURITY: {UNTRUSTED_DATA_RULE}"
 
     user_msg = ""
     if parsed_jd:
         skills = parsed_jd.get("required_skills", [])[:8]
         exp = parsed_jd.get("experience_years", "")
         if skills:
-            user_msg += f"TARGET ROLE SKILLS: {', '.join(skills)}\n"
+            user_msg += xml_data_block(
+                "required_skills_data", json.dumps(skills, ensure_ascii=False)
+            ) + "\n"
         if exp:
-            user_msg += f"EXPERIENCE LEVEL: {exp}\n"
+            user_msg += xml_data_block("job_experience_requirement_data", exp) + "\n"
     if jd_text and not parsed_jd:
-        user_msg += f"TARGET JOB DESCRIPTION (excerpt):\n{jd_text[:1500]}\n\n"
+        user_msg += xml_data_block("job_description_data", jd_text, 1500) + "\n\n"
 
     if body.user_direction:
-        user_msg += f"USER INSTRUCTION: {body.user_direction}\n\n"
+        user_msg += xml_data_block("user_request", body.user_direction) + "\n\n"
 
-    user_msg += f"KEY CONTENT FROM RESUME:\n" + "\n".join(bullet_lines)
+    user_msg += xml_data_block("resume_data", resume_text)
 
-    content = _call_sealion(
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_msg},
-        ],
-        max_tokens=200,
-        model=SEALION_MODEL,
-        temperature=0.3,
-    )
-
-    if not content:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service unavailable — rate limit or API error. Try again shortly.",
+    summary = ""
+    for attempt in range(2):
+        retry_note = (
+            "\n\nRETRY: The previous draft changed a numeric claim. Preserve every "
+            "metric's original qualifier, status, and meaning."
+            if attempt else ""
         )
-
-    summary = content.strip().strip('"')
-    if len(summary) < 30:
+        content = _call_sealion(
+            messages=[
+                {"role": "system", "content": system + retry_note},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=200,
+            model=SEALION_MODEL,
+            temperature=0.3,
+        )
+        summary = (content or "").strip().strip('"')
+        if len(summary) >= 30 and numeric_metric_claims_verifiable(resume_text, summary):
+            break
+    else:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI returned an unusable summary. Please try again.",
+            detail="AI could not produce a fact-verifiable summary. Please try again.",
         )
 
     return {"summary": summary}
@@ -6056,20 +6986,14 @@ Return ONLY the summary text, nothing else."""
 @app.post("/api/ai/cover-letter")
 def generate_cover_letter(
     body: CoverLetterRequest,
-    user: Optional[User] = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     """
     Generate a professional cover letter from resume content,
     optionally tailored to a specific job description.
     """
-    check_rate_limit(user, "ai", db)
-    db.add(UsageLog(
-        user_id=user.id if user else None,
-        action="ai",
-        detail="cover_letter",
-    ))
-    db.commit()
+    _consume_ai_credit(user, db, "cover_letter")
 
     resume_text = sanitize_resume_text(body.resume_text)
 
@@ -6109,15 +7033,6 @@ def generate_cover_letter(
                 jd_context = (target_job.description or "")[:1500]
                 job_description = job_description or jd_context
 
-    # Extract key bullets from resume (first 15 non-empty lines >15 chars)
-    bullet_lines = []
-    for line in resume_text.split("\n"):
-        stripped = line.strip()
-        if stripped and len(stripped) > 15:
-            bullet_lines.append(f"- {stripped}")
-        if len(bullet_lines) >= 15:
-            break
-
     # Build the prompt
     system = """You are an expert cover letter writer for the Singapore job market.
 
@@ -6130,6 +7045,8 @@ Generate a professional cover letter (250-350 words) with this structure:
 CRITICAL RULES:
 - Address "Dear Hiring Team" unless a specific hiring manager is mentioned
 - NEVER invent achievements, numbers, skills, or experience not present in the resume
+- Keep each metric's meaning and relationship unchanged; do not relabel an amount as savings unless the resume says it was savings
+- A project sponsor or client is not the candidate's employer. Take employer and current-role claims from the matching role header
 - Reference specific, concrete accomplishments from the resume that match the JD
 - Sound professional but natural — avoid generic, AI-sounding phrases
 - Do NOT use phrases like "I am writing to express my interest" or "I believe I would be a great fit"
@@ -6137,46 +7054,50 @@ CRITICAL RULES:
 - If the company name is known, mention it naturally
 
 Return ONLY the cover letter text. No subject lines, no labels, no markdown formatting."""
+    system += f"\n\nSECURITY: {UNTRUSTED_DATA_RULE}"
 
     user_msg = ""
     if job_title:
-        user_msg += f"TARGET ROLE: {job_title}\n"
+        user_msg += xml_data_block("job_title_data", job_title) + "\n"
     if job_company:
-        user_msg += f"COMPANY: {job_company}\n"
+        user_msg += xml_data_block("company_data", job_company) + "\n"
     if jd_context:
-        user_msg += f"JOB REQUIREMENTS: {jd_context}\n"
+        user_msg += xml_data_block("job_requirements_data", jd_context) + "\n"
     elif job_description:
-        user_msg += (
-            f"JOB DESCRIPTION:\n{job_description[:1500]}\n"
-        )
+        user_msg += xml_data_block(
+            "job_description_data", job_description, 1500
+        ) + "\n"
     if body.user_direction:
-        user_msg += f"\nUSER INSTRUCTION: {body.user_direction}\n"
+        user_msg += "\n" + xml_data_block("user_request", body.user_direction) + "\n"
 
-    user_msg += (
-        f"\nKEY CONTENT FROM RESUME:\n" + "\n".join(bullet_lines)
-    )
+    user_msg += "\n" + xml_data_block("resume_data", resume_text)
 
-    content = _call_sealion(
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_msg},
-        ],
-        max_tokens=600,
-        model=SEALION_MODEL,
-        temperature=0.4,
-    )
-
-    if not content:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI service unavailable — rate limit or API error. Try again shortly.",
+    cover_letter = ""
+    for attempt in range(2):
+        retry_note = (
+            "\n\nRETRY: The previous draft changed a numeric claim. Preserve every "
+            "metric's original qualifier, status, and meaning."
+            if attempt else ""
         )
-
-    cover_letter = content.strip().strip('"')
-    if len(cover_letter) < 100:
+        content = _call_sealion(
+            messages=[
+                {"role": "system", "content": system + retry_note},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=600,
+            model=SEALION_MODEL,
+            temperature=0.4,
+        )
+        cover_letter = (content or "").strip().strip('"')
+        if (
+            len(cover_letter) >= 100
+            and numeric_metric_claims_verifiable(resume_text, cover_letter)
+        ):
+            break
+    else:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI returned an unusable cover letter. Please try again.",
+            detail="AI could not produce a fact-verifiable cover letter. Please try again.",
         )
 
     word_count = len(cover_letter.split())
@@ -6186,20 +7107,14 @@ Return ONLY the cover letter text. No subject lines, no labels, no markdown form
 @app.post("/api/ai/application-pack")
 def generate_application_pack(
     body: ApplicationPackRequest,
-    user: Optional[User] = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     """
     Build a job-specific application pack: recruiter verdict, ATS gaps,
     evidence questions, resume changes, outreach copy, and interview prep.
     """
-    check_rate_limit(user, "ai", db)
-    db.add(UsageLog(
-        user_id=user.id if user else None,
-        action="ai",
-        detail="application_pack",
-    ))
-    db.commit()
+    _consume_ai_credit(user, db, "application_pack")
 
     resume_text = sanitize_resume_text(body.resume_text)
     job_title = sanitize_user_input(body.job_title)
@@ -6275,7 +7190,7 @@ def generate_application_pack(
 @app.post("/api/ai/resume-chat")
 def resume_chat_step(
     body: ResumeChatRequest,
-    user: Optional[User] = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     """
@@ -6283,13 +7198,7 @@ def resume_chat_step(
     action='chat'  -> returns next AI question + stage metadata.
     action='generate' -> returns structured resume text from conversation.
     """
-    check_rate_limit(user, "ai", db)
-    db.add(UsageLog(
-        user_id=user.id if user else None,
-        action="ai",
-        detail=f"resume_chat_{body.action}",
-    ))
-    db.commit()
+    _consume_ai_credit(user, db, f"resume_chat_{body.action}")
 
     messages = body.messages or []
 
@@ -6546,6 +7455,7 @@ def resume_chat_step(
 
 @app.post("/api/resume/upload")
 async def upload_resume(
+    request: Request,
     file: UploadFile = File(...),
     user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db),
@@ -6554,15 +7464,30 @@ async def upload_resume(
     Upload a PDF or DOCX resume. Returns full extracted text + metadata.
     No truncation — everything is returned.
     """
-    file_bytes = await file.read()
+    owner = f"user:{user.id}" if user else f"ip:{_get_client_ip(request)}"
+    if not _PUBLIC_RATE_LIMITER.allow(f"resume-upload:{owner}", limit=10, window_seconds=3600):
+        raise HTTPException(status_code=429, detail="Too many resume uploads. Please try again later.")
+    file_bytes = await file.read(MAX_FILE_SIZE + 1)
+    await file.close()
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail="File too large. Maximum is 5MB.")
+    if not _RESUME_PARSE_SLOTS.acquire(blocking=False):
+        raise HTTPException(
+            status_code=503,
+            detail="Resume parsing is busy. Please try again shortly.",
+            headers={"Retry-After": "2"},
+        )
     try:
-        result = parse_resume(
+        result = await run_in_threadpool(
+            parse_resume_isolated,
             filename=file.filename or "resume",
             content_type=file.content_type or "",
             file_bytes=file_bytes,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        _RESUME_PARSE_SLOTS.release()
 
     parse_quality = result.get("parse_quality", {})
     db.add(UsageLog(
@@ -6575,6 +7500,8 @@ async def upload_resume(
             "parse_quality": parse_quality,
         }, separators=(",", ":")),
     ))
+    if user:
+        _consume_ai_credit(user, db, "resume_embedding")
     _persist_resume_to_memory(user, db, result["text"])
     db.commit()
 
@@ -6584,7 +7511,7 @@ async def upload_resume(
 @app.post("/api/ai/review-all")
 def review_all_bullets(
     body: ResumeScoreRequest,
-    user: Optional[User] = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     """
@@ -6592,9 +7519,7 @@ def review_all_bullets(
     User reviews each suggestion, accepts/rejects individually, then applies all.
     This replaces the old "AI Improve All" which blindly rewrote everything.
     """
-    check_rate_limit(user, "ai", db)
-    db.add(UsageLog(user_id=user.id if user else None, action="ai", detail="review_all"))
-    db.commit()
+    _consume_ai_credit(user, db, "review_all")
 
     resume_text = sanitize_resume_text(body.resume_text)
     jd = sanitize_user_input(body.job_description)
@@ -6621,10 +7546,11 @@ Return a JSON array:
   {"original": "exact bullet text", "status": "improve", "issue": "Weak opening verb", "suggested": "Rewritten version here", "reason": "Replaced 'Responsible for' with 'Directed'"},
   ...
 ]"""
+    system += f"\n\nSECURITY: {UNTRUSTED_DATA_RULE}"
 
-    user_msg = f"Resume:\n{resume_text}"
+    user_msg = xml_data_block("resume_data", resume_text)
     if jd:
-        user_msg += f"\n\nTarget job description:\n{jd}"
+        user_msg += "\n\n" + xml_data_block("job_description_data", jd)
         user_msg += "\n\nWeave in missing keywords from the JD where they fit naturally. Keywords must be EXACT MATCH."
 
     content = _call_sealion(
@@ -6668,6 +7594,7 @@ Return a JSON array:
 
 @app.post("/api/resume/download")
 def download_resume(
+    request: Request,
     body: dict,
     user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db),
@@ -6680,6 +7607,11 @@ def download_resume(
     resume_text = body.get("resume_text", "")
     if not resume_text or len(resume_text) < 50:
         raise HTTPException(status_code=400, detail="Resume text too short")
+    if len(resume_text) > 30_000:
+        raise HTTPException(status_code=413, detail="Resume text is too large")
+    owner = f"user:{user.id}" if user else f"ip:{_get_client_ip(request)}"
+    if not _PUBLIC_RATE_LIMITER.allow(f"docx-export:{owner}", limit=10, window_seconds=3600):
+        raise HTTPException(status_code=429, detail="Too many document exports")
 
     template_id = body.get("template", "modern")
     name = sanitize_user_input(body.get("name", ""))
@@ -6752,6 +7684,7 @@ def download_resume(
 
 @app.post("/api/resume/download-pdf")
 def download_resume_pdf(
+    request: Request,
     body: dict,
     user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db),
@@ -6760,6 +7693,11 @@ def download_resume_pdf(
     resume_text = body.get("resume_text", "")
     if not resume_text or len(resume_text) < 50:
         raise HTTPException(status_code=400, detail="Resume text too short")
+    if len(resume_text) > 30_000:
+        raise HTTPException(status_code=413, detail="Resume text is too large")
+    owner = f"user:{user.id}" if user else f"ip:{_get_client_ip(request)}"
+    if not _PUBLIC_RATE_LIMITER.allow(f"pdf-export:{owner}", limit=5, window_seconds=3600):
+        raise HTTPException(status_code=429, detail="Too many PDF exports")
 
     template_id = body.get("template", "modern")
     name = sanitize_user_input(body.get("name", ""))
@@ -6807,14 +7745,14 @@ def download_resume_pdf(
 
 def _parse_sections_for_pdf(text: str) -> list[dict]:
     """Parse resume text into sections for HTML rendering."""
-    from resume_templates import _parse_sections, normalize_for_ats
+    from resume_templates import _group_export_lines, _parse_sections, normalize_for_ats
     text = normalize_for_ats(text)
     raw = _parse_sections(text)
     result = []
     for key, content in raw.items():
         if key == "header":
             continue
-        lines = [ln.strip() for ln in content.split("\n") if ln.strip()]
+        lines = _group_export_lines(content, key)
         result.append({"key": key, "lines": lines})
     return result
 
@@ -6901,63 +7839,55 @@ def get_templates() -> list[dict]:
 # UTILITY
 # ═════════════════════════════════════════════════════════════════════════════
 
-@app.get("/api/tiers", response_model=list[TierInfo])
-def get_tiers() -> list[dict]:
-    return [
-        {
-            "name": "Free",
-            "price": "Free",
-            "limits": TIER_LIMITS["free"],
-            "features": [
-                "Search all SG job portals",
-                "AI resume scoring",
-                "AI resume coaching",
-                "AI bullet rewriting",
-                "ATS keyword matching",
-                "3 AI reviews per day",
-                "No login required",
-            ],
-        },
-        {
-            "name": "AISG",
-            "price": "Free (@aisg.sg)",
-            "limits": TIER_LIMITS["pro"],
-            "features": [
-                "Everything in Free",
-                "Save & track job applications",
-                "Resume profile persistence",
-                "Follow-up reminders",
-                "CSV export of tracked jobs",
-                "50 AI reviews per day",
-            ],
-        },
-        {
-            "name": "Admin",
-            "price": "Internal",
-            "limits": TIER_LIMITS["admin"],
-            "features": [
-                "Unlimited searches",
-                "Unlimited tracked jobs",
-                "CSV export",
-                "Full access",
-            ],
-        },
-    ]
-
-
 @app.post("/api/contact", status_code=201)
-def contact(body: ContactRequest, db: Session = Depends(get_db)) -> dict:
-    # Rate limit contact form submissions (abuse prevention)
-    check_rate_limit(None, "search", db)
-    log.info("Contact form submission received")
+def contact(
+    request: Request,
+    body: ContactRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"contact:{user.id}",
+        limit=5,
+        window_seconds=3600,
+    ):
+        raise HTTPException(status_code=429, detail="Too many messages. Please try again later.")
+    if str(body.email).strip().lower() != user.email.strip().lower():
+        raise HTTPException(status_code=400, detail="Use the email address on your account")
+    contact_email = (
+        os.environ.get("CONTACT_EMAIL")
+        or os.environ.get("ADMIN_EMAIL")
+        or ""
+    ).strip()
+    if not contact_email or not email_configured():
+        raise HTTPException(status_code=503, detail="Contact email is temporarily unavailable")
+
+    message = body.message.strip()
+    text_body = f"From: {user.name} <{user.email}>\n\n{message}"
+    html_body = (
+        f"<p><strong>From:</strong> {html.escape(user.name)} "
+        f"&lt;{html.escape(user.email)}&gt;</p>"
+        f"<p>{html.escape(message).replace(chr(10), '<br>')}</p>"
+    )
+    try:
+        send_email(
+            contact_email,
+            "Job Hunter SG contact form",
+            text_body,
+            html_body,
+        )
+    except Exception as exc:
+        log.warning("Contact email failed for user_id=%s: %s", user.id, type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Message could not be sent")
+
     usage = UsageLog(
-        user_id=None,
+        user_id=user.id,
         action="contact",
         detail="contact_form_submission",
     )
     db.add(usage)
     db.commit()
-    return {"message": "Thanks! We'll get back to you soon."}
+    return {"message": "Message sent."}
 
 
 @app.get("/api/admin/metrics")
@@ -7278,9 +8208,8 @@ def get_usage(
         .scalar()
         or 0
     )
-    limits = TIER_LIMITS.get(user.tier, TIER_LIMITS["free"])
+    limits = get_account_limits(user)
     return {
-        "tier": user.tier,
         "searches_today": searches_today,
         "searches_limit": limits["searches_per_day"],
         "ai_today": ai_today,
@@ -7339,12 +8268,28 @@ def save_resume_version(
     """
     from models import ResumeVersion
 
-    label = sanitize_user_input(body.get("label", "")).strip()
+    active_count = (
+        db.query(func.count(ResumeVersion.id))
+        .filter(ResumeVersion.user_id == user.id, ResumeVersion.is_active == True)
+        .scalar()
+        or 0
+    )
+    if active_count >= _MAX_ACTIVE_RESUME_VERSIONS:
+        raise HTTPException(status_code=409, detail="Resume version limit reached")
+
+    label = sanitize_user_input(body.get("label", "")).strip()[:200]
     resume_text = body.get("resume_text", "").strip()
     if not label:
         raise HTTPException(status_code=400, detail="Label is required")
     if not resume_text or len(resume_text) < 50:
         raise HTTPException(status_code=400, detail="Resume text too short")
+    if len(resume_text) > _MAX_SAVED_RESUME_CHARS:
+        raise HTTPException(status_code=413, detail="Resume text is too large")
+    resume_structured = body.get("resume_structured")
+    if resume_structured is not None and len(
+        json.dumps(resume_structured, separators=(",", ":"))
+    ) > _MAX_RESUME_STRUCTURED_BYTES:
+        raise HTTPException(status_code=413, detail="Structured resume is too large")
 
     is_master = body.get("is_master", False)
     # If setting as master, unset previous master
@@ -7369,7 +8314,7 @@ def save_resume_version(
         label=label,
         source=body.get("source", "manual"),
         resume_text=resume_text,
-        resume_structured=body.get("resume_structured"),
+        resume_structured=resume_structured,
         job_id=job_id,
         job_title=job_title,
         job_company=job_company,
@@ -7445,11 +8390,15 @@ def update_resume_version(
         raise HTTPException(status_code=404, detail="Version not found")
 
     if "label" in body:
-        version.label = sanitize_user_input(body["label"]).strip()
+        version.label = sanitize_user_input(body["label"]).strip()[:200]
     if "resume_text" in body:
+        if len(body["resume_text"]) > _MAX_SAVED_RESUME_CHARS:
+            raise HTTPException(status_code=413, detail="Resume text is too large")
         version.resume_text = body["resume_text"]
         version.word_count = len(body["resume_text"].split())
     if "resume_structured" in body:
+        if len(json.dumps(body["resume_structured"], separators=(",", ":"))) > _MAX_RESUME_STRUCTURED_BYTES:
+            raise HTTPException(status_code=413, detail="Structured resume is too large")
         version.resume_structured = body["resume_structured"]
     if "score" in body:
         version.score = body["score"]
@@ -7490,13 +8439,117 @@ def delete_resume_version(
     return {"id": version.id, "deleted": True}
 
 
+# ── Resume Deep Agent v2 ────────────────────────────────────────────────────
+
+
+def _stream_resume_agent_events(body: dict):
+    from resume_agent.session import stream_chat_events
+
+    return stream_chat_events(
+        body,
+        owner_run_reserved=bool(body.get("_owner_run_reserved")),
+    )
+
+
+def _resume_agent_sse(body: dict, heartbeat_seconds: float = 15):
+    events: queue.Queue[dict | None] = queue.Queue()
+
+    def produce() -> None:
+        try:
+            for event in _stream_resume_agent_events(body):
+                events.put(event)
+        except Exception:
+            events.put({"event": "error", "message": "Agent Review stopped unexpectedly."})
+        finally:
+            events.put(None)
+
+    threading.Thread(target=produce, daemon=True).start()
+    while True:
+        try:
+            event = events.get(timeout=heartbeat_seconds)
+        except queue.Empty:
+            yield ": keepalive\n\n"
+            continue
+        if event is None:
+            return
+        event_name = event.get("event", "message")
+        yield f"event: {event_name}\n"
+        yield f"data: {json.dumps(event)}\n\n"
+
+
+@app.post("/api/resume/agent/chat")
+def resume_agent_chat(
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from resume_agent.session import release_owner_run, reserve_owner_run
+
+    owner_key = f"user:{user.id}"
+    session_id = str(body.get("session_id") or "").strip()
+    if len(session_id) > 200:
+        raise HTTPException(status_code=422, detail="Agent session ID is too long")
+    if len(str(body.get("message") or "")) > 10_000:
+        raise HTTPException(status_code=413, detail="Agent message is too large")
+    if len(str(body.get("resume_text") or "")) > app_config.AGENT_MAX_DRAFT_CHARS:
+        raise HTTPException(status_code=413, detail="Resume draft is too large")
+    if (
+        len(str(body.get("profile_context") or ""))
+        > app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS
+    ):
+        raise HTTPException(status_code=413, detail="Profile context is too large")
+    with _account_lifecycle_lock(user.id):
+        if not db.query(User.id).filter(User.id == user.id).first():
+            raise HTTPException(status_code=401, detail="Account no longer exists")
+        if session_id:
+            try:
+                _get_resume_agent_state(session_id, owner_key=owner_key)
+            except (KeyError, PermissionError):
+                raise HTTPException(status_code=404, detail="Agent session not found")
+        if not reserve_owner_run(owner_key):
+            raise HTTPException(status_code=429, detail="Agent Review is already running")
+        try:
+            _consume_ai_credit(user, db, "resume_agent_chat")
+            body = {
+                **body,
+                "_owner_key": owner_key,
+                "_owner_run_reserved": True,
+            }
+            return StreamingResponse(
+                _resume_agent_sse(body),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+        except Exception:
+            release_owner_run(owner_key)
+            raise
+
+
+def _get_resume_agent_state(session_id: str, owner_key: str | None = None) -> dict:
+    from resume_agent.session import get_state
+
+    return get_state(session_id, owner_key=owner_key)
+
+
+@app.get("/api/resume/agent/{session_id}/state")
+def resume_agent_state(
+    session_id: str,
+    user: User = Depends(get_current_user),
+):
+    owner_key = f"user:{user.id}"
+    try:
+        return _get_resume_agent_state(session_id, owner_key=owner_key)
+    except (KeyError, PermissionError):
+        raise HTTPException(status_code=404, detail="Agent session not found")
+
+
 # ── Resume Tailoring Pipeline ───────────────────────────────────────────────
 
 
 @app.post("/api/resume/tailor")
 def start_tailoring(
     body: dict,
-    user: Optional[User] = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     """
@@ -7511,41 +8564,44 @@ def start_tailoring(
 
     if not resume_text or len(resume_text) < 50:
         raise HTTPException(status_code=400, detail="Resume text is too short (min 50 chars).")
+    if len(resume_text) > _MAX_SAVED_RESUME_CHARS:
+        raise HTTPException(status_code=413, detail="Resume text is too large.")
     if intensity not in ("nudge", "keywords", "full"):
         raise HTTPException(status_code=400, detail="Intensity must be nudge, keywords, or full.")
 
     # Load job and its pre-parsed JD
     jd_text = ""
     parsed_jd = None
+    job = None
     if job_id:
         job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
         if not job:
             raise HTTPException(status_code=404, detail="Job not found.")
         jd_text = job.description or ""
         parsed_jd = job.parsed_jd
-        # Pre-parse on the fly if missing
-        if not parsed_jd and jd_text:
-            skills_list = job.skills if isinstance(job.skills, list) else []
-            parsed_jd = preparse_jd(jd_text, skills=skills_list, db_session=db)
-            job.parsed_jd = parsed_jd
-            db.commit()
     else:
         jd_text = sanitize_user_input(body.get("job_description", ""))
 
-    if user:
-        check_rate_limit(user, "ai", db)
-        db.add(UsageLog(user_id=user.id, action="ai", detail="tailor_pipeline"))
-        db.commit()
-    else:
-        # Rate-limit anonymous users too to prevent LLM abuse
-        check_rate_limit(None, "ai", db)
-
-    state = run_pipeline(
-        resume_text=resume_text,
-        job_description=jd_text,
-        parsed_jd=parsed_jd,
-        intensity=intensity,
-    )
+    owner_key = f"user:{user.id}"
+    with _account_lifecycle_lock(user.id):
+        if not db.query(User.id).filter(User.id == user.id).first():
+            raise HTTPException(status_code=401, detail="Account no longer exists")
+        if owner_has_active_pipelines(owner_key):
+            raise HTTPException(
+                status_code=429,
+                detail="A tailoring pipeline is already running for this account.",
+            )
+        _consume_ai_credit(user, db, "tailor_pipeline")
+        try:
+            state = run_pipeline(
+                resume_text=resume_text,
+                job_description=jd_text,
+                parsed_jd=parsed_jd,
+                intensity=intensity,
+                owner_key=owner_key,
+            )
+        except PipelineCapacityError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from None
 
     return {
         "session_id": state.session_id,
@@ -7555,22 +8611,27 @@ def start_tailoring(
 
 
 @app.get("/api/resume/tailor/{session_id}/status")
-def get_tailoring_status(session_id: str) -> dict:
+def get_tailoring_status(
+    session_id: str,
+    user: User = Depends(get_current_user),
+) -> dict:
     """Poll for pipeline progress."""
-    state = get_pipeline_state(session_id)
+    owner_key = f"user:{user.id}"
+    state = get_pipeline_state(session_id, owner_key=owner_key)
     if not state:
         raise HTTPException(status_code=404, detail="Tailoring session not found.")
     return state.to_dict()
 
 
-@app.get("/api/resume/tailor/{session_id}/result")
+@app.post("/api/resume/tailor/{session_id}/result")
 def get_tailoring_result(
     session_id: str,
-    user: Optional[User] = Depends(get_optional_user),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     """Get the tailoring result (available even before pipeline completes)."""
-    state = get_pipeline_state(session_id)
+    owner_key = f"user:{user.id}"
+    state = get_pipeline_state(session_id, owner_key=owner_key)
     if not state:
         raise HTTPException(status_code=404, detail="Tailoring session not found.")
     if state.error:
@@ -7585,39 +8646,70 @@ def get_tailoring_result(
 
     # Auto-save as a resume version on first complete fetch
     result = state.result
-    if user and not result.get("_version_saved"):
-        from models import ResumeVersion, TailoredResume
-        tailored_text = result.get("tailored_text", "")
-        job_title = ""
-        job_company = ""
-        job_id = None
-        # Get job info from the TailoredResume record
-        tr = db.query(TailoredResume).filter(TailoredResume.session_id == session_id).first()
-        if tr:
-            job_id = tr.job_id
-            job = db.query(ScrapedJob).filter(ScrapedJob.id == tr.job_id).first() if tr.job_id else None
-            if job:
-                job_title = job.title or ""
-                job_company = job.company or ""
+    if not result.get("_version_saved"):
+        with _locked_account_storage(user.id, db):
+            # Recheck after serialization so two result requests cannot both save.
+            if not result.get("_version_saved"):
+                from models import ResumeVersion, TailoredResume
 
-        if tailored_text and len(tailored_text) >= 50:
-            score_after = result.get("score", {}).get("after")
-            label = f"Tailored for {job_title[:40]}" if job_title else f"Tailored {session_id[:8]}"
-            version = ResumeVersion(
-                user_id=user.id,
-                label=label,
-                source="tailored",
-                resume_text=tailored_text,
-                job_id=job_id,
-                job_title=job_title,
-                job_company=job_company,
-                score=score_after,
-                word_count=len(tailored_text.split()),
-            )
-            db.add(version)
-            db.commit()
-            result["_version_saved"] = True
-            result["version_id"] = version.id
+                tailored_text = result.get("tailored_text", "")
+                job_title = ""
+                job_company = ""
+                job_id = None
+                tr = (
+                    db.query(TailoredResume)
+                    .filter(
+                        TailoredResume.session_id == session_id,
+                        TailoredResume.user_id == user.id,
+                    )
+                    .first()
+                )
+                if tr:
+                    job_id = tr.job_id
+                    job = (
+                        db.query(ScrapedJob).filter(ScrapedJob.id == tr.job_id).first()
+                        if tr.job_id
+                        else None
+                    )
+                    if job:
+                        job_title = job.title or ""
+                        job_company = job.company or ""
+
+                active_versions = (
+                    db.query(func.count(ResumeVersion.id))
+                    .filter(
+                        ResumeVersion.user_id == user.id,
+                        ResumeVersion.is_active == True,
+                    )
+                    .scalar()
+                    or 0
+                )
+                if (
+                    active_versions < _MAX_ACTIVE_RESUME_VERSIONS
+                    and tailored_text
+                    and 50 <= len(tailored_text) <= _MAX_SAVED_RESUME_CHARS
+                ):
+                    score_after = result.get("score", {}).get("after")
+                    label = (
+                        f"Tailored for {job_title[:40]}"
+                        if job_title
+                        else f"Tailored {session_id[:8]}"
+                    )
+                    version = ResumeVersion(
+                        user_id=user.id,
+                        label=label,
+                        source="tailored",
+                        resume_text=tailored_text,
+                        job_id=job_id,
+                        job_title=job_title,
+                        job_company=job_company,
+                        score=score_after,
+                        word_count=len(tailored_text.split()),
+                    )
+                    db.add(version)
+                    db.commit()
+                    result["_version_saved"] = True
+                    result["version_id"] = version.id
 
     return result
 
@@ -7625,36 +8717,19 @@ def get_tailoring_result(
 @app.get("/api/jobs/{job_id}/parsed")
 def get_parsed_jd(
     job_id: int,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
     """Get the pre-parsed JD data for a job (skills, requirements, etc.)."""
     job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found.")
-    if job.source == "Careers@Gov" and not (job.description or "").strip():
-        if _enrich_careersgov_job(job, db):
-            db.commit()
-    elif job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(job, db):
-        db.commit()
+    if not _PUBLIC_RATE_LIMITER.allow(f"job-parsed:{user.id}", limit=60, window_seconds=60):
+        raise HTTPException(status_code=429, detail="Too many job detail requests")
 
-    # Parse on the fly if not already done
-    if not job.parsed_jd and job.description:
-        skills_list = job.skills if isinstance(job.skills, list) else []
-        job.parsed_jd = preparse_jd(
-            job.description,
-            skills=skills_list,
-            db_session=db,
-            job_title=job.title or "",
-        )
-        db.commit()
-
-    # Compute terms once, cache preview, queue summary if needed
-    terms = _build_canonical_job_terms(job, db)
+    # Compute for this response only. Job-detail reads never enqueue AI or mutate jobs.
+    terms = _build_canonical_job_terms(job)
     preview = _job_term_labels(terms, limit=8)
-    if preview != (job.job_terms_preview or []):
-        job.job_terms_preview = preview
-        db.commit()
-    _queue_enrichment_if_needed(job)
 
     return {
         "job_id": job_id,
@@ -7674,20 +8749,24 @@ def get_parsed_jd(
 def submit_tailoring_feedback(
     session_id: str,
     body: dict,
+    user: User = Depends(get_current_user),
 ) -> dict:
     """Accept, reject, or edit an individual change from the pipeline."""
-    state = get_pipeline_state(session_id)
+    owner_key = f"user:{user.id}"
+    state = get_pipeline_state(session_id, owner_key=owner_key)
     if not state:
         raise HTTPException(status_code=404, detail="Tailoring session not found.")
     if not state.result:
         raise HTTPException(status_code=400, detail="Pipeline has not completed yet.")
 
-    bullet_id = body.get("bullet_id", "")
-    action = body.get("action", "")  # "accept" | "reject" | "edit"
-    edited_text = body.get("edited_text", "")
+    bullet_id = str(body.get("bullet_id") or "")[:200]
+    action = str(body.get("action") or "")  # "accept" | "reject" | "edit"
+    edited_text = str(body.get("edited_text") or "")
 
     if action not in ("accept", "reject", "edit"):
         raise HTTPException(status_code=400, detail="Action must be accept, reject, or edit.")
+    if len(edited_text) > _MAX_SAVED_RESUME_CHARS:
+        raise HTTPException(status_code=413, detail="edited_text is too large")
     if action == "edit" and not edited_text.strip():
         raise HTTPException(status_code=400, detail="edited_text required when action is edit.")
 
@@ -7727,9 +8806,11 @@ def submit_tailoring_feedback(
 @app.post("/api/resume/tailor/{session_id}/apply")
 def apply_tailoring_changes(
     session_id: str,
+    user: User = Depends(get_current_user),
 ) -> dict:
     """Apply all accepted changes and return the final tailored resume text."""
-    state = get_pipeline_state(session_id)
+    owner_key = f"user:{user.id}"
+    state = get_pipeline_state(session_id, owner_key=owner_key)
     if not state:
         raise HTTPException(status_code=404, detail="Tailoring session not found.")
     if not state.result:
@@ -7738,8 +8819,8 @@ def apply_tailoring_changes(
     original_text = state.result.get("original_text", "")
     changes = state.result.get("changes", [])
 
-    # Start from original text and apply only accepted changes
-    lines = original_text.replace("\r\n", "\n").split("\n")
+    # Start from original text and apply only accepted changes.
+    tailored_text = original_text.replace("\r\n", "\n")
 
     applied_count = 0
     rejected_count = 0
@@ -7763,26 +8844,12 @@ def apply_tailoring_changes(
         if not original or not final_text:
             continue
 
-        # Find and replace in lines
-        normalize = lambda s: re.sub(r"\s+", " ", s.strip().lower())
-        for i, line in enumerate(lines):
-            # Strip bullet markers for comparison
-            stripped = re.sub(
-                r"^[\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)]\s)\s*",
-                "", line,
-            ).strip()
-            if normalize(stripped) == normalize(original):
-                # Preserve the original bullet marker
-                marker_match = re.match(
-                    r"^([\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)]\s)\s*)",
-                    line,
-                )
-                marker = marker_match.group(1) if marker_match else ""
-                lines[i] = f"{marker}{final_text}"
-                applied_count += 1
-                break
-
-    tailored_text = "\n".join(lines)
+        tailored_text, replaced = _replace_wrapped_resume_change(
+            tailored_text,
+            original,
+            final_text,
+        )
+        applied_count += int(replaced)
 
     # Re-score the final version
     scorer = ResumeScorer()
@@ -7798,9 +8865,39 @@ def apply_tailoring_changes(
     }
 
 
+def _replace_wrapped_resume_change(
+    resume_text: str,
+    original: str,
+    replacement: str,
+) -> tuple[str, bool]:
+    """Replace one logical resume line even when a PDF wrapped it physically."""
+    words = original.split()
+    if not words:
+        return resume_text, False
+    body_pattern = r"\s+".join(re.escape(word) for word in words)
+    marker_pattern = r"(?:[-*\u2022\u2023\u25E6\u2043\u2219]|\d+[.)])"
+    pattern = re.compile(
+        rf"^(?P<prefix>[ \t]*(?:{marker_pattern}[ \t]*)?){body_pattern}[ \t]*$",
+        re.MULTILINE,
+    )
+    updated, count = pattern.subn(
+        lambda match: f"{match.group('prefix')}{replacement}",
+        resume_text,
+        count=1,
+    )
+    return updated, count == 1
+
+
 # ── Static frontend (single-service deploy) ─────────────────────────────────
 # IMPORTANT: This MUST be the last thing registered. app.mount("/") catches
 # all paths, so any API routes defined after this will get 405 errors.
+
+
+def _frontend_cache_control(path: str, status_code: int) -> str:
+    if path.startswith("/assets/") and status_code < 400:
+        return "public, max-age=31536000, immutable"
+    return "no-store"
+
 
 _static_dir = Path(__file__).resolve().parent / "static"
 if _static_dir.is_dir():
@@ -7809,17 +8906,35 @@ if _static_dir.is_dir():
     @app.middleware("http")
     async def _spa_middleware(request: Request, call_next):
         """Serve SPA -- fall back to index.html for non-API, non-file routes."""
+        path = request.url.path
         response = await call_next(request)
+        if path.startswith("/assets/"):
+            # Missing hashed assets must stay 404. Returning index.html here
+            # produces a MIME error and lets CDNs cache HTML under a JS URL.
+            response.headers["Cache-Control"] = _frontend_cache_control(
+                path, response.status_code
+            )
+            return response
         if (
             response.status_code == 404
-            and not request.url.path.startswith("/api")
-            and not request.url.path.startswith("/docs")
-            and not request.url.path.startswith("/openapi")
+            and not path.startswith("/api")
+            and not path.startswith("/docs")
+            and not path.startswith("/openapi")
         ):
-            return FileResponse(_static_dir / "index.html")
+            return FileResponse(
+                _static_dir / "index.html",
+                headers={"Cache-Control": "no-store"},
+            )
+        if not path.startswith(("/api", "/docs", "/openapi")):
+            response.headers["Cache-Control"] = _frontend_cache_control(
+                path, response.status_code
+            )
         return response
 
     app.mount("/", StaticFiles(directory=str(_static_dir)), name="static")
+
+# Register this last so it also wraps responses replaced by the SPA fallback.
+app.add_middleware(SecurityHeadersMiddleware, hsts=_is_production)
 
 
 # ── Run ──────────────────────────────────────────────────────────────────────

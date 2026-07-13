@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
 import {
-  User, LogOut, Mail, Star, CheckCircle, Loader2, Bell, Save, ShieldCheck,
-  FileText, Sparkles, BookOpen, BarChart2,
+  User, LogOut, Mail, Loader2, Bell, Save, ShieldCheck,
+  FileText, Sparkles, BookOpen, BarChart2, KeyRound, Trash2,
 } from "lucide-react";
-import { API_BASE, apiFetch } from "../lib/api.js";
-import TierBadge from "./TierBadge.jsx";
+import { API_BASE, apiFetch, clearResumeDraftStorage } from "../lib/api.js";
 
 const formatLimit = (value) => (value >= 999999 ? "Unlimited" : value?.toLocaleString?.() ?? value);
 const formatLimitLabel = (value) => (value >= 999999 ? "Unlimited" : `${formatLimit(value)} limit`);
@@ -18,7 +17,7 @@ const defaultAlertPrefs = {
   last_run_at: null,
 };
 
-export default function AccountTab({ user, onLogout, setActiveTab }) {
+export default function AccountTab({ user, authMode = "password", onLogout, onAccountDeleted, setActiveTab }) {
   const [accountView, setAccountView] = useState("overview");
   const [usage, setUsage] = useState(null);
   const [usageLoading, setUsageLoading] = useState(true);
@@ -34,6 +33,14 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
   const [alertsSaving, setAlertsSaving] = useState(false);
   const [alertsSaved, setAlertsSaved] = useState(false);
   const [alertsError, setAlertsError] = useState("");
+  const [passwordForm, setPasswordForm] = useState({ current: "", next: "", confirm: "" });
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [deleteEmail, setDeleteEmail] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteSending, setDeleteSending] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const isAdmin = user?.tier === "admin";
 
   useEffect(() => {
@@ -151,10 +158,60 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
     }
   };
 
-  const isPro = user?.tier === "pro" || user?.tier === "admin";
+  const changePassword = async (e) => {
+    e.preventDefault();
+    setPasswordError("");
+    setPasswordMessage("");
+    if (passwordForm.next !== passwordForm.confirm) {
+      setPasswordError("New passwords do not match.");
+      return;
+    }
+    setPasswordSaving(true);
+    try {
+      const resp = await apiFetch("/api/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify({
+          current_password: passwordForm.current,
+          new_password: passwordForm.next,
+        }),
+      });
+      const data = await resp.json();
+      if (data.token) localStorage.setItem("token", data.token);
+      setPasswordForm({ current: "", next: "", confirm: "" });
+      setPasswordMessage(data.message || "Password updated.");
+    } catch (err) {
+      setPasswordError(err.message || "Could not update your password.");
+    } finally {
+      setPasswordSaving(false);
+    }
+  };
+
+  const deleteAccount = async (e) => {
+    e.preventDefault();
+    setDeleteError("");
+    setDeleteSending(true);
+    try {
+      const payload = { confirm_email: deleteEmail };
+      if (authMode === "password") payload.current_password = deletePassword;
+      const resp = await apiFetch("/api/account", {
+        method: "DELETE",
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      localStorage.removeItem("token");
+      clearResumeDraftStorage();
+      if (onAccountDeleted) onAccountDeleted(data.logout_url);
+      else onLogout?.();
+    } catch (err) {
+      setDeleteError(err.message || "Could not delete your account.");
+    } finally {
+      setDeleteSending(false);
+    }
+  };
+
   const accountSections = [
     { id: "overview", label: "Overview", icon: User },
-    { id: "plans", label: "Plans & Privacy", icon: ShieldCheck },
+    { id: "privacy", label: "Privacy", icon: ShieldCheck },
     ...(isAdmin ? [{ id: "admin", label: "Admin", icon: BarChart2 }] : []),
   ];
 
@@ -200,15 +257,61 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
             <div className="text-[#384959]">{user?.email || "\u2014"}</div>
           </div>
           <div>
-            <div className="text-[#6A89A7] text-xs uppercase tracking-wide mb-1">Tier</div>
-            <TierBadge tier={user?.tier} />
-          </div>
-          <div>
             <div className="text-[#6A89A7] text-xs uppercase tracking-wide mb-1">Member Since</div>
             <div className="text-[#384959]">{user?.created_at ? new Date(user.created_at).toLocaleDateString() : "\u2014"}</div>
           </div>
         </div>
       </div>
+
+      {authMode === "password" && (
+      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
+        <h3 className="font-semibold text-[#384959] mb-1 flex items-center gap-2">
+          <KeyRound size={17} /> Change Password
+        </h3>
+        <p className="mb-4 text-sm text-[#6A89A7]">Use at least 8 characters for your new password.</p>
+        {passwordError && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{passwordError}</div>}
+        {passwordMessage && <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{passwordMessage}</div>}
+        <form onSubmit={changePassword} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <input
+            type="password"
+            required
+            placeholder="Current password"
+            autoComplete="current-password"
+            value={passwordForm.current}
+            onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })}
+            className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm"
+          />
+          <input
+            type="password"
+            required
+            minLength={8}
+            placeholder="New password"
+            autoComplete="new-password"
+            value={passwordForm.next}
+            onChange={(e) => setPasswordForm({ ...passwordForm, next: e.target.value })}
+            className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm"
+          />
+          <input
+            type="password"
+            required
+            minLength={8}
+            placeholder="Confirm new password"
+            autoComplete="new-password"
+            value={passwordForm.confirm}
+            onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
+            className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm"
+          />
+          <button
+            type="submit"
+            disabled={passwordSaving}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#384959] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-50 sm:col-start-3"
+          >
+            {passwordSaving && <Loader2 size={14} className="animate-spin" />}
+            Update Password
+          </button>
+        </form>
+      </div>
+      )}
 
       {/* Usage Stats */}
       <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
@@ -216,7 +319,7 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
         {usageLoading ? (
           <div className="flex items-center gap-2 text-sm text-[#6A89A7]"><Loader2 size={14} className="animate-spin" /> Loading usage...</div>
         ) : usage ? (
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-blue-50 rounded-xl p-4 text-center">
               <div className="text-2xl font-bold text-[#384959]">{usage.searches_today ?? 0}</div>
               <div className="text-xs text-[#6A89A7] mt-1">Searches today</div>
@@ -237,10 +340,6 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
               {usage.tracked_limit != null && (
                 <div className="text-xs text-[#6A89A7] mt-0.5">{formatLimitLabel(usage.tracked_limit)}</div>
               )}
-            </div>
-            <div className="bg-green-50 rounded-xl p-4 text-center">
-              <div className="text-2xl font-bold text-[#384959] capitalize">{usage.tier || user?.tier || "free"}</div>
-              <div className="text-xs text-[#6A89A7] mt-1">Current tier</div>
             </div>
           </div>
         ) : (
@@ -560,14 +659,13 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
         </div>
       )}
 
-      {accountView === "plans" && (
-      <>
+      {accountView === "privacy" && (
       <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
         <h3 className="font-semibold text-[#384959] mb-3 flex items-center gap-2">
           <ShieldCheck size={17} /> Legal & Privacy
         </h3>
         <p className="text-sm text-[#6A89A7] mb-4">
-          Review service limits, privacy handling, and alert consent.
+          Review how your data is handled and the terms for using Job Hunter SG.
         </p>
         <div className="flex flex-col gap-3 sm:flex-row">
           <button
@@ -586,72 +684,6 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
           </button>
         </div>
       </div>
-
-      {/* Tier Comparison */}
-      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
-        <h3 className="font-semibold text-[#384959] mb-4">Plan Comparison</h3>
-        <div className="overflow-hidden rounded-lg border border-[#BDDDFC]/30">
-          <table className="w-full text-sm">
-            <thead className="bg-[#f0f4f8]">
-              <tr>
-                <th className="text-left px-4 py-3 text-[#6A89A7] text-xs uppercase">Feature</th>
-                <th className="text-center px-4 py-3 text-[#6A89A7] text-xs uppercase">Free</th>
-                <th className="text-center px-4 py-3 text-xs uppercase text-[#384959]">Pro / AISG</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#BDDDFC]/20">
-              <tr>
-                <td className="px-4 py-3 text-[#384959]">Job Searching</td>
-                <td className="px-4 py-3 text-center text-[#6A89A7]">Unlimited</td>
-                <td className="px-4 py-3 text-center text-[#384959] font-medium">Unlimited</td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3 text-[#384959]">AI Requests / day</td>
-                <td className="px-4 py-3 text-center text-[#6A89A7]">500</td>
-                <td className="px-4 py-3 text-center text-[#384959] font-medium">Unlimited</td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3 text-[#384959]">Resume Builder Chat</td>
-                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
-                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3 text-[#384959]">Cover Letter Generator</td>
-                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
-                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3 text-[#384959]">Smart Match</td>
-                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
-                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3 text-[#384959]">Tracked Jobs</td>
-                <td className="px-4 py-3 text-center text-[#6A89A7]">Sign in required</td>
-                <td className="px-4 py-3 text-center text-[#384959] font-medium">Unlimited</td>
-              </tr>
-              <tr>
-                <td className="px-4 py-3 text-[#384959]">ATS Scoring</td>
-                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
-                <td className="px-4 py-3 text-center text-green-600"><CheckCircle size={14} className="mx-auto" /></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        {!isPro && (
-          <div className="mt-4 bg-gradient-to-r from-indigo-50 to-purple-50 border border-[#BDDDFC]/30 rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-2">
-              <Star size={20} className="text-[#384959]" />
-              <h4 className="font-semibold text-[#384959]">Upgrade to AISG Tier</h4>
-            </div>
-            <p className="text-sm text-[#6A89A7] mb-3">
-              Sign in with an AISG account for unlimited AI requests, job tracking, and saved resume versions.
-            </p>
-          </div>
-        )}
-      </div>
-      </>
       )}
 
       {/* Contact */}
@@ -692,8 +724,51 @@ export default function AccountTab({ user, onLogout, setActiveTab }) {
       </div>
       )}
 
+      {accountView === "overview" && (
+      <div className="rounded-xl border border-red-200 bg-white p-5">
+        <h3 className="flex items-center gap-2 font-semibold text-red-700">
+          <Trash2 size={17} /> Delete Account
+        </h3>
+        <p className="mt-1 text-sm text-[#6A89A7]">
+          Permanently remove your saved resumes and tailored results, tracked jobs, stories,
+          alerts, Agent memory and history, and usage records. Shared public job listings remain.
+          This cannot be undone.
+        </p>
+        {deleteError && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{deleteError}</div>}
+        <form onSubmit={deleteAccount} className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <input
+            type="email"
+            required
+            placeholder={`Type ${user?.email || "your email"}`}
+            value={deleteEmail}
+            onChange={(e) => setDeleteEmail(e.target.value)}
+            className="rounded-lg border border-red-200 px-3 py-2 text-sm"
+          />
+          {authMode === "password" && (
+            <input
+              type="password"
+              required
+              placeholder="Current password"
+              autoComplete="current-password"
+              value={deletePassword}
+              onChange={(e) => setDeletePassword(e.target.value)}
+              className="rounded-lg border border-red-200 px-3 py-2 text-sm"
+            />
+          )}
+          <button
+            type="submit"
+            disabled={deleteSending || deleteEmail !== user?.email || (authMode === "password" && !deletePassword)}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {deleteSending && <Loader2 size={14} className="animate-spin" />}
+            Delete My Account
+          </button>
+        </form>
+      </div>
+      )}
+
       {/* Logout */}
-      <button onClick={onLogout}
+      <button onClick={() => onLogout?.()}
         className="flex items-center gap-2 border border-red-200 text-red-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-50 transition w-full justify-center">
         <LogOut size={14} /> Sign Out
       </button>

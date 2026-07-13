@@ -3,6 +3,16 @@ import {
   Search, X, Loader2, BarChart2, Building2, Briefcase, Tags,
   TrendingUp, Clock, BadgeDollarSign, Layers, Target, ShieldCheck,
 } from "lucide-react";
+import {
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { apiFetch } from "../lib/api.js";
 
 const formatNumber = (value) => Number(value || 0).toLocaleString();
@@ -90,8 +100,108 @@ function BarRow({ rank, label, count, maxCount, active = false, color = "bg-[#88
   );
 }
 
+function HiringTrendTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const count = payload.find((item) => item.dataKey === "count")?.value || 0;
+  return (
+    <div className="rounded-lg border border-[#BDDDFC]/40 bg-white px-3 py-2 shadow-lg">
+      <div className="text-xs font-semibold text-[#384959]">{label}</div>
+      <div className="mt-1 text-xs text-[#6A89A7]">{formatNumber(count)} postings</div>
+    </div>
+  );
+}
+
+function HiringTrendChart({ trend }) {
+  const series = trend?.series || [];
+  const peak = trend?.peak;
+  const latest = series[series.length - 1];
+  const tickEvery = Math.max(1, Math.ceil(series.length / 6));
+
+  return (
+    <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">
+            <TrendingUp size={16} />
+            Hiring Trend
+          </div>
+          <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
+            Weekly posting volume for the selected source, agency, company, sector, or title.
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-right text-xs text-[#6A89A7] sm:flex sm:items-center">
+          <div>
+            <div className="font-mono text-sm font-semibold text-[#384959]">{formatNumber(latest?.count)}</div>
+            <div>latest week</div>
+          </div>
+          <div>
+            <div className="font-mono text-sm font-semibold text-[#384959]">{formatNumber(peak?.count)}</div>
+            <div>peak {peak?.label || ""}</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 h-64 overflow-hidden rounded-xl bg-[#f0f4f8] px-2 py-3">
+        {series.length > 0 ? (
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={series} margin={{ top: 12, right: 12, bottom: 8, left: -16 }}>
+              <CartesianGrid stroke="#BDDDFC" strokeDasharray="4 4" vertical={false} />
+              <XAxis
+                dataKey="label"
+                interval={tickEvery - 1}
+                tick={{ fill: "#6A89A7", fontSize: 11 }}
+                tickLine={false}
+                axisLine={{ stroke: "#BDDDFC" }}
+              />
+              <YAxis
+                allowDecimals={false}
+                tick={{ fill: "#6A89A7", fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+              />
+              <Tooltip content={<HiringTrendTooltip />} cursor={{ fill: "rgba(189, 221, 252, 0.28)" }} />
+              <Bar dataKey="count" name="Postings" fill="#BDDDFC" radius={[4, 4, 0, 0]} barSize={10} />
+              <Line
+                type="monotone"
+                dataKey="count"
+                name="Trend"
+                stroke="#384959"
+                strokeWidth={2.5}
+                dot={{ r: 2, fill: "#384959", strokeWidth: 0 }}
+                activeDot={{ r: 5, fill: "#10b981", stroke: "#ecfdf5", strokeWidth: 2 }}
+              />
+            </ComposedChart>
+          </ResponsiveContainer>
+        ) : (
+          <div className="py-12 text-center text-sm text-[#6A89A7]">No dated postings in this view yet.</div>
+        )}
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Recent role mix</div>
+          <div className="grid grid-cols-1 gap-1.5">
+            {(trend?.recent_top_titles || []).slice(0, 6).map((item, index) => (
+              <BarRow key={`trend-title-${item.title}`} rank={index + 1} label={item.title} count={item.count} maxCount={trend.recent_top_titles?.[0]?.count || 1} color="bg-emerald-500" />
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Recent ATS terms</div>
+          <div className="grid grid-cols-1 gap-1.5">
+            {(trend?.recent_ats_terms || []).slice(0, 6).map((item, index) => (
+              <BarRow key={`trend-skill-${item.skill}`} rank={index + 1} label={item.skill} count={item.count} maxCount={trend.recent_ats_terms?.[0]?.count || 1} color="bg-cyan-500" />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AnalyticsTab() {
   const [data, setData] = useState(null);
+  const [trend, setTrend] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sectorFilter, setSectorFilter] = useState("");
@@ -115,11 +225,19 @@ export default function AnalyticsTab() {
       if (sourceFilter) params.set("source", sourceFilter);
       if (agencySubset) params.set("agency_subset", agencySubset);
       if (directEmployersOnly) params.set("direct_employers_only", "true");
-      const resp = await apiFetch(`/api/analytics/skills?${params}`);
+      const trendParams = new URLSearchParams(params);
+      trendParams.delete("limit");
+      trendParams.set("weeks", "52");
+      const [resp, trendResp] = await Promise.all([
+        apiFetch(`/api/analytics/skills?${params}`),
+        apiFetch(`/api/analytics/trends?${trendParams}`),
+      ]);
       if (!resp.ok) throw new Error("Failed to load analytics");
       setData(await resp.json());
+      setTrend(trendResp.ok ? await trendResp.json() : null);
     } catch (err) {
       setError(err.message);
+      setTrend(null);
     }
     setLoading(false);
   }, [sectorFilter, companyFilter, titleFilter, sourceFilter, agencySubset, directEmployersOnly]);
@@ -194,8 +312,13 @@ export default function AnalyticsTab() {
           Market Insights
         </h2>
         <p className="mt-1 text-sm text-[#6A89A7]">
-          Skill and salary trends from {data?.total_jobs_with_terms?.toLocaleString() || "..."} Singapore job listings.
+          Skill and salary trends from {data?.total_jobs_with_terms?.toLocaleString() || "..."} listings with extracted skill signals, not the live Jobs total.
         </p>
+        {!loading && !error && data?.partial && (
+          <p className="mt-1 text-xs text-[#6A89A7]">
+            Showing a recent sample of {data.sampled_jobs?.toLocaleString()} listings for faster loading.
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -262,6 +385,8 @@ export default function AnalyticsTab() {
           />
         </div>
       )}
+
+      {!loading && !error && trend && <HiringTrendChart trend={trend} />}
 
       {!loading && !error && data && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">

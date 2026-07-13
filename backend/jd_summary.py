@@ -7,8 +7,11 @@ LLM for a short 2-4 sentence summary that is easier for humans to skim.
 
 from __future__ import annotations
 
+import json
+
 from ai_service import SEALION_MODEL_INTERACTIVE, _call_sealion
 from jd_analyzer import sanitize_for_llm
+from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
 
 
 def build_structured_jd_outline(
@@ -85,18 +88,12 @@ def summarize_job_description(
         "Sentence 2: what the person will actually do. "
         "Sentence 3: the strongest must-haves, tools, or seniority cues if useful. "
         "Do not invent salary, scope, team names, or requirements not present in the input. "
-        "Do not use bullet points. Do not say 'This role'."
+        "Do not use bullet points. Do not say 'This role'. "
+        f"{UNTRUSTED_DATA_RULE}"
     )
-    user = (
-        f"JOB TITLE: {outline['job_title']}\n"
-        f"EXPERIENCE: {outline['experience_years'] or 'not specified'}\n"
-        f"EDUCATION: {outline['education_level'] or 'not specified'}\n"
-        f"REQUIRED SKILLS: {', '.join(outline['required_skills']) or 'not specified'}\n"
-        f"PREFERRED SKILLS: {', '.join(outline['preferred_skills']) or 'not specified'}\n"
-        f"TOOLS/TECH: {', '.join(outline['single_word_skills']) or 'not specified'}\n"
-        f"KEY RESPONSIBILITIES: {' | '.join(outline['key_responsibilities']) or 'not specified'}\n"
-        f"COMPETENCY SIGNALS: {', '.join(outline['competency_signals']) or 'not specified'}\n"
-        f"DESCRIPTION EXCERPT:\n{outline['description_excerpt']}"
+    user = xml_data_block(
+        "job_description_data",
+        json.dumps(outline, ensure_ascii=False),
     )
 
     summary = _call_sealion(

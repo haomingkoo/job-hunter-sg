@@ -6,34 +6,42 @@ Returns the full text without truncation.
 from __future__ import annotations
 
 import io
+import json
 import logging
+import os
+from pathlib import Path
 import re
-from typing import Optional
+import subprocess
+import sys
+import tempfile
+import zipfile
 
 from shared_classification import SHARED_HEADINGS
 
 log = logging.getLogger("jobhunter.parser")
 
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+MAX_EXTRACTED_CHARS = 200_000
+MAX_PDF_PAGES = 50
+MAX_DOCX_ENTRIES = 2_000
+MAX_DOCX_UNCOMPRESSED_BYTES = 50 * 1024 * 1024
+MAX_DOCX_COMPRESSION_RATIO = 100
+MAX_PARSER_OUTPUT_BYTES = 2 * 1024 * 1024
+PARSER_WALL_TIMEOUT_SECONDS = 8
+PDF_X_TOLERANCE_RATIO = 0.15
 ALLOWED_TYPES = {
     "application/pdf": "pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
-    "application/msword": "doc",
 }
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc"}
+ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 
-SECTION_HEADER_ALIASES = {
-    "experience", "professional experience", "work experience", "employment history",
-    "career history", "professional background", "education", "academic background",
-    "skills", "technical skills", "technical proficiencies", "core skills",
-    "core competencies", "competencies", "summary", "professional summary",
-    "executive summary", "career summary", "professional profile", "profile",
-    "summary of qualifications", "qualifications", "objective", "projects",
-    "selected projects", "leadership", "activities", "volunteer", "volunteering",
-    "certifications", "certification", "licenses", "licenses & certifications",
-    "certifications & technical upskilling", "additional information",
-    "languages", "interests", "awards", "publications", "personal", "personal particulars",
-} | set(SHARED_HEADINGS)
+SECTION_HEADER_ALIASES = set(SHARED_HEADINGS)
+
+_BULLET_PREFIX_RE = re.compile(
+    r"^[\t ]*(?P<marker>[•\-*▪\u2022\u2023\u25E6\u2043\u2219]|\d+[.)])[\t ]*",
+    re.MULTILINE,
+)
+_WRAPPED_HYPHEN_RE = re.compile(r"(?<=\w)-\n[\t ]*(?=\w)")
 
 DOCX_BULLET_STYLE_TOKENS = (
     "list bullet",
@@ -51,15 +59,7 @@ def _looks_like_section_header(value: str) -> bool:
     stripped = value.strip()
     if not stripped:
         return False
-
-    lower = stripped.lower().rstrip(":")
-    if lower in SECTION_HEADER_ALIASES:
-        return True
-
-    if re.fullmatch(r"[A-Z][A-Z &/\-]{3,}", stripped):
-        return True
-
-    return False
+    return stripped.lower().rstrip(":") in SECTION_HEADER_ALIASES
 
 
 def validate_upload(filename: str, content_type: str, size: int) -> str:
@@ -87,102 +87,13 @@ def validate_upload(filename: str, content_type: str, size: int) -> str:
 
 
 def _join_broken_lines(text: str) -> str:
-    """Rejoin lines that pdfplumber broke mid-sentence.
-
-    The key insight: PDF line breaks are layout-driven, not semantic.
-    A sentence like "Led cross-functional delivery" might become two lines:
-      "Led cross-"
-      "functional delivery"
-
-    We join aggressively and only keep lines separate when they clearly
-    start a new semantic block (section header, bullet, role/date line).
-    """
-    _bullet_start = re.compile(r"^[\s]*[•\-\*▪\u2022\u2023\u25E6\u2043\u2219]\s")
-    _date_pattern = re.compile(
-        r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{4}"
-        r"|\d{1,2}/\d{4}"
-        r"|\d{4}\s*[-–—]\s*(?:\d{4}|[Pp]resent|[Cc]urrent)",
+    """Apply only mechanical repairs; preserve PDF line boundaries."""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = _WRAPPED_HYPHEN_RE.sub("-", normalized)
+    return _BULLET_PREFIX_RE.sub(
+        lambda match: f"{match.group('marker')} ",
+        normalized,
     )
-    _all_caps_header = re.compile(r"^[A-Z][A-Z &/\-]{3,}$")
-    _role_separator = re.compile(r"\s[|—–]\s")
-    _contact_signal = re.compile(r"@|linkedin|github|portfolio|https?://", re.IGNORECASE)
-    _phone_only = re.compile(r"^[\+]?[\d\s\-\(\)]{8,}$")
-    # Known section headers
-    _section_words = SECTION_HEADER_ALIASES
-
-    lines = text.split("\n")
-    merged: list[str] = []
-
-    for line in lines:
-        stripped = line.strip()
-
-        # Preserve blank lines
-        if not stripped:
-            merged.append("")
-            continue
-
-        # Check if PREVIOUS line ends with hyphen (word split across lines)
-        if merged and merged[-1] and merged[-1].endswith("-"):
-            # Join without space, removing the trailing hyphen
-            merged[-1] = merged[-1][:-1] + stripped
-            continue
-
-        # Determine if this line starts a new semantic block
-        starts_new = False
-        lower = stripped.lower()
-
-        # Bullet point (• Led..., - Built..., etc)
-        if _bullet_start.match(stripped):
-            starts_new = True
-        elif _contact_signal.search(stripped) or _phone_only.match(stripped):
-            starts_new = True
-        # ALL CAPS section header (PROFESSIONAL EXPERIENCE, EDUCATION, etc)
-        elif _all_caps_header.match(stripped):
-            starts_new = True
-        # Known section header words
-        elif lower in _section_words or lower.rstrip(":") in _section_words:
-            starts_new = True
-        # Line with a date (likely a role/company line)
-        elif _date_pattern.search(stripped):
-            starts_new = True
-        # Line with role separator (Company | Location, Title — Date)
-        elif _role_separator.search(stripped):
-            starts_new = True
-        # Short line that looks like a company/institution name (< 60 chars, starts with caps)
-        elif len(stripped) < 60 and stripped[0].isupper() and not stripped[0:1].islower():
-            # Check if it looks like a heading (no period at end, mostly proper nouns)
-            if not stripped.endswith((".",";")):
-                words = stripped.split()
-                # If most words are capitalized, likely a heading/company name
-                caps_words = sum(1 for w in words if w[0].isupper())
-                if caps_words >= len(words) * 0.6 and len(words) <= 8:
-                    starts_new = True
-
-        # If previous line ends with period/semicolon AND this starts with caps, new line
-        if not starts_new and merged and merged[-1]:
-            prev = merged[-1]
-            prev_lower = prev.strip().lower().rstrip(":")
-            prev_is_section = _looks_like_section_header(prev.strip())
-            prev_is_subheading = bool(_date_pattern.search(prev)) or bool(_role_separator.search(prev))
-
-            # Never join content onto a section header or dated role line.
-            if prev_is_section or prev_is_subheading:
-                starts_new = True
-            elif _contact_signal.search(prev) or _phone_only.match(prev.strip()):
-                starts_new = True
-
-        if not starts_new and merged and merged[-1]:
-            prev = merged[-1]
-            if prev.endswith((".", ";", ":", "!")) and stripped[0].isupper():
-                starts_new = True
-
-        if starts_new or not merged or merged[-1] == "":
-            merged.append(stripped)
-        else:
-            # Continuation — join to previous line
-            merged[-1] = merged[-1] + " " + stripped
-
-    return "\n".join(merged)
 
 
 def _looks_like_docx_list_paragraph(paragraph) -> bool:
@@ -202,7 +113,7 @@ def _extract_docx_paragraph_text(paragraph) -> str:
         return ""
 
     cleaned = "\n".join(lines)
-    if _looks_like_docx_list_paragraph(paragraph) and not re.match(r"^\s*(?:[•\-\*▪\u2022\u2023\u25E6\u2043\u2219]|\d+[.)])\s+", cleaned):
+    if _looks_like_docx_list_paragraph(paragraph) and not _BULLET_PREFIX_RE.match(cleaned):
         cleaned = f"• {cleaned}"
     return cleaned
 
@@ -245,7 +156,7 @@ def _parse_quality(text: str, file_type: str) -> dict:
     words = text.split()
     lower_lines = {line.lower().rstrip(":") for line in lines}
     section_hits = sum(1 for line in lower_lines if line in SECTION_HEADER_ALIASES)
-    bullet_lines = sum(1 for line in lines if re.match(r"^[\s]*(?:[•\-\*▪\u2022\u2023\u25E6\u2043\u2219]|\d+[.)])\s+", line))
+    bullet_lines = sum(1 for line in lines if _BULLET_PREFIX_RE.match(line))
     long_tokens = [word for word in words if len(word) > 45]
     email_found = bool(re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", text))
     phone_found = bool(re.search(r"[\+]?[\d\s\-\(\)]{8,15}", text))
@@ -309,93 +220,28 @@ def _parse_quality(text: str, file_type: str) -> dict:
     }
 
 
-def _cluster_items_into_lines(items: list[dict], tolerance: float = 3.0) -> list[tuple[float, list[dict]]]:
-    """Group positioned PDF items into visual lines using a top-position tolerance.
-
-    Some PDFs render parts of the same line a couple of points apart vertically
-    (for example a degree title and its right-aligned date). Rounding `top`
-    values can split those into separate lines, so we cluster nearby positions
-    instead.
-    """
-    clusters: list[dict] = []
-    for item in sorted(items, key=lambda current: float(current["top"])):
-        top = float(item["top"])
-        best_cluster = None
-        best_diff = None
-
-        for cluster in clusters:
-            diff = abs(top - cluster["top"])
-            if diff <= tolerance and (best_diff is None or diff < best_diff):
-                best_cluster = cluster
-                best_diff = diff
-
-        if best_cluster is None:
-            clusters.append({"top": top, "items": [item]})
-            continue
-
-        best_cluster["items"].append(item)
-        count = len(best_cluster["items"])
-        best_cluster["top"] = ((best_cluster["top"] * (count - 1)) + top) / count
-
-    return [(cluster["top"], cluster["items"]) for cluster in clusters]
-
-
-def _extract_text_from_chars(page) -> str:
-    """Reconstruct text from character-level positions when extract_text() fails.
-
-    LaTeX PDFs often have correct character positions but missing space
-    characters. This function detects gaps between characters and inserts
-    spaces where the visual layout implies them.
-    """
-    chars = page.chars
-    if not chars:
-        return ""
-
-    # Determine typical character width for space threshold.
-    # Use 15% of avg char width (not 35%) to catch tight LaTeX word spacing
-    # (typically 1.5-3pt gaps). Within-word char gaps are ~0pt, so 15% is safe.
-    all_widths = [float(c["x1"]) - float(c["x0"]) for c in chars if c["text"].strip()]
-    avg_width = sum(all_widths) / len(all_widths) if all_widths else 5.0
-    space_threshold = avg_width * 0.15  # gap > 15% of avg char width = space
-
-    result_lines = []
-    for _, line_items in sorted(_cluster_items_into_lines(chars), key=lambda line: line[0]):
-        line_chars = sorted(line_items, key=lambda c: float(c["x0"]))
-        text = ""
-        prev_x1 = None
-        for c in line_chars:
-            gap = float(c["x0"]) - prev_x1 if prev_x1 is not None else 0.0
-            if prev_x1 is not None and gap > space_threshold:
-                text += " "
-            text += c["text"]
-            prev_x1 = float(c["x1"])
-        if text.strip():
-            result_lines.append(text.strip())
-
-    return "\n".join(result_lines)
-
-
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     """Extract full text from a PDF file. No truncation.
 
-    Uses standard extraction first, then falls back to character-level
-    reconstruction for LaTeX PDFs with missing spaces.
+    Uses pdfplumber's proportional spacing tolerance for tightly-set PDFs.
     """
     import pdfplumber
 
     text_parts = []
     try:
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            if len(pdf.pages) > MAX_PDF_PAGES:
+                raise ValueError(f"PDF has too many pages. Maximum is {MAX_PDF_PAGES}.")
             for page in pdf.pages:
-                page_text = page.extract_text()
+                page_text = page.extract_text(
+                    x_tolerance_ratio=PDF_X_TOLERANCE_RATIO,
+                )
                 if page_text:
-                    # Detect LaTeX space-stripping and fall back to char-level
-                    if _has_missing_spaces(page_text):
-                        char_text = _extract_text_from_chars(page)
-                        if char_text and not _has_missing_spaces(char_text):
-                            log.info("PDF page %d: LaTeX space fix applied", page.page_number)
-                            page_text = char_text
                     text_parts.append(page_text)
+                    if sum(len(part) for part in text_parts) > MAX_EXTRACTED_CHARS:
+                        raise ValueError("PDF contains too much text.")
+    except ValueError:
+        raise
     except Exception as e:
         log.warning(f"PDF extraction failed: {e}")
         raise ValueError("Could not read this PDF. Make sure it's not a scanned image — we need text-based PDFs.")
@@ -413,7 +259,27 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     from docx import Document
 
     try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
+            entries = archive.infolist()
+            if len(entries) > MAX_DOCX_ENTRIES:
+                raise ValueError("DOCX contains too many files.")
+            total_compressed = sum(max(entry.compress_size, 1) for entry in entries)
+            total_uncompressed = sum(entry.file_size for entry in entries)
+            if total_uncompressed > MAX_DOCX_UNCOMPRESSED_BYTES:
+                raise ValueError("DOCX expands beyond the safe size limit.")
+            if (
+                total_uncompressed / total_compressed > MAX_DOCX_COMPRESSION_RATIO
+                or any(
+                    entry.file_size / max(entry.compress_size, 1) > MAX_DOCX_COMPRESSION_RATIO
+                    for entry in entries
+                )
+            ):
+                raise ValueError("DOCX compression ratio is unsafe.")
         doc = Document(io.BytesIO(file_bytes))
+    except ValueError:
+        raise
+    except zipfile.BadZipFile:
+        raise ValueError("Could not read this DOCX file. It may be corrupted.") from None
     except Exception as e:
         log.warning(f"DOCX extraction failed: {e}")
         raise ValueError("Could not read this DOCX file. It may be corrupted.")
@@ -444,6 +310,8 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     if not full_text.strip():
         raise ValueError("No text found in DOCX file.")
 
+    if len(full_text) > MAX_EXTRACTED_CHARS:
+        raise ValueError("DOCX contains too much text.")
     return _join_broken_lines(full_text)
 
 
@@ -456,7 +324,7 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
 
     if file_type in ("pdf",):
         text = extract_text_from_pdf(file_bytes)
-    elif file_type in ("docx", "doc"):
+    elif file_type == "docx":
         text = extract_text_from_docx(file_bytes)
     else:
         raise ValueError(f"Unsupported file type: {file_type}")
@@ -512,3 +380,53 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
         "phone": phone_match.group().strip() if phone_match else None,
         "page_estimate": max(1, word_count // 500),
     }
+
+
+def parse_resume_isolated(filename: str, content_type: str, file_bytes: bytes) -> dict:
+    """Parse an upload in a resource-limited, short-lived subprocess."""
+    validate_upload(filename, content_type, len(file_bytes))
+    header = json.dumps(
+        {"filename": filename, "content_type": content_type, "size": len(file_bytes)},
+        separators=(",", ":"),
+    ).encode()
+    if len(header) > 16 * 1024:
+        raise ValueError("Resume filename is too long.")
+
+    worker = Path(__file__).with_name("resume_parser_worker.py")
+    with tempfile.TemporaryFile() as output:
+        try:
+            process = subprocess.Popen(
+                [sys.executable, str(worker)],
+                stdin=subprocess.PIPE,
+                stdout=output,
+                stderr=subprocess.DEVNULL,
+                env={"PATH": os.defpath, "PYTHONHASHSEED": "random"},
+            )
+            process.communicate(header + b"\n" + file_bytes, timeout=PARSER_WALL_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            raise ValueError("Resume parsing took too long. Please try a simpler PDF or DOCX.") from None
+        except (OSError, subprocess.SubprocessError):
+            raise ValueError("Could not safely parse this resume.") from None
+
+        output.seek(0)
+        raw_result = output.read(MAX_PARSER_OUTPUT_BYTES + 1)
+
+    if process.returncode != 0 or len(raw_result) > MAX_PARSER_OUTPUT_BYTES:
+        raise ValueError("Could not safely parse this resume.")
+
+    try:
+        response = json.loads(raw_result)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise ValueError("Could not safely parse this resume.") from None
+
+    if not isinstance(response, dict):
+        raise ValueError("Could not safely parse this resume.")
+    if not response.get("ok"):
+        error = response.get("error")
+        raise ValueError(error if isinstance(error, str) and len(error) <= 500 else "Could not safely parse this resume.")
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("Could not safely parse this resume.")
+    return result

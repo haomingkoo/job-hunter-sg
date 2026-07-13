@@ -7,8 +7,10 @@ from __future__ import annotations
 import os
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+import config as app_config
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./jobhunter.db")
 
@@ -20,7 +22,24 @@ connect_args = {}
 if DATABASE_URL.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
 
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
+engine_kwargs = {"connect_args": connect_args}
+if not DATABASE_URL.startswith("sqlite"):
+    engine_kwargs.update(
+        pool_pre_ping=True,
+        pool_size=app_config.DATABASE_POOL_SIZE,
+        max_overflow=app_config.DATABASE_MAX_OVERFLOW,
+        pool_timeout=app_config.DATABASE_POOL_TIMEOUT,
+        pool_recycle=app_config.DATABASE_POOL_RECYCLE_SECONDS,
+    )
+
+engine = create_engine(DATABASE_URL, **engine_kwargs)
+if DATABASE_URL.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 
@@ -106,6 +125,12 @@ def _apply_lightweight_migrations() -> None:
             statements.append("ALTER TABLE users ADD COLUMN terms_accepted_at TIMESTAMP")
         if "privacy_accepted_at" not in user_columns:
             statements.append("ALTER TABLE users ADD COLUMN privacy_accepted_at TIMESTAMP")
+        if "email_verified_at" not in user_columns:
+            statements.append("ALTER TABLE users ADD COLUMN email_verified_at TIMESTAMP")
+        if "token_version" not in user_columns:
+            statements.append(
+                "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0"
+            )
 
     # tracked_jobs: new columns for resume versioning and stage history
     if "tracked_jobs" in inspector.get_table_names():
@@ -114,6 +139,12 @@ def _apply_lightweight_migrations() -> None:
             statements.append("ALTER TABLE tracked_jobs ADD COLUMN resume_version_id INTEGER")
         if "stage_history" not in tracked_columns:
             statements.append("ALTER TABLE tracked_jobs ADD COLUMN stage_history JSON")
+        if "source_url" not in tracked_columns:
+            statements.append("ALTER TABLE tracked_jobs ADD COLUMN source_url TEXT DEFAULT ''")
+        if "job_description" not in tracked_columns:
+            statements.append("ALTER TABLE tracked_jobs ADD COLUMN job_description TEXT DEFAULT ''")
+        if "role_metadata" not in tracked_columns:
+            statements.append("ALTER TABLE tracked_jobs ADD COLUMN role_metadata JSON")
 
     # user_memories: embedding vector for semantic matching
     if "user_memories" in inspector.get_table_names():
@@ -129,6 +160,23 @@ def _apply_lightweight_migrations() -> None:
         if "unsubscribed_at" not in alert_columns:
             statements.append("ALTER TABLE job_alert_preferences ADD COLUMN unsubscribed_at TIMESTAMP")
 
+    # usage_logs: rate limits and admin metrics should not full-scan forever
+    if "usage_logs" in inspector.get_table_names():
+        usage_indexes = {idx["name"] for idx in inspector.get_indexes("usage_logs")}
+        usage_index_defs = {
+            "ix_usage_logs_user_action_created": (
+                "CREATE INDEX ix_usage_logs_user_action_created "
+                "ON usage_logs (user_id, action, created_at)"
+            ),
+            "ix_usage_logs_action_created": (
+                "CREATE INDEX ix_usage_logs_action_created "
+                "ON usage_logs (action, created_at)"
+            ),
+        }
+        for idx_name, idx_sql in usage_index_defs.items():
+            if idx_name not in usage_indexes:
+                statements.append(idx_sql)
+
     # Widen jd_summary_status if it was created as VARCHAR(30) (too short for model names)
     summary_status_column = next(
         (column for column in inspector.get_columns("scraped_jobs") if column["name"] == "jd_summary_status"),
@@ -143,10 +191,7 @@ def _apply_lightweight_migrations() -> None:
 
     with engine.begin() as connection:
         for statement in statements:
-            try:
-                connection.execute(text(statement))
-            except Exception:
-                pass  # Skip if already applied
+            connection.execute(text(statement))
 
 
 def get_db() -> Generator[Session, None, None]:

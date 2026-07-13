@@ -13,18 +13,34 @@ repos:
       - id: check-yaml
       - id: detect-private-key
       - id: end-of-file-fixer
+      - id: no-commit-to-branch
+        args: ["--branch", "main"]
       - id: trailing-whitespace
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.5
+    rev: v0.15.20
     hooks:
       - id: ruff
         name: ruff critical checks
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        name: detect-secrets staged scan
+        exclude: ^(frontend/package-lock\.json|.*\.lock|.*\.log)$
 
   - repo: local
     hooks:
       - id: backend-compile
         name: backend compileall
-        entry: python -m compileall -q backend
+        entry: python3 -m compileall -q backend
         language: system
+        pass_filenames: false
+      - id: backend-ty
+        name: ty baseline type check
+        entry: ty check
+        args: ["--output-format", "concise"]
+        language: python
+        additional_dependencies: ["ty==0.0.56"]
         pass_filenames: false

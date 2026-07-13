@@ -1,8 +1,16 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Briefcase, Loader2, LogOut, ChevronLeft } from "lucide-react";
 
-import { apiFetch, clearResumeDraftStorage } from "./lib/api.js";
+import {
+  API_BASE,
+  AUTH_EXPIRED_EVENT,
+  AUTH_SYNC_KEY,
+  apiFetch,
+  bindResumeDraftStorageToUser,
+  broadcastAuthChange,
+  clearResumeDraftStorage,
+} from "./lib/api.js";
 
 import Nav from "./components/Nav.jsx";
 import AuthModal from "./components/AuthModal.jsx";
@@ -15,16 +23,58 @@ import AnalyticsTab from "./components/AnalyticsTab.jsx";
 import RemindersTab from "./components/RemindersTab.jsx";
 import AccountTab from "./components/AccountTab.jsx";
 import StoriesTab from "./components/StoriesTab.jsx";
-import TierBadge from "./components/TierBadge.jsx";
 import ResumeTab from "./components/ResumeTab.jsx";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════════
 
+const AUTH_LINK_TOKEN_NAMES = ["reset_token", "verify_token"];
+const APP_TABS = new Set(["jobs", "resume", "stories", "tracker", "reminders", "analytics", "power", "account"]);
+
+export function readActiveTab(hash = window.location.hash) {
+  const fragment = hash.replace(/^#/, "");
+  const candidate = fragment.includes("=")
+    ? new URLSearchParams(fragment).get("tab")
+    : fragment;
+  return APP_TABS.has(candidate) ? candidate : "home";
+}
+
+export function readAuthLinkTokens(href = window.location.href) {
+  const url = new URL(href);
+  const hashParams = new URLSearchParams(url.hash.slice(1));
+  return Object.fromEntries(
+    AUTH_LINK_TOKEN_NAMES.map((name) => [name, hashParams.get(name) || url.searchParams.get(name) || ""]),
+  );
+}
+
+export function removeAuthLinkTokensFromUrl(names = AUTH_LINK_TOKEN_NAMES) {
+  const url = new URL(window.location.href);
+  const hashParams = new URLSearchParams(url.hash.slice(1));
+  let changed = false;
+  let hashChanged = false;
+
+  names.forEach((name) => {
+    if (url.searchParams.has(name)) {
+      url.searchParams.delete(name);
+      changed = true;
+    }
+    if (hashParams.has(name)) {
+      hashParams.delete(name);
+      changed = true;
+      hashChanged = true;
+    }
+  });
+
+  if (!changed) return;
+  if (hashChanged) url.hash = hashParams.toString();
+  window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
 export default function JobHunterSG() {
-  const [activeTab, setActiveTab] = useState("home");
+  const [activeTab, setActiveTab] = useState(readActiveTab);
   const [trackedJobs, setTrackedJobs] = useState([]);
+  const [trackedJobsError, setTrackedJobsError] = useState("");
   const [selectedJob, setSelectedJob] = useState(null);
 
   // Scroll state for glassmorphism header
@@ -37,54 +87,178 @@ export default function JobHunterSG() {
 
   // Auth state
   const [user, setUser] = useState(null);
+  const activeUserIdRef = useRef(null);
+  const identityGenerationRef = useRef(0);
+  activeUserIdRef.current = user?.id ?? null;
   const [token, setToken] = useState(() => localStorage.getItem("token"));
+  const [authGeneration, setAuthGeneration] = useState(0);
+  const [authConfig, setAuthConfig] = useState(null);
+  const [cloudflareIdentityReady, setCloudflareIdentityReady] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [showAuthModal, setShowAuthModal] = useState(false);
-  const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get("reset_token") || "");
+  const [authLinkTokens] = useState(readAuthLinkTokens);
+  const [resetToken, setResetToken] = useState(authLinkTokens.reset_token);
+  const [verifyToken, setVerifyToken] = useState(authLinkTokens.verify_token);
 
-  const clearResetToken = useCallback(() => {
-    setResetToken("");
-    const url = new URL(window.location.href);
-    if (url.searchParams.has("reset_token")) {
-      url.searchParams.delete("reset_token");
-      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-    }
+  // Layout effects run before the app's fetch effects, so link secrets cannot
+  // leak into later requests or remain visible while verification is running.
+  useLayoutEffect(() => removeAuthLinkTokensFromUrl(), []);
+
+  const clearAuthToken = useCallback((name) => {
+    if (name === "reset_token") setResetToken("");
+    if (name === "verify_token") setVerifyToken("");
+    removeAuthLinkTokensFromUrl([name]);
   }, []);
 
   useEffect(() => {
-    if (resetToken) setShowAuthModal(true);
-  }, [resetToken]);
+    if (resetToken || verifyToken) setShowAuthModal(true);
+  }, [resetToken, verifyToken]);
 
-  // Validate token on mount
   useEffect(() => {
-    if (!token) {
+    const handleAuthExpired = (event) => {
+      if (event.detail?.reason === "required") {
+        setAuthLoading(false);
+        setShowAuthModal(true);
+        return;
+      }
+      identityGenerationRef.current += 1;
+      bindResumeDraftStorageToUser(null);
+      setUser(null);
+      setToken(null);
+      setTrackedJobs([]);
+      setTrackedJobsError("");
       setAuthLoading(false);
-      return;
-    }
+      setActiveTab("home");
+      setShowAuthModal(false);
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+  }, []);
+
+  useEffect(() => {
+    const handleAuthStorage = (event) => {
+      if (
+        (event.key !== "token" && event.key !== AUTH_SYNC_KEY)
+        || (event.storageArea && event.storageArea !== localStorage)
+      ) return;
+      identityGenerationRef.current += 1;
+      clearResumeDraftStorage();
+      setUser(null);
+      setTrackedJobs([]);
+      setTrackedJobsError("");
+      setCloudflareIdentityReady(false);
+      setAuthLoading(false);
+      const isLoginSignal = event.key === AUTH_SYNC_KEY && event.newValue?.startsWith("login:");
+      setToken(event.key === "token" ? event.newValue : localStorage.getItem("token"));
+      if (isLoginSignal) setAuthGeneration((generation) => generation + 1);
+      setActiveTab("home");
+      setShowAuthModal(false);
+    };
+    window.addEventListener("storage", handleAuthStorage);
+    return () => window.removeEventListener("storage", handleAuthStorage);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const resp = await apiFetch("/api/auth/me");
+        const resp = await fetch(`${API_BASE}/api/auth/config`);
+        if (!resp.ok) throw new Error(`Auth config failed (${resp.status})`);
         const data = await resp.json();
-        if (!cancelled) setUser(data);
+        if (!cancelled) setAuthConfig(data);
       } catch {
-        localStorage.removeItem("token");
-        if (!cancelled) setToken(null);
-      } finally {
-        if (!cancelled) setAuthLoading(false);
+        // Local development remains usable if an older backend is briefly running.
+        if (!cancelled) setAuthConfig({ mode: "password" });
       }
     })();
     return () => { cancelled = true; };
-  }, [token]);
+  }, []);
+
+  // Resolve either an app JWT account or a Cloudflare Access account on mount.
+  useEffect(() => {
+    if (!authConfig) return undefined;
+    let cancelled = false;
+    const expectedGeneration = identityGenerationRef.current;
+    const isCurrentIdentity = () => (
+      !cancelled && identityGenerationRef.current === expectedGeneration
+    );
+    setAuthLoading(true);
+    (async () => {
+      try {
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        const resp = await fetch(`${API_BASE}/api/auth/me`, { headers, credentials: "include" });
+        if (resp.status === 401) {
+          if (token) {
+            if (isCurrentIdentity()) {
+              localStorage.removeItem("token");
+              clearResumeDraftStorage();
+              identityGenerationRef.current += 1;
+              setUser(null);
+              setTrackedJobs([]);
+              setTrackedJobsError("");
+              setActiveTab("home");
+              setShowAuthModal(false);
+              setToken(null);
+              setAuthLoading(false);
+            }
+          } else if (isCurrentIdentity()) {
+            bindResumeDraftStorageToUser(null);
+          }
+          if (authConfig.mode === "cloudflare") {
+            const data = await resp.json().catch(() => ({}));
+            if (isCurrentIdentity()) {
+              setCloudflareIdentityReady(data.detail === "Account registration required");
+            }
+          }
+          return;
+        }
+        if (!resp.ok) throw new Error(`Account lookup failed (${resp.status})`);
+        const data = await resp.json();
+        if (isCurrentIdentity()) {
+          bindResumeDraftStorageToUser(data.id);
+          setUser(data);
+          if (authConfig.mode === "cloudflare") setCloudflareIdentityReady(true);
+        }
+      } catch {
+        if (token && isCurrentIdentity()) localStorage.removeItem("token");
+        if (isCurrentIdentity() && token) {
+          identityGenerationRef.current += 1;
+          clearResumeDraftStorage();
+          setUser(null);
+          setTrackedJobs([]);
+          setTrackedJobsError("");
+          setActiveTab("home");
+          setShowAuthModal(false);
+          setToken(null);
+          setAuthLoading(false);
+        }
+      } finally {
+        if (isCurrentIdentity()) setAuthLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authConfig, token, authGeneration]);
 
   // Load tracked jobs once authenticated
   const refreshJobs = useCallback(async () => {
+    const expectedUserId = activeUserIdRef.current;
+    const expectedGeneration = identityGenerationRef.current;
+    if (expectedUserId === null) return;
     try {
       const resp = await apiFetch("/api/tracked");
       const data = await resp.json();
+      if (
+        activeUserIdRef.current !== expectedUserId
+        || identityGenerationRef.current !== expectedGeneration
+      ) return;
       setTrackedJobs(Array.isArray(data) ? data : data.jobs || []);
-    } catch {
-      setTrackedJobs([]);
+      setTrackedJobsError("");
+    } catch (err) {
+      if (
+        activeUserIdRef.current !== expectedUserId
+        || identityGenerationRef.current !== expectedGeneration
+      ) return;
+      setTrackedJobsError(err.message || "Could not refresh tracked jobs.");
     }
   }, []);
 
@@ -93,17 +267,52 @@ export default function JobHunterSG() {
   }, [user, refreshJobs]);
 
   const handleAuth = (authUser, authToken) => {
+    identityGenerationRef.current += 1;
+    bindResumeDraftStorageToUser(authUser.id);
+    setTrackedJobs([]);
+    setTrackedJobsError("");
     setUser(authUser);
     setToken(authToken);
+    if (!authToken) broadcastAuthChange("login");
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      if (authConfig?.mode === "password" && token) {
+        await apiFetch("/api/auth/logout", { method: "POST", timeoutMs: 3000 });
+      }
+    } catch {
+      // Local sign-out still completes if the backend is unavailable.
+    } finally {
+      identityGenerationRef.current += 1;
+      localStorage.removeItem("token");
+      broadcastAuthChange("logout");
+      clearResumeDraftStorage();
+      setUser(null);
+      setToken(null);
+      setTrackedJobs([]);
+      setTrackedJobsError("");
+      setActiveTab("home");
+      setCloudflareIdentityReady(false);
+      if (authConfig?.mode === "cloudflare" && authConfig.cloudflare_logout_url) {
+        window.location.assign(authConfig.cloudflare_logout_url);
+      }
+    }
+  };
+
+  const handleAccountDeleted = (logoutUrl) => {
+    identityGenerationRef.current += 1;
     localStorage.removeItem("token");
+    broadcastAuthChange("logout");
     clearResumeDraftStorage();
     setUser(null);
     setToken(null);
     setTrackedJobs([]);
+    setTrackedJobsError("");
     setActiveTab("home");
+    setCloudflareIdentityReady(false);
+    const destination = logoutUrl || authConfig?.cloudflare_logout_url;
+    if (destination) window.location.assign(destination);
   };
 
   const handleTrackJob = async (payload) => {
@@ -125,16 +334,16 @@ export default function JobHunterSG() {
   const navigateTo = (tab) => {
     setActiveTab(tab);
     window.scrollTo({ top: 0, behavior: "smooth" });
-    // Push to browser history so Back button goes to home, not leaves site
-    if (tab !== "home") {
-      window.history.pushState({ tab }, "", `#${tab}`);
-    }
+    const url = tab === "home"
+      ? `${window.location.pathname}${window.location.search}`
+      : `#${tab}`;
+    window.history.pushState({ tab }, "", url);
   };
 
   // Handle browser back button
   useEffect(() => {
     const handlePopState = () => {
-      setActiveTab("home");
+      setActiveTab(readActiveTab());
       window.scrollTo({ top: 0 });
     };
     window.addEventListener("popstate", handlePopState);
@@ -188,7 +397,6 @@ export default function JobHunterSG() {
               <div className="flex items-center gap-3">
                 <div className="hidden sm:flex items-center gap-2 text-sm">
                   <span className={`font-medium ${isHome ? "text-white" : "text-[#384959]"}`}>{user.name}</span>
-                  <TierBadge tier={user.tier} />
                 </div>
                 <button
                   onClick={handleLogout}
@@ -212,10 +420,23 @@ export default function JobHunterSG() {
 
       {showAuthModal && (
         <AuthModal
+          authConfig={authConfig || { mode: "password" }}
+          cloudflareIdentityReady={cloudflareIdentityReady}
           initialResetToken={resetToken}
-          onResetComplete={clearResetToken}
-          onAuth={(authUser, authToken) => { handleAuth(authUser, authToken); setShowAuthModal(false); clearResetToken(); }}
-          onClose={() => { setShowAuthModal(false); clearResetToken(); }}
+          initialVerifyToken={verifyToken}
+          onResetComplete={() => clearAuthToken("reset_token")}
+          onVerifyComplete={() => clearAuthToken("verify_token")}
+          onAuth={(authUser, authToken) => {
+            handleAuth(authUser, authToken);
+            setShowAuthModal(false);
+            clearAuthToken("reset_token");
+            clearAuthToken("verify_token");
+          }}
+          onClose={() => {
+            setShowAuthModal(false);
+            clearAuthToken("reset_token");
+            clearAuthToken("verify_token");
+          }}
         />
       )}
 
@@ -229,7 +450,7 @@ export default function JobHunterSG() {
           <Nav active={activeTab} setActive={navigateTo} />
           <AnimatePresence mode="wait">
             <motion.div
-              key={activeTab}
+              key={`${activeTab}:${user?.id ?? "anonymous"}`}
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
@@ -255,7 +476,7 @@ export default function JobHunterSG() {
               )}
               {activeTab === "tracker" && (
                 user ? (
-                  <TrackerTab user={user} jobs={trackedJobs} refreshJobs={refreshJobs} setActiveTab={navigateTo} />
+                  <TrackerTab jobs={trackedJobs} loadError={trackedJobsError} refreshJobs={refreshJobs} setActiveTab={navigateTo} />
                 ) : (
                   <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Application Tracker" />
                 )
@@ -278,7 +499,13 @@ export default function JobHunterSG() {
               )}
               {activeTab === "account" && (
                 user ? (
-                  <AccountTab user={user} onLogout={handleLogout} setActiveTab={navigateTo} />
+                  <AccountTab
+                    user={user}
+                    authMode={authConfig?.mode || "password"}
+                    onLogout={handleLogout}
+                    onAccountDeleted={handleAccountDeleted}
+                    setActiveTab={navigateTo}
+                  />
                 ) : (
                   <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Account Settings" />
                 )

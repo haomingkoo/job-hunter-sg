@@ -1,11 +1,41 @@
 // ─── API Config ────────────────────────────────────────────────────────────────
 export const API_BASE = import.meta.env.VITE_API_URL || "";
+export const AUTH_EXPIRED_EVENT = "jobhunter:auth-expired";
+export const AUTH_SYNC_KEY = "jobhunter:auth-change";
+const RESUME_DRAFT_OWNER_KEY = "jh_resume_owner";
+
+export function broadcastAuthChange(kind) {
+  try {
+    const nonce = globalThis.crypto?.randomUUID?.() || `${Date.now()}:${Math.random()}`;
+    localStorage.setItem(AUTH_SYNC_KEY, `${kind}:${nonce}`);
+  } catch {
+    // A storage event is a best-effort safety net for other tabs.
+  }
+}
 
 export function clearResumeDraftStorage() {
   try {
     sessionStorage.removeItem("jh_resume_profile");
     sessionStorage.removeItem("jh_resume_text");
     sessionStorage.removeItem("jh_resume_template");
+    sessionStorage.removeItem("jh_wizard_step");
+    sessionStorage.removeItem(RESUME_DRAFT_OWNER_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function bindResumeDraftStorageToUser(userId) {
+  try {
+    const currentOwner = sessionStorage.getItem(RESUME_DRAFT_OWNER_KEY);
+    if (userId == null) {
+      if (currentOwner) clearResumeDraftStorage();
+      return;
+    }
+
+    const nextOwner = String(userId);
+    if (currentOwner && currentOwner !== nextOwner) clearResumeDraftStorage();
+    sessionStorage.setItem(RESUME_DRAFT_OWNER_KEY, nextOwner);
   } catch {
     // ignore storage errors
   }
@@ -53,6 +83,7 @@ export async function apiFetch(path, options = {}) {
   let resp;
   try {
     resp = await fetch(`${API_BASE}${path}`, {
+      credentials: "include",
       ...fetchOptions,
       headers,
       signal: controller?.signal || fetchOptions.signal,
@@ -61,15 +92,27 @@ export async function apiFetch(path, options = {}) {
     if (err?.name === "AbortError") {
       throw new Error("The request timed out. Please try again shortly.");
     }
+    if (err instanceof TypeError || err?.message === "Failed to fetch") {
+      throw new Error("Could not reach the backend. Make sure the backend server is running, then try again.");
+    }
     throw err;
   } finally {
     if (timeoutId) window.clearTimeout(timeoutId);
   }
 
   if (resp.status === 401) {
+    if (!token) {
+      window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, {
+        detail: { reason: "required" },
+      }));
+      throw new Error("Please sign in to use this feature.");
+    }
     localStorage.removeItem("token");
     clearResumeDraftStorage();
-    window.location.reload();
+    broadcastAuthChange("logout");
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, {
+      detail: { reason: "expired" },
+    }));
     throw new Error("Session expired. Please sign in again.");
   }
   if (!resp.ok) throw new Error(await readApiError(resp));

@@ -119,7 +119,7 @@ export function splitInlineHeadingContent(value) {
   const headingCandidates = [...RESUME_HEADINGS].sort((a, b) => b.length - a.length);
   for (const heading of headingCandidates) {
     const pattern = new RegExp(
-      `^(${escapeRegExp(heading)})(?:\\s*[:|-]\\s*|\\s*\\|\\s*)(.+)$`,
+      `^(${escapeRegExp(heading)})(?:\\s*[:|]\\s*|\\s+[–—-]\\s+)(.+)$`,
       "i",
     );
     const match = cleaned.match(pattern);
@@ -132,21 +132,6 @@ export function splitInlineHeadingContent(value) {
       bodyText,
       sectionKey: getResumeSectionKey(match[1]),
     };
-  }
-
-  // Fallback: check if line STARTS with a known heading followed by content (no separator)
-  // e.g., "KEY SKILLS Program Management • Engineering Strategy • ..."
-  for (const heading of headingCandidates) {
-    if (cleaned.toLowerCase().startsWith(heading.toLowerCase() + " ")) {
-      const bodyText = cleaned.substring(heading.length).trim();
-      if (bodyText && bodyText.length > 10) {
-        return {
-          headingText: cleaned.substring(0, heading.length),
-          bodyText,
-          sectionKey: getResumeSectionKey(heading),
-        };
-      }
-    }
   }
 
   return null;
@@ -193,22 +178,6 @@ export function getResumeSectionKey(value) {
   if (normalized === "personal" || normalized.includes("personal information")) return "personal";
   if (normalized.includes("award") || normalized.includes("honor") || normalized.includes("publication")) return "awards";
   return "";
-}
-
-export function isAllCapsHeading(line) {
-  const trimmed = stripResumeMarkdown(line);
-  if (!trimmed || trimmed !== trimmed.toUpperCase() || !/[A-Z]/.test(trimmed)) return false;
-  const words = trimmed.split(/\s+/);
-  if (words.length > 4) return false;
-  if (/^[•\-*]/.test(trimmed)) return false;
-  if (/\d/.test(trimmed)) return false;
-  if (looksLikeEducationDetail(trimmed)) return false;
-  // Removed certification/in-progress filter: ALL-CAPS lines (2-4 words) are section headings,
-  // not entry content. Mixed-case entries like "AWS Certified Solutions Architect" are already
-  // filtered by the trimmed !== trimmed.toUpperCase() check above.
-  if (trimmed.endsWith(".")) return false;
-  if (/\(.*\)/.test(trimmed)) return false;
-  return true;
 }
 
 export function hasDateHint(value) {
@@ -587,7 +556,7 @@ export function isHeadingLine(line) {
   if (!normalized) return false;
   if (RESUME_HEADINGS.has(normalized)) return true;
   if (trimmed.endsWith(":") && RESUME_HEADINGS.has(normalizeHeadingLabel(trimmed.slice(0, -1)))) return true;
-  return isAllCapsHeading(trimmed);
+  return false;
 }
 
 export function buildEducationPair(lines, lineIndex, currentSectionKey, keywords) {
@@ -981,7 +950,8 @@ export function mergeParsedParagraphRuns(sections) {
       && section.lineIndices?.length
       && previous.lineIndices[previous.lineIndices.length - 1] + 1 === section.lineIndices[0]
       && !previousLooksLikeLostBullet
-      && !currentLooksLikeLostBullet;
+      && !currentLooksLikeLostBullet
+      && !/^[A-Z][^:\n]{1,50}:\s+\S/.test(stripResumeMarkdown(section.text));
 
     if (canMergeParagraph) {
       previous.text = `${previous.text} ${section.text}`.trim();
@@ -1488,6 +1458,7 @@ function shouldMergeContinuationLine(line, currentSectionKey, previousItem) {
   if (!trimmed || !previousItem || previousItem.sectionKey !== currentSectionKey) return false;
   if (!["bullet", "paragraph"].includes(previousItem.type)) return false;
   if (RESUME_BULLET_RE.test(line) || isHeadingLine(trimmed) || splitInlineHeadingContent(trimmed)) return false;
+  if (previousItem.type === "paragraph" && /^[A-Z][^:\n]{1,50}:\s+\S/.test(trimmed)) return false;
 
   const previousText = stripResumeMarkdown(previousItem.text || "");
   const previousEndsSentence = /[.!?]$/.test(previousText);
@@ -1625,7 +1596,10 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
       const canPromoteBulletHeading = ENTRY_SUBHEADING_SECTIONS.has(currentSectionKey) || currentSectionKey === "education";
       const bulletText = stripResumeMarkdown(bulletMatch[2]);
       const promoted = canPromoteBulletHeading ? parseSubheadingParts(bulletText, currentSectionKey) : null;
-      subheadingParts = promoted && (promoted.variant === "dated" || promoted.variant.startsWith("education")) ? promoted : null;
+      subheadingParts = promoted && (
+        (promoted.variant.startsWith("education") && startsNewEducationEntry(bulletText))
+        || (currentSectionKey !== "education" && promoted.variant === "dated")
+      ) ? promoted : null;
     } else {
       subheadingParts = parseSubheadingParts(normalizedLine, currentSectionKey);
     }
@@ -1670,7 +1644,22 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
     }
 
     const previousParsedSection = [...parsed].reverse().find((section) => section.type !== "spacer");
-    const inferredBullets = inferWordBulletLines(normalizedLine, currentSectionKey, previousParsedSection);
+    let explicitBulletAhead = false;
+    for (let futureIndex = lineIndex + 1; futureIndex < lines.length; futureIndex += 1) {
+      const futureRaw = lines[futureIndex];
+      const futureText = stripResumeMarkdown(futureRaw);
+      if (!futureText) continue;
+      if (RESUME_BULLET_RE.test(futureRaw)) {
+        explicitBulletAhead = true;
+        break;
+      }
+      if (isHeadingLine(futureText) || parseSubheadingParts(futureText, currentSectionKey)) break;
+    }
+    const isRoleIntroParagraph = previousParsedSection?.type === "subheading"
+      && /^(?:selected\s+(?:into|for|as)\b|currently\b|joined\b|appointed\b)/i.test(normalizedLine);
+    const inferredBullets = explicitBulletAhead && isRoleIntroParagraph
+      ? null
+      : inferWordBulletLines(normalizedLine, currentSectionKey, previousParsedSection);
     if (inferredBullets) {
       inferredBullets.forEach((bulletText, inferredIndex) => {
         parsed.push({

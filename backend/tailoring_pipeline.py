@@ -24,6 +24,12 @@ from typing import Optional
 
 from ai_phrases import clean_ai_phrases
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms
+from config import (
+    PIPELINE_REWRITE_TOKENS_PER_BULLET,
+    PIPELINE_STRATEGY_MAX_TOKENS,
+    PIPELINE_SUMMARY_MAX_TOKENS,
+    VALIDATION_REWRITE_MAX_EXPANSION_RATIO,
+)
 from ai_service import (
     SEALION_MODEL_PIPELINE_BULLETS,
     SEALION_MODEL_REASONING,
@@ -31,6 +37,7 @@ from ai_service import (
     call_sealion_json,
 )
 from jd_preparser import preparse_job_description
+from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
 from resume_scorer import ResumeScorer
 from resume_structurer import flatten_to_text, get_all_bullets, structure_resume
 from validation_gates import validate_and_fix
@@ -54,8 +61,9 @@ STAGES = [
 class PipelineState:
     """Thread-safe pipeline progress tracker."""
 
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str, owner_key: str | None = None):
         self.session_id = session_id
+        self.owner_key = owner_key
         self.stage_index = 0
         self.stage_name = STAGES[0]
         self.progress = {"completed": 0, "total": 0}
@@ -110,13 +118,68 @@ class PipelineState:
 _active_pipelines: dict[str, PipelineState] = {}
 _pipelines_lock = threading.Lock()
 _PIPELINE_TTL_SECONDS = 1800  # 30 minutes
+_MAX_ACTIVE_PIPELINES = 4
+_MAX_RETAINED_PIPELINES = 32
 
 
-def get_pipeline_state(session_id: str) -> PipelineState | None:
+class PipelineCapacityError(RuntimeError):
+    """Raised when another tailoring pipeline cannot be admitted."""
+
+
+def _trim_terminal_pipelines_locked(max_total: int) -> None:
+    """Evict the oldest finished sessions until the registry fits."""
+    overflow = len(_active_pipelines) - max_total
+    if overflow <= 0:
+        return
+
+    terminal = sorted(
+        (
+            (session_id, state)
+            for session_id, state in _active_pipelines.items()
+            if state.stage_name == "complete" or state.error is not None
+        ),
+        key=lambda item: (
+            getattr(item[1], "_completed_at", item[1]._created_at),
+            item[1]._created_at,
+            item[0],
+        ),
+    )
+    for session_id, _state in terminal[:overflow]:
+        _active_pipelines.pop(session_id, None)
+
+
+def get_pipeline_state(
+    session_id: str,
+    owner_key: str | None = None,
+) -> PipelineState | None:
     # Piggyback cleanup on reads (cheap, no extra thread needed)
     _cleanup_expired_pipelines()
     with _pipelines_lock:
-        return _active_pipelines.get(session_id)
+        state = _active_pipelines.get(session_id)
+        if state and state.owner_key and state.owner_key != owner_key:
+            return None
+        return state
+
+
+def owner_has_active_pipelines(owner_key: str) -> bool:
+    with _pipelines_lock:
+        return any(
+            state.owner_key == owner_key
+            and state.stage_name != "complete"
+            and state.error is None
+            for state in _active_pipelines.values()
+        )
+
+
+def purge_owner_pipelines(owner_key: str) -> None:
+    with _pipelines_lock:
+        session_ids = [
+            session_id
+            for session_id, state in _active_pipelines.items()
+            if state.owner_key == owner_key
+        ]
+        for session_id in session_ids:
+            _active_pipelines.pop(session_id, None)
 
 
 def _cleanup_expired_pipelines() -> None:
@@ -133,6 +196,7 @@ def _cleanup_expired_pipelines() -> None:
         ]
         for sid in expired:
             del _active_pipelines[sid]
+        _trim_terminal_pipelines_locked(_MAX_RETAINED_PIPELINES)
         if expired:
             log.info(f"[PIPELINE] Cleaned up {len(expired)} expired sessions")
 
@@ -203,7 +267,7 @@ def _stage_0_analyze(
     state.update_progress(1, 3, "Scoring resume...")
 
     scorer = ResumeScorer()
-    score_result = scorer.analyze(resume_text, jd_text)
+    score_result = scorer.analyze(resume_text, jd_text, parsed_jd=parsed_jd)
     state.update_progress(2, 3, "Analyzing skill gaps...")
 
     # Skill gap from parsed JD
@@ -278,13 +342,22 @@ Return ONLY valid JSON with this structure:
 
 Priority levels: "high" (rewrite needed + JD relevant), "medium" (fixable issues), "low" (minor), "skip" (already strong or irrelevant).
 Only include bullets that need work in bullet_priorities. Skip strong bullets."""
+    system += f"\n\nSECURITY: {UNTRUSTED_DATA_RULE}"
 
-    user_msg = (
-        f"BULLETS:\n" + "\n".join(bullet_summary[:25]) +
-        f"\n\nJD REQUIRED SKILLS: {', '.join(parsed_jd.get('required_skills', [])[:10])}"
-        f"\nJD PREFERRED: {', '.join(parsed_jd.get('preferred_skills', [])[:5])}"
-        f"\nINJECTABLE KEYWORDS: {', '.join(analysis['injectable_keywords'][:8])}"
-        f"\nEXPERIENCE REQUIRED: {parsed_jd.get('experience_years', 'not specified')}"
+    user_msg = "Create the strategy from this context:\n" + xml_data_block(
+        "strategy_context_data",
+        json.dumps(
+            {
+                "bullets": bullet_summary[:25],
+                "required_skills": parsed_jd.get("required_skills", [])[:10],
+                "preferred_skills": parsed_jd.get("preferred_skills", [])[:5],
+                "injectable_keywords": analysis["injectable_keywords"][:8],
+                "job_experience_requirement": parsed_jd.get(
+                    "experience_years", "not specified"
+                ),
+            },
+            ensure_ascii=False,
+        ),
     )
 
     content = call_sealion_json(
@@ -292,7 +365,7 @@ Only include bullets that need work in bullet_priorities. Skip strong bullets.""
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ],
-        max_tokens=800,
+        max_tokens=PIPELINE_STRATEGY_MAX_TOKENS,
         model=SEALION_MODEL_REASONING,
     )
 
@@ -454,8 +527,12 @@ CRITICAL RULES:
 - If original has "$3M", keep "$3M" exactly
 - If no numbers exist, use [X%] or [N] placeholders
 - Start each bullet with a STRONG action verb
-- Keep each bullet to 15-30 words
+- Keep each bullet concise; never make it more than {VALIDATION_REWRITE_MAX_EXPANSION_RATIO:g}x the original word count
 - If [inject: keyword] is noted, weave that keyword in naturally
+- Do NOT add outcomes such as zero downtime, improved reliability, cost savings,
+  seamless transition, operational continuity, latency reduction, speed gains,
+  or revenue impact unless the original bullet or sibling bullets explicitly say so
+- Do NOT add an "ensuring ..." clause unless the original bullet already has one
 
 QUALITY RULES:
 - Each bullet is shown with its role context [Company | Title] and sibling bullets
@@ -464,21 +541,32 @@ QUALITY RULES:
 - Align wording with JD terminology where natural (don't force it)
 - The resume should read well as a whole — varied verbs, concrete results, clear story
 
-JD REQUIRED SKILLS: {', '.join(parsed_jd.get('required_skills', [])[:8])}
-JD PREFERRED SKILLS: {', '.join(parsed_jd.get('preferred_skills', [])[:5])}
-EXPERIENCE LEVEL: {parsed_jd.get('experience_years', '')}
-
 Return ONLY a JSON object: {{"rewrites": ["rewritten bullet 1", "rewritten bullet 2", ...]}}
-The array MUST have exactly {len(batch)} items, one per input bullet, in the same order."""
+The array MUST have exactly {len(batch)} items, one per input bullet, in the same order.
 
-        user_msg = "Rewrite these bullets:\n" + "\n".join(bullet_lines)
+SECURITY: {UNTRUSTED_DATA_RULE}"""
+
+        user_msg = "Rewrite these bullets from this context:\n" + xml_data_block(
+            "rewrite_context_data",
+            json.dumps(
+                {
+                    "bullets": bullet_lines,
+                    "required_skills": parsed_jd.get("required_skills", [])[:8],
+                    "preferred_skills": parsed_jd.get("preferred_skills", [])[:5],
+                    "job_experience_requirement": parsed_jd.get(
+                        "experience_years", ""
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+        )
 
         content = call_sealion_json(
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=150 * len(batch),
+            max_tokens=PIPELINE_REWRITE_TOKENS_PER_BULLET * len(batch),
             model=SEALION_MODEL_PIPELINE_BULLETS,
         )
 
@@ -491,10 +579,15 @@ The array MUST have exactly {len(batch)} items, one per input bullet, in the sam
                     rewrites = []
             except (json.JSONDecodeError, ValueError, AttributeError):
                 # Fallback: try numbered-line parsing
-                for line in content.strip().split("\n"):
-                    cleaned = re.sub(r"^\d+[\.\)]\s*", "", line.strip())
-                    if cleaned and len(cleaned) > 10:
-                        rewrites.append(cleaned)
+                raw_content = content.strip()
+                if not (
+                    raw_content.startswith(("{", "["))
+                    or '"rewrites"' in raw_content
+                ):
+                    for line in raw_content.split("\n"):
+                        cleaned = re.sub(r"^\d+[\.\)]\s*", "", line.strip())
+                        if cleaned and len(cleaned) > 10:
+                            rewrites.append(cleaned)
 
         if not rewrites:
             log.warning(
@@ -607,6 +700,20 @@ def _ensure_summary_section(structured: dict) -> dict:
     return summary_section
 
 
+_YEARS_EXPERIENCE_RE = re.compile(
+    r"\b\d+(?:\.\d+)?\+?\s*(?:years?|yrs?)\s+(?:of\s+)?experience\b",
+    re.IGNORECASE,
+)
+
+
+def _summary_has_unsupported_years(source_text: str, summary_text: str) -> bool:
+    source_claims = {m.group(0).lower() for m in _YEARS_EXPERIENCE_RE.finditer(source_text)}
+    for match in _YEARS_EXPERIENCE_RE.finditer(summary_text):
+        if match.group(0).lower() not in source_claims:
+            return True
+    return False
+
+
 def _summary_needs_refresh(summary_section: dict | None) -> bool:
     """Heuristic for whether the summary should be regenerated in a full pass."""
     if not summary_section:
@@ -662,24 +769,36 @@ def _stage_5_full_polish(
     system = """You are an expert resume writer specializing in Singapore's job market.
 
 Generate a compelling professional summary (2-4 sentences, ~40-60 words) that:
-1. Opens with years of experience + core expertise
+1. Opens with core expertise; mention years of experience only if the source bullets explicitly state it
 2. Highlights 2-3 key strengths relevant to the target role
 3. Mentions a quantified achievement if possible
 4. Sounds natural, not AI-generated
 
 CRITICAL RULES:
 - Only reference achievements and skills that appear in the bullet points below. Do NOT invent.
+- The target job's required experience is not the candidate's experience.
+- If the source bullets do not explicitly say "years of experience", do not mention years.
+- Do NOT add outcomes such as zero downtime, improved reliability, cost savings,
+  seamless transition, operational continuity, latency reduction, speed gains,
+  or revenue impact unless the bullets explicitly say so.
+- Do NOT add an "ensuring ..." clause unless the bullets explicitly have one.
 - NEVER change numbers, years of experience, dollar amounts, or metrics from the original resume.
-  If the resume says "7+ years", keep "7+ years". Do NOT calculate or infer different numbers.
+  If the resume says "7+ years", keep "7+ years". Do NOT calculate, infer, or import different numbers.
 - Preserve all factual claims exactly as stated in the resume.
 
 Return ONLY the summary text, nothing else."""
+    system += f"\n\nSECURITY: {UNTRUSTED_DATA_RULE}"
 
-    user_msg = (
-        f"TARGET ROLE: {parsed_jd.get('required_skills', [])[:5]}"
-        f"\nEXPERIENCE: {parsed_jd.get('experience_years', '')}"
-        f"\nDIRECTION: {summary_direction}"
-        f"\n\nKEY BULLETS FROM RESUME:\n" + "\n".join(bullet_context)
+    user_msg = "Write the summary from this context:\n" + xml_data_block(
+        "summary_context_data",
+        json.dumps(
+            {
+                "target_role_skills": parsed_jd.get("required_skills", [])[:5],
+                "summary_direction": summary_direction,
+                "resume_bullets": bullet_context,
+            },
+            ensure_ascii=False,
+        ),
     )
 
     content = _call_sealion(
@@ -687,7 +806,7 @@ Return ONLY the summary text, nothing else."""
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ],
-        max_tokens=200,
+        max_tokens=PIPELINE_SUMMARY_MAX_TOKENS,
         model=SEALION_MODEL_REASONING,
         temperature=0.3,
     )
@@ -708,7 +827,13 @@ Return ONLY the summary text, nothing else."""
         )
     elif summary_section is not None and _summary_needs_refresh(summary_section):
         new_summary = content.strip().strip('"')
-        if len(new_summary) > 30:
+        source_text = "\n".join(bullet_context)
+        if _summary_has_unsupported_years(source_text, new_summary):
+            result["_degraded"] = True
+            result["_degraded_reason"] = (
+                "AI summary polishing added unsupported years of experience, so the pipeline kept the current summary."
+            )
+        elif len(new_summary) > 30:
             result["original_summary"] = summary_section.get("content", "")
             result["new_summary"] = new_summary
             result["summary_rewritten"] = True
@@ -723,6 +848,11 @@ Return ONLY the summary text, nothing else."""
         result["_degraded_reason"] = (
             "The resume did not contain enough structured content to generate a professional summary."
         )
+
+    if summary_was_missing and not result["summary_rewritten"]:
+        sections = structured.get("sections", [])
+        if summary_section in sections:
+            sections.remove(summary_section)
 
     state.update_progress(1, 1, "Full polish complete.")
     return result
@@ -740,7 +870,7 @@ def _stage_6_validate(
 
     tailored_text = flatten_to_text(structured)
     scorer = ResumeScorer()
-    final_score = scorer.analyze(tailored_text, jd_text)
+    final_score = scorer.analyze(tailored_text, jd_text, parsed_jd=parsed_jd)
 
     state.update_progress(1, 4, "Re-scanning skill match...")
 
@@ -912,6 +1042,7 @@ def run_pipeline(
     parsed_jd: dict | None,
     intensity: str = "full",
     session_id: str | None = None,
+    owner_key: str | None = None,
 ) -> PipelineState:
     """Start the tailoring pipeline in a background thread.
 
@@ -929,13 +1060,27 @@ def run_pipeline(
     if not session_id:
         session_id = secrets.token_hex(16)
 
-    state = PipelineState(session_id)
+    state = PipelineState(session_id, owner_key=owner_key)
 
     # Sweep before inserting so the dict can't grow without bound even if
     # nobody polls get_pipeline_state (the only other cleanup trigger).
     _cleanup_expired_pipelines()
 
     with _pipelines_lock:
+        active = [
+            existing
+            for existing in _active_pipelines.values()
+            if existing.stage_name != "complete" and existing.error is None
+        ]
+        if owner_key is not None and any(
+            existing.owner_key == owner_key for existing in active
+        ):
+            raise PipelineCapacityError(
+                "A tailoring pipeline is already running for this account."
+            )
+        if len(active) >= _MAX_ACTIVE_PIPELINES:
+            raise PipelineCapacityError("Tailoring is busy. Try again shortly.")
+        _trim_terminal_pipelines_locked(_MAX_RETAINED_PIPELINES - 1)
         _active_pipelines[session_id] = state
 
     def _run() -> None:
@@ -1039,7 +1184,6 @@ def _execute_pipeline(
 
         # ── Stage 6: Validate ──────────────────────────────────
         final = _stage_6_validate(analysis["structured"], resume_text, jd_text, parsed_jd, state)
-        state.advance("Validation done.")
 
     elapsed = round(time.monotonic() - start_time, 1)
 

@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
 from main import (  # noqa: E402
     _analytics_agency_subset_options,
+    _analytics_company_filter_condition,
     _analytics_company_label,
     _analytics_job_matches_agency_subset,
     _analytics_skill_display,
@@ -76,6 +77,17 @@ def test_split_multi_value_filter_trims_dedupes_and_preserves_order():
         "Full Time",
         "Contract",
     ]
+
+
+def test_analytics_company_filter_escapes_sql_wildcards():
+    sql = str(
+        _analytics_company_filter_condition("%_").compile(
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+
+    assert r"%\%\_%" in sql
+    assert "ESCAPE" in sql
 
 
 def test_direct_employer_filter_classifies_common_recruiters():

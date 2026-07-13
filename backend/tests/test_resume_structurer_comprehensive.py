@@ -192,3 +192,45 @@ def test_mondelez_education_entries_keep_degree_school_and_dates() -> None:
     assert all(entry.get("degree") for entry in education["entries"])
     assert all(entry.get("institution") for entry in education["entries"])
     assert all(entry.get("date_range") for entry in education["entries"])
+
+
+def test_real_pdf_shape_uses_exact_sections_and_keeps_role_context() -> None:
+    result = structure_resume(
+        "\n".join([
+            "HAOMING KOO",
+            "PROFESSIONAL SUMMARY",
+            "AI engineering leader.",
+            "CORE SKILLS",
+            "Leadership and Delivery: programme management and adoption",
+            "PROFESSIONAL EXPERIENCE",
+            "Associate AI Engineer | AI Singapore | Jan 2026 - Present",
+            "Selected for an industry project delivered with a three-person team",
+            "and targeting a 90% reduction in investigation time.",
+            "• Built the production agent scaffold.",
+            "• Designed the validation workflow.",
+            "SELECTED TECHNICAL PROJECTS",
+            "• smart-buoy: streamed positioning data through an ML pipeline.",
+            "EDUCATION AND CERTIFICATIONS",
+            "• M.Sc., National University of Singapore, 2022",
+            "• Project Management Professional (PMP), in progress",
+        ])
+    )
+
+    assert [section["key"] for section in result["sections"]] == [
+        "summary", "skills", "experience", "projects", "education",
+    ]
+    experience = next(section for section in result["sections"] if section["key"] == "experience")
+    assert len(experience["entries"]) == 1
+    entry = experience["entries"][0]
+    assert entry["title"] == "Associate AI Engineer"
+    assert entry["company"] == "AI Singapore"
+    assert entry["company"] != "Selected for an industry project delivered with a three-person team"
+    assert [bullet["text"] for bullet in entry["bullets"]] == [
+        "Selected for an industry project delivered with a three-person team and targeting a 90% reduction in investigation time.",
+        "Built the production agent scaffold.",
+        "Designed the validation workflow.",
+    ]
+    education = next(section for section in result["sections"] if section["key"] == "education")
+    assert len(education["entries"]) == 2
+    assert education["entries"][0]["date_range"] == "2022"
+    assert "Project Management Professional" in education["entries"][1]["heading"]

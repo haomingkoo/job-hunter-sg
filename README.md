@@ -117,7 +117,7 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 | Embeddings | sentence-transformers/all-MiniLM-L6-v2 |
 | Skills | SSG-WSG Skills Framework + data.gov.sg MySkillsFuture Course Directory |
 | Rate Limiting | In-memory token bucket, 5 API keys cycled (~45 req/min) |
-| Auth | JWT + bcrypt, tier-based rate limiting |
+| Auth | Verified email/password accounts (JWT + bcrypt), optional Cloudflare Access, per-account throttling |
 | Deploy | Railway (Docker), persistent PostgreSQL |
 | Quality | GitHub Actions, Ruff, Gitleaks, Dependabot, pre-commit hooks |
 
@@ -202,7 +202,7 @@ shared/resume-classification.json ← single source of truth for both backend + 
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/jobs` | Browse cached jobs with filters |
-| `GET /api/search?q=...` | Full-text job search |
+| `POST /api/search?q=...` | Admin live-source job search |
 | `POST /api/resume/score` | Score resume 0-100 |
 | `POST /api/resume/upload` | Upload PDF/DOCX, extract text |
 | `POST /api/resume/tailor` | Start 7-stage tailoring pipeline |
@@ -210,7 +210,7 @@ shared/resume-classification.json ← single source of truth for both backend + 
 | `POST /api/ai/rewrite` | AI bullet rewrite (3 options) |
 | `POST /api/ai/cover-letter` | Generate cover letter |
 | `POST /api/ai/resume-chat` | Conversational resume builder |
-| `GET /api/jobs/power-match` | Smart Match with RAG |
+| `POST /api/jobs/power-match` | Smart Match with RAG |
 | `POST /api/skillsfuture/recommend` | MySkillsFuture courses for Smart Match gaps |
 | `POST /api/admin/seed` | Trigger job crawl (admin) |
 
@@ -221,6 +221,8 @@ shared/resume-classification.json ← single source of truth for both backend + 
 ```bash
 DATABASE_URL=sqlite:///./jobhunter.db
 JWT_SECRET=your-secret
+AUTH_MODE=password
+ACCOUNT_AI_PER_DAY=500
 sealion_api=your-sealion-key          # supports sealion_api2 through sealion_api5
 ALLOWED_EMAIL_DOMAINS=*               # or comma-separated domains
 ALLOWED_ORIGINS=http://localhost:5173  # CORS

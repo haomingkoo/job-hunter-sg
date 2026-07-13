@@ -267,7 +267,7 @@ def _split_inline_heading_line(line: str) -> list[str]:
     lower = stripped.lower()
     for heading in _INLINE_HEADINGS:
         pattern = re.compile(
-            rf"^({re.escape(heading)})(?:\s*[:\-|]\s*|\s+)(.+)$",
+            rf"^({re.escape(heading)})(?:\s*[:|]\s*|\s+[-–—]\s+)(.+)$",
             re.I,
         )
         match = pattern.match(stripped)
@@ -276,7 +276,7 @@ def _split_inline_heading_line(line: str) -> list[str]:
         remainder = match.group(2).strip()
         if not remainder:
             continue
-        if remainder.startswith(("&", "/", "and ")):
+        if remainder.lower().startswith(("&", "/", "and ")):
             continue
         # Avoid splitting genuine headers like "Professional Summary:"
         if remainder.lower() in _NORMALIZED_SECTION_KEYS:

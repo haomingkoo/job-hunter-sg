@@ -13,9 +13,12 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import time
 from collections import Counter
 from typing import Optional
+
+from config import ANALYTICS_MAX_ROWS
 
 log = logging.getLogger("jobhunter.skills")
 
@@ -547,6 +550,7 @@ _dynamic_cache: dict = {
     "built_at": 0,      # timestamp
     "job_count": 0,     # number of JDs analyzed
 }
+_dynamic_cache_lock = threading.Lock()
 
 
 def _tokenize_for_ngrams(text: str) -> list[str]:
@@ -580,9 +584,23 @@ def build_dynamic_skills(db_session) -> dict[str, int]:
     Returns dict of {skill_phrase: number_of_JDs_containing_it}.
     Results are cached for 6 hours.
     """
+    # Return cache if fresh (< 6 hours old)
+    cache_age = time.time() - _dynamic_cache["built_at"]
+    if _dynamic_cache["built_at"] > 0 and cache_age < 6 * 3600:
+        return _dynamic_cache["skills"]
+
+    if not _dynamic_cache_lock.acquire(blocking=False):
+        return _dynamic_cache["skills"]
+
+    try:
+        return _build_dynamic_skills(db_session)
+    finally:
+        _dynamic_cache_lock.release()
+
+
+def _build_dynamic_skills(db_session) -> dict[str, int]:
     from models import ScrapedJob
 
-    # Return cache if fresh (< 6 hours old)
     cache_age = time.time() - _dynamic_cache["built_at"]
     if _dynamic_cache["built_at"] > 0 and cache_age < 6 * 3600:
         return _dynamic_cache["skills"]
@@ -597,6 +615,7 @@ def build_dynamic_skills(db_session) -> dict[str, int]:
     query = (
         db_session.query(ScrapedJob.description, ScrapedJob.skills)
         .filter(ScrapedJob.description != "")
+        .limit(ANALYTICS_MAX_ROWS)
         .yield_per(500)
     )
     for desc, job_skills in query:

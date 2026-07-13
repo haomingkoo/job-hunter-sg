@@ -29,6 +29,12 @@ def _generate_api_key() -> str:
     return secrets.token_hex(32)
 
 
+def _generate_token_version() -> int:
+    # Prevent a deleted account's JWT from authenticating a later SQLite row
+    # that happens to reuse the same integer primary key.
+    return secrets.randbelow(1_000_000_000) + 1
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -36,12 +42,19 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    tier: Mapped[str] = mapped_column(String(20), default="free", nullable=False)
+    # Normal accounts use "user"; "admin" is an authorization role, not a plan.
+    tier: Mapped[str] = mapped_column(String(20), default="user", nullable=False)
     api_key: Mapped[str] = mapped_column(
         String(64), unique=True, default=_generate_api_key, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    token_version: Mapped[int] = mapped_column(
+        Integer,
+        default=_generate_token_version,
+        nullable=False,
+    )
     terms_accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     privacy_accepted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -120,6 +133,9 @@ class TrackedJob(Base):
     date_applied: Mapped[str | None] = mapped_column(String(50), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="applied")
     source: Mapped[str] = mapped_column(String(200), default="")
+    source_url: Mapped[str] = mapped_column(Text, default="")
+    job_description: Mapped[str] = mapped_column(Text, default="")
+    role_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
     follow_up_date: Mapped[str | None] = mapped_column(String(50), nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
     scraped_job_id: Mapped[int | None] = mapped_column(
@@ -183,6 +199,23 @@ class PasswordResetToken(Base):
     __table_args__ = (
         Index("ix_password_reset_tokens_user", "user_id", "created_at"),
         Index("ix_password_reset_tokens_hash", "token_hash"),
+    )
+
+
+class EmailVerificationToken(Base):
+    """One-time email verification token. Only the token hash is stored."""
+    __tablename__ = "email_verification_tokens"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        Index("ix_email_verification_tokens_user", "user_id", "created_at"),
+        Index("ix_email_verification_tokens_hash", "token_hash"),
     )
 
 
@@ -385,3 +418,8 @@ class UsageLog(Base):
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     detail: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        Index("ix_usage_logs_user_action_created", "user_id", "action", "created_at"),
+        Index("ix_usage_logs_action_created", "action", "created_at"),
+    )

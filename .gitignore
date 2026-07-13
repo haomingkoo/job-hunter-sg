@@ -12,11 +12,14 @@ __pycache__/
 .venv/
 venv/
 *.db
+*.log
 
 # Node
 node_modules/
 frontend/node_modules/
 frontend/dist/
+.playwright-mcp/
+tmp/
 
 # IDE
 .vscode/
@@ -25,7 +28,9 @@ frontend/dist/
 .DS_Store
 
 # Internal dev notes
+.agents/
 .claude/notes/
+.claude/skills/
 
 # Data
 *.csv
@@ -34,11 +39,9 @@ frontend/dist/
 !package-lock.json
 !manifest.json
 !tsconfig.json
+!smithery.remote-config.json
 !.env.example
-!backend/.env.example
-!backend/data/onet_extracted.json
 !shared/resume-classification.json
-!skills-lock.json
 backend/data/*.xlsx
 backend/data/company_ssic_cache.json
 backend/data/learned_skills.json

@@ -10,6 +10,7 @@ export default function Nav({ active, setActive }) {
     { id: "resume", label: "Resume", icon: FileText },
     { id: "stories", label: "Stories", icon: BookOpen },
     { id: "tracker", label: "Applications", icon: Briefcase },
+    { id: "reminders", label: "Reminders", icon: Bell },
     { id: "analytics", label: "Market Insights", icon: BarChart2 },
     { id: "power", label: "Smart Match", icon: Sparkles },
     { id: "account", label: "Account", icon: User },

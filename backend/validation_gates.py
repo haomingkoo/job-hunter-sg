@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 
 from ai_phrases import clean_ai_phrases
+from config import VALIDATION_REWRITE_MAX_EXPANSION_RATIO
 
 log = logging.getLogger("jobhunter.gates")
 
@@ -34,6 +35,7 @@ _NUMBER_RE = re.compile(
     r"|\d+(?:\.\d+)?%"
     r"|\d{1,3}(?:,\d{3})+"
     r"|\d+[kKmMbB]\b"
+    r"|\b\d+(?:\.\d+)?\+?\b"
     r"|\d+\s*(?:team|users|people|projects|systems|clients|engineers"
     r"|members|staff|reports|sites|regions|countries)"
 )
@@ -50,6 +52,110 @@ _TECH_TERMS = {
     "terraform", "ansible", "jenkins", "ci/cd",
 }
 
+_UNSUPPORTED_OUTCOME_PATTERNS = [
+    re.compile(r"\bzero[- ]downtime\b", re.IGNORECASE),
+    re.compile(r"\bno downtime\b", re.IGNORECASE),
+    re.compile(r"\bwithout downtime\b", re.IGNORECASE),
+    re.compile(r"\bimproved (?:system )?reliability\b", re.IGNORECASE),
+    re.compile(r"\bseamless transition\b", re.IGNORECASE),
+    re.compile(r"\boperational continuity\b", re.IGNORECASE),
+    re.compile(r"\bensur(?:ed|ing)\b", re.IGNORECASE),
+]
+
+_UNSUPPORTED_SCOPE_CLAIMS = [
+    (
+        "leadership",
+        re.compile(
+            r"\b(?:led|leading|managed|managing|directed|supervised|headed|oversaw)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:led|leadership|leading|managed|managing|directed|supervised|"
+            r"headed|oversaw|owned|drove|spearheaded)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "deployment",
+        re.compile(
+            r"\b(?:deployed|deploying|deployment)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"\b(?:deployed|deploying|deployment|released|shipped|launched|"
+            r"rolled out)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "production readiness",
+        re.compile(r"\bproduction[- ](?:ready|grade)\b", re.IGNORECASE),
+        re.compile(r"\bproduction[- ](?:ready|grade)\b", re.IGNORECASE),
+    ),
+    (
+        "prevention",
+        re.compile(r"\b(?:avoided|prevented)\b", re.IGNORECASE),
+        re.compile(r"\b(?:avoided|prevented)\b", re.IGNORECASE),
+    ),
+]
+
+_GENERATED_LIST_PREFIX_RE = re.compile(
+    r"^\s*(?:[-*•]\s+|\d+[.)]\s+)"
+)
+
+_LIMITED_MATURITY_RE = re.compile(
+    r"\b(?:scaffold|prototype|proof[- ]of[- ]concept|poc)\b",
+    re.IGNORECASE,
+)
+_FULL_IMPLEMENTATION_RE = re.compile(
+    r"\b(?:implemented|deployed|launched|released)\b",
+    re.IGNORECASE,
+)
+
+_METRIC_NUMBER_RE = re.compile(
+    r"(?<![\w.])(?:(?:USD|SGD|US\$|S\$|\$)\s*)?[~≈]?\s*"
+    r"\d+(?:,\d{3})*(?:\.\d+)?\s*[kKmMbB]?\+?%?(?![\w%])",
+    re.IGNORECASE,
+)
+
+_METRIC_CONTEXT_PATTERNS = (
+    ("savings", re.compile(r"\bsav(?:e[ds]?|ings?)\b", re.IGNORECASE)),
+    ("realised", re.compile(r"\breali[sz](?:e[ds]?|ing|ation)\b", re.IGNORECASE)),
+    ("opportunities", re.compile(r"\bopportunit(?:y|ies)\b", re.IGNORECASE)),
+    ("reduction", re.compile(r"\breduc(?:e[ds]?|ing|tions?)\b", re.IGNORECASE)),
+    ("target", re.compile(r"\b(?:target|aim)(?:ed|ing|s)?\b", re.IGNORECASE)),
+    ("projected", re.compile(r"\bproject(?:ed|ing|ions?)\b", re.IGNORECASE)),
+    ("potential", re.compile(r"\bpotential(?:ly)?\b", re.IGNORECASE)),
+    ("prevention", re.compile(r"\b(?:avoid|prevent)(?:ed|ing|s)?\b", re.IGNORECASE)),
+    ("approximate", re.compile(r"\b(?:about|around|approximately|roughly)\b", re.IGNORECASE)),
+    ("upper_bound", re.compile(r"\b(?:up to|at most)\b", re.IGNORECASE)),
+)
+
+_METRIC_UNIT_PATTERNS = (
+    ("years", re.compile(r"\byears?\b", re.IGNORECASE)),
+    ("months", re.compile(r"\bmonths?\b", re.IGNORECASE)),
+    ("weeks", re.compile(r"\bweeks?\b", re.IGNORECASE)),
+    ("days", re.compile(r"\bdays?\b", re.IGNORECASE)),
+    ("reports", re.compile(r"\b(?:direct\s+)?reports?\b", re.IGNORECASE)),
+    ("engineers", re.compile(r"\bengineers?\b", re.IGNORECASE)),
+    ("people", re.compile(r"\b(?:people|persons?|staff|members?)\b", re.IGNORECASE)),
+    ("users", re.compile(r"\busers?\b", re.IGNORECASE)),
+    ("customers", re.compile(r"\bcustomers?\b", re.IGNORECASE)),
+    ("clients", re.compile(r"\bclients?\b", re.IGNORECASE)),
+    ("records", re.compile(r"\brecords?\b", re.IGNORECASE)),
+    ("events", re.compile(r"\bevents?\b", re.IGNORECASE)),
+    ("projects", re.compile(r"\bprojects?\b", re.IGNORECASE)),
+    ("systems", re.compile(r"\bsystems?\b", re.IGNORECASE)),
+    ("sites", re.compile(r"\bsites?\b", re.IGNORECASE)),
+    ("countries", re.compile(r"\bcountr(?:y|ies)\b", re.IGNORECASE)),
+    ("roles", re.compile(r"\broles?\b", re.IGNORECASE)),
+    ("jobs", re.compile(r"\bjobs?\b", re.IGNORECASE)),
+    ("listings", re.compile(r"\blistings?\b", re.IGNORECASE)),
+)
+
+_METRIC_CONTEXT_RADIUS = 80
+_CLAIM_BOUNDARY_RE = re.compile(r"[;.!?\n]")
+
 
 def _extract_numbers(text: str) -> set[str]:
     """Extract all numeric facts from text."""
@@ -64,20 +170,101 @@ def _extract_domain_terms(text: str) -> set[str]:
     return terms
 
 
+def _normalize_metric_token(value: str) -> str:
+    value = re.sub(r"^\s*(?:usd|sgd|us\$|s\$|\$)\s*", "", value, flags=re.IGNORECASE)
+    return re.sub(r"[\s,~≈]", "", value).lower()
+
+
+def _metric_currency(value: str) -> str:
+    compact = re.sub(r"\s+", "", value).lower()
+    if compact.startswith(("usd", "us$")):
+        return "usd"
+    if compact.startswith(("sgd", "s$")):
+        return "sgd"
+    if compact.startswith("$"):
+        return "unspecified"
+    return ""
+
+
+def _metric_claim_signatures(text: str) -> list[tuple[str, frozenset[str]]]:
+    metrics = [
+        [match, _normalize_metric_token(match.group()), set()]
+        for match in _METRIC_NUMBER_RE.finditer(text)
+    ]
+    for metric in metrics:
+        if "~" in metric[0].group() or "≈" in metric[0].group():
+            metric[2].add("approximate")
+        currency = _metric_currency(metric[0].group())
+        if currency:
+            metric[2].add(f"currency:{currency}")
+
+    labelled_patterns = _METRIC_CONTEXT_PATTERNS + tuple(
+        (f"unit:{label}", pattern) for label, pattern in _METRIC_UNIT_PATTERNS
+    )
+    for label, pattern in labelled_patterns:
+        for context_match in pattern.finditer(text):
+            candidates = []
+            for index, (metric_match, _token, _labels) in enumerate(metrics):
+                is_unit = label.startswith("unit:")
+                if is_unit and context_match.start() < metric_match.end():
+                    continue
+                distance = max(
+                    metric_match.start() - context_match.end(),
+                    context_match.start() - metric_match.end(),
+                    0,
+                )
+                between = text[
+                    min(metric_match.end(), context_match.end()):
+                    max(metric_match.start(), context_match.start())
+                ]
+                max_distance = 18 if is_unit else _METRIC_CONTEXT_RADIUS
+                if distance <= max_distance and not _CLAIM_BOUNDARY_RE.search(between):
+                    candidates.append((distance, index))
+            if candidates:
+                metrics[min(candidates)[1]][2].add(label)
+
+    return [(token, frozenset(labels)) for _match, token, labels in metrics]
+
+
+def numeric_metric_claims_verifiable(source: str, generated: str) -> bool:
+    """Return whether each generated numeric claim keeps its source meaning."""
+    source_claims: dict[str, set[frozenset[str]]] = {}
+    for token, labels in _metric_claim_signatures(source):
+        source_claims.setdefault(token, set()).add(labels)
+
+    return all(
+        labels in source_claims.get(token, set())
+        for token, labels in _metric_claim_signatures(generated)
+    )
+
+
 # ── Gate 1: Fact Preservation ───────────────────────────────────────────────
 
 
 def gate_fact_preservation(original: str, tailored: str) -> GateResult:
-    """Ensure all numbers and metrics from the original appear in the tailored version."""
+    """Ensure numeric facts are preserved and not newly introduced."""
     orig_numbers = _extract_numbers(original)
     tail_numbers = _extract_numbers(tailored)
     missing = orig_numbers - tail_numbers
+    added = tail_numbers - orig_numbers
 
     if missing:
         return GateResult(
             passed=False,
             gate_name="fact_preservation",
             message=f"Missing facts from original: {', '.join(sorted(missing))}",
+        )
+    if added:
+        return GateResult(
+            passed=False,
+            gate_name="fact_preservation",
+            message=f"Added unsupported numeric facts: {', '.join(sorted(added))}",
+        )
+    if not numeric_metric_claims_verifiable(original, tailored):
+        return GateResult(
+            passed=False,
+            gate_name="fact_preservation",
+            message="A numeric fact changed currency, unit, qualifier, or meaning.",
         )
     return GateResult(
         passed=True,
@@ -173,13 +360,14 @@ def gate_length_sanity(original: str, tailored: str) -> GateResult:
             message=f"Rewrite is very short ({tail_words} words).",
         )
 
-    if orig_words > 0 and tail_words / orig_words > 1.8:
+    if orig_words > 0 and tail_words / orig_words > VALIDATION_REWRITE_MAX_EXPANSION_RATIO:
         return GateResult(
             passed=False,
             gate_name="length_sanity",
             message=(
                 f"Rewrite is {tail_words / orig_words:.1f}x longer than "
-                f"original ({orig_words} -> {tail_words} words). Max 1.8x."
+                f"original ({orig_words} -> {tail_words} words). "
+                f"Max {VALIDATION_REWRITE_MAX_EXPANSION_RATIO:g}x."
             ),
         )
 
@@ -220,6 +408,42 @@ def gate_hallucination(
     )
 
 
+# ── Gate 6: Unsupported Claims ──────────────────────────────────────────────
+
+
+def gate_unsupported_claims(original: str, tailored: str) -> GateResult:
+    """Reject high-risk outcome or scope claims absent from the source bullet."""
+    if (
+        _LIMITED_MATURITY_RE.search(original)
+        and not _LIMITED_MATURITY_RE.search(tailored)
+        and _FULL_IMPLEMENTATION_RE.search(tailored)
+    ):
+        return GateResult(
+            passed=False,
+            gate_name="unsupported_claims",
+            message="Rewrite removes a prototype or scaffold qualification.",
+        )
+    for pattern in _UNSUPPORTED_OUTCOME_PATTERNS:
+        if pattern.search(tailored) and not pattern.search(original):
+            return GateResult(
+                passed=False,
+                gate_name="unsupported_claims",
+                message="Rewrite adds unsupported outcome claims.",
+            )
+    for claim, tailored_pattern, source_pattern in _UNSUPPORTED_SCOPE_CLAIMS:
+        if tailored_pattern.search(tailored) and not source_pattern.search(original):
+            return GateResult(
+                passed=False,
+                gate_name="unsupported_claims",
+                message=f"Rewrite adds an unsupported {claim} claim.",
+            )
+    return GateResult(
+        passed=True,
+        gate_name="unsupported_claims",
+        message="No unsupported claims detected.",
+    )
+
+
 # ── Runners ─────────────────────────────────────────────────────────────────
 
 
@@ -230,13 +454,14 @@ def run_all_gates(
     required_keywords: list[str] | None = None,
     injectable_keywords: set[str] | None = None,
 ) -> list[GateResult]:
-    """Run all 5 validation gates. Returns list of results."""
+    """Run all validation gates. Returns list of results."""
     return [
         gate_fact_preservation(original, tailored),
         gate_ai_phrases(tailored, jd_text),
         gate_keyword_verbatim(tailored, required_keywords),
         gate_length_sanity(original, tailored),
         gate_hallucination(original, tailored, injectable_keywords),
+        gate_unsupported_claims(original, tailored),
     ]
 
 
@@ -252,14 +477,18 @@ def validate_and_fix(
     If a critical gate fails (fact_preservation, hallucination),
     returns the ORIGINAL text unchanged.
     """
+    normalized = tailored.strip()
+    if not _GENERATED_LIST_PREFIX_RE.match(original):
+        normalized = _GENERATED_LIST_PREFIX_RE.sub("", normalized, count=1)
+
     results = run_all_gates(
-        original, tailored, jd_text, required_keywords, injectable_keywords,
+        original, normalized, jd_text, required_keywords, injectable_keywords,
     )
 
-    final_text = tailored
+    final_text = normalized
 
     # Check for critical failures -- revert to original
-    critical_gates = {"fact_preservation", "hallucination"}
+    critical_gates = {"fact_preservation", "hallucination", "unsupported_claims"}
     for result in results:
         if not result.passed and result.gate_name in critical_gates:
             log.info(

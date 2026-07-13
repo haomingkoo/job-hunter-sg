@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+from itertools import chain, repeat
 from types import SimpleNamespace
 
 import pytest
@@ -242,6 +243,34 @@ class TestSkillExtractor:
         assert "\n- First item" in cleaned
         assert "\n- Second item" in cleaned
 
+    def test_careersgov_detail_uses_cached_json_dump(self, monkeypatch):
+        from scraper import CareersGovScraper
+
+        monkeypatch.setattr(
+            CareersGovScraper,
+            "_fetch_data",
+            classmethod(
+                lambda cls: [
+                    {
+                        "jobId": "123",
+                        "postingNo": "ABC",
+                        "jobTitle": "Data Engineer",
+                        "agency": "GovTech",
+                        "jobDescription": "<p>Build pipelines.</p>",
+                        "jobResponsibilities": "<ul><li>Own data quality</li></ul>",
+                        "jobRequirements": "Python and SQL",
+                    }
+                ]
+            ),
+        )
+
+        detail = CareersGovScraper().get_job_detail("/jobs/hrp/123/ABC")
+
+        assert detail["companyName"] == "GovTech"
+        assert "Build pipelines." in detail["jobDescription"]
+        assert "- Own data quality" in detail["jobDescription"]
+        assert "Python and SQL" in detail["jobDescription"]
+
     def test_ats_terms_exclude_benefits_bullets_but_keep_real_skills(self):
         from ats_terms import build_job_ats_terms
 
@@ -337,7 +366,32 @@ class TestResumeParser:
 
         text = "Led cross-\nfunctional delivery"
         result = _join_broken_lines(text)
-        assert "crossfunctional" in result or "cross-functional" in result.replace("\n", "")
+        assert result == "Led cross-functional delivery"
+
+    def test_join_broken_lines_preserves_pdf_bullets_without_spaces(self):
+        from resume_parser import _join_broken_lines, _parse_quality
+
+        text = (
+            "Selected for an industry project targeting a 90% improvement.\n"
+            "•Built the production agent scaffold.\n"
+            "•Designed the validation workflow."
+        )
+
+        result = _join_broken_lines(text)
+
+        assert result.splitlines() == [
+            "Selected for an industry project targeting a 90% improvement.",
+            "• Built the production agent scaffold.",
+            "• Designed the validation workflow.",
+        ]
+        assert _parse_quality(result, "pdf")["signals"]["bullet_line_count"] == 2
+
+    def test_join_broken_lines_preserves_meaningful_hyphen(self):
+        from resume_parser import _join_broken_lines
+
+        assert _join_broken_lines("Produced evidence-\nbacked reports") == (
+            "Produced evidence-backed reports"
+        )
 
     def test_join_broken_lines_preserves_sections(self):
         """Section headers should stay on their own lines."""
@@ -362,24 +416,16 @@ class TestResumeParser:
         assert lines[0].strip() == "EXECUTIVE SUMMARY"
         assert lines[1].startswith("Transformation leader")
 
-    def test_extract_text_from_chars_clusters_nearby_tops_into_one_line(self):
-        """Small top offsets on the same visual line should not split the line."""
-        from resume_parser import _extract_text_from_chars
+    def test_join_broken_lines_does_not_guess_semantic_paragraphs(self):
+        from resume_parser import _join_broken_lines
 
-        page = SimpleNamespace(chars=[
-            {"text": "Bachelor", "x0": 0.0, "x1": 8.0, "top": 251.29},
-            {"text": "of", "x0": 10.0, "x1": 12.0, "top": 251.29},
-            {"text": "Science,", "x0": 14.0, "x1": 21.0, "top": 249.27},
-            {"text": "Aug", "x0": 40.0, "x1": 43.0, "top": 249.27},
-            {"text": "2018", "x0": 45.0, "x1": 49.0, "top": 249.27},
-            {"text": "Major", "x0": 0.0, "x1": 5.0, "top": 261.22},
-        ])
+        text = (
+            "CORE SKILLS\n"
+            "Leadership and Delivery: programme management and adoption\n"
+            "Agentic AI and LLM Engineering: LangGraph and RAG"
+        )
 
-        result = _extract_text_from_chars(page)
-        lines = result.splitlines()
-
-        assert lines[0] == "Bachelor of Science, Aug 2018"
-        assert lines[1] == "Major"
+        assert _join_broken_lines(text) == text
 
     def test_name_detection(self):
         """parse_resume metadata should extract a name from the first lines."""
@@ -391,14 +437,14 @@ class TestResumeParser:
             from docx import Document
 
             doc = Document()
-            doc.add_paragraph("John Smith")
+            doc.add_paragraph("JOHN SMITH")
             doc.add_paragraph("john@example.com")
             doc.add_paragraph("EXPERIENCE")
             doc.add_paragraph("Software Engineer at Google")
             buf = io.BytesIO()
             doc.save(buf)
             result = parse_resume("test.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", buf.getvalue())
-            assert result["name"] == "John Smith"
+            assert result["name"] == "JOHN SMITH"
         except ImportError:
             pytest.skip("python-docx not installed")
 
@@ -696,14 +742,25 @@ class TestAPIEndpoints:
         stale = _parse_job_posted_at("Posted 30+ Days Ago")
         assert recent > stale
 
-    def test_tiers_endpoint(self, client):
-        resp = client.get("/api/tiers")
-        assert resp.status_code == 200
-
     def test_trending_skills_endpoint(self, client):
         resp = client.get("/api/skills/trending")
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
+
+    def test_analytics_trends_endpoint(self, client):
+        from main import _ANALYTICS_CACHE_LOCK, _analytics_query_cache, _clear_analytics_cache
+
+        _clear_analytics_cache()
+        resp = client.get("/api/analytics/trends?weeks=4")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "series" in data
+        assert "recent_top_titles" in data
+        assert "recent_ats_terms" in data
+        second = client.get("/api/analytics/trends?weeks=4")
+        assert second.json() == data
+        with _ANALYTICS_CACHE_LOCK:
+            assert any(key[0] == "trends" and key[-1] == 4 for key in _analytics_query_cache)
 
     def test_resume_score_requires_text(self, client):
         resp = client.post("/api/resume/score", json={
@@ -721,10 +778,18 @@ class TestAPIEndpoints:
         )
         assert resp.status_code == 403
 
-    def test_signup_and_login_flow(self, client):
+    def test_signup_and_login_flow(self, client, monkeypatch):
         import secrets
+        import main
         email = f"test_{secrets.token_hex(4)}@aisg.sg"
         pw = "TestPassword123!"
+        sent = {}
+        monkeypatch.setattr(main, "email_configured", lambda: True)
+        monkeypatch.setattr(
+            main,
+            "_send_verification_email",
+            lambda _user, token: sent.setdefault("token", token),
+        )
 
         # Signup
         resp = client.post("/api/auth/signup", json={
@@ -734,9 +799,20 @@ class TestAPIEndpoints:
             "accepted_terms": True,
         })
         assert resp.status_code == 200
-        data = resp.json()
-        assert "token" in data
-        assert data["user"]["email"] == email
+        assert "token" not in resp.json()
+
+        resp = client.post(
+            "/api/auth/verify-email",
+            json={
+                "token": sent["token"],
+                "password": pw,
+                "name": "Test User",
+                "accepted_terms": True,
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.json()["user"]["email"] == email
+        assert resp.json()["user"]["tier"] == "user"
 
         # Login
         resp = client.post("/api/auth/login", json={
@@ -746,11 +822,78 @@ class TestAPIEndpoints:
         assert resp.status_code == 200
         assert "token" in resp.json()
 
+    def test_tracked_status_history_is_append_only(self, client, monkeypatch):
+        import secrets
+        import main
+        from database import init_db
+
+        init_db()
+
+        email = f"tracked_{secrets.token_hex(4)}@aisg.sg"
+        pw = "TestPassword123!"
+        sent = {}
+        monkeypatch.setattr(main, "email_configured", lambda: True)
+        monkeypatch.setattr(
+            main,
+            "_send_verification_email",
+            lambda _user, token: sent.setdefault("token", token),
+        )
+        signup = client.post("/api/auth/signup", json={
+            "email": email,
+            "password": pw,
+            "name": "Tracked User",
+            "accepted_terms": True,
+        })
+        assert signup.status_code == 200
+        verification = client.post(
+            "/api/auth/verify-email",
+            json={
+                "token": sent["token"],
+                "password": pw,
+                "name": "Test User",
+                "accepted_terms": True,
+            },
+        )
+        assert verification.status_code == 200
+        headers = {"Authorization": f"Bearer {verification.json()['token']}"}
+
+        created = client.post("/api/tracked", json={
+            "company": "Example Co",
+            "role": "AI Program Manager",
+            "date_applied": "2026-07-03",
+            "status": "saved",
+        }, headers=headers)
+        assert created.status_code == 201
+        tracked = created.json()
+        assert [event["stage"] for event in tracked["stage_history"]] == ["saved"]
+
+        updated = client.put(
+            f"/api/tracked/{tracked['id']}",
+            json={"status": "screening"},
+            headers=headers,
+        )
+        assert updated.status_code == 200
+        assert [event["stage"] for event in updated.json()["stage_history"]] == [
+            "saved",
+            "screening",
+        ]
+
     def test_static_frontend_or_no_static(self, client):
         """/ should serve frontend if static dir exists, or 404 otherwise."""
         resp = client.get("/")
         # 200 if static dir exists, 404 if not (local dev without build)
         assert resp.status_code in (200, 307, 404)
+
+    def test_frontend_cache_policy_never_caches_html_or_missing_assets(self):
+        from main import _frontend_cache_control
+
+        assert _frontend_cache_control("/", 200) == "no-store"
+        assert _frontend_cache_control("/resume", 200) == "no-store"
+        assert _frontend_cache_control("/assets/index-abc.js", 404) == "no-store"
+        assert (
+            _frontend_cache_control("/assets/index-abc.js", 200)
+            == "public, max-age=31536000, immutable"
+        )
 
 
 class TestBackfillProgress:
@@ -837,7 +980,7 @@ class TestBackfillProgress:
 
         fake_db = FakeDB(jobs)
         progress_updates = []
-        timeline = iter([0, 60, 120, 180, 180])
+        timeline = iter(chain([0, 60, 120, 180, 180], repeat(180)))
 
         monkeypatch.setattr("backfill_enrichment.SessionLocal", lambda: fake_db)
         monkeypatch.setattr("backfill_enrichment.preparse_jd", lambda *args, **kwargs: {"required_skills": []})

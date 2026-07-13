@@ -16,6 +16,17 @@ from typing import Optional
 
 import requests
 
+from config import (
+    SEALION_DISABLE_THINKING_MODELS,
+    SEALION_FAST_MODEL,
+    SEALION_HTTP_TIMEOUT,
+    SEALION_PIPELINE_MODEL,
+    SEALION_REQ_PER_MIN,
+    SEALION_SMART_MODEL,
+)
+from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
+from validation_gates import validate_and_fix
+
 log = logging.getLogger("jobhunter.ai")
 
 # ── Rate limiter (token bucket, 10 req/min) ────────────────────────────────
@@ -64,9 +75,14 @@ class _RateLimiter:
 # ── SEA-LION Client ─────────────────────────────────────────────────────────
 
 SEALION_BASE_URL = "https://api.sea-lion.ai/v1"
-SEALION_MODEL_INTERACTIVE = "aisingapore/Qwen-SEA-LION-v4-32B-IT"
-SEALION_MODEL_PIPELINE_BULLETS = "aisingapore/Qwen-SEA-LION-v4-32B-IT"
-SEALION_MODEL_REASONING = "aisingapore/Llama-SEA-LION-v3.5-70B-R"
+SEALION_MODEL_INTERACTIVE = SEALION_FAST_MODEL
+SEALION_MODEL_PIPELINE_BULLETS = SEALION_PIPELINE_MODEL
+# v1 pipeline retired the 70B-R reasoning model (couldn't tool-call, leaked
+# chain-of-thought into output, slow). The classic pipeline is env-switchable via
+# SEALION_PIPELINE_MODEL; v4 32B remains the default because it follows strict
+# JSON/prose prompts better than v4.5 Qwen on this path.
+SEALION_MODEL_REASONING = SEALION_PIPELINE_MODEL
+SEALION_MODEL_SMART = SEALION_SMART_MODEL
 
 # Backwards-compatible alias used by older call sites.
 SEALION_MODEL = SEALION_MODEL_INTERACTIVE
@@ -98,13 +114,17 @@ _api_keys = _load_api_keys()
 _key_index = 0
 _key_lock = threading.Lock()
 
-# Rate limiter: 9 req/min per key, so N keys = 9*N req/min total
+# Rate limiter: SEALION_REQ_PER_MIN per key, so N keys = N*that req/min total.
 _limiter = _RateLimiter(
-    max_tokens=max(1, 9 * len(_api_keys)),
+    max_tokens=max(1, SEALION_REQ_PER_MIN * len(_api_keys)),
     refill_seconds=60,
 )
+_AI_CALL_SLOTS = threading.BoundedSemaphore(8)
 
-log.info(f"[AI] Loaded {len(_api_keys)} SEA-LION API key(s) → {9 * len(_api_keys)} req/min capacity")
+log.info(
+    f"[AI] Loaded {len(_api_keys)} SEA-LION API key(s) → "
+    f"{SEALION_REQ_PER_MIN * len(_api_keys)} req/min capacity"
+)
 
 
 def _get_api_key() -> str:
@@ -205,6 +225,7 @@ def _call_sealion(
     max_tokens: int = 500,
     model: str = SEALION_MODEL,
     temperature: float = 0.7,
+    response_format: dict | None = None,
 ) -> Optional[str]:
     """Call SEA-LION API with rate limiting. Returns response text or None."""
     api_key = _get_api_key()
@@ -212,36 +233,47 @@ def _call_sealion(
         log.warning("[AI] SEA-LION API key not set (sealion_api)")
         return None
 
-    if not _limiter.acquire(timeout=30):
-        log.warning("[AI] Rate limit — could not acquire token in 30s")
+    if not _AI_CALL_SLOTS.acquire(blocking=False):
+        log.warning("[AI] Concurrent call limit reached")
         return None
 
     try:
+        if not _limiter.acquire(timeout=0):
+            log.warning("[AI] Rate limit reached")
+            return None
+        body = {
+            "model": model,
+            "messages": messages,
+            "max_completion_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if model in SEALION_DISABLE_THINKING_MODELS:
+            body["chat_template_kwargs"] = {"enable_thinking": False}
+        if response_format:
+            body["response_format"] = response_format
+
         resp = requests.post(
             f"{SEALION_BASE_URL}/chat/completions",
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": model,
-                "messages": messages,
-                "max_completion_tokens": max_tokens,
-                "temperature": temperature,
-            },
-            timeout=60,
+            json=body,
+            timeout=SEALION_HTTP_TIMEOUT,
         )
         resp.raise_for_status()
         data = resp.json()
         message = data["choices"][0]["message"]
-        content = message.get("content") or message.get("reasoning_content")
+        content = message.get("content")
         if isinstance(content, list):
             content = "".join(
                 part.get("text", "") if isinstance(part, dict) else str(part)
                 for part in content
             )
         if not isinstance(content, str):
-            raise KeyError("content/reasoning_content")
+            if message.get("reasoning_content"):
+                raise KeyError("content missing; reasoning_content not accepted")
+            raise KeyError("content")
         usage = data.get("usage", {})
         log.info(
             f"[AI] SEA-LION response: {usage.get('total_tokens', '?')} tokens"
@@ -258,6 +290,8 @@ def _call_sealion(
         log.warning(f"[AI] SEA-LION parse error: {type(e).__name__}: {e}")
         _track_failure("ParseError", str(e)[:50])
         return None
+    finally:
+        _AI_CALL_SLOTS.release()
 
 
 # ── JSON-safe call with progressive retry ──────────────────────────────────
@@ -291,6 +325,7 @@ def call_sealion_json(
             max_tokens=max_tokens,
             model=model,
             temperature=temp,
+            response_format={"type": "json_object"},
         )
         if result and result.strip():
             stripped = result.strip()
@@ -389,13 +424,20 @@ Structure your review in this exact order:
 PAGE LENGTH: The ideal resume is 1-2 pages. 3 pages is acceptable for senior professionals with 15+ years of experience. If the resume is over 3 pages, recommend what to trim. Don't be rigid about 1 page — 2 pages is perfectly fine for most candidates in Singapore.
 
 IMPORTANT: Never alter factual information (names, emails, phone numbers, dates, company names, degrees, certifications). Only suggest improvements to wording, structure, and presentation. If something seems wrong, flag it for the user to fix — don't change it yourself.
+Do not turn teamwork or participation into a leadership claim. Working with a team does not mean leading or managing it; ask the user to confirm unclear scope instead.
 
 Keep it conversational — like you're sitting across from them at a coffee shop in Singapore, not writing a formal report. Use "you" and "your". Be encouraging but honest."""
 
+    system += f"\n\nSECURITY: {UNTRUSTED_DATA_RULE}"
+
     # Send full resume — SEA-LION supports up to 128K context
-    user_msg = f"Please review my resume:\n\n{resume_text}"
+    user_msg = "Please review my resume:\n\n" + xml_data_block(
+        "resume_data", resume_text
+    )
     if job_description:
-        user_msg += f"\n\n---\nI'm applying for this role:\n{job_description[:2000]}"
+        user_msg += "\n\nI'm applying for this role:\n" + xml_data_block(
+            "job_description_data", job_description, 2000
+        )
         user_msg += "\n\nPlease focus on how I can tailor my resume for this specific job. What keywords am I missing? How should I reframe my experience?"
     else:
         user_msg += "\n\nI'm looking for roles in Singapore. Please give me a general review and help me make this stronger."
@@ -429,20 +471,14 @@ def rewrite_bullet(
     focused_feedback: str = "",
 ) -> Optional[list]:
     """Rewrite a single resume bullet — returns 3 OPTIONS, not just one."""
-    avoid_verbs = f"\nAVOID these verbs (already used in other bullets): {used_verbs}" if used_verbs else ""
     focus_tokens = {token.strip().lower() for token in rewrite_focus.split(",") if token.strip()}
     focus_rules = []
     if "bullet_length" in focus_tokens or "shorten" in focus_tokens:
         focus_rules.append("- Option 1 MUST be the shortest scan-friendly rewrite. Keep it crisp, front-load the result, and aim for roughly 18-26 words when possible without losing facts.")
     if "overused_avoided" in focus_tokens or "tighten" in focus_tokens:
-        # Extract the actual overused words from focused_feedback if available
-        overused_words = ""
-        if focused_feedback:
-            # focused_feedback often contains the flagged words
-            overused_words = focused_feedback
         focus_rules.append(
-            f"- The resume overuses certain words. In THIS rewrite, AVOID these specific words and use alternatives instead: {overused_words}. "
-            f"Do NOT just swap with another generic word — use a specific, concrete word that fits the bullet's actual content."
+            "- Avoid the overused words identified in the user-provided feedback. "
+            "Use a specific, concrete alternative that fits the bullet's actual content."
         )
     if "action_oriented" in focus_tokens or "action" in focus_tokens:
         focus_rules.append("- Lead with a strong, specific action verb rather than a weak or generic opening.")
@@ -451,7 +487,6 @@ def rewrite_bullet(
     if "bulletize" in focus_tokens or "format" in focus_tokens:
         focus_rules.append("- Each option must read like a single resume bullet line, not a paragraph.")
     focus_hint = f"\nFOCUS FOR THIS REWRITE:\n" + "\n".join(focus_rules) if focus_rules else ""
-    feedback_hint = f"\nTARGETED FEEDBACK TO ADDRESS:\n{focused_feedback}" if focused_feedback else ""
 
     system = f"""You are a resume writing expert who has helped thousands of professionals in Singapore.
 
@@ -460,9 +495,8 @@ CRITICAL — DO NOT HALLUCINATE:
 - If the original says "$50M", keep it as "$50M" — do not change to "$60M"
 - If there are no numbers, use placeholders like [X%] or [N] that the user fills in themselves
 - Preserve all factual information exactly as-is
-{avoid_verbs}
+- Do not upgrade reviewed or planned work into leadership or deployment. Only say led, managed, deployed, or production-ready when the original explicitly supports it.
 {focus_hint}
-{feedback_hint}
 
 Provide exactly 3 different rewrites of the bullet. Each should:
 - Start with a DIFFERENT strong action verb
@@ -477,17 +511,33 @@ If the bullet is already strong and doesn't need changes, return "NO_CHANGE" as 
 Return EXACTLY this format (3 lines, nothing else):
 1. [first rewrite]
 2. [second rewrite]
-3. [third rewrite]"""
+3. [third rewrite]
 
-    user_msg = f"Rewrite this resume bullet:\n\"{bullet}\""
+SECURITY: {UNTRUSTED_DATA_RULE}"""
+
+    user_msg = "Rewrite this resume bullet:\n" + xml_data_block(
+        "resume_bullet_data", bullet
+    )
     if job_title:
-        user_msg += f"\n\nThis is for a {job_title} role."
+        user_msg += "\n\nTarget role:\n" + xml_data_block(
+            "job_title_data", job_title
+        )
     if job_description:
-        user_msg += f"\n\nKey job requirements:\n{job_description[:1500]}"
+        user_msg += "\n\nKey job requirements:\n" + xml_data_block(
+            "job_description_data", job_description, 1500
+        )
     if context:
-        user_msg += f"\nContext: {context}"
+        user_msg += "\n\nResume context:\n" + xml_data_block(
+            "resume_context_data", context
+        )
+    if used_verbs:
+        user_msg += "\n\nAlready-used verbs to avoid:\n" + xml_data_block(
+            "used_verbs_data", used_verbs
+        )
     if focused_feedback:
-        user_msg += f"\nFocused feedback to address: {focused_feedback}"
+        user_msg += "\n\nFocused feedback to address:\n" + xml_data_block(
+            "focused_feedback_data", focused_feedback
+        )
 
     content = _call_sealion(
         messages=[
@@ -539,7 +589,7 @@ Rules:
 - The "new" sentence should be based on the user's actual experience — never fabricate
 - If the keyword only fits in Skills, say so
 - NEVER change company names, job titles, dates, or metrics
-- Return a JSON array only
+- Return a JSON object with one top-level "suggestions" array
 
 For each keyword return:
 {
@@ -566,38 +616,97 @@ If keyword only fits in Skills:
     "reason": "Technical skill — best added to skills list"
   }
 }"""
+    system += (
+        "\n\nWrap all keyword objects as: "
+        '{"suggestions": [/* keyword objects */]}'
+        f"\n\nSECURITY: {UNTRUSTED_DATA_RULE}"
+    )
 
-    keywords_str = ", ".join(missing_keywords[:20])  # Cap at 20 keywords
-    user_msg = f"Resume:\n{resume_text[:4000]}\n\nMissing keywords: {keywords_str}"
+    user_msg = xml_data_block("resume_data", resume_text, 4000)
+    user_msg += "\n\n" + xml_data_block(
+        "missing_keywords_data",
+        json.dumps(missing_keywords[:20], ensure_ascii=False),
+    )
     if job_title:
-        user_msg += f"\n\nTarget role: {job_title}"
+        user_msg += "\n\n" + xml_data_block("job_title_data", job_title)
 
-    content = _call_sealion(
+    content = call_sealion_json(
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ],
         max_tokens=2000,
-        temperature=0.3,
+        max_retries=1,
     )
 
     if not content:
         return None
 
-    # Parse JSON array from response
+    # Parse the exact object shape requested above.
     try:
-        start = content.find("[")
-        end = content.rfind("]") + 1
-        if start >= 0 and end > start:
-            suggestions = json.loads(content[start:end])
-            # Validate structure — each item must have required keys
-            required_keys = {"keyword", "original_bullet", "suggested_rewrite", "section", "reason"}
-            validated = []
-            for item in suggestions:
-                if isinstance(item, dict) and required_keys.issubset(item.keys()):
-                    validated.append(item)
-            if validated:
-                return validated
+        payload = json.loads(content)
+        suggestions = payload.get("suggestions", []) if isinstance(payload, dict) else []
+        if not isinstance(suggestions, list):
+            return None
+        requested_keywords = {
+            keyword.strip()
+            for keyword in missing_keywords[:20]
+            if isinstance(keyword, str) and keyword.strip()
+        }
+        normalized_resume = " ".join(resume_text.split()).casefold()
+        validated = []
+        for item in suggestions:
+            if not isinstance(item, dict):
+                continue
+            keyword = item.get("keyword")
+            if not isinstance(keyword, str) or keyword not in requested_keywords:
+                continue
+
+            edit = item.get("edit")
+            original = edit.get("original", "") if isinstance(edit, dict) else ""
+            rewritten = edit.get("rewritten", "") if isinstance(edit, dict) else ""
+            normalized_original = " ".join(str(original).split()).casefold()
+            valid_edit = (
+                isinstance(edit, dict)
+                and all(
+                    isinstance(edit.get(field), str) and edit[field].strip()
+                    for field in ("original", "rewritten", "reason")
+                )
+                and keyword in rewritten
+                and normalized_original in normalized_resume
+            )
+            if valid_edit:
+                validated_rewrite, _gate_results = validate_and_fix(
+                    original=original,
+                    tailored=rewritten,
+                    required_keywords=[keyword],
+                    injectable_keywords={keyword},
+                )
+                valid_edit = validated_rewrite != original
+                if valid_edit:
+                    edit = {**edit, "rewritten": validated_rewrite}
+            new = item.get("new")
+            new_sentence = new.get("sentence", "") if isinstance(new, dict) else ""
+            valid_new = (
+                isinstance(new, dict)
+                and all(
+                    isinstance(new.get(field), str) and new[field].strip()
+                    for field in ("sentence", "suggested_section", "reason")
+                )
+                and keyword in new_sentence
+                and " ".join(new_sentence.split()).casefold() in normalized_resume
+            )
+            if not valid_edit and not valid_new:
+                continue
+            validated.append(
+                {
+                    "keyword": keyword,
+                    "edit": edit if valid_edit else None,
+                    "new": new if valid_new else None,
+                }
+            )
+        if validated:
+            return validated
     except (json.JSONDecodeError, ValueError) as e:
         log.warning(f"[AI] integrate_keywords JSON parse failed: {e}")
 

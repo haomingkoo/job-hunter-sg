@@ -538,7 +538,7 @@ export default function HomePage({ onNavigate }) {
             {[
               { icon: MapPin, title: "Built for Singapore", desc: "Skills taxonomy and resume conventions tailored to the SG job market." },
               { icon: Zap, title: "Intelligent scoring", desc: "ATS keyword extraction, resume scoring, and one-click tailoring." },
-              { icon: Shield, title: "Private and free", desc: "Your resume stays on your device. No data leaves your browser." },
+              { icon: Shield, title: "Private and free", desc: "Resume uploads are processed securely for scoring and tailoring, then shown back to you." },
             ].map((t, i) => (
               <motion.div key={t.title} variants={fadeUp} custom={i} className="flex items-start gap-3.5">
                 <div className="flex-shrink-0 rounded-xl bg-[#f0f4f8] p-2.5 text-[#6A89A7] border border-[#BDDDFC]/30"><t.icon size={16} strokeWidth={1.8} /></div>
