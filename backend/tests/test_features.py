@@ -884,6 +884,17 @@ class TestAPIEndpoints:
         # 200 if static dir exists, 404 if not (local dev without build)
         assert resp.status_code in (200, 307, 404)
 
+    def test_frontend_cache_policy_never_caches_html_or_missing_assets(self):
+        from main import _frontend_cache_control
+
+        assert _frontend_cache_control("/", 200) == "no-store"
+        assert _frontend_cache_control("/resume", 200) == "no-store"
+        assert _frontend_cache_control("/assets/index-abc.js", 404) == "no-store"
+        assert (
+            _frontend_cache_control("/assets/index-abc.js", 200)
+            == "public, max-age=31536000, immutable"
+        )
+
 
 class TestBackfillProgress:
     def test_preview_backfill_reports_live_rate_and_eta(self, monkeypatch):

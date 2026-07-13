@@ -8764,6 +8764,13 @@ def apply_tailoring_changes(
 # IMPORTANT: This MUST be the last thing registered. app.mount("/") catches
 # all paths, so any API routes defined after this will get 405 errors.
 
+
+def _frontend_cache_control(path: str, status_code: int) -> str:
+    if path.startswith("/assets/") and status_code < 400:
+        return "public, max-age=31536000, immutable"
+    return "no-store"
+
+
 _static_dir = Path(__file__).resolve().parent / "static"
 if _static_dir.is_dir():
     log.info("Serving frontend from %s", _static_dir)
@@ -8771,14 +8778,29 @@ if _static_dir.is_dir():
     @app.middleware("http")
     async def _spa_middleware(request: Request, call_next):
         """Serve SPA -- fall back to index.html for non-API, non-file routes."""
+        path = request.url.path
         response = await call_next(request)
+        if path.startswith("/assets/"):
+            # Missing hashed assets must stay 404. Returning index.html here
+            # produces a MIME error and lets CDNs cache HTML under a JS URL.
+            response.headers["Cache-Control"] = _frontend_cache_control(
+                path, response.status_code
+            )
+            return response
         if (
             response.status_code == 404
-            and not request.url.path.startswith("/api")
-            and not request.url.path.startswith("/docs")
-            and not request.url.path.startswith("/openapi")
+            and not path.startswith("/api")
+            and not path.startswith("/docs")
+            and not path.startswith("/openapi")
         ):
-            return FileResponse(_static_dir / "index.html")
+            return FileResponse(
+                _static_dir / "index.html",
+                headers={"Cache-Control": "no-store"},
+            )
+        if not path.startswith(("/api", "/docs", "/openapi")):
+            response.headers["Cache-Control"] = _frontend_cache_control(
+                path, response.status_code
+            )
         return response
 
     app.mount("/", StaticFiles(directory=str(_static_dir)), name="static")
