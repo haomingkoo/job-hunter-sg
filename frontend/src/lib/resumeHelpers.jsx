@@ -165,7 +165,7 @@ export function getResumeSectionKey(value) {
     || normalized.includes("career history")
     || normalized.includes("professional background")
   ) return "experience";
-  if (normalized.includes("skill") || normalized.includes("competenc") || normalized.includes("proficienc")) return "skills";
+  if (/\bskills?\b|competenc|proficienc|expertise/.test(normalized)) return "skills";
   if (normalized.includes("project")) return "projects";
   if (
     normalized.includes("certification")
@@ -358,6 +358,7 @@ export function reorderParsedSections(sections, templateOrder = []) {
   };
 
   const getSectionType = (section) => {
+    if (section.sectionKey) return section.sectionKey;
     const raw = normalizeKey(section.heading || section.text || "");
     return sectionKeyMap[raw] || raw;
   };
@@ -555,8 +556,21 @@ export function isHeadingLine(line) {
   const normalized = normalizeHeadingLabel(trimmed);
   if (!normalized) return false;
   if (RESUME_HEADINGS.has(normalized)) return true;
-  if (trimmed.endsWith(":") && RESUME_HEADINGS.has(normalizeHeadingLabel(trimmed.slice(0, -1)))) return true;
-  return false;
+  if (
+    trimmed.length > 100
+    || normalized.split(/\s+/).length > 10
+    || /\d|@|https?:\/\/|\|/i.test(trimmed)
+    || /^[•\-*▪]/.test(trimmed)
+    || /[.!?;]$/.test(trimmed)
+  ) return false;
+
+  const words = trimmed.match(/[A-Za-z][A-Za-z'-]*|[&/]/g) || [];
+  const connectors = new Set(["and", "of", "the", "for", "in", "to", "&", "/"]);
+  const isUpper = /[A-Za-z]/.test(trimmed) && trimmed === trimmed.toUpperCase();
+  const isTitle = words.length > 0 && words.every(
+    (word) => connectors.has(word.toLowerCase()) || word[0] === word[0].toUpperCase(),
+  );
+  return (isUpper || isTitle) && Boolean(getResumeSectionKey(trimmed));
 }
 
 export function buildEducationPair(lines, lineIndex, currentSectionKey, keywords) {
@@ -586,6 +600,7 @@ export function buildEducationPair(lines, lineIndex, currentSectionKey, keywords
 
   const currentIsEducationMain = looksLikeEducationMain(current);
   const nextIsEducationMain = looksLikeEducationMain(next);
+  if (hasDateHint(current) && hasDateHint(next)) return null;
   if (currentIsEducationMain && nextIsEducationMain) {
     return {
       type: "subheading",
@@ -630,7 +645,7 @@ function isEducationEntryStart(item) {
     const leftText = stripResumeMarkdown(item.left || item.text || "");
     if (DEGREE_START_RE.test(leftText) || RESUME_DEGREE_RE.test(leftText)
       || looksLikeEducationInstitution(leftText) || looksLikeEducationText(leftText)
-      || leftText.split(/\s+/).length >= 4) return true;
+      || leftText.split(/\s+/).length >= 2) return true;
     return false;
   }
   // Subheading with degree pattern but wrong variant (e.g., "Bachelor of Science – Distinction" parsed as variant=company)
@@ -640,6 +655,12 @@ function isEducationEntryStart(item) {
   if ((item.type === "paragraph" || item.type === "bullet") && DEGREE_START_RE.test(stripResumeMarkdown(item.text || ""))) return true;
   // Detect institution names as entry boundaries (second NUS = new entry)
   if (item.type === "paragraph" && looksLikeEducationInstitution(item.text) && !looksLikeEducationDetail(item.text)) return true;
+  if (
+    item.type === "paragraph"
+    && hasDateHint(item.text)
+    && /^[A-Z]/.test(stripResumeMarkdown(item.text || ""))
+    && !looksLikeEducationDetail(item.text)
+  ) return true;
   return false;
 }
 
@@ -1656,7 +1677,7 @@ export function parseResumeToSections(text, keywords, templateOrder = []) {
       if (isHeadingLine(futureText) || parseSubheadingParts(futureText, currentSectionKey)) break;
     }
     const isRoleIntroParagraph = previousParsedSection?.type === "subheading"
-      && /^(?:selected\s+(?:into|for|as)\b|currently\b|joined\b|appointed\b)/i.test(normalizedLine);
+      && /^(?:selected\s+(?:into|for|as|to|via|through)\b|currently\b|joined\b|appointed\b)/i.test(normalizedLine);
     const inferredBullets = explicitBulletAhead && isRoleIntroParagraph
       ? null
       : inferWordBulletLines(normalizedLine, currentSectionKey, previousParsedSection);
@@ -1819,7 +1840,9 @@ export function moveResumeBullet(text, fromLineIndex, toLineIndex) {
 
 export function moveSectionInText(text, parsedSections, headingId, direction) {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const headings = parsedSections.filter((s) => s.type === "heading");
+  const headings = parsedSections
+    .filter((s) => s.type === "heading")
+    .sort((a, b) => a.lineIndex - b.lineIndex);
   const currentHeading = headings.find((h) => h.id === headingId);
   if (!currentHeading) return text;
 

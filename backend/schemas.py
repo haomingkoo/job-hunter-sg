@@ -330,10 +330,14 @@ class ContactRequest(BaseModel):
 
 
 class ResumeScoreRequest(BaseModel):
-    resume_text: str = Field(..., min_length=50, max_length=10000)
+    resume_text: str = Field(..., min_length=50, max_length=50000)
     job_description: str = Field("", max_length=10000)
     job_id: int | None = Field(None, description="Optional job ID to fetch parsed JD for ATS blending")
     template_id: str | None = Field(None, description="Template ID to check expected sections")
+
+
+class ResumeAIRequest(ResumeScoreRequest):
+    resume_text: str = Field(..., min_length=50, max_length=10000)
 
 
 class RewriteBulletRequest(BaseModel):

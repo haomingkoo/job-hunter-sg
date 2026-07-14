@@ -10,6 +10,7 @@ import {
   getResumeSectionKey,
   parseSubheadingParts,
   getDisplaySubheadingText,
+  moveSectionInText,
 } from "../resumeHelpers.jsx";
 
 // ── Load curated resume fixtures ────────────────────────────────────────────
@@ -143,6 +144,13 @@ describe("isHeadingLine", () => {
     expect(isHeadingLine("EDUCATION AND CERTIFICATIONS")).toBe(true);
   });
 
+  it("detects descriptive headings without exact aliases", () => {
+    expect(isHeadingLine("FINANCE PROCESS & TRANSFORMATION EXPERIENCE")).toBe(true);
+    expect(isHeadingLine("Automation & AI Experience")).toBe(true);
+    expect(isHeadingLine("PROFESSIONAL EXPERIENCE (FINANCE & ANALYTICS)")).toBe(true);
+    expect(isHeadingLine("EDUCATION & CERTIFICATIONS")).toBe(true);
+  });
+
   it("does not treat an uppercase name as a heading", () => {
     expect(isHeadingLine("HAOMING KOO")).toBe(false);
   });
@@ -159,6 +167,13 @@ describe("isHeadingLine", () => {
 
   it("does not detect regular text", () => {
     expect(isHeadingLine("Managed cross-functional team to deliver project")).toBe(false);
+  });
+
+  it("does not promote names, phases, roles, or prose containing section words", () => {
+    expect(isHeadingLine("HUI SHAN ANG")).toBe(false);
+    expect(isHeadingLine("Deep Skilling Phase")).toBe(false);
+    expect(isHeadingLine("Finance Manager | Example Company | 2021 - Present")).toBe(false);
+    expect(isHeadingLine("Managed teams with extensive project experience.")).toBe(false);
   });
 });
 
@@ -193,6 +208,28 @@ describe("getResumeSectionKey", () => {
   it("returns summary for Professional Summary", () => {
     expect(getResumeSectionKey("Professional Summary")).toBe("summary");
   });
+});
+
+it("keeps descriptive headings as separate sections through the UI parser", () => {
+  const parsed = parseResumeToSections([
+    "PROFESSIONAL SUMMARY",
+    "Finance transformation leader.",
+    "FINANCE PROCESS & TRANSFORMATION EXPERIENCE",
+    "Finance Manager | Example Company | 2021 - Present",
+    "• Led a regional close redesign.",
+    "AUTOMATION & AI EXPERIENCE",
+    "AI Finance Lead | Example Company | 2023 - Present",
+    "• Built forecasting automation.",
+    "EDUCATION & CERTIFICATIONS",
+    "Bachelor of Accountancy, National University of Singapore, 2015",
+  ].join("\n"), []);
+
+  expect(parsed.filter((item) => item.type === "heading").map((item) => item.sectionKey)).toEqual([
+    "summary",
+    "experience",
+    "experience",
+    "education",
+  ]);
 });
 
 // ── Unit tests: parseSubheadingParts ────────────────────────────────────────
@@ -257,7 +294,7 @@ describe("parseResumeToSections - fixture regressions", () => {
       "Agentic AI and LLM Engineering: LangGraph and RAG",
       "PROFESSIONAL EXPERIENCE",
       "Associate AI Engineer | AI Singapore | Jan 2026 - Present",
-      "Selected for an industry project delivered with a three-person team.",
+      "Selected via a national assessment for an industry project delivered with a three-person team.",
       "• Built the production agent scaffold across four services",
       "and wrote the phased redesign plan.",
       "• Designed the validation workflow.",
@@ -286,7 +323,7 @@ describe("parseResumeToSections - fixture regressions", () => {
     expect(sections).toContainEqual(expect.objectContaining({
       type: "paragraph",
       sectionKey: "experience",
-      text: "Selected for an industry project delivered with a three-person team.",
+      text: "Selected via a national assessment for an industry project delivered with a three-person team.",
     }));
     expect(bullets.find((section) => section.text.startsWith("Built"))?.text).toContain("phased redesign plan");
     expect(bullets.find((section) => section.text.startsWith("Languages"))?.text).toContain("and travel");
@@ -399,6 +436,55 @@ describe("parseResumeToSections - fixture regressions", () => {
     expect(bullet).toBeTruthy();
     expect(bullet.text).not.toContain("Shopee");
     expect(bullet.text).not.toContain("Senior Engineer");
+  });
+
+  it("uses normalized section keys when applying template order", () => {
+    const parsed = parseResumeToSections([
+      "PROFESSIONAL SUMMARY",
+      "Finance leader.",
+      "CORE SKILLS",
+      "Python, SQL",
+      "FINANCE PROCESS & TRANSFORMATION EXPERIENCE",
+      "Finance Manager | Example Company | 2021 - Present",
+    ].join("\n"), [], ["summary", "experience", "skills"]);
+
+    expect(parsed.filter((item) => item.type === "heading").map((item) => item.sectionKey)).toEqual([
+      "summary",
+      "experience",
+      "skills",
+    ]);
+  });
+
+  it("moves sections by source order even when display order was templated", () => {
+    const text = [
+      "PROFESSIONAL SUMMARY",
+      "Finance leader.",
+      "CORE SKILLS",
+      "Python, SQL",
+      "PROFESSIONAL EXPERIENCE",
+      "Finance Manager | Example Company | 2021 - Present",
+    ].join("\n");
+    const parsed = parseResumeToSections(text, [], ["summary", "experience", "skills"]);
+    const experience = parsed.find((item) => item.type === "heading" && item.sectionKey === "experience");
+
+    const moved = moveSectionInText(text, parsed, experience.id, 1);
+
+    expect(moved).toBe(text);
+    expect((moved.match(/CORE SKILLS/g) || [])).toHaveLength(1);
+    expect((moved.match(/PROFESSIONAL EXPERIENCE/g) || [])).toHaveLength(1);
+  });
+
+  it("keeps each dated education or certification line as its own entry", () => {
+    const parsed = parseResumeToSections([
+      "EDUCATION & CERTIFICATIONS",
+      "AI Singapore, AI Apprenticeship Programme 2026",
+      "Institute of Data, Certified Data Science & AI 2025",
+      "Singapore Chartered Tax Professionals, Accredited Tax Practitioner 2022",
+      "ISCA / ACCA, Chartered Accountant of Singapore 2017 / 2015",
+      "University of London, B.Sc. Business, Honours 2009",
+    ].join("\n"), []);
+
+    expect(groupEducationSections(parsed).filter((item) => item.type === "education_entry")).toHaveLength(5);
   });
 
   it("does not merge a no-period bullet with a long pipe-and-date position header below", () => {

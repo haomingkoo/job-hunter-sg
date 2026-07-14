@@ -225,8 +225,11 @@ def test_real_pdf_shape_uses_exact_sections_and_keeps_role_context() -> None:
     assert entry["title"] == "Associate AI Engineer"
     assert entry["company"] == "AI Singapore"
     assert entry["company"] != "Selected for an industry project delivered with a three-person team"
+    assert entry["description"] == (
+        "Selected for an industry project delivered with a three-person team "
+        "and targeting a 90% reduction in investigation time."
+    )
     assert [bullet["text"] for bullet in entry["bullets"]] == [
-        "Selected for an industry project delivered with a three-person team and targeting a 90% reduction in investigation time.",
         "Built the production agent scaffold.",
         "Designed the validation workflow.",
     ]
@@ -234,3 +237,64 @@ def test_real_pdf_shape_uses_exact_sections_and_keeps_role_context() -> None:
     assert len(education["entries"]) == 2
     assert education["entries"][0]["date_range"] == "2022"
     assert "Project Management Professional" in education["entries"][1]["heading"]
+
+
+def test_descriptive_section_headings_are_classified_without_exact_aliases() -> None:
+    result = structure_resume(
+        "\n".join([
+            "HUI SHAN ANG",
+            "PROFESSIONAL SUMMARY",
+            "Finance transformation leader.",
+            "FINANCE PROCESS & TRANSFORMATION EXPERIENCE",
+            "Finance Manager | Example Company | 2021 - Present",
+            "• Led a regional close redesign.",
+            "AUTOMATION & AI EXPERIENCE",
+            "AI Finance Lead | Example Company | 2023 - Present",
+            "• Built forecasting automation.",
+            "EDUCATION & CERTIFICATIONS",
+            "Bachelor of Accountancy, National University of Singapore, 2015",
+        ])
+    )
+
+    assert [section["key"] for section in result["sections"]] == [
+        "summary",
+        "experience",
+        "experience",
+        "education",
+    ]
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "HUI SHAN ANG",
+        "Managed cross-functional teams with extensive project experience.",
+        "Finance Manager | Example Company | 2021 - Present",
+        "Deep Skilling Phase",
+    ],
+)
+def test_heading_classifier_does_not_promote_ordinary_resume_lines(line: str) -> None:
+    from resume_structurer import _is_section_heading
+
+    assert _is_section_heading(line) is None
+
+
+def test_role_description_and_wrapped_lines_are_not_extra_bullets() -> None:
+    result = structure_resume(
+        "\n".join([
+            "JANE DOE",
+            "PROFESSIONAL EXPERIENCE",
+            "Finance Manager | Example Company | 2021 - Present",
+            "Selected to lead the regional reporting transformation programme.",
+            "• Built an automated reporting pipeline used across eight markets and",
+            "reduced the monthly close by four working days.",
+            "• Led finance user training for more than 100 stakeholders.",
+        ])
+    )
+
+    entry = result["sections"][0]["entries"][0]
+    assert entry["description"] == "Selected to lead the regional reporting transformation programme."
+    assert [bullet["text"] for bullet in entry["bullets"]] == [
+        "Built an automated reporting pipeline used across eight markets and reduced the monthly close by four working days.",
+        "Led finance user training for more than 100 stakeholders.",
+    ]

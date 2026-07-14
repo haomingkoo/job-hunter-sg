@@ -16,7 +16,7 @@ import sys
 import tempfile
 import zipfile
 
-from shared_classification import SHARED_HEADINGS
+from shared_classification import SHARED_HEADINGS, classify_section_heading
 
 log = logging.getLogger("jobhunter.parser")
 
@@ -42,6 +42,10 @@ _BULLET_PREFIX_RE = re.compile(
     re.MULTILINE,
 )
 _WRAPPED_HYPHEN_RE = re.compile(r"(?<=\w)-\n[\t ]*(?=\w)")
+_PHONE_CANDIDATE_RE = re.compile(
+    r"(?<!\w)(?:\+\d{1,3}[ .\-]?)?(?:\(\d{1,4}\)[ .\-]?)?\d(?:[\d .\-]{5,16}\d)(?!\w)"
+)
+_YEAR_RANGE_RE = re.compile(r"^(?:19|20)\d{2}\s*[-–—]\s*(?:19|20)\d{2}$")
 
 DOCX_BULLET_STYLE_TOKENS = (
     "list bullet",
@@ -56,10 +60,7 @@ DOCX_NUMBER_STYLE_TOKENS = (
 
 
 def _looks_like_section_header(value: str) -> bool:
-    stripped = value.strip()
-    if not stripped:
-        return False
-    return stripped.lower().rstrip(":") in SECTION_HEADER_ALIASES
+    return classify_section_heading(value) is not None
 
 
 def validate_upload(filename: str, content_type: str, size: int) -> str:
@@ -125,6 +126,55 @@ def _append_text_lines(target: list[str], value: str) -> None:
             target.append(cleaned)
 
 
+def extract_phone_number(text: str) -> str | None:
+    for match in _PHONE_CANDIDATE_RE.finditer(text or ""):
+        candidate = match.group().strip()
+        digits = sum(char.isdigit() for char in candidate)
+        has_phone_formatting = bool(re.search(r"[+().\-\s]", candidate))
+        looks_like_sg_local = digits == 8 and candidate[:1] in {"3", "6", "8", "9"}
+        if (
+            7 <= digits <= 15
+            and not _YEAR_RANGE_RE.fullmatch(candidate)
+            and (has_phone_formatting or looks_like_sg_local)
+        ):
+            return candidate
+    return None
+
+
+def _extract_docx_container(container) -> list[str]:
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    text_parts: list[str] = []
+    for block in container.iter_inner_content():
+        if isinstance(block, Paragraph):
+            paragraph_text = _extract_docx_paragraph_text(block)
+            if paragraph_text:
+                _append_text_lines(text_parts, paragraph_text)
+            continue
+        if isinstance(block, Table):
+            for row in block.rows:
+                row_cells: list[list[str]] = []
+                seen_cells: set[int] = set()
+                for cell in row.cells:
+                    cell_id = id(cell._tc)
+                    if cell_id in seen_cells:
+                        continue
+                    seen_cells.add(cell_id)
+                    cell_lines = _extract_docx_container(cell)
+                    if cell_lines:
+                        row_cells.append(cell_lines)
+                for line_index in range(max((len(lines) for lines in row_cells), default=0)):
+                    row_text = " | ".join(
+                        lines[line_index]
+                        for lines in row_cells
+                        if line_index < len(lines)
+                    )
+                    if row_text:
+                        text_parts.append(row_text)
+    return text_parts
+
+
 def _has_missing_spaces(text: str) -> bool:
     """Detect if extracted text has space-stripping (common in LaTeX PDFs).
 
@@ -145,7 +195,7 @@ def _has_missing_spaces(text: str) -> bool:
     return long_words > len(words) * 0.15
 
 
-def _parse_quality(text: str, file_type: str) -> dict:
+def _parse_quality(text: str, file_type: str, *, possible_multi_column_layout: bool = False) -> dict:
     """Return lightweight diagnostics so the UI can warn on weak extraction.
 
     This is intentionally heuristic. The parser should still return the text it
@@ -154,12 +204,15 @@ def _parse_quality(text: str, file_type: str) -> dict:
     """
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     words = text.split()
-    lower_lines = {line.lower().rstrip(":") for line in lines}
-    section_hits = sum(1 for line in lower_lines if line in SECTION_HEADER_ALIASES)
+    section_hits = len({
+        line.lower().rstrip(":")
+        for line in lines
+        if classify_section_heading(line) is not None
+    })
     bullet_lines = sum(1 for line in lines if _BULLET_PREFIX_RE.match(line))
     long_tokens = [word for word in words if len(word) > 45]
     email_found = bool(re.search(r"[\w.+-]+@[\w-]+\.[\w.]+", text))
-    phone_found = bool(re.search(r"[\+]?[\d\s\-\(\)]{8,15}", text))
+    phone_found = extract_phone_number(text) is not None
     merged_words = _has_missing_spaces(text)
 
     score = 100
@@ -196,6 +249,10 @@ def _parse_quality(text: str, file_type: str) -> dict:
         score -= 8
         warnings.append("Contact details were not detected. Check the header if it was laid out with icons or columns.")
 
+    if possible_multi_column_layout:
+        score -= 20
+        warnings.append("This PDF appears to use multiple columns, so reading order may need review. A DOCX upload is safer.")
+
     label = "good"
     if score < 60:
         label = "review"
@@ -216,11 +273,48 @@ def _parse_quality(text: str, file_type: str) -> dict:
             "phone_found": phone_found,
             "possible_merged_words": merged_words,
             "long_token_count": len(long_tokens),
+            "possible_multi_column_layout": possible_multi_column_layout,
         },
     }
 
 
-def extract_text_from_pdf(file_bytes: bytes) -> str:
+def _content_warnings(text: str) -> list[str]:
+    bracketed = re.findall(r"\[[^\]\n]{1,120}\]", text or "")
+    unresolved = [
+        value
+        for value in bracketed
+        if re.search(r"\b(?:confirm|verify|todo|tbc|insert|placeholder)\b|\b[XS$%]*X\b|^\[N\]$", value, re.I)
+    ]
+    if not unresolved:
+        return []
+    return [f"Found {len(unresolved)} unresolved placeholder(s). Replace or remove them before exporting."]
+
+
+def _page_has_multiple_columns(page) -> bool:
+    words = page.extract_words() or []
+    if len(words) < 30:
+        return False
+    rows: list[list[dict]] = []
+    for word in sorted(words, key=lambda item: (float(item["top"]), float(item["x0"]))):
+        if not rows or abs(float(word["top"]) - float(rows[-1][0]["top"])) > 3:
+            rows.append([word])
+        else:
+            rows[-1].append(word)
+
+    midpoint = float(page.width) / 2
+    wide_gap_rows = 0
+    for row in rows:
+        left = [word for word in row if float(word["x1"]) < midpoint]
+        right = [word for word in row if float(word["x0"]) > midpoint]
+        if not left or not right:
+            continue
+        gap = min(float(word["x0"]) for word in right) - max(float(word["x1"]) for word in left)
+        if gap > float(page.width) * 0.12:
+            wide_gap_rows += 1
+    return wide_gap_rows >= 6 and wide_gap_rows >= len(rows) * 0.2
+
+
+def _extract_pdf(file_bytes: bytes) -> tuple[str, bool, int]:
     """Extract full text from a PDF file. No truncation.
 
     Uses pdfplumber's proportional spacing tolerance for tightly-set PDFs.
@@ -228,11 +322,15 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     import pdfplumber
 
     text_parts = []
+    possible_multi_column_layout = False
+    page_count = 0
     try:
         with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            page_count = len(pdf.pages)
             if len(pdf.pages) > MAX_PDF_PAGES:
                 raise ValueError(f"PDF has too many pages. Maximum is {MAX_PDF_PAGES}.")
             for page in pdf.pages:
+                possible_multi_column_layout = possible_multi_column_layout or _page_has_multiple_columns(page)
                 page_text = page.extract_text(
                     x_tolerance_ratio=PDF_X_TOLERANCE_RATIO,
                 )
@@ -251,7 +349,12 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
         raise ValueError("No text found in PDF. If your resume is a scanned image, please upload a DOCX or text-based PDF instead.")
 
     full_text = _join_broken_lines(full_text)
-    return full_text
+    return full_text, possible_multi_column_layout, page_count
+
+
+def extract_text_from_pdf(file_bytes: bytes) -> str:
+    """Extract full text from a PDF file. No truncation."""
+    return _extract_pdf(file_bytes)[0]
 
 
 def extract_text_from_docx(file_bytes: bytes) -> str:
@@ -284,27 +387,17 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
         log.warning(f"DOCX extraction failed: {e}")
         raise ValueError("Could not read this DOCX file. It may be corrupted.")
 
-    text_parts = []
-    for para in doc.paragraphs:
-        paragraph_text = _extract_docx_paragraph_text(para)
-        if paragraph_text:
-            _append_text_lines(text_parts, paragraph_text)
-
-    # Also extract from tables (some resumes use tables for layout)
-    for table in doc.tables:
-        for row in table.rows:
-            row_values: list[str] = []
-            for cell in row.cells:
-                cell_lines: list[str] = []
-                for para in cell.paragraphs:
-                    paragraph_text = _extract_docx_paragraph_text(para)
-                    if paragraph_text:
-                        _append_text_lines(cell_lines, paragraph_text)
-                if cell_lines:
-                    row_values.append(" ".join(cell_lines).strip())
-            row_text = " | ".join(value for value in row_values if value)
-            if row_text:
-                text_parts.append(row_text)
+    text_parts: list[str] = []
+    seen_parts: set[int] = set()
+    for section in doc.sections:
+        if id(section.header.part) not in seen_parts:
+            text_parts.extend(_extract_docx_container(section.header))
+            seen_parts.add(id(section.header.part))
+    text_parts.extend(_extract_docx_container(doc))
+    for section in doc.sections:
+        if id(section.footer.part) not in seen_parts:
+            text_parts.extend(_extract_docx_container(section.footer))
+            seen_parts.add(id(section.footer.part))
 
     full_text = "\n".join(text_parts)
     if not full_text.strip():
@@ -322,8 +415,10 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
     """
     file_type = validate_upload(filename, content_type, len(file_bytes))
 
+    possible_multi_column_layout = False
+    page_count = 0
     if file_type in ("pdf",):
-        text = extract_text_from_pdf(file_bytes)
+        text, possible_multi_column_layout, page_count = _extract_pdf(file_bytes)
     elif file_type == "docx":
         text = extract_text_from_docx(file_bytes)
     else:
@@ -336,7 +431,6 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
 
     # Try to find email, phone, and name
     email_match = re.search(r'[\w.+-]+@[\w-]+\.[\w.]+', text)
-    phone_match = re.search(r'[\+]?[\d\s\-\(\)]{8,15}', text)
 
     # Name detection — first non-empty line that looks like a name
     # (2-4 words, no special chars, not an email/phone/url, not a section header)
@@ -374,11 +468,16 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
         "file_type": file_type,
         "word_count": word_count,
         "line_count": line_count,
-        "parse_quality": _parse_quality(text, file_type),
+        "parse_quality": _parse_quality(
+            text,
+            file_type,
+            possible_multi_column_layout=possible_multi_column_layout,
+        ),
+        "content_warnings": _content_warnings(text),
         "name": name,
         "email": email_match.group() if email_match else None,
-        "phone": phone_match.group().strip() if phone_match else None,
-        "page_estimate": max(1, word_count // 500),
+        "phone": extract_phone_number(text),
+        "page_estimate": page_count or max(1, word_count // 500),
     }
 
 

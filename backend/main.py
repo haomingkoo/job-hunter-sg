@@ -105,6 +105,7 @@ from schemas import (
     RegenerateSummaryRequest,
     ResendVerificationRequest,
     ResetPasswordRequest,
+    ResumeAIRequest,
     ResumeScoreRequest,
     RewriteBulletRequest,
     SearchResponse,
@@ -6708,7 +6709,7 @@ def _consume_ai_credit(
 
 @app.post("/api/ai/coach")
 def ai_coach_resume(
-    body: ResumeScoreRequest,
+    body: ResumeAIRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -7510,7 +7511,7 @@ async def upload_resume(
 
 @app.post("/api/ai/review-all")
 def review_all_bullets(
-    body: ResumeScoreRequest,
+    body: ResumeAIRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:

@@ -23,19 +23,14 @@ from resume_scorer import (
     _section_key,
     _starts_with_action_verb,
 )
-from resume_parser import _join_broken_lines
-from shared_classification import SHARED_HEADINGS, SHARED_KEY_MAP, SHARED_TITLE_PATTERNS
+from resume_parser import _join_broken_lines, extract_phone_number
+from shared_classification import SHARED_HEADINGS, SHARED_KEY_MAP, SHARED_TITLE_PATTERNS, classify_section_heading
 
 log = logging.getLogger("jobhunter.structurer")
 
 # ── Regex patterns ───────────────────────────────────────────────────────────
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
-_PHONE_RE = re.compile(
-    r"(?:\+?\d{1,3}[\s\-]?)?"           # country code
-    r"(?:\(?\d{1,4}\)?[\s\-]?)?"         # area code
-    r"\d[\d\s\-]{6,12}\d"               # main number
-)
 _LINKEDIN_RE = re.compile(
     r"(?:https?://)?(?:www\.)?linkedin\.com/in/[\w\-]+/?", re.I
 )
@@ -80,6 +75,10 @@ _COMPANY_LINE_RE = re.compile(
     re.I,
 )
 _YEAR_ONLY_RE = re.compile(r"^(?:19|20)\d{2}$")
+_ROLE_DESCRIPTION_RE = re.compile(
+    r"^(?:selected\s+(?:into|for|as|to|via|through)\b|currently\b|joined\b|appointed\b)",
+    re.I,
+)
 
 # Education-specific patterns
 _DEGREE_PREFIX_RE = re.compile(
@@ -124,7 +123,7 @@ def _extract_contact(lines: list[str]) -> dict[str, str]:
     header_lines = lines[:8]
     name = ""
     email = ""
-    phone = ""
+    phone = extract_phone_number("\n".join(header_lines)) or ""
     location = ""
     linkedin = ""
 
@@ -139,14 +138,6 @@ def _extract_contact(lines: list[str]) -> dict[str, str]:
         email_match = _EMAIL_RE.search(cleaned)
         if email_match and not email:
             email = email_match.group()
-
-        # Grab phone
-        phone_match = _PHONE_RE.search(cleaned)
-        if phone_match and not phone:
-            candidate = phone_match.group().strip()
-            # Require at least 7 digits to avoid matching short numbers
-            if sum(c.isdigit() for c in candidate) >= 7:
-                phone = candidate
 
         # Grab LinkedIn
         li_match = _LINKEDIN_RE.search(cleaned)
@@ -196,8 +187,6 @@ def _is_section_heading(line: str) -> str | None:
     if not stripped:
         return None
 
-    lower = stripped.lower().rstrip(":")
-
     # Lines with GPA, dates, or numeric content are NOT headings
     if _GPA_RE.search(stripped):
         return None
@@ -208,13 +197,13 @@ def _is_section_heading(line: str) -> str | None:
     if len(letters_only) < 2:
         return None
 
-    # Exact match against known sections (shared headings + legacy list)
-    if lower in SHARED_HEADINGS or lower in (s.lower() for s in STANDARD_SECTIONS):
-        return _section_key(stripped)
+    section_key = classify_section_heading(stripped)
+    if section_key:
+        return section_key
 
     # Line ending with colon and short enough to be a header
     if stripped.endswith(":") and len(stripped.split()) <= 5:
-        return _section_key(lower)
+        return _section_key(stripped)
 
     return None
 
@@ -489,6 +478,7 @@ def _is_education_entry_start(line: str) -> bool:
 def _parse_education_entry(
     lines: list[str],
     entry_idx: int,
+    id_prefix: str = "edu",
 ) -> dict[str, Any]:
     """Parse a group of education lines into structured fields."""
     degree = ""
@@ -588,7 +578,7 @@ def _parse_education_entry(
         subheading_parts.append(date_range)
     subheading = " | ".join(subheading_parts) if subheading_parts else ""
 
-    entry_id = f"edu-{entry_idx}"
+    entry_id = f"{id_prefix}-{entry_idx}"
     return {
         "id": entry_id,
         "heading": heading,
@@ -607,6 +597,7 @@ def _parse_education_entry(
 
 def _build_education_entries(
     section_lines: list[str],
+    id_prefix: str = "edu",
 ) -> list[dict[str, Any]]:
     """Parse education section into structured entries with rich fields."""
     entries: list[dict[str, Any]] = []
@@ -616,7 +607,7 @@ def _build_education_entries(
         nonlocal current_lines
         if not current_lines:
             return
-        entry = _parse_education_entry(current_lines, len(entries))
+        entry = _parse_education_entry(current_lines, len(entries), id_prefix)
         # Only add if there's meaningful content
         if entry["heading"] or entry["degree"] or entry["institution"]:
             entries.append(entry)
@@ -708,17 +699,18 @@ def _should_append_heading_line(
 
 
 def _build_entries(
-    section_lines: list[str], section_key_str: str,
+    section_lines: list[str], section_key_str: str, id_prefix: str | None = None,
 ) -> list[dict[str, Any]]:
     """Parse lines within an entry-based section into structured entries."""
     entries: list[dict[str, Any]] = []
     current_heading_lines: list[str] = []
+    current_description: list[str] = []
     current_bullets: list[str] = []
-    prefix = section_key_str[:3]
+    prefix = id_prefix or section_key_str[:3]
 
     def _flush() -> None:
-        nonlocal current_heading_lines, current_bullets
-        if not current_heading_lines and not current_bullets:
+        nonlocal current_heading_lines, current_description, current_bullets
+        if not current_heading_lines and not current_description and not current_bullets:
             return
         idx = len(entries)
         entry_id = f"{prefix}-{idx}"
@@ -751,9 +743,11 @@ def _build_entries(
             "company": parsed["company"],
             "title": parsed["title"],
             "date_range": parsed["date_range"],
+            "description": " ".join(current_description),
             "bullets": bullets_out,
         })
         current_heading_lines = []
+        current_description = []
         current_bullets = []
 
     for line in section_lines:
@@ -793,6 +787,10 @@ def _build_entries(
                 _flush()
                 current_heading_lines = [line]
                 current_bullets = []
+        elif current_bullets and stripped[:1].islower():
+            current_bullets[-1] += " " + stripped
+        elif current_heading_lines and not current_bullets and _ROLE_DESCRIPTION_RE.match(stripped):
+            current_description.append(stripped)
         elif (
             _starts_with_action_verb(stripped)
             and len(stripped.split()) >= 5
@@ -813,8 +811,8 @@ def _build_entries(
                 or _looks_like_company_line(stripped)
             )
         ):
-            # A long paragraph after a dated role is role context, not a company.
-            current_bullets.append(stripped)
+            # A long paragraph after a dated role is role context, not a bullet.
+            current_description.append(stripped)
         elif current_heading_lines and not current_bullets and _should_append_heading_line(
             current_heading_lines, line, section_key_str,
         ):
@@ -823,6 +821,8 @@ def _build_entries(
         elif current_bullets:
             # Continuation of the previous bullet
             current_bullets[-1] += " " + stripped
+        elif current_heading_lines:
+            current_description.append(stripped)
         else:
             # Stray line before any entry -- treat as heading start
             _flush()
@@ -947,6 +947,7 @@ def structure_resume(resume_text: str) -> dict[str, Any]:
     bullets_with_action_verb = 0
     bullets_with_metric = 0
     bullets_with_issues = 0
+    section_occurrences: dict[str, int] = {}
 
     for sec in raw_sections:
         key = sec["key"]
@@ -970,10 +971,13 @@ def structure_resume(resume_text: str) -> dict[str, Any]:
             section_out["skill_list"] = _parse_skill_list(sec_lines)
 
         elif sec_type == "entries":
+            occurrence = section_occurrences.get(key, 0)
+            section_occurrences[key] = occurrence + 1
+            id_prefix = key[:3] if occurrence == 0 else f"{key[:3]}{occurrence + 1}"
             if key == "education":
-                entries = _build_education_entries(sec_lines)
+                entries = _build_education_entries(sec_lines, id_prefix)
             else:
-                entries = _build_entries(sec_lines, key)
+                entries = _build_entries(sec_lines, key, id_prefix)
             section_out["entries"] = entries
 
             for entry in entries:

@@ -98,6 +98,43 @@ describe("ResumeTab Agent v2", () => {
     expect(rejected.pendingDiffs).toEqual([]);
   });
 
+  it("scores a first upload once", async () => {
+    sessionStorage.clear();
+    global.fetch = vi.fn((url) => {
+      const target = String(url);
+      if (target.includes("/api/resume/upload")) {
+        return responseJson({
+          text: "Jane Doe\nPROFESSIONAL EXPERIENCE\n• Built a reporting pipeline used by 50 finance users every month.",
+          name: "Jane Doe",
+          parse_quality: { warnings: [] },
+        });
+      }
+      if (target.includes("/api/resume/score")) {
+        return responseJson({ overall_score: 78, checks: {} });
+      }
+      if (target.includes("/api/ai/status")) {
+        return responseJson({ healthy: true });
+      }
+      return responseJson([]);
+    });
+
+    await act(async () => {
+      root.render(<ResumeTab selectedJob={null} user={null} setActiveTab={() => {}} />);
+    });
+    const input = container.querySelector('input[type="file"]');
+    Object.defineProperty(input, "files", {
+      value: [new File(["resume"], "resume.pdf", { type: "application/pdf" })],
+    });
+
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(global.fetch.mock.calls.filter(([url]) => String(url).includes("/api/resume/score"))).toHaveLength(1);
+  });
+
   it("parses agent error events from SSE", () => {
     const events = parseSseEvents(
       'event: error\ndata: {"event":"error","session_id":"sid-1","message":"Agent v2 needs SEALION_API configured before it can run."}\n\n',
