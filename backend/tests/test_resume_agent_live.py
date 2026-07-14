@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import secrets
 from pathlib import Path
@@ -82,6 +83,14 @@ GovTech | AI Project Lead | Jan 2022 - Present
                 "session_id": session_id,
                 "message": "Give one concise recruiter review of this resume. Do not search jobs.",
                 "resume_text": resume_text,
+                "job_context": {
+                    "title": "AI Project Lead",
+                    "company": "Example Agency",
+                    "description": "Own document automation delivery and stakeholder rollout.",
+                    "terms": ["document automation", "stakeholder rollout"],
+                    "location": "Singapore",
+                    "source": "live-smoke",
+                },
             },
             owner_key=owner_key,
         )
@@ -112,6 +121,7 @@ GovTech | AI Project Lead | Jan 2022 - Present
         "hiring_manager",
         "ats",
         "skeptic",
+        "market_researcher",
     }
     evidence_ids = {
         block["id"] for block in state["document"]["blocks"]
@@ -119,6 +129,21 @@ GovTech | AI Project Lead | Jan 2022 - Present
     assert all(
         set(finding["evidence_ids"]) <= evidence_ids
         for finding in state["persona_findings"]
+    )
+    assert all(finding["rationale"] for finding in state["persona_findings"])
+    assert len({
+        finding["category"].strip().lower()
+        for finding in state["persona_findings"]
+    }) >= 3
+    assert all(
+        placeholder not in json.dumps(finding)
+        for finding in state["persona_findings"]
+        for placeholder in ("[X]", "[Y]", "TBD")
+    )
+    assert all(
+        finding["target_job_fields"]
+        for finding in state["persona_findings"]
+        if finding["persona"] == "market_researcher"
     )
 
 

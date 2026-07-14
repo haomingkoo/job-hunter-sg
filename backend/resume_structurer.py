@@ -750,7 +750,7 @@ def _build_entries(
         current_description = []
         current_bullets = []
 
-    for line in section_lines:
+    for line_index, line in enumerate(section_lines):
         stripped = _clean_line(line)
         if not stripped:
             continue
@@ -774,7 +774,15 @@ def _build_entries(
                 _SINGLE_DATE_RE.search(stripped)
             )
             is_caps = bool(_ALL_CAPS_HEADER_RE.match(stripped))
-            if not has_date and not is_caps:
+            next_line = next(
+                (
+                    _clean_line(candidate)
+                    for candidate in section_lines[line_index + 1:]
+                    if _clean_line(candidate)
+                ),
+                "",
+            )
+            if not has_date and not is_caps and not _is_date_only_line(next_line):
                 current_bullets[-1] += " " + stripped
                 continue
 

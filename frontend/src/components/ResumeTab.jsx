@@ -71,6 +71,18 @@ import {
 
 const RESUME_UNDO_LIMIT = 30;
 
+export function buildAgentJobContext(job) {
+  if (!job) return undefined;
+  return {
+    title: job.title || "",
+    company: job.company || "",
+    description: job.description || "",
+    terms: job.jobTermsPreview || job.skills || [],
+    location: job.location || "",
+    source: job.source || "",
+  };
+}
+
 function TemplatePreview({ templateId }) {
   const accent = templateId === "modern"
     ? "bg-indigo-500"
@@ -346,6 +358,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [agentDocument, setAgentDocument] = useState(null);
   const [agentApplyingDiffId, setAgentApplyingDiffId] = useState("");
   const lastAgentResponseRef = useRef("");
+  const agentEvidenceById = useMemo(
+    () => new Map((agentDocument?.blocks || []).map((block) => [block.id, block])),
+    [agentDocument],
+  );
 
   useEffect(() => {
     if (!agentLoading) return undefined;
@@ -808,6 +824,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           resume_text: resumeText,
           profile_context: agentProfileContext.trim() || undefined,
           job_id: selectedJob?.id || undefined,
+          job_context: buildAgentJobContext(selectedJob),
         }),
       });
       const data = await response.json();
@@ -3185,7 +3202,7 @@ CERTIFICATIONS
                   {agentMessages.map((message, index) => (
                     <div
                       key={`${message.role}-${index}`}
-                      className={`max-w-[75ch] rounded-2xl px-3 py-2 text-sm leading-relaxed ${
+                      className={`max-w-[75ch] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm leading-relaxed ${
                         message.role === "user"
                           ? "ml-auto bg-[#384959] text-white"
                           : "bg-white text-[#384959]"
@@ -3283,7 +3300,30 @@ CERTIFICATIONS
               <div className="mt-3 space-y-2">
                 {agentFindings.length > 0 ? agentFindings.map((finding, index) => (
                   <div key={`${finding.persona || "persona"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-sm text-[#384959]">
-                    <span className="font-semibold">{finding.persona || "persona"}:</span> {finding.finding || finding.message || ""}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold capitalize">{String(finding.persona || "reviewer").replaceAll("_", " ")}</span>
+                      {finding.category && <span className="text-xs text-[#6A89A7]">{finding.category}</span>}
+                    </div>
+                    <div className="mt-1 leading-relaxed">{finding.finding || finding.message || ""}</div>
+                    {finding.rationale && <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">Why: {finding.rationale}</div>}
+                    {finding.suggested_action && <div className="mt-1 text-xs leading-relaxed text-[#384959]"><span className="font-semibold">Next:</span> {finding.suggested_action}</div>}
+                    {Array.isArray(finding.evidence_ids) && finding.evidence_ids.length > 0 && (
+                      <div className="mt-2 border-t border-[#BDDDFC]/30 pt-2 text-xs leading-relaxed text-[#6A89A7]">
+                        <span className="font-semibold">Resume evidence:</span>{" "}
+                        {finding.evidence_ids
+                          .map((id) => agentEvidenceById.get(id)?.text)
+                          .filter(Boolean)
+                          .slice(0, 2)
+                          .map((text) => `“${text}”`)
+                          .join("; ")}
+                      </div>
+                    )}
+                    {Array.isArray(finding.target_job_fields) && finding.target_job_fields.length > 0 && (
+                      <div className="mt-1 text-xs text-[#6A89A7]">
+                        <span className="font-semibold">Target-job evidence:</span>{" "}
+                        {finding.target_job_fields.join(", ")}
+                      </div>
+                    )}
                   </div>
                 )) : (
                   <div className="text-sm text-[#6A89A7]">Findings will appear after the agent reviews the draft.</div>

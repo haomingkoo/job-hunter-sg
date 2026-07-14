@@ -109,3 +109,27 @@ Acme | Engineer | 2022 - Present
     assert len(bullets) == 1
     assert bullets[0]["text"] == "Built a reporting platform used by finance teams across the company"
     assert "\n" in bullets[0]["source_text"]
+
+
+def test_role_header_with_separate_date_is_not_absorbed_by_previous_bullet():
+    text = """PROFESSIONAL EXPERIENCE
+Analyst | Acme Pte Ltd
+Jan 2020 - Dec 2022
+• Built the reporting workflow.
+Operations Lead | Northstar Pte Ltd
+Jan 2023 - Present
+• Led the finance transformation.
+"""
+
+    document = create_resume_document(text)
+    bullets = [block for block in document["blocks"] if block["kind"] == "bullet"]
+
+    assert [block["text"] for block in bullets] == [
+        "Built the reporting workflow.",
+        "Led the finance transformation.",
+    ]
+    assert all("Operations Lead" not in block["text"] for block in bullets)
+    assert any(
+        block["text"] == "Operations Lead | Northstar Pte Ltd"
+        for block in document["blocks"]
+    )

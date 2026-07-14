@@ -8519,6 +8519,11 @@ def start_resume_agent_review(
         raise HTTPException(status_code=413, detail="Resume draft is too large")
     if len(str(body.get("profile_context") or "")) > app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS:
         raise HTTPException(status_code=413, detail="Profile context is too large")
+    job_context = body.get("job_context")
+    if job_context is not None and not isinstance(job_context, dict):
+        raise HTTPException(status_code=422, detail="Job context must be an object")
+    if len(json.dumps(job_context or {}, ensure_ascii=False)) > 20_000:
+        raise HTTPException(status_code=413, detail="Job context is too large")
 
     with _account_lifecycle_lock(user.id):
         if not db.query(User.id).filter(User.id == user.id).first():

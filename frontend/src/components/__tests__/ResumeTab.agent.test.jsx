@@ -3,7 +3,7 @@ import { act } from "react-dom/test-utils";
 import { createRoot } from "react-dom/client";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
-import ResumeTab from "../ResumeTab.jsx";
+import ResumeTab, { buildAgentJobContext } from "../ResumeTab.jsx";
 
 function responseJson(data, ok = true) {
   return Promise.resolve({
@@ -52,6 +52,25 @@ describe("ResumeTab Agent v2", () => {
     container.remove();
     vi.restoreAllMocks();
     sessionStorage.clear();
+  });
+
+  it("keeps a selected-job snapshot for reviews after a listing disappears", () => {
+    expect(buildAgentJobContext({
+      id: 347820,
+      title: "Finance Process Intelligence Manager",
+      company: "Micron",
+      description: "Lead process intelligence and transformation.",
+      jobTermsPreview: ["process intelligence"],
+      location: "Singapore",
+      source: "MyCareersFuture",
+    })).toEqual({
+      title: "Finance Process Intelligence Manager",
+      company: "Micron",
+      description: "Lead process intelligence and transformation.",
+      terms: ["process intelligence"],
+      location: "Singapore",
+      source: "MyCareersFuture",
+    });
   });
 
   it("v2 toggle renders and does not affect the classic editor", async () => {
@@ -136,9 +155,23 @@ describe("ResumeTab Agent v2", () => {
           progress: "Review complete",
           response: "Evidence-bound review ready.",
           todos: [],
-          persona_findings: [],
+          persona_findings: [{
+            persona: "ats",
+            category: "role terminology",
+            evidence_ids: ["b_pipeline"],
+            target_job_fields: ["description", "terms"],
+            message: "The resume shows relevant delivery experience.",
+            rationale: "The cited bullet supports the role requirement.",
+            suggested_action: "Use the supported target term once.",
+          }],
           pending_diffs: [],
-          document: null,
+          document: {
+            blocks: [{
+              id: "b_pipeline",
+              kind: "bullet",
+              text: "Built data pipeline processing 10M events daily",
+            }],
+          },
         });
       }
       if (target.includes("/api/resume/score")) return responseJson({ overall_score: 78, checks: {} });
@@ -165,6 +198,10 @@ describe("ResumeTab Agent v2", () => {
     expect(global.fetch.mock.calls.some(([url]) => String(url).includes("/api/resume/agent/start"))).toBe(true);
     expect(sessionStorage.getItem("jh_resume_agent_session")).toBe("detached-1");
     expect(container.textContent).toContain("Evidence-bound review ready.");
+    expect(container.textContent).toContain("Resume evidence:");
+    expect(container.textContent).toContain("Built data pipeline processing 10M events daily");
+    expect(container.textContent).toContain("Target-job evidence: description, terms");
+    expect(container.textContent).toContain("Why: The cited bullet supports the role requirement.");
   });
 
 });

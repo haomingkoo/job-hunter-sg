@@ -179,6 +179,24 @@ def test_kla_keeps_company_location_with_first_experience_entry() -> None:
     assert first_entry.get("date_range") == "2022 –2025"
 
 
+def test_role_header_with_date_on_next_line_does_not_merge_into_previous_bullet() -> None:
+    result = structure_resume("""PROFESSIONAL EXPERIENCE
+Analyst | Acme Pte Ltd
+Jan 2020 - Dec 2022
+• Built the reporting workflow.
+Operations Lead | Northstar Pte Ltd
+Jan 2023 - Present
+• Led the finance transformation.
+""")
+
+    experience = next(section for section in result["sections"] if section["key"] == "experience")
+    assert len(experience["entries"]) == 2
+    assert experience["entries"][0]["bullets"][0]["text"] == "Built the reporting workflow."
+    assert experience["entries"][1]["title"] == "Operations Lead"
+    assert "Northstar Pte Ltd" in experience["entries"][1]["company"]
+    assert experience["entries"][1]["date_range"] == "Jan 2023 - Present"
+
+
 def test_mondelez_experience_count_stays_near_expected() -> None:
     result = structure_resume(_load_fixture("Haoming_Koo_Mondelez.txt"))
     experience = next(section for section in result["sections"] if section["key"] == "experience")

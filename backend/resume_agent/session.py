@@ -160,6 +160,7 @@ def _build_prompt(body: dict) -> str:
     resume_text = str(body.get("resume_text", ""))
     profile_context = str(body.get("profile_context", ""))[: app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS]
     job_id = body.get("job_id")
+    job_context = body.get("job_context") if isinstance(body.get("job_context"), dict) else {}
 
     parts = [
         (
@@ -196,6 +197,15 @@ def _build_prompt(body: dict) -> str:
         parts.append(
             "General strengthening mode: no target job was selected. "
             "Do not invent job-specific requirements."
+        )
+    if job_context:
+        parts.append(
+            "Use this selected-job snapshot even if its internal database row is no longer active. "
+            "Do not call get_job merely to re-fetch it.\n"
+            + xml_data_block(
+                "target_job_data",
+                json.dumps(job_context, ensure_ascii=False, separators=(",", ":")),
+            )
         )
     persona_findings = body.get("persona_findings")
     if persona_findings:
@@ -347,6 +357,7 @@ def _stream_chat_events(
         profile_context = profile_context[: app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS]
 
     job_id = body.get("job_id")
+    job_context = body.get("job_context") if isinstance(body.get("job_context"), dict) else {}
     previous_document = state.get("document")
     document = previous_document
     if not isinstance(document, dict) or document.get("raw_text") != resume_text:
@@ -387,7 +398,8 @@ def _stream_chat_events(
             }
             for finding in iter_persona_reviews(
                 document,
-                include_market=bool(job_id),
+                include_market=bool(job_context),
+                job_context=job_context,
             ):
                 state["persona_findings"].append(finding)
                 yield {
@@ -397,6 +409,11 @@ def _stream_chat_events(
                     "finding": finding,
                 }
             state["_persona_revision"] = document.get("revision")
+            yield {
+                "event": "progress",
+                "session_id": session_id,
+                "message": "Synthesizing reviewer findings",
+            }
 
         active_agent = agent or create_resume_agent(
             subagents=[],

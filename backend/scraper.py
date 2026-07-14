@@ -168,6 +168,27 @@ class MyCareersFutureScraper:
     """
     BASE_URL = "https://api.mycareersfuture.gov.sg/v2/jobs"
 
+    @staticmethod
+    def _location(item: dict) -> str:
+        """Return a useful job region, not the posting company's office building."""
+        address = item.get("address") if isinstance(item.get("address"), dict) else {}
+        if address.get("isOverseas"):
+            return str(address.get("overseasCountry") or "Overseas").strip()
+
+        company = item.get("postedCompany") if isinstance(item.get("postedCompany"), dict) else {}
+        ssic = str(company.get("ssicCode2020") or company.get("ssicCode") or "").strip()
+        if ssic.startswith("78"):
+            return "Singapore"
+
+        districts = address.get("districts") if isinstance(address.get("districts"), list) else []
+        for district in districts:
+            if not isinstance(district, dict):
+                continue
+            region = str(district.get("region") or district.get("location") or "").strip()
+            if region:
+                return region
+        return "Singapore"
+
     def search(self, keyword: str, limit: int = 20, page: int = 0) -> list[Job]:
         log.info(f"[MCF] Searching for '{keyword}' (limit={limit}, page={page})...")
         jobs = []
@@ -209,16 +230,7 @@ class MyCareersFutureScraper:
                     elif isinstance(skill, str):
                         skills.append(skill)
 
-                # Extract location — build from address fields
-                location_data = item.get("address") or {}
-                location = ""
-                if isinstance(location_data, dict):
-                    street = location_data.get("street", "")
-                    building = location_data.get("building", "")
-                    block = location_data.get("block", "")
-                    location = building or street or (f"Blk {block}" if block else "")
-                elif isinstance(location_data, str):
-                    location = location_data
+                location = self._location(item)
 
                 uuid = item.get("uuid", "")
                 title = item.get("title", "Unknown")
@@ -234,7 +246,7 @@ class MyCareersFutureScraper:
                 job = Job(
                     title=title,
                     company=company_name,
-                    location=location or "Singapore",
+                    location=location,
                     salary=salary_str,
                     source="MyCareersFuture",
                     url=f"https://www.mycareersfuture.gov.sg/job/{uuid}" if uuid else "",
