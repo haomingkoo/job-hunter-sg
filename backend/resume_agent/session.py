@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import config as app_config
 from langchain_core.messages import AIMessage, ToolMessage
+from openai import APITimeoutError
 from prompt_safety import xml_data_block
 from resume_structurer import get_all_bullets, structure_resume
 
@@ -363,6 +364,15 @@ def _stream_chat_events(
             "event": "error",
             "session_id": session_id,
             "message": str(exc),
+        }
+    except APITimeoutError:
+        yield {
+            "event": "error",
+            "session_id": session_id,
+            "message": (
+                "The review model took too long to respond. No resume changes were applied. "
+                "Try a narrower review request."
+            ),
         }
     except Exception:
         log.exception("Resume agent run failed for session_id=%s", session_id)

@@ -103,6 +103,28 @@ export function parseSseEvents(text) {
     .filter(Boolean);
 }
 
+export async function consumeSseEvents(response, onEvent) {
+  if (!response.body?.getReader) {
+    parseSseEvents(await response.text()).forEach(onEvent);
+    return;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const blocks = buffer.split(/\n\n+/);
+    buffer = blocks.pop() || "";
+    parseSseEvents(blocks.join("\n\n")).forEach(onEvent);
+    if (done) {
+      parseSseEvents(buffer).forEach(onEvent);
+      return;
+    }
+  }
+}
+
 function TemplatePreview({ templateId }) {
   const accent = templateId === "modern"
     ? "bg-indigo-500"
@@ -362,10 +384,22 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [agentMessages, setAgentMessages] = useState([]);
   const [agentSessionId, setAgentSessionId] = useState("");
   const [agentLoading, setAgentLoading] = useState(false);
+  const [agentElapsedSeconds, setAgentElapsedSeconds] = useState(0);
+  const [agentProgress, setAgentProgress] = useState("");
   const [agentError, setAgentError] = useState("");
   const [agentTodos, setAgentTodos] = useState([]);
   const [agentFindings, setAgentFindings] = useState([]);
   const [agentPendingDiffs, setAgentPendingDiffs] = useState([]);
+
+  useEffect(() => {
+    if (!agentLoading) return undefined;
+    const startedAt = Date.now();
+    setAgentElapsedSeconds(0);
+    const interval = window.setInterval(() => {
+      setAgentElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [agentLoading]);
 
   const openMobileFeedbackPanel = useCallback((targetRef = scorePanelRef) => {
     if (typeof window === "undefined" || window.innerWidth >= 1024) return;
@@ -771,6 +805,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setAgentInput("");
     setAgentError("");
     setAgentLoading(true);
+    setAgentProgress("Reading resume evidence");
     setAgentMessages((current) => [...current, { role: "user", content: message }]);
     try {
       const response = await apiFetch("/api/resume/agent/chat", {
@@ -783,12 +818,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           job_id: selectedJob?.id || undefined,
         }),
       });
-      const events = parseSseEvents(await response.text());
       let nextSessionId = agentSessionId;
       let nextError = "";
-      events.forEach((event) => {
+      await consumeSseEvents(response, (event) => {
         if (event.session_id) nextSessionId = event.session_id;
+        if (event.event === "session") setAgentProgress("Reviewing your resume");
+        if (event.event === "tool") setAgentProgress("Checking evidence and proposed changes");
         if (event.event === "token" && event.content) {
+          setAgentProgress("Finalizing the review");
           setAgentMessages((current) => [...current, { role: "assistant", content: event.content }]);
         }
         if (event.event === "error" && event.message) {
@@ -802,6 +839,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       setAgentError(err.message || "Agent Review is unavailable right now.");
     } finally {
       setAgentLoading(false);
+      setAgentProgress("");
     }
   }, [agentInput, agentLoading, agentProfileContext, agentSessionId, refreshAgentState, resumeText, selectedJob?.id]);
 
@@ -3147,6 +3185,18 @@ CERTIFICATIONS
                 </div>
               )}
             </div>
+
+            {agentLoading && (
+              <div className="mt-3 flex items-center gap-3 rounded-2xl border border-[#BDDDFC]/30 bg-[#f7fafc] px-3 py-2.5" role="status" aria-live="polite">
+                <Loader2 size={16} className="shrink-0 animate-spin text-[#6A89A7]" />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-[#384959]">{agentProgress || "Reviewing your resume"}</div>
+                  <div className="mt-0.5 text-xs text-[#6A89A7]">
+                    {agentElapsedSeconds}s elapsed. Longer resumes and multi-reviewer checks can take up to two minutes.
+                  </div>
+                </div>
+              </div>
+            )}
 
             {agentError && (
               <div className="mt-3 flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">

@@ -452,6 +452,31 @@ def test_missing_agent_credentials_return_error_event(monkeypatch):
     assert events[-1] == {"event": "done", "session_id": events[0]["session_id"]}
 
 
+def test_agent_timeout_returns_actionable_error_event():
+    from openai import APITimeoutError
+
+    import resume_agent.session as agent_session
+
+    class SlowAgent:
+        def invoke(self, _payload, config=None):
+            raise APITimeoutError(request=None)
+
+    events = list(
+        agent_session.stream_chat_events(
+            {
+                "message": "Run a full review",
+                "resume_text": "EXPERIENCE\n- Built a data platform",
+            },
+            agent=SlowAgent(),
+        )
+    )
+
+    assert events[1]["event"] == "error"
+    assert "took too long" in events[1]["message"]
+    assert "No resume changes were applied" in events[1]["message"]
+    assert events[-1] == {"event": "done", "session_id": events[0]["session_id"]}
+
+
 def test_session_collects_propose_edit_tool_diffs():
     import json
 

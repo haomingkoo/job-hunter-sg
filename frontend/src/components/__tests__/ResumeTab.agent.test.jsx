@@ -3,7 +3,7 @@ import { act } from "react-dom/test-utils";
 import { createRoot } from "react-dom/client";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
-import ResumeTab, { applyAgentDiffDecision, parseSseEvents } from "../ResumeTab.jsx";
+import ResumeTab, { applyAgentDiffDecision, consumeSseEvents, parseSseEvents } from "../ResumeTab.jsx";
 
 function responseJson(data, ok = true) {
   return Promise.resolve({
@@ -146,6 +146,27 @@ describe("ResumeTab Agent v2", () => {
         session_id: "sid-1",
         message: "Agent v2 needs SEALION_API configured before it can run.",
       },
+    ]);
+  });
+
+  it("consumes agent SSE events as chunks arrive", async () => {
+    const encoder = new TextEncoder();
+    const response = {
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('event: session\ndata: {"event":"session","session_id":"sid-1"}\n\n'));
+          controller.enqueue(encoder.encode(': keepalive\n\nevent: token\ndata: {"event":"token","session_id":"sid-1","content":"Review ready"}\n\n'));
+          controller.close();
+        },
+      }),
+    };
+    const events = [];
+
+    await consumeSseEvents(response, (event) => events.push(event));
+
+    expect(events).toEqual([
+      { event: "session", session_id: "sid-1" },
+      { event: "token", session_id: "sid-1", content: "Review ready" },
     ]);
   });
 });
