@@ -71,60 +71,6 @@ import {
 
 const RESUME_UNDO_LIMIT = 30;
 
-export function applyAgentDiffDecision(resumeText, pendingDiffs, bulletId, decision) {
-  const target = pendingDiffs.find((diff) => diff.bullet_id === bulletId);
-  const remaining = pendingDiffs.filter((diff) => diff.bullet_id !== bulletId);
-  if (!target || decision !== "accept") {
-    return { resumeText, pendingDiffs: remaining };
-  }
-  return {
-    resumeText: resumeText.replace(target.original, target.rewrite),
-    pendingDiffs: remaining,
-  };
-}
-
-export function parseSseEvents(text) {
-  return String(text || "")
-    .split(/\n\n+/)
-    .map((block) => {
-      const lines = block.split("\n");
-      const eventLine = lines.find((line) => line.startsWith("event:"));
-      const dataLine = lines.find((line) => line.startsWith("data:"));
-      if (!dataLine) return null;
-      try {
-        return {
-          event: eventLine ? eventLine.replace("event:", "").trim() : "message",
-          ...JSON.parse(dataLine.replace("data:", "").trim()),
-        };
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
-}
-
-export async function consumeSseEvents(response, onEvent) {
-  if (!response.body?.getReader) {
-    parseSseEvents(await response.text()).forEach(onEvent);
-    return;
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-    const blocks = buffer.split(/\n\n+/);
-    buffer = blocks.pop() || "";
-    parseSseEvents(blocks.join("\n\n")).forEach(onEvent);
-    if (done) {
-      parseSseEvents(buffer).forEach(onEvent);
-      return;
-    }
-  }
-}
-
 function TemplatePreview({ templateId }) {
   const accent = templateId === "modern"
     ? "bg-indigo-500"
@@ -382,14 +328,24 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [agentInput, setAgentInput] = useState("");
   const [agentProfileContext, setAgentProfileContext] = useState("");
   const [agentMessages, setAgentMessages] = useState([]);
-  const [agentSessionId, setAgentSessionId] = useState("");
-  const [agentLoading, setAgentLoading] = useState(false);
+  const [agentSessionId, setAgentSessionId] = useState(() => {
+    try {
+      return sessionStorage.getItem("jh_resume_agent_session") || "";
+    } catch {
+      return "";
+    }
+  });
+  const [agentRunStatus, setAgentRunStatus] = useState(() => (agentSessionId ? "queued" : "idle"));
+  const [agentLoading, setAgentLoading] = useState(Boolean(agentSessionId));
   const [agentElapsedSeconds, setAgentElapsedSeconds] = useState(0);
   const [agentProgress, setAgentProgress] = useState("");
   const [agentError, setAgentError] = useState("");
   const [agentTodos, setAgentTodos] = useState([]);
   const [agentFindings, setAgentFindings] = useState([]);
   const [agentPendingDiffs, setAgentPendingDiffs] = useState([]);
+  const [agentDocument, setAgentDocument] = useState(null);
+  const [agentApplyingDiffId, setAgentApplyingDiffId] = useState("");
+  const lastAgentResponseRef = useRef("");
 
   useEffect(() => {
     if (!agentLoading) return undefined;
@@ -797,7 +753,42 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setAgentTodos(Array.isArray(data.todos) ? data.todos : []);
     setAgentFindings(Array.isArray(data.persona_findings) ? data.persona_findings : []);
     setAgentPendingDiffs(Array.isArray(data.pending_diffs) ? data.pending_diffs : []);
+    setAgentDocument(data.document?.schema_version === 1 ? data.document : null);
+    setAgentRunStatus(data.status || "idle");
+    setAgentProgress(data.progress || "");
+    setAgentLoading(["queued", "running"].includes(data.status));
+    if (data.error) setAgentError(data.error);
+    if (data.response && data.response !== lastAgentResponseRef.current) {
+      lastAgentResponseRef.current = data.response;
+      setAgentMessages((current) => [...current, { role: "assistant", content: data.response }]);
+    }
+    return data;
   }, []);
+
+  useEffect(() => {
+    if (!agentSessionId || !["queued", "running"].includes(agentRunStatus)) return undefined;
+    let cancelled = false;
+    let timeoutId = null;
+    const poll = async () => {
+      try {
+        const data = await refreshAgentState(agentSessionId);
+        if (!cancelled && ["queued", "running"].includes(data.status)) {
+          timeoutId = window.setTimeout(poll, 1000);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setAgentLoading(false);
+          setAgentRunStatus("failed");
+          setAgentError(err.message || "Could not reconnect to this review.");
+        }
+      }
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
+  }, [agentRunStatus, agentSessionId, refreshAgentState]);
 
   const handleAgentSend = useCallback(async () => {
     const message = agentInput.trim();
@@ -806,9 +797,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setAgentError("");
     setAgentLoading(true);
     setAgentProgress("Reading resume evidence");
+    lastAgentResponseRef.current = "";
     setAgentMessages((current) => [...current, { role: "user", content: message }]);
     try {
-      const response = await apiFetch("/api/resume/agent/chat", {
+      const response = await apiFetch("/api/resume/agent/start", {
         method: "POST",
         body: JSON.stringify({
           session_id: agentSessionId || undefined,
@@ -818,38 +810,64 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           job_id: selectedJob?.id || undefined,
         }),
       });
-      let nextSessionId = agentSessionId;
-      let nextError = "";
-      await consumeSseEvents(response, (event) => {
-        if (event.session_id) nextSessionId = event.session_id;
-        if (event.event === "session") setAgentProgress("Reviewing your resume");
-        if (event.event === "tool") setAgentProgress("Checking evidence and proposed changes");
-        if (event.event === "token" && event.content) {
-          setAgentProgress("Finalizing the review");
-          setAgentMessages((current) => [...current, { role: "assistant", content: event.content }]);
-        }
-        if (event.event === "error" && event.message) {
-          nextError = event.message;
-        }
-      });
-      if (nextError) setAgentError(nextError);
-      setAgentSessionId(nextSessionId || "");
-      if (nextSessionId) await refreshAgentState(nextSessionId);
+      const data = await response.json();
+      const nextSessionId = data.session_id || "";
+      setAgentSessionId(nextSessionId);
+      setAgentRunStatus(data.status || "queued");
+      setAgentProgress("Waiting for reviewers");
+      try {
+        sessionStorage.setItem("jh_resume_agent_session", nextSessionId);
+      } catch {
+        // Review still runs; only automatic reconnection is unavailable.
+      }
     } catch (err) {
       setAgentError(err.message || "Agent Review is unavailable right now.");
-    } finally {
       setAgentLoading(false);
-      setAgentProgress("");
+      setAgentRunStatus("failed");
     }
-  }, [agentInput, agentLoading, agentProfileContext, agentSessionId, refreshAgentState, resumeText, selectedJob?.id]);
+  }, [agentInput, agentLoading, agentProfileContext, agentSessionId, resumeText, selectedJob?.id]);
 
-  const handleAgentDiffDecision = useCallback((bulletId, decision) => {
-    const next = applyAgentDiffDecision(resumeText, agentPendingDiffs, bulletId, decision);
-    if (decision === "accept" && next.resumeText !== resumeText) {
-      applyResumeText(next.resumeText, { preserveTailoringContext: true });
+  const handleAgentDiffDecision = useCallback(async (bulletId, decision) => {
+    if (decision !== "accept") {
+      if (!agentSessionId) return;
+      setAgentApplyingDiffId(bulletId);
+      setAgentError("");
+      try {
+        const response = await apiFetch(`/api/resume/agent/${agentSessionId}/dismiss`, {
+          method: "POST",
+          body: JSON.stringify({ bullet_id: bulletId }),
+        });
+        const data = await response.json();
+        setAgentPendingDiffs(Array.isArray(data.pending_diffs) ? data.pending_diffs : []);
+      } catch (err) {
+        setAgentError(err.message || "Could not dismiss this resume edit.");
+      } finally {
+        setAgentApplyingDiffId("");
+      }
+      return;
     }
-    setAgentPendingDiffs(next.pendingDiffs);
-  }, [agentPendingDiffs, applyResumeText, resumeText]);
+    const target = agentPendingDiffs.find((diff) => diff.bullet_id === bulletId);
+    if (!target || !agentSessionId || !target.document_revision) return;
+    setAgentApplyingDiffId(bulletId);
+    setAgentError("");
+    try {
+      const response = await apiFetch(`/api/resume/agent/${agentSessionId}/apply`, {
+        method: "POST",
+        body: JSON.stringify({
+          bullet_id: bulletId,
+          expected_revision: target.document_revision,
+        }),
+      });
+      const data = await response.json();
+      applyResumeText(data.draft, { preserveTailoringContext: true });
+      setAgentPendingDiffs(Array.isArray(data.pending_diffs) ? data.pending_diffs : []);
+      setAgentDocument(data.document?.schema_version === 1 ? data.document : null);
+    } catch (err) {
+      setAgentError(err.message || "Could not safely apply this resume edit.");
+    } finally {
+      setAgentApplyingDiffId("");
+    }
+  }, [agentPendingDiffs, agentSessionId, applyResumeText]);
 
   const startBlankResumeFlow = useCallback(() => {
     const starterResume = buildBlankResumeStarter(profile);
@@ -963,6 +981,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
       const data = await response.json();
       const nextText = data.text || "";
+      setAgentDocument(data.document?.schema_version === 1 ? data.document : null);
       setUploadWarnings([
         ...(data.parse_quality?.warnings || []),
         ...(data.content_warnings || []),
@@ -999,6 +1018,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const handlePasteResume = () => {
     if (!pastedText.trim()) return;
     setUploadWarnings([]);
+    setAgentDocument(null);
     setProfile({ name: "", email: "", phone: "", location: "" });
     setSelectedBulletId(null);
     setEditingNodeId(null);
@@ -1032,6 +1052,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       const resp = await apiFetch(`/api/resume/versions/${versionId}`);
       if (!resp.ok) return;
       const data = await resp.json();
+      setAgentDocument(data.resume_structured?.schema_version === 1 ? data.resume_structured : null);
       setSelectedBulletId(null);
       setEditingNodeId(null);
       setCoachResponse(null);
@@ -1053,6 +1074,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         body: JSON.stringify({
           label: saveVersionLabel.trim(),
           resume_text: resumeText,
+          resume_structured: agentDocument?.raw_text === resumeText ? agentDocument : undefined,
           source: "manual",
           job_id: selectedJob?.id || null,
           score: scoreData?.total_score || null,
@@ -3289,15 +3311,17 @@ CERTIFICATIONS
                       <button
                         type="button"
                         onClick={() => handleAgentDiffDecision(diff.bullet_id, "accept")}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-700"
+                        disabled={Boolean(agentApplyingDiffId)}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
                       >
-                        <CheckCircle size={13} />
-                        Accept
+                        {agentApplyingDiffId === diff.bullet_id ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
+                        {agentApplyingDiffId === diff.bullet_id ? "Applying" : "Accept"}
                       </button>
                       <button
                         type="button"
                         onClick={() => handleAgentDiffDecision(diff.bullet_id, "reject")}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-1.5 text-xs font-medium text-[#384959] transition hover:bg-[#f0f4f8]"
+                        disabled={Boolean(agentApplyingDiffId)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-1.5 text-xs font-medium text-[#384959] transition hover:bg-[#f0f4f8] disabled:opacity-50"
                       >
                         <X size={13} />
                         Reject

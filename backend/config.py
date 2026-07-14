@@ -67,7 +67,7 @@ SEALION_DISABLE_THINKING_MODELS: tuple[str, ...] = _csv_env(
 SMART_MIN_MAX_TOKENS: int = _int_env("SMART_MIN_MAX_TOKENS", 3000)
 
 # ── Resume deep-agent v2 knobs ───────────────────────────────────────────────
-AGENT_MAX_TOOL_ITERATIONS: int = _int_env("AGENT_MAX_TOOL_ITERATIONS", 8)
+AGENT_MAX_TOOL_ITERATIONS: int = _int_env("AGENT_MAX_TOOL_ITERATIONS", 20)
 AGENT_PERSONA_COUNT: int = _int_env("AGENT_PERSONA_COUNT", 5)
 AGENT_SMART_MAX_TOKENS: int = max(
     SMART_MIN_MAX_TOKENS,

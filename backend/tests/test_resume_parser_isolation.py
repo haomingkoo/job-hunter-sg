@@ -87,6 +87,9 @@ def test_isolated_parser_returns_normal_pdf_result():
 
     assert result["file_type"] == "pdf"
     assert result["text"]
+    assert result["document"]["schema_version"] == 1
+    assert result["document"]["raw_text"] == result["text"]
+    assert result["document"]["source"]["format"] == "pdf"
 
 
 def test_isolated_parser_returns_normal_docx_result():
@@ -105,6 +108,7 @@ def test_isolated_parser_returns_normal_docx_result():
 
     assert result["file_type"] == "docx"
     assert result["name"] == "Jane Doe"
+    assert result["document"]["raw_text"] == result["text"]
 
 
 def test_docx_preserves_paragraph_and_table_order() -> None:

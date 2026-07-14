@@ -3,7 +3,7 @@ import { act } from "react-dom/test-utils";
 import { createRoot } from "react-dom/client";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
-import ResumeTab, { applyAgentDiffDecision, consumeSseEvents, parseSseEvents } from "../ResumeTab.jsx";
+import ResumeTab from "../ResumeTab.jsx";
 
 function responseJson(data, ok = true) {
   return Promise.resolve({
@@ -13,6 +13,12 @@ function responseJson(data, ok = true) {
     text: () => Promise.resolve(typeof data === "string" ? data : JSON.stringify(data)),
     headers: { get: () => "" },
   });
+}
+
+function setField(field, value) {
+  const setter = Object.getOwnPropertyDescriptor(field.constructor.prototype, "value")?.set;
+  setter.call(field, value);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 describe("ResumeTab Agent v2", () => {
@@ -79,25 +85,6 @@ describe("ResumeTab Agent v2", () => {
     expect(classicEditor.className).not.toContain("hidden");
   });
 
-  it("accepting a bullet diff applies it; rejecting discards it", () => {
-    const resumeText = "EXPERIENCE\n- Built data pipeline processing 10M events daily";
-    const pendingDiffs = [
-      {
-        bullet_id: "exp-0-b0",
-        original: "Built data pipeline processing 10M events daily",
-        rewrite: "Built reliable data pipeline processing 10M events daily",
-      },
-    ];
-
-    const accepted = applyAgentDiffDecision(resumeText, pendingDiffs, "exp-0-b0", "accept");
-    const rejected = applyAgentDiffDecision(resumeText, pendingDiffs, "exp-0-b0", "reject");
-
-    expect(accepted.resumeText).toContain("Built reliable data pipeline processing 10M events daily");
-    expect(accepted.pendingDiffs).toEqual([]);
-    expect(rejected.resumeText).toBe(resumeText);
-    expect(rejected.pendingDiffs).toEqual([]);
-  });
-
   it("scores a first upload once", async () => {
     sessionStorage.clear();
     global.fetch = vi.fn((url) => {
@@ -135,38 +122,48 @@ describe("ResumeTab Agent v2", () => {
     expect(global.fetch.mock.calls.filter(([url]) => String(url).includes("/api/resume/score"))).toHaveLength(1);
   });
 
-  it("parses agent error events from SSE", () => {
-    const events = parseSseEvents(
-      'event: error\ndata: {"event":"error","session_id":"sid-1","message":"Agent v2 needs SEALION_API configured before it can run."}\n\n',
-    );
+  it("starts a detached review and reconnects through session state", async () => {
+    global.fetch = vi.fn((url) => {
+      const target = String(url);
+      if (target.includes("/api/resume/agent/start")) {
+        return responseJson({ session_id: "detached-1", status: "queued" });
+      }
+      if (target.includes("/api/resume/agent/detached-1/state")) {
+        return responseJson({
+          session_id: "detached-1",
+          status: "completed",
+          progress: "Review complete",
+          response: "Evidence-bound review ready.",
+          todos: [],
+          persona_findings: [],
+          pending_diffs: [],
+          document: null,
+        });
+      }
+      if (target.includes("/api/resume/score")) return responseJson({ overall_score: 78, checks: {} });
+      if (target.includes("/api/ai/status")) return responseJson({ healthy: true });
+      return responseJson([]);
+    });
+    await act(async () => {
+      root.render(<ResumeTab selectedJob={null} user={{ id: 1 }} setActiveTab={() => {}} />);
+    });
+    const agentButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent.includes("Agent review"));
+    await act(async () => agentButton.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const prompt = container.querySelector('textarea[placeholder^="Ask for ATS gaps"]');
+    await act(async () => setField(prompt, "Review this resume"));
+    const send = container.querySelector('button[title="Send to Agent Review"]');
 
-    expect(events).toEqual([
-      {
-        event: "error",
-        session_id: "sid-1",
-        message: "Agent v2 needs SEALION_API configured before it can run.",
-      },
-    ]);
+    await act(async () => {
+      send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(global.fetch.mock.calls.some(([url]) => String(url).includes("/api/resume/agent/start"))).toBe(true);
+    expect(sessionStorage.getItem("jh_resume_agent_session")).toBe("detached-1");
+    expect(container.textContent).toContain("Evidence-bound review ready.");
   });
 
-  it("consumes agent SSE events as chunks arrive", async () => {
-    const encoder = new TextEncoder();
-    const response = {
-      body: new ReadableStream({
-        start(controller) {
-          controller.enqueue(encoder.encode('event: session\ndata: {"event":"session","session_id":"sid-1"}\n\n'));
-          controller.enqueue(encoder.encode(': keepalive\n\nevent: token\ndata: {"event":"token","session_id":"sid-1","content":"Review ready"}\n\n'));
-          controller.close();
-        },
-      }),
-    };
-    const events = [];
-
-    await consumeSseEvents(response, (event) => events.push(event));
-
-    expect(events).toEqual([
-      { event: "session", session_id: "sid-1" },
-      { event: "token", session_id: "sid-1", content: "Review ready" },
-    ]);
-  });
 });

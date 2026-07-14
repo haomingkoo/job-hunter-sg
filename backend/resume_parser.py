@@ -5,6 +5,7 @@ Returns the full text without truncation.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import logging
@@ -17,6 +18,7 @@ import tempfile
 import zipfile
 
 from shared_classification import SHARED_HEADINGS, classify_section_heading
+from resume_document import create_resume_document
 
 log = logging.getLogger("jobhunter.parser")
 
@@ -462,17 +464,37 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
             name = cleaned
             break
 
+    parse_quality = _parse_quality(
+        text,
+        file_type,
+        possible_multi_column_layout=possible_multi_column_layout,
+    )
+    document_warnings = [
+        {
+            "code": "extraction_review",
+            "severity": "review",
+            "message": warning,
+            "block_ids": [],
+            "section_ids": [],
+        }
+        for warning in parse_quality.get("warnings", [])
+    ]
+    document = create_resume_document(
+        text,
+        source_format=file_type,
+        filename=filename,
+        source_sha256=hashlib.sha256(file_bytes).hexdigest(),
+        warnings=document_warnings,
+    )
+
     return {
         "text": text,  # FULL text, no truncation
+        "document": document,
         "filename": filename,
         "file_type": file_type,
         "word_count": word_count,
         "line_count": line_count,
-        "parse_quality": _parse_quality(
-            text,
-            file_type,
-            possible_multi_column_layout=possible_multi_column_layout,
-        ),
+        "parse_quality": parse_quality,
         "content_warnings": _content_warnings(text),
         "name": name,
         "email": email_match.group() if email_match else None,

@@ -64,6 +64,12 @@ def test_application_workspace_stores_job_context_and_append_only_history():
         "is_master": True,
     }, headers=headers)
     assert version.status_code == 200
+    stored_version = client.get(
+        f"/api/resume/versions/{version.json()['id']}",
+        headers=headers,
+    ).json()
+    assert stored_version["resume_structured"]["schema_version"] == 1
+    assert stored_version["resume_structured"]["raw_text"] == stored_version["resume_text"]
 
     created = client.post("/api/applications/workspaces", json={
         "company": "GovTech",

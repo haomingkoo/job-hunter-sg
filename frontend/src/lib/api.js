@@ -19,6 +19,7 @@ export function clearResumeDraftStorage() {
     sessionStorage.removeItem("jh_resume_text");
     sessionStorage.removeItem("jh_resume_template");
     sessionStorage.removeItem("jh_wizard_step");
+    sessionStorage.removeItem("jh_resume_agent_session");
     sessionStorage.removeItem(RESUME_DRAFT_OWNER_KEY);
   } catch {
     // ignore storage errors

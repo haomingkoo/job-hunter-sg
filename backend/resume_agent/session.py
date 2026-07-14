@@ -15,10 +15,12 @@ import config as app_config
 from langchain_core.messages import AIMessage, ToolMessage
 from openai import APITimeoutError
 from prompt_safety import xml_data_block
+from resume_document import apply_resume_patch, create_resume_document
 from resume_structurer import get_all_bullets, structure_resume
 
 from .agent import create_resume_agent, run_agent_turn
 from .models import ResumeAgentConfigurationError
+from .personas import iter_persona_reviews
 from .tools import bullet_context
 
 
@@ -46,9 +48,15 @@ def _new_state(session_id: str) -> dict:
         "session_id": session_id,
         "_owner_key": None,
         "_updated_at": now,
+        "_persona_revision": None,
         "mode": "general",
+        "status": "idle",
+        "progress": "",
+        "error": "",
+        "response": "",
         "job_id": None,
         "draft": "",
+        "document": None,
         "profile_context": "",
         "todos": [],
         "persona_findings": [],
@@ -131,10 +139,16 @@ def _append_message(state: dict, message: dict) -> None:
     del messages[:-app_config.AGENT_CHAT_HISTORY_LIMIT]
 
 
-def _resume_bullet_maps(resume_text: str) -> tuple[dict[str, str], dict[str, dict]]:
+def _resume_bullet_maps(
+    resume_text: str,
+    document: dict | None = None,
+) -> tuple[dict[str, str], dict[str, dict]]:
     if not resume_text.strip():
         return {}, {}
-    bullets = get_all_bullets(structure_resume(resume_text))
+    canonical = document or create_resume_document(resume_text)
+    bullets = [block for block in canonical.get("blocks", []) if block.get("kind") == "bullet"]
+    if not bullets:
+        bullets = get_all_bullets(structure_resume(resume_text))
     return (
         {bullet["id"]: bullet["text"] for bullet in bullets},
         {bullet["id"]: bullet for bullet in bullets},
@@ -183,6 +197,15 @@ def _build_prompt(body: dict) -> str:
             "General strengthening mode: no target job was selected. "
             "Do not invent job-specific requirements."
         )
+    persona_findings = body.get("persona_findings")
+    if persona_findings:
+        parts.append(
+            "Independent persona reviews are provided below. Synthesize them; do not delegate another review.\n"
+            + xml_data_block(
+                "persona_findings_data",
+                json.dumps(persona_findings, ensure_ascii=False, separators=(",", ":")),
+            )
+        )
     return "\n\n".join(part for part in parts if part)
 
 
@@ -191,6 +214,7 @@ def _collect_pending_diffs(
     text_by_id: dict[str, str],
     meta_by_id: dict[str, dict],
     existing: list[dict],
+    document_revision: str,
 ) -> list[dict]:
     pending_by_id = {diff.get("bullet_id"): diff for diff in existing if diff.get("bullet_id")}
     for message in result.get("messages", []):
@@ -214,6 +238,7 @@ def _collect_pending_diffs(
             "entry_id": meta.get("entry_id", ""),
             "original": original,
             "rewrite": rewrite,
+            "document_revision": document_revision,
             "status": "pending",
         }
     return list(pending_by_id.values())[: app_config.AGENT_PENDING_DIFFS_LIMIT]
@@ -322,12 +347,22 @@ def _stream_chat_events(
         profile_context = profile_context[: app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS]
 
     job_id = body.get("job_id")
-    bullet_texts, bullet_meta = _resume_bullet_maps(resume_text)
+    previous_document = state.get("document")
+    document = previous_document
+    if not isinstance(document, dict) or document.get("raw_text") != resume_text:
+        document = create_resume_document(resume_text)
+    if (
+        isinstance(previous_document, dict)
+        and previous_document.get("revision") != document.get("revision")
+    ):
+        state["pending_diffs"] = []
+    bullet_texts, bullet_meta = _resume_bullet_maps(resume_text, document)
 
     state["mode"] = "target_job" if job_id else "general"
     state["job_id"] = job_id
     if resume_text:
         state["draft"] = resume_text
+        state["document"] = document
     if profile_context:
         state["profile_context"] = profile_context
 
@@ -343,15 +378,53 @@ def _stream_chat_events(
         return
 
     try:
-        active_agent = agent or create_resume_agent(checkpointer=_get_checkpointer())
-        prompt = _build_prompt({**body, "resume_text": resume_text, "profile_context": profile_context})
+        if agent is None and state.get("_persona_revision") != document.get("revision"):
+            state["persona_findings"] = []
+            yield {
+                "event": "progress",
+                "session_id": session_id,
+                "message": "Running independent resume reviewers",
+            }
+            for finding in iter_persona_reviews(
+                document,
+                include_market=bool(job_id),
+            ):
+                state["persona_findings"].append(finding)
+                yield {
+                    "event": "persona",
+                    "session_id": session_id,
+                    "persona": finding["persona"],
+                    "finding": finding,
+                }
+            state["_persona_revision"] = document.get("revision")
+
+        active_agent = agent or create_resume_agent(
+            subagents=[],
+            checkpointer=_get_checkpointer(),
+        )
+        prompt = _build_prompt({
+            **body,
+            "resume_text": resume_text,
+            "profile_context": profile_context,
+            "persona_findings": state.get("persona_findings", []),
+        })
         with bullet_context(bullet_texts):
             result = run_agent_turn(active_agent, prompt, session_id=session_id)
+        if result.get("stopped"):
+            yield {
+                "event": "error",
+                "session_id": session_id,
+                "message": (
+                    "The reviewers finished, but the final synthesis reached its safety limit. "
+                    "Their completed findings are preserved; try a narrower edit request."
+                ),
+            }
         state["pending_diffs"] = _collect_pending_diffs(
             result,
             bullet_texts,
             bullet_meta,
             state.get("pending_diffs", []),
+            str(document.get("revision") or ""),
         )
         _append_message(state, {"role": "user", "content": str(body.get("message", ""))})
 
@@ -386,3 +459,130 @@ def _stream_chat_events(
             release_owner_run(owner)
 
     yield {"event": "done", "session_id": session_id}
+
+
+def apply_pending_diff(
+    session_id: str,
+    bullet_id: str,
+    expected_revision: str,
+    owner_key: str,
+) -> dict:
+    """Apply one pending agent edit to its canonical document."""
+    with _sessions_lock:
+        _cleanup_sessions()
+        state = _sessions.get(session_id)
+        if not state:
+            raise KeyError(session_id)
+        if not _state_visible_to_owner(state, owner_key):
+            raise PermissionError("Agent session is not visible to this user.")
+        diff = next(
+            (
+                item
+                for item in state.get("pending_diffs", [])
+                if item.get("bullet_id") == bullet_id and item.get("status") == "pending"
+            ),
+            None,
+        )
+        if not diff:
+            raise KeyError(bullet_id)
+        if diff.get("document_revision") != expected_revision:
+            from resume_document import StaleResumeRevision
+
+            raise StaleResumeRevision("Resume changed after this suggestion was created.")
+
+        document = apply_resume_patch(
+            state["document"],
+            {
+                "block_id": bullet_id,
+                "expected_revision": expected_revision,
+                "expected_text": diff["original"],
+                "text": diff["rewrite"],
+            },
+        )
+        remaining = [
+            item for item in state.get("pending_diffs", []) if item.get("bullet_id") != bullet_id
+        ]
+        for item in remaining:
+            item["document_revision"] = document["revision"]
+        state["document"] = document
+        state["draft"] = document["raw_text"]
+        state["pending_diffs"] = remaining
+        state["_updated_at"] = time.time()
+        return _public_state(state)
+
+
+def dismiss_pending_diff(session_id: str, bullet_id: str, owner_key: str) -> dict:
+    """Dismiss one pending edit without changing the resume document."""
+    with _sessions_lock:
+        _cleanup_sessions()
+        state = _sessions.get(session_id)
+        if not state:
+            raise KeyError(session_id)
+        if not _state_visible_to_owner(state, owner_key):
+            raise PermissionError("Agent session is not visible to this user.")
+        before = state.get("pending_diffs", [])
+        remaining = [item for item in before if item.get("bullet_id") != bullet_id]
+        if len(remaining) == len(before):
+            raise KeyError(bullet_id)
+        state["pending_diffs"] = remaining
+        state["_updated_at"] = time.time()
+        return _public_state(state)
+
+
+def start_background_review(
+    body: dict,
+    owner_key: str,
+    agent: Any | None = None,
+) -> str:
+    """Start a detached in-process review and return its session ID immediately."""
+    session_id = str(body.get("session_id") or secrets.token_urlsafe())
+    with _sessions_lock:
+        _cleanup_sessions()
+        state = _sessions.setdefault(session_id, _new_state(session_id))
+        if not _state_visible_to_owner(state, owner_key):
+            raise PermissionError("Agent session is not visible to this user.")
+        state.update({
+            "_owner_key": owner_key,
+            "_updated_at": time.time(),
+            "status": "queued",
+            "progress": "Waiting for reviewers",
+            "error": "",
+            "response": "",
+        })
+
+    def run() -> None:
+        failed = False
+        for event in stream_chat_events(
+            {**body, "session_id": session_id},
+            agent=agent,
+            owner_key=owner_key,
+            owner_run_reserved=True,
+        ):
+            with _sessions_lock:
+                state = _sessions.get(session_id)
+                if not state:
+                    continue
+                event_type = event.get("event")
+                if event_type == "session":
+                    state["status"] = "running"
+                    state["progress"] = "Reading resume evidence"
+                elif event_type == "progress":
+                    state["progress"] = str(event.get("message") or "Reviewing resume")
+                elif event_type == "persona":
+                    state["progress"] = f"{event.get('persona') or 'Reviewer'} review complete"
+                elif event_type == "tool":
+                    state["progress"] = "Checking proposed changes"
+                elif event_type == "token":
+                    state["response"] = str(event.get("content") or "")
+                    state["progress"] = "Finalizing review"
+                elif event_type == "error":
+                    failed = True
+                    state["status"] = "failed"
+                    state["error"] = str(event.get("message") or "Review failed")
+                elif event_type == "done" and not failed:
+                    state["status"] = "completed"
+                    state["progress"] = "Review complete"
+                state["_updated_at"] = time.time()
+
+    threading.Thread(target=run, daemon=True).start()
+    return session_id

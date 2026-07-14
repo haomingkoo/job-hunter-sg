@@ -300,6 +300,138 @@ def test_persona_subagent_uses_smart_model_and_no_tools(monkeypatch):
         assert subagent["model"].max_tokens >= config.SMART_MIN_MAX_TOKENS
 
 
+def test_persona_reviews_require_canonical_evidence_ids():
+    import json
+
+    from langchain_core.messages import AIMessage
+    from resume_document import create_resume_document
+    import resume_agent.personas as personas
+
+    document = create_resume_document("EXPERIENCE\n- Built a data platform")
+    evidence_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
+
+    class FakeModel:
+        def invoke(self, messages):
+            persona = messages[0].content.split("\n", 1)[0].split(":", 1)[1].strip()
+            return AIMessage(content=json.dumps({
+                "category": "clarity",
+                "evidence_ids": [evidence_id],
+                "message": f"{persona} finding",
+                "suggested_action": "Clarify the result without inventing metrics.",
+            }))
+
+    findings = list(personas.iter_persona_reviews(document, FakeModel(), include_market=False))
+
+    assert {finding["persona"] for finding in findings} == {
+        "recruiter", "hiring_manager", "ats", "skeptic",
+    }
+    assert all(finding["evidence_ids"] == [evidence_id] for finding in findings)
+
+
+def test_persona_review_discards_unknown_evidence_ids():
+    import json
+
+    from langchain_core.messages import AIMessage
+    from resume_document import create_resume_document
+    import resume_agent.personas as personas
+
+    document = create_resume_document("EXPERIENCE\n- Built a data platform")
+
+    class FakeModel:
+        def invoke(self, _messages):
+            return AIMessage(content=json.dumps({
+                "category": "clarity",
+                "evidence_ids": ["b_unknown"],
+                "message": "Unsupported finding",
+                "suggested_action": "Change it.",
+            }))
+
+    assert list(personas.iter_persona_reviews(
+        document,
+        FakeModel(),
+        include_market=False,
+        persona_names=("recruiter",),
+    )) == []
+
+
+def test_session_streams_and_persists_independent_persona_findings(monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    import resume_agent.session as agent_session
+
+    class FakeAgent:
+        def invoke(self, _payload, config=None):
+            return {"messages": [AIMessage(content="Synthesized review.")]}
+
+    monkeypatch.setattr(
+        agent_session,
+        "iter_persona_reviews",
+        lambda _document, include_market: iter([{
+            "persona": "recruiter",
+            "category": "clarity",
+            "evidence_ids": ["b_evidence"],
+            "message": "Clarify the outcome.",
+            "suggested_action": "State the result if supported.",
+        }]),
+    )
+    monkeypatch.setattr(agent_session, "create_resume_agent", lambda **_kwargs: FakeAgent())
+
+    events = list(agent_session.stream_chat_events({
+        "session_id": "persona-events",
+        "message": "Review this resume",
+        "resume_text": "EXPERIENCE\n- Built a data platform",
+    }, owner_key="user:1"))
+    state = agent_session.get_state("persona-events", owner_key="user:1")
+
+    assert any(event["event"] == "progress" for event in events)
+    assert any(event["event"] == "persona" and event["persona"] == "recruiter" for event in events)
+    assert state["persona_findings"][0]["message"] == "Clarify the outcome."
+
+
+def test_background_review_returns_immediately_and_completes_in_session():
+    import time
+    from langchain_core.messages import AIMessage
+
+    import resume_agent.session as agent_session
+
+    release = threading.Event()
+
+    class SlowAgent:
+        def invoke(self, _payload, config=None):
+            release.wait(2)
+            return {"messages": [AIMessage(content="Detached review complete.")]}
+
+    owner_key = "background-owner"
+    assert agent_session.reserve_owner_run(owner_key)
+    started = time.monotonic()
+    session_id = agent_session.start_background_review(
+        {
+            "session_id": "background-review",
+            "message": "Review this",
+            "resume_text": "EXPERIENCE\n- Built a data platform",
+        },
+        owner_key,
+        agent=SlowAgent(),
+    )
+
+    assert session_id == "background-review"
+    assert time.monotonic() - started < 0.5
+    assert agent_session.get_state(session_id, owner_key=owner_key)["status"] in {
+        "queued", "running",
+    }
+    release.set()
+    for _attempt in range(100):
+        state = agent_session.get_state(session_id, owner_key=owner_key)
+        if state["status"] == "completed":
+            break
+        time.sleep(0.01)
+    else:
+        raise AssertionError("background review did not complete")
+
+    assert state["response"] == "Detached review complete."
+    assert agent_session.owner_has_active_sessions(owner_key) is False
+
+
 def test_per_bullet_diff_preserves_bullet_ids():
     from resume_structurer import get_all_bullets, structure_resume
 
@@ -444,7 +576,8 @@ def test_missing_agent_credentials_return_error_event(monkeypatch):
     )
 
     assert events[0]["event"] == "session"
-    assert events[1] == {
+    error = next(event for event in events if event["event"] == "error")
+    assert error == {
         "event": "error",
         "session_id": events[0]["session_id"],
         "message": "Agent v2 needs SEALION_API configured before it can run.",
@@ -481,12 +614,13 @@ def test_session_collects_propose_edit_tool_diffs():
     import json
 
     from langchain_core.messages import AIMessage, ToolMessage
-    from resume_structurer import get_all_bullets, structure_resume
+    from resume_document import create_resume_document
 
     import resume_agent.session as agent_session
 
     resume_text = "EXPERIENCE\n- Built data pipeline processing 10M events daily"
-    bullet_id = get_all_bullets(structure_resume(resume_text))[0]["id"]
+    document = create_resume_document(resume_text)
+    bullet_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
 
     class FakeAgent:
         def invoke(self, _payload, config=None):
@@ -523,9 +657,130 @@ def test_session_collects_propose_edit_tool_diffs():
             "entry_id": "exp-0",
             "original": "Built data pipeline processing 10M events daily",
             "rewrite": "Built reliable data pipeline processing 10M events daily",
+            "document_revision": document["revision"],
             "status": "pending",
         }
     ]
+
+
+def test_session_discards_pending_diffs_when_resume_changes():
+    import json
+
+    from langchain_core.messages import AIMessage, ToolMessage
+    from resume_document import create_resume_document
+
+    import resume_agent.session as agent_session
+
+    original = "EXPERIENCE\n- Built a reporting platform"
+    document = create_resume_document(original)
+    bullet_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
+
+    class ProposingAgent:
+        def invoke(self, _payload, config=None):
+            return {"messages": [
+                ToolMessage(
+                    name="propose_edit",
+                    tool_call_id="call_1",
+                    content=json.dumps({
+                        "accepted": True,
+                        "bullet_id": bullet_id,
+                        "rewrite": "Built a reliable reporting platform",
+                    }),
+                ),
+                AIMessage(content="Prepared one edit."),
+            ]}
+
+    class ReviewingAgent:
+        def invoke(self, _payload, config=None):
+            return {"messages": [AIMessage(content="Reviewed the updated resume.")]}
+
+    body = {
+        "message": "Review this",
+        "resume_text": original,
+        "session_id": "changed-resume-session",
+    }
+    list(agent_session.stream_chat_events(body, agent=ProposingAgent(), owner_key="user:1"))
+    body["resume_text"] = "EXPERIENCE\n- Built a reporting platform for finance"
+    list(agent_session.stream_chat_events(body, agent=ReviewingAgent(), owner_key="user:1"))
+
+    state = agent_session.get_state("changed-resume-session", owner_key="user:1")
+    assert state["pending_diffs"] == []
+
+
+def test_agent_applies_one_duplicate_diff_by_block_id_and_rebases_the_rest():
+    import json
+
+    from langchain_core.messages import AIMessage, ToolMessage
+    from resume_document import create_resume_document
+
+    import resume_agent.session as agent_session
+
+    resume_text = "EXPERIENCE\n- Built the reporting platform\n- Built the reporting platform"
+    document = create_resume_document(resume_text)
+    bullet_ids = [block["id"] for block in document["blocks"] if block["kind"] == "bullet"]
+
+    class FakeAgent:
+        def invoke(self, _payload, config=None):
+            return {
+                "messages": [
+                    ToolMessage(
+                        name="propose_edit",
+                        tool_call_id=f"call-{index}",
+                        content=json.dumps({
+                            "accepted": True,
+                            "bullet_id": bullet_id,
+                            "rewrite": rewrite,
+                        }),
+                    )
+                    for index, (bullet_id, rewrite) in enumerate(zip(
+                        bullet_ids,
+                        ("Built the finance reporting platform", "Built the operations reporting platform"),
+                    ))
+                ] + [AIMessage(content="Prepared two edits.")]
+            }
+
+    list(agent_session.stream_chat_events(
+        {
+            "message": "Improve both bullets",
+            "resume_text": resume_text,
+            "session_id": "duplicate-diff-session",
+        },
+        agent=FakeAgent(),
+        owner_key="user:1",
+    ))
+    state = agent_session.get_state("duplicate-diff-session", owner_key="user:1")
+
+    updated = agent_session.apply_pending_diff(
+        "duplicate-diff-session",
+        bullet_ids[1],
+        state["document"]["revision"],
+        "user:1",
+    )
+
+    assert updated["draft"].count("Built the reporting platform") == 1
+    assert "Built the operations reporting platform" in updated["draft"]
+    assert updated["pending_diffs"][0]["document_revision"] == updated["document"]["revision"]
+    dismissed = agent_session.dismiss_pending_diff(
+        "duplicate-diff-session",
+        bullet_ids[0],
+        "user:1",
+    )
+    assert dismissed["pending_diffs"] == []
+
+
+def test_agent_diff_cannot_be_applied_by_another_owner():
+    import resume_agent.session as agent_session
+
+    state = agent_session._new_state("private-diff-session")
+    state["_owner_key"] = "user:1"
+    agent_session._sessions["private-diff-session"] = state
+
+    try:
+        agent_session.apply_pending_diff("private-diff-session", "missing", "stale", "user:2")
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("another account must not apply this session's resume edits")
 
 
 def test_agent_state_is_owner_bound():
@@ -659,6 +914,28 @@ def test_tool_iteration_cap_stops_runaway_loop():
         "stopped": True,
         "reason": "tool_iteration_cap",
     }
+
+
+def test_session_surfaces_iteration_cap_instead_of_returning_blank():
+    from langgraph.errors import GraphRecursionError
+
+    import resume_agent.session as agent_session
+
+    class StoppedAgent:
+        def invoke(self, _payload, config=None):
+            raise GraphRecursionError("limit")
+
+    events = list(agent_session.stream_chat_events(
+        {
+            "message": "Improve everything",
+            "resume_text": "EXPERIENCE\n- Built a data platform",
+        },
+        agent=StoppedAgent(),
+    ))
+
+    error = next(event for event in events if event["event"] == "error")
+    assert "safety limit" in error["message"]
+    assert events[-1]["event"] == "done"
 
 
 def test_agent_failure_is_logged_without_exposing_details_to_user(caplog):
@@ -834,6 +1111,35 @@ def test_chat_endpoint_streams_token_and_tool_events(monkeypatch):
     assert response.headers["cache-control"] == "no-cache, no-store"
 
 
+def test_background_start_endpoint_returns_session_immediately(monkeypatch):
+    from fastapi.testclient import TestClient
+    from types import SimpleNamespace
+
+    import main
+    from auth import get_current_user
+    import resume_agent.session as agent_session
+
+    user_id = _persisted_user_id()
+    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id)
+    monkeypatch.setattr(main, "_consume_ai_credit", lambda *args: None)
+    monkeypatch.setattr(agent_session, "reserve_owner_run", lambda _owner: True)
+    monkeypatch.setattr(
+        agent_session,
+        "start_background_review",
+        lambda _body, _owner: "detached-session",
+    )
+    try:
+        response = TestClient(main.app).post(
+            "/api/resume/agent/start",
+            json={"message": "Review this", "resume_text": "EXPERIENCE\n- Built a platform"},
+        )
+    finally:
+        main.app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 202
+    assert response.json() == {"session_id": "detached-session", "status": "queued"}
+
+
 def test_resume_agent_sse_sends_keepalive_while_agent_runs(monkeypatch):
     import main
 
@@ -848,7 +1154,13 @@ def test_resume_agent_sse_sends_keepalive_while_agent_runs(monkeypatch):
 
     assert next(stream) == ": keepalive\n\n"
     release.set()
-    assert "event: done" in next(stream)
+    for _attempt in range(1_000):
+        chunk = next(stream)
+        if "event: done" in chunk:
+            break
+        assert chunk == ": keepalive\n\n"
+    else:
+        raise AssertionError("agent stream never emitted its done event")
 
 
 def test_state_endpoint_returns_draft_todos_and_pending_diffs(monkeypatch):
@@ -882,6 +1194,55 @@ def test_state_endpoint_returns_draft_todos_and_pending_diffs(monkeypatch):
     assert data["draft"] == "Resume draft"
     assert data["todos"] == ["Review bullets"]
     assert data["pending_diffs"][0]["bullet_id"] == "exp-0-b0"
+
+
+def test_apply_endpoint_is_revision_safe_and_owner_isolated():
+    from fastapi.testclient import TestClient
+    from types import SimpleNamespace
+
+    import main
+    from auth import get_current_user
+    from resume_document import create_resume_document
+    import resume_agent.session as agent_session
+
+    resume_text = "EXPERIENCE\n- Built the reporting platform\n- Built the reporting platform"
+    document = create_resume_document(resume_text)
+    bullet = [block for block in document["blocks"] if block["kind"] == "bullet"][1]
+    state = agent_session._new_state("http-safe-diff")
+    state.update({
+        "_owner_key": "user:101",
+        "draft": resume_text,
+        "document": document,
+        "pending_diffs": [{
+            "bullet_id": bullet["id"],
+            "original": bullet["text"],
+            "rewrite": "Built the operations reporting platform",
+            "document_revision": document["revision"],
+            "status": "pending",
+        }],
+    })
+    agent_session._sessions["http-safe-diff"] = state
+    client = TestClient(main.app)
+
+    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=202)
+    try:
+        denied = client.post(
+            "/api/resume/agent/http-safe-diff/apply",
+            json={"bullet_id": bullet["id"], "expected_revision": document["revision"]},
+        )
+        main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=101)
+        applied = client.post(
+            "/api/resume/agent/http-safe-diff/apply",
+            json={"bullet_id": bullet["id"], "expected_revision": document["revision"]},
+        )
+    finally:
+        main.app.dependency_overrides.pop(get_current_user, None)
+        agent_session._sessions.pop("http-safe-diff", None)
+
+    assert denied.status_code == 404
+    assert applied.status_code == 200
+    assert applied.json()["draft"].count("Built the reporting platform") == 1
+    assert "Built the operations reporting platform" in applied.json()["draft"]
 
 
 def test_explicit_missing_agent_session_returns_404_before_quota(monkeypatch):

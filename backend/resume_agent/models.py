@@ -71,7 +71,7 @@ def create_smart_model(temperature: float = 0.0):
         temperature=temperature,
         max_completion_tokens=config.AGENT_SMART_MAX_TOKENS,
         timeout=config.SEALION_HTTP_TIMEOUT,
-        max_retries=1,
+        max_retries=0,
         rate_limiter=_rate_limiter,
         **_model_kwargs(config.SEALION_SMART_MODEL),
     )

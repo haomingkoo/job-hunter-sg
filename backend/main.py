@@ -8225,6 +8225,18 @@ def get_usage(
 # ── Resume Versions ────────────────────────────────────────────────────────
 
 
+def _resume_structure_for_storage(resume_text: str, supplied: object = None) -> dict:
+    from resume_document import create_resume_document
+
+    if supplied is None:
+        return create_resume_document(resume_text)
+    if not isinstance(supplied, dict):
+        raise HTTPException(status_code=422, detail="Structured resume must be an object")
+    if supplied.get("schema_version") == 1 and supplied.get("raw_text") != resume_text:
+        raise HTTPException(status_code=409, detail="Structured resume does not match resume text")
+    return supplied
+
+
 @app.get("/api/resume/versions")
 def list_resume_versions(
     user: User = Depends(get_current_user),
@@ -8286,8 +8298,11 @@ def save_resume_version(
         raise HTTPException(status_code=400, detail="Resume text too short")
     if len(resume_text) > _MAX_SAVED_RESUME_CHARS:
         raise HTTPException(status_code=413, detail="Resume text is too large")
-    resume_structured = body.get("resume_structured")
-    if resume_structured is not None and len(
+    resume_structured = _resume_structure_for_storage(
+        resume_text,
+        body.get("resume_structured"),
+    )
+    if len(
         json.dumps(resume_structured, separators=(",", ":"))
     ) > _MAX_RESUME_STRUCTURED_BYTES:
         raise HTTPException(status_code=413, detail="Structured resume is too large")
@@ -8397,10 +8412,14 @@ def update_resume_version(
             raise HTTPException(status_code=413, detail="Resume text is too large")
         version.resume_text = body["resume_text"]
         version.word_count = len(body["resume_text"].split())
-    if "resume_structured" in body:
-        if len(json.dumps(body["resume_structured"], separators=(",", ":"))) > _MAX_RESUME_STRUCTURED_BYTES:
+    if "resume_text" in body or "resume_structured" in body:
+        resume_structured = _resume_structure_for_storage(
+            version.resume_text,
+            body.get("resume_structured"),
+        )
+        if len(json.dumps(resume_structured, separators=(",", ":"))) > _MAX_RESUME_STRUCTURED_BYTES:
             raise HTTPException(status_code=413, detail="Structured resume is too large")
-        version.resume_structured = body["resume_structured"]
+        version.resume_structured = resume_structured
     if "score" in body:
         version.score = body["score"]
     if "is_master" in body and body["is_master"]:
@@ -8478,6 +8497,48 @@ def _resume_agent_sse(body: dict, heartbeat_seconds: float = 15):
         yield f"data: {json.dumps(event)}\n\n"
 
 
+@app.post("/api/resume/agent/start", status_code=202)
+def start_resume_agent_review(
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    from resume_agent.session import (
+        release_owner_run,
+        reserve_owner_run,
+        start_background_review,
+    )
+
+    owner_key = f"user:{user.id}"
+    session_id = str(body.get("session_id") or "").strip()
+    if len(session_id) > 200:
+        raise HTTPException(status_code=422, detail="Agent session ID is too long")
+    if len(str(body.get("message") or "")) > 10_000:
+        raise HTTPException(status_code=413, detail="Agent message is too large")
+    if len(str(body.get("resume_text") or "")) > app_config.AGENT_MAX_DRAFT_CHARS:
+        raise HTTPException(status_code=413, detail="Resume draft is too large")
+    if len(str(body.get("profile_context") or "")) > app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS:
+        raise HTTPException(status_code=413, detail="Profile context is too large")
+
+    with _account_lifecycle_lock(user.id):
+        if not db.query(User.id).filter(User.id == user.id).first():
+            raise HTTPException(status_code=401, detail="Account no longer exists")
+        if session_id:
+            try:
+                _get_resume_agent_state(session_id, owner_key=owner_key)
+            except (KeyError, PermissionError):
+                raise HTTPException(status_code=404, detail="Agent session not found")
+        if not reserve_owner_run(owner_key):
+            raise HTTPException(status_code=429, detail="Agent Review is already running")
+        try:
+            _consume_ai_credit(user, db, "resume_agent_chat")
+            next_session_id = start_background_review(body, owner_key)
+        except Exception:
+            release_owner_run(owner_key)
+            raise
+    return {"session_id": next_session_id, "status": "queued"}
+
+
 @app.post("/api/resume/agent/chat")
 def resume_agent_chat(
     body: dict,
@@ -8542,6 +8603,53 @@ def resume_agent_state(
         return _get_resume_agent_state(session_id, owner_key=owner_key)
     except (KeyError, PermissionError):
         raise HTTPException(status_code=404, detail="Agent session not found")
+
+
+@app.post("/api/resume/agent/{session_id}/apply")
+def apply_resume_agent_diff(
+    session_id: str,
+    body: dict,
+    user: User = Depends(get_current_user),
+) -> dict:
+    from resume_agent.session import apply_pending_diff
+    from resume_document import ResumePatchError, StaleResumeRevision
+
+    bullet_id = str(body.get("bullet_id") or "")
+    expected_revision = str(body.get("expected_revision") or "")
+    if not bullet_id or len(bullet_id) > 100 or not expected_revision or len(expected_revision) > 100:
+        raise HTTPException(status_code=422, detail="Bullet ID and document revision are required")
+    try:
+        return apply_pending_diff(
+            session_id,
+            bullet_id,
+            expected_revision,
+            f"user:{user.id}",
+        )
+    except PermissionError:
+        raise HTTPException(status_code=404, detail="Agent session not found") from None
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Pending resume edit not found") from None
+    except StaleResumeRevision as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except ResumePatchError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+@app.post("/api/resume/agent/{session_id}/dismiss")
+def dismiss_resume_agent_diff(
+    session_id: str,
+    body: dict,
+    user: User = Depends(get_current_user),
+) -> dict:
+    from resume_agent.session import dismiss_pending_diff
+
+    bullet_id = str(body.get("bullet_id") or "")
+    if not bullet_id or len(bullet_id) > 100:
+        raise HTTPException(status_code=422, detail="Bullet ID is required")
+    try:
+        return dismiss_pending_diff(session_id, bullet_id, f"user:{user.id}")
+    except (KeyError, PermissionError):
+        raise HTTPException(status_code=404, detail="Pending resume edit not found") from None
 
 
 # ── Resume Tailoring Pipeline ───────────────────────────────────────────────

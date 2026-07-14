@@ -107,6 +107,19 @@ GovTech | AI Project Lead | Jan 2022 - Present
     ]
     assert state["draft"].strip() == resume_text.strip()
     assert len(assistant_outputs) >= 2
+    assert {finding["persona"] for finding in state["persona_findings"]} == {
+        "recruiter",
+        "hiring_manager",
+        "ats",
+        "skeptic",
+    }
+    evidence_ids = {
+        block["id"] for block in state["document"]["blocks"]
+    }
+    assert all(
+        set(finding["evidence_ids"]) <= evidence_ids
+        for finding in state["persona_findings"]
+    )
 
 
 def test_live_sealion_agent_calls_search_jobs_for_role_research(monkeypatch):
