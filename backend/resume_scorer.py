@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-from shared_classification import SHARED_KEY_MAP
+from shared_classification import SHARED_KEY_MAP, classify_section_heading
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -87,12 +87,6 @@ STANDARD_SECTIONS = [
     "about", "licenses & certifications", "honors & awards",
     "additional information", "languages", "languages & work authorization",
     "activities", "volunteer", "certifications & technical upskilling",
-]
-
-EXTRACURRICULAR_KEYWORDS = [
-    "volunteer", "volunteering", "activities", "leadership",
-    "extracurricular", "community", "pro bono", "charity",
-    "club", "society", "organization",
 ]
 
 COMPETENCY_KEYWORDS: dict[str, list[str]] = {
@@ -341,6 +335,7 @@ class ResumeScorer:
         lines = _iter_resume_lines(text)
         context_window = 0
         current_section = ""
+        pending_explicit_index: int | None = None
 
         for line in lines:
             stripped = _clean_line(line)
@@ -353,20 +348,17 @@ class ResumeScorer:
             has_date = bool(_date_re.search(stripped))
             has_role_sep = bool(_role_separator.search(stripped))
             section_key = _section_key(stripped)
+            explicit_bullet = bool(_BULLET_RE.match(line))
 
-            if is_header or section_key in _NORMALIZED_SECTION_KEYS.values():
-                current_section = section_key
-                context_window = 2
-                continue
+            if pending_explicit_index is not None and not (explicit_bullet or is_header or has_date or has_role_sep):
+                if not bullets[pending_explicit_index].endswith((".", "!", "?", ";")) or stripped[:1].islower():
+                    bullets[pending_explicit_index] += " " + stripped
+                    continue
+            pending_explicit_index = None
 
-            if has_date or has_role_sep:
-                context_window = 2
-                continue
-
-            # Method 1: explicit bullet character
-            # Skip skills/certifications/education sections — these are labels, not achievements
+            # Explicit markers take priority over dates and separators inside the bullet.
             _non_bullet_sections = {"skills", "certifications", "education", "languages", "awards"}
-            if _BULLET_RE.match(line):
+            if explicit_bullet:
                 if current_section in _non_bullet_sections:
                     continue
                 cleaned = re.sub(
@@ -377,6 +369,16 @@ class ResumeScorer:
                 ).strip()
                 if cleaned:
                     bullets.append(cleaned)
+                    pending_explicit_index = len(bullets) - 1
+                continue
+
+            if is_header or section_key in _NORMALIZED_SECTION_KEYS.values():
+                current_section = section_key
+                context_window = 2
+                continue
+
+            if has_date or has_role_sep:
+                context_window = 2
                 continue
 
             # Methods 2 & 3: action-verb start or achievement pattern
@@ -415,10 +417,9 @@ class ResumeScorer:
             stripped = _clean_line(line)
             if not stripped:
                 continue
-            lower = stripped.lower().rstrip(":")
-            # Exact match against known sections
-            if lower in STANDARD_SECTIONS:
-                found.append(_section_key(lower))
+            section_key = classify_section_heading(stripped)
+            if section_key:
+                found.append(section_key)
                 continue
             # ALL-CAPS line with 2+ chars and no lowercase
             if (
@@ -431,7 +432,7 @@ class ResumeScorer:
                 continue
             # Line ending with colon, short enough to be a header
             if stripped.endswith(":") and len(stripped.split()) <= 5:
-                found.append(_section_key(lower))
+                found.append(_section_key(stripped))
         return list(dict.fromkeys(found))  # dedupe, preserve order
 
     @staticmethod
@@ -565,9 +566,7 @@ class ResumeScorer:
         }
 
         # extracurricular (5)
-        extra_found = any(
-            kw in text_lower for kw in EXTRACURRICULAR_KEYWORDS
-        )
+        extra_found = "activities" in self._extract_sections(text)
         extra_score = 5 if extra_found else 3
         extra_suggestions: list[str] = []
         if not extra_found:

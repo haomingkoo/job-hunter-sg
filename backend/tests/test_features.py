@@ -360,6 +360,15 @@ class TestResumeParser:
         with pytest.raises(ValueError, match="Unsupported"):
             validate_upload("resume.txt", "text/plain", 1024)
 
+    def test_score_accepts_long_resume_without_expanding_ai_prompt_limit(self):
+        from pydantic import ValidationError
+        from schemas import ResumeAIRequest, ResumeScoreRequest
+
+        long_resume = "A" * 20_000
+        assert ResumeScoreRequest(resume_text=long_resume).resume_text == long_resume
+        with pytest.raises(ValidationError):
+            ResumeAIRequest(resume_text=long_resume)
+
     def test_join_broken_lines_hyphenated(self):
         """Hyphenated line breaks should be joined."""
         from resume_parser import _join_broken_lines
@@ -535,6 +544,17 @@ class TestResumeParser:
         except ImportError:
             pytest.skip("python-docx not installed")
 
+    def test_content_warnings_are_separate_from_parse_quality(self):
+        from resume_parser import _content_warnings
+
+        warnings = _content_warnings(
+            "Led reporting across [X regions] and Oracle Cloud [confirm version]."
+        )
+
+        assert warnings == [
+            "Found 2 unresolved placeholder(s). Replace or remove them before exporting."
+        ]
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. Resume Scorer
@@ -612,6 +632,33 @@ class TestResumeScorer:
             ),
         )
         assert strong["overall_score"] > weak["overall_score"]
+
+    def test_explicit_bullets_keep_internal_dashes_and_wrapped_metrics(self):
+        from resume_scorer import ResumeScorer
+
+        bullets = ResumeScorer._extract_bullets(
+            "\n".join([
+                "PROFESSIONAL EXPERIENCE",
+                "AI Engineer | Example Company | 2021 - Present",
+                "• Practised MLOps and CI/CD — containerised model training",
+                "and reduced deployment time by 40% across eight services.",
+                "• Led finance transformation across three regions.",
+            ])
+        )
+
+        assert bullets == [
+            "Practised MLOps and CI/CD — containerised model training and reduced deployment time by 40% across eight services.",
+            "Led finance transformation across three regions.",
+        ]
+
+    def test_leadership_skill_does_not_count_as_extracurricular_section(self):
+        from resume_scorer import ResumeScorer
+
+        scorer = ResumeScorer()
+        result = scorer.analyze("CORE SKILLS\nLeadership and stakeholder management")
+
+        item = result["dimensions"]["impact"]["items"]["extracurricular"]
+        assert item["detail"] == "No extracurricular content detected -- optional for many experienced candidates"
 
     def test_empty_resume_returns_low_score(self):
         from resume_scorer import ResumeScorer

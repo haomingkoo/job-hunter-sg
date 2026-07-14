@@ -748,6 +748,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     }
     if (clearRewrites) setRewriteResults({});
     if (rescore) {
+      initialScoredRef.current = true;
       runScore(nextText, jobDescription, { phase: "opening" });
     } else {
       setNeedsRescore(Boolean(nextText.trim()));
@@ -924,7 +925,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
       const data = await response.json();
       const nextText = data.text || "";
-      setUploadWarnings(data.parse_quality?.warnings || []);
+      setUploadWarnings([
+        ...(data.parse_quality?.warnings || []),
+        ...(data.content_warnings || []),
+      ]);
       setProfile({
         name: data.name || "",
         email: data.email || "",
@@ -1823,7 +1827,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const headerMeta = useMemo(() => extractResumeHeaderMeta(resumeText), [resumeText]);
   const fallbackHeaderLines = [profile.name, [profile.email, profile.phone, profile.location].filter(Boolean).join(" | ")].filter(Boolean);
   const displayHeaderLines = headerMeta.lines.length > 0 ? headerMeta.lines : fallbackHeaderLines;
-  const displayContactLine = displayHeaderLines.slice(1).join(" | ");
+  const displayDetailLines = displayHeaderLines.slice(1);
   const bodySections = useMemo(
     () => groupEducationSections(parsedSections.filter((section) => !headerMeta.lineIndices.includes(section.lineIndex))),
     [parsedSections, headerMeta.lineIndices],
@@ -4631,7 +4635,9 @@ CERTIFICATIONS
                   {displayHeaderLines.length > 0 && (
                     <div className="mb-4 border-b border-[#BDDDFC]/30 pb-2 text-center">
                       <div className={templateStyles.nameClass} style={templateStyles.nameStyle}>{displayHeaderLines[0]}</div>
-                      {displayContactLine && <div className="mx-auto mt-0.5 max-w-[34rem] text-[#6A89A7]" style={templateStyles.contactStyle}>{displayContactLine}</div>}
+                      {displayDetailLines.map((line, index) => (
+                        <div key={`${line}-${index}`} className="mx-auto mt-0.5 max-w-[34rem] text-[#6A89A7]" style={templateStyles.contactStyle}>{line}</div>
+                      ))}
                     </div>
                   )}
 
