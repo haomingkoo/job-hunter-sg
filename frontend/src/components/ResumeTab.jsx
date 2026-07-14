@@ -3201,7 +3201,8 @@ CERTIFICATIONS
                     <Sparkles size={18} className="mx-auto text-[#88BDF2]" />
                     <div className="mt-2 text-sm font-semibold text-[#384959]">Ask for a review pass</div>
                     <div className="mt-1 text-sm leading-relaxed text-[#6A89A7]">
-                      The agent will return bullet edits for you to accept or reject before the draft changes.
+                      Several reviewers critique your resume, then return evidence-backed edits for you to approve.
+                      This usually takes 30 seconds to 2 minutes.
                     </div>
                   </div>
                 </div>
@@ -3214,7 +3215,7 @@ CERTIFICATIONS
                 <div className="min-w-0">
                   <div className="text-sm font-medium text-[#384959]">{agentProgress || "Reviewing your resume"}</div>
                   <div className="mt-0.5 text-xs text-[#6A89A7]">
-                    {agentElapsedSeconds}s elapsed. Longer resumes and multi-reviewer checks can take up to two minutes.
+                    {agentElapsedSeconds}s elapsed. You can switch pages and return while this continues.
                   </div>
                 </div>
               </div>
