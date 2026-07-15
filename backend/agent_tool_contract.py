@@ -7,6 +7,7 @@ from typing import Any
 import config
 
 
+
 SEARCH_JOBS_TOOL = "search_jobs"
 GET_JOB_TOOL = "get_job"
 
@@ -57,7 +58,13 @@ def skills_list(skills: Any) -> list[str]:
     return []
 
 
-def job_payload(job: Any, score: float | None = None, *, detail: bool = False) -> dict:
+def job_payload(
+    job: Any,
+    score: float | None = None,
+    *,
+    detail: bool = False,
+    include_parsed: bool = True,
+) -> dict:
     values = {
         "data_classification": "untrusted_job_data",
         "id": job.id,
@@ -76,6 +83,8 @@ def job_payload(job: Any, score: float | None = None, *, detail: bool = False) -
         ),
     }
     fields = JOB_DETAIL_FIELDS if detail else SEARCH_RESULT_FIELDS
+    if not include_parsed:
+        fields = tuple(field for field in fields if field != "parsed_jd")
     return {field: values[field] for field in fields if field != "score" or score is not None}
 
 

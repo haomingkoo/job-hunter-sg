@@ -375,6 +375,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [agentError, setAgentError] = useState("");
   const [agentTodos, setAgentTodos] = useState([]);
   const [agentFindings, setAgentFindings] = useState([]);
+  const [agentAssessment, setAgentAssessment] = useState({});
   const [agentToolSpans, setAgentToolSpans] = useState([]);
   const [agentPendingDiffs, setAgentPendingDiffs] = useState([]);
   const [agentDocument, setAgentDocument] = useState(null);
@@ -790,6 +791,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     const data = await response.json();
     setAgentTodos(Array.isArray(data.todos) ? data.todos : []);
     setAgentFindings(Array.isArray(data.persona_findings) ? data.persona_findings : []);
+    setAgentAssessment(data.multi_agent_assessment || {});
     setAgentToolSpans(Array.isArray(data.tool_spans) ? data.tool_spans : []);
     setAgentPendingDiffs(Array.isArray(data.pending_diffs) ? data.pending_diffs : []);
     setAgentDocument(data.document?.schema_version === 1 ? data.document : null);
@@ -835,6 +837,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setAgentInput("");
     setAgentError("");
     setAgentLoading(true);
+    setAgentAssessment({});
     setAgentToolSpans([]);
     setAgentProgress("Reading resume evidence");
     lastAgentResponseRef.current = "";
@@ -3348,7 +3351,9 @@ CERTIFICATIONS
                 {agentToolSpans.length > 0 ? agentToolSpans.map((span, index) => (
                   <div key={`${span.name || "tool"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-xs text-[#6A89A7]">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="font-semibold text-[#384959]">{span.name || "tool"}</span>
+                      <span className="font-semibold text-[#384959]">
+                        {span.worker && span.worker !== "orchestrator" ? `${String(span.worker).replaceAll("_", " ")} · ` : ""}{span.name || "tool"}
+                      </span>
                       <span>{span.status || "unknown"}{Number.isFinite(span.duration_ms) ? ` · ${span.duration_ms} ms` : ""}</span>
                     </div>
                     {Array.isArray(span.input_keys) && span.input_keys.length > 0 && (
@@ -3360,24 +3365,52 @@ CERTIFICATIONS
                   </div>
                 )) : (
                   <div className="text-xs leading-relaxed text-[#6A89A7]">
-                    No orchestrator tool was needed yet. The five reviewer calls use supplied evidence rather than tools.
+                    Tool calls will appear as each independent reviewer completes its required research or validation pass.
                   </div>
                 )}
               </div>
             </details>
 
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-              <div className="text-sm font-semibold text-[#384959]">Reviewer Notes</div>
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-[#384959]">Independent Reviewer Assessments</div>
+                {Number.isFinite(agentAssessment.score) && (
+                  <span className="rounded-full bg-[#BDDDFC]/20 px-2.5 py-1 text-xs font-semibold text-[#384959]">
+                    Median {agentAssessment.score}/100
+                  </span>
+                )}
+              </div>
               <div className="mt-3 space-y-2">
                 {agentFindings.length > 0 ? agentFindings.map((finding, index) => (
                   <div key={`${finding.persona || "persona"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-sm text-[#384959]">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold capitalize">{String(finding.persona || "reviewer").replaceAll("_", " ")}</span>
                       {finding.category && <span className="text-xs text-[#6A89A7]">{finding.category}</span>}
+                      {Number.isFinite(finding.score) && <span className="ml-auto text-xs font-semibold text-[#384959]">{finding.score}/100</span>}
                     </div>
-                    <div className="mt-1 leading-relaxed">{finding.finding || finding.message || ""}</div>
-                    {finding.rationale && <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">Why: {finding.rationale}</div>}
-                    {finding.suggested_action && <div className="mt-1 text-xs leading-relaxed text-[#384959]"><span className="font-semibold">Next:</span> {finding.suggested_action}</div>}
+                    {finding.summary && <div className="mt-2 text-sm font-medium leading-relaxed text-[#384959]">{finding.summary}</div>}
+                    {Array.isArray(finding.strengths) && finding.strengths.length > 0 && (
+                      <div className="mt-2 text-xs leading-relaxed text-emerald-700"><span className="font-semibold">Strength:</span> {finding.strengths.join(" ")}</div>
+                    )}
+                    {Array.isArray(finding.weaknesses) && finding.weaknesses.length > 0 && (
+                      <div className="mt-1 text-xs leading-relaxed text-rose-700"><span className="font-semibold">Weakness:</span> {finding.weaknesses.join(" ")}</div>
+                    )}
+                    {(finding.reasoning || finding.rationale) && <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]"><span className="font-semibold">Reasoning:</span> {finding.reasoning || finding.rationale}</div>}
+                    {(finding.suggested_actions?.[0] || finding.suggested_action) && <div className="mt-1 text-xs leading-relaxed text-[#384959]"><span className="font-semibold">Next:</span> {(finding.suggested_actions || [finding.suggested_action]).join(" ")}</div>}
+                    {Array.isArray(finding.findings) && finding.findings.length > 0 && (
+                      <details className="mt-2 border-t border-[#BDDDFC]/30 pt-2 text-xs text-[#6A89A7]">
+                        <summary className="cursor-pointer font-semibold">Evidence methods</summary>
+                        <div className="mt-2 space-y-2">
+                          {finding.findings.map((item, itemIndex) => (
+                            <div key={`${item.source || "source"}-${item.source_location || itemIndex}`}>
+                              <span className="font-semibold capitalize">{item.kind} · {Math.round(Number(item.relevance_score || 0) * 100)}%</span>
+                              <div>{item.method}</div>
+                              <div>Source: {item.source} · {item.source_location}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </details>
+                    )}
                     {Array.isArray(finding.evidence_ids) && finding.evidence_ids.length > 0 && (
                       <div className="mt-2 border-t border-[#BDDDFC]/30 pt-2 text-xs leading-relaxed text-[#6A89A7]">
                         <span className="font-semibold">Resume evidence:</span>{" "}
@@ -3394,6 +3427,9 @@ CERTIFICATIONS
                         <span className="font-semibold">Target-job evidence:</span>{" "}
                         {finding.target_job_fields.join(", ")}
                       </div>
+                    )}
+                    {Array.isArray(finding.research_job_ids) && finding.research_job_ids.length > 0 && (
+                      <div className="mt-1 text-xs text-[#6A89A7]"><span className="font-semibold">Compared jobs:</span> {finding.research_job_ids.join(", ")}</div>
                     )}
                   </div>
                 )) : (

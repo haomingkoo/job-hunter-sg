@@ -222,7 +222,7 @@ describe("ResumeTab Agent v2", () => {
     expect(container.textContent).toContain("Resume evidence:");
     expect(container.textContent).toContain("Built data pipeline processing 10M events daily");
     expect(container.textContent).toContain("Target-job evidence: description, terms");
-    expect(container.textContent).toContain("Why: The cited bullet supports the role requirement.");
+    expect(container.textContent).toContain("Reasoning: The cited bullet supports the role requirement.");
     expect(container.textContent).toContain("score_resume");
     expect(container.textContent).toContain("success · 24 ms");
     expect(container.textContent).toContain("overall_score=78");

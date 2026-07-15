@@ -101,7 +101,7 @@ GovTech | AI Project Lead | Jan 2022 - Present
         for event in reversed(first_events)
         if event.get("event") == "token" and event.get("content")
     )
-    assessment_headings = ["Strengths", "Weaknesses", "LLM assessment score", "Reasoning", "Next actions"]
+    assessment_headings = ["Summary", "Strengths", "Weaknesses", "Independent reviewer score", "Reasoning", "Next actions"]
     assessment_positions = [first_assessment.index(heading) for heading in assessment_headings]
     assert assessment_positions == sorted(assessment_positions)
 

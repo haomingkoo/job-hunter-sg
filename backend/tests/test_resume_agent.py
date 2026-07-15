@@ -146,7 +146,7 @@ def test_search_jobs_detail_expands_job_payload(monkeypatch):
 
     assert result["detail"] is True
     assert result["results"][0]["description"] == "Build agentic AI workflows for public services."
-    assert result["results"][0]["parsed_jd"] == {"required_skills": ["Python"]}
+    assert "parsed_jd" not in result["results"][0]
 
 
 def test_search_jobs_empty_results_are_explicit(monkeypatch):
@@ -251,16 +251,15 @@ def test_agent_prompt_marks_job_tool_results_as_untrusted():
     assert "untrusted reference data" in ORCHESTRATOR_SYSTEM_PROMPT
 
 
-def test_agent_prompt_publishes_llm_assessment_rubric_and_order():
+def test_agent_prompt_puts_summary_first_and_preserves_worker_score():
     from resume_agent.prompts import ORCHESTRATOR_SYSTEM_PROMPT
 
-    headings = ["Strengths", "Weaknesses", "LLM assessment score", "Reasoning", "Next actions"]
+    headings = ["Summary", "Strengths", "Weaknesses", "Independent reviewer score", "Reasoning", "Next actions"]
     positions = [ORCHESTRATOR_SYSTEM_PROMPT.index(heading) for heading in headings]
 
     assert positions == sorted(positions)
-    assert "Evidence and demonstrated impact: 30" in ORCHESTRATOR_SYSTEM_PROMPT
-    assert "Target-role fit, or career narrative when no target job exists: 25" in ORCHESTRATOR_SYSTEM_PROMPT
-    assert 'Label it "LLM assessment score"' in ORCHESTRATOR_SYSTEM_PROMPT
+    assert "deterministic" in ORCHESTRATOR_SYSTEM_PROMPT
+    assert "Do not rescore" in ORCHESTRATOR_SYSTEM_PROMPT
 
 
 def test_tool_span_recorder_keeps_status_not_sensitive_values():
@@ -280,6 +279,7 @@ def test_tool_span_recorder_keeps_status_not_sensitive_values():
     recorder.on_tool_end({"overall_score": 82, "private": "secret resume text"}, run_id=run_id)
 
     assert recorder.spans == [{
+        "worker": "orchestrator",
         "name": "score_resume",
         "status": "success",
         "duration_ms": recorder.spans[0]["duration_ms"],
@@ -287,6 +287,22 @@ def test_tool_span_recorder_keeps_status_not_sensitive_values():
         "result": {"overall_score": 82},
     }]
     assert "secret resume text" not in json.dumps(recorder.spans)
+
+
+def test_multi_agent_score_is_deterministic_median_with_disagreement_range():
+    import resume_agent.session as agent_session
+
+    result = agent_session._reduce_worker_scores([
+        {"persona": "recruiter", "score": 68},
+        {"persona": "hiring_manager", "score": 82},
+        {"persona": "ats", "score": 74},
+        {"persona": "skeptic", "score": 60},
+        {"persona": "market_researcher", "score": 79},
+    ])
+
+    assert result["score"] == 74
+    assert result["score_method"] == "median of independent worker scores"
+    assert result["score_range"] == 22
 
 
 def test_agent_calls_search_jobs_for_role_query():
@@ -370,7 +386,7 @@ def test_propose_edit_rejects_fabricated_metric():
     assert "Unsupported numeric facts" in result["reason"]
 
 
-def test_persona_subagent_uses_smart_model_and_no_tools(monkeypatch):
+def test_persona_subagents_have_bounded_shared_tools(monkeypatch):
     import config
     import resume_agent.models as agent_models
     import resume_agent.personas as personas
@@ -388,9 +404,8 @@ def test_persona_subagent_uses_smart_model_and_no_tools(monkeypatch):
         "market_researcher",
     }
     for subagent in subagents:
-        assert subagent["tools"] == []
-        assert subagent["model"].model_name == config.SEALION_SMART_MODEL
-        assert subagent["model"].max_tokens >= config.SMART_MIN_MAX_TOKENS
+        assert subagent["tools"] == personas._WORKER_TOOLS[subagent["name"]]
+        assert subagent["model"].model_name == config.SEALION_AGENT_MODEL
         assert "Workflow:" in subagent["system_prompt"]
         assert "Good:" in subagent["system_prompt"]
         assert "Avoid:" in subagent["system_prompt"]
@@ -410,12 +425,15 @@ def test_persona_reviews_require_canonical_evidence_ids():
         def invoke(self, messages):
             persona = messages[0].content.split("\n", 1)[0].split(":", 1)[1].strip()
             return AIMessage(content=json.dumps({
+                "summary": f"{persona} conclusion",
                 "category": "clarity",
-                "evidence_ids": [evidence_id],
-                "target_job_fields": [],
-                "message": f"{persona} finding",
-                "rationale": "The cited block supports this finding.",
-                "suggested_action": "Clarify the result without inventing metrics.",
+                "findings": [
+                    {"kind": "strength", "finding": "The cited block shows relevant delivery.", "source": "resume", "source_location": evidence_id, "method": "Reviewed cited evidence.", "relevance_score": 0.9},
+                    {"kind": "weakness", "finding": f"{persona} found an unclear result.", "source": "resume", "source_location": evidence_id, "method": "Checked result clarity.", "relevance_score": 0.8},
+                ],
+                "score": 72,
+                "reasoning": "The cited block supports the assessment.",
+                "suggested_actions": ["Clarify the result without inventing metrics."],
             }))
 
     findings = list(personas.iter_persona_reviews(document, FakeModel(), include_market=False))
@@ -424,6 +442,80 @@ def test_persona_reviews_require_canonical_evidence_ids():
         "recruiter", "hiring_manager", "ats", "skeptic",
     }
     assert all(finding["evidence_ids"] == [evidence_id] for finding in findings)
+
+
+def test_persona_worker_uses_required_tool_and_records_its_own_span():
+    import json
+
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from resume_document import create_resume_document
+    import resume_agent.personas as personas
+
+    document = create_resume_document("EXPERIENCE\n- Built a data platform for 100 users")
+    evidence_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
+
+    class ToolCallingFakeModel(FakeMessagesListChatModel):
+        def bind_tools(self, _tools, **_kwargs):
+            return self
+
+    model = ToolCallingFakeModel(responses=[
+        AIMessage(content="", tool_calls=[{
+            "name": "score_resume",
+            "args": {"resume_text": document["raw_text"]},
+            "id": "score-call",
+        }]),
+        AIMessage(content=json.dumps({
+            "summary": "The delivery is credible but the outcome needs context.",
+            "category": "first screen",
+            "findings": [
+                {"kind": "strength", "finding": "The bullet quantifies delivery scale.", "source": "resume", "source_location": evidence_id, "method": "Reviewed the cited bullet and deterministic scorecard.", "relevance_score": 0.9},
+                {"kind": "weakness", "finding": "The user impact is not explained.", "source": "resume", "source_location": evidence_id, "method": "Checked whether the quantified scale includes an outcome.", "relevance_score": 0.8},
+            ],
+            "score": 74,
+            "reasoning": "The resume has visible scale but limited outcome evidence.",
+            "suggested_actions": ["Clarify the supported user outcome."],
+        })),
+    ])
+
+    finding = personas._persona_review("recruiter", document, model)
+
+    assert finding is not None
+    assert finding["score"] == 74
+    assert finding["tool_spans"][0]["worker"] == "recruiter"
+    assert finding["tool_spans"][0]["name"] == "score_resume"
+    assert finding["tool_spans"][0]["status"] == "success"
+
+
+def test_persona_worker_result_is_rejected_when_required_tool_is_skipped():
+    import json
+
+    from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+    from langchain_core.messages import AIMessage
+    from resume_document import create_resume_document
+    import resume_agent.personas as personas
+
+    document = create_resume_document("EXPERIENCE\n- Built a data platform")
+    evidence_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
+    payload = json.dumps({
+        "summary": "The resume has one relevant but underspecified example.",
+        "category": "first screen",
+        "findings": [
+            {"kind": "strength", "finding": "The bullet shows delivery.", "source": "resume", "source_location": evidence_id, "method": "Reviewed the cited bullet.", "relevance_score": 0.8},
+            {"kind": "weakness", "finding": "The outcome is unclear.", "source": "resume", "source_location": evidence_id, "method": "Checked outcome evidence.", "relevance_score": 0.8},
+        ],
+        "score": 65,
+        "reasoning": "The evidence is relevant but incomplete.",
+        "suggested_actions": ["Clarify the supported outcome."],
+    })
+
+    class ToolCallingFakeModel(FakeMessagesListChatModel):
+        def bind_tools(self, _tools, **_kwargs):
+            return self
+
+    model = ToolCallingFakeModel(responses=[AIMessage(content=payload), AIMessage(content=payload)])
+
+    assert personas._persona_review("recruiter", document, model) is None
 
 
 def test_persona_review_discards_unknown_evidence_ids():
@@ -441,12 +533,15 @@ def test_persona_review_discards_unknown_evidence_ids():
         def invoke(self, _messages):
             self.calls += 1
             return AIMessage(content=json.dumps({
+                "summary": "The citation is invalid.",
                 "category": "clarity",
-                "evidence_ids": ["b_unknown"],
-                "target_job_fields": [],
-                "message": "Unsupported finding",
-                "rationale": "The evidence does not exist.",
-                "suggested_action": "Change it.",
+                "findings": [
+                    {"kind": "strength", "finding": "The resume contains delivery evidence.", "source": "resume", "source_location": "b_unknown", "method": "Reviewed citation.", "relevance_score": 0.8},
+                    {"kind": "weakness", "finding": "The result is unsupported.", "source": "resume", "source_location": "b_unknown", "method": "Checked support.", "relevance_score": 0.9},
+                ],
+                "score": 40,
+                "reasoning": "The evidence ID is invalid.",
+                "suggested_actions": ["Change it."],
             }))
 
     model = FakeModel()
@@ -479,12 +574,15 @@ def test_persona_review_retries_once_after_fixable_validation_failure():
                 return AIMessage(content="not json")
             self.retry_prompt = messages[-1].content
             return AIMessage(content=json.dumps({
+                "summary": "The delivery result needs clarification.",
                 "category": "clarity",
-                "evidence_ids": [evidence_id],
-                "target_job_fields": [],
-                "message": "The result is unclear.",
-                "rationale": "The cited bullet describes work without its outcome.",
-                "suggested_action": "Add the supported result.",
+                "findings": [
+                    {"kind": "strength", "finding": "The bullet shows platform delivery.", "source": "resume", "source_location": evidence_id, "method": "Reviewed delivery evidence.", "relevance_score": 0.8},
+                    {"kind": "weakness", "finding": "The result is unclear.", "source": "resume", "source_location": evidence_id, "method": "Checked outcome clarity.", "relevance_score": 0.9},
+                ],
+                "score": 65,
+                "reasoning": "The cited bullet describes work without its outcome.",
+                "suggested_actions": ["Add the supported result."],
             }))
 
     model = FakeModel()
@@ -511,12 +609,15 @@ def test_market_persona_receives_xml_delimited_job_snapshot():
         def invoke(self, messages):
             self.messages = messages
             return AIMessage(content=json.dumps({
+                "summary": "The resume shows partial alignment with the target role.",
                 "category": "role alignment",
-                "evidence_ids": [evidence_id],
-                "target_job_fields": ["description"],
-                "message": "The resume shows relevant process automation.",
-                "rationale": "The cited bullet aligns with the selected role.",
-                "suggested_action": "Make the finance scope easier to scan.",
+                "findings": [
+                    {"kind": "strength", "finding": "The resume shows relevant process automation.", "source": "resume", "source_location": evidence_id, "method": "Compared resume evidence with the target role.", "relevance_score": 0.9},
+                    {"kind": "weakness", "finding": "The finance scope is difficult to scan.", "source": "target_job", "source_location": "description", "method": "Compared target responsibilities with visible resume scope.", "relevance_score": 0.8},
+                ],
+                "score": 78,
+                "reasoning": "The cited bullet aligns with the selected role.",
+                "suggested_actions": ["Make the finance scope easier to scan."],
             }))
 
     model = FakeModel()
@@ -759,6 +860,31 @@ def test_agent_prompt_escapes_resume_and_profile_xml_boundaries():
     assert "do not call get_job merely to re-fetch it" in prompt.lower()
     assert datetime.now(ZoneInfo("Asia/Singapore")).date().isoformat() in prompt
     assert "do not call a past or current date future-dated" in prompt
+
+
+def test_synthesis_prompt_excludes_worker_traces_and_compatibility_duplicates():
+    import resume_agent.session as agent_session
+
+    prompt = agent_session._build_prompt({
+        "message": "Synthesize",
+        "persona_findings": [{
+            "persona": "ats",
+            "summary": "Clear structure.",
+            "category": "parsing",
+            "findings": [{"kind": "strength", "finding": "Sections are readable."}],
+            "score": 80,
+            "reasoning": "The structure is consistent.",
+            "suggested_actions": ["Keep headings stable."],
+            "tool_spans": [{"name": "score_resume", "duration_ms": 99}],
+            "message": "duplicate compatibility text",
+            "rationale": "duplicate reasoning",
+        }],
+    })
+
+    assert "Clear structure." in prompt
+    assert "score_resume" not in prompt
+    assert "duplicate compatibility text" not in prompt
+    assert "duplicate reasoning" not in prompt
 
 
 def test_missing_agent_credentials_return_error_event(monkeypatch):
