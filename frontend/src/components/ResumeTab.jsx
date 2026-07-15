@@ -376,6 +376,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [agentTodos, setAgentTodos] = useState([]);
   const [agentFindings, setAgentFindings] = useState([]);
   const [agentAssessment, setAgentAssessment] = useState({});
+  const [agentJudgeAssessment, setAgentJudgeAssessment] = useState({});
+  const [agentJudgeRun, setAgentJudgeRun] = useState({});
   const [agentWorkerRuns, setAgentWorkerRuns] = useState([]);
   const [agentToolSpans, setAgentToolSpans] = useState([]);
   const [agentPendingDiffs, setAgentPendingDiffs] = useState([]);
@@ -793,6 +795,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setAgentTodos(Array.isArray(data.todos) ? data.todos : []);
     setAgentFindings(Array.isArray(data.persona_findings) ? data.persona_findings : []);
     setAgentAssessment(data.multi_agent_assessment || {});
+    setAgentJudgeAssessment(data.judge_assessment || {});
+    setAgentJudgeRun(data.judge_run || {});
     setAgentWorkerRuns(Array.isArray(data.worker_runs) ? data.worker_runs : []);
     setAgentToolSpans(Array.isArray(data.tool_spans) ? data.tool_spans : []);
     setAgentPendingDiffs(Array.isArray(data.pending_diffs) ? data.pending_diffs : []);
@@ -840,6 +844,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setAgentError("");
     setAgentLoading(true);
     setAgentAssessment({});
+    setAgentJudgeAssessment({});
+    setAgentJudgeRun({});
     setAgentWorkerRuns([]);
     setAgentToolSpans([]);
     setAgentProgress("Reading resume evidence");
@@ -3349,13 +3355,13 @@ CERTIFICATIONS
             </div>
 
             <details className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-              <summary className="cursor-pointer text-sm font-semibold text-[#384959]">Tool activity</summary>
+              <summary className="cursor-pointer text-sm font-semibold text-[#384959]">Agent spans</summary>
               <div className="mt-3 space-y-2">
                 {agentToolSpans.length > 0 ? agentToolSpans.map((span, index) => (
                   <div key={`${span.name || "tool"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-xs text-[#6A89A7]">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-semibold text-[#384959]">
-                        {span.worker && span.worker !== "orchestrator" ? `${String(span.worker).replaceAll("_", " ")} · ` : ""}{span.name || "tool"}
+                        {span.worker && span.worker !== "orchestrator" ? `${String(span.worker).replaceAll("_", " ")} · ` : ""}{span.kind === "llm" ? `${span.phase || "model"} · ` : ""}{span.name || span.kind || "span"}
                       </span>
                       <span>{span.status || "unknown"}{Number.isFinite(span.duration_ms) ? ` · ${span.duration_ms} ms` : ""}</span>
                     </div>
@@ -3368,7 +3374,7 @@ CERTIFICATIONS
                   </div>
                 )) : (
                   <div className="text-xs leading-relaxed text-[#6A89A7]">
-                    Tool calls will appear as each independent reviewer completes its required research or validation pass.
+                    Model and tool spans will appear as each independent reviewer completes its research and assessment.
                   </div>
                 )}
               </div>
@@ -3450,6 +3456,46 @@ CERTIFICATIONS
                   <div className="text-sm text-[#6A89A7]">Findings will appear after the agent reviews the draft.</div>
                 )}
               </div>
+            </div>
+
+            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-[#384959]">Assessment Quality Judge</div>
+                {Number.isFinite(agentJudgeAssessment.score) && (
+                  <span className="rounded-full bg-[#BDDDFC]/20 px-2.5 py-1 text-xs font-semibold text-[#384959]">
+                    {agentJudgeAssessment.score}/100
+                  </span>
+                )}
+              </div>
+              {agentJudgeRun.status === "error" ? (
+                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
+                  <div className="font-semibold">Independent quality check unavailable</div>
+                  <div className="mt-1">{agentJudgeRun.remaining_gap || "The review remains available, but its write-up quality was not independently graded."}</div>
+                </div>
+              ) : agentJudgeAssessment.verdict ? (
+                <div className="mt-3 space-y-2 text-xs leading-relaxed">
+                  <div className="text-sm font-medium text-[#384959]">{agentJudgeAssessment.verdict}</div>
+                  <div className="text-emerald-700"><span className="font-semibold">Strengths:</span> {(agentJudgeAssessment.strengths || []).map((item) => item.finding).join(" ")}</div>
+                  <div className="text-rose-700"><span className="font-semibold">Weaknesses:</span> {(agentJudgeAssessment.weaknesses || []).map((item) => item.finding).join(" ")}</div>
+                  <div className="text-[#6A89A7]"><span className="font-semibold">Reasoning:</span> {agentJudgeAssessment.reasoning}</div>
+                  {Array.isArray(agentJudgeAssessment.evidence_gaps) && agentJudgeAssessment.evidence_gaps.length > 0 && (
+                    <div className="text-amber-800"><span className="font-semibold">Unavailable or unverified:</span> {agentJudgeAssessment.evidence_gaps.join(" ")}</div>
+                  )}
+                  <details className="border-t border-[#BDDDFC]/30 pt-2 text-[#6A89A7]">
+                    <summary className="cursor-pointer font-semibold">Judge citations</summary>
+                    <div className="mt-1">
+                      {[...(agentJudgeAssessment.strengths || []), ...(agentJudgeAssessment.weaknesses || [])]
+                        .map((item) => item.source)
+                        .filter(Boolean)
+                        .join(", ")}
+                    </div>
+                  </details>
+                </div>
+              ) : (
+                <div className="mt-3 text-sm leading-relaxed text-[#6A89A7]">
+                  The judge runs after the final assessment and grades its evidence, balance, honesty, usefulness, and clarity.
+                </div>
+              )}
             </div>
 
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">

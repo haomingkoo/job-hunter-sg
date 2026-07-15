@@ -20,6 +20,7 @@ from resume_document import apply_resume_patch, create_resume_document
 from resume_structurer import get_all_bullets, structure_resume
 
 from .agent import create_resume_agent, run_agent_turn
+from .judge import judge_assessment
 from .models import ResumeAgentConfigurationError
 from .personas import iter_persona_worker_runs
 from .tracing import ToolSpanRecorder
@@ -68,6 +69,8 @@ def _new_state(session_id: str) -> dict:
         "persona_findings": [],
         "worker_runs": [],
         "multi_agent_assessment": {},
+        "judge_assessment": {},
+        "judge_run": {},
         "tool_spans": [],
         "pending_diffs": [],
         "messages": [],
@@ -498,6 +501,8 @@ def _stream_chat_events(
             state["worker_runs"] = []
             state["review_status"] = "running"
             state["multi_agent_assessment"] = {}
+            state["judge_assessment"] = {}
+            state["judge_run"] = {}
             yield {
                 "event": "progress",
                 "session_id": session_id,
@@ -507,6 +512,7 @@ def _stream_chat_events(
                 document,
                 include_market=bool(job_context),
                 job_context=job_context,
+                session_id=session_id,
             ):
                 state["worker_runs"].append(run)
                 if run.get("status") != "success":
@@ -532,6 +538,21 @@ def _stream_chat_events(
                 else "success" if completed_count
                 else "error"
             )
+            if failed_count:
+                log.warning("resume_agent_workflow_problem %s", json.dumps({
+                    "trace_id": session_id,
+                    "status": state["review_status"],
+                    "successful_worker_count": completed_count,
+                    "failed_workers": [
+                        {
+                            "persona": run.get("persona"),
+                            "failure_type": run.get("failure_type"),
+                            "error_code": (run.get("error") or {}).get("code"),
+                        }
+                        for run in state["worker_runs"]
+                        if run.get("status") != "success"
+                    ],
+                }, separators=(",", ":")))
             state["multi_agent_assessment"] = _reduce_worker_scores(
                 state["persona_findings"]
             )
@@ -554,7 +575,7 @@ def _stream_chat_events(
             "worker_runs": state.get("worker_runs", []),
             "multi_agent_assessment": state.get("multi_agent_assessment", {}),
         })
-        tool_spans = _ToolSpanRecorder()
+        tool_spans = _ToolSpanRecorder(trace_id=session_id)
         worker_spans = [
             span
             for run in state.get("worker_runs", [])
@@ -587,6 +608,33 @@ def _stream_chat_events(
             state.get("pending_diffs", []),
             str(document.get("revision") or ""),
         )
+        final_assessment = next((
+            str(message.content)
+            for message in reversed(result.get("messages", []))
+            if isinstance(message, AIMessage) and message.content
+        ), "")
+        if final_assessment and not result.get("stopped") and agent is None:
+            yield {
+                "event": "progress",
+                "session_id": session_id,
+                "message": "Quality-checking final assessment",
+            }
+            state["judge_run"] = judge_assessment(
+                final_assessment,
+                state.get("persona_findings", []),
+                state.get("worker_runs", []),
+                trace_id=session_id,
+            )
+            state["judge_assessment"] = state["judge_run"].get("assessment", {})
+            state["tool_spans"] = [
+                *state["tool_spans"],
+                *state["judge_run"].get("tool_spans", []),
+            ]
+            yield {
+                "event": "judge" if state["judge_run"].get("status") == "success" else "judge_error",
+                "session_id": session_id,
+                "judge_run": state["judge_run"],
+            }
         _append_message(state, {"role": "user", "content": str(body.get("message", ""))})
 
         for event in _event_messages(result, session_id):

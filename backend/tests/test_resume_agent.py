@@ -296,7 +296,11 @@ def test_tool_span_recorder_keeps_status_not_sensitive_values():
     recorder.on_tool_end({"overall_score": 82, "private": "secret resume text"}, run_id=run_id)
 
     assert recorder.spans == [{
+        "kind": "tool",
+        "trace_id": "",
         "worker": "orchestrator",
+        "attempt": None,
+        "phase": "orchestrator",
         "name": "score_resume",
         "status": "success",
         "duration_ms": recorder.spans[0]["duration_ms"],
@@ -304,6 +308,127 @@ def test_tool_span_recorder_keeps_status_not_sensitive_values():
         "result": {"overall_score": 82},
     }]
     assert "secret resume text" not in json.dumps(recorder.spans)
+
+
+def test_span_recorder_tracks_redacted_llm_latency_and_tokens():
+    import json
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from resume_agent.tracing import ToolSpanRecorder
+
+    recorder = ToolSpanRecorder(worker="ats", trace_id="session-1", attempt=2)
+    recorder.set_phase("assessment")
+    run_id = uuid4()
+    recorder.on_chat_model_start(
+        {"name": "ChatOpenAI"},
+        [["secret prompt"]],
+        run_id=run_id,
+        invocation_params={"model_name": "test-model"},
+    )
+    recorder.on_llm_end(
+        SimpleNamespace(llm_output={
+            "model_name": "test-model",
+            "token_usage": {
+                "prompt_tokens": 120,
+                "completion_tokens": 30,
+                "total_tokens": 150,
+            },
+        }),
+        run_id=run_id,
+    )
+
+    span = recorder.spans[0]
+    assert span["kind"] == "llm"
+    assert span["trace_id"] == "session-1"
+    assert span["worker"] == "ats"
+    assert span["attempt"] == 2
+    assert span["phase"] == "assessment"
+    assert span["status"] == "success"
+    assert span["result"] == {
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "total_tokens": 150,
+        "model": "test-model",
+    }
+    assert "secret prompt" not in json.dumps(span)
+
+
+def test_quality_judge_scores_the_writeup_with_cited_strengths_and_weaknesses():
+    import json
+
+    from langchain_core.messages import AIMessage
+
+    from resume_agent.judge import judge_assessment
+
+    class FakeJudgeModel:
+        def invoke(self, messages, config=None):
+            assert "<rubric>" in messages[0].content
+            assert "<final_assessment_data>" in messages[1].content
+            return AIMessage(content=json.dumps({
+                "verdict": "The assessment is useful but omits one failed specialist lens.",
+                "strengths": [{
+                    "finding": "It leads with a decision-useful conclusion.",
+                    "source": "final_assessment",
+                }],
+                "weaknesses": [{
+                    "finding": "It does not disclose the unavailable market comparison.",
+                    "source": "worker_failure:market_researcher",
+                }],
+                "score": 76,
+                "reasoning": "Evidence use is strong, with a material honesty deduction.",
+                "evidence_gaps": ["Market comparison is unavailable."],
+            }))
+
+    run = judge_assessment(
+        "Summary\nClear role fit.",
+        [{"persona": "recruiter", "summary": "Clear role fit.", "score": 80}],
+        [{
+            "persona": "market_researcher",
+            "status": "error",
+            "failure_type": "timeout",
+            "remaining_gap": "Market comparison is unavailable.",
+            "retryable": True,
+        }],
+        trace_id="judge-test",
+        model=FakeJudgeModel(),
+    )
+
+    assert run["status"] == "success"
+    assert run["assessment"]["score"] == 76
+    assert run["assessment"]["strengths"][0]["source"] == "final_assessment"
+    assert run["assessment"]["weaknesses"][0]["source"] == "worker_failure:market_researcher"
+
+
+def test_quality_judge_does_not_retry_authentication_failure():
+    import json
+
+    from resume_agent.judge import judge_assessment
+
+    AuthenticationError = type("AuthenticationError", (Exception,), {})
+
+    class UnauthorizedModel:
+        def invoke(self, _messages, config=None):
+            raise AuthenticationError("secret provider detail")
+
+    run = judge_assessment(
+        "Summary\nClear role fit.",
+        [{"persona": "recruiter", "summary": "Clear role fit.", "score": 80}],
+        [],
+        trace_id="judge-auth-test",
+        model=UnauthorizedModel(),
+    )
+
+    assert run["status"] == "error"
+    assert run["failure_type"] == "authentication"
+    assert run["attempt_count"] == 1
+    assert run["retryable"] is False
+    assert run["local_recovery_attempts"] == [{
+        "attempt": 1,
+        "outcome": "failed",
+        "failure": "model_error:AuthenticationError",
+    }]
+    assert "secret provider detail" not in json.dumps(run)
 
 
 def test_multi_agent_score_is_deterministic_median_with_disagreement_range():
@@ -428,6 +553,104 @@ def test_persona_subagents_have_bounded_shared_tools(monkeypatch):
         assert "Avoid:" in subagent["system_prompt"]
 
 
+def test_research_personas_must_cite_a_job_returned_by_their_search():
+    import resume_agent.personas as personas
+
+    hiring_prompt = personas._worker_system_prompt(
+        "hiring_manager",
+        personas._PERSONA_BY_NAME["hiring_manager"][1],
+    )
+    recruiter_prompt = personas._worker_system_prompt(
+        "recruiter",
+        personas._PERSONA_BY_NAME["recruiter"][1],
+    )
+
+    assert "research_job_ids must contain" in hiring_prompt
+    assert "research_job_ids must contain" not in recruiter_prompt
+
+
+def test_research_worker_places_returned_job_ids_in_final_citation_check(monkeypatch):
+    import json
+
+    from langchain_core.messages import AIMessage
+
+    import resume_agent.personas as personas
+    from resume_agent.tracing import ToolSpanRecorder
+
+    class BoundModel:
+        calls = []
+
+        def bind_tools(self, tools, **_kwargs):
+            self.tools = tools
+            return self
+
+        def invoke(self, messages, config=None):
+            self.calls.append(messages)
+            if len(self.calls) == 1:
+                return AIMessage(content="", tool_calls=[{
+                    "name": "search_jobs",
+                    "args": {"query": "Finance Manager", "n": 1},
+                    "id": "search-1",
+                }])
+            assert any("internal job IDs 42" in message.content for message in messages)
+            return AIMessage(content=json.dumps({"summary": "done"}))
+
+    monkeypatch.setattr(
+        personas.search_jobs,
+        "func",
+        lambda **_kwargs: {
+            "ok": True,
+            "query_executed": True,
+            "results": [{"id": 42, "title": "Finance Manager"}],
+            "result_count": 1,
+        },
+    )
+    model = BoundModel()
+    personas._invoke_worker(
+        model,
+        "hiring_manager",
+        "Review the role.",
+        "Resume evidence.",
+        ToolSpanRecorder("hiring_manager"),
+    )
+
+
+def test_research_worker_can_cite_a_secondary_job_separately_from_primary_evidence():
+    from resume_document import create_resume_document
+
+    import resume_agent.personas as personas
+    from resume_agent.tracing import ToolSpanRecorder
+
+    document = create_resume_document("EXPERIENCE\n- Led finance process automation")
+    evidence_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
+    recorder = ToolSpanRecorder("hiring_manager")
+    recorder.source_job_ids.add(42)
+    recorder.spans.append({"name": "search_jobs", "status": "success", "result": {"ok": True}})
+    parsed = {
+        "summary": "The resume shows relevant delivery with a scope gap.",
+        "category": "delivery scope",
+        "findings": [
+            {"kind": "strength", "finding": "The bullet shows ownership.", "source": "resume", "source_location": evidence_id, "method": "Compared the resume with internal job 42.", "relevance_score": 0.9},
+            {"kind": "weakness", "finding": "The target scope is not explicit.", "source": "target_job", "source_location": "description", "method": "Compared supplied target responsibilities.", "relevance_score": 0.8},
+        ],
+        "research_job_ids": [42],
+        "score": 70,
+        "reasoning": "Delivery evidence is relevant but incomplete.",
+        "suggested_actions": ["Clarify supported scope."],
+    }
+
+    finding, reason = personas._validated_finding(
+        "hiring_manager",
+        parsed,
+        document,
+        {"description": "Lead finance process intelligence."},
+        recorder,
+    )
+
+    assert reason == ""
+    assert finding["research_job_ids"] == [42]
+
+
 def test_persona_reviews_require_canonical_evidence_ids():
     import json
 
@@ -499,12 +722,13 @@ def test_persona_worker_uses_required_tool_and_records_its_own_span():
 
     assert finding is not None
     assert finding["score"] == 74
-    assert finding["tool_spans"][0]["worker"] == "recruiter"
-    assert finding["tool_spans"][0]["name"] == "score_resume"
-    assert finding["tool_spans"][0]["status"] == "success"
+    tool_span = next(span for span in finding["tool_spans"] if span["kind"] == "tool")
+    assert tool_span["worker"] == "recruiter"
+    assert tool_span["name"] == "score_resume"
+    assert tool_span["status"] == "success"
 
 
-def test_persona_worker_result_is_rejected_when_required_tool_is_skipped():
+def test_persona_worker_result_is_rejected_when_required_tool_is_skipped(caplog):
     import json
 
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -543,6 +767,9 @@ def test_persona_worker_result_is_rejected_when_required_tool_is_skipped():
     assert run["remaining_gap"]
     assert run["suggested_alternatives"]
     assert run["retryable"] is True
+    assert "resume_agent_attempt_problem" in caplog.text
+    assert "resume_agent_problem" in caplog.text
+    assert "Built a data platform" not in caplog.text
 
 
 def test_persona_review_discards_unknown_evidence_ids():
@@ -674,7 +901,7 @@ def test_session_streams_and_persists_independent_persona_findings(monkeypatch):
     monkeypatch.setattr(
         agent_session,
         "iter_persona_worker_runs",
-        lambda _document, include_market, job_context=None: iter([{
+        lambda _document, include_market, job_context=None, session_id="": iter([{
             "persona": "recruiter",
             "status": "success",
             "attempt_count": 1,
@@ -692,6 +919,20 @@ def test_session_streams_and_persists_independent_persona_findings(monkeypatch):
         }]),
     )
     monkeypatch.setattr(agent_session, "create_resume_agent", lambda **_kwargs: FakeAgent())
+    monkeypatch.setattr(agent_session, "judge_assessment", lambda *_args, **_kwargs: {
+        "status": "success",
+        "attempt_count": 1,
+        "assessment": {
+            "verdict": "The synthesis is clear.",
+            "strengths": [{"finding": "Clear conclusion.", "source": "final_assessment"}],
+            "weaknesses": [{"finding": "Limited evidence.", "source": "reviewer:recruiter"}],
+            "score": 82,
+            "reasoning": "The write-up is concise but evidence is limited.",
+            "evidence_gaps": [],
+        },
+        "tool_spans": [],
+        "error": None,
+    })
 
     events = list(agent_session.stream_chat_events({
         "session_id": "persona-events",
@@ -707,6 +948,8 @@ def test_session_streams_and_persists_independent_persona_findings(monkeypatch):
     )
     assert any(event["event"] == "persona" and event["persona"] == "recruiter" for event in events)
     assert state["persona_findings"][0]["message"] == "Clarify the outcome."
+    assert state["judge_assessment"]["score"] == 82
+    assert any(event["event"] == "judge" for event in events)
 
 
 def test_session_keeps_successful_reviews_when_one_worker_fails(monkeypatch):
@@ -755,6 +998,11 @@ def test_session_keeps_successful_reviews_when_one_worker_fails(monkeypatch):
         ]),
     )
     monkeypatch.setattr(agent_session, "create_resume_agent", lambda **_kwargs: FakeAgent())
+    monkeypatch.setattr(agent_session, "judge_assessment", lambda *_args, **_kwargs: {
+        "status": "error",
+        "remaining_gap": "The final write-up was not independently graded.",
+        "tool_spans": [],
+    })
 
     events = list(agent_session.stream_chat_events({
         "session_id": "partial-worker-session",
