@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, cast
 
@@ -495,6 +496,7 @@ def _failure_run(
     retryable: bool,
     message: str,
     recovery_attempts: list[dict] | None = None,
+    duration_ms: int | None = None,
 ) -> dict:
     failure_stage = stage or _error_stage(reason)
     tool_names = {str(span.get("name")) for span in spans if span.get("name")}
@@ -516,6 +518,7 @@ def _failure_run(
             if isinstance(span.get("attempted_query"), str)
         )),
         "attempt_count": attempts,
+        "duration_ms": duration_ms,
         "partial_results": _partial_tool_results(spans),
         "local_recovery_attempts": recovery_attempts or [],
         "remaining_gap": remaining_gap,
@@ -537,6 +540,7 @@ def _worker_run(
     model: Any | None,
     job_context: dict | None = None,
 ) -> dict:
+    started_at = time.perf_counter()
     spec = _PERSONA_BY_NAME.get(name)
     if not spec:
         return _failure_run(
@@ -547,6 +551,7 @@ def _worker_run(
             stage="configuration",
             retryable=False,
             message="The requested reviewer is not configured.",
+            duration_ms=round((time.perf_counter() - started_at) * 1000),
         )
     _description, prompt = spec
     evidence = [
@@ -633,6 +638,8 @@ def _worker_run(
         finding, reason = _validated_finding(name, parsed, document, job_context, recorder)
         if finding:
             finding["tool_spans"] = all_spans
+            duration_ms = round((time.perf_counter() - started_at) * 1000)
+            finding["duration_ms"] = duration_ms
             return {
                 "persona": name,
                 "status": "success",
@@ -645,6 +652,7 @@ def _worker_run(
                     if isinstance(span.get("attempted_query"), str)
                 )),
                 "attempt_count": attempt + 1,
+                "duration_ms": duration_ms,
                 "partial_results": [],
                 "local_recovery_attempts": recovery_attempts,
                 "remaining_gap": None,
@@ -676,6 +684,7 @@ def _worker_run(
             "No unvalidated finding was used."
         ),
         recovery_attempts=recovery_attempts,
+        duration_ms=round((time.perf_counter() - started_at) * 1000),
     )
 
 

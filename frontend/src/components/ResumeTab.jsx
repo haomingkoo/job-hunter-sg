@@ -3399,6 +3399,7 @@ CERTIFICATIONS
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold capitalize">{String(finding.persona || "reviewer").replaceAll("_", " ")}</span>
                       {finding.category && <span className="text-xs text-[#6A89A7]">{finding.category}</span>}
+                      {Number.isFinite(finding.duration_ms) && <span className="text-xs text-[#6A89A7]">{Math.round(finding.duration_ms / 100) / 10}s</span>}
                       {Number.isFinite(finding.score) && <span className="ml-auto text-xs font-semibold text-[#384959]">{finding.score}/100</span>}
                     </div>
                     {finding.summary && <div className="mt-2 text-sm font-medium leading-relaxed text-[#384959]">{finding.summary}</div>}

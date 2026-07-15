@@ -282,6 +282,7 @@ def _build_prompt(body: dict) -> str:
                 "source",
                 "attempted_queries",
                 "attempt_count",
+                "duration_ms",
                 "partial_results",
                 "local_recovery_attempts",
                 "remaining_gap",
