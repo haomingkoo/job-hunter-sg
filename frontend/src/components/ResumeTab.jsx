@@ -62,6 +62,8 @@ import {
   getBulletFeedbackTabs,
   getBulletRewriteFocus,
   getRewriteButtonLabel,
+  getRewriteCacheKey,
+  isRewriteResultCurrent,
   getIssueLabel,
   evaluateRewriteOption,
   getRewriteOptionMeta,
@@ -80,6 +82,25 @@ export function buildAgentJobContext(job) {
     terms: job.jobTermsPreview || job.skills || [],
     location: job.location || "",
     source: job.source || "",
+  };
+}
+
+export function buildAgentScoreContext(score) {
+  if (!score || !Number.isFinite(score.overall_score)) return undefined;
+  return {
+    overall_score: score.overall_score,
+    quality_score: score.quality_score,
+    dimensions: Object.fromEntries(
+      Object.entries(score.dimensions || {}).map(([name, value]) => [
+        name,
+        { score: value?.score, max: value?.max },
+      ]),
+    ),
+    keyword_match: {
+      matched: score.keyword_match?.matched?.length || 0,
+      missing: score.keyword_match?.missing?.length || 0,
+      score_percent: score.keyword_match?.score_percent || 0,
+    },
   };
 }
 
@@ -354,6 +375,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [agentError, setAgentError] = useState("");
   const [agentTodos, setAgentTodos] = useState([]);
   const [agentFindings, setAgentFindings] = useState([]);
+  const [agentToolSpans, setAgentToolSpans] = useState([]);
   const [agentPendingDiffs, setAgentPendingDiffs] = useState([]);
   const [agentDocument, setAgentDocument] = useState(null);
   const [agentApplyingDiffId, setAgentApplyingDiffId] = useState("");
@@ -768,6 +790,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     const data = await response.json();
     setAgentTodos(Array.isArray(data.todos) ? data.todos : []);
     setAgentFindings(Array.isArray(data.persona_findings) ? data.persona_findings : []);
+    setAgentToolSpans(Array.isArray(data.tool_spans) ? data.tool_spans : []);
     setAgentPendingDiffs(Array.isArray(data.pending_diffs) ? data.pending_diffs : []);
     setAgentDocument(data.document?.schema_version === 1 ? data.document : null);
     setAgentRunStatus(data.status || "idle");
@@ -812,6 +835,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setAgentInput("");
     setAgentError("");
     setAgentLoading(true);
+    setAgentToolSpans([]);
     setAgentProgress("Reading resume evidence");
     lastAgentResponseRef.current = "";
     setAgentMessages((current) => [...current, { role: "user", content: message }]);
@@ -825,6 +849,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           profile_context: agentProfileContext.trim() || undefined,
           job_id: selectedJob?.id || undefined,
           job_context: buildAgentJobContext(selectedJob),
+          score_context: buildAgentScoreContext(scoreData),
         }),
       });
       const data = await response.json();
@@ -842,7 +867,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       setAgentLoading(false);
       setAgentRunStatus("failed");
     }
-  }, [agentInput, agentLoading, agentProfileContext, agentSessionId, resumeText, selectedJob?.id]);
+  }, [agentInput, agentLoading, agentProfileContext, agentSessionId, resumeText, scoreData, selectedJob]);
 
   const handleAgentDiffDecision = useCallback(async (bulletId, decision) => {
     if (decision !== "accept") {
@@ -1254,8 +1279,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const handleBulletRewrite = async (section, activeTabId = selectedBulletTab, suggestionHint = null) => {
     if (!section?.text) return;
 
-    setRewriteLoading((current) => ({ ...current, [section.id]: true }));
-    setCoachError("");
     const sectionTabs = getBulletFeedbackTabs(section, resumeText);
     const activeFocusTab = sectionTabs.find((tab) => tab.id === activeTabId) || sectionTabs.find((tab) => tab.status === "issue") || sectionTabs[0] || null;
     const rewriteFocus = getBulletRewriteFocus(section, resumeText, activeTabId);
@@ -1270,6 +1293,21 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       .map((candidate) => candidate.text.split(/\s+/)[0]?.toLowerCase().replace(/[,:;.]$/, ""))
       .filter(Boolean)
       .join(", ");
+    const cacheKey = getRewriteCacheKey({
+      bullet: section.text,
+      jobTitle: selectedJob?.title || "",
+      jobDescription,
+      usedVerbs,
+      rewriteFocus,
+      focusedFeedback: focusedFeedback + hintContext,
+    });
+    if (rewriteResults[section.id]?.cache_key === cacheKey) {
+      openMobileFeedbackPanel(selectedFeedbackRef);
+      return;
+    }
+
+    setRewriteLoading((current) => ({ ...current, [section.id]: true }));
+    setCoachError("");
 
     try {
       const response = await apiFetch("/api/ai/rewrite", {
@@ -1296,6 +1334,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           options: rankedOptions,
           rewrite_focus: rewriteFocus,
           focused_feedback: focusedFeedback,
+          cache_key: cacheKey,
+          source_bullet: section.text,
+          job_title: selectedJob?.title || "",
+          job_description: jobDescription,
         },
       }));
       if (suggestionHint) setActiveSuggestionHint(null);
@@ -1870,7 +1912,12 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       : jobMatchError
         ? "match_error"
       : "empty";
-  const selectedRewrite = selectedBullet ? rewriteResults[selectedBullet.id] : null;
+  const selectedRewriteCandidate = selectedBullet ? rewriteResults[selectedBullet.id] : null;
+  const selectedRewrite = isRewriteResultCurrent(selectedRewriteCandidate, {
+    bullet: selectedBullet?.text || "",
+    jobTitle: selectedJob?.title || "",
+    jobDescription,
+  }) ? selectedRewriteCandidate : null;
   const reviewableSuggestions = useMemo(
     () => reviewAllSuggestions.filter((suggestion) => suggestion.status === "improve"),
     [reviewAllSuggestions],
@@ -3295,6 +3342,30 @@ CERTIFICATIONS
               </div>
             </div>
 
+            <details className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+              <summary className="cursor-pointer text-sm font-semibold text-[#384959]">Tool activity</summary>
+              <div className="mt-3 space-y-2">
+                {agentToolSpans.length > 0 ? agentToolSpans.map((span, index) => (
+                  <div key={`${span.name || "tool"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-xs text-[#6A89A7]">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="font-semibold text-[#384959]">{span.name || "tool"}</span>
+                      <span>{span.status || "unknown"}{Number.isFinite(span.duration_ms) ? ` · ${span.duration_ms} ms` : ""}</span>
+                    </div>
+                    {Array.isArray(span.input_keys) && span.input_keys.length > 0 && (
+                      <div className="mt-1">Inputs: {span.input_keys.join(", ")}</div>
+                    )}
+                    {span.result && Object.keys(span.result).length > 0 && (
+                      <div className="mt-1">Result: {Object.entries(span.result).map(([key, value]) => `${key}=${value}`).join(", ")}</div>
+                    )}
+                  </div>
+                )) : (
+                  <div className="text-xs leading-relaxed text-[#6A89A7]">
+                    No orchestrator tool was needed yet. The five reviewer calls use supplied evidence rather than tools.
+                  </div>
+                )}
+              </div>
+            </details>
+
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
               <div className="text-sm font-semibold text-[#384959]">Reviewer Notes</div>
               <div className="mt-3 space-y-2">
@@ -3457,14 +3528,14 @@ CERTIFICATIONS
           <div ref={scorePanelRef} className={`rounded-3xl border p-5 shadow-sm ${scoreData ? scoreTheme.panel : "border-[#BDDDFC]/30 bg-white"}`}>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6A89A7]">Score</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6A89A7]">Rule-based Resume Score</div>
                 <div className={`mt-2 text-4xl font-bold ${scoreData ? scoreTheme.text : "text-[#6A89A7]"}`}>
                   {scoring ? "..." : scoreDisplayValue}
                   <span className="ml-1 text-base font-medium text-[#6A89A7]">{scoreData ? "/100" : ""}</span>
                 </div>
                 <div className="mt-1 text-sm text-[#6A89A7]">
                   {scoreData
-                    ? "Based on structure, phrasing, and evidence in the draft."
+                    ? "Impact 40 + presentation 30 + competencies 30. Target-job term match is shown separately."
                     : scoreError
                       ? "Resume scoring is unavailable right now. Please retry when the API is healthy."
                       : "Upload or paste a resume to begin"}
@@ -3820,7 +3891,11 @@ CERTIFICATIONS
                   className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-black disabled:opacity-50"
                 >
                   {rewriteLoading[selectedBullet.id] ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                  {rewriteLoading[selectedBullet.id] ? "Rewriting..." : getRewriteButtonLabel(activeBulletTab, selectedBullet)}
+                  {rewriteLoading[selectedBullet.id]
+                    ? "Rewriting..."
+                    : selectedRewrite
+                      ? "Rewrites ready below"
+                      : getRewriteButtonLabel(activeBulletTab, selectedBullet)}
                 </button>
                 <div className="rounded-2xl bg-[#f0f4f8] px-3 py-3 text-xs leading-relaxed text-[#6A89A7]">
                   {activeBulletTab?.id === "bullet_length" && activeBulletTab.status === "issue"
@@ -5518,7 +5593,15 @@ CERTIFICATIONS
                   disabled={rewriteLoading[mobileBulletSheet?.id]}
                   className="flex-1 rounded-xl bg-[#384959] min-h-[44px] py-3 text-sm font-medium text-white hover:bg-[#2d3a47] transition disabled:opacity-50"
                 >
-                  {rewriteLoading[mobileBulletSheet?.id] ? "Rewriting..." : "AI Rewrite"}
+                  {rewriteLoading[mobileBulletSheet?.id]
+                    ? "Rewriting..."
+                    : isRewriteResultCurrent(rewriteResults[mobileBulletSheet?.id], {
+                        bullet: mobileBulletSheet?.text || "",
+                        jobTitle: selectedJob?.title || "",
+                        jobDescription,
+                      })
+                      ? "Rewrites ready"
+                      : "AI Rewrite"}
                 </button>
                 <button
                   type="button"
@@ -5533,7 +5616,11 @@ CERTIFICATIONS
               </div>
 
               {/* Rewrite results */}
-              {mobileBulletSheet && rewriteResults[mobileBulletSheet.id] && (
+              {mobileBulletSheet && isRewriteResultCurrent(rewriteResults[mobileBulletSheet.id], {
+                bullet: mobileBulletSheet.text || "",
+                jobTitle: selectedJob?.title || "",
+                jobDescription,
+              }) && (
                 <div className="space-y-2">
                   <div className="text-xs font-semibold uppercase tracking-wider text-[#6A89A7]">Pick a rewrite</div>
                   {rewriteResults[mobileBulletSheet.id].options.map((option, idx) => (

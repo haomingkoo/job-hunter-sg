@@ -96,6 +96,14 @@ GovTech | AI Project Lead | Jan 2022 - Present
         )
     )
     _assert_completed(first_events)
+    first_assessment = next(
+        event["content"]
+        for event in reversed(first_events)
+        if event.get("event") == "token" and event.get("content")
+    )
+    assessment_headings = ["Strengths", "Weaknesses", "LLM assessment score", "Reasoning", "Next actions"]
+    assessment_positions = [first_assessment.index(heading) for heading in assessment_headings]
+    assert assessment_positions == sorted(assessment_positions)
 
     second_events = list(
         agent_session.stream_chat_events(
@@ -148,7 +156,7 @@ GovTech | AI Project Lead | Jan 2022 - Present
 
 
 def test_live_sealion_agent_calls_search_jobs_for_role_research(monkeypatch):
-    ai_service, _agent_session = _reload_live_agent_modules()
+    ai_service, agent_session = _reload_live_agent_modules()
     if not ai_service._get_api_key():
         pytest.fail("RUN_LIVE_SEALION=1 requires SEALION_API or sealion_api in the environment or backend/.env.")
 
@@ -197,6 +205,7 @@ def test_live_sealion_agent_calls_search_jobs_for_role_research(monkeypatch):
         tools=[agent_tools.search_jobs],
         subagents=[],
     )
+    recorder = agent_session._ToolSpanRecorder()
     result = agent_module.run_agent_turn(
         agent,
         (
@@ -205,6 +214,7 @@ def test_live_sealion_agent_calls_search_jobs_for_role_research(monkeypatch):
             "then answer with the best matching title and company."
         ),
         session_id=f"live-search-jobs-smoke-{secrets.token_hex(4)}",
+        callbacks=[recorder],
     )
 
     tool_messages = [
@@ -216,3 +226,7 @@ def test_live_sealion_agent_calls_search_jobs_for_role_research(monkeypatch):
     assert search_calls
     assert tool_messages
     assert "Senior AI Product Manager" in str(tool_messages[0].content)
+    assert any(
+        span["name"] == "search_jobs" and span["status"] == "success"
+        for span in recorder.spans
+    )

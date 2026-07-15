@@ -10,8 +10,38 @@ import {
   getResumeSectionKey,
   parseSubheadingParts,
   getDisplaySubheadingText,
+  getRewriteCacheKey,
+  isRewriteResultCurrent,
   moveSectionInText,
 } from "../resumeHelpers.jsx";
+
+describe("getRewriteCacheKey", () => {
+  const inputs = {
+    bullet: "Led a finance transformation.",
+    jobTitle: "Finance Manager",
+    jobDescription: "Own process improvement.",
+    usedVerbs: "built, managed",
+    rewriteFocus: "specifics",
+    focusedFeedback: "Add supported scale.",
+  };
+
+  it("reuses rewrites only when every model input is unchanged", () => {
+    expect(getRewriteCacheKey(inputs)).toBe(getRewriteCacheKey({ ...inputs }));
+    expect(getRewriteCacheKey(inputs)).not.toBe(getRewriteCacheKey({ ...inputs, rewriteFocus: "shorten" }));
+    expect(getRewriteCacheKey(inputs)).not.toBe(getRewriteCacheKey({ ...inputs, bullet: "Updated bullet." }));
+  });
+
+  it("hides a cached rewrite after its bullet or target job changes", () => {
+    const result = {
+      source_bullet: inputs.bullet,
+      job_title: inputs.jobTitle,
+      job_description: inputs.jobDescription,
+    };
+    expect(isRewriteResultCurrent(result, inputs)).toBe(true);
+    expect(isRewriteResultCurrent(result, { ...inputs, bullet: "Changed bullet." })).toBe(false);
+    expect(isRewriteResultCurrent(result, { ...inputs, jobTitle: "Another role" })).toBe(false);
+  });
+});
 
 // ── Load curated resume fixtures ────────────────────────────────────────────
 

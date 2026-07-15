@@ -2108,6 +2108,26 @@ export function getRewriteButtonLabel(activeBulletTab, selectedBullet) {
   return "AI Rewrite This Bullet";
 }
 
+export function getRewriteCacheKey({
+  bullet = "",
+  jobTitle = "",
+  jobDescription = "",
+  usedVerbs = "",
+  rewriteFocus = "",
+  focusedFeedback = "",
+} = {}) {
+  return JSON.stringify([bullet, jobTitle, jobDescription, usedVerbs, rewriteFocus, focusedFeedback]);
+}
+
+export function isRewriteResultCurrent(result, { bullet = "", jobTitle = "", jobDescription = "" } = {}) {
+  return Boolean(
+    result
+    && result.source_bullet === bullet
+    && result.job_title === jobTitle
+    && result.job_description === jobDescription
+  );
+}
+
 export function normalizeRewriteOptionText(value) {
   const cleaned = stripResumeMarkdown(String(value || ""))
     .replace(/^[•\-*o▪●\u2022\u2023\u25E6\u2043\u2219\u25AA\u25AB\u25CF\uF0B7]+\s*/, "")

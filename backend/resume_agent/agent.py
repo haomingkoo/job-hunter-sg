@@ -35,7 +35,12 @@ def create_resume_agent(
     )
 
 
-def run_agent_turn(agent: Any, message: str, session_id: str | None = None) -> dict:
+def run_agent_turn(
+    agent: Any,
+    message: str,
+    session_id: str | None = None,
+    callbacks: list[Any] | None = None,
+) -> dict:
     """Run one synchronous agent turn."""
     payload = {"messages": [{"role": "user", "content": message}]}
     run_config: dict[str, Any] = {
@@ -43,6 +48,8 @@ def run_agent_turn(agent: Any, message: str, session_id: str | None = None) -> d
     }
     if session_id:
         run_config["configurable"] = {"thread_id": session_id}
+    if callbacks:
+        run_config["callbacks"] = callbacks
     try:
         return agent.invoke(payload, config=run_config)
     except GraphRecursionError:

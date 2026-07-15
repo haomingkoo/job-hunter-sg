@@ -12,6 +12,7 @@ from typing import Any, Iterator
 from zoneinfo import ZoneInfo
 
 import config as app_config
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, ToolMessage
 from openai import APITimeoutError
 from prompt_safety import xml_data_block
@@ -31,6 +32,68 @@ _active_runs: dict[str, int] = {}
 _active_runs_lock = threading.Lock()
 _MAX_ACTIVE_RUNS = 4
 _sessions_lock = threading.Lock()
+
+
+class _ToolSpanRecorder(BaseCallbackHandler):
+    """Keep redacted tool timing/status data for one agent turn."""
+
+    def __init__(self) -> None:
+        self.spans: list[dict] = []
+        self._active: dict[str, tuple[int, float]] = {}
+
+    def on_tool_start(self, serialized, _input_str, *, run_id, inputs=None, **kwargs) -> None:
+        name = str((serialized or {}).get("name") or kwargs.get("name") or "tool")
+        span = {
+            "name": name,
+            "status": "running",
+            "duration_ms": None,
+            "input_keys": sorted(str(key) for key in inputs) if isinstance(inputs, dict) else [],
+            "result": {},
+        }
+        self.spans.append(span)
+        self._active[str(run_id)] = (len(self.spans) - 1, time.perf_counter())
+
+    def on_tool_end(self, output, *, run_id, **_kwargs) -> None:
+        self._finish(run_id, "success", output)
+
+    def on_tool_error(self, error, *, run_id, **_kwargs) -> None:
+        self._finish(run_id, "error", {"error": type(error).__name__})
+
+    def _finish(self, run_id, status: str, output: Any) -> None:
+        active = self._active.pop(str(run_id), None)
+        if not active:
+            return
+        index, started_at = active
+        span = self.spans[index]
+        span["status"] = status
+        span["duration_ms"] = round((time.perf_counter() - started_at) * 1000)
+        span["result"] = self._summarize(output)
+        log.info(
+            "resume agent tool span name=%s status=%s duration_ms=%s",
+            span["name"],
+            status,
+            span["duration_ms"],
+        )
+
+    @staticmethod
+    def _summarize(output: Any) -> dict:
+        value = getattr(output, "content", output)
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+        if not isinstance(value, dict):
+            return {}
+        summary = {
+            key: value[key]
+            for key in ("ok", "accepted", "overall_score", "matched", "total")
+            if isinstance(value.get(key), (bool, int, float))
+        }
+        error = value.get("error")
+        if isinstance(error, dict) and error.get("code"):
+            summary["error_code"] = str(error["code"])
+        return summary
 
 
 def _get_checkpointer():
@@ -60,6 +123,7 @@ def _new_state(session_id: str) -> dict:
         "profile_context": "",
         "todos": [],
         "persona_findings": [],
+        "tool_spans": [],
         "pending_diffs": [],
         "messages": [],
     }
@@ -161,6 +225,7 @@ def _build_prompt(body: dict) -> str:
     profile_context = str(body.get("profile_context", ""))[: app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS]
     job_id = body.get("job_id")
     job_context = body.get("job_context") if isinstance(body.get("job_context"), dict) else {}
+    score_context = body.get("score_context") if isinstance(body.get("score_context"), dict) else {}
 
     parts = [
         (
@@ -205,6 +270,15 @@ def _build_prompt(body: dict) -> str:
             + xml_data_block(
                 "target_job_data",
                 json.dumps(job_context, ensure_ascii=False, separators=(",", ":")),
+            )
+        )
+    if score_context:
+        parts.append(
+            "Reuse this current rule-based score snapshot as a deterministic baseline. "
+            "Do not call score_resume again unless the user explicitly requests a rescore.\n"
+            + xml_data_block(
+                "resume_score_data",
+                json.dumps(score_context, ensure_ascii=False, separators=(",", ":")),
             )
         )
     persona_findings = body.get("persona_findings")
@@ -425,8 +499,18 @@ def _stream_chat_events(
             "profile_context": profile_context,
             "persona_findings": state.get("persona_findings", []),
         })
-        with bullet_context(bullet_texts):
-            result = run_agent_turn(active_agent, prompt, session_id=session_id)
+        tool_spans = _ToolSpanRecorder()
+        state["tool_spans"] = []
+        try:
+            with bullet_context(bullet_texts):
+                result = run_agent_turn(
+                    active_agent,
+                    prompt,
+                    session_id=session_id,
+                    callbacks=[tool_spans],
+                )
+        finally:
+            state["tool_spans"] = tool_spans.spans
         if result.get("stopped"):
             yield {
                 "event": "error",

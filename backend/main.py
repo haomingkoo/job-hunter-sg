@@ -8524,6 +8524,11 @@ def start_resume_agent_review(
         raise HTTPException(status_code=422, detail="Job context must be an object")
     if len(json.dumps(job_context or {}, ensure_ascii=False)) > 20_000:
         raise HTTPException(status_code=413, detail="Job context is too large")
+    score_context = body.get("score_context")
+    if score_context is not None and not isinstance(score_context, dict):
+        raise HTTPException(status_code=422, detail="Score context must be an object")
+    if len(json.dumps(score_context or {}, ensure_ascii=False)) > 10_000:
+        raise HTTPException(status_code=413, detail="Score context is too large")
 
     with _account_lifecycle_lock(user.id):
         if not db.query(User.id).filter(User.id == user.id).first():

@@ -3,7 +3,7 @@ import { act } from "react-dom/test-utils";
 import { createRoot } from "react-dom/client";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 
-import ResumeTab, { buildAgentJobContext } from "../ResumeTab.jsx";
+import ResumeTab, { buildAgentJobContext, buildAgentScoreContext } from "../ResumeTab.jsx";
 
 function responseJson(data, ok = true) {
   return Promise.resolve({
@@ -70,6 +70,20 @@ describe("ResumeTab Agent v2", () => {
       terms: ["process intelligence"],
       location: "Singapore",
       source: "MyCareersFuture",
+    });
+  });
+
+  it("reuses the compact rule-based score without sending every bullet diagnostic", () => {
+    expect(buildAgentScoreContext({
+      overall_score: 77,
+      quality_score: 77,
+      dimensions: { impact: { score: 21, max: 40 }, presentation: { score: 30, max: 30 } },
+      keyword_match: { matched: ["Python"], missing: ["SQL", "AWS"], score_percent: 33 },
+    })).toEqual({
+      overall_score: 77,
+      quality_score: 77,
+      dimensions: { impact: { score: 21, max: 40 }, presentation: { score: 30, max: 30 } },
+      keyword_match: { matched: 1, missing: 2, score_percent: 33 },
     });
   });
 
@@ -164,6 +178,13 @@ describe("ResumeTab Agent v2", () => {
             rationale: "The cited bullet supports the role requirement.",
             suggested_action: "Use the supported target term once.",
           }],
+          tool_spans: [{
+            name: "score_resume",
+            status: "success",
+            duration_ms: 24,
+            input_keys: ["resume_text"],
+            result: { overall_score: 78 },
+          }],
           pending_diffs: [],
           document: {
             blocks: [{
@@ -202,6 +223,9 @@ describe("ResumeTab Agent v2", () => {
     expect(container.textContent).toContain("Built data pipeline processing 10M events daily");
     expect(container.textContent).toContain("Target-job evidence: description, terms");
     expect(container.textContent).toContain("Why: The cited bullet supports the role requirement.");
+    expect(container.textContent).toContain("score_resume");
+    expect(container.textContent).toContain("success · 24 ms");
+    expect(container.textContent).toContain("overall_score=78");
   });
 
 });
