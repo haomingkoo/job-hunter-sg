@@ -17,6 +17,17 @@ from models import ScrapedJob
 MAX_SCORE_SUGGESTIONS = 5
 MAX_SCORE_KEYWORDS = 20
 
+
+def _search_failure_type(exc: Exception) -> str:
+    name = type(exc).__name__.lower()
+    if "timeout" in name:
+        return "timeout"
+    if "rate" in name and "limit" in name:
+        return "rate_limit"
+    if any(term in name for term in ("auth", "permission", "unauthorized")):
+        return "authentication"
+    return "unavailable"
+
 _current_bullets: ContextVar[dict[str, str]] = ContextVar(
     "resume_agent_current_bullets",
     default={},
@@ -43,10 +54,11 @@ def search_jobs(query: str, n: int | None = None, detail: bool = False) -> dict:
     """
     clean_query = (query or "").strip()
     if not clean_query:
-        return contract.tool_error(
-            contract.SEARCH_JOBS_TOOL,
+        return contract.search_jobs_error(
+            clean_query,
             "empty_query",
             "search_jobs requires a non-empty query.",
+            failure_type="validation",
         )
 
     limit = contract.limit_jobs(n)
@@ -77,11 +89,11 @@ def search_jobs(query: str, n: int | None = None, detail: bool = False) -> dict:
         ][:limit]
         return contract.search_jobs_result(clean_query, limit, results, detail=detail)
     except Exception as exc:
-        return contract.tool_error(
-            contract.SEARCH_JOBS_TOOL,
+        return contract.search_jobs_error(
+            clean_query,
             "search_failed",
-            str(exc) or "Job search failed.",
-            query=clean_query,
+            "The internal job search source was unavailable.",
+            failure_type=_search_failure_type(exc),
         )
     finally:
         if db:
@@ -163,6 +175,42 @@ def extract_skills(text: str) -> list[str]:
     from skill_extractor import extract_skill_phrases
 
     return extract_skill_phrases(text or "")
+
+
+@tool
+def analyze_ats_fit(resume_text: str, target_job_text: str = "") -> dict:
+    """Run one deterministic ATS evidence pass over a resume and target job.
+
+    Use this once before an ATS assessment. It combines the compact resume
+    scorecard with normalized resume/job skill extraction and exact overlap.
+    Missing terms are comparison evidence only, never permission to add an
+    unsupported skill. Returns no LLM judgment and does not emulate a vendor ATS.
+    """
+    from resume_scorer import ResumeScorer
+    from skill_extractor import extract_skill_phrases
+
+    score = ResumeScorer().analyze(resume_text or "")
+    resume_skills = extract_skill_phrases(resume_text or "")
+    target_skills = extract_skill_phrases(target_job_text or "")
+    resume_keys = {skill.casefold() for skill in resume_skills}
+    return {
+        "overall_score": score.get("overall_score", 0),
+        "dimensions": {
+            name: {
+                key: dimension.get(key)
+                for key in ("score", "max", "status")
+            }
+            for name, dimension in score.get("dimensions", {}).items()
+        },
+        "resume_skills": resume_skills,
+        "target_skills": target_skills,
+        "matched_target_skills": [
+            skill for skill in target_skills if skill.casefold() in resume_keys
+        ],
+        "missing_target_skills": [
+            skill for skill in target_skills if skill.casefold() not in resume_keys
+        ],
+    }
 
 
 def _gate_payload(gates: list[Any]) -> list[dict]:

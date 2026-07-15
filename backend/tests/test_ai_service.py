@@ -38,6 +38,19 @@ def _setup_call(monkeypatch):
     return ai_service
 
 
+def test_load_api_keys_prefers_named_pool_and_deduplicates_legacy(monkeypatch):
+    import ai_service
+
+    for index in range(2, 10):
+        monkeypatch.delenv(f"SEALION_API{index}", raising=False)
+        monkeypatch.delenv(f"sealion_api{index}", raising=False)
+    monkeypatch.setenv("SEALION_API_KEYS", "key-a,key-b\nkey-a")
+    monkeypatch.setenv("SEALION_API", "key-b")
+    monkeypatch.setenv("SEALION_API2", "key-c")
+
+    assert ai_service._load_api_keys() == ["key-a", "key-b", "key-c"]
+
+
 def test_call_sealion_reads_standard_content(monkeypatch):
     ai_service = _setup_call(monkeypatch)
 

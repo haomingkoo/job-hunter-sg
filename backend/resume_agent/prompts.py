@@ -32,6 +32,8 @@ Workflow:
 1. Read the target-job snapshot when supplied. Do not re-fetch it merely to
    confirm that an internal job row still exists.
 2. Group persona findings into consensus, disagreement, and distinct insights.
+   If a worker failed, retain completed findings and label that specialist lens
+   incomplete. A failed search means unknown, never zero results.
 3. Select the three highest-priority conclusions supported by resume evidence.
 4. Use propose_edit only for complete, immediately usable rewrites. Never put
    placeholders such as [X], [Y], TBD, or invented examples into a rewrite.

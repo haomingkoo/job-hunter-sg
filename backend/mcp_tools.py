@@ -161,21 +161,22 @@ def search_jobs(query: str, limit: int | None = None, detail: bool = False) -> s
     clean_query = re.sub(r"\s+", " ", query or "").strip()
     if not clean_query:
         return _json(
-            contract.tool_error(
-                contract.SEARCH_JOBS_TOOL,
+            contract.search_jobs_error(
+                clean_query,
                 "empty_query",
                 "search_jobs requires a non-empty query.",
+                failure_type="validation",
             )
         )
     if len(clean_query) > 200:
-        return _json(
-            contract.tool_error(
-                contract.SEARCH_JOBS_TOOL,
-                "query_too_long",
-                "search_jobs query exceeds 200 characters.",
-                max_characters=200,
-            )
+        payload = contract.search_jobs_error(
+            clean_query,
+            "query_too_long",
+            "search_jobs query exceeds 200 characters.",
+            failure_type="validation",
         )
+        payload["max_characters"] = 200
+        return _json(payload)
 
     capped = contract.limit_jobs(limit)
     db = None
@@ -194,11 +195,11 @@ def search_jobs(query: str, limit: int | None = None, detail: bool = False) -> s
         return _json(contract.search_jobs_result(clean_query, capped, jobs, detail=detail))
     except Exception as exc:
         return _json(
-            contract.tool_error(
-                contract.SEARCH_JOBS_TOOL,
+            contract.search_jobs_error(
+                clean_query,
                 "search_failed",
-                str(exc) or "Job search failed.",
-                query=clean_query,
+                "The internal job search source was unavailable.",
+                failure_type="unavailable",
             )
         )
     finally:

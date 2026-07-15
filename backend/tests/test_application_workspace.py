@@ -338,7 +338,7 @@ def test_application_workspace_agent_review_returns_clean_config_error(monkeypat
 
     response = client.post(f"/api/applications/workspaces/{workspace_id}/agent-review", headers=headers)
     assert response.status_code == 503
-    assert response.json()["detail"] == "Agent v2 needs SEALION_API configured before it can run."
+    assert response.json()["detail"] == "Agent v2 needs SEALION_API_KEYS or SEALION_API configured before it can run."
 
     loaded = client.get(f"/api/applications/workspaces/{workspace_id}", headers=headers)
     review = loaded.json()["role_metadata"]["agent_review"]

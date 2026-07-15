@@ -91,17 +91,44 @@ def job_payload(
 def search_jobs_result(query: str, limit: int, jobs: list[dict], *, detail: bool = False) -> dict:
     return {
         "ok": True,
+        "status": "success",
         "tool": SEARCH_JOBS_TOOL,
         "query": query,
+        "query_executed": True,
         "limit": limit,
         "detail": detail,
         "count": len(jobs),
+        "result_count": len(jobs),
         "empty": len(jobs) == 0,
         "results": jobs,
         "detail_available": not detail,
         "detail_request": None
         if detail
         else "Call search_jobs with detail=true, or get_job with the id.",
+    }
+
+
+def search_jobs_error(
+    query: str,
+    code: str,
+    message: str,
+    *,
+    failure_type: str = "unavailable",
+) -> dict:
+    return {
+        "ok": False,
+        "status": "error",
+        "tool": SEARCH_JOBS_TOOL,
+        "query": query,
+        "query_executed": False,
+        "results": None,
+        "result_count": None,
+        "failure_type": failure_type,
+        "retryable": failure_type in {"timeout", "rate_limit", "unavailable"},
+        "error": {
+            "code": code,
+            "message": message,
+        },
     }
 
 

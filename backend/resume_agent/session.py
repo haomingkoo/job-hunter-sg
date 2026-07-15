@@ -21,7 +21,7 @@ from resume_structurer import get_all_bullets, structure_resume
 
 from .agent import create_resume_agent, run_agent_turn
 from .models import ResumeAgentConfigurationError
-from .personas import iter_persona_reviews
+from .personas import iter_persona_worker_runs
 from .tracing import ToolSpanRecorder
 from .tools import bullet_context
 
@@ -56,6 +56,7 @@ def _new_state(session_id: str) -> dict:
         "_persona_revision": None,
         "mode": "general",
         "status": "idle",
+        "review_status": "idle",
         "progress": "",
         "error": "",
         "response": "",
@@ -65,6 +66,7 @@ def _new_state(session_id: str) -> dict:
         "profile_context": "",
         "todos": [],
         "persona_findings": [],
+        "worker_runs": [],
         "multi_agent_assessment": {},
         "tool_spans": [],
         "pending_diffs": [],
@@ -268,6 +270,39 @@ def _build_prompt(body: dict) -> str:
                 json.dumps(synthesis_findings, ensure_ascii=False, separators=(",", ":")),
             )
         )
+    worker_runs = body.get("worker_runs")
+    failed_workers = [
+        {
+            key: run.get(key)
+            for key in (
+                "persona",
+                "status",
+                "failure_type",
+                "attempted_operation",
+                "source",
+                "attempted_queries",
+                "attempt_count",
+                "partial_results",
+                "local_recovery_attempts",
+                "remaining_gap",
+                "suggested_alternatives",
+                "retryable",
+                "error",
+            )
+        }
+        for run in (worker_runs or [])
+        if isinstance(run, dict) and run.get("status") != "success"
+    ]
+    if failed_workers:
+        parts.append(
+            "Some independent workers failed after their own retries. Continue with valid "
+            "completed findings, clearly label the missing specialist coverage, and never "
+            "interpret a failed search as an empty result.\n"
+            + xml_data_block(
+                "worker_failures_data",
+                json.dumps(failed_workers, ensure_ascii=False, separators=(",", ":")),
+            )
+        )
     multi_agent_assessment = body.get("multi_agent_assessment")
     if multi_agent_assessment:
         parts.append(
@@ -459,17 +494,29 @@ def _stream_chat_events(
         )
         if agent is None and state.get("_persona_revision") != persona_revision:
             state["persona_findings"] = []
+            state["worker_runs"] = []
+            state["review_status"] = "running"
             state["multi_agent_assessment"] = {}
             yield {
                 "event": "progress",
                 "session_id": session_id,
                 "message": "Running independent resume reviewers",
             }
-            for finding in iter_persona_reviews(
+            for run in iter_persona_worker_runs(
                 document,
                 include_market=bool(job_context),
                 job_context=job_context,
             ):
+                state["worker_runs"].append(run)
+                if run.get("status") != "success":
+                    yield {
+                        "event": "persona_error",
+                        "session_id": session_id,
+                        "persona": run.get("persona"),
+                        "failure": run,
+                    }
+                    continue
+                finding = run["assessment"]
                 state["persona_findings"].append(finding)
                 yield {
                     "event": "persona",
@@ -477,6 +524,13 @@ def _stream_chat_events(
                     "persona": finding["persona"],
                     "finding": finding,
                 }
+            completed_count = len(state["persona_findings"])
+            failed_count = len(state["worker_runs"]) - completed_count
+            state["review_status"] = (
+                "partial_success" if completed_count and failed_count
+                else "success" if completed_count
+                else "error"
+            )
             state["multi_agent_assessment"] = _reduce_worker_scores(
                 state["persona_findings"]
             )
@@ -496,13 +550,14 @@ def _stream_chat_events(
             "resume_text": resume_text,
             "profile_context": profile_context,
             "persona_findings": state.get("persona_findings", []),
+            "worker_runs": state.get("worker_runs", []),
             "multi_agent_assessment": state.get("multi_agent_assessment", {}),
         })
         tool_spans = _ToolSpanRecorder()
         worker_spans = [
             span
-            for finding in state.get("persona_findings", [])
-            for span in finding.get("tool_spans", [])
+            for run in state.get("worker_runs", [])
+            for span in run.get("tool_spans", [])
         ]
         state["tool_spans"] = worker_spans
         try:

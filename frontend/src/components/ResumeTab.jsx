@@ -376,6 +376,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [agentTodos, setAgentTodos] = useState([]);
   const [agentFindings, setAgentFindings] = useState([]);
   const [agentAssessment, setAgentAssessment] = useState({});
+  const [agentWorkerRuns, setAgentWorkerRuns] = useState([]);
   const [agentToolSpans, setAgentToolSpans] = useState([]);
   const [agentPendingDiffs, setAgentPendingDiffs] = useState([]);
   const [agentDocument, setAgentDocument] = useState(null);
@@ -792,6 +793,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setAgentTodos(Array.isArray(data.todos) ? data.todos : []);
     setAgentFindings(Array.isArray(data.persona_findings) ? data.persona_findings : []);
     setAgentAssessment(data.multi_agent_assessment || {});
+    setAgentWorkerRuns(Array.isArray(data.worker_runs) ? data.worker_runs : []);
     setAgentToolSpans(Array.isArray(data.tool_spans) ? data.tool_spans : []);
     setAgentPendingDiffs(Array.isArray(data.pending_diffs) ? data.pending_diffs : []);
     setAgentDocument(data.document?.schema_version === 1 ? data.document : null);
@@ -838,6 +840,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setAgentError("");
     setAgentLoading(true);
     setAgentAssessment({});
+    setAgentWorkerRuns([]);
     setAgentToolSpans([]);
     setAgentProgress("Reading resume evidence");
     lastAgentResponseRef.current = "";
@@ -3381,6 +3384,16 @@ CERTIFICATIONS
                 )}
               </div>
               <div className="mt-3 space-y-2">
+                {agentWorkerRuns.filter((run) => run.status === "error").map((run) => (
+                  <div key={`failure-${run.persona}`} className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
+                    <div className="font-semibold capitalize">{String(run.persona || "reviewer").replaceAll("_", " ")} incomplete · {run.failure_type || "error"}</div>
+                    <div className="mt-1">{run.remaining_gap || run.error?.message || "This specialist assessment is unavailable."}</div>
+                    <div className="mt-1 text-amber-800">Attempted {run.attempt_count || 0} time(s){run.source ? ` using ${run.source}` : ""}.</div>
+                    {Array.isArray(run.suggested_alternatives) && run.suggested_alternatives.length > 0 && (
+                      <div className="mt-1"><span className="font-semibold">Alternative:</span> {run.suggested_alternatives[0]}</div>
+                    )}
+                  </div>
+                ))}
                 {agentFindings.length > 0 ? agentFindings.map((finding, index) => (
                   <div key={`${finding.persona || "persona"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-sm text-[#384959]">
                     <div className="flex flex-wrap items-center gap-2">

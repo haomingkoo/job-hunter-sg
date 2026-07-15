@@ -50,6 +50,8 @@ class ToolSpanRecorder(BaseCallbackHandler):
         span["status"] = status
         span["duration_ms"] = round((time.perf_counter() - started_at) * 1000)
         value = self._payload(output)
+        if isinstance(value, dict) and isinstance(value.get("query"), str):
+            span["attempted_query"] = value["query"]
         self._collect_job_ids(value)
         span["result"] = self._summarize(value)
         log.info(
@@ -89,9 +91,22 @@ class ToolSpanRecorder(BaseCallbackHandler):
             return {}
         summary = {
             key: value[key]
-            for key in ("ok", "accepted", "overall_score", "matched", "total", "count", "found")
+            for key in (
+                "ok",
+                "accepted",
+                "overall_score",
+                "matched",
+                "total",
+                "count",
+                "found",
+                "query_executed",
+                "result_count",
+                "retryable",
+            )
             if isinstance(value.get(key), (bool, int, float))
         }
+        if isinstance(value.get("failure_type"), str):
+            summary["failure_type"] = value["failure_type"]
         error = value.get("error")
         if isinstance(error, dict) and error.get("code"):
             summary["error_code"] = str(error["code"])

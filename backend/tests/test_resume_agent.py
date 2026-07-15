@@ -163,8 +163,11 @@ def test_search_jobs_empty_results_are_explicit(monkeypatch):
     result = agent_tools.search_jobs.invoke({"query": "rare role"})
 
     assert result["ok"] is True
+    assert result["status"] == "success"
+    assert result["query_executed"] is True
     assert result["empty"] is True
     assert result["count"] == 0
+    assert result["result_count"] == 0
     assert result["results"] == []
 
 
@@ -185,8 +188,14 @@ def test_search_jobs_errors_are_structured(monkeypatch):
     result = agent_tools.search_jobs.invoke({"query": "data engineer"})
 
     assert result["ok"] is False
+    assert result["status"] == "error"
+    assert result["query_executed"] is False
+    assert result["results"] is None
+    assert result["result_count"] is None
     assert result["error"]["code"] == "search_failed"
-    assert "vector index unavailable" in result["error"]["message"]
+    assert result["failure_type"] == "unavailable"
+    assert result["retryable"] is True
+    assert result["error"]["message"] == "The internal job search source was unavailable."
 
 
 def test_get_job_returns_visible_detail(monkeypatch):
@@ -238,10 +247,18 @@ def test_score_and_skill_tools_return_structured_results(monkeypatch):
         "resume_text": "EXPERIENCE\n- Led delivery for 10 users\nSKILLS\nPython and SQL",
     })
     skills = agent_tools.extract_skills.invoke({"text": "Python and SQL"})
+    ats = agent_tools.analyze_ats_fit.invoke({
+        "resume_text": "EXPERIENCE\n- Built Python services",
+        "target_job_text": "Python and SQL",
+    })
 
     assert 0 <= score["overall_score"] <= 100
     assert set(score["dimensions"]) == {"impact", "presentation", "competencies"}
     assert skills == ["Python", "SQL"]
+    assert 0 <= ats["overall_score"] <= 100
+    assert ats["resume_skills"] == ["Python", "SQL"]
+    assert ats["target_skills"] == ["Python", "SQL"]
+    assert ats["matched_target_skills"] == ["Python", "SQL"]
 
 
 def test_agent_prompt_marks_job_tool_results_as_untrusted():
@@ -513,9 +530,19 @@ def test_persona_worker_result_is_rejected_when_required_tool_is_skipped():
         def bind_tools(self, _tools, **_kwargs):
             return self
 
-    model = ToolCallingFakeModel(responses=[AIMessage(content=payload), AIMessage(content=payload)])
+    model = ToolCallingFakeModel(responses=[AIMessage(content=payload) for _attempt in range(4)])
 
-    assert personas._persona_review("recruiter", document, model) is None
+    run = personas._worker_run("recruiter", document, model)
+
+    assert run["status"] == "error"
+    assert run["failure_type"] == "tool"
+    assert run["attempted_operation"] == "recruiter resume assessment"
+    assert run["attempt_count"] == 2
+    assert run["partial_results"] == []
+    assert len(run["local_recovery_attempts"]) == 2
+    assert run["remaining_gap"]
+    assert run["suggested_alternatives"]
+    assert run["retryable"] is True
 
 
 def test_persona_review_discards_unknown_evidence_ids():
@@ -646,15 +673,22 @@ def test_session_streams_and_persists_independent_persona_findings(monkeypatch):
 
     monkeypatch.setattr(
         agent_session,
-        "iter_persona_reviews",
+        "iter_persona_worker_runs",
         lambda _document, include_market, job_context=None: iter([{
             "persona": "recruiter",
-            "category": "clarity",
-            "evidence_ids": ["b_evidence"],
-            "target_job_fields": [],
-            "message": "Clarify the outcome.",
-            "rationale": "The bullet describes work but not its result.",
-            "suggested_action": "State the result if supported.",
+            "status": "success",
+            "attempt_count": 1,
+            "tool_spans": [],
+            "error": None,
+            "assessment": {
+                "persona": "recruiter",
+                "category": "clarity",
+                "evidence_ids": ["b_evidence"],
+                "target_job_fields": [],
+                "message": "Clarify the outcome.",
+                "rationale": "The bullet describes work but not its result.",
+                "suggested_action": "State the result if supported.",
+            },
         }]),
     )
     monkeypatch.setattr(agent_session, "create_resume_agent", lambda **_kwargs: FakeAgent())
@@ -673,6 +707,67 @@ def test_session_streams_and_persists_independent_persona_findings(monkeypatch):
     )
     assert any(event["event"] == "persona" and event["persona"] == "recruiter" for event in events)
     assert state["persona_findings"][0]["message"] == "Clarify the outcome."
+
+
+def test_session_keeps_successful_reviews_when_one_worker_fails(monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    import resume_agent.session as agent_session
+
+    class FakeAgent:
+        def invoke(self, payload, config=None):
+            prompt = payload["messages"][0]["content"]
+            assert "worker_failures_data" in prompt
+            assert "search_failed" in prompt
+            return {"messages": [AIMessage(content="Partial synthesis with clear limitation.")]}
+
+    completed = {
+        "persona": "recruiter",
+        "score": 72,
+        "summary": "The role narrative is visible.",
+        "findings": [],
+        "reasoning": "Relevant experience is easy to find.",
+        "suggested_actions": ["Clarify one outcome."],
+        "tool_spans": [],
+    }
+    failed = {
+        "persona": "market_researcher",
+        "status": "error",
+        "failure_type": "tool",
+        "attempted_operation": "market_researcher resume assessment",
+        "source": "search_jobs",
+        "attempted_queries": ["Data Lead"],
+        "attempt_count": 2,
+        "partial_results": [],
+        "local_recovery_attempts": [{"attempt": 1, "outcome": "failed"}],
+        "remaining_gap": "Market comparison is unknown.",
+        "suggested_alternatives": ["Retry the search."],
+        "retryable": True,
+        "tool_spans": [],
+        "error": {"code": "search_failed", "stage": "tool", "retryable": True, "message": "Search unavailable."},
+    }
+    monkeypatch.setattr(
+        agent_session,
+        "iter_persona_worker_runs",
+        lambda *_args, **_kwargs: iter([
+            {"persona": "recruiter", "status": "success", "attempt_count": 1, "tool_spans": [], "assessment": completed, "error": None},
+            failed,
+        ]),
+    )
+    monkeypatch.setattr(agent_session, "create_resume_agent", lambda **_kwargs: FakeAgent())
+
+    events = list(agent_session.stream_chat_events({
+        "session_id": "partial-worker-session",
+        "message": "Review this resume",
+        "resume_text": "EXPERIENCE\n- Built a data platform",
+        "job_context": {"title": "Data Lead", "description": "Lead data delivery"},
+    }, agent=None, owner_key="partial-owner"))
+    state = agent_session.get_state("partial-worker-session", owner_key="partial-owner")
+
+    assert state["persona_findings"] == [completed]
+    assert len(state["worker_runs"]) == 2
+    assert any(event["event"] == "persona_error" for event in events)
+    assert any(event.get("content") == "Partial synthesis with clear limitation." for event in events)
 
 
 def test_background_review_returns_immediately_and_completes_in_session():
@@ -907,7 +1002,7 @@ def test_missing_agent_credentials_return_error_event(monkeypatch):
     assert error == {
         "event": "error",
         "session_id": events[0]["session_id"],
-        "message": "Agent v2 needs SEALION_API configured before it can run.",
+        "message": "Agent v2 needs SEALION_API_KEYS or SEALION_API configured before it can run.",
     }
     assert events[-1] == {"event": "done", "session_id": events[0]["session_id"]}
 

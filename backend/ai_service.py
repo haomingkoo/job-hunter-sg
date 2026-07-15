@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from typing import Optional
@@ -96,8 +97,12 @@ SEALION_MODEL = SEALION_MODEL_INTERACTIVE
 
 
 def _load_api_keys() -> list[str]:
-    """Load all SEA-LION API keys from environment (supports multiple)."""
-    keys = []
+    """Load the canonical key pool plus legacy numbered variables."""
+    keys = [
+        key.strip()
+        for key in re.split(r"[,\n]", os.environ.get("SEALION_API_KEYS", ""))
+        if key.strip()
+    ]
     # Primary key
     k1 = os.environ.get("SEALION_API", os.environ.get("sealion_api", ""))
     if k1:
@@ -107,7 +112,7 @@ def _load_api_keys() -> list[str]:
         k = os.environ.get(f"SEALION_API{i}", os.environ.get(f"sealion_api{i}", ""))
         if k:
             keys.append(k)
-    return keys
+    return list(dict.fromkeys(keys))
 
 
 _api_keys = _load_api_keys()

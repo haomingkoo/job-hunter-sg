@@ -10,12 +10,20 @@ from typing import Any, cast
 
 import config
 from deepagents.middleware.subagents import SubAgent
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from .models import create_agent_model
 from .prompts import FAIRNESS_AND_ANTI_FABRICATION_GUARDRAILS
 from .tracing import ToolSpanRecorder
-from .tools import bullet_context, extract_skills, get_job, propose_edit, score_resume, search_jobs
+from .tools import (
+    analyze_ats_fit,
+    bullet_context,
+    extract_skills,
+    get_job,
+    propose_edit,
+    score_resume,
+    search_jobs,
+)
 from prompt_safety import xml_data_block
 
 
@@ -31,7 +39,6 @@ MAX_FINDING_CHARS = 700
 MAX_METHOD_CHARS = 500
 MAX_REASONING_CHARS = 1_600
 MAX_SUMMARY_CHARS = 500
-MAX_WORKER_TOOL_ITERATIONS = 8
 RELEVANCE_SCORE_DECIMALS = 2
 
 _PERSONAS = [
@@ -101,16 +108,16 @@ _PERSONA_BY_NAME = {name: (description, prompt) for name, description, prompt in
 _WORKER_TOOLS = {
     "recruiter": [score_resume],
     "hiring_manager": [search_jobs, get_job],
-    "ats": [score_resume, extract_skills],
+    "ats": [analyze_ats_fit],
     "skeptic": [propose_edit],
     "market_researcher": [search_jobs, get_job, extract_skills],
 }
 _REQUIRED_TOOL_NAMES = {
     "recruiter": {"score_resume"},
     "hiring_manager": {"search_jobs"},
-    "ats": {"score_resume", "extract_skills"},
+    "ats": {"analyze_ats_fit"},
     "skeptic": {"propose_edit"},
-    "market_researcher": {"search_jobs", "extract_skills"},
+    "market_researcher": {"search_jobs"},
 }
 _SCORING_RUBRICS = {
     "recruiter": (
@@ -165,6 +172,11 @@ def _worker_system_prompt(name: str, role_prompt: str) -> str:
         "Score the resume for your specialist lens, state both strengths and weaknesses, "
         "and explain the largest deductions.\n</scoring_rubric>\n\n"
         f"<output_contract>\n{_OUTPUT_INSTRUCTIONS}\n</output_contract>\n\n"
+        "<self_verification>\nBefore returning, verify that every mandatory tool "
+        "completed, the JSON matches the output contract, every source location exists "
+        "in supplied or tool-returned evidence, both finding kinds are present, and the "
+        "score follows your rubric. Correct your output before returning it.\n"
+        "</self_verification>\n\n"
         f"<guardrails>\n{FAIRNESS_AND_ANTI_FABRICATION_GUARDRAILS}\n</guardrails>"
     )
 
@@ -322,17 +334,41 @@ def _validated_finding(
     }, ""
 
 
-def _last_ai_content(result: dict) -> str:
-    for message in reversed(result.get("messages", [])):
-        if isinstance(message, AIMessage) and message.content:
-            if isinstance(message.content, str):
-                return message.content
-            return json.dumps(message.content, ensure_ascii=False)
-    return ""
+def _tool_result_content(result: Any) -> str:
+    if isinstance(result, str):
+        return result
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+class RequiredToolFailure(RuntimeError):
+    def __init__(self, failure_type: str):
+        super().__init__(failure_type)
+        self.failure_type = failure_type
+
+
+def _execute_tool_calls(
+    response: AIMessage,
+    available_tools: list[Any],
+    recorder: ToolSpanRecorder,
+) -> list[ToolMessage]:
+    by_name = {tool.name: tool for tool in available_tools}
+    messages = []
+    for call in response.tool_calls:
+        name = str(call.get("name") or "")
+        tool = by_name.get(name)
+        if tool is None:
+            continue
+        result = tool.invoke(call.get("args") or {}, config={"callbacks": [recorder]})
+        messages.append(ToolMessage(
+            name=name,
+            tool_call_id=str(call.get("id") or name),
+            content=_tool_result_content(result),
+        ))
+    return messages
 
 
 def _invoke_worker(model: Any, name: str, system_prompt: str, user_prompt: str, recorder: ToolSpanRecorder) -> str:
-    """Run one isolated tool-using agent graph; simple models remain a test seam."""
+    """Run one isolated worker with a forced required-tool phase."""
     if not hasattr(model, "bind_tools"):
         response = model.invoke([
             SystemMessage(content=f"Persona: {name}\n{system_prompt}"),
@@ -340,30 +376,178 @@ def _invoke_worker(model: Any, name: str, system_prompt: str, user_prompt: str, 
         ])
         return str(getattr(response, "content", "") or "")
 
-    from langchain.agents import create_agent
+    messages = [
+        SystemMessage(content=f"Persona: {name}\n{system_prompt}"),
+        HumanMessage(content=user_prompt),
+    ]
+    all_tools = _WORKER_TOOLS[name]
+    required_names = _REQUIRED_TOOL_NAMES[name]
+    required_tools = [tool for tool in all_tools if tool.name in required_names]
+    required_response = model.bind_tools(
+        required_tools,
+        tool_choice="required",
+    ).invoke(messages)
+    messages.append(required_response)
+    messages.extend(_execute_tool_calls(required_response, required_tools, recorder))
+    required_spans = [
+        span for span in recorder.spans if span.get("name") in required_names
+    ]
+    if not required_spans:
+        raise RequiredToolFailure("missing_required_tool_call")
+    failed_required = next((
+        span for span in required_spans
+        if span.get("status") != "success" or span.get("result", {}).get("ok") is False
+    ), None)
+    if failed_required:
+        raise RequiredToolFailure(
+            str(failed_required.get("result", {}).get("failure_type") or "unavailable")
+        )
 
-    worker = create_agent(
-        model=model,
-        tools=_WORKER_TOOLS[name],
-        system_prompt=f"Persona: {name}\n{system_prompt}",
-        name=f"resume_{name}",
+    optional_tools = [tool for tool in all_tools if tool.name not in required_names]
+    if optional_tools:
+        assessment = model.bind_tools(optional_tools, tool_choice="auto").invoke(messages)
+        messages.append(assessment)
+        optional_results = _execute_tool_calls(assessment, optional_tools, recorder)
+        if optional_results:
+            messages.extend(optional_results)
+            assessment = model.invoke(messages)
+    else:
+        assessment = model.invoke(messages)
+    return str(getattr(assessment, "content", "") or "")
+
+
+def _error_stage(reason: str) -> str:
+    if reason.startswith("model_error:"):
+        return "model"
+    if "tool" in reason:
+        return "tool"
+    if any(term in reason for term in ("source", "citation", "evidence", "job_id", "job_field")):
+        return "citation"
+    return "validation"
+
+
+def _retryable_exception(exc: Exception) -> bool:
+    return type(exc).__name__ in {
+        "APIConnectionError",
+        "APITimeoutError",
+        "InternalServerError",
+        "RateLimitError",
+        "ReadTimeout",
+        "TimeoutException",
+    }
+
+
+def _failure_alternatives(stage: str) -> list[str]:
+    if stage == "model":
+        return [
+            "Retry the reviewer after the model service recovers.",
+            "Continue with completed reviewers and label the assessment incomplete.",
+        ]
+    if stage == "tool":
+        return [
+            "Rerun the worker's mandatory tool pass.",
+            "Inspect the tool trace for an unavailable or rejected input.",
+            "Continue with completed reviewers and label the missing specialist lens.",
+        ]
+    if stage == "citation":
+        return [
+            "Regenerate using only supplied resume blocks and tool-returned job IDs.",
+            "Use the selected-job snapshot when the current internal job row is unavailable.",
+        ]
+    return [
+        "Regenerate the structured output from the supplied evidence.",
+        "Continue with completed reviewers and label the assessment incomplete.",
+    ]
+
+
+def _partial_tool_results(spans: list[dict]) -> list[dict]:
+    return [
+        {
+            "tool": span.get("name"),
+            "status": span.get("status"),
+            "result": span.get("result", {}),
+        }
+        for span in spans
+        if span.get("status") in {"success", "error"}
+    ]
+
+
+def _failure_type(reason: str, stage: str) -> str:
+    lowered = reason.lower()
+    if "timeout" in lowered:
+        return "timeout"
+    if "ratelimit" in lowered or "rate_limit" in lowered:
+        return "rate_limit"
+    if "authentication" in lowered or "permission" in lowered or "unauthorized" in lowered:
+        return "authentication"
+    if "connection" in lowered or "unavailable" in lowered or "internalserver" in lowered:
+        return "unavailable"
+    return stage
+
+
+def _failure_run(
+    name: str,
+    reason: str,
+    attempts: int,
+    spans: list[dict],
+    *,
+    stage: str | None = None,
+    retryable: bool,
+    message: str,
+    recovery_attempts: list[dict] | None = None,
+) -> dict:
+    failure_stage = stage or _error_stage(reason)
+    tool_names = {str(span.get("name")) for span in spans if span.get("name")}
+    remaining_gap = (
+        "The search did not complete, so we do not know whether matching jobs exist."
+        if failure_stage == "tool" and "search_jobs" in tool_names
+        else f"The {name.replace('_', ' ')} assessment is not validated, so its conclusions remain unknown."
     )
-    result = worker.invoke(
-        {"messages": [{"role": "user", "content": user_prompt}]},
-        config={"callbacks": [recorder], "recursion_limit": MAX_WORKER_TOOL_ITERATIONS},
-    )
-    return _last_ai_content(result)
+    return {
+        "persona": name,
+        "status": "error",
+        "failure_type": _failure_type(reason, failure_stage),
+        "attempted_operation": f"{name} resume assessment",
+        "source": ", ".join(sorted({str(span.get("name")) for span in spans if span.get("name")}))
+        or "SEA-LION model",
+        "attempted_queries": list(dict.fromkeys(
+            str(span["attempted_query"])
+            for span in spans
+            if isinstance(span.get("attempted_query"), str)
+        )),
+        "attempt_count": attempts,
+        "partial_results": _partial_tool_results(spans),
+        "local_recovery_attempts": recovery_attempts or [],
+        "remaining_gap": remaining_gap,
+        "suggested_alternatives": _failure_alternatives(failure_stage),
+        "retryable": retryable,
+        "tool_spans": spans,
+        "error": {
+            "code": reason,
+            "stage": failure_stage,
+            "retryable": retryable,
+            "message": message,
+        },
+    }
 
 
-def _persona_review(
+def _worker_run(
     name: str,
     document: dict,
     model: Any | None,
     job_context: dict | None = None,
-) -> dict | None:
+) -> dict:
     spec = _PERSONA_BY_NAME.get(name)
     if not spec:
-        return None
+        return _failure_run(
+            name,
+            "unknown_worker",
+            0,
+            [],
+            stage="configuration",
+            retryable=False,
+            message="The requested reviewer is not configured.",
+        )
     _description, prompt = spec
     evidence = [
         {
@@ -393,35 +577,153 @@ def _persona_review(
     system_prompt = _worker_system_prompt(name, prompt)
     user_prompt = "\n\n".join(data_blocks)
     reason = ""
+    previous_raw = ""
+    all_spans = []
+    recovery_attempts = []
     for attempt in range(MAX_VALIDATION_ATTEMPTS):
         recorder = ToolSpanRecorder(worker=name) if hasattr(active_model, "bind_tools") else None
         correction = "" if attempt == 0 else (
-            f"\n\nYour prior response failed validation: {reason}. Run your tool pass and "
-            "return one corrected JSON object using only supplied citations."
+            "\n\n<retry_feedback>\n"
+            f"Your prior response failed at {_error_stage(reason)} with code: {reason}. "
+            "Rerun every mandatory tool, inspect the failure, correct only what failed, "
+            "and self-verify the complete result.\n"
+            f"{xml_data_block('previous_invalid_output', previous_raw)}\n"
+            "</retry_feedback>"
         )
-        with bullet_context({
-            str(block.get("id")): str(block.get("text"))
-            for block in document.get("blocks", [])
-            if block.get("id") and block.get("kind") == "bullet"
-        }):
-            raw = _invoke_worker(
-                active_model,
-                name,
-                system_prompt,
-                user_prompt + correction,
-                recorder or ToolSpanRecorder(name),
+        try:
+            with bullet_context({
+                str(block.get("id")): str(block.get("text"))
+                for block in document.get("blocks", [])
+                if block.get("id") and block.get("kind") == "bullet"
+            }):
+                raw = _invoke_worker(
+                    active_model,
+                    name,
+                    system_prompt,
+                    user_prompt + correction,
+                    recorder or ToolSpanRecorder(name),
+                )
+        except Exception as exc:
+            if recorder:
+                all_spans.extend(recorder.spans)
+            is_tool_failure = isinstance(exc, RequiredToolFailure)
+            reason = (
+                f"tool_error:{exc.failure_type}"
+                if is_tool_failure
+                else f"model_error:{type(exc).__name__}"
             )
+            log.warning(
+                "resume reviewer failed persona=%s attempt=%d reason=%s",
+                name,
+                attempt + 1,
+                reason,
+            )
+            recovery_attempts.append({
+                "attempt": attempt + 1,
+                "outcome": "failed",
+                "failure": reason,
+            })
+            if not is_tool_failure and not _retryable_exception(exc):
+                break
+            continue
+        previous_raw = raw
+        if recorder:
+            all_spans.extend(recorder.spans)
         parsed = parse_persona_output(raw)
         finding, reason = _validated_finding(name, parsed, document, job_context, recorder)
         if finding:
-            return finding
+            finding["tool_spans"] = all_spans
+            return {
+                "persona": name,
+                "status": "success",
+                "failure_type": None,
+                "attempted_operation": f"{name} resume assessment",
+                "source": ", ".join(sorted({str(span.get('name')) for span in all_spans if span.get('name')})) or "SEA-LION model",
+                "attempted_queries": list(dict.fromkeys(
+                    str(span["attempted_query"])
+                    for span in all_spans
+                    if isinstance(span.get("attempted_query"), str)
+                )),
+                "attempt_count": attempt + 1,
+                "partial_results": [],
+                "local_recovery_attempts": recovery_attempts,
+                "remaining_gap": None,
+                "suggested_alternatives": [],
+                "retryable": False,
+                "tool_spans": all_spans,
+                "assessment": finding,
+                "error": None,
+            }
         log.warning(
             "resume reviewer output rejected persona=%s attempt=%d reason=%s",
             name,
             attempt + 1,
             reason,
         )
-    return None
+        recovery_attempts.append({
+            "attempt": attempt + 1,
+            "outcome": "rejected",
+            "failure": reason,
+        })
+    return _failure_run(
+        name,
+        reason or "worker_failed",
+        min(MAX_VALIDATION_ATTEMPTS, attempt + 1),
+        all_spans,
+        retryable=reason.startswith("model_error:") or not reason.startswith("unknown_"),
+        message=(
+            "The reviewer could not produce a validated assessment after retrying. "
+            "No unvalidated finding was used."
+        ),
+        recovery_attempts=recovery_attempts,
+    )
+
+
+def _persona_review(
+    name: str,
+    document: dict,
+    model: Any | None,
+    job_context: dict | None = None,
+) -> dict | None:
+    """Compatibility helper returning only a completed assessment."""
+    run = _worker_run(name, document, model, job_context)
+    return run.get("assessment") if run.get("status") == "success" else None
+
+
+def iter_persona_worker_runs(
+    document: dict,
+    model: Any | None = None,
+    *,
+    include_market: bool,
+    job_context: dict | None = None,
+    persona_names: tuple[str, ...] | None = None,
+):
+    """Yield one explicit terminal run envelope per isolated worker."""
+    names = persona_names or tuple(
+        name
+        for name, _description, _prompt in _PERSONAS
+        if include_market or name != "market_researcher"
+    )
+    with ThreadPoolExecutor(max_workers=len(names)) as pool:
+        futures = {
+            pool.submit(_worker_run, name, document, model, job_context): name
+            for name in names
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                yield future.result()
+            except Exception as exc:
+                log.exception("resume reviewer crashed persona=%s", name)
+                yield _failure_run(
+                    name,
+                    f"worker_crash:{type(exc).__name__}",
+                    1,
+                    [],
+                    stage="worker",
+                    retryable=_retryable_exception(exc),
+                    message="The reviewer stopped unexpectedly. No finding was used.",
+                )
 
 
 def iter_persona_reviews(
@@ -433,20 +735,12 @@ def iter_persona_reviews(
     persona_names: tuple[str, ...] | None = None,
 ):
     """Yield valid persona findings independently as each reviewer completes."""
-    names = persona_names or tuple(
-        name
-        for name, _description, _prompt in _PERSONAS
-        if include_market or name != "market_researcher"
-    )
-    with ThreadPoolExecutor(max_workers=len(names)) as pool:
-        futures = {
-            pool.submit(_persona_review, name, document, model, job_context): name
-            for name in names
-        }
-        for future in as_completed(futures):
-            try:
-                finding = future.result()
-            except Exception:
-                finding = None
-            if finding:
-                yield finding
+    for run in iter_persona_worker_runs(
+        document,
+        model,
+        include_market=include_market,
+        job_context=job_context,
+        persona_names=persona_names,
+    ):
+        if run.get("status") == "success":
+            yield run["assessment"]

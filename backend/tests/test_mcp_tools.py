@@ -102,6 +102,8 @@ def test_search_jobs_caps_and_shapes_results(monkeypatch):
     data = json.loads(mcp_tools.search_jobs("python data", limit=999))
 
     assert data["ok"] is True
+    assert data["status"] == "success"
+    assert data["query_executed"] is True
     assert data["limit"] == config.AGENT_SEARCH_JOBS_LIMIT
     assert data["detail"] is False
     assert data["results"][0]["id"] == 7

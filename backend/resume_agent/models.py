@@ -30,7 +30,7 @@ def _api_key() -> str:
     key = ai_service._get_api_key()
     if not key:
         raise ResumeAgentConfigurationError(
-            "Agent v2 needs SEALION_API configured before it can run."
+            "Agent v2 needs SEALION_API_KEYS or SEALION_API configured before it can run."
         )
     return key
 
