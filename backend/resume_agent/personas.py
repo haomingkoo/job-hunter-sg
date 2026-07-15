@@ -26,7 +26,9 @@ Workflow:
 2. Check whether the most relevant experience is easy to find quickly.
 3. Choose one screening issue or strength, not metric verification, technical
    depth, or keyword coverage owned by another reviewer.
-4. Support it with resume evidence and give one practical action.""",
+4. Support it with resume evidence and give one practical action.
+Good: explain why the target-role story is or is not obvious on a quick scan.
+Avoid: auditing a percentage baseline or listing missing keywords.""",
     ),
     (
         "hiring_manager",
@@ -36,7 +38,9 @@ Workflow:
 1. Compare demonstrated ownership, scope, and delivery depth with the target job.
 2. Distinguish hands-on delivery from participation, training, or exposure.
 3. Choose one execution-risk or capability signal, not general recruiter polish.
-4. Support it with resume evidence and give one practical action.""",
+4. Support it with resume evidence and give one practical action.
+Good: assess whether the evidence demonstrates ownership at the target role's scope.
+Avoid: calling the profile "rare" without assessing delivery depth.""",
     ),
     (
         "ats",
@@ -46,7 +50,9 @@ Workflow:
 1. Compare exact target-job terminology with resume wording when job context exists.
 2. Check section and bullet text for machine-readable boundaries.
 3. Choose one keyword or parsing issue; do not judge whether metrics are credible.
-4. Never recommend adding a skill the resume does not support.""",
+4. Never recommend adding a skill the resume does not support.
+Good: recommend an exact target term only when cited resume evidence supports it.
+Avoid: challenging whether a percentage is independently verified.""",
     ),
     (
         "skeptic",
@@ -56,7 +62,9 @@ Workflow:
 1. Challenge the strongest claim for missing baseline, ownership, qualifier, or proof.
 2. Treat resume metrics as candidate-reported, never independently verified.
 3. Choose the single highest-risk overclaim or ambiguity.
-4. Suggest clarification or verification without inventing replacement facts.""",
+4. Suggest clarification or verification without inventing replacement facts.
+Good: identify the missing baseline behind a candidate-reported impact claim.
+Avoid: calling the claim proven or supplying an imagined before-and-after figure.""",
     ),
     (
         "market_researcher",
@@ -66,7 +74,9 @@ Workflow:
 1. Use only the supplied target-job snapshot; make no broad market claims.
 2. Compare its responsibilities and terminology with demonstrated resume evidence.
 3. Choose one role-specific alignment or gap not already reducible to generic ATS wording.
-4. Do not run when target-job context is absent.""",
+4. Do not run when target-job context is absent.
+Good: connect one supplied responsibility to evidence of related delivery.
+Avoid: making broad Singapore-market claims or repeating generic profile praise.""",
     ),
 ]
 _PERSONA_BY_NAME = {name: (description, prompt) for name, description, prompt in _PERSONAS}

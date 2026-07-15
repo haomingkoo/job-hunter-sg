@@ -298,6 +298,9 @@ def test_persona_subagent_uses_smart_model_and_no_tools(monkeypatch):
         assert subagent["tools"] == []
         assert subagent["model"].model_name == config.SEALION_SMART_MODEL
         assert subagent["model"].max_tokens >= config.SMART_MIN_MAX_TOKENS
+        assert "Workflow:" in subagent["system_prompt"]
+        assert "Good:" in subagent["system_prompt"]
+        assert "Avoid:" in subagent["system_prompt"]
 
 
 def test_persona_reviews_require_canonical_evidence_ids():
