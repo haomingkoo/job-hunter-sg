@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, cast
@@ -14,6 +15,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from .models import create_smart_model
 from .prompts import FAIRNESS_AND_ANTI_FABRICATION_GUARDRAILS
 from prompt_safety import xml_data_block
+
+
+log = logging.getLogger("jobhunter.resume_agent")
 
 
 _PERSONAS = [
@@ -127,6 +131,52 @@ def parse_persona_output(raw: str) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _validated_finding(
+    name: str,
+    parsed: dict,
+    document: dict,
+    job_context: dict | None,
+) -> tuple[dict | None, str]:
+    if not parsed:
+        return None, "invalid_json"
+
+    valid_ids = {str(block.get("id")) for block in document.get("blocks", [])}
+    evidence_ids = parsed.get("evidence_ids")
+    if not isinstance(evidence_ids, list) or not evidence_ids:
+        return None, "missing_evidence_ids"
+    if any(str(item) not in valid_ids for item in evidence_ids):
+        return None, "unknown_evidence_id"
+
+    allowed_job_fields = {
+        key for key in (job_context or {})
+        if key in {"title", "company", "description", "terms", "location", "source"}
+    }
+    target_job_fields = parsed.get("target_job_fields", [])
+    if not isinstance(target_job_fields, list):
+        return None, "invalid_target_job_fields"
+    if any(str(item) not in allowed_job_fields for item in target_job_fields):
+        return None, "unknown_target_job_field"
+    if name == "market_researcher" and job_context and not target_job_fields:
+        return None, "missing_target_job_citation"
+
+    category = str(parsed.get("category") or "").strip()[:80]
+    message = str(parsed.get("message") or "").strip()[:1000]
+    rationale = str(parsed.get("rationale") or "").strip()[:1000]
+    suggested_action = str(parsed.get("suggested_action") or "").strip()[:1000]
+    if not category or not message or not rationale or not suggested_action:
+        return None, "missing_required_text"
+
+    return {
+        "persona": name,
+        "category": category,
+        "evidence_ids": [str(item) for item in evidence_ids],
+        "target_job_fields": [str(item) for item in target_job_fields],
+        "message": message,
+        "rationale": rationale,
+        "suggested_action": suggested_action,
+    }, ""
+
+
 def _persona_review(
     name: str,
     document: dict,
@@ -156,48 +206,30 @@ def _persona_review(
             "target_job_data",
             json.dumps(job_context, ensure_ascii=False, separators=(",", ":")),
         ))
-    response = model.invoke([
+    messages = [
         SystemMessage(content=(
             f"Persona: {name}\n{prompt}\n\n{_OUTPUT_INSTRUCTIONS}\n\n"
             f"{FAIRNESS_AND_ANTI_FABRICATION_GUARDRAILS}"
         )),
         HumanMessage(content="\n\n".join(data_blocks)),
-    ])
-    parsed = parse_persona_output(str(getattr(response, "content", "") or ""))
-    valid_ids = {str(block.get("id")) for block in document.get("blocks", [])}
-    evidence_ids = parsed.get("evidence_ids")
-    if (
-        not isinstance(evidence_ids, list)
-        or not evidence_ids
-        or any(str(item) not in valid_ids for item in evidence_ids)
-    ):
-        return None
-    allowed_job_fields = {
-        key for key in (job_context or {})
-        if key in {"title", "company", "description", "terms", "location", "source"}
-    }
-    target_job_fields = parsed.get("target_job_fields", [])
-    if (
-        not isinstance(target_job_fields, list)
-        or any(str(item) not in allowed_job_fields for item in target_job_fields)
-        or (name == "market_researcher" and job_context and not target_job_fields)
-    ):
-        return None
-    category = str(parsed.get("category") or "").strip()[:80]
-    message = str(parsed.get("message") or "").strip()[:1000]
-    rationale = str(parsed.get("rationale") or "").strip()[:1000]
-    suggested_action = str(parsed.get("suggested_action") or "").strip()[:1000]
-    if not category or not message or not rationale or not suggested_action:
-        return None
-    return {
-        "persona": name,
-        "category": category,
-        "evidence_ids": [str(item) for item in evidence_ids],
-        "target_job_fields": [str(item) for item in target_job_fields],
-        "message": message,
-        "rationale": rationale,
-        "suggested_action": suggested_action,
-    }
+    ]
+    for attempt in range(2):
+        response = model.invoke(messages)
+        parsed = parse_persona_output(str(getattr(response, "content", "") or ""))
+        finding, reason = _validated_finding(name, parsed, document, job_context)
+        if finding:
+            return finding
+        log.warning(
+            "resume reviewer output rejected persona=%s attempt=%d reason=%s",
+            name,
+            attempt + 1,
+            reason,
+        )
+        messages = [*messages, HumanMessage(content=(
+            f"Your response failed validation: {reason}. Return one corrected JSON "
+            "object using only the supplied evidence IDs and allowed target-job field names."
+        ))]
+    return None
 
 
 def iter_persona_reviews(

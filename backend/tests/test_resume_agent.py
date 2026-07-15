@@ -343,7 +343,10 @@ def test_persona_review_discards_unknown_evidence_ids():
     document = create_resume_document("EXPERIENCE\n- Built a data platform")
 
     class FakeModel:
+        calls = 0
+
         def invoke(self, _messages):
+            self.calls += 1
             return AIMessage(content=json.dumps({
                 "category": "clarity",
                 "evidence_ids": ["b_unknown"],
@@ -353,12 +356,50 @@ def test_persona_review_discards_unknown_evidence_ids():
                 "suggested_action": "Change it.",
             }))
 
+    model = FakeModel()
     assert list(personas.iter_persona_reviews(
         document,
-        FakeModel(),
+        model,
         include_market=False,
         persona_names=("recruiter",),
     )) == []
+    assert model.calls == 2
+
+
+def test_persona_review_retries_once_after_fixable_validation_failure():
+    import json
+
+    from langchain_core.messages import AIMessage
+    from resume_document import create_resume_document
+    import resume_agent.personas as personas
+
+    document = create_resume_document("EXPERIENCE\n- Built a data platform")
+    evidence_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
+
+    class FakeModel:
+        calls = 0
+        retry_prompt = ""
+
+        def invoke(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                return AIMessage(content="not json")
+            self.retry_prompt = messages[-1].content
+            return AIMessage(content=json.dumps({
+                "category": "clarity",
+                "evidence_ids": [evidence_id],
+                "target_job_fields": [],
+                "message": "The result is unclear.",
+                "rationale": "The cited bullet describes work without its outcome.",
+                "suggested_action": "Add the supported result.",
+            }))
+
+    model = FakeModel()
+    finding = personas._persona_review("recruiter", document, model)
+
+    assert finding is not None
+    assert model.calls == 2
+    assert "invalid_json" in model.retry_prompt
 
 
 def test_market_persona_receives_xml_delimited_job_snapshot():
