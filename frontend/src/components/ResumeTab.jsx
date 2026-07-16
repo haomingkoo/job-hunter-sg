@@ -3423,13 +3423,33 @@ CERTIFICATIONS
                         <div className="mt-2 space-y-2">
                           {finding.findings.map((item, itemIndex) => (
                             <div key={`${item.source || "source"}-${item.source_location || itemIndex}`}>
-                              <span className="font-semibold capitalize">{item.kind} · {Math.round(Number(item.relevance_score || 0) * 100)}%</span>
+                              <span className="font-semibold capitalize">{item.kind} · relevance {Math.round(Number(item.relevance_score || 0) * 100)}%{Number.isFinite(item.confidence) ? ` · confidence ${Math.round(item.confidence * 100)}%` : " · confidence unavailable"}</span>
                               <div>{item.method}</div>
+                              {item.confidence_basis && <div>Confidence: {item.confidence_basis}</div>}
                               <div>Source: {item.source} · {item.source_location}</div>
+                              {item.source_mapping?.relevant_excerpt && <div>Evidence: “{item.source_mapping.relevant_excerpt}”{item.source_mapping.excerpt_truncated ? "…" : ""}</div>}
+                              {item.claim_id && <div>Claim: {item.claim_id}</div>}
+                              {item.trace_id && <div>Trace: {item.trace_id} · {item.worker} · attempt {item.attempt}</div>}
                             </div>
                           ))}
                         </div>
                       </details>
+                    )}
+                    {Array.isArray(finding.conflicts) && finding.conflicts.length > 0 && (
+                      <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                        <div className="font-semibold">Conflicting evidence</div>
+                        {finding.conflicts.map((conflict) => (
+                          <div key={conflict.conflict_id || conflict.topic} className="mt-1">
+                            <div>{conflict.topic}</div>
+                            {(conflict.values || []).map((value, valueIndex) => (
+                              <div key={`${conflict.conflict_id || conflict.topic}-${valueIndex}`}>
+                                {String(value.value)} · {value.source_mapping?.name} · {value.measurement_date || "date unavailable"} · {value.scope || "scope unavailable"}
+                              </div>
+                            ))}
+                            {conflict.possible_explanation && <div className="mt-1">Possible explanation: {conflict.possible_explanation}</div>}
+                          </div>
+                        ))}
+                      </div>
                     )}
                     {Array.isArray(finding.evidence_ids) && finding.evidence_ids.length > 0 && (
                       <div className="mt-2 border-t border-[#BDDDFC]/30 pt-2 text-xs leading-relaxed text-[#6A89A7]">
@@ -3475,8 +3495,8 @@ CERTIFICATIONS
               ) : agentJudgeAssessment.verdict ? (
                 <div className="mt-3 space-y-2 text-xs leading-relaxed">
                   <div className="text-sm font-medium text-[#384959]">{agentJudgeAssessment.verdict}</div>
-                  <div className="text-emerald-700"><span className="font-semibold">Strengths:</span> {(agentJudgeAssessment.strengths || []).map((item) => item.finding).join(" ")}</div>
-                  <div className="text-rose-700"><span className="font-semibold">Weaknesses:</span> {(agentJudgeAssessment.weaknesses || []).map((item) => item.finding).join(" ")}</div>
+                  <div className="text-emerald-700"><span className="font-semibold">Strengths:</span> {(agentJudgeAssessment.strengths || []).map((item) => `${item.finding}${Number.isFinite(item.confidence) ? ` (${Math.round(item.confidence * 100)}% confidence)` : ""}`).join(" ")}</div>
+                  <div className="text-rose-700"><span className="font-semibold">Weaknesses:</span> {(agentJudgeAssessment.weaknesses || []).map((item) => `${item.finding}${Number.isFinite(item.confidence) ? ` (${Math.round(item.confidence * 100)}% confidence)` : ""}`).join(" ")}</div>
                   <div className="text-[#6A89A7]"><span className="font-semibold">Reasoning:</span> {agentJudgeAssessment.reasoning}</div>
                   {Array.isArray(agentJudgeAssessment.evidence_gaps) && agentJudgeAssessment.evidence_gaps.length > 0 && (
                     <div className="text-amber-800"><span className="font-semibold">Unavailable or unverified:</span> {agentJudgeAssessment.evidence_gaps.join(" ")}</div>
@@ -3485,10 +3505,11 @@ CERTIFICATIONS
                     <summary className="cursor-pointer font-semibold">Judge citations</summary>
                     <div className="mt-1">
                       {[...(agentJudgeAssessment.strengths || []), ...(agentJudgeAssessment.weaknesses || [])]
-                        .map((item) => item.source)
+                        .map((item) => `${item.source}${item.confidence_basis ? ` · ${item.confidence_basis}` : ""}`)
                         .filter(Boolean)
                         .join(", ")}
                     </div>
+                    {agentJudgeAssessment.trace_id && <div className="mt-1">Trace: {agentJudgeAssessment.trace_id}</div>}
                   </details>
                 </div>
               ) : (

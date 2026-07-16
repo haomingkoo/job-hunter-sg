@@ -19,7 +19,7 @@ from .tracing import ToolSpanRecorder
 log = logging.getLogger("jobhunter.resume_agent")
 MAX_JUDGE_ATTEMPTS = 2
 _RUBRIC = """Score the assessment, not the candidate, out of 100:
-- evidence fidelity and accurate citations: 30
+- evidence fidelity, confidence calibration, and accurate citations: 30
 - balanced coverage of material strengths and weaknesses: 20
 - honest disclosure of unavailable evidence and failed worker coverage: 20
 - specificity and practical usefulness: 15
@@ -27,11 +27,12 @@ _RUBRIC = """Score the assessment, not the candidate, out of 100:
 Do not use or reward conclusions based on protected or demographic attributes.
 Do not reward confident language when the supplied evidence does not support it."""
 _OUTPUT = """Return only this JSON object:
-{"verdict":"one-sentence quality conclusion","strengths":[{"finding":"assessment strength","source":"final_assessment"}],"weaknesses":[{"finding":"assessment weakness","source":"reviewer:ats"}],"score":80,"reasoning":"concise score rationale and largest deductions","evidence_gaps":["unavailable or unverified item"]}
+{"verdict":"one-sentence quality conclusion","strengths":[{"finding":"assessment strength","source":"final_assessment","confidence":0.9,"confidence_basis":"directly visible in the final write-up"}],"weaknesses":[{"finding":"assessment weakness","source":"reviewer:ats","confidence":0.8,"confidence_basis":"the cited reviewer finding is absent from the synthesis"}],"score":80,"reasoning":"concise score rationale and largest deductions","evidence_gaps":["unavailable or unverified item"]}
 Each source must be final_assessment, reviewer:<supplied persona>, or
 worker_failure:<supplied persona>. Include at least one strength and one weakness.
 The score must be an integer from 0 to 100. Use an empty evidence_gaps list only
-when no evidence or specialist coverage is unavailable."""
+when no evidence or specialist coverage is unavailable. Confidence is field-level
+evidence support from 0 to 1 and requires a concise confidence_basis."""
 
 
 def _parse(raw: str, allowed_sources: set[str]) -> tuple[dict | None, str]:
@@ -60,17 +61,32 @@ def _parse(raw: str, allowed_sources: set[str]) -> tuple[dict | None, str]:
                 return None, f"invalid_{key}"
             if item.get("source") not in allowed_sources:
                 return None, "invalid_source"
+            confidence = item.get("confidence")
+            if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1:
+                return None, "invalid_confidence"
+            if not isinstance(item.get("confidence_basis"), str) or not item["confidence_basis"].strip():
+                return None, "missing_confidence_basis"
     gaps = value.get("evidence_gaps")
     if not isinstance(gaps, list) or not all(isinstance(gap, str) for gap in gaps):
         return None, "invalid_evidence_gaps"
     return {
         "verdict": value["verdict"].strip(),
         "strengths": [
-            {"finding": item["finding"].strip(), "source": item["source"]}
+            {
+                "finding": item["finding"].strip(),
+                "source": item["source"],
+                "confidence": round(float(item["confidence"]), 2),
+                "confidence_basis": item["confidence_basis"].strip(),
+            }
             for item in value["strengths"]
         ],
         "weaknesses": [
-            {"finding": item["finding"].strip(), "source": item["source"]}
+            {
+                "finding": item["finding"].strip(),
+                "source": item["source"],
+                "confidence": round(float(item["confidence"]), 2),
+                "confidence_basis": item["confidence_basis"].strip(),
+            }
             for item in value["weaknesses"]
         ],
         "score": value["score"],
@@ -119,7 +135,7 @@ def judge_assessment(
     }
     evidence = [{
         key: finding.get(key)
-        for key in ("persona", "summary", "findings", "score", "reasoning")
+        for key in ("persona", "summary", "findings", "conflicts", "score", "reasoning")
     } for finding in persona_findings]
     failures = [{
         key: run.get(key)
@@ -193,6 +209,13 @@ def judge_assessment(
         spans.extend(recorder.spans)
         if parsed:
             parsed["duration_ms"] = round((time.perf_counter() - started_at) * 1000)
+            parsed["trace_id"] = trace_id
+            for item in [*parsed["strengths"], *parsed["weaknesses"]]:
+                item.update({
+                    "trace_id": trace_id,
+                    "worker": "quality_judge",
+                    "attempt": attempt,
+                })
             return {
                 "status": "success",
                 "attempt_count": attempt,

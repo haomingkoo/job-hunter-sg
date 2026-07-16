@@ -258,6 +258,7 @@ def _build_prompt(body: dict) -> str:
                     "summary",
                     "category",
                     "findings",
+                    "conflicts",
                     "score",
                     "reasoning",
                     "suggested_actions",

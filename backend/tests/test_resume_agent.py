@@ -370,10 +370,14 @@ def test_quality_judge_scores_the_writeup_with_cited_strengths_and_weaknesses():
                 "strengths": [{
                     "finding": "It leads with a decision-useful conclusion.",
                     "source": "final_assessment",
+                    "confidence": 0.9,
+                    "confidence_basis": "The conclusion appears first in the write-up.",
                 }],
                 "weaknesses": [{
                     "finding": "It does not disclose the unavailable market comparison.",
                     "source": "worker_failure:market_researcher",
+                    "confidence": 0.95,
+                    "confidence_basis": "The failed worker is supplied but absent from the write-up.",
                 }],
                 "score": 76,
                 "reasoning": "Evidence use is strong, with a material honesty deduction.",
@@ -398,6 +402,8 @@ def test_quality_judge_scores_the_writeup_with_cited_strengths_and_weaknesses():
     assert run["assessment"]["score"] == 76
     assert run["assessment"]["strengths"][0]["source"] == "final_assessment"
     assert run["assessment"]["weaknesses"][0]["source"] == "worker_failure:market_researcher"
+    assert run["assessment"]["strengths"][0]["confidence"] == 0.9
+    assert run["assessment"]["trace_id"] == "judge-test"
 
 
 def test_quality_judge_does_not_retry_authentication_failure():
@@ -570,8 +576,6 @@ def test_research_personas_must_cite_a_job_returned_by_their_search():
 
 
 def test_research_worker_places_returned_job_ids_in_final_citation_check(monkeypatch):
-    import json
-
     from langchain_core.messages import AIMessage
 
     import resume_agent.personas as personas
@@ -593,7 +597,20 @@ def test_research_worker_places_returned_job_ids_in_final_citation_check(monkeyp
                     "id": "search-1",
                 }])
             assert any("internal job IDs 42" in message.content for message in messages)
-            return AIMessage(content=json.dumps({"summary": "done"}))
+            return AIMessage(content="", tool_calls=[{
+                "name": "submit_assessment",
+                "args": {
+                    "summary": "done",
+                    "category": "research",
+                    "findings": [],
+                    "conflicts": [],
+                    "research_job_ids": [42],
+                    "score": 70,
+                    "reasoning": "Compared the supplied evidence.",
+                    "suggested_actions": ["Clarify scope."],
+                },
+                "id": "submit-1",
+            }])
 
     monkeypatch.setattr(
         personas.search_jobs,
@@ -633,6 +650,15 @@ def test_research_worker_can_cite_a_secondary_job_separately_from_primary_eviden
             {"kind": "strength", "finding": "The bullet shows ownership.", "source": "resume", "source_location": evidence_id, "method": "Compared the resume with internal job 42.", "relevance_score": 0.9},
             {"kind": "weakness", "finding": "The target scope is not explicit.", "source": "target_job", "source_location": "description", "method": "Compared supplied target responsibilities.", "relevance_score": 0.8},
         ],
+        "conflicts": [{
+            "topic": "role scope",
+            "status": "conflict",
+            "values": [
+                {"value": "process automation", "source": "resume", "source_location": evidence_id, "measurement_date": None, "scope": "candidate evidence"},
+                {"value": "process intelligence", "source": "target_job", "source_location": "description", "measurement_date": None, "scope": "target responsibility"},
+            ],
+            "possible_explanation": "The resume and target role describe different scope.",
+        }],
         "research_job_ids": [42],
         "score": 70,
         "reasoning": "Delivery evidence is relevant but incomplete.",
@@ -649,6 +675,8 @@ def test_research_worker_can_cite_a_secondary_job_separately_from_primary_eviden
 
     assert reason == ""
     assert finding["research_job_ids"] == [42]
+    assert finding["conflicts"][0]["values"][0]["source_mapping"]["name"] == "Uploaded resume"
+    assert finding["conflicts"][0]["values"][1]["source_mapping"]["name"] == "Selected job snapshot"
 
 
 def test_persona_reviews_require_canonical_evidence_ids():
@@ -685,8 +713,6 @@ def test_persona_reviews_require_canonical_evidence_ids():
 
 
 def test_persona_worker_uses_required_tool_and_records_its_own_span():
-    import json
-
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     from langchain_core.messages import AIMessage
     from resume_document import create_resume_document
@@ -705,23 +731,32 @@ def test_persona_worker_uses_required_tool_and_records_its_own_span():
             "args": {"resume_text": document["raw_text"]},
             "id": "score-call",
         }]),
-        AIMessage(content=json.dumps({
-            "summary": "The delivery is credible but the outcome needs context.",
-            "category": "first screen",
-            "findings": [
-                {"kind": "strength", "finding": "The bullet quantifies delivery scale.", "source": "resume", "source_location": evidence_id, "method": "Reviewed the cited bullet and deterministic scorecard.", "relevance_score": 0.9},
-                {"kind": "weakness", "finding": "The user impact is not explained.", "source": "resume", "source_location": evidence_id, "method": "Checked whether the quantified scale includes an outcome.", "relevance_score": 0.8},
-            ],
-            "score": 74,
-            "reasoning": "The resume has visible scale but limited outcome evidence.",
-            "suggested_actions": ["Clarify the supported user outcome."],
-        })),
+        AIMessage(content="", tool_calls=[{
+            "name": "submit_assessment",
+            "args": {
+                "summary": "The delivery is credible but the outcome needs context.",
+                "category": "first screen",
+                "findings": [
+                    {"kind": "strength", "finding": "The bullet quantifies delivery scale.", "source": "resume", "source_location": evidence_id, "method": "Reviewed the cited bullet and deterministic scorecard.", "relevance_score": 0.9, "confidence": 0.9, "confidence_basis": "Directly stated in the cited bullet."},
+                    {"kind": "weakness", "finding": "The user impact is not explained.", "source": "resume", "source_location": evidence_id, "method": "Checked whether the quantified scale includes an outcome.", "relevance_score": 0.8, "confidence": 0.8, "confidence_basis": "The cited bullet contains no user outcome."},
+                ],
+                "conflicts": [],
+                "research_job_ids": [],
+                "score": 74,
+                "reasoning": "The resume has visible scale but limited outcome evidence.",
+                "suggested_actions": ["Clarify the supported user outcome."],
+            },
+            "id": "submit-assessment",
+        }]),
     ])
 
     finding = personas._persona_review("recruiter", document, model)
 
     assert finding is not None
     assert finding["score"] == 74
+    assert finding["findings"][0]["confidence"] == 0.9
+    assert finding["findings"][0]["source_mapping"]["relevant_excerpt"] == "Built a data platform for 100 users"
+    assert finding["findings"][0]["claim_id"] == "recruiter-1-1"
     tool_span = next(span for span in finding["tool_spans"] if span["kind"] == "tool")
     assert tool_span["worker"] == "recruiter"
     assert tool_span["name"] == "score_resume"

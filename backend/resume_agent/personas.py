@@ -7,11 +7,13 @@ import logging
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import config
 from deepagents.middleware.subagents import SubAgent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.tools import StructuredTool
+from pydantic import BaseModel, Field
 
 from .models import create_agent_model
 from .prompts import FAIRNESS_AND_ANTI_FABRICATION_GUARDRAILS
@@ -41,6 +43,7 @@ MAX_METHOD_CHARS = 500
 MAX_REASONING_CHARS = 1_600
 MAX_SUMMARY_CHARS = 500
 RELEVANCE_SCORE_DECIMALS = 2
+MAX_SOURCE_EXCERPT_CHARS = 500
 
 _PERSONAS = [
     (
@@ -143,7 +146,7 @@ _SCORING_RUBRICS = {
     ),
 }
 _OUTPUT_INSTRUCTIONS = """Return only one JSON object with exactly these fields:
-{"summary":"one-sentence decision-useful conclusion","category":"short label","findings":[{"kind":"strength","finding":"one atomic observation","source":"resume","source_location":"canonical block id","method":"how evidence and tool output were assessed","relevance_score":0.92},{"kind":"weakness","finding":"one atomic observation","source":"target_job","source_location":"description","method":"comparison performed","relevance_score":0.88}],"research_job_ids":[12345],"score":75,"reasoning":"brief explanation of score tradeoffs and largest deductions","suggested_actions":["one or two practical actions"]}
+{"summary":"one-sentence decision-useful conclusion","category":"short label","findings":[{"kind":"strength","finding":"one atomic observation","source":"resume","source_location":"canonical block id","method":"how evidence and tool output were assessed","relevance_score":0.92,"confidence":0.9,"confidence_basis":"directly stated in the cited resume block"},{"kind":"weakness","finding":"one atomic observation","source":"target_job","source_location":"description","method":"comparison performed","relevance_score":0.88,"confidence":0.75,"confidence_basis":"inferred from the cited role requirement and supplied resume evidence"}],"conflicts":[{"topic":"employee count","status":"conflict","values":[{"value":12400,"source":"resume","source_location":"canonical block id","measurement_date":"2025-12-31","scope":"global employees"},{"value":11850,"source":"internal_job","source_location":"12345","measurement_date":"2025-09-30","scope":"full-time employees"}],"possible_explanation":"The dates and workforce definitions differ."}],"research_job_ids":[12345],"score":75,"reasoning":"brief explanation of score tradeoffs and largest deductions","suggested_actions":["one or two practical actions"]}
 Return one or two strengths and one or two weaknesses. `source` must be resume,
 target_job, or internal_job. For resume, source_location must be a canonical ID
 from resume_evidence_data. For target_job, it must be one field name chosen from
@@ -151,7 +154,68 @@ title, company, description, terms, location, source. For internal_job, it must
 be the decimal ID returned by a tool in this run. `relevance_score` must be a
 number from 0 to 1. The assessment score must be an integer from 0 to 100. Do
 not wrap the JSON in Markdown. Put every internal job ID used for comparison in
-research_job_ids; use an empty list when no internal job informed the assessment."""
+research_job_ids; use an empty list when no internal job informed the assessment.
+`confidence` is evidence support for that exact finding, not relevance or general
+model certainty, and must be from 0 to 1. Explain it in `confidence_basis`."""
+
+
+class _FindingSubmission(BaseModel):
+    kind: Literal["strength", "weakness"]
+    finding: str
+    source: Literal["resume", "target_job", "internal_job"]
+    source_location: str
+    method: str
+    relevance_score: float
+    confidence: float | None = None
+    confidence_basis: str | None = None
+
+
+class _ConflictValueSubmission(BaseModel):
+    value: str | int | float
+    source: Literal["resume", "target_job", "internal_job"]
+    source_location: str
+    measurement_date: str | None = None
+    scope: str | None = None
+
+
+class _ConflictSubmission(BaseModel):
+    topic: str
+    status: Literal["conflict"]
+    values: list[_ConflictValueSubmission]
+    possible_explanation: str | None = None
+
+
+class _AssessmentSubmission(BaseModel):
+    summary: str
+    category: str
+    findings: list[_FindingSubmission]
+    conflicts: list[_ConflictSubmission] = Field(default_factory=list)
+    research_job_ids: list[int] = Field(default_factory=list)
+    score: int
+    reasoning: str
+    suggested_actions: list[str]
+
+
+def _submit_assessment(**payload: Any) -> dict:
+    """Submit the final reviewer assessment using the required JSON schema."""
+    def plain(value: Any) -> Any:
+        if isinstance(value, BaseModel):
+            return value.model_dump()
+        if isinstance(value, list):
+            return [plain(item) for item in value]
+        if isinstance(value, dict):
+            return {key: plain(item) for key, item in value.items()}
+        return value
+
+    return plain(payload)
+
+
+_SUBMIT_ASSESSMENT_TOOL = StructuredTool.from_function(
+    func=_submit_assessment,
+    name="submit_assessment",
+    description="Submit the final evidence-bound resume assessment after required research.",
+    args_schema=_AssessmentSubmission,
+)
 
 
 def _worker_system_prompt(name: str, role_prompt: str) -> str:
@@ -180,6 +244,9 @@ def _worker_system_prompt(name: str, role_prompt: str) -> str:
         "Score the resume for your specialist lens, state both strengths and weaknesses, "
         "and explain the largest deductions.\n</scoring_rubric>\n\n"
         f"<output_contract>\n{_OUTPUT_INSTRUCTIONS}\n</output_contract>\n\n"
+        "<submission_policy>Return the final assessment by calling the "
+        "submit_assessment tool. Do not return the assessment as free-form text."
+        "</submission_policy>\n\n"
         "<self_verification>\nBefore returning, verify that every mandatory tool "
         "completed, the JSON matches the output contract, every source location exists "
         "in supplied or tool-returned evidence, both finding kinds are present, and the "
@@ -224,6 +291,41 @@ def parse_persona_output(raw: str) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _source_mapping(
+    source: str,
+    source_location: str,
+    document: dict,
+    job_context: dict | None,
+) -> dict:
+    excerpt: str | None = None
+    name = "Internal job search result"
+    if source == "resume":
+        name = "Uploaded resume"
+        block = next((
+            block for block in document.get("blocks", [])
+            if str(block.get("id")) == source_location
+        ), None)
+        excerpt = str((block or {}).get("text") or "") or None
+    elif source == "target_job":
+        name = "Selected job snapshot"
+        value = (job_context or {}).get(source_location)
+        if value is not None:
+            excerpt = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    excerpt_truncated = bool(excerpt and len(excerpt) > MAX_SOURCE_EXCERPT_CHARS)
+    return {
+        "type": source,
+        "name": name,
+        "url": None,
+        "location": source_location,
+        "relevant_excerpt": (
+            excerpt[:MAX_SOURCE_EXCERPT_CHARS] if excerpt else None
+        ),
+        "excerpt_truncated": excerpt_truncated,
+        "publication_date": None,
+        "data_period": None,
+    }
+
+
 def _validated_finding(
     name: str,
     parsed: dict,
@@ -242,12 +344,15 @@ def _validated_finding(
     category = str(parsed.get("category") or "").strip()[:MAX_CATEGORY_CHARS]
     summary = str(parsed.get("summary") or "").strip()[:MAX_SUMMARY_CHARS]
     findings = parsed.get("findings")
+    conflicts = parsed.get("conflicts", [])
     declared_research_job_ids = parsed.get("research_job_ids", [])
     suggested_actions = parsed.get("suggested_actions")
     reasoning = str(parsed.get("reasoning") or "").strip()[:MAX_REASONING_CHARS]
     score = parsed.get("score")
     if not isinstance(findings, list) or not MIN_WORKER_FINDINGS <= len(findings) <= MAX_WORKER_FINDINGS:
         return None, "invalid_findings"
+    if not isinstance(conflicts, list):
+        return None, "invalid_conflicts"
     if not isinstance(declared_research_job_ids, list) or any(
         isinstance(job_id, bool) or not isinstance(job_id, int)
         for job_id in declared_research_job_ids
@@ -283,10 +388,20 @@ def _validated_finding(
         source_location = str(item.get("source_location") or "")
         method = str(item.get("method") or "").strip()[:MAX_METHOD_CHARS]
         relevance_score = item.get("relevance_score")
+        confidence = item.get("confidence")
+        confidence_basis = str(item.get("confidence_basis") or "").strip()[:MAX_METHOD_CHARS]
         if kind not in {"strength", "weakness"} or not finding_text or not method:
             return None, "invalid_finding_fields"
         if isinstance(relevance_score, bool) or not isinstance(relevance_score, (int, float)) or not 0 <= relevance_score <= 1:
             return None, "invalid_relevance_score"
+        if confidence is not None and (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not 0 <= confidence <= 1
+        ):
+            return None, "invalid_confidence"
+        if confidence is not None and not confidence_basis:
+            return None, "missing_confidence_basis"
         if source == "resume" and source_location not in valid_ids:
             return None, "unknown_evidence_id"
         if source == "target_job" and source_location not in allowed_job_fields:
@@ -307,6 +422,79 @@ def _validated_finding(
             "source_location": source_location,
             "method": method,
             "relevance_score": round(float(relevance_score), RELEVANCE_SCORE_DECIMALS),
+            "confidence": (
+                round(float(confidence), RELEVANCE_SCORE_DECIMALS)
+                if confidence is not None
+                else None
+            ),
+            "confidence_basis": confidence_basis or "Confidence was not reported by this reviewer.",
+            "source_mapping": _source_mapping(
+                source,
+                source_location,
+                document,
+                job_context,
+            ),
+        })
+
+    clean_conflicts = []
+    for conflict in conflicts:
+        if not isinstance(conflict, dict) or conflict.get("status") != "conflict":
+            return None, "invalid_conflict"
+        topic = str(conflict.get("topic") or "").strip()
+        values = conflict.get("values")
+        if not topic or not isinstance(values, list) or len(values) < 2:
+            return None, "invalid_conflict_values"
+        clean_values = []
+        for value in values:
+            if not isinstance(value, dict) or isinstance(value.get("value"), bool) or not isinstance(value.get("value"), (str, int, float)):
+                return None, "invalid_conflict_value"
+            if value.get("measurement_date") is not None and not isinstance(value.get("measurement_date"), str):
+                return None, "invalid_conflict_measurement_date"
+            if value.get("scope") is not None and not isinstance(value.get("scope"), str):
+                return None, "invalid_conflict_scope"
+            value_source = str(value.get("source") or "")
+            value_location = str(value.get("source_location") or "")
+            if value_source == "resume" and value_location not in valid_ids:
+                return None, "unknown_conflict_evidence_id"
+            if value_source == "target_job" and value_location not in allowed_job_fields:
+                return None, "unknown_conflict_job_field"
+            if value_source == "internal_job":
+                try:
+                    conflict_job_id = int(value_location)
+                except ValueError:
+                    return None, "invalid_conflict_job_id"
+                if recorder is None or conflict_job_id not in recorder.source_job_ids:
+                    return None, "unknown_conflict_job_id"
+            elif value_source not in {"resume", "target_job"}:
+                return None, "invalid_conflict_source"
+            clean_values.append({
+                "value": (
+                    value["value"][:MAX_FINDING_CHARS]
+                    if isinstance(value["value"], str)
+                    else value["value"]
+                ),
+                "source_mapping": _source_mapping(
+                    value_source,
+                    value_location,
+                    document,
+                    job_context,
+                ),
+                "measurement_date": (
+                    value["measurement_date"][:MAX_CATEGORY_CHARS]
+                    if value.get("measurement_date")
+                    else None
+                ),
+                "scope": (
+                    value["scope"][:MAX_METHOD_CHARS]
+                    if value.get("scope")
+                    else None
+                ),
+            })
+        clean_conflicts.append({
+            "topic": topic,
+            "status": "conflict",
+            "values": clean_values,
+            "possible_explanation": str(conflict.get("possible_explanation") or "").strip()[:MAX_METHOD_CHARS],
         })
 
     clean_strengths = [item["finding"] for item in clean_findings if item["kind"] == "strength"]
@@ -322,7 +510,7 @@ def _validated_finding(
     research_job_ids = list(dict.fromkeys([
         *declared_research_job_ids,
         *(
-            int(item["source_location"])
+            int(str(item["source_location"]))
             for item in clean_findings
             if item["source"] == "internal_job"
         ),
@@ -342,6 +530,7 @@ def _validated_finding(
         "summary": summary,
         "category": category,
         "findings": clean_findings,
+        "conflicts": clean_conflicts,
         "strengths": clean_strengths,
         "weaknesses": clean_weaknesses,
         "score": score,
@@ -390,6 +579,20 @@ def _execute_tool_calls(
     return messages
 
 
+def _submitted_assessment(response: AIMessage, recorder: ToolSpanRecorder) -> str:
+    call = next((
+        call for call in response.tool_calls
+        if call.get("name") == _SUBMIT_ASSESSMENT_TOOL.name
+    ), None)
+    if call is None:
+        raise RequiredToolFailure("missing_assessment_submission")
+    result = _SUBMIT_ASSESSMENT_TOOL.invoke(
+        call.get("args") or {},
+        config={"callbacks": [recorder]},
+    )
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
 def _invoke_worker(model: Any, name: str, system_prompt: str, user_prompt: str, recorder: ToolSpanRecorder) -> str:
     """Run one isolated worker with a forced required-tool phase."""
     if not hasattr(model, "bind_tools"):
@@ -434,22 +637,22 @@ def _invoke_worker(model: Any, name: str, system_prompt: str, user_prompt: str, 
         )))
 
     optional_tools = [tool for tool in all_tools if tool.name not in required_names]
-    if optional_tools:
-        recorder.set_phase("optional_tool_or_assessment")
-        assessment = model.bind_tools(optional_tools, tool_choice="auto").invoke(
-            messages,
-            config={"callbacks": [recorder]},
-        )
-        messages.append(assessment)
-        optional_results = _execute_tool_calls(assessment, optional_tools, recorder)
-        if optional_results:
-            messages.extend(optional_results)
-            recorder.set_phase("assessment")
-            assessment = model.invoke(messages, config={"callbacks": [recorder]})
-    else:
-        recorder.set_phase("assessment")
-        assessment = model.invoke(messages, config={"callbacks": [recorder]})
-    return str(getattr(assessment, "content", "") or "")
+    recorder.set_phase("optional_tool_or_assessment")
+    assessment = model.bind_tools(
+        [*optional_tools, _SUBMIT_ASSESSMENT_TOOL],
+        tool_choice="required",
+    ).invoke(messages, config={"callbacks": [recorder]})
+    messages.append(assessment)
+    optional_results = _execute_tool_calls(assessment, optional_tools, recorder)
+    if not optional_results:
+        return _submitted_assessment(assessment, recorder)
+    messages.extend(optional_results)
+    recorder.set_phase("assessment")
+    assessment = model.bind_tools(
+        [_SUBMIT_ASSESSMENT_TOOL],
+        tool_choice="required",
+    ).invoke(messages, config={"callbacks": [recorder]})
+    return _submitted_assessment(assessment, recorder)
 
 
 def _error_stage(reason: str) -> str:
@@ -734,6 +937,29 @@ def _worker_run(
         parsed = parse_persona_output(raw)
         finding, reason = _validated_finding(name, parsed, document, job_context, recorder)
         if finding:
+            for index, item in enumerate(finding["findings"], start=1):
+                item.update({
+                    "claim_id": f"{name}-{attempt + 1}-{index}",
+                    "trace_id": session_id,
+                    "worker": name,
+                    "attempt": attempt + 1,
+                })
+                log.info("resume_agent_claim %s", json.dumps({
+                    "claim_id": item["claim_id"],
+                    "trace_id": session_id,
+                    "worker": name,
+                    "attempt": attempt + 1,
+                    "source_type": item["source"],
+                    "source_location": item["source_location"],
+                    "confidence": item["confidence"],
+                }, separators=(",", ":")))
+            for index, conflict in enumerate(finding["conflicts"], start=1):
+                conflict.update({
+                    "conflict_id": f"{name}-{attempt + 1}-conflict-{index}",
+                    "trace_id": session_id,
+                    "worker": name,
+                    "attempt": attempt + 1,
+                })
             finding["tool_spans"] = all_spans
             duration_ms = round((time.perf_counter() - started_at) * 1000)
             finding["duration_ms"] = duration_ms

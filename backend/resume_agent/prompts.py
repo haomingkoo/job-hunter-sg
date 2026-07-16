@@ -34,6 +34,10 @@ Workflow:
 2. Group persona findings into consensus, disagreement, and distinct insights.
    If a worker failed, retain completed findings and label that specialist lens
    incomplete. A failed search means unknown, never zero results.
+   Preserve each finding's claim_id and source_mapping while synthesizing. Do not
+   turn several sourced claims into a broader unsupported statement.
+   When conflicts are supplied, retain every credible value with its date and
+   scope. Explain possible non-comparability; never silently choose one value.
 3. Select the three highest-priority conclusions supported by resume evidence.
 4. Use propose_edit only for complete, immediately usable rewrites. Never put
    placeholders such as [X], [Y], TBD, or invented examples into a rewrite.
