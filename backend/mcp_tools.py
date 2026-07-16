@@ -133,14 +133,7 @@ def get_job(job_id: int, include_old: bool = False) -> str:
         db = SessionLocal()
         job = _get_public_job(db, job_id, include_old=include_old)
         if not job:
-            return _json(
-                contract.tool_error(
-                    contract.GET_JOB_TOOL,
-                    "job_not_found",
-                    "No job exists for this id.",
-                    job_id=job_id,
-                )
-            )
+            return _json(contract.get_job_empty_result(job_id))
         return _json(contract.get_job_result(contract.job_payload(job, detail=True)))
     except Exception as exc:
         return _json(

@@ -311,16 +311,23 @@ def _source_mapping(
         value = (job_context or {}).get(source_location)
         if value is not None:
             excerpt = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-    excerpt_truncated = bool(excerpt and len(excerpt) > MAX_SOURCE_EXCERPT_CHARS)
+    original_length = len(excerpt) if excerpt else 0
+    display_excerpt = excerpt[:MAX_SOURCE_EXCERPT_CHARS] if excerpt else None
+    excerpt_truncated = original_length > MAX_SOURCE_EXCERPT_CHARS
     return {
         "type": source,
         "name": name,
         "url": None,
         "location": source_location,
-        "relevant_excerpt": (
-            excerpt[:MAX_SOURCE_EXCERPT_CHARS] if excerpt else None
-        ),
+        "relevant_excerpt": excerpt if excerpt and not excerpt_truncated else None,
+        "evidence_reference": {
+            "type": source,
+            "location": source_location,
+        },
+        "display_excerpt": display_excerpt,
         "excerpt_truncated": excerpt_truncated,
+        "original_length": original_length,
+        "display_length": len(display_excerpt) if display_excerpt else 0,
         "publication_date": None,
         "data_period": None,
     }
@@ -341,13 +348,13 @@ def _validated_finding(
         key for key in (job_context or {})
         if key in {"title", "company", "description", "terms", "location", "source"}
     }
-    category = str(parsed.get("category") or "").strip()[:MAX_CATEGORY_CHARS]
-    summary = str(parsed.get("summary") or "").strip()[:MAX_SUMMARY_CHARS]
+    category = str(parsed.get("category") or "").strip()
+    summary = str(parsed.get("summary") or "").strip()
     findings = parsed.get("findings")
     conflicts = parsed.get("conflicts", [])
     declared_research_job_ids = parsed.get("research_job_ids", [])
     suggested_actions = parsed.get("suggested_actions")
-    reasoning = str(parsed.get("reasoning") or "").strip()[:MAX_REASONING_CHARS]
+    reasoning = str(parsed.get("reasoning") or "").strip()
     score = parsed.get("score")
     if not isinstance(findings, list) or not MIN_WORKER_FINDINGS <= len(findings) <= MAX_WORKER_FINDINGS:
         return None, "invalid_findings"
@@ -368,6 +375,12 @@ def _validated_finding(
         return None, "invalid_score"
     if not summary or not category or not reasoning:
         return None, "missing_required_text"
+    if len(category) > MAX_CATEGORY_CHARS:
+        return None, "oversized_category"
+    if len(summary) > MAX_SUMMARY_CHARS:
+        return None, "oversized_summary"
+    if len(reasoning) > MAX_REASONING_CHARS:
+        return None, "oversized_reasoning"
 
     if recorder is not None:
         successful = [
@@ -383,15 +396,21 @@ def _validated_finding(
         if not isinstance(item, dict):
             return None, "invalid_finding"
         kind = str(item.get("kind") or "")
-        finding_text = str(item.get("finding") or "").strip()[:MAX_FINDING_CHARS]
+        finding_text = str(item.get("finding") or "").strip()
         source = str(item.get("source") or "")
         source_location = str(item.get("source_location") or "")
-        method = str(item.get("method") or "").strip()[:MAX_METHOD_CHARS]
+        method = str(item.get("method") or "").strip()
         relevance_score = item.get("relevance_score")
         confidence = item.get("confidence")
-        confidence_basis = str(item.get("confidence_basis") or "").strip()[:MAX_METHOD_CHARS]
+        confidence_basis = str(item.get("confidence_basis") or "").strip()
         if kind not in {"strength", "weakness"} or not finding_text or not method:
             return None, "invalid_finding_fields"
+        if len(finding_text) > MAX_FINDING_CHARS:
+            return None, "oversized_finding"
+        if len(method) > MAX_METHOD_CHARS:
+            return None, "oversized_method"
+        if len(confidence_basis) > MAX_METHOD_CHARS:
+            return None, "oversized_confidence_basis"
         if isinstance(relevance_score, bool) or not isinstance(relevance_score, (int, float)) or not 0 <= relevance_score <= 1:
             return None, "invalid_relevance_score"
         if confidence is not None and (
@@ -444,6 +463,8 @@ def _validated_finding(
         values = conflict.get("values")
         if not topic or not isinstance(values, list) or len(values) < 2:
             return None, "invalid_conflict_values"
+        if len(topic) > MAX_CATEGORY_CHARS:
+            return None, "oversized_conflict_topic"
         clean_values = []
         for value in values:
             if not isinstance(value, dict) or isinstance(value.get("value"), bool) or not isinstance(value.get("value"), (str, int, float)):
@@ -452,6 +473,12 @@ def _validated_finding(
                 return None, "invalid_conflict_measurement_date"
             if value.get("scope") is not None and not isinstance(value.get("scope"), str):
                 return None, "invalid_conflict_scope"
+            if isinstance(value["value"], str) and len(value["value"]) > MAX_FINDING_CHARS:
+                return None, "oversized_conflict_value"
+            if value.get("measurement_date") and len(value["measurement_date"]) > MAX_CATEGORY_CHARS:
+                return None, "oversized_conflict_measurement_date"
+            if value.get("scope") and len(value["scope"]) > MAX_METHOD_CHARS:
+                return None, "oversized_conflict_scope"
             value_source = str(value.get("source") or "")
             value_location = str(value.get("source_location") or "")
             if value_source == "resume" and value_location not in valid_ids:
@@ -468,33 +495,24 @@ def _validated_finding(
             elif value_source not in {"resume", "target_job"}:
                 return None, "invalid_conflict_source"
             clean_values.append({
-                "value": (
-                    value["value"][:MAX_FINDING_CHARS]
-                    if isinstance(value["value"], str)
-                    else value["value"]
-                ),
+                "value": value["value"],
                 "source_mapping": _source_mapping(
                     value_source,
                     value_location,
                     document,
                     job_context,
                 ),
-                "measurement_date": (
-                    value["measurement_date"][:MAX_CATEGORY_CHARS]
-                    if value.get("measurement_date")
-                    else None
-                ),
-                "scope": (
-                    value["scope"][:MAX_METHOD_CHARS]
-                    if value.get("scope")
-                    else None
-                ),
+                "measurement_date": value.get("measurement_date"),
+                "scope": value.get("scope"),
             })
+        possible_explanation = str(conflict.get("possible_explanation") or "").strip()
+        if len(possible_explanation) > MAX_METHOD_CHARS:
+            return None, "oversized_conflict_explanation"
         clean_conflicts.append({
             "topic": topic,
             "status": "conflict",
             "values": clean_values,
-            "possible_explanation": str(conflict.get("possible_explanation") or "").strip()[:MAX_METHOD_CHARS],
+            "possible_explanation": possible_explanation,
         })
 
     clean_strengths = [item["finding"] for item in clean_findings if item["kind"] == "strength"]
@@ -520,10 +538,11 @@ def _validated_finding(
     if recorder is not None and name in {"hiring_manager", "market_researcher"} and recorder.source_job_ids and not research_job_ids:
         return None, "missing_research_citation"
 
-    clean_actions = [
-        str(value).strip()[:MAX_FINDING_CHARS]
-        for value in suggested_actions[:MAX_WORKER_ACTIONS]
-    ]
+    if len(suggested_actions) > MAX_WORKER_ACTIONS:
+        return None, "too_many_suggested_actions"
+    clean_actions = [str(value).strip() for value in suggested_actions]
+    if any(len(value) > MAX_FINDING_CHARS for value in clean_actions):
+        return None, "oversized_suggested_action"
 
     return {
         "persona": name,
@@ -712,6 +731,19 @@ def _partial_tool_results(spans: list[dict]) -> list[dict]:
     ]
 
 
+def _optional_tool_failures(name: str, spans: list[dict]) -> list[dict]:
+    required = _REQUIRED_TOOL_NAMES[name]
+    return [
+        span for span in spans
+        if span.get("kind", "tool") == "tool"
+        and span.get("name") not in {*required, _SUBMIT_ASSESSMENT_TOOL.name}
+        and (
+            span.get("status") == "error"
+            or span.get("result", {}).get("ok") is False
+        )
+    ]
+
+
 def _failure_type(reason: str, stage: str) -> str:
     lowered = reason.lower()
     if "timeout" in lowered:
@@ -753,6 +785,7 @@ def _failure_run(
         "persona": name,
         "trace_id": trace_id,
         "status": "error",
+        "findings": [],
         "failure_type": _failure_type(reason, failure_stage),
         "attempted_operation": f"{name} resume assessment",
         "source": ", ".join(sorted(tool_names))
@@ -764,7 +797,8 @@ def _failure_run(
         )),
         "attempt_count": attempts,
         "duration_ms": duration_ms,
-        "partial_results": _partial_tool_results(spans),
+        "partial_results": [],
+        "tool_results": _partial_tool_results(spans),
         "local_recovery_attempts": recovery_attempts or [],
         "remaining_gap": remaining_gap,
         "suggested_alternatives": _failure_alternatives(failure_stage),
@@ -867,7 +901,6 @@ def _worker_run(
     system_prompt = _worker_system_prompt(name, prompt)
     user_prompt = "\n\n".join(data_blocks)
     reason = ""
-    previous_raw = ""
     all_spans = []
     recovery_attempts = []
     for attempt in range(MAX_VALIDATION_ATTEMPTS):
@@ -880,8 +913,8 @@ def _worker_run(
             "\n\n<retry_feedback>\n"
             f"Your prior response failed at {_error_stage(reason)} with code: {reason}. "
             "Rerun every mandatory tool, inspect the failure, correct only what failed, "
-            "and self-verify the complete result.\n"
-            f"{xml_data_block('previous_invalid_output', previous_raw)}\n"
+            "and self-verify the complete result. The rejected output is intentionally "
+            "not copied into this retry context.\n"
             "</retry_feedback>"
         )
         try:
@@ -931,7 +964,6 @@ def _worker_run(
             if not is_tool_failure and not _retryable_exception(exc):
                 break
             continue
-        previous_raw = raw
         if recorder:
             all_spans.extend(recorder.spans)
         parsed = parse_persona_output(raw)
@@ -963,11 +995,51 @@ def _worker_run(
             finding["tool_spans"] = all_spans
             duration_ms = round((time.perf_counter() - started_at) * 1000)
             finding["duration_ms"] = duration_ms
+            optional_failures = _optional_tool_failures(
+                name,
+                recorder.spans if recorder else [],
+            )
+            partial = bool(optional_failures)
+            failed_optional = optional_failures[0] if optional_failures else {}
+            failure_result = failed_optional.get("result", {})
+            failure_code = str(
+                failure_result.get("failure_type")
+                or failure_result.get("error_code")
+                or "optional_tool_failure"
+            )
+            retryable = bool(failure_result.get("retryable", True))
+            partial_results = [
+                {
+                    "claim_id": item["claim_id"],
+                    "reference": f"findings[{index}]",
+                }
+                for index, item in enumerate(finding["findings"])
+            ]
+            remaining_gap = (
+                f"The validated findings are available, but {failed_optional.get('name')} evidence is incomplete."
+                if partial else None
+            )
+            partial_error = ({
+                "status": "partial",
+                "failure_type": _failure_type(failure_code, "tool"),
+                "attempted_operation": f"{failed_optional.get('name')} optional evidence lookup",
+                "attempted_queries": [
+                    span["attempted_query"]
+                    for span in optional_failures
+                    if isinstance(span.get("attempted_query"), str)
+                ],
+                "attempt_count": len(optional_failures),
+                "retryable": retryable,
+                "partial_results_count": len(finding["findings"]),
+                "remaining_gap": remaining_gap,
+                "suggested_alternatives": _failure_alternatives("tool"),
+            } if partial else None)
             return {
                 "persona": name,
                 "trace_id": session_id,
-                "status": "success",
-                "failure_type": None,
+                "status": "partial" if partial else "success",
+                "findings": finding["findings"],
+                "failure_type": partial_error["failure_type"] if partial_error else None,
                 "attempted_operation": f"{name} resume assessment",
                 "source": ", ".join(sorted({
                     str(span.get("name"))
@@ -981,14 +1053,15 @@ def _worker_run(
                 )),
                 "attempt_count": attempt + 1,
                 "duration_ms": duration_ms,
-                "partial_results": [],
+                "partial_results": partial_results if partial else [],
+                "tool_results": _partial_tool_results(all_spans),
                 "local_recovery_attempts": recovery_attempts,
-                "remaining_gap": None,
-                "suggested_alternatives": [],
-                "retryable": False,
+                "remaining_gap": remaining_gap,
+                "suggested_alternatives": partial_error["suggested_alternatives"] if partial_error else [],
+                "retryable": retryable if partial else False,
                 "tool_spans": all_spans,
                 "assessment": finding,
-                "error": None,
+                "error": partial_error,
             }
         log.warning(
             "resume reviewer output rejected persona=%s attempt=%d reason=%s",
@@ -1032,7 +1105,7 @@ def _persona_review(
 ) -> dict | None:
     """Compatibility helper returning only a completed assessment."""
     run = _worker_run(name, document, model, job_context)
-    return run.get("assessment") if run.get("status") == "success" else None
+    return run.get("assessment") if run.get("status") in {"success", "partial"} else None
 
 
 def iter_persona_worker_runs(
@@ -1091,5 +1164,5 @@ def iter_persona_reviews(
         persona_names=persona_names,
         session_id=session_id,
     ):
-        if run.get("status") == "success":
+        if run.get("status") in {"success", "partial"}:
             yield run["assessment"]

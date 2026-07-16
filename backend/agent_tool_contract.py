@@ -135,16 +135,47 @@ def search_jobs_error(
 def get_job_result(job: dict) -> dict:
     return {
         "ok": True,
+        "status": "success",
         "tool": GET_JOB_TOOL,
+        "query_executed": True,
         "found": True,
         "job": job,
     }
 
 
-def tool_error(tool: str, code: str, message: str, **context: Any) -> dict:
+def get_job_empty_result(job_id: int) -> dict:
+    return {
+        "ok": True,
+        "status": "success",
+        "tool": GET_JOB_TOOL,
+        "query_executed": True,
+        "found": False,
+        "job": None,
+        "job_id": job_id,
+    }
+
+
+def tool_error(
+    tool: str,
+    code: str,
+    message: str,
+    *,
+    failure_type: str = "unavailable",
+    retryable: bool | None = None,
+    **context: Any,
+) -> dict:
     payload = {
         "ok": False,
+        "status": "error",
         "tool": tool,
+        "query_executed": False,
+        "results": None,
+        "failure_type": failure_type,
+        "retryable": (
+            failure_type in {"timeout", "rate_limit", "unavailable"}
+            if retryable is None
+            else retryable
+        ),
         "error": {
             "code": code,
             "message": message,

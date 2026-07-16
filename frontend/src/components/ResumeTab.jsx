@@ -3390,9 +3390,9 @@ CERTIFICATIONS
                 )}
               </div>
               <div className="mt-3 space-y-2">
-                {agentWorkerRuns.filter((run) => run.status === "error").map((run) => (
+                {agentWorkerRuns.filter((run) => run.status !== "success").map((run) => (
                   <div key={`failure-${run.persona}`} className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
-                    <div className="font-semibold capitalize">{String(run.persona || "reviewer").replaceAll("_", " ")} incomplete · {run.failure_type || "error"}</div>
+                    <div className="font-semibold capitalize">{String(run.persona || "reviewer").replaceAll("_", " ")} {run.status === "partial" ? "partially complete" : "incomplete"} · {run.failure_type || "error"}</div>
                     <div className="mt-1">{run.remaining_gap || run.error?.message || "This specialist assessment is unavailable."}</div>
                     <div className="mt-1 text-amber-800">Attempted {run.attempt_count || 0} time(s){run.source ? ` using ${run.source}` : ""}.</div>
                     {Array.isArray(run.suggested_alternatives) && run.suggested_alternatives.length > 0 && (
@@ -3427,7 +3427,12 @@ CERTIFICATIONS
                               <div>{item.method}</div>
                               {item.confidence_basis && <div>Confidence: {item.confidence_basis}</div>}
                               <div>Source: {item.source} · {item.source_location}</div>
-                              {item.source_mapping?.relevant_excerpt && <div>Evidence: “{item.source_mapping.relevant_excerpt}”{item.source_mapping.excerpt_truncated ? "…" : ""}</div>}
+                              {(item.source_mapping?.relevant_excerpt || item.source_mapping?.display_excerpt) && (
+                                <div>
+                                  {item.source_mapping.excerpt_truncated ? "Evidence preview" : "Evidence"}: “{item.source_mapping.relevant_excerpt || item.source_mapping.display_excerpt}”{item.source_mapping.excerpt_truncated ? "…" : ""}
+                                  {item.source_mapping.excerpt_truncated && ` (${item.source_mapping.display_length}/${item.source_mapping.original_length} characters shown; exact source retained at ${item.source_mapping.evidence_reference?.location})`}
+                                </div>
+                              )}
                               {item.claim_id && <div>Claim: {item.claim_id}</div>}
                               {item.trace_id && <div>Trace: {item.trace_id} · {item.worker} · attempt {item.attempt}</div>}
                             </div>

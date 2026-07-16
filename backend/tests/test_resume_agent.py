@@ -237,6 +237,39 @@ def test_get_job_returns_visible_detail(monkeypatch):
     assert result["job"]["description"] == "Build agentic AI workflows."
 
 
+def test_get_job_distinguishes_valid_missing_row_from_access_failure(monkeypatch):
+    import resume_agent.tools as agent_tools
+
+    class Query:
+        def filter(self, *_args):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeDb:
+        def query(self, *_args):
+            return Query()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(agent_tools, "SessionLocal", lambda: FakeDb())
+    monkeypatch.setattr(agent_tools, "apply_public_job_visibility", lambda query: query)
+
+    result = agent_tools.get_job.invoke({"job_id": 347820})
+
+    assert result == {
+        "ok": True,
+        "status": "success",
+        "tool": "get_job",
+        "query_executed": True,
+        "found": False,
+        "job": None,
+        "job_id": 347820,
+    }
+
+
 def test_score_and_skill_tools_return_structured_results(monkeypatch):
     import skill_extractor
     import resume_agent.tools as agent_tools
@@ -807,6 +840,66 @@ def test_persona_worker_result_is_rejected_when_required_tool_is_skipped(caplog)
     assert "Built a data platform" not in caplog.text
 
 
+def test_persona_worker_preserves_findings_when_optional_tool_fails(monkeypatch):
+    import json
+
+    from resume_document import create_resume_document
+    import resume_agent.personas as personas
+
+    document = create_resume_document("EXPERIENCE\n- Led finance process automation")
+    evidence_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
+
+    def fake_invoke(_model, _name, _system, _user, recorder):
+        recorder.source_job_ids.add(42)
+        recorder.spans.extend([
+            {
+                "kind": "tool",
+                "name": "search_jobs",
+                "status": "success",
+                "attempted_query": "Finance Transformation Lead",
+                "result": {"ok": True, "query_executed": True, "result_count": 1},
+            },
+            {
+                "kind": "tool",
+                "name": "get_job",
+                "status": "success",
+                "result": {"ok": False, "failure_type": "timeout", "retryable": True},
+            },
+        ])
+        return json.dumps({
+            "summary": "The resume shows ownership, but detailed role evidence is incomplete.",
+            "category": "delivery depth",
+            "findings": [
+                {"kind": "strength", "finding": "The cited bullet shows delivery ownership.", "source": "resume", "source_location": evidence_id, "method": "Reviewed the cited delivery statement.", "relevance_score": 0.9},
+                {"kind": "weakness", "finding": "The scale of the automation is not stated.", "source": "resume", "source_location": evidence_id, "method": "Checked the cited bullet for scope evidence.", "relevance_score": 0.8},
+            ],
+            "conflicts": [],
+            "research_job_ids": [42],
+            "score": 70,
+            "reasoning": "The resume supports ownership but not delivery scale.",
+            "suggested_actions": ["Add supported scope evidence."],
+        })
+
+    class FakeModel:
+        def bind_tools(self, *_args, **_kwargs):
+            return self
+
+    monkeypatch.setattr(personas, "_invoke_worker", fake_invoke)
+    run = personas._worker_run("hiring_manager", document, FakeModel())
+
+    assert run["status"] == "partial"
+    assert len(run["findings"]) == 2
+    assert run["assessment"]["findings"] == run["findings"]
+    assert run["failure_type"] == "timeout"
+    assert run["error"]["status"] == "partial"
+    assert run["error"]["partial_results_count"] == 2
+    assert run["partial_results"] == [
+        {"claim_id": "hiring_manager-1-1", "reference": "findings[0]"},
+        {"claim_id": "hiring_manager-1-2", "reference": "findings[1]"},
+    ]
+    assert run["remaining_gap"]
+
+
 def test_persona_review_discards_unknown_evidence_ids():
     import json
 
@@ -880,6 +973,71 @@ def test_persona_review_retries_once_after_fixable_validation_failure():
     assert finding is not None
     assert model.calls == 2
     assert "invalid_json" in model.retry_prompt
+
+
+def test_persona_review_retries_oversized_exact_finding_instead_of_clipping():
+    import json
+
+    from langchain_core.messages import AIMessage
+    from resume_document import create_resume_document
+    import resume_agent.personas as personas
+
+    document = create_resume_document("EXPERIENCE\n- Built a data platform")
+    evidence_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
+    valid_payload = {
+        "summary": "The delivery result needs clarification.",
+        "category": "clarity",
+        "findings": [
+            {"kind": "strength", "finding": "The bullet shows platform delivery.", "source": "resume", "source_location": evidence_id, "method": "Reviewed delivery evidence.", "relevance_score": 0.8},
+            {"kind": "weakness", "finding": "The result is unclear.", "source": "resume", "source_location": evidence_id, "method": "Checked outcome clarity.", "relevance_score": 0.9},
+        ],
+        "score": 65,
+        "reasoning": "The cited bullet describes work without its outcome.",
+        "suggested_actions": ["Add the supported result."],
+    }
+
+    class FakeModel:
+        calls = 0
+        retry_prompt = ""
+
+        def invoke(self, messages):
+            self.calls += 1
+            payload = dict(valid_payload)
+            payload["findings"] = [dict(item) for item in valid_payload["findings"]]
+            if self.calls == 1:
+                payload["findings"][0]["finding"] = "x" * (personas.MAX_FINDING_CHARS + 1)
+            else:
+                self.retry_prompt = messages[-1].content
+            return AIMessage(content=json.dumps(payload))
+
+    model = FakeModel()
+    finding = personas._persona_review("recruiter", document, model)
+
+    assert finding is not None
+    assert model.calls == 2
+    assert "oversized_finding" in model.retry_prompt
+    assert finding["findings"][0]["finding"] == "The bullet shows platform delivery."
+
+
+def test_long_source_evidence_is_referenced_and_preview_is_explicit():
+    from resume_document import create_resume_document
+    import resume_agent.personas as personas
+
+    source_text = "Evidence " + ("x" * personas.MAX_SOURCE_EXCERPT_CHARS)
+    document = create_resume_document(f"EXPERIENCE\n- {source_text}")
+    block = next(block for block in document["blocks"] if block["kind"] == "bullet")
+
+    mapping = personas._source_mapping("resume", block["id"], document, None)
+
+    assert mapping["relevant_excerpt"] is None
+    assert mapping["excerpt_truncated"] is True
+    assert mapping["original_length"] == len(source_text)
+    assert mapping["display_length"] == personas.MAX_SOURCE_EXCERPT_CHARS
+    assert mapping["display_excerpt"] == source_text[:personas.MAX_SOURCE_EXCERPT_CHARS]
+    assert mapping["evidence_reference"] == {
+        "type": "resume",
+        "location": block["id"],
+    }
 
 
 def test_market_persona_receives_xml_delimited_job_snapshot():
@@ -1053,6 +1211,68 @@ def test_session_keeps_successful_reviews_when_one_worker_fails(monkeypatch):
     assert any(event.get("content") == "Partial synthesis with clear limitation." for event in events)
 
 
+def test_session_keeps_partial_review_and_discloses_its_gap(monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    import resume_agent.session as agent_session
+
+    finding = {
+        "persona": "hiring_manager",
+        "score": 70,
+        "summary": "Ownership is visible, but detailed role evidence is incomplete.",
+        "findings": [],
+        "reasoning": "The resume supports delivery ownership.",
+        "suggested_actions": ["Add supported scope evidence."],
+        "tool_spans": [],
+    }
+    partial = {
+        "persona": "hiring_manager",
+        "status": "partial",
+        "failure_type": "timeout",
+        "attempted_operation": "get_job optional evidence lookup",
+        "source": "search_jobs, get_job",
+        "attempted_queries": ["Finance Transformation Lead"],
+        "attempt_count": 1,
+        "partial_results": [],
+        "local_recovery_attempts": [],
+        "remaining_gap": "Detailed job evidence is incomplete.",
+        "suggested_alternatives": ["Retry the lookup."],
+        "retryable": True,
+        "tool_spans": [],
+        "assessment": finding,
+        "error": {"status": "partial", "failure_type": "timeout"},
+    }
+
+    class FakeAgent:
+        def invoke(self, payload, config=None):
+            assert "worker_failures_data" in payload["messages"][0]["content"]
+            return {"messages": [AIMessage(content="Synthesis with disclosed evidence gap.")]}
+
+    monkeypatch.setattr(
+        agent_session,
+        "iter_persona_worker_runs",
+        lambda *_args, **_kwargs: iter([partial]),
+    )
+    monkeypatch.setattr(agent_session, "create_resume_agent", lambda **_kwargs: FakeAgent())
+    monkeypatch.setattr(agent_session, "judge_assessment", lambda *_args, **_kwargs: {
+        "status": "error",
+        "remaining_gap": "Judge unavailable.",
+        "tool_spans": [],
+    })
+
+    events = list(agent_session.stream_chat_events({
+        "session_id": "partial-review-session",
+        "message": "Review this resume",
+        "resume_text": "EXPERIENCE\n- Led finance process automation",
+    }, agent=None, owner_key="partial-review-owner"))
+    state = agent_session.get_state("partial-review-session", owner_key="partial-review-owner")
+
+    assert state["persona_findings"] == [finding]
+    assert state["review_status"] == "partial_success"
+    assert any(event["event"] == "persona" for event in events)
+    assert any(event["event"] == "persona_error" for event in events)
+
+
 def test_background_review_returns_immediately_and_completes_in_session():
     import time
     from langchain_core.messages import AIMessage
@@ -1167,9 +1387,7 @@ def test_general_mode_runs_without_target_job():
     assert events[-1] == {"event": "done", "session_id": session_id}
 
 
-def test_agent_prompt_includes_bounded_profile_context(monkeypatch):
-    from langchain_core.messages import AIMessage
-
+def test_agent_rejects_oversized_profile_context_without_clipping(monkeypatch):
     import config as app_config
     import resume_agent.session as agent_session
 
@@ -1181,7 +1399,7 @@ def test_agent_prompt_includes_bounded_profile_context(monkeypatch):
 
         def invoke(self, payload, config=None):
             self.message = payload["messages"][0]["content"]
-            return {"messages": [AIMessage(content="Checked profile consistency.")]}
+            raise AssertionError("oversized profile context must not reach the agent")
 
     fake_agent = FakeAgent()
     events = list(
@@ -1199,10 +1417,10 @@ def test_agent_prompt_includes_bounded_profile_context(monkeypatch):
 
     state = agent_session.get_state("profile-context", owner_key="profile-owner")
     assert events[-1] == {"event": "done", "session_id": "profile-context"}
-    assert "Optional LinkedIn/profile context" in fake_agent.message
-    assert "Do not turn this into resume claims" in fake_agent.message
-    assert "stakeholder leadership" not in fake_agent.message
-    assert len(state["profile_context"]) == app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS
+    assert events[-2]["event"] == "error"
+    assert "too large" in events[-2]["message"]
+    assert fake_agent.message == ""
+    assert state["profile_context"] == ""
 
 
 def test_agent_prompt_escapes_resume_and_profile_xml_boundaries():

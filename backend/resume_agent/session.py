@@ -189,7 +189,7 @@ def _resume_bullet_maps(
 def _build_prompt(body: dict) -> str:
     message = str(body.get("message", ""))
     resume_text = str(body.get("resume_text", ""))
-    profile_context = str(body.get("profile_context", ""))[: app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS]
+    profile_context = str(body.get("profile_context", ""))
     job_id = body.get("job_id")
     job_context = body.get("job_context") if isinstance(body.get("job_context"), dict) else {}
     score_context = body.get("score_context") if isinstance(body.get("score_context"), dict) else {}
@@ -300,8 +300,8 @@ def _build_prompt(body: dict) -> str:
     ]
     if failed_workers:
         parts.append(
-            "Some independent workers failed after their own retries. Continue with valid "
-            "completed findings, clearly label the missing specialist coverage, and never "
+            "Some independent workers returned partial results or failed after their own retries. "
+            "Continue with validated findings, clearly label incomplete specialist coverage, and never "
             "interpret a failed search as an empty result.\n"
             + xml_data_block(
                 "worker_failures_data",
@@ -456,7 +456,13 @@ def _stream_chat_events(
         yield {"event": "done", "session_id": session_id}
         return
     if len(profile_context) > app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS:
-        profile_context = profile_context[: app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS]
+        yield {
+            "event": "error",
+            "session_id": session_id,
+            "message": "Profile context is too large for Agent Review. Shorten it and try again.",
+        }
+        yield {"event": "done", "session_id": session_id}
+        return
 
     job_id = body.get("job_id")
     job_context = body.get("job_context") if isinstance(body.get("job_context"), dict) else {}
@@ -516,7 +522,7 @@ def _stream_chat_events(
                 session_id=session_id,
             ):
                 state["worker_runs"].append(run)
-                if run.get("status") != "success":
+                if run.get("status") == "error":
                     yield {
                         "event": "persona_error",
                         "session_id": session_id,
@@ -532,14 +538,23 @@ def _stream_chat_events(
                     "persona": finding["persona"],
                     "finding": finding,
                 }
+                if run.get("status") == "partial":
+                    yield {
+                        "event": "persona_error",
+                        "session_id": session_id,
+                        "persona": run.get("persona"),
+                        "failure": run,
+                    }
             completed_count = len(state["persona_findings"])
-            failed_count = len(state["worker_runs"]) - completed_count
+            incomplete_count = sum(
+                run.get("status") != "success" for run in state["worker_runs"]
+            )
             state["review_status"] = (
-                "partial_success" if completed_count and failed_count
+                "partial_success" if completed_count and incomplete_count
                 else "success" if completed_count
                 else "error"
             )
-            if failed_count:
+            if incomplete_count:
                 log.warning("resume_agent_workflow_problem %s", json.dumps({
                     "trace_id": session_id,
                     "status": state["review_status"],

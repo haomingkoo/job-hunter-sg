@@ -156,9 +156,12 @@ def test_get_job_does_not_return_hidden_job(monkeypatch):
 
     data = json.loads(mcp_tools.get_job(7))
 
-    assert data["ok"] is False
-    assert data["error"]["code"] == "job_not_found"
-    assert data["context"]["job_id"] == 7
+    assert data["ok"] is True
+    assert data["status"] == "success"
+    assert data["query_executed"] is True
+    assert data["found"] is False
+    assert data["job"] is None
+    assert data["job_id"] == 7
 
 
 def test_latest_jobs_returns_compact_public_jobs(monkeypatch):

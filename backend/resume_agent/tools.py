@@ -115,12 +115,7 @@ def get_job(job_id: int) -> dict:
             db.query(ScrapedJob).filter(ScrapedJob.id == job_id)
         ).first()
         if not job:
-            return contract.tool_error(
-                contract.GET_JOB_TOOL,
-                "job_not_found",
-                "No job exists for this id.",
-                job_id=job_id,
-            )
+            return contract.get_job_empty_result(job_id)
         return contract.get_job_result(
             contract.job_payload(job, detail=True, include_parsed=False)
         )
@@ -129,6 +124,7 @@ def get_job(job_id: int) -> dict:
             contract.GET_JOB_TOOL,
             "get_job_failed",
             str(exc) or "Job lookup failed.",
+            failure_type=_search_failure_type(exc),
             job_id=job_id,
         )
     finally:
@@ -147,6 +143,9 @@ def score_resume(resume_text: str) -> dict:
     from resume_scorer import ResumeScorer
 
     result = ResumeScorer().analyze(resume_text or "")
+    matched = result.get("keyword_match", {}).get("matched", [])
+    missing = result.get("keyword_match", {}).get("missing", [])
+    suggestions = result.get("top_suggestions", [])
     return {
         "overall_score": result.get("overall_score", 0),
         "dimensions": {
@@ -158,10 +157,19 @@ def score_resume(resume_text: str) -> dict:
         },
         "keyword_match": {
             "score_percent": result.get("keyword_match", {}).get("score_percent", 0),
-            "matched": result.get("keyword_match", {}).get("matched", [])[:MAX_SCORE_KEYWORDS],
-            "missing": result.get("keyword_match", {}).get("missing", [])[:MAX_SCORE_KEYWORDS],
+            "matched": matched[:MAX_SCORE_KEYWORDS],
+            "matched_truncated": len(matched) > MAX_SCORE_KEYWORDS,
+            "matched_original_length": len(matched),
+            "matched_display_length": min(len(matched), MAX_SCORE_KEYWORDS),
+            "missing": missing[:MAX_SCORE_KEYWORDS],
+            "missing_truncated": len(missing) > MAX_SCORE_KEYWORDS,
+            "missing_original_length": len(missing),
+            "missing_display_length": min(len(missing), MAX_SCORE_KEYWORDS),
         },
-        "top_suggestions": result.get("top_suggestions", [])[:MAX_SCORE_SUGGESTIONS],
+        "top_suggestions": suggestions[:MAX_SCORE_SUGGESTIONS],
+        "top_suggestions_truncated": len(suggestions) > MAX_SCORE_SUGGESTIONS,
+        "top_suggestions_original_length": len(suggestions),
+        "top_suggestions_display_length": min(len(suggestions), MAX_SCORE_SUGGESTIONS),
     }
 
 
