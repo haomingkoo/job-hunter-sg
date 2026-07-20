@@ -13,6 +13,9 @@ from ..assessment_contracts import TargetAssessmentRequest
 _current_request: ContextVar[TargetAssessmentRequest | None] = ContextVar(
     "open_agent_current_request", default=None
 )
+_current_document: ContextVar[dict[str, Any] | None] = ContextVar(
+    "open_agent_current_document", default=None
+)
 _proposed_edits: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     "open_agent_proposed_edits", default=None
 )
@@ -21,16 +24,22 @@ _proposed_edits: ContextVar[list[dict[str, Any]] | None] = ContextVar(
 @contextmanager
 def assessment_context(request: TargetAssessmentRequest) -> Iterator[None]:
     request_token = _current_request.set(request)
+    document_token = _current_document.set(request.resume_document)
     edits_token = _proposed_edits.set([])
     try:
         yield
     finally:
         _current_request.reset(request_token)
+        _current_document.reset(document_token)
         _proposed_edits.reset(edits_token)
 
 
 def current_request() -> TargetAssessmentRequest | None:
     return _current_request.get()
+
+
+def current_document() -> dict[str, Any] | None:
+    return _current_document.get()
 
 
 def proposed_edits() -> list[dict[str, Any]] | None:

@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -44,9 +45,7 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     # Normal accounts use "user"; "admin" is an authorization role, not a plan.
     tier: Mapped[str] = mapped_column(String(20), default="user", nullable=False)
-    api_key: Mapped[str] = mapped_column(
-        String(64), unique=True, default=_generate_api_key, nullable=False
-    )
+    api_key: Mapped[str] = mapped_column(String(64), unique=True, default=_generate_api_key, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -138,12 +137,8 @@ class TrackedJob(Base):
     role_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=dict)
     follow_up_date: Mapped[str | None] = mapped_column(String(50), nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
-    scraped_job_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("scraped_jobs.id"), nullable=True
-    )
-    resume_version_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("resume_versions.id"), nullable=True
-    )
+    scraped_job_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("scraped_jobs.id"), nullable=True)
+    resume_version_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("resume_versions.id"), nullable=True)
     # Stage history: [{stage, date, notes}] - tracks progression through hiring pipeline
     stage_history: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
@@ -158,6 +153,7 @@ class UserMemory(Base):
     coach "remembers" their background, goals, and past feedback.
     Users can view and edit their memory.
     """
+
     __tablename__ = "user_memories"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -165,11 +161,11 @@ class UserMemory(Base):
 
     # Profile — extracted from resume or entered manually
     resume_text: Mapped[str] = mapped_column(Text, default="")
-    target_roles: Mapped[str] = mapped_column(Text, default="")        # e.g. "PM, Data Engineer, SWE"
-    target_companies: Mapped[str] = mapped_column(Text, default="")    # e.g. "GovTech, Grab, DBS"
-    career_goals: Mapped[str] = mapped_column(Text, default="")        # free text
-    strengths: Mapped[str] = mapped_column(Text, default="")           # AI-identified or user-edited
-    areas_to_improve: Mapped[str] = mapped_column(Text, default="")    # AI-identified or user-edited
+    target_roles: Mapped[str] = mapped_column(Text, default="")  # e.g. "PM, Data Engineer, SWE"
+    target_companies: Mapped[str] = mapped_column(Text, default="")  # e.g. "GovTech, Grab, DBS"
+    career_goals: Mapped[str] = mapped_column(Text, default="")  # free text
+    strengths: Mapped[str] = mapped_column(Text, default="")  # AI-identified or user-edited
+    areas_to_improve: Mapped[str] = mapped_column(Text, default="")  # AI-identified or user-edited
     preferred_industry: Mapped[str] = mapped_column(String(500), default="")
     years_experience: Mapped[str] = mapped_column(String(50), default="")
     education_level: Mapped[str] = mapped_column(String(200), default="")
@@ -178,7 +174,7 @@ class UserMemory(Base):
     resume_embedding: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
 
     # AI coaching memory — accumulated across sessions
-    coaching_notes: Mapped[str] = mapped_column(Text, default="")      # AI summary of past sessions
+    coaching_notes: Mapped[str] = mapped_column(Text, default="")  # AI summary of past sessions
     session_count: Mapped[int] = mapped_column(Integer, default=0)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
@@ -187,6 +183,7 @@ class UserMemory(Base):
 
 class PasswordResetToken(Base):
     """One-time password reset token. Only the token hash is stored."""
+
     __tablename__ = "password_reset_tokens"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -204,6 +201,7 @@ class PasswordResetToken(Base):
 
 class EmailVerificationToken(Base):
     """One-time email verification token. Only the token hash is stored."""
+
     __tablename__ = "email_verification_tokens"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -224,6 +222,7 @@ class PowerMatchSnapshot(Base):
     Persisted Power Match result for a user resume + job corpus version.
     Keeps repeat visits off the expensive ranking path.
     """
+
     __tablename__ = "power_match_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -234,9 +233,7 @@ class PowerMatchSnapshot(Base):
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
-    __table_args__ = (
-        Index("ix_power_match_snapshots_lookup", "user_id", "resume_hash", "corpus_marker", "limit"),
-    )
+    __table_args__ = (Index("ix_power_match_snapshots_lookup", "user_id", "resume_hash", "corpus_marker", "limit"),)
 
 
 class TailoredResume(Base):
@@ -244,6 +241,7 @@ class TailoredResume(Base):
     Stores a structured resume tailoring session tied to a user and a job.
     Tracks pipeline progress, changes made, and before/after metrics.
     """
+
     __tablename__ = "tailored_resumes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -277,6 +275,7 @@ class ResumeVersion(Base):
     Saved resume versions - from uploads, tailoring pipeline, or manual edits.
     Users can label, compare, and attach versions to tracked jobs.
     """
+
     __tablename__ = "resume_versions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -306,8 +305,227 @@ class ResumeVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
+    __table_args__ = (Index("ix_resume_versions_user", "user_id"),)
+
+
+class RecruitmentThread(Base):
+    """Durable user-owned V3 recruitment conversation."""
+
+    __tablename__ = "recruitment_threads"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    resume_version_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("resume_versions.id"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(30), default="active", nullable=False)
+    workflow_state: Mapped[str] = mapped_column(
+        String(40),
+        default="exploring",
+        nullable=False,
+    )
+    case_facts: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    next_event_sequence: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=_utcnow,
+        onupdate=_utcnow,
+        nullable=False,
+    )
+
+    __table_args__ = (Index("ix_recruitment_threads_owner_updated", "user_id", "updated_at"),)
+
+
+class RecruitmentMessage(Base):
+    """Visible message in a durable recruitment conversation."""
+
+    __tablename__ = "recruitment_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    thread_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("recruitment_threads.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+    __table_args__ = (Index("ix_recruitment_messages_thread", "thread_id", "id"),)
+
+
+class RecruitmentRun(Base):
+    """Idempotent command execution and its durable result."""
+
+    __tablename__ = "recruitment_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    thread_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("recruitment_threads.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    command_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    trace_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     __table_args__ = (
-        Index("ix_resume_versions_user", "user_id"),
+        UniqueConstraint(
+            "user_id",
+            "idempotency_key",
+            name="uq_recruitment_runs_owner_idempotency",
+        ),
+        Index("ix_recruitment_runs_thread", "thread_id", "created_at"),
+    )
+
+
+class RecruitmentActivityEvent(Base):
+    """Ordered user-safe activity emitted by the recruitment-team module."""
+
+    __tablename__ = "recruitment_activity_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    thread_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("recruitment_threads.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    team_member: Mapped[str] = mapped_column(String(80), nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    trace_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "thread_id",
+            "sequence",
+            name="uq_recruitment_events_thread_sequence",
+        ),
+        Index("ix_recruitment_events_thread", "thread_id", "sequence"),
+    )
+
+
+class CandidateProfileArtifact(Base):
+    """Reusable role-neutral profile and validated scope checkpoints for one resume."""
+
+    __tablename__ = "candidate_profile_artifacts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    resume_version_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("resume_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    checkpoint_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    decomposition_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    execution_policy: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    scopes: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=_utcnow,
+        onupdate=_utcnow,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "resume_version_id",
+            "checkpoint_id",
+            name="uq_candidate_profile_artifact_identity",
+        ),
+        Index(
+            "ix_candidate_profile_artifact_resume",
+            "user_id",
+            "resume_version_id",
+            "updated_at",
+        ),
+    )
+
+
+class TargetAssessmentArtifact(Base):
+    """Durable output and partial results for one bounded target assessment run."""
+
+    __tablename__ = "target_assessment_artifacts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    thread_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("recruitment_threads.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("recruitment_runs.id"), nullable=False)
+    resume_version_id: Mapped[int] = mapped_column(Integer, ForeignKey("resume_versions.id"), nullable=False)
+    candidate_profile_artifact_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("candidate_profile_artifacts.id"),
+        nullable=False,
+    )
+    target_job_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_snapshot_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    specialist_runs: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    synthesis: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    judge: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    correction: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    execution_policy: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_target_assessment_artifact_run"),
+        Index("ix_target_assessment_artifact_thread", "user_id", "thread_id", "updated_at"),
+    )
+
+
+class ProposedResumeEdit(Base):
+    """A pending, agent-proposed resume edit awaiting explicit candidate accept/reject."""
+
+    __tablename__ = "proposed_resume_edits"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    thread_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("recruitment_threads.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[str] = mapped_column(String(36), ForeignKey("recruitment_runs.id"), nullable=False)
+    resume_version_id: Mapped[int] = mapped_column(Integer, ForeignKey("resume_versions.id"), nullable=False)
+    block_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    section_key: Mapped[str] = mapped_column(String(80), default="", nullable=False)
+    entry_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    original: Mapped[str] = mapped_column(Text, nullable=False)
+    rewrite: Mapped[str] = mapped_column(Text, nullable=False)
+    document_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_proposed_resume_edit_thread", "user_id", "thread_id", "status"),
     )
 
 
@@ -316,6 +534,7 @@ class InterviewStory(Base):
     STAR+R story bank for interview prep.
     Users build reusable stories tagged with behavioral categories.
     """
+
     __tablename__ = "interview_stories"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -346,13 +565,12 @@ class InterviewStory(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
-    __table_args__ = (
-        Index("ix_interview_stories_user", "user_id"),
-    )
+    __table_args__ = (Index("ix_interview_stories_user", "user_id"),)
 
 
 class StoryUsage(Base):
     """Tracks which stories were used for which job interviews."""
+
     __tablename__ = "story_usages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -366,6 +584,7 @@ class StoryUsage(Base):
 
 class JobAlertPreference(Base):
     """Per-user opt-in settings for matched job email digests."""
+
     __tablename__ = "job_alert_preferences"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -390,13 +609,12 @@ class JobAlertPreference(Base):
 
 class JobAlertDelivery(Base):
     """Records alerted or user-suppressed jobs so digests do not repeat them."""
+
     __tablename__ = "job_alert_deliveries"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
-    preference_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("job_alert_preferences.id"), nullable=True
-    )
+    preference_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("job_alert_preferences.id"), nullable=True)
     scraped_job_id: Mapped[int] = mapped_column(Integer, ForeignKey("scraped_jobs.id"), nullable=False)
     resume_hash: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     match_score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
