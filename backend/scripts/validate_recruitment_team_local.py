@@ -551,7 +551,17 @@ def main() -> int:
     assert len({receipt.trace_key for receipt in receipts}) == len(receipts)
     if journey_error is None:
         assert [span.name for span in telemetry.spans].count("model") == 2
-        assert all(span.status == "success" for span in telemetry.spans)
+        non_success_spans = [span for span in telemetry.spans if span.status != "success"]
+        # A phase that failed once and then succeeded on an explicit resume
+        # (candidate_profile_resume_attempts / role_profile_resume_attempts /
+        # target_assessment_resume_attempts) legitimately leaves the failed
+        # attempt's top-level "command" span recorded as non-success -- that's
+        # the telemetry doing its job, not a bug. What must never happen is a
+        # non-success span anywhere else (an unexpected inner failure), or
+        # more non-success spans than the resumes actually taken account for.
+        assert all(span.name == "command" for span in non_success_spans)
+        total_resumes = candidate_profile_resume_count + role_profile_resume_count + target_assessment_resume_count
+        assert len(non_success_spans) <= total_resumes
         if imported_profile_run is None:
             assert any(span.name == "candidate_profile.model_attempt" for span in telemetry.spans)
         else:
