@@ -346,7 +346,10 @@ def test_assessor_targets_one_failed_judgment_and_preserves_other_values():
         ),
     ],
 )
-def test_assessor_rejects_invalid_ids_quotes_and_numbers_without_fallback(changes, error):
+def test_assessor_rejects_invalid_ids_quotes_and_numbers_without_fallback(changes, error, monkeypatch):
+    import config
+
+    monkeypatch.setattr(config, "ROLE_EVIDENCE_VALIDATION_ATTEMPTS", 2)
     payload = {"judgments": [_judgment(**changes)]}
     model = _Model([payload, {"judgment": _judgment(**changes)}])
 
@@ -362,7 +365,10 @@ def test_assessor_rejects_invalid_ids_quotes_and_numbers_without_fallback(change
     ]
 
 
-def test_assessor_rejects_resume_evidence_not_owned_by_selected_profile_field():
+def test_assessor_rejects_resume_evidence_not_owned_by_selected_profile_field(monkeypatch):
+    import config
+
+    monkeypatch.setattr(config, "ROLE_EVIDENCE_VALIDATION_ATTEMPTS", 2)
     request = _two_criterion_request()
     regional = _judgment(candidate_profile_field_ids=["profile-monthly-forecast"])
     stable = _stable_judgment()
