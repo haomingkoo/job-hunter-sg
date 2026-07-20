@@ -1697,17 +1697,23 @@ git commit -m "feat: add OpenAgentTargetAssessmentRunner with real-time streamin
 
 ---
 
-### Task 11: Activity logging, cutover, and dead-code removal
+### Task 11: Activity logging, cutover, edit persistence, and dead-code removal
 
 **Files:**
-- Modify: `backend/recruitment_team/recruitment_team.py` (`_assess_target`, activity logging, runner construction)
-- Modify: `backend/recruitment_team/open_agent/runner.py` (emit progress detail the activity logger can consume)
+- Modify: `backend/recruitment_team/assessment_contracts.py` (`TargetAssessmentResult` gains `proposed_edits`)
+- Modify: `backend/recruitment_team/open_agent/runner.py` (populate `proposed_edits` on the yielded result)
+- Modify: `backend/recruitment_team/recruitment_team.py` (`_assess_target`, activity logging, runner construction, edit persistence, paused-result handling)
 - Delete: `backend/recruitment_team/target_assessment.py` (once nothing references `NativeTargetAssessmentRunner`)
 - Modify: `backend/tests/test_recruitment_team_module.py`, `backend/tests/test_target_assessment.py` (update/retire references to the deleted runner)
 
 **Interfaces:**
-- Consumes: `RecruitmentTeam._event(thread, run, *, event_type, status, summary, detail=None, team_member="coordinator")` (`recruitment_team.py:1215-1241`, unchanged signature).
-- Produces: nothing new — this task is the swap-in.
+- Consumes: `RecruitmentTeam._event(thread, run, *, event_type, status, summary, detail=None, team_member="coordinator")` (`recruitment_team.py:1215-1241`, unchanged signature), `models.ProposedResumeEdit` (Task 5).
+- Produces: nothing new beyond the `proposed_edits` field — this task is primarily the swap-in, plus closing two gaps Task 10's review surfaced.
+
+**Two gaps folded in from Task 10's review, not originally scoped here:**
+
+1. **Proposed edits are validated in-run but never persisted.** The runner computes `edits = context.proposed_edits() or []` and drops it — `TargetAssessmentResult` has no field to carry it out, and the runner takes no DB/session parameters to persist it itself (persistence needs `run.id`/`thread.id`/`resume.id`, which only `_assess_target` has). Fix: add `proposed_edits: tuple[dict, ...] = ()` to `TargetAssessmentResult` (defaulted, so the old `NativeTargetAssessmentRunner`, still alive until Step 6 of this task, is unaffected), have the runner populate it, and have `_assess_target` write one `ProposedResumeEdit` row per entry after a `completed` result.
+2. **A cleanly-paused run (Task 10's `ask_candidate` fix) currently looks identical to a real failure.** `_assess_target`'s existing `if result is None:` branch (`recruitment_team.py:711-724`) always raises `TargetAssessmentUnavailable(failure_type="workflow", retryable=True)` when the runner's generator ends without a `TargetAssessmentResult` — which is now also exactly what a clean pause looks like (Task 10 deliberately ends the generator without a Result when `ask_candidate` interrupts). Without a fix, every real pause gets misreported as a retryable failure. Fix: track the `status` of the last `TargetAssessmentProgress` event seen; if `result is None` AND that last status was `"paused"`, treat it as a distinct, non-failure outcome instead of falling into the existing failure branch.
 
 - [ ] **Step 1: Thread the resume document into the request**
 
@@ -1755,12 +1761,93 @@ from .open_agent.runner import OpenAgentTargetAssessmentRunner
 self._target_assessment_runner = OpenAgentTargetAssessmentRunner()
 ```
 
-- [ ] **Step 5: Run the full backend suite**
+- [ ] **Step 5: Add `proposed_edits` to `TargetAssessmentResult` and populate it**
+
+In `backend/recruitment_team/assessment_contracts.py`, add a defaulted field to the frozen dataclass:
+
+```python
+@dataclass(frozen=True)
+class TargetAssessmentResult:
+    status: Literal["completed", "quality_blocked", "failed"]
+    specialist_runs: tuple[dict, ...]
+    synthesis: str
+    judge: dict | None
+    correction: dict | None
+    error: dict | None
+    execution_policy: dict
+    proposed_edits: tuple[dict, ...] = ()
+```
+
+In `backend/recruitment_team/open_agent/runner.py`, pass `proposed_edits=tuple(edits)` into the `TargetAssessmentResult(...)` construction (the `edits` local is already computed from `context.proposed_edits()`, just not currently threaded through). Write a test asserting a run that calls `propose_resume_edit` produces a non-empty `result.proposed_edits` tuple containing the exact `block_id`/`rewrite` the tool accepted.
+
+Run: `cd backend && .venv/bin/python -m pytest tests/test_open_agent_runner.py -v`
+Expected: PASS.
+
+- [ ] **Step 6: Persist proposed edits and handle a paused result in `_assess_target`**
+
+In `_assess_target`, track the last progress status seen while iterating, so the `result is None` branch can distinguish a real failure from a clean pause:
+
+```python
+result: TargetAssessmentResult | None = None
+last_progress_status: str | None = None
+try:
+    for update in self._target_assessment_runner.run(...):
+        if isinstance(update, TargetAssessmentProgress):
+            last_progress_status = update.status
+            ...  # existing _event/publish logic, unchanged
+        elif isinstance(update, TargetAssessmentResult):
+            ...  # existing, unchanged
+```
+
+Replace the existing `if result is None:` branch (`recruitment_team.py:711-724`) with one that checks `last_progress_status` first:
+
+```python
+if result is None:
+    if last_progress_status == "paused":
+        artifact.status = "paused"
+        artifact.updated_at = _utcnow()
+        facts = dict(thread.case_facts)
+        facts["target_assessment_status"] = "paused"
+        thread.case_facts = facts
+        thread.workflow_state = "awaiting_candidate_answer"
+        self._db.commit()
+        pending_question = ""  # extract from the paused TargetAssessmentProgress's detail dict --
+                                # capture it in the loop above alongside last_progress_status, same pattern
+        return ModelReply(content=pending_question, model_name="open-agent-recruitment-team"), {}
+    # ... existing MissingTerminalResult failure branch, unchanged
+```
+
+After a `completed` result (in the existing success path, once `effective_status`/`artifact.status` etc. are set), persist each proposed edit:
+
+```python
+for edit in result.proposed_edits:
+    self._db.add(models.ProposedResumeEdit(
+        id=str(uuid.uuid4()),
+        user_id=owner_id,
+        thread_id=thread.id,
+        run_id=run.id,
+        resume_version_id=resume.id,
+        block_id=edit["block_id"],
+        section_key=edit.get("section_key", ""),
+        entry_id=edit.get("entry_id", ""),
+        original=edit["original"],
+        rewrite=edit["rewrite"],
+        document_revision=edit["document_revision"],
+        status="pending",
+    ))
+```
+
+Write two tests: one proving a `completed` result with `proposed_edits` produces the matching `ProposedResumeEdit` rows (query them back via `self._db`), one proving a `paused` outcome sets `thread.workflow_state == "awaiting_candidate_answer"`, does NOT raise `TargetAssessmentUnavailable`, and returns the pending question as the reply content.
+
+Run: `cd backend && .venv/bin/python -m pytest tests/test_recruitment_team_module.py -v`
+Expected: PASS.
+
+- [ ] **Step 7: Run the full backend suite**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/ -q`
 Expected: PASS. Every test that constructed or referenced `NativeTargetAssessmentRunner` directly (`test_target_assessment.py` in full) now targets a deleted class — update each to construct `OpenAgentTargetAssessmentRunner` instead, adjusting fixtures (fake models, expected persona counts) to the open-agent shape. Do not skip or delete these tests wholesale; each one encodes a real behavior (e.g. judge-gates-completion, specialist-failure-handling) that must still hold.
 
-- [ ] **Step 6: Delete `target_assessment.py`**
+- [ ] **Step 8: Delete `target_assessment.py`**
 
 ```bash
 git rm backend/recruitment_team/target_assessment.py
@@ -1773,12 +1860,12 @@ grep -rn "from .target_assessment import\|from recruitment_team.target_assessmen
 ```
 Expected: no output (or only references inside files this task already updated).
 
-- [ ] **Step 7: Run the full suite one more time**
+- [ ] **Step 9: Run the full suite one more time**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/ -q`
 Expected: PASS, full green.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add -A backend/recruitment_team/ backend/tests/
