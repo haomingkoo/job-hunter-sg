@@ -763,7 +763,7 @@ class RecruitmentTeam:
             }
         artifact.status = effective_status
         artifact.specialist_runs = list(result.specialist_runs)
-        artifact.synthesis = result.synthesis
+        artifact.synthesis = result.synthesis if effective_status == "completed" else ""
         artifact.judge = result.judge
         artifact.correction = result.correction
         artifact.error = effective_error
@@ -803,7 +803,7 @@ class RecruitmentTeam:
             )
         thread.workflow_state = "assessment_ready"
         return ModelReply(
-            content=result.synthesis,
+            content=artifact.synthesis,
             model_name="bounded-recruitment-team",
         ), {
             "operation": "assess_target_job",

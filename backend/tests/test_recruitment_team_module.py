@@ -1383,6 +1383,88 @@ def test_quality_blocked_target_assessment_is_durable_and_withholds_synthesis():
     assert all(message.content != "Unsupported draft" for message in snapshot.messages)
 
 
+def test_quality_blocked_open_agent_assessment_withholds_stored_synthesis():
+    """Regression guard: a quality-blocked run must never persist its synthesis,
+    even when the underlying result carries real, non-empty text. The prior
+    false-coverage test only fed an already-empty synthesis string, so it never
+    proved anything gets withheld -- it just proved empty stays empty. Here the
+    runner hands back a full, plausible-sounding synthesis alongside a
+    quality_blocked status, and the assertion is that the persisted artifact row
+    still stores an empty string, not the fed-in text."""
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.errors import TargetAssessmentUnavailable
+    from recruitment_team.interface import (
+        AssessTargetJob,
+        BuildCandidateProfile,
+        SearchJobs,
+        SelectTargetJob,
+        StartThread,
+    )
+    from recruitment_team.assessment_contracts import (
+        ScriptedTargetAssessmentRunner,
+        TargetAssessmentResult,
+        target_assessment_execution_policy,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    unapproved_synthesis = (
+        "The candidate is a strong fit for this role, with directly relevant "
+        "experience and measurable impact across every listed requirement."
+    )
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery([JobSearchResult("agent systems", (job,), 1, 1, False, False)])
+    runner = ScriptedTargetAssessmentRunner(
+        [
+            TargetAssessmentResult(
+                status="quality_blocked",
+                specialist_runs=({"persona": "skeptic", "status": "success"},),
+                synthesis=unapproved_synthesis,
+                judge={"verdict": "revise", "requires_revision": True},
+                correction={"attempted": True, "resolved": False},
+                error={"failure_type": "quality", "retryable": False},
+                execution_policy=target_assessment_execution_policy(),
+            )
+        ]
+    )
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            discovery,
+            _role_profiler([_role_profile_run(job.job_id)]),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([_candidate_profile_run()]),
+            runner,
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "withheld-start",
+        )
+        team.execute(owner_id, BuildCandidateProfile(started.thread_id), "withheld-profile")
+        team.execute(owner_id, SearchJobs(started.thread_id, "agent systems"), "withheld-search")
+        team.execute(owner_id, SelectTargetJob(started.thread_id, job.job_id), "withheld-select")
+
+        with pytest.raises(TargetAssessmentUnavailable) as caught:
+            team.execute(owner_id, AssessTargetJob(started.thread_id), "withheld-assessment")
+
+        artifact = team.target_assessment(owner_id, started.thread_id)
+
+    assert caught.value.failure_type == "quality"
+    assert artifact is not None
+    assert artifact.status == "quality_blocked"
+    assert artifact.synthesis == ""
+    assert unapproved_synthesis not in (artifact.synthesis or "")
+
+
 def test_completed_target_assessment_persists_its_proposed_resume_edits():
     from models import ProposedResumeEdit
     from recruitment_team import RecruitmentTeam, ScriptedConversationModel
