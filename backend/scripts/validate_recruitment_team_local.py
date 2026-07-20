@@ -332,6 +332,15 @@ def main() -> int:
         )
         started_at = time.perf_counter()
         receipts = []
+        # RecruitmentTeam.execute() always persists a "user" message before
+        # attempting a command, and only adds the "assistant" reply on
+        # success (recruitment_team.py) -- so a failed attempt that gets
+        # resumed with a new idempotency_key leaves an orphaned "user"
+        # message behind, one that a resumed command's own successful
+        # receipt never accounts for. Tracking every attempt here (not just
+        # the successful receipts) is what lets the role-sequence assertion
+        # below match what's actually persisted.
+        expected_message_roles = []
         journey_error = None
         attempted_target = None
         thread_id = ""
@@ -339,6 +348,7 @@ def main() -> int:
         def execute_phase(phase, command, idempotency_key):
             phase_started = time.perf_counter()
             print(json.dumps({"phase": phase, "status": "running"}), file=sys.stderr, flush=True)
+            expected_message_roles.append("user")
             try:
                 receipt = team.execute(
                     owner_id,
@@ -371,6 +381,7 @@ def main() -> int:
                 file=sys.stderr,
                 flush=True,
             )
+            expected_message_roles.append("assistant")
             receipts.append(receipt)
             return receipt
 
@@ -501,8 +512,7 @@ def main() -> int:
         target_assessment_artifact = team.target_assessment(owner_id, thread_id)
 
     if journey_error is None:
-        expected_roles = [role for _receipt in receipts for role in ("user", "assistant")]
-        assert [message.role for message in snapshot.messages] == expected_roles
+        assert [message.role for message in snapshot.messages] == expected_message_roles
     assert all(message.content.strip() for message in snapshot.messages)
     if journey_error is None:
         assert candidate_profile_artifact is not None
