@@ -32,7 +32,8 @@ New package `backend/recruitment_team/open_agent/`:
 | `context.py` | Context-var plumbing (`assessment_context`) giving tools access to the active request/document/edit-accumulator without threading them through LangChain's tool-call args. |
 | `tools.py` | `read_candidate_evidence`, `read_target_job`, `propose_resume_edit`, `ask_candidate`. (`search_jobs` is reused unmodified from `resume_agent.tools`.) |
 | `subagents.py` | `create_target_persona_subagents(registry, model)` — builds `SubAgent` entries from `PersonaPackRegistry`. |
-| `guardrails.py` | No-repeat-call check, edit-cap enforcement helpers, shared by `runner.py`. |
+| `guardrails.py` | No-repeat-call check, shared by `runner.py`. |
+| `streaming.py` | `iter_progress_events(agent, payload, run_config)` — normalizes `agent.stream(..., subgraphs=True)` into real-time tool_call/tool_result/message events, at the top level and inside delegated persona subagents. |
 | `runner.py` | `OpenAgentTargetAssessmentRunner`, implementing the `TargetAssessmentRunner` protocol. |
 
 Modified existing files:
@@ -40,12 +41,12 @@ Modified existing files:
 | File | Change |
 |---|---|
 | `backend/recruitment_team/assessment_contracts.py` (**new**) | Receives `TargetAssessmentRequest/Progress/Result/Update`, `TargetAssessmentRunner` protocol, the specialist/judge tool+schema+validation helpers, moved out of `target_assessment.py` (Task 2). |
-| `backend/recruitment_team/target_assessment.py` | Re-imports from `assessment_contracts.py` (Task 2); deleted entirely in Task 10 once the cutover lands. |
+| `backend/recruitment_team/target_assessment.py` | Re-imports from `assessment_contracts.py` (Task 2); deleted entirely in Task 11 once the cutover lands. |
 | `backend/config.py` | New `OPEN_AGENT_MAX_PROPOSED_EDITS` constant (Task 5). |
 | `backend/models.py` | New `ProposedResumeEdit` table (Task 5). |
-| `backend/recruitment_team/recruitment_team.py` | `_assess_target` builds the resume document, threads it into the request, and (Task 10) constructs `OpenAgentTargetAssessmentRunner` instead of `NativeTargetAssessmentRunner`. |
+| `backend/recruitment_team/recruitment_team.py` | `_assess_target` builds the resume document, threads it into the request, and (Task 11) constructs `OpenAgentTargetAssessmentRunner` instead of `NativeTargetAssessmentRunner`. |
 
-Test files (one per new module, mirroring existing repo convention of co-locating by responsibility, not by layer): `backend/tests/test_open_agent_delegation_spike.py`, `test_open_agent_checkpoint_spike.py`, `test_assessment_contracts.py`, `test_open_agent_tools.py`, `test_open_agent_subagents.py`, `test_open_agent_guardrails.py`, `test_open_agent_runner.py`. `test_recruitment_team_module.py` and `test_target_assessment.py` get targeted updates in Task 10, not new files.
+Test files (one per new module, mirroring existing repo convention of co-locating by responsibility, not by layer): `backend/tests/test_open_agent_delegation_spike.py`, `test_open_agent_checkpoint_spike.py`, `test_open_agent_streaming_spike.py`, `test_assessment_contracts.py`, `test_open_agent_tools.py`, `test_open_agent_subagents.py`, `test_open_agent_guardrails.py`, `test_open_agent_runner.py`. `test_recruitment_team_module.py` and `test_target_assessment.py` get targeted updates in Task 11, not new files.
 
 ---
 
@@ -1039,7 +1040,7 @@ git commit -m "feat: build persona subagents from PersonaPackRegistry"
 
 ---
 
-### Task 8: Guardrails — no-repeat-call check and combined iteration budget
+### Task 8: Guardrails — no-repeat-call check
 
 **Files:**
 - Create: `backend/recruitment_team/open_agent/guardrails.py`
@@ -1047,7 +1048,9 @@ git commit -m "feat: build persona subagents from PersonaPackRegistry"
 
 **Interfaces:**
 - Consumes: nothing new (pure functions over LangChain message lists).
-- Produces: `has_repeated_call(messages: list, tool_name: str, args: dict) -> bool`, consumed by Task 9's runner to decide whether to reject a would-be-duplicate call (implemented as validation feedback returned to the model, not a hard crash — matching this codebase's existing retry-with-exact-feedback pattern).
+- Produces: `has_repeated_call(messages: list, tool_name: str, args: dict) -> bool`, consumed by Task 10's runner (via `guarded_search_jobs`) to decide whether to reject a would-be-duplicate call (implemented as validation feedback returned to the model, not a hard crash — matching this codebase's existing retry-with-exact-feedback pattern).
+
+**Scope correction from an earlier draft of this plan:** this task's title originally said "and combined iteration budget," but Task 1's spike finding makes a genuine combined counter unachievable as first envisioned — a persona subagent's internal steps are invisible to the parent's message history (only one synthesized `"task"`-named `ToolMessage` per delegation ever appears there), so the orchestrator cannot count or bound a subagent's internal work from outside. What IS achievable, and is what Task 10 actually wires in: `AGENT_MAX_TOOL_ITERATIONS` bounds the orchestrator's own top-level step count (which includes one step per delegation, so it indirectly bounds how many times personas get consulted), each persona subagent has exactly one tool available (Task 7), which self-limits typical depth even without an external hard guarantee, and `OPEN_AGENT_MAX_PROPOSED_EDITS` (Task 5) bounds total edit output regardless of how much internal reasoning produced it. `has_repeated_call` is the one guardrail this task actually builds.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1101,9 +1104,10 @@ from typing import Any
 
 
 def has_repeated_call(messages: list[Any], tool_name: str, args: dict[str, Any]) -> bool:
-    """True if an earlier AIMessage already called `tool_name` with materially
-    identical args, with no new information (a new HumanMessage/ToolMessage
-    carrying different content) since that call."""
+    """Scans the full list backward for the first match, oldest and newest
+    calls alike -- it has no turn-boundary or staleness awareness. Callers
+    are responsible for passing only the relevant message window if a
+    legitimately-repeated call after new information arrived matters."""
     for message in reversed(messages):
         tool_calls = getattr(message, "tool_calls", None) or []
         for call in tool_calls:
@@ -1126,17 +1130,223 @@ git commit -m "feat: add no-repeated-call guardrail helper"
 
 ---
 
-### Task 9: `OpenAgentTargetAssessmentRunner` — the runner itself
+### Task 9: Spike — stream real-time progress from the orchestrator and its subagents
+
+**Files:**
+- Create: `backend/recruitment_team/open_agent/streaming.py`
+- Test: `backend/tests/test_open_agent_streaming_spike.py`
+
+**Interfaces:**
+- Consumes: `resume_agent.agent.create_resume_agent` (existing), the underlying LangGraph `.stream(stream_mode="updates", subgraphs=True)` interface.
+- Produces: `iter_progress_events(agent, payload, run_config) -> Iterator[dict]`, consumed by Task 10's runner for both real-time `TargetAssessmentProgress` reporting and specialist-findings extraction.
+
+**Why this task exists, and what it already confirmed empirically before being written into implementer form:** the original plan draft assumed `agent.invoke()` (one blocking call, all-at-once result) was the runner's execution model, with two consequences discovered to be real problems: (1) no live "consulting recruiter now" progress during a run, unlike the old thread-pool-based pipeline; (2) per Task 1's spike, a delegated persona subagent's structured submission never reaches the top-level `result["messages"]` at all — only a plain-text paraphrase does. Investigating `agent.stream(stream_mode="updates", subgraphs=True)` directly against a real (scripted-model) delegation resolved both at once: a plain top-level stream (`subgraphs=True` omitted) shows only the orchestrator's own node updates, same opacity into subagents as `.invoke()`. Passing `subgraphs=True` additionally yields items under a non-empty namespace tuple per active subagent invocation (e.g. `("tools:<uuid>",)`), carrying that subagent's own `model`/`tools` node updates in real time — including the delegated subagent's `AIMessage.name` field identifying which persona it is (e.g. `name="recruiter"`), and, critically, the **real structured `ToolMessage` content** when that persona calls its own submission tool (verified directly: `content='{"summary": "Clear ownership.", ..., "score": 80, ...}'`, the actual validated JSON, not a paraphrase). This single mechanism gets both real-time progress AND the structured persona data the original draft needed a separate context-var side-channel for — no side-channel is needed. This task turns that already-verified finding into a tested, committed module, and additionally verifies it holds with more than one sequential persona delegation (not just one), since the empirical check that produced this finding only tried one.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# backend/tests/test_open_agent_streaming_spike.py
+from __future__ import annotations
+
+import json
+
+from langchain_core.messages import AIMessage
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
+
+import config
+from resume_agent.agent import create_resume_agent
+from resume_agent.personas import create_persona_subagents
+from recruitment_team.open_agent.streaming import iter_progress_events
+
+
+class _ScriptedModel(FakeMessagesListChatModel):
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+def _delegate_call(subagent_type: str, call_id: str) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "task",
+            "args": {"description": f"Review as {subagent_type}.", "subagent_type": subagent_type},
+            "id": call_id,
+        }],
+    )
+
+
+def _submission_args(summary: str, score: int) -> dict:
+    return {
+        "summary": summary, "category": "ownership",
+        "findings": [{
+            "kind": "strength", "finding": "Shipped a feature end-to-end.", "source": "resume",
+            "source_location": "bullet-1", "method": "Read the bullet.", "relevance_score": 0.8,
+        }],
+        "score": score, "reasoning": "Ownership is clear.", "suggested_actions": ["Add a metric."],
+    }
+
+
+def test_iter_progress_events_reports_two_sequential_persona_delegations(monkeypatch):
+    import resume_agent.models as agent_models
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+
+    orchestrator_model = _ScriptedModel(responses=[
+        _delegate_call("recruiter", "call-1"),
+        _delegate_call("ats", "call-2"),
+        AIMessage(content="Consulted both personas."),
+    ])
+
+    recruiter_submit = AIMessage(content="", tool_calls=[{"name": "submit_assessment", "args": _submission_args("Recruiter view.", 80), "id": "r-1"}])
+    recruiter_model = _ScriptedModel(responses=[recruiter_submit, AIMessage(content="Recruiter done.")])
+
+    ats_submit = AIMessage(content="", tool_calls=[{"name": "submit_assessment", "args": _submission_args("ATS view.", 65), "id": "a-1"}])
+    ats_model = _ScriptedModel(responses=[ats_submit, AIMessage(content="ATS done.")])
+
+    subagents = create_persona_subagents(smart_model=recruiter_model)
+    subagents = [s if s["name"] != "ats" else {**s, "model": ats_model} for s in subagents]
+
+    agent = create_resume_agent(model=orchestrator_model, tools=[], subagents=subagents)
+
+    events = list(iter_progress_events(
+        agent,
+        {"messages": [{"role": "user", "content": "Assess this candidate."}]},
+        {"recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS},
+    ))
+
+    tool_calls = [e for e in events if e["kind"] == "tool_call"]
+    assert any(e["team_member"] == "coordinator" and e["tool_name"] == "task" for e in tool_calls)
+    assert any(e["team_member"] == "recruiter" and e["tool_name"] == "submit_assessment" for e in tool_calls)
+    assert any(e["team_member"] == "ats" and e["tool_name"] == "submit_assessment" for e in tool_calls)
+
+    results = [e for e in events if e["kind"] == "tool_result"]
+    recruiter_result = next(e for e in results if e["team_member"] == "recruiter" and e["tool_name"] == "submit_assessment")
+    ats_result = next(e for e in results if e["team_member"] == "ats" and e["tool_name"] == "submit_assessment")
+    assert json.loads(recruiter_result["content"])["score"] == 80
+    assert json.loads(ats_result["content"])["score"] == 65
+
+    messages = [e for e in events if e["kind"] == "message"]
+    assert any(e["team_member"] == "coordinator" and e["content"] == "Consulted both personas." for e in messages)
+    assert any(e["team_member"] == "recruiter" and e["content"] == "Recruiter done." for e in messages)
+    assert any(e["team_member"] == "ats" and e["content"] == "ATS done." for e in messages)
+```
+
+- [ ] **Step 2: Run and confirm failure**
+
+Run: `cd backend && .venv/bin/python -m pytest tests/test_open_agent_streaming_spike.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'recruitment_team.open_agent.streaming'`.
+
+- [ ] **Step 3: Implement `streaming.py`**
+
+```python
+# backend/recruitment_team/open_agent/streaming.py
+"""Real-time progress extraction from agent.stream(..., stream_mode="updates",
+subgraphs=True).
+
+Verified directly against the installed deepagents/langgraph/langchain
+versions: a plain top-level stream (subgraphs=True omitted) only shows the
+orchestrator's own node updates -- a delegated subagent's internal execution
+is as invisible there as it is via .invoke(). Passing subgraphs=True
+additionally yields items under a non-empty namespace tuple per active
+subagent invocation (e.g. ("tools:<uuid>",)), carrying that subagent's own
+model/tools node updates in real time -- including the AIMessage.name field
+identifying which persona it is, and the real structured ToolMessage content
+when that persona calls its own submission tool (not a paraphrase). This
+module is the one place that knows this shape; nothing downstream should
+re-derive it."""
+
+from __future__ import annotations
+
+from typing import Any, Iterator
+
+
+def iter_progress_events(agent: Any, payload: dict, run_config: dict) -> Iterator[dict]:
+    """Yield one normalized event per meaningful message anywhere in the run,
+    at the top level (team_member="coordinator") or inside a delegated
+    persona subagent (team_member=<persona_id>, learned from that subagent's
+    own AIMessage.name the first time it's seen in that subgraph's
+    namespace). Three event kinds: "tool_call" (a model decided to call a
+    tool), "tool_result" (a tool's return value, structured JSON when the
+    tool is a schema-enforced submission), "message" (a plain final reply
+    with no tool call -- how a turn, the orchestrator's or a persona
+    subagent's own, naturally ends; the last coordinator-level one of these
+    is the run's synthesis text)."""
+    active_persona_by_namespace: dict[tuple, str] = {}
+
+    for namespace, chunk in agent.stream(
+        payload, config=run_config, stream_mode="updates", subgraphs=True
+    ):
+        for node_update in (chunk or {}).values():
+            if not isinstance(node_update, dict):
+                continue
+            for message in node_update.get("messages", []) or []:
+                persona_name = getattr(message, "name", None)
+                tool_calls = getattr(message, "tool_calls", None) or []
+                if tool_calls:
+                    if persona_name:
+                        active_persona_by_namespace[namespace] = persona_name
+                    team_member = active_persona_by_namespace.get(namespace, "coordinator")
+                    for call in tool_calls:
+                        yield {
+                            "kind": "tool_call",
+                            "team_member": team_member,
+                            "tool_name": call.get("name"),
+                            "args": call.get("args"),
+                        }
+                elif hasattr(message, "tool_call_id"):
+                    team_member = active_persona_by_namespace.get(namespace, "coordinator")
+                    yield {
+                        "kind": "tool_result",
+                        "team_member": team_member,
+                        "tool_name": getattr(message, "name", None),
+                        "content": message.content,
+                    }
+                elif message.content:
+                    # A plain final reply with no tool call -- this is how a
+                    # turn (the orchestrator's or a persona subagent's own)
+                    # naturally ends. The runner needs the LAST coordinator-
+                    # level one of these as its synthesis text; without this
+                    # branch it would never see it at all.
+                    team_member = active_persona_by_namespace.get(namespace, "coordinator")
+                    yield {
+                        "kind": "message",
+                        "team_member": team_member,
+                        "content": message.content,
+                    }
+```
+
+- [ ] **Step 4: Run the test, verify pass**
+
+Run: `cd backend && .venv/bin/python -m pytest tests/test_open_agent_streaming_spike.py -v`
+Expected: PASS. If the two-persona scenario shows namespace collision (both personas' events attributed to the same `team_member`) or any other deviation from the single-persona shape already verified, that's a real, more serious finding — do not paper over it with a workaround; report BLOCKED with the actual observed chunk structure (add a debug `print(namespace, chunk)` temporarily to see it) so the controller can decide how Task 10 should adapt.
+
+- [ ] **Step 5: Run the full suite, then commit**
+
+Run: `cd backend && .venv/bin/python -m pytest tests/ -q`
+Expected: PASS, no regressions (this task only adds new files).
+
+```bash
+git add backend/recruitment_team/open_agent/streaming.py backend/tests/test_open_agent_streaming_spike.py
+git commit -m "feat: stream real-time progress from the orchestrator and its subagents"
+```
+
+---
+
+### Task 10: `OpenAgentTargetAssessmentRunner` — the runner itself
 
 **Files:**
 - Create: `backend/recruitment_team/open_agent/runner.py`
 - Test: `backend/tests/test_open_agent_runner.py`
 
 **Interfaces:**
-- Consumes: `resume_agent.agent.create_resume_agent` (Task 2's `interrupt_on` addition), `assessment_contracts.{TargetAssessmentRequest, TargetAssessmentProgress, TargetAssessmentResult, TargetAssessmentRunner, JUDGE_TOOL, JudgeSubmission, invoke_structured, target_assessment_execution_policy}` (Task 3), `open_agent.tools.{read_candidate_evidence, read_target_job, propose_resume_edit, ask_candidate}` (Tasks 4-6), `resume_agent.tools.search_jobs` (existing, unmodified), `open_agent.subagents.create_target_persona_subagents` (Task 7), `open_agent.guardrails.has_repeated_call` (Task 8), `open_agent.context.{assessment_context, proposed_edits}` (Tasks 4-5).
-- Produces: `OpenAgentTargetAssessmentRunner(model_factory=None, telemetry=None, persona_registry=None)`, implementing `run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]` — consumed by Task 10's cutover in `recruitment_team.py`.
+- Consumes: `resume_agent.agent.create_resume_agent` (Task 2's `interrupt_on` addition), `assessment_contracts.{TargetAssessmentRequest, TargetAssessmentProgress, TargetAssessmentResult, TargetAssessmentRunner, SPECIALIST_TOOL, JUDGE_TOOL, JudgeSubmission, invoke_structured, target_assessment_execution_policy}` (Task 3), `open_agent.tools.{read_candidate_evidence, read_target_job, propose_resume_edit, ask_candidate}` (Tasks 4-6), `resume_agent.tools.search_jobs` (existing, unmodified), `open_agent.subagents.create_target_persona_subagents` (Task 7), `open_agent.guardrails.has_repeated_call` (Task 8), `open_agent.streaming.iter_progress_events` (Task 9), `open_agent.context.{assessment_context, proposed_edits, tool_call_history}` (Tasks 4-5, this task adds `tool_call_history`).
+- Produces: `OpenAgentTargetAssessmentRunner(model_factory=None, telemetry=None, persona_registry=None)`, implementing `run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]` — consumed by Task 11's cutover in `recruitment_team.py`.
 
-This is the task where the mandatory judge, the numeric caps, and the guardrail actually get wired together into one control flow. The orchestrator's own tool-calling loop is genuinely open (persona choice, edit proposals, questions); everything in this task is the fixed frame around it.
+This is the task where the mandatory judge, the numeric caps, real-time progress reporting, and the guardrail all get wired together into one control flow, built directly on Task 9's verified `iter_progress_events`. The orchestrator's own tool-calling loop is genuinely open (persona choice, edit proposals, questions); everything in this task is the fixed frame around it.
+
+**Design note carried from Task 9:** `iter_progress_events` yields events as the run happens, not after it finishes — `TargetAssessmentProgress` events are yielded live, matching each `tool_call`/`tool_result`/`message` event as it streams in, not reconstructed from a final result afterward. A specialist's structured submission is read directly from a `tool_result` event's `content` (real JSON, per Task 9's finding) whenever that event's `team_member` is a persona (not `"coordinator"`) and its `tool_name` matches `SPECIALIST_TOOL.name` — no side-channel needed. The run's `synthesis` is the last `message`-kind event with `team_member == "coordinator"`.
+
+**Design note on the no-repeat-call guardrail:** `has_repeated_call` (Task 8) scans a list of message-like objects for a `.tool_calls` match. Streaming only lets the runner *observe* a call after the graph has already decided to make it — by the time a `tool_call` event streams out, `search_jobs` has already run. To actually prevent a wasted duplicate call (not just notice one after the fact), the guardrail has to live inside the tool itself, which needs its own per-run memory of prior calls — the same `ContextVar` pattern `propose_resume_edit` (Task 5) already established. `guarded_search_jobs` (built in this task) maintains that memory and calls `has_repeated_call` against it before delegating to the real `search_jobs`, so Task 8's tested function is reused at the one point where it can actually stop something, not just report it.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1218,12 +1428,15 @@ def test_runner_reaches_completed_via_mandatory_judge_with_zero_personas_consult
     )
 
     updates = list(runner.run(_request()))
+    progress = [item for item in updates if isinstance(item, TargetAssessmentProgress)]
     result = next(item for item in updates if isinstance(item, TargetAssessmentResult))
 
+    assert progress[0].team_member == "coordinator" and progress[0].status == "running"
     assert result.status == "completed"
     assert result.judge is not None
     assert result.judge["disposition"] == "pass"
     assert result.specialist_runs == ()
+    assert result.synthesis == "No specialist consultation needed; evidence is unambiguous."
 ```
 
 - [ ] **Step 2: Run and confirm failure**
@@ -1231,38 +1444,83 @@ def test_runner_reaches_completed_via_mandatory_judge_with_zero_personas_consult
 Run: `cd backend && .venv/bin/python -m pytest tests/test_open_agent_runner.py -v`
 Expected: FAIL — `ModuleNotFoundError`.
 
-- [ ] **Step 3: Implement `runner.py`**
+- [ ] **Step 3: Add `tool_call_history` to `context.py`**
+
+```python
+# backend/recruitment_team/open_agent/context.py -- add alongside _proposed_edits
+_tool_call_history: ContextVar[list[Any] | None] = ContextVar(
+    "open_agent_tool_call_history", default=None
+)
+
+# inside assessment_context(), alongside the other .set(...)/.reset(...) calls:
+    history_token = _tool_call_history.set([])
+    ...
+    _tool_call_history.reset(history_token)
+
+
+def tool_call_history() -> list[Any] | None:
+    return _tool_call_history.get()
+```
+
+- [ ] **Step 4: Implement `runner.py`**
 
 ```python
 # backend/recruitment_team/open_agent/runner.py
 """Open-ended orchestrator over the target-assessment tool set, with a
 mandatory independent judge as the one non-optional step regardless of the
-reasoning path the orchestrator took to get there."""
+reasoning path the orchestrator took to get there, and real-time progress
+reporting built on Task 9's verified streaming mechanism."""
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
 from typing import Iterator
+
+from langchain_core.tools import tool
 
 import config
 from resume_agent.agent import create_resume_agent
 from resume_agent.tools import search_jobs
 
-from ..persona_packs import PersonaPackRegistry, load_persona_pack_registry
-from ..telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
-from .assessment_contracts_imports import (  # see Step 3a below
+from ..assessment_contracts import (
     JUDGE_TOOL,
-    JudgeSubmission,
+    SPECIALIST_TOOL,
     TargetAssessmentProgress,
     TargetAssessmentRequest,
     TargetAssessmentResult,
     TargetAssessmentUpdate,
     invoke_structured,
     target_assessment_execution_policy,
-    tool_payload,
 )
+from ..persona_packs import PersonaPackRegistry, load_persona_pack_registry
+from ..telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 from . import context
+from .guardrails import has_repeated_call
+from .streaming import iter_progress_events
 from .subagents import create_target_persona_subagents
 from .tools import ask_candidate, propose_resume_edit, read_candidate_evidence, read_target_job
+
+
+@tool
+def guarded_search_jobs(query: str, n: int | None = None, detail: bool = False) -> dict:
+    """Search the current internal Singapore job corpus by role or responsibility.
+
+    Same contract as the underlying search_jobs tool; rejects a materially
+    identical repeat within this run instead of re-querying.
+    """
+    args = {"query": query, "n": n, "detail": detail}
+    history = context.tool_call_history()
+    if history is not None and has_repeated_call(history, "search_jobs", args):
+        return {
+            "ok": False,
+            "failure_type": "validation",
+            "reason": "identical_call_no_new_information",
+        }
+    result = search_jobs.invoke(args)
+    if history is not None:
+        history.append(SimpleNamespace(tool_calls=[{"name": "search_jobs", "args": args}]))
+    return result
 
 
 class OpenAgentTargetAssessmentRunner:
@@ -1288,44 +1546,60 @@ class OpenAgentTargetAssessmentRunner:
         self._registry = persona_registry or load_persona_pack_registry()
 
     def run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]:
-        yield TargetAssessmentProgress(team_member="coordinator", status="running", summary="Open-agent run started.", detail={})
+        yield TargetAssessmentProgress(
+            team_member="coordinator", status="running", summary="Open-agent run started.", detail={}
+        )
 
         orchestrator_model = self._model_factory()
         persona_subagents = create_target_persona_subagents(self._registry, orchestrator_model)
         agent = create_resume_agent(
             model=orchestrator_model,
-            tools=[read_candidate_evidence, read_target_job, search_jobs, propose_resume_edit, ask_candidate],
+            tools=[read_candidate_evidence, read_target_job, guarded_search_jobs, propose_resume_edit, ask_candidate],
             subagents=persona_subagents,
             interrupt_on={"ask_candidate": True},
         )
+        payload = {"messages": [{
+            "role": "user",
+            "content": (
+                "Assess this candidate against the target job. Consult whichever "
+                "personas you judge useful, however many times you judge useful. "
+                "Propose resume edits only where you have real evidence or an answer "
+                "the candidate gave you. Ask the candidate directly if you hit a real "
+                "evidence gap."
+            ),
+        }]}
+        run_config = {"recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS}
 
+        specialist_runs: list[dict] = []
+        synthesis = ""
         with context.assessment_context(request):
-            result = agent.invoke(
-                {"messages": [{
-                    "role": "user",
-                    "content": (
-                        "Assess this candidate against the target job. Consult whichever "
-                        "personas you judge useful, however many times you judge useful. "
-                        "Propose resume edits only where you have real evidence or an answer "
-                        "the candidate gave you. Ask the candidate directly if you hit a real "
-                        "evidence gap."
-                    ),
-                }]},
-                config={"recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS},
-            )
+            for event in iter_progress_events(agent, payload, run_config):
+                if event["kind"] == "tool_call":
+                    yield TargetAssessmentProgress(
+                        team_member=event["team_member"],
+                        status="running",
+                        summary=f"{event['team_member']} called {event['tool_name']}.",
+                        detail={"tool_name": event["tool_name"]},
+                    )
+                elif (
+                    event["kind"] == "tool_result"
+                    and event["team_member"] != "coordinator"
+                    and event["tool_name"] == SPECIALIST_TOOL.name
+                ):
+                    submission = self._parse_specialist_submission(event["content"])
+                    if submission is not None:
+                        specialist_runs.append(
+                            {"persona_id": event["team_member"], "status": "completed", "submission": submission}
+                        )
+                        yield TargetAssessmentProgress(
+                            team_member=event["team_member"],
+                            status="completed",
+                            summary=f"{event['team_member']} submitted its assessment.",
+                            detail={},
+                        )
+                elif event["kind"] == "message" and event["team_member"] == "coordinator":
+                    synthesis = str(event["content"])
             edits = context.proposed_edits() or []
-
-        specialist_runs = self._extract_specialist_runs(result)
-        for run in specialist_runs:
-            yield TargetAssessmentProgress(
-                team_member=run["persona_id"],
-                status="completed" if run["status"] == "completed" else "failed",
-                summary=f"{run['persona_id']} submitted its assessment.",
-                detail={},
-            )
-
-        final_messages = [m for m in result.get("messages", []) if getattr(m, "content", None)]
-        synthesis = str(final_messages[-1].content) if final_messages else ""
 
         judge_model = self._judge_model_factory()
         judge = self._run_judge(judge_model, request, specialist_runs, synthesis)
@@ -1341,25 +1615,16 @@ class OpenAgentTargetAssessmentRunner:
             execution_policy=target_assessment_execution_policy(),
         )
 
-    def _extract_specialist_runs(self, result: dict) -> list[dict]:
-        # A subagent's submission surfaces as a ToolMessage named after its
-        # submission tool (SPECIALIST_TOOL.name) inside result["messages"].
-        # Task 1's spike confirmed this trace shape -- adapt here if the real
-        # shape differs (e.g. nested under a per-subagent sub-list).
-        from ..assessment_contracts import SPECIALIST_TOOL
-
-        runs = []
-        for message in result.get("messages", []):
-            if getattr(message, "name", None) != SPECIALIST_TOOL.name:
-                continue
-            import json
-
-            try:
-                payload = json.loads(message.content) if isinstance(message.content, str) else message.content
-            except (json.JSONDecodeError, TypeError):
-                continue
-            runs.append({"persona_id": payload.get("persona_id", "unknown"), "status": "completed", "submission": payload})
-        return runs
+    @staticmethod
+    def _parse_specialist_submission(content) -> dict | None:
+        if isinstance(content, dict):
+            return content
+        if not isinstance(content, str):
+            return None
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return None
 
     def _run_judge(self, model, request: TargetAssessmentRequest, specialist_runs: list[dict], synthesis: str) -> dict:
         from ..prompts.target_assessment import TARGET_JUDGE_SYSTEM_PROMPT
@@ -1393,42 +1658,46 @@ class OpenAgentTargetAssessmentRunner:
         return {**payload, "model_name": model_name, "input_tokens": input_tokens, "output_tokens": output_tokens}
 ```
 
-Replace the placeholder import line `from .assessment_contracts_imports import (...)` with a direct `from ..assessment_contracts import (...)` — it's written as a separate line above only so this step's diff is easy to read; there is no `assessment_contracts_imports` module.
-
-- [ ] **Step 4: Run tests, verify pass**
+- [ ] **Step 5: Run tests, verify pass**
 
 Run: `cd backend && .venv/bin/python -m pytest tests/test_open_agent_runner.py -v`
-Expected: PASS. If `_extract_specialist_runs`'s assumption about where a subagent's tool call surfaces in `result["messages"]` doesn't match Task 1's spike findings, fix this method to match what Task 1 actually confirmed — that spike's comment is the source of truth here, not this draft.
+Expected: PASS. If real behavior deviates from Task 9's verified event shapes (e.g. a specialist's `tool_result` content arrives as something other than a JSON string), fix `_parse_specialist_submission` to match reality — Task 9's streaming module and its own test are the source of truth for the event shape, not this draft.
 
-- [ ] **Step 5: Add the no-repeat-call guardrail as a rejection path**
-
-Add a second test proving a materially identical `search_jobs` call gets rejected with feedback rather than silently executed twice:
+- [ ] **Step 6: Add a real second-persona test and the no-repeat-call guardrail test**
 
 ```python
 # backend/tests/test_open_agent_runner.py -- append
-def test_runner_rejects_a_materially_identical_repeated_search_jobs_call(monkeypatch):
-    # Script the orchestrator to call search_jobs twice with identical args,
-    # then assert the second ToolMessage's content signals the guardrail
-    # rejection rather than a second real search result.
-    ...  # follow the same _ScriptedModel construction pattern as Step 1,
-        # scripting two identical search_jobs tool_calls back to back.
-```
+def test_runner_captures_a_real_persona_submission_via_streaming(monkeypatch):
+    # Script the orchestrator to delegate to "recruiter", script the persona
+    # model with a valid submit_assessment call (see Task 9's test for the
+    # exact args shape), then assert result.specialist_runs has one entry
+    # with persona_id == "recruiter" and the real score/summary from the
+    # scripted submission -- proving the runner reads structured data from
+    # the stream, not a paraphrase.
+    ...
 
-Wire the guardrail into the agent's tool execution: wrap `search_jobs` in a thin guarded version inside `runner.py` that checks `guardrails.has_repeated_call` against the running message list before delegating to the real tool, returning a rejection payload (`{"ok": False, "failure_type": "validation", "reason": "identical_call_no_new_information"}`) instead of re-querying when the guardrail trips. This mirrors the retry-with-exact-feedback discipline used throughout `validation_gates.py`.
+
+def test_runner_rejects_a_materially_identical_repeated_search_jobs_call(monkeypatch):
+    # Script the orchestrator to call guarded_search_jobs (via the agent's
+    # tool binding) twice with identical args, then assert the second
+    # invocation's tool_result content signals identical_call_no_new_information
+    # rather than a second real search.
+    ...
+```
 
 Run: `cd backend && .venv/bin/python -m pytest tests/test_open_agent_runner.py -v`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add backend/recruitment_team/open_agent/runner.py backend/tests/test_open_agent_runner.py
-git commit -m "feat: add OpenAgentTargetAssessmentRunner with mandatory judge and guardrails"
+git add backend/recruitment_team/open_agent/context.py backend/recruitment_team/open_agent/runner.py backend/tests/test_open_agent_runner.py
+git commit -m "feat: add OpenAgentTargetAssessmentRunner with real-time streaming, mandatory judge, and guardrails"
 ```
 
 ---
 
-### Task 10: Activity logging, cutover, and dead-code removal
+### Task 11: Activity logging, cutover, and dead-code removal
 
 **Files:**
 - Modify: `backend/recruitment_team/recruitment_team.py` (`_assess_target`, activity logging, runner construction)
@@ -1520,13 +1789,15 @@ git commit -m "feat: cut target assessment over to the open-agent runner"
 
 ## Self-Review
 
-**Spec coverage** — every section of `docs/superpowers/specs/2026-07-20-recruitment-team-open-agent-design.md` maps to a task: Engine reuse (Tasks 2, 9), Tool registry (Tasks 4-6), Subagents (Task 7), Mandatory final judge (Task 9), Efficiency guardrails (Task 8, wired in Task 9), Activity/observability (Task 10), Data model changes (Task 5's `ProposedResumeEdit`, Task 1's spike note on `specialist_runs` variability), Error handling (each tool returns a reason string on rejection, consistent with the retry-with-exact-feedback pattern; new tool call sites still route through the existing failure taxonomy per the Global Constraints). The two spikes (Tasks 1, 2) directly address the two corrections the independent spec critique made: the unverified subagent-delegation claim and the unverified `ask_candidate` turn-ending mechanism.
+**Spec coverage** — every section of `docs/superpowers/specs/2026-07-20-recruitment-team-open-agent-design.md` maps to a task: Engine reuse (Tasks 2, 10), Tool registry (Tasks 4-6), Subagents (Task 7), Mandatory final judge (Task 10), Efficiency guardrails (Task 8, wired in Task 10), Activity/observability (Tasks 9, 11), Data model changes (Task 5's `ProposedResumeEdit`, Task 1's spike note on `specialist_runs` variability), Error handling (each tool returns a reason string on rejection, consistent with the retry-with-exact-feedback pattern; new tool call sites still route through the existing failure taxonomy per the Global Constraints). The three spikes (Tasks 1, 2, 9) directly address three corrections found empirically rather than assumed: the unverified subagent-delegation claim, the unverified `ask_candidate` turn-ending mechanism, and (found mid-execution, after Task 8 landed) that `.invoke()` gives no real-time visibility into a delegated persona's work and no access to its structured submission at all — `agent.stream(stream_mode="updates", subgraphs=True)`, verified directly against a real scripted delegation before Task 9 was written, resolves both without a side-channel.
 
 **Deviation the critique surfaced, now made concrete in this plan:** the spec originally implied guardrail work (issue #113) could follow core engine work (issue #109) directly. Building `ask_candidate`'s real hard-turn-end requires a durable checkpointer and `interrupt_on`, which is issue #112's territory — so this plan does that spike (Task 2) second, before any tool work, rather than last. The GitHub issue dependency graph (#113 currently has no stated dependency on #112) should be updated to reflect this; flagging it for a follow-up comment on those two issues rather than silently absorbing the reordering into this plan alone.
 
+**Mid-execution revision (Task 9 inserted, Tasks 9-10 renumbered to 10-11):** the original Task 9 draft assumed `.invoke()` and a context-var side-channel could recover a delegated persona's structured findings. Direct investigation (running a real scripted delegation through both `.invoke()` and `.stream(..., subgraphs=True)` and reading the actual output, not assuming) found `.stream()` with `subgraphs=True` already exposes the real structured `ToolMessage` content from inside a subagent's own execution, in real time, at the same point the original draft needed a separate accumulator for — one verified mechanism instead of two, and it also closes a separate, independently-raised gap (no live progress reporting during a run). The runner (now Task 10) was rewritten around `iter_progress_events` before any implementer touched it; nothing here was discovered after the fact by an implementer stuck on a wrong assumption.
+
 **Placeholder scan** — no TBD/TODO. Two spots are intentionally exploratory rather than fixed (Task 1 Step 2's two-outcome branch, Task 2 Step 4's fallback investigation instruction) — both give the engineer the concrete file to read and the concrete fix to make if reality differs from the draft, which is different from a placeholder.
 
-**Type consistency** — `TargetAssessmentRequest`/`Progress`/`Result`/`Update`, `SPECIALIST_TOOL`/`SpecialistSubmission`, `JUDGE_TOOL`/`JudgeSubmission` are named identically from Task 3 onward through Task 9. `assessment_context`/`current_request`/`current_document`/`proposed_edits` in `context.py` are the only functions any later task calls into that module by name, and Tasks 4/5/9 use those exact four names throughout.
+**Type consistency** — `TargetAssessmentRequest`/`Progress`/`Result`/`Update`, `SPECIALIST_TOOL`/`SpecialistSubmission`, `JUDGE_TOOL`/`JudgeSubmission` are named identically from Task 3 onward through Task 10. `assessment_context`/`current_request`/`current_document`/`proposed_edits`/`tool_call_history` in `context.py` are the only functions any later task calls into that module by name, and Tasks 4/5/10 use those exact five names throughout.
 
 **Scope check** — this plan covers issues #109-113 as one build (they share one runner and one tool registry; splitting further would fragment a single control-flow object across plans). It deliberately excludes: any new HTTP endpoint for accepting/rejecting a `ProposedResumeEdit` (Task 5 only builds the table and the tool), and the frontend changes needed to surface pending edits in `RecruitmentTeamPanel.jsx` — both are natural follow-on plans once this one is implemented and its real behavior can inform their design, not omissions from this scope.
 
