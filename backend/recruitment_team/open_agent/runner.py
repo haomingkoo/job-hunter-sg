@@ -174,6 +174,7 @@ class OpenAgentTargetAssessmentRunner:
             correction=None,
             error=None,
             execution_policy=target_assessment_execution_policy(),
+            proposed_edits=tuple(edits),
         )
 
     @staticmethod

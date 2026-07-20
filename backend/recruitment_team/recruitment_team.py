@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from models import (
     CandidateProfileArtifact,
+    ProposedResumeEdit,
     RecruitmentActivityEvent,
     RecruitmentMessage,
     RecruitmentRun,
@@ -79,7 +80,7 @@ from .role_evidence_assessor import RoleEvidenceAssessmentError
 from .telemetry import RecruitmentTelemetry
 from .activity_publisher import ActivityPublisher
 from .prompts import CONVERSATION_PROMPT_VERSION
-from .target_assessment import (
+from .assessment_contracts import (
     TargetAssessmentProgress,
     TargetAssessmentRequest,
     TargetAssessmentResult,
@@ -634,6 +635,9 @@ class RecruitmentTeam:
     ) -> tuple[ModelReply, dict]:
         if self._target_assessment_runner is None:
             raise InvalidCommand("target assessment capability is not configured")
+        from resume_document import create_resume_document
+
+        resume_document = create_resume_document(resume.resume_text)
         facts = dict(thread.case_facts)
         if not isinstance(facts.get("selected_target"), dict):
             raise InvalidCommand("select a target job before running its assessment")
@@ -668,6 +672,8 @@ class RecruitmentTeam:
         self._db.commit()
 
         result: TargetAssessmentResult | None = None
+        last_progress_status: str | None = None
+        pending_question = ""
         try:
             for update in self._target_assessment_runner.run(
                 TargetAssessmentRequest(
@@ -675,9 +681,13 @@ class RecruitmentTeam:
                     role_profile=role_profile,
                     target_job=target,
                     trace_key=run.trace_key,
+                    resume_document=resume_document,
                 )
             ):
                 if isinstance(update, TargetAssessmentProgress):
+                    last_progress_status = update.status
+                    if update.status == "paused":
+                        pending_question = str((update.detail or {}).get("question") or "")
                     progress_event = self._event(
                         thread,
                         run,
@@ -714,6 +724,18 @@ class RecruitmentTeam:
             ) from error
 
         if result is None:
+            if last_progress_status == "paused":
+                artifact.status = "paused"
+                artifact.updated_at = _utcnow()
+                facts = dict(thread.case_facts)
+                facts["target_assessment_status"] = "paused"
+                thread.case_facts = facts
+                thread.workflow_state = "awaiting_candidate_answer"
+                self._db.commit()
+                return ModelReply(
+                    content=pending_question,
+                    model_name="open-agent-recruitment-team",
+                ), {}
             artifact.status = "failed"
             artifact.error = {
                 "failure_type": "workflow",
@@ -761,6 +783,23 @@ class RecruitmentTeam:
                 "target assessment did not pass its independent quality gate",
                 failure_type=failure_type,
                 retryable=bool((effective_error or {}).get("retryable")),
+            )
+        for edit in result.proposed_edits:
+            self._db.add(
+                ProposedResumeEdit(
+                    id=str(uuid.uuid4()),
+                    user_id=owner_id,
+                    thread_id=thread.id,
+                    run_id=run.id,
+                    resume_version_id=resume.id,
+                    block_id=edit["block_id"],
+                    section_key=edit.get("section_key", ""),
+                    entry_id=edit.get("entry_id", ""),
+                    original=edit["original"],
+                    rewrite=edit["rewrite"],
+                    document_revision=edit["document_revision"],
+                    status="pending",
+                )
             )
         thread.workflow_state = "assessment_ready"
         return ModelReply(

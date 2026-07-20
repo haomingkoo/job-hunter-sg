@@ -1,8 +1,7 @@
-"""Shared request/result types and specialist/judge contracts for target assessment.
-
-Used by both the legacy NativeTargetAssessmentRunner and the open-agent runner,
-so a specialist's submission is validated identically regardless of whether the
-orchestrator called it directly or delegated to it as a subagent.
+"""Shared request/result types and specialist/judge contracts for target assessment,
+consumed by the open-agent runner (and, historically, the retired native runner it
+replaced) so a specialist's submission is validated identically regardless of
+whether the orchestrator called it directly or delegated to it as a subagent.
 """
 
 from __future__ import annotations
@@ -59,6 +58,7 @@ class TargetAssessmentResult:
     correction: dict | None
     error: dict | None
     execution_policy: dict
+    proposed_edits: tuple[dict, ...] = ()
 
 
 TargetAssessmentUpdate = TargetAssessmentProgress | TargetAssessmentResult
@@ -66,6 +66,16 @@ TargetAssessmentUpdate = TargetAssessmentProgress | TargetAssessmentResult
 
 class TargetAssessmentRunner(Protocol):
     def run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]: ...
+
+
+class ScriptedTargetAssessmentRunner:
+    def __init__(self, updates: list[TargetAssessmentUpdate]):
+        self._updates = tuple(updates)
+        self.call_count = 0
+
+    def run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]:
+        self.call_count += 1
+        yield from self._updates
 
 
 class SpecialistSubmission(BaseModel):

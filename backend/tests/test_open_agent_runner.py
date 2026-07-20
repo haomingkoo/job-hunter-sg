@@ -162,6 +162,44 @@ def test_runner_captures_a_real_persona_submission_via_streaming(monkeypatch):
     assert result.synthesis == "Consulted the recruiter persona; synthesis complete."
 
 
+def test_runner_carries_an_accepted_proposed_edit_out_on_the_result(monkeypatch):
+    import resume_agent.models as agent_models
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+
+    propose_call = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "propose_resume_edit",
+            "args": {"block_id": "b1", "rewrite": "Led a team of 12 engineers."},
+            "id": "call-1",
+        }],
+    )
+    final_reply = AIMessage(content="Proposed one evidence-safe rewrite; no specialist consultation needed.")
+    orchestrator_model = _ScriptedModel(responses=[propose_call, final_reply])
+
+    judge_model = _ScriptedModel(responses=[_judge_call()])
+
+    runner = OpenAgentTargetAssessmentRunner(
+        model_factory=lambda: orchestrator_model,
+        judge_model_factory=lambda: judge_model,
+        telemetry=RecordedTelemetry(),
+    )
+
+    updates = list(runner.run(_request()))
+    result = next(item for item in updates if isinstance(item, TargetAssessmentResult))
+
+    assert len(result.proposed_edits) == 1
+    edit = result.proposed_edits[0]
+    # These values only exist in propose_call's scripted args above -- if this
+    # assertion passes, the runner read them from the real tool acceptance,
+    # not a hardcoded/paraphrased stand-in.
+    assert edit["block_id"] == "b1"
+    assert edit["rewrite"] == "Led a team of 12 engineers."
+    assert edit["original"] == "Led team of 12 engineers."
+    assert edit["document_revision"] == "rev-1"
+
+
 def test_runner_rejects_a_materially_identical_repeated_search_jobs_call(monkeypatch):
     import resume_agent.models as agent_models
     import resume_agent.tools as agent_tools

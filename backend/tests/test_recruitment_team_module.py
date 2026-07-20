@@ -1101,7 +1101,7 @@ def test_bounded_target_assessment_persists_and_streams_specialist_judge_artifac
         SelectTargetJob,
         StartThread,
     )
-    from recruitment_team.target_assessment import (
+    from recruitment_team.assessment_contracts import (
         ScriptedTargetAssessmentRunner,
         TargetAssessmentProgress,
         TargetAssessmentResult,
@@ -1226,6 +1226,88 @@ def test_bounded_target_assessment_persists_and_streams_specialist_judge_artifac
     assert any(event.team_member == "recruiter" for event in activity.events)
 
 
+def test_open_agent_target_assessment_logs_only_the_personas_actually_consulted():
+    """The open-agent runner consults a variable set of personas per run, not
+    a fixed five -- activity logging must faithfully mirror whatever
+    TargetAssessmentProgress events it actually yields, nothing more."""
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.interface import (
+        AssessTargetJob,
+        BuildCandidateProfile,
+        SearchJobs,
+        SelectTargetJob,
+        StartThread,
+    )
+    from recruitment_team.assessment_contracts import (
+        ScriptedTargetAssessmentRunner,
+        TargetAssessmentProgress,
+        TargetAssessmentResult,
+        target_assessment_execution_policy,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery(
+        [JobSearchResult("agent systems", (job,), 1, 1, False, False)]
+    )
+    runner = ScriptedTargetAssessmentRunner(
+        [
+            TargetAssessmentProgress(
+                team_member="skeptic",
+                status="completed",
+                summary="Skeptic review completed.",
+                detail={},
+            ),
+            TargetAssessmentProgress(
+                team_member="quality_judge",
+                status="completed",
+                summary="Independent quality judge completed.",
+                detail={"disposition": "pass"},
+            ),
+            TargetAssessmentResult(
+                status="completed",
+                specialist_runs=({"persona_id": "skeptic", "status": "completed"},),
+                synthesis="Evidence-backed target assessment from a single persona.",
+                judge={"disposition": "pass", "score": 88},
+                correction={"attempted": False},
+                error=None,
+                execution_policy=target_assessment_execution_policy(),
+            ),
+        ]
+    )
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            discovery,
+            _role_profiler([_role_profile_run(job.job_id)]),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([_candidate_profile_run()]),
+            runner,
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "open-agent-events-start",
+        )
+        team.execute(owner_id, BuildCandidateProfile(started.thread_id), "open-agent-events-profile")
+        team.execute(owner_id, SearchJobs(started.thread_id, "agent systems"), "open-agent-events-search")
+        team.execute(owner_id, SelectTargetJob(started.thread_id, job.job_id), "open-agent-events-select")
+        team.execute(owner_id, AssessTargetJob(started.thread_id), "open-agent-events-run")
+
+        events = team.events(owner_id, started.thread_id, after_sequence=0)
+
+    assessment_events = [event for event in events if event.event_type == "assessment"]
+    assert [event.team_member for event in assessment_events] == ["skeptic", "quality_judge"]
+
+
 def test_quality_blocked_target_assessment_is_durable_and_withholds_synthesis():
     from recruitment_team import RecruitmentTeam, ScriptedConversationModel
     from recruitment_team.activity_publisher import IgnoreActivityPublisher
@@ -1239,7 +1321,7 @@ def test_quality_blocked_target_assessment_is_durable_and_withholds_synthesis():
         SelectTargetJob,
         StartThread,
     )
-    from recruitment_team.target_assessment import (
+    from recruitment_team.assessment_contracts import (
         ScriptedTargetAssessmentRunner,
         TargetAssessmentResult,
         target_assessment_execution_policy,
@@ -1299,6 +1381,161 @@ def test_quality_blocked_target_assessment_is_durable_and_withholds_synthesis():
     assert snapshot.case_facts.target_assessment_status == "quality_blocked"
     assert snapshot.workflow_state == "quality_blocked"
     assert all(message.content != "Unsupported draft" for message in snapshot.messages)
+
+
+def test_completed_target_assessment_persists_its_proposed_resume_edits():
+    from models import ProposedResumeEdit
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.interface import (
+        AssessTargetJob,
+        BuildCandidateProfile,
+        SearchJobs,
+        SelectTargetJob,
+        StartThread,
+    )
+    from recruitment_team.assessment_contracts import (
+        ScriptedTargetAssessmentRunner,
+        TargetAssessmentResult,
+        target_assessment_execution_policy,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery([JobSearchResult("agent systems", (job,), 1, 1, False, False)])
+    runner = ScriptedTargetAssessmentRunner(
+        [
+            TargetAssessmentResult(
+                status="completed",
+                specialist_runs=(),
+                synthesis="Evidence-backed target assessment with a proposed rewrite.",
+                judge={"disposition": "pass", "score": 90},
+                correction={"attempted": False},
+                error=None,
+                execution_policy=target_assessment_execution_policy(),
+                proposed_edits=(
+                    {
+                        "block_id": "b1",
+                        "section_key": "experience",
+                        "entry_id": "e1",
+                        "original": "Led team of 12 engineers.",
+                        "rewrite": "Led a team of 12 engineers.",
+                        "document_revision": "rev-1",
+                        "status": "pending",
+                    },
+                ),
+            )
+        ]
+    )
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            discovery,
+            _role_profiler([_role_profile_run(job.job_id)]),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([_candidate_profile_run()]),
+            runner,
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "edits-start",
+        )
+        team.execute(owner_id, BuildCandidateProfile(started.thread_id), "edits-profile")
+        team.execute(owner_id, SearchJobs(started.thread_id, "agent systems"), "edits-search")
+        team.execute(owner_id, SelectTargetJob(started.thread_id, job.job_id), "edits-select")
+        team.execute(owner_id, AssessTargetJob(started.thread_id), "edits-run")
+
+        rows = (
+            db.query(ProposedResumeEdit)
+            .filter(ProposedResumeEdit.thread_id == started.thread_id)
+            .all()
+        )
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.user_id == owner_id
+    assert row.resume_version_id == resume_id
+    assert row.block_id == "b1"
+    assert row.section_key == "experience"
+    assert row.entry_id == "e1"
+    assert row.original == "Led team of 12 engineers."
+    assert row.rewrite == "Led a team of 12 engineers."
+    assert row.document_revision == "rev-1"
+    assert row.status == "pending"
+
+
+def test_paused_target_assessment_does_not_raise_and_awaits_the_candidate():
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.interface import (
+        AssessTargetJob,
+        BuildCandidateProfile,
+        SearchJobs,
+        SelectTargetJob,
+        StartThread,
+    )
+    from recruitment_team.assessment_contracts import (
+        ScriptedTargetAssessmentRunner,
+        TargetAssessmentProgress,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery([JobSearchResult("agent systems", (job,), 1, 1, False, False)])
+    runner = ScriptedTargetAssessmentRunner(
+        [
+            TargetAssessmentProgress(
+                team_member="coordinator",
+                status="paused",
+                summary="Run paused: waiting on the candidate to answer a question.",
+                detail={"question": "How large was the team you led?"},
+            ),
+        ]
+    )
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            discovery,
+            _role_profiler([_role_profile_run(job.job_id)]),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([_candidate_profile_run()]),
+            runner,
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "paused-start",
+        )
+        team.execute(owner_id, BuildCandidateProfile(started.thread_id), "paused-profile")
+        team.execute(owner_id, SearchJobs(started.thread_id, "agent systems"), "paused-search")
+        team.execute(owner_id, SelectTargetJob(started.thread_id, job.job_id), "paused-select")
+
+        # Must return normally -- a clean pause is not a TargetAssessmentUnavailable failure.
+        team.execute(owner_id, AssessTargetJob(started.thread_id), "paused-run")
+
+        artifact = team.target_assessment(owner_id, started.thread_id)
+        snapshot = team.snapshot(owner_id, started.thread_id)
+
+    assert snapshot.workflow_state == "awaiting_candidate_answer"
+    assert snapshot.case_facts.target_assessment_status == "paused"
+    assert snapshot.messages[-1].content == "How large was the team you led?"
+    assert artifact is not None
+    assert artifact.status == "paused"
 
 
 def _role_definition_submission(
@@ -1939,7 +2176,7 @@ def test_public_http_streams_and_persists_the_bounded_target_assessment():
         get_role_success_profiler,
         get_target_assessment_runner,
     )
-    from recruitment_team.target_assessment import (
+    from recruitment_team.assessment_contracts import (
         ScriptedTargetAssessmentRunner,
         TargetAssessmentProgress,
         TargetAssessmentResult,

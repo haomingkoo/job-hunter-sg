@@ -44,7 +44,8 @@ from .recruitment_team import RecruitmentTeam
 from .role_success import LangChainRoleDefinitionGenerator, RoleSuccessProfiler
 from .role_evidence_assessor import LangChainRoleEvidenceAssessor
 from .telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
-from .target_assessment import ResumeAgentTargetAssessmentRunner, TargetAssessmentRunner
+from .assessment_contracts import TargetAssessmentRunner
+from .open_agent.runner import OpenAgentTargetAssessmentRunner
 
 
 router = APIRouter(prefix="/api/recruitment-team", tags=["recruitment-team"])
@@ -100,7 +101,7 @@ def get_candidate_profiler_factory(
 
 
 def get_target_assessment_runner() -> TargetAssessmentRunner:
-    return ResumeAgentTargetAssessmentRunner()
+    return OpenAgentTargetAssessmentRunner()
 
 
 def _team(

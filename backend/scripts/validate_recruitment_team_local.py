@@ -52,7 +52,7 @@ from recruitment_team.interface import (  # noqa: E402
     StartThread,
 )
 from recruitment_team.telemetry import RecordedTelemetry  # noqa: E402
-from recruitment_team.target_assessment import NativeTargetAssessmentRunner  # noqa: E402
+from recruitment_team.open_agent.runner import OpenAgentTargetAssessmentRunner  # noqa: E402
 from resume_agent.models import create_agent_model  # noqa: E402
 from resume_parser import parse_resume_isolated  # noqa: E402
 from resume_document import create_resume_document  # noqa: E402
@@ -325,7 +325,7 @@ def main() -> int:
             telemetry,
             activity,
             candidate_profiler_factory,
-            NativeTargetAssessmentRunner(
+            OpenAgentTargetAssessmentRunner(
                 model_factory=lambda: live_model(args.assessment_model),
                 telemetry=telemetry,
             ),
@@ -523,7 +523,10 @@ def main() -> int:
         assert target_assessment_artifact.execution_policy["content_truncation"] is False
         expected_specialists = set(target_assessment_artifact.execution_policy["specialists"])
         observed_specialists = {run["persona_id"] for run in target_assessment_artifact.specialist_runs}
-        assert observed_specialists == expected_specialists
+        # The open-agent orchestrator decides which personas to consult and how
+        # many times, so a live run is no longer guaranteed to touch every
+        # registered persona -- only that whichever it did consult are real.
+        assert observed_specialists <= expected_specialists
     assert all(receipt.thread_id == thread_id for receipt in receipts)
     assert len({receipt.trace_key for receipt in receipts}) == len(receipts)
     if journey_error is None:
@@ -535,11 +538,10 @@ def main() -> int:
             assert not any(span.name == "candidate_profile.model_attempt" for span in telemetry.spans)
         assert any(span.name == "role_definition.model_attempt" for span in telemetry.spans)
         assert any(span.name == "role_evidence_assessment.model_attempt" for span in telemetry.spans)
-        assert len([span for span in telemetry.spans if span.name == "target_assessment.specialist_attempt"]) >= len(
-            expected_specialists
-        )
-        assert any(span.name == "target_assessment.synthesis" for span in telemetry.spans)
-        assert any(span.name == "target_assessment.judge_attempt" for span in telemetry.spans)
+        # Specialists now run as delegated subagents (streamed, not invoked via
+        # invoke_structured), so only the mandatory fresh judge call still
+        # produces its own telemetry span.
+        assert any(span.name == "open_agent_assessment.judge_attempt" for span in telemetry.spans)
         forbidden_span_content = (resume_text, args.initial_message, args.follow_up_message)
         assert not any(
             secret and secret in str(value)
