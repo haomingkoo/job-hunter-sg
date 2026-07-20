@@ -1,0 +1,21 @@
+{
+  "dataset_version": "synthetic-v1",
+  "cases": [
+    {
+      "case_id": "synthetic-ai-project-lead",
+      "role_family": "ai_delivery",
+      "resume": {
+        "ref": "cases/synthetic-ai-project-lead/resume.txt",
+        "sha256": "1f616694828e46adc6a941cb500a75654b919c92ec74af4f284360856ffd02e5"
+      },
+      "target_job": {
+        "ref": "cases/synthetic-ai-project-lead/target-job.json",
+        "sha256": "84f1ee79639e774c68475276535d853772332d8963cc5b44a4206f89c7fa334b"
+      },
+      "labels": {
+        "ref": "cases/synthetic-ai-project-lead/labels.json",
+        "sha256": "9dee1234a235e933fdc16fc65b4ce9466f9e033869025947db0b43c1a916012c"
+      }
+    }
+  ]
+}
