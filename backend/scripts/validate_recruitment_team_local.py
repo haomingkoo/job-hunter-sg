@@ -524,11 +524,6 @@ def main() -> int:
         assert snapshot.case_facts.role_success_profile is not None
         assert snapshot.case_facts.role_success_profile.criteria
         assert target_assessment_artifact is not None
-        assert target_assessment_artifact.status == "completed"
-        assert target_assessment_artifact.synthesis.strip()
-        assert target_assessment_artifact.judge
-        assert target_assessment_artifact.judge["strengths"]
-        assert target_assessment_artifact.judge["score_reason"]
         assert target_assessment_artifact.execution_policy["fallback_model"] is None
         assert target_assessment_artifact.execution_policy["content_truncation"] is False
         expected_specialists = set(target_assessment_artifact.execution_policy["specialists"])
@@ -537,6 +532,21 @@ def main() -> int:
         # many times, so a live run is no longer guaranteed to touch every
         # registered persona -- only that whichever it did consult are real.
         assert observed_specialists <= expected_specialists
+        if target_assessment_artifact.status == "paused":
+            # A genuinely autonomous run: the orchestrator decided to call
+            # ask_candidate instead of completing. This is a real, legitimate
+            # terminal state (Tasks 10-11), not a failure -- synthesis stays
+            # withheld and the judge never runs, since there is nothing
+            # approved yet to judge.
+            assert snapshot.workflow_state == "awaiting_candidate_answer"
+            assert not target_assessment_artifact.synthesis.strip()
+            assert target_assessment_artifact.judge is None
+        else:
+            assert target_assessment_artifact.status == "completed"
+            assert target_assessment_artifact.synthesis.strip()
+            assert target_assessment_artifact.judge
+            assert target_assessment_artifact.judge["strengths"]
+            assert target_assessment_artifact.judge["score_reason"]
     assert all(receipt.thread_id == thread_id for receipt in receipts)
     assert len({receipt.trace_key for receipt in receipts}) == len(receipts)
     if journey_error is None:
@@ -550,8 +560,10 @@ def main() -> int:
         assert any(span.name == "role_evidence_assessment.model_attempt" for span in telemetry.spans)
         # Specialists now run as delegated subagents (streamed, not invoked via
         # invoke_structured), so only the mandatory fresh judge call still
-        # produces its own telemetry span.
-        assert any(span.name == "open_agent_assessment.judge_attempt" for span in telemetry.spans)
+        # produces its own telemetry span -- except on a paused run, where the
+        # judge never runs at all (nothing approved yet to judge).
+        if target_assessment_artifact.status != "paused":
+            assert any(span.name == "open_agent_assessment.judge_attempt" for span in telemetry.spans)
         forbidden_span_content = (resume_text, args.initial_message, args.follow_up_message)
         assert not any(
             secret and secret in str(value)
