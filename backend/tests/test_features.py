@@ -718,6 +718,15 @@ class TestSanitizer:
         assert "<b>" not in result["title"]
         assert "<script>" not in result["company"]
 
+    def test_sanitize_job_preserves_complete_description(self):
+        from sanitizer import sanitize_job
+
+        description = "A" * 5000 + " COMPLETE END"
+
+        result = sanitize_job({"description": f"<p>{description}</p>"})
+
+        assert result["description"] == description
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 5. Auth

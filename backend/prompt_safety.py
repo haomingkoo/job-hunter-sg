@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, unescape
 
 
 UNTRUSTED_DATA_RULE = (
@@ -17,3 +17,14 @@ def xml_data_block(tag: str, value: object, max_chars: int | None = None) -> str
     if max_chars is not None:
         text = text[:max_chars]
     return f"<{tag}>\n{escape(text)}\n</{tag}>"
+
+
+def unescape_xml_data(value: str) -> str:
+    """Reverse xml_data_block's escaping.
+
+    A model quoting text it read inside a ``_data`` block echoes back the
+    escaped form (``&amp;`` for a literal ``&``). Validators comparing that
+    quote against the original, unescaped source text must unescape it first
+    or a legitimate quote containing ``&``, ``<``, or ``>`` is rejected.
+    """
+    return unescape(value)

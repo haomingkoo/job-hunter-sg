@@ -136,6 +136,19 @@ def test_unsupported_scope_inflation_detected():
         assert not gate_unsupported_claims(original, tailored).passed
 
 
+def test_leadership_does_not_prove_ownership_or_manual_workflow_replacement():
+    original = "Led delivery of an internal document assistant for operations teams"
+
+    assert not gate_unsupported_claims(
+        original,
+        "Owned end-to-end document automation delivery for operations teams",
+    ).passed
+    assert not gate_unsupported_claims(
+        original,
+        "Led document automation delivery, replacing manual workflows",
+    ).passed
+
+
 def test_supported_scope_paraphrases_allowed():
     original = (
         "Led the architecture review, released the service, and delivered a "

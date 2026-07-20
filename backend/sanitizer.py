@@ -26,7 +26,6 @@ _EVENT_HANDLER_RE = re.compile(
 _INLINE_WHITESPACE_RE = re.compile(r"[^\S\n]+")
 _MULTI_NEWLINE_RE = re.compile(r"\n{3,}")
 
-MAX_DESCRIPTION_LEN = 5000
 MAX_USER_INPUT_LEN = 1000
 
 
@@ -77,8 +76,7 @@ def sanitize_job(job_dict: dict) -> dict:
         if field in sanitized and isinstance(sanitized[field], str):
             sanitized[field] = sanitize_html(sanitized[field])
     if "description" in sanitized and isinstance(sanitized["description"], str):
-        desc = sanitize_html(sanitized["description"])
-        sanitized["description"] = desc[:MAX_DESCRIPTION_LEN]
+        sanitized["description"] = sanitize_html(sanitized["description"])
     if "url" in sanitized:
         sanitized["url"] = sanitize_url(sanitized.get("url", ""))
     try:

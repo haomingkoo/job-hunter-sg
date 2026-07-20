@@ -60,13 +60,20 @@ _UNSUPPORTED_OUTCOME_PATTERNS = [
     re.compile(r"\bseamless transition\b", re.IGNORECASE),
     re.compile(r"\boperational continuity\b", re.IGNORECASE),
     re.compile(r"\bensur(?:ed|ing)\b", re.IGNORECASE),
+    re.compile(r"\breplac(?:e[ds]?|ing)\s+manual\b", re.IGNORECASE),
 ]
 
 _UNSUPPORTED_SCOPE_CLAIMS = [
     (
+        "ownership",
+        re.compile(r"\b(?:owned|ownership)\b", re.IGNORECASE),
+        re.compile(r"\b(?:owned|ownership)\b", re.IGNORECASE),
+    ),
+    (
         "leadership",
         re.compile(
-            r"\b(?:led|leading|managed|managing|directed|supervised|headed|oversaw)\b",
+            r"\b(?:led|leading|managed|managing|directed|supervised|headed|oversaw|"
+            r"drove|spearheaded)\b",
             re.IGNORECASE,
         ),
         re.compile(
