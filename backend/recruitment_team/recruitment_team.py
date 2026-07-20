@@ -265,7 +265,16 @@ class RecruitmentTeam:
                         resume,
                         run,
                     )
-                    completion_member = "quality_judge"
+                    # A paused run (the ask_candidate interrupt) never reaches
+                    # the judge -- _assess_target sets workflow_state to
+                    # "awaiting_candidate_answer" for exactly that case, so
+                    # use it to avoid crediting the judge for a turn it never
+                    # ran on.
+                    completion_member = (
+                        "coordinator"
+                        if thread.workflow_state == "awaiting_candidate_answer"
+                        else "quality_judge"
+                    )
                 else:
                     reply = self._model_reply(
                         thread,
@@ -762,7 +771,7 @@ class RecruitmentTeam:
                 "retryable": False,
             }
         artifact.status = effective_status
-        artifact.specialist_runs = list(result.specialist_runs)
+        artifact.specialist_runs = list(result.specialist_runs) if effective_status == "completed" else []
         artifact.synthesis = result.synthesis if effective_status == "completed" else ""
         artifact.judge = result.judge
         artifact.correction = result.correction

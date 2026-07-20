@@ -273,6 +273,45 @@ def test_runner_rejects_a_materially_identical_repeated_search_jobs_call(monkeyp
     assert len(real_search_calls) == 2
 
 
+def test_runner_still_reaches_a_judged_result_when_the_iteration_cap_is_hit(monkeypatch):
+    """Regression guard for the "mandatory final judge" design requirement:
+    hitting the orchestrator's recursion_limit must not discard whatever
+    partial progress was made. `FakeMessagesListChatModel` cycles back to its
+    last scripted response forever once exhausted, so a single repeating
+    tool-call response makes the orchestrator loop indefinitely -- exactly
+    the kind of run that blows through a (deliberately tiny, for a fast
+    deterministic test) recursion_limit instead of ever producing a final
+    non-tool-call reply. The runner must still yield a terminal
+    TargetAssessmentResult with the judge populated, not let
+    GraphRecursionError propagate out of run()."""
+    import resume_agent.models as agent_models
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+    monkeypatch.setattr(config, "AGENT_MAX_TOOL_ITERATIONS", 4)
+
+    read_call = AIMessage(
+        content="",
+        tool_calls=[{"name": "read_target_job", "args": {}, "id": "call-loop"}],
+    )
+    orchestrator_model = _ScriptedModel(responses=[read_call])
+
+    judge_model = _ScriptedModel(responses=[_judge_call()])
+
+    runner = OpenAgentTargetAssessmentRunner(
+        model_factory=lambda: orchestrator_model,
+        judge_model_factory=lambda: judge_model,
+        telemetry=RecordedTelemetry(),
+    )
+
+    updates = list(runner.run(_request()))
+
+    results = [item for item in updates if isinstance(item, TargetAssessmentResult)]
+    assert len(results) == 1, "the run must still reach exactly one terminal result, not raise"
+    result = results[0]
+    assert result.judge is not None
+    assert result.judge["disposition"] == "pass"
+
+
 def test_runner_pauses_and_yields_no_result_when_ask_candidate_interrupts(monkeypatch):
     import resume_agent.models as agent_models
 

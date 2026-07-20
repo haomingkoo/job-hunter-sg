@@ -13,6 +13,7 @@ from typing import Iterator
 
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.errors import GraphRecursionError
 
 import config
 from resume_agent.agent import create_resume_agent
@@ -113,34 +114,44 @@ class OpenAgentTargetAssessmentRunner:
         synthesis = ""
         pending_question: str | None = None
         with context.assessment_context(request):
-            for event in iter_progress_events(agent, payload, run_config):
-                if event["kind"] == "tool_call":
-                    if event["tool_name"] == ask_candidate.name:
-                        pending_question = (event.get("args") or {}).get("question")
-                    yield TargetAssessmentProgress(
-                        team_member=event["team_member"],
-                        status="running",
-                        summary=f"{event['team_member']} called {event['tool_name']}.",
-                        detail={"tool_name": event["tool_name"]},
-                    )
-                elif (
-                    event["kind"] == "tool_result"
-                    and event["team_member"] != "coordinator"
-                    and event["tool_name"] == SPECIALIST_TOOL.name
-                ):
-                    submission = self._parse_specialist_submission(event["content"])
-                    if submission is not None:
-                        specialist_runs.append(
-                            {"persona_id": event["team_member"], "status": "completed", "submission": submission}
-                        )
+            try:
+                for event in iter_progress_events(agent, payload, run_config):
+                    if event["kind"] == "tool_call":
+                        if event["tool_name"] == ask_candidate.name:
+                            pending_question = (event.get("args") or {}).get("question")
                         yield TargetAssessmentProgress(
                             team_member=event["team_member"],
-                            status="completed",
-                            summary=f"{event['team_member']} submitted its assessment.",
-                            detail={},
+                            status="running",
+                            summary=f"{event['team_member']} called {event['tool_name']}.",
+                            detail={"tool_name": event["tool_name"]},
                         )
-                elif event["kind"] == "message" and event["team_member"] == "coordinator":
-                    synthesis = str(event["content"])
+                    elif (
+                        event["kind"] == "tool_result"
+                        and event["team_member"] != "coordinator"
+                        and event["tool_name"] == SPECIALIST_TOOL.name
+                    ):
+                        submission = self._parse_specialist_submission(event["content"])
+                        if submission is not None:
+                            specialist_runs.append(
+                                {"persona_id": event["team_member"], "status": "completed", "submission": submission}
+                            )
+                            yield TargetAssessmentProgress(
+                                team_member=event["team_member"],
+                                status="completed",
+                                summary=f"{event['team_member']} submitted its assessment.",
+                                detail={},
+                            )
+                    elif event["kind"] == "message" and event["team_member"] == "coordinator":
+                        synthesis = str(event["content"])
+            except GraphRecursionError:
+                # The orchestrator hit its recursion_limit before reaching a
+                # natural stopping point. Per the design spec's "Mandatory
+                # final judge" section, whatever specialist_runs/synthesis
+                # were accumulated so far must still go through the judge
+                # rather than being discarded -- so just stop consuming
+                # events and fall through to the same judge-calling path a
+                # normal completion takes.
+                pass
             edits = context.proposed_edits() or []
 
             # iter_progress_events (Task 9) only forwards dict-shaped node

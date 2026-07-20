@@ -1384,13 +1384,16 @@ def test_quality_blocked_target_assessment_is_durable_and_withholds_synthesis():
 
 
 def test_quality_blocked_open_agent_assessment_withholds_stored_synthesis():
-    """Regression guard: a quality-blocked run must never persist its synthesis,
-    even when the underlying result carries real, non-empty text. The prior
-    false-coverage test only fed an already-empty synthesis string, so it never
-    proved anything gets withheld -- it just proved empty stays empty. Here the
-    runner hands back a full, plausible-sounding synthesis alongside a
-    quality_blocked status, and the assertion is that the persisted artifact row
-    still stores an empty string, not the fed-in text."""
+    """Regression guard: a quality-blocked run must never persist its synthesis
+    or its specialist_runs, even when the underlying result carries real,
+    non-empty values for both. The prior false-coverage test only fed an
+    already-empty synthesis string, so it never proved anything gets withheld
+    -- it just proved empty stays empty. Here the runner hands back a full,
+    plausible-sounding synthesis and a non-empty specialist_runs list
+    alongside a quality_blocked status, and the assertion is that the
+    persisted artifact row stores an empty string and an empty list, not the
+    fed-in values -- the same "don't expose unapproved content" boundary
+    must apply consistently to both fields."""
     from recruitment_team import RecruitmentTeam, ScriptedConversationModel
     from recruitment_team.activity_publisher import IgnoreActivityPublisher
     from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
@@ -1463,6 +1466,7 @@ def test_quality_blocked_open_agent_assessment_withholds_stored_synthesis():
     assert artifact.status == "quality_blocked"
     assert artifact.synthesis == ""
     assert unapproved_synthesis not in (artifact.synthesis or "")
+    assert artifact.specialist_runs == ()
 
 
 def test_completed_target_assessment_persists_its_proposed_resume_edits():
@@ -1608,16 +1612,29 @@ def test_paused_target_assessment_does_not_raise_and_awaits_the_candidate():
         team.execute(owner_id, SelectTargetJob(started.thread_id, job.job_id), "paused-select")
 
         # Must return normally -- a clean pause is not a TargetAssessmentUnavailable failure.
-        team.execute(owner_id, AssessTargetJob(started.thread_id), "paused-run")
+        paused_receipt = team.execute(owner_id, AssessTargetJob(started.thread_id), "paused-run")
 
         artifact = team.target_assessment(owner_id, started.thread_id)
         snapshot = team.snapshot(owner_id, started.thread_id)
+        events = team.events(owner_id, started.thread_id, 0)
 
     assert snapshot.workflow_state == "awaiting_candidate_answer"
     assert snapshot.case_facts.target_assessment_status == "paused"
     assert snapshot.messages[-1].content == "How large was the team you led?"
     assert artifact is not None
     assert artifact.status == "paused"
+
+    # The judge never ran for a paused turn -- the terminal "run completed"
+    # event for this command must not credit it. Regression guard for a bug
+    # where completion_member was hardcoded to "quality_judge" for every
+    # AssessTargetJob command, including this paused one.
+    run_completed_event = next(
+        event
+        for event in events
+        if event.run_id == paused_receipt.run_id and event.event_type == "run" and event.status == "completed"
+    )
+    assert run_completed_event.team_member == "coordinator"
+    assert run_completed_event.summary == "The coordinator completed this turn."
 
 
 def _role_definition_submission(
