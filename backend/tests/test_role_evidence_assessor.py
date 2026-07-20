@@ -190,7 +190,7 @@ def test_assessor_returns_one_validated_judgment_and_uses_xml_tool_contract():
     run = LangChainRoleEvidenceAssessor(model).assess(_request())
 
     assert run.attempt_count == 1
-    assert run.prompt_version == "role-evidence-assessor-v4"
+    assert run.prompt_version == "role-evidence-assessor-v5"
     assert run.judgments[0].alignment == "partial"
     assert run.judgments[0].evidence_support_score == 55
     data_message = model.requests[0][1].content
@@ -229,7 +229,7 @@ def test_assessor_retries_once_with_original_evidence_failed_output_and_exact_er
     assert attempts[0].attributes == {
         "attempt": 1,
         "max_attempts": config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS,
-        "prompt_version": "role-evidence-assessor-v4",
+        "prompt_version": "role-evidence-assessor-v5",
         "configured_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
         "correction_scope": "full",
@@ -381,6 +381,31 @@ def test_assessor_rejects_resume_evidence_not_owned_by_selected_profile_field():
     correction_message = model.requests[1][1].content
     assert "candidate_profile_field_ids:evidence_mismatch:block-1:regional_rollout" in correction_message
     assert "remove or replace exactly those" in correction_message
+
+
+def test_assessor_correction_names_the_valid_field_for_orphaned_evidence_and_can_recover():
+    """A model that cited evidence via the wrong profile field is told exactly
+    which field(s) actually own that evidence, and can use that to submit a
+    valid correction -- proving the retry can genuinely recover, not just
+    fail identically twice (the real-world failure this test guards)."""
+    request = _two_criterion_request()
+    regional = _judgment(candidate_profile_field_ids=["profile-monthly-forecast"])
+    stable = _stable_judgment()
+    corrected = _judgment(candidate_profile_field_ids=["profile-monthly-forecast", "profile-regional-rollout"])
+    model = _Model(
+        [
+            {"judgments": [stable, regional]},
+            {"judgment": corrected},
+        ]
+    )
+
+    run = LangChainRoleEvidenceAssessor(model).assess(request)
+
+    correction_message = model.requests[1][1].content
+    assert (
+        '"orphaned_evidence_valid_field_ids":{"block-1":["profile-regional-rollout"]}' in correction_message
+    )
+    assert run.judgments[1].candidate_profile_field_ids == tuple(corrected["candidate_profile_field_ids"])
 
 
 def test_assessor_prompt_requires_unquoted_narrative_paraphrase():

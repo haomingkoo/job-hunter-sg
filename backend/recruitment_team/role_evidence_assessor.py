@@ -179,6 +179,16 @@ def _target_criterion_id(failure: str, criteria: tuple[RoleCriterion, ...]) -> s
     return matches[0] if len(matches) == 1 else None
 
 
+def _orphaned_evidence_ids(failure: str) -> tuple[str, ...]:
+    """Extract the orphaned resume-evidence IDs from an
+    "candidate_profile_field_ids:evidence_mismatch:<ids>:<criterion_id>" code."""
+    if not failure.startswith("candidate_profile_field_ids:evidence_mismatch:"):
+        return ()
+    remainder = failure[len("candidate_profile_field_ids:evidence_mismatch:") :]
+    ids_part, _, _criterion_id = remainder.rpartition(":")
+    return tuple(evidence_id for evidence_id in ids_part.split(",") if evidence_id)
+
+
 def _targeted_correction_data(
     request: RoleEvidenceAssessmentRequest,
     failed_payload: dict,
@@ -191,7 +201,7 @@ def _targeted_correction_data(
         for judgment in failed_payload["judgments"]
         if str(judgment.get("criterion_id") or "").strip() == criterion_id
     )
-    return {
+    data = {
         "prompt_version": ROLE_EVIDENCE_ASSESSOR_PROMPT_VERSION,
         "validation_code": failure,
         "criterion": asdict(criterion),
@@ -199,6 +209,25 @@ def _targeted_correction_data(
         "resume_blocks": [asdict(block) for block in request.resume_blocks],
         "failed_judgment": failed_judgment,
     }
+    orphaned_ids = _orphaned_evidence_ids(failure)
+    if orphaned_ids:
+        # An evidence_mismatch failure means the model cited a resume block
+        # without also citing a candidate_profile_field_id that contains it.
+        # Finding which field(s) actually contain that block is a trivial,
+        # deterministic lookup here -- but a hard search for the model across
+        # 100+ hash-suffixed field IDs, which is why it was observed
+        # resubmitting the identical rejected judgment unchanged rather than
+        # attempting a fix. Handing over the exact valid field IDs removes
+        # that search entirely.
+        data["orphaned_evidence_valid_field_ids"] = {
+            evidence_id: sorted(
+                field.field_id
+                for field in request.candidate_profile_fields
+                if evidence_id in field.resume_evidence_ids
+            )
+            for evidence_id in orphaned_ids
+        }
+    return data
 
 
 def _merge_correction(failed_payload: dict, correction: dict, criterion_id: str) -> dict:
@@ -348,7 +377,13 @@ class LangChainRoleEvidenceAssessor:
                         content="Correct only the supplied failed judgment. The validation_code names "
                         "the exact IDs, quoted phrase, or numbers that are unsupported where "
                         "applicable -- remove or replace exactly those, do not re-derive the "
-                        "judgment from scratch.\n\n"
+                        "judgment from scratch. Resubmitting the failed_judgment unchanged will "
+                        "fail again identically. If validation_code is an evidence_mismatch, "
+                        "orphaned_evidence_valid_field_ids maps each unsupported resume_evidence_id "
+                        "to the exact candidate_profile_field_ids that actually contain it -- for "
+                        "each one, either add one of those exact field IDs to candidate_profile_field_ids, "
+                        "or remove that resume_evidence_id from resume_evidence_ids if the field can't "
+                        "also stay true to the criterion.\n\n"
                         + xml_data_block(
                             "role_evidence_correction_data",
                             json.dumps(correction_data, ensure_ascii=False, separators=(",", ":")),
