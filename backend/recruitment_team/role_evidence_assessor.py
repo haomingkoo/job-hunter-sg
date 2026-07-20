@@ -179,23 +179,26 @@ def _target_criterion_id(failure: str, criteria: tuple[RoleCriterion, ...]) -> s
     return matches[0] if len(matches) == 1 else None
 
 
+def _csv_items_from_validation_code(failure: str, prefix: str) -> tuple[str, ...]:
+    """Extract the comma-separated items from a "<prefix><items>:<criterion_id>"
+    validation code, shared by every failure shaped this way (an id list or a
+    number list ahead of the trailing criterion_id)."""
+    if not failure.startswith(prefix):
+        return ()
+    remainder = failure[len(prefix) :]
+    items_part, _, _criterion_id = remainder.rpartition(":")
+    return tuple(item for item in items_part.split(",") if item)
+
+
 def _orphaned_evidence_ids(failure: str) -> tuple[str, ...]:
     """Extract the orphaned resume-evidence IDs from an
     "candidate_profile_field_ids:evidence_mismatch:<ids>:<criterion_id>" code."""
-    if not failure.startswith("candidate_profile_field_ids:evidence_mismatch:"):
-        return ()
-    remainder = failure[len("candidate_profile_field_ids:evidence_mismatch:") :]
-    ids_part, _, _criterion_id = remainder.rpartition(":")
-    return tuple(evidence_id for evidence_id in ids_part.split(",") if evidence_id)
+    return _csv_items_from_validation_code(failure, "candidate_profile_field_ids:evidence_mismatch:")
 
 
 def _unsupported_numbers(failure: str) -> tuple[str, ...]:
     """Extract the unsupported numbers from a "numeric_claim:unsupported:<numbers>:<criterion_id>" code."""
-    if not failure.startswith("numeric_claim:unsupported:"):
-        return ()
-    remainder = failure[len("numeric_claim:unsupported:") :]
-    numbers_part, _, _criterion_id = remainder.rpartition(":")
-    return tuple(number for number in numbers_part.split(",") if number)
+    return _csv_items_from_validation_code(failure, "numeric_claim:unsupported:")
 
 
 def _targeted_correction_data(
