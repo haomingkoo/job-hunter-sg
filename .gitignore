@@ -42,6 +42,9 @@ tmp/
 !smithery.remote-config.json
 !.env.example
 !shared/resume-classification.json
+!backend/evals/corpora/synthetic-v1/cases/*/*.json
+backend/evals/corpora/private/
 backend/data/*.xlsx
 backend/data/company_ssic_cache.json
 backend/data/learned_skills.json
+.superpowers/
