@@ -47,3 +47,23 @@ being written as facts.
 Critical workspace flows need a minimal UI smoke path. Vitest component coverage
 is acceptable for stable flows; use Playwright when browser layout, navigation,
 or file interaction is the behavior under test.
+
+## Staging Resume-Agent E2E
+
+Run the authenticated deployment canary against staging before promoting the
+same build to production. It runs two complete review turns on the canary account.
+
+```bash
+export JOB_HUNTER_E2E_BASE_URL=https://staging.example.com
+export JOB_HUNTER_E2E_TOKEN=replace-with-short-lived-canary-token
+cd backend
+.venv/bin/python scripts/validate_resume_agent_deployment.py
+```
+
+The gate requires a healthy API, all five independent reviewers, successful
+synthesis and judge stages, native structured reviewer/judge submissions,
+read-only assessment synthesis, successful model/tool spans, a clean literal
+output contract, and target-job continuity across a second turn. A target-job
+snapshot must not trigger a redundant `search_jobs` call. Use the printed hashed
+`trace_key` to inspect the matching OpenTelemetry spans. A partial result is a
+failed deployment gate even when the endpoint returned HTTP 200.

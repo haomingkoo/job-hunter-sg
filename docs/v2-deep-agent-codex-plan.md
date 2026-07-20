@@ -66,7 +66,7 @@ backend/config.py                # + new AGENT_* constants
   - `POST /api/resume/agent/chat` — `{session_id?, message, resume_text?, job_id?}` → **SSE** stream of tokens + tool/subagent events.
   - `GET /api/resume/agent/{session_id}/state` — current draft, plan/todos, persona findings, pending diffs.
   - Saving the final resume reuses the existing `POST /api/resume/versions`.
-- **Config additions** (`config.py`): `AGENT_MAX_TOOL_ITERATIONS`, `AGENT_PERSONA_COUNT`, `AGENT_SMART_MAX_TOKENS` (= `SMART_MIN_MAX_TOKENS`), `AGENT_SEARCH_JOBS_LIMIT`, `AGENT_MAX_CONCURRENT_RUNS_PER_USER`, `AGENT_CHAT_HISTORY_LIMIT` — all `os.getenv`-overridable.
+- **Config additions** (`config.py`): operational limits such as `AGENT_MAX_TOOL_ITERATIONS`, `AGENT_SMART_MAX_TOKENS` (= `SMART_MIN_MAX_TOKENS`), `AGENT_SEARCH_JOBS_LIMIT`, `AGENT_MAX_CONCURRENT_RUNS_PER_USER`, and `AGENT_CHAT_HISTORY_LIMIT` are `os.getenv`-overridable. The five reviewer roles are a fixed workflow contract, not a feature flag.
 
 ## 3. Dependencies
 Add to `backend/requirements.txt` (pin versions): `deepagents`, `langgraph`, `langchain`, `langchain-openai`. ⚠️ Railway memory: this stack adds weight next to `sentence-transformers` — verify the container still boots within the memory tier; lazy-import the agent module so it doesn't load unless used.
