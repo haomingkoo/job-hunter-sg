@@ -45,7 +45,7 @@ class TargetAssessmentRequest:
 @dataclass(frozen=True)
 class TargetAssessmentProgress:
     team_member: str
-    status: Literal["running", "completed", "failed"]
+    status: Literal["running", "completed", "failed", "paused"]
     summary: str
     detail: dict
 

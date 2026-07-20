@@ -233,3 +233,45 @@ def test_runner_rejects_a_materially_identical_repeated_search_jobs_call(monkeyp
     # Only the two allowed calls (first + different-args) reached the real
     # search backend; the identical repeat never did.
     assert len(real_search_calls) == 2
+
+
+def test_runner_pauses_and_yields_no_result_when_ask_candidate_interrupts(monkeypatch):
+    import resume_agent.models as agent_models
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+
+    ask_call = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "ask_candidate",
+            "args": {"question": "How large was the team you led?"},
+            "id": "call-1",
+        }],
+    )
+    orchestrator_model = _ScriptedModel(responses=[ask_call])
+
+    judge_calls: list[int] = []
+
+    def _judge_model_factory():
+        # Must never be invoked while the run is paused waiting on the
+        # candidate -- counted, not raised, so a bug here surfaces as a
+        # clean assertion failure below instead of an unrelated crash.
+        judge_calls.append(1)
+        return _ScriptedModel(responses=[_judge_call()])
+
+    runner = OpenAgentTargetAssessmentRunner(
+        model_factory=lambda: orchestrator_model,
+        judge_model_factory=_judge_model_factory,
+        telemetry=RecordedTelemetry(),
+    )
+
+    updates = list(runner.run(_request()))
+
+    results = [item for item in updates if isinstance(item, TargetAssessmentResult)]
+    assert results == [], "a paused run must not yield a terminal TargetAssessmentResult"
+    assert judge_calls == [], "the judge must never be invoked while the run is waiting on the candidate"
+
+    paused = [item for item in updates if isinstance(item, TargetAssessmentProgress) and item.status == "paused"]
+    assert len(paused) == 1, "exactly one paused progress event must be yielded"
+    assert paused[0].team_member == "coordinator"
+    assert paused[0].detail["question"] == "How large was the team you led?"

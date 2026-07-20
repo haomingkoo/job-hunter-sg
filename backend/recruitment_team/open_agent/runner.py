@@ -6,11 +6,13 @@ reporting built on Task 9's verified streaming mechanism."""
 from __future__ import annotations
 
 import json
+import uuid
 from dataclasses import asdict
 from types import SimpleNamespace
 from typing import Iterator
 
 from langchain_core.tools import tool
+from langgraph.checkpoint.memory import MemorySaver
 
 import config
 from resume_agent.agent import create_resume_agent
@@ -89,6 +91,7 @@ class OpenAgentTargetAssessmentRunner:
             model=orchestrator_model,
             tools=[read_candidate_evidence, read_target_job, guarded_search_jobs, propose_resume_edit, ask_candidate],
             subagents=persona_subagents,
+            checkpointer=MemorySaver(),
             interrupt_on={"ask_candidate": True},
         )
         payload = {"messages": [{
@@ -101,13 +104,19 @@ class OpenAgentTargetAssessmentRunner:
                 "evidence gap."
             ),
         }]}
-        run_config = {"recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS}
+        run_config = {
+            "recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS,
+            "configurable": {"thread_id": str(uuid.uuid4())},
+        }
 
         specialist_runs: list[dict] = []
         synthesis = ""
+        pending_question: str | None = None
         with context.assessment_context(request):
             for event in iter_progress_events(agent, payload, run_config):
                 if event["kind"] == "tool_call":
+                    if event["tool_name"] == ask_candidate.name:
+                        pending_question = (event.get("args") or {}).get("question")
                     yield TargetAssessmentProgress(
                         team_member=event["team_member"],
                         status="running",
@@ -133,6 +142,25 @@ class OpenAgentTargetAssessmentRunner:
                 elif event["kind"] == "message" and event["team_member"] == "coordinator":
                     synthesis = str(event["content"])
             edits = context.proposed_edits() or []
+
+            # iter_progress_events (Task 9) only forwards dict-shaped node
+            # updates (see streaming.py's `isinstance(node_update, dict)`
+            # check), so the raw `{"__interrupt__": (...)}` chunk LangGraph
+            # emits when the HumanInTheLoopMiddleware pauses the graph is
+            # silently dropped -- the stream loop above just ends with no
+            # explicit signal. Confirmed empirically (see
+            # tests/test_open_agent_runner.py's interrupt test): with a
+            # checkpointer + thread_id wired, agent.get_state(run_config)
+            # after the loop still exposes the pending interrupt via
+            # `state.interrupts`, because the checkpointer persisted it.
+            if agent.get_state(run_config).interrupts:
+                yield TargetAssessmentProgress(
+                    team_member="coordinator",
+                    status="paused",
+                    summary="Run paused: waiting on the candidate to answer a question.",
+                    detail={"question": pending_question},
+                )
+                return
 
         judge_model = self._judge_model_factory()
         judge = self._run_judge(judge_model, request, specialist_runs, synthesis)
