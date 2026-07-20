@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import config
@@ -21,6 +22,15 @@ SEARCH_RESULT_FIELDS = (
     "score",
     "jd_summary",
     "skills",
+    "posted_date",
+    "closing_date",
+    "scraped_at",
+    "employment_type",
+    "seniority",
+    "source_posting_id",
+    "availability",
+    "posting_variants",
+    "duplicate_count",
 )
 JOB_DETAIL_FIELDS = SEARCH_RESULT_FIELDS + (
     "salary",
@@ -75,6 +85,15 @@ def job_payload(
         "score": score,
         "jd_summary": getattr(job, "jd_summary", "") or "",
         "skills": skills_list(getattr(job, "skills", [])),
+        "posted_date": getattr(job, "posted_date", "") or "",
+        "closing_date": getattr(job, "closing_date", "") or "",
+        "scraped_at": getattr(job, "scraped_at", "") or "",
+        "employment_type": getattr(job, "employment_type", "") or "",
+        "seniority": getattr(job, "seniority", "") or "",
+        "source_posting_id": getattr(job, "source_posting_id", "") or "",
+        "availability": "current",
+        "posting_variants": [],
+        "duplicate_count": 0,
         "salary": getattr(job, "salary", ""),
         "url": getattr(job, "url", ""),
         "description": getattr(job, "description", "") or "",
@@ -88,7 +107,71 @@ def job_payload(
     return {field: values[field] for field in fields if field != "score" or score is not None}
 
 
-def search_jobs_result(query: str, limit: int, jobs: list[dict], *, detail: bool = False) -> dict:
+def _canonical_job_identity(job: dict) -> tuple[str, ...]:
+    def normalize(value: object) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", str(value or "").casefold()).strip()
+
+    description = normalize(job.get("description"))
+    if description:
+        return (
+            "description",
+            normalize(job.get("title")),
+            normalize(job.get("company")),
+            normalize(job.get("location")),
+            description,
+        )
+    return (
+        "source_posting",
+        normalize(job.get("source")),
+        normalize(job.get("source_posting_id") or job.get("url") or job.get("id")),
+    )
+
+
+def deduplicate_job_payloads(jobs: list[dict]) -> list[dict]:
+    """Consolidate presentation duplicates while retaining every source variant."""
+
+    grouped: dict[tuple[str, ...], dict] = {}
+    ordered: list[dict] = []
+    for job in jobs:
+        identity = _canonical_job_identity(job)
+        primary = grouped.get(identity)
+        variant = {
+            key: job.get(key)
+            for key in (
+                "id",
+                "salary",
+                "source",
+                "url",
+                "source_posting_id",
+                "posted_date",
+                "closing_date",
+                "scraped_at",
+                "availability",
+            )
+        }
+        if primary is None:
+            primary = dict(job)
+            primary["posting_variants"] = [variant]
+            primary["duplicate_count"] = 0
+            grouped[identity] = primary
+            ordered.append(primary)
+            continue
+        primary["posting_variants"].append(variant)
+        primary["duplicate_count"] = len(primary["posting_variants"]) - 1
+    return ordered
+
+
+def search_jobs_result(
+    query: str,
+    limit: int,
+    jobs: list[dict],
+    *,
+    detail: bool = False,
+    candidate_count: int | None = None,
+    visible_candidate_count: int | None = None,
+) -> dict:
+    original_count = len(jobs) if visible_candidate_count is None else visible_candidate_count
+    retained = jobs[:limit]
     return {
         "ok": True,
         "status": "success",
@@ -97,10 +180,17 @@ def search_jobs_result(query: str, limit: int, jobs: list[dict], *, detail: bool
         "query_executed": True,
         "limit": limit,
         "detail": detail,
-        "count": len(jobs),
-        "result_count": len(jobs),
-        "empty": len(jobs) == 0,
-        "results": jobs,
+        "count": len(retained),
+        "result_count": len(retained),
+        "candidate_count": candidate_count,
+        "visible_candidate_count": original_count,
+        "deduplicated_result_count": len(jobs),
+        "duplicate_count": max(0, original_count - len(jobs)),
+        "original_result_count": original_count,
+        "retained_result_count": len(retained),
+        "truncated": original_count > len(retained),
+        "empty": len(retained) == 0,
+        "results": retained,
         "detail_available": not detail,
         "detail_request": None
         if detail

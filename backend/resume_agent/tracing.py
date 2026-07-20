@@ -9,6 +9,8 @@ from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 
+from . import telemetry
+
 
 log = logging.getLogger("jobhunter.resume_agent")
 
@@ -22,15 +24,17 @@ class ToolSpanRecorder(BaseCallbackHandler):
         *,
         trace_id: str = "",
         attempt: int | None = None,
+        tracer: Any | None = None,
     ) -> None:
         self.worker = worker
         self.trace_id = trace_id
         self.attempt = attempt
+        self._tracer = tracer or telemetry.tracer()
         self.phase = "orchestrator"
         self.spans: list[dict] = []
         self.source_job_ids: set[int] = set()
-        self._active_tools: dict[str, tuple[int, float]] = {}
-        self._active_models: dict[str, tuple[int, float]] = {}
+        self._active_tools: dict[str, tuple[int, float, Any]] = {}
+        self._active_models: dict[str, tuple[int, float, Any]] = {}
 
     def set_phase(self, phase: str) -> None:
         self.phase = phase
@@ -56,7 +60,11 @@ class ToolSpanRecorder(BaseCallbackHandler):
             sorted(str(key) for key in inputs) if isinstance(inputs, dict) else []
         )
         self.spans.append(span)
-        self._active_tools[str(run_id)] = (len(self.spans) - 1, time.perf_counter())
+        self._active_tools[str(run_id)] = (
+            len(self.spans) - 1,
+            time.perf_counter(),
+            self._start_otel_span("tool", name),
+        )
 
     def on_tool_end(self, output, *, run_id, **_kwargs) -> None:
         self._finish_tool(run_id, "success", output)
@@ -88,13 +96,26 @@ class ToolSpanRecorder(BaseCallbackHandler):
             or "language_model"
         )
         self.spans.append(self._base_span("llm", name))
-        self._active_models[key] = (len(self.spans) - 1, time.perf_counter())
+        self._active_models[key] = (
+            len(self.spans) - 1,
+            time.perf_counter(),
+            self._start_otel_span("model", name),
+        )
+
+    def _start_otel_span(self, kind: str, name: str):
+        return self._tracer.start_span(f"resume_agent.{kind}", attributes={
+            "resume_agent.trace_key": telemetry.trace_key(self.trace_id),
+            "resume_agent.worker": self.worker,
+            "resume_agent.attempt": self.attempt or 0,
+            "resume_agent.phase": self.phase,
+            "resume_agent.operation": name,
+        })
 
     def _finish_tool(self, run_id, status: str, output: Any) -> None:
         active = self._active_tools.pop(str(run_id), None)
         if not active:
             return
-        index, started_at = active
+        index, started_at, otel_span = active
         span = self.spans[index]
         span["status"] = status
         span["duration_ms"] = round((time.perf_counter() - started_at) * 1000)
@@ -104,17 +125,19 @@ class ToolSpanRecorder(BaseCallbackHandler):
         self._collect_job_ids(value)
         span["result"] = self._tool_summary(value)
         self._log_span(span)
+        telemetry.finish_span(otel_span, span)
 
     def _finish_model(self, run_id, status: str, response: Any) -> None:
         active = self._active_models.pop(str(run_id), None)
         if not active:
             return
-        index, started_at = active
+        index, started_at, otel_span = active
         span = self.spans[index]
         span["status"] = status
         span["duration_ms"] = round((time.perf_counter() - started_at) * 1000)
         span["result"] = self._model_summary(response)
         self._log_span(span)
+        telemetry.finish_span(otel_span, span)
 
     @staticmethod
     def _log_span(span: dict) -> None:

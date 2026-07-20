@@ -7,6 +7,7 @@ import secrets
 from pathlib import Path
 
 import pytest
+from resume_agent.contracts import TARGET_JOB_PERSONAS
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -48,6 +49,9 @@ def _reload_live_agent_modules():
 
     import ai_service
     import resume_agent.session as agent_session
+    import resume_agent.telemetry as telemetry
+
+    telemetry.configure_telemetry()
 
     return ai_service, agent_session
 
@@ -153,6 +157,12 @@ GovTech | AI Project Lead | Jan 2022 - Present
         for finding in state["persona_findings"]
         if finding["persona"] == "market_researcher"
     )
+    successful_model_workers = {
+        span.get("worker")
+        for span in state["tool_spans"]
+        if span.get("kind") == "llm" and span.get("status") == "success"
+    }
+    assert {*TARGET_JOB_PERSONAS, "orchestrator", "quality_judge"} <= successful_model_workers
 
 
 def test_live_sealion_agent_calls_search_jobs_for_role_research(monkeypatch):

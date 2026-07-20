@@ -41,19 +41,29 @@ def _model_kwargs(model: str) -> dict:
     return {}
 
 
-def create_agent_model(temperature: float = 0.0):
+def create_agent_model(
+    temperature: float = 0.0,
+    *,
+    timeout: int | None = None,
+    max_retries: int = 0,
+    model: str | None = None,
+    max_completion_tokens: int | None = None,
+):
     """Return the agentic model used by the orchestrator and tool-calling loop."""
     from langchain_openai import ChatOpenAI
 
+    resolved_model = model or config.SEALION_AGENT_MODEL
+    completion_budget = {"max_completion_tokens": max_completion_tokens} if max_completion_tokens is not None else {}
     return ChatOpenAI(
         base_url=ai_service.SEALION_BASE_URL,
         api_key=SecretStr(_api_key()),
-        model=config.SEALION_AGENT_MODEL,
+        model=resolved_model,
         temperature=temperature,
-        timeout=config.SEALION_HTTP_TIMEOUT,
-        max_retries=1,
+        timeout=config.SEALION_HTTP_TIMEOUT if timeout is None else timeout,
+        max_retries=max_retries,
         rate_limiter=_rate_limiter,
-        **_model_kwargs(config.SEALION_AGENT_MODEL),
+        **completion_budget,
+        **_model_kwargs(resolved_model),
     )
 
 

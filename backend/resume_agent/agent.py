@@ -11,10 +11,10 @@ from langgraph.errors import GraphRecursionError
 from .models import create_agent_model
 from .personas import create_persona_subagents
 from .prompts import ORCHESTRATOR_SYSTEM_PROMPT
-from .tools import extract_skills, get_job, propose_edit, score_resume, search_jobs
+from .tooling import ORCHESTRATOR_TOOLS
 
 
-DEFAULT_TOOLS = [search_jobs, get_job, score_resume, extract_skills, propose_edit]
+DEFAULT_TOOLS = list(ORCHESTRATOR_TOOLS)
 
 
 def create_resume_agent(
