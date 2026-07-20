@@ -10,9 +10,14 @@ from typing import Any
 
 
 def has_repeated_call(messages: list[Any], tool_name: str, args: dict[str, Any]) -> bool:
-    """True if an earlier AIMessage already called `tool_name` with materially
-    identical args, with no new information (a new HumanMessage/ToolMessage
-    carrying different content) since that call."""
+    """True if any AIMessage in `messages` already called `tool_name` with
+    materially identical args.
+
+    Scans the full list backward for the first match, oldest and newest
+    calls alike -- it has no turn-boundary or staleness awareness. Callers
+    are responsible for passing only the relevant message window (e.g. only
+    messages since the last human turn) if a repeat should be allowed once
+    new information has arrived."""
     for message in reversed(messages):
         tool_calls = getattr(message, "tool_calls", None) or []
         for call in tool_calls:
