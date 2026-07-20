@@ -19,6 +19,9 @@ _current_document: ContextVar[dict[str, Any] | None] = ContextVar(
 _proposed_edits: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     "open_agent_proposed_edits", default=None
 )
+_tool_call_history: ContextVar[list[Any] | None] = ContextVar(
+    "open_agent_tool_call_history", default=None
+)
 
 
 @contextmanager
@@ -26,12 +29,14 @@ def assessment_context(request: TargetAssessmentRequest) -> Iterator[None]:
     request_token = _current_request.set(request)
     document_token = _current_document.set(request.resume_document)
     edits_token = _proposed_edits.set([])
+    history_token = _tool_call_history.set([])
     try:
         yield
     finally:
         _current_request.reset(request_token)
         _current_document.reset(document_token)
         _proposed_edits.reset(edits_token)
+        _tool_call_history.reset(history_token)
 
 
 def current_request() -> TargetAssessmentRequest | None:
@@ -44,3 +49,7 @@ def current_document() -> dict[str, Any] | None:
 
 def proposed_edits() -> list[dict[str, Any]] | None:
     return _proposed_edits.get()
+
+
+def tool_call_history() -> list[Any] | None:
+    return _tool_call_history.get()
