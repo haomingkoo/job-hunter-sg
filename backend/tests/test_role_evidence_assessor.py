@@ -190,7 +190,7 @@ def test_assessor_returns_one_validated_judgment_and_uses_xml_tool_contract():
     run = LangChainRoleEvidenceAssessor(model).assess(_request())
 
     assert run.attempt_count == 1
-    assert run.prompt_version == "role-evidence-assessor-v5"
+    assert run.prompt_version == "role-evidence-assessor-v6"
     assert run.judgments[0].alignment == "partial"
     assert run.judgments[0].evidence_support_score == 55
     data_message = model.requests[0][1].content
@@ -229,7 +229,7 @@ def test_assessor_retries_once_with_original_evidence_failed_output_and_exact_er
     assert attempts[0].attributes == {
         "attempt": 1,
         "max_attempts": config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS,
-        "prompt_version": "role-evidence-assessor-v5",
+        "prompt_version": "role-evidence-assessor-v6",
         "configured_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
         "correction_scope": "full",
@@ -412,6 +412,23 @@ def test_assessor_correction_names_the_valid_field_for_orphaned_evidence_and_can
         '"orphaned_evidence_valid_field_ids":{"block-1":["profile-regional-rollout"]}' in correction_message
     )
     assert run.judgments[1].candidate_profile_field_ids == tuple(corrected["candidate_profile_field_ids"])
+
+
+def test_assessor_correction_names_unsupported_numbers_for_a_computed_value():
+    """A narrative stating a computed gap (e.g. "2 years short") derived from
+    real grounded numbers still fails numeric_claim, since the computed value
+    itself never appears verbatim -- the correction must name exactly which
+    numbers to drop rather than a vague "remove or replace"."""
+    failed = _judgment(score_reason="The candidate is 2 years short of the requirement.")
+    corrected = _judgment(score_reason="The candidate falls short of the requirement.")
+    model = _Model([{"judgments": [failed]}, {"judgment": corrected}])
+
+    run = LangChainRoleEvidenceAssessor(model).assess(_request())
+
+    correction_message = model.requests[1][1].content
+    assert '"unsupported_numbers":["2"]' in correction_message
+    assert "Describe that comparison in words instead" in correction_message
+    assert run.judgments[0].score_reason == corrected["score_reason"]
 
 
 def test_assessor_prompt_requires_unquoted_narrative_paraphrase():

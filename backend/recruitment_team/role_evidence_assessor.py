@@ -189,6 +189,15 @@ def _orphaned_evidence_ids(failure: str) -> tuple[str, ...]:
     return tuple(evidence_id for evidence_id in ids_part.split(",") if evidence_id)
 
 
+def _unsupported_numbers(failure: str) -> tuple[str, ...]:
+    """Extract the unsupported numbers from a "numeric_claim:unsupported:<numbers>:<criterion_id>" code."""
+    if not failure.startswith("numeric_claim:unsupported:"):
+        return ()
+    remainder = failure[len("numeric_claim:unsupported:") :]
+    numbers_part, _, _criterion_id = remainder.rpartition(":")
+    return tuple(number for number in numbers_part.split(",") if number)
+
+
 def _targeted_correction_data(
     request: RoleEvidenceAssessmentRequest,
     failed_payload: dict,
@@ -227,6 +236,19 @@ def _targeted_correction_data(
             )
             for evidence_id in orphaned_ids
         }
+    unsupported_numbers = _unsupported_numbers(failure)
+    if unsupported_numbers:
+        # A numeric_claim failure often means the narrative states a computed
+        # value (a duration, a difference, a fraction) derived from real,
+        # grounded numbers rather than an invented fact -- e.g. "2 years
+        # short" when the criterion requires 10 and the evidence shows 8.
+        # That computed value still doesn't appear verbatim in the grounding,
+        # so it still fails this check; "remove or replace" is genuinely
+        # ambiguous here (replace with what?), and the model was observed
+        # resubmitting the identical narrative unchanged rather than guessing.
+        # There is no safe way to keep a non-grounded computed number, so the
+        # correction data says so explicitly.
+        data["unsupported_numbers"] = list(unsupported_numbers)
     return data
 
 
@@ -383,7 +405,13 @@ class LangChainRoleEvidenceAssessor:
                         "to the exact candidate_profile_field_ids that actually contain it -- for "
                         "each one, either add one of those exact field IDs to candidate_profile_field_ids, "
                         "or remove that resume_evidence_id from resume_evidence_ids if the field can't "
-                        "also stay true to the criterion.\n\n"
+                        "also stay true to the criterion. If validation_code is a numeric_claim, "
+                        "unsupported_numbers lists every number that must not appear anywhere in "
+                        "supported_strength, remaining_gap, or score_reason -- including a computed "
+                        "duration, difference, or fraction derived from real evidence, since it still "
+                        "does not appear verbatim in the grounding. Describe that comparison in words "
+                        "instead (e.g. \"a few years short\" rather than naming the computed gap), or "
+                        "state only the underlying numbers that do appear in the grounding.\n\n"
                         + xml_data_block(
                             "role_evidence_correction_data",
                             json.dumps(correction_data, ensure_ascii=False, separators=(",", ":")),

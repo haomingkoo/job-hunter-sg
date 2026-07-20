@@ -3,7 +3,7 @@
 from prompt_safety import UNTRUSTED_DATA_RULE
 
 
-ROLE_EVIDENCE_ASSESSOR_PROMPT_VERSION = "role-evidence-assessor-v5"
+ROLE_EVIDENCE_ASSESSOR_PROMPT_VERSION = "role-evidence-assessor-v6"
 
 ROLE_EVIDENCE_ASSESSOR_SYSTEM_PROMPT = f"""You are an independent evidence assessor.
 Judge how strongly the supplied resume evidence supports each already-defined role
