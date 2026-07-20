@@ -1,8 +1,8 @@
-"""Shared request/result types and specialist/judge contracts for target assessment,
-consumed by the open-agent runner (and, historically, the retired native runner it
-replaced) so a specialist's submission is validated identically regardless of
-whether the orchestrator called it directly or delegated to it as a subagent.
-"""
+"""Shared request/result types and the specialist/judge contracts for target
+assessment, consumed by the open-agent runner. The mandatory judge is the
+single validation gate over whatever the open orchestrator produces; there is
+no separate synthesis-submission or per-specialist ID-cross-check step (those
+belonged to the retired, fully-bounded native runner)."""
 
 from __future__ import annotations
 
@@ -93,20 +93,6 @@ class SpecialistSubmission(BaseModel):
     score_reason: str = Field(min_length=1)
 
 
-class SynthesisSubmission(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    summary: str = Field(min_length=1)
-    strengths: list[str]
-    weaknesses: list[str]
-    evidence_gaps: list[str]
-    next_steps: list[str]
-    coverage_notes: list[str]
-    criterion_ids: list[str]
-    candidate_profile_field_ids: list[str]
-    resume_evidence_ids: list[str]
-
-
 class Deduction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -148,10 +134,6 @@ def _dump_specialist(**payload: Any) -> dict:
     return SpecialistSubmission(**payload).model_dump()
 
 
-def _dump_synthesis(**payload: Any) -> dict:
-    return SynthesisSubmission(**payload).model_dump()
-
-
 def _dump_judge(**payload: Any) -> dict:
     return JudgeSubmission(**payload).model_dump()
 
@@ -164,15 +146,6 @@ SPECIALIST_TOOL = StructuredTool.from_function(
         "evidence gaps, raw evidence-support score, reason, and all provenance IDs."
     ),
     args_schema=SpecialistSubmission,
-)
-SYNTHESIS_TOOL = StructuredTool.from_function(
-    func=_dump_synthesis,
-    name="submit_target_assessment_synthesis",
-    description=(
-        "Submit the evidence-grounded synthesis, including visible coverage limitations "
-        "and candidate next steps that do not invent experience."
-    ),
-    args_schema=SynthesisSubmission,
 )
 JUDGE_TOOL = StructuredTool.from_function(
     func=_dump_judge,
@@ -221,80 +194,6 @@ def usage_from_response(response: AIMessage) -> tuple[int, int, str]:
     usage = getattr(response, "usage_metadata", None) or {}
     model_name = str(getattr(response, "response_metadata", {}).get("model_name") or "unknown")
     return int(usage.get("input_tokens") or 0), int(usage.get("output_tokens") or 0), model_name
-
-
-def evidence_sets(request: TargetAssessmentRequest) -> tuple[set[str], set[str], dict[str, set[str]]]:
-    criterion_ids = {criterion.criterion_id for criterion in request.role_profile.criteria}
-    field_ids = {field.field_id for field in request.candidate_profile.fields}
-    field_evidence = {
-        field.field_id: set(field.resume_evidence_ids)
-        for field in request.candidate_profile.fields
-    }
-    return criterion_ids, field_ids, field_evidence
-
-
-def valid_unique_ids(values: list[str], allowed: set[str]) -> bool:
-    return len(values) == len(set(values)) and all(value in allowed for value in values)
-
-
-def validate_specialist(
-    payload: dict | None,
-    persona_id: str,
-    request: TargetAssessmentRequest,
-) -> tuple[dict | None, str]:
-    if payload is None:
-        return None, "invalid_submission"
-    criterion_ids, field_ids, field_evidence = evidence_sets(request)
-    if payload["persona_id"] != persona_id:
-        return None, "persona_id:mismatch"
-    if not valid_unique_ids(payload["criterion_ids"], criterion_ids):
-        return None, "criterion_ids:unknown_or_duplicate"
-    if not valid_unique_ids(payload["candidate_profile_field_ids"], field_ids):
-        return None, "candidate_profile_field_ids:unknown_or_duplicate"
-    cited_evidence = payload["resume_evidence_ids"]
-    allowed_evidence = {
-        evidence_id
-        for field_id in payload["candidate_profile_field_ids"]
-        for evidence_id in field_evidence[field_id]
-    }
-    if not valid_unique_ids(cited_evidence, allowed_evidence):
-        return None, "resume_evidence_ids:unknown_duplicate_or_field_mismatch"
-    return payload, ""
-
-
-def validate_synthesis(payload: dict | None, specialist_runs: tuple[dict, ...]) -> tuple[dict | None, str]:
-    if payload is None:
-        return None, "invalid_submission"
-    accepted = [run["submission"] for run in specialist_runs if run["status"] == "completed"]
-    allowed = {
-        "criterion_ids": {item for run in accepted for item in run["criterion_ids"]},
-        "candidate_profile_field_ids": {
-            item for run in accepted for item in run["candidate_profile_field_ids"]
-        },
-        "resume_evidence_ids": {item for run in accepted for item in run["resume_evidence_ids"]},
-    }
-    for field_name, allowed_ids in allowed.items():
-        if not valid_unique_ids(payload[field_name], allowed_ids):
-            return None, f"{field_name}:unknown_or_duplicate"
-    failed_personas = {run["persona_id"] for run in specialist_runs if run["status"] == "failed"}
-    if failed_personas and not payload["coverage_notes"]:
-        return None, "coverage_notes:missing_for_specialist_failure"
-    return payload, ""
-
-
-def render_synthesis(payload: dict) -> str:
-    sections = [payload["summary"]]
-    for title, key in (
-        ("Strengths", "strengths"),
-        ("Weaknesses", "weaknesses"),
-        ("Evidence gaps", "evidence_gaps"),
-        ("Next steps", "next_steps"),
-        ("Coverage notes", "coverage_notes"),
-    ):
-        values = payload[key]
-        if values:
-            sections.append(f"## {title}\n" + "\n".join(f"- {value}" for value in values))
-    return "\n\n".join(sections)
 
 
 def invoke_structured(
