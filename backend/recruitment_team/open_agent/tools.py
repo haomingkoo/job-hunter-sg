@@ -14,6 +14,19 @@ from . import context
 
 
 @tool
+def ask_candidate(question: str) -> dict:
+    """Ask the candidate one focused question about a real evidence gap.
+
+    This tool must be bound with interrupt_on={"ask_candidate": True} on the
+    orchestrator agent -- calling it pauses the graph before any further tool
+    call executes. The candidate's next message answers it; that answer
+    becomes citable evidence for later propose_resume_edit calls in this
+    thread. This is enforced by the interrupt, not by prompted convention.
+    """
+    return {"ok": True, "question": question}
+
+
+@tool
 def read_candidate_evidence() -> dict:
     """Read the candidate's evidence-cited profile fields for the active run.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from recruitment_team.assessment_contracts import TargetAssessmentRequest
 from recruitment_team.open_agent.context import assessment_context
 from recruitment_team.open_agent.tools import (
+    ask_candidate,
     propose_resume_edit,
     read_candidate_evidence,
     read_target_job,
@@ -119,6 +120,12 @@ def test_propose_resume_edit_rejects_via_validation_gates_with_no_new_numbers():
         )
     assert result["accepted"] is False
     assert "25" not in (result.get("reason") or "")
+
+
+def test_ask_candidate_returns_the_question_unchanged():
+    result = ask_candidate.invoke({"question": "How large was the team you led?"})
+    assert result["question"] == "How large was the team you led?"
+    assert result["ok"] is True
 
 
 def test_propose_resume_edit_stops_at_the_cap(monkeypatch):

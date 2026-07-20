@@ -7,11 +7,12 @@
 # `interrupt_on` or a resume flow before, so this was genuinely unverified
 # integration, not known-working reuse.
 #
-# `recruitment_team.open_agent.tools` (where `ask_candidate` will permanently
-# live) does not exist yet -- it is created by Task 6, which depends on this
-# spike's finding. So `ask_candidate` is defined inline below, matching the
-# exact shape Task 6's brief specifies (`{"ok": True, "question": question}`),
-# so Task 6 can swap the import in for this inline definition unchanged.
+# `recruitment_team.open_agent.tools` (where `ask_candidate` permanently
+# lives) did not exist when this spike was written -- it was created by
+# Task 6, which depended on this spike's finding. `ask_candidate` was
+# originally defined inline below, matching the exact shape Task 6's brief
+# specifies (`{"ok": True, "question": question}`); Task 6 swapped in an
+# import of the permanent tool for that inline definition, unchanged.
 #
 # The brief's illustrative test (docs/superpowers/plans task-2-brief.md) does
 # not run as literally written -- two things about real `deepagents`/
@@ -82,13 +83,8 @@ from langchain_core.tools import tool
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
+from recruitment_team.open_agent.tools import ask_candidate
 from resume_agent.agent import create_resume_agent
-
-
-@tool
-def ask_candidate(question: str) -> dict:
-    """Ask the candidate one focused question about a real evidence gap."""
-    return {"ok": True, "question": question}
 
 
 @tool
