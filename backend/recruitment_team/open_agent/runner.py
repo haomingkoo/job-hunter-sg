@@ -132,6 +132,7 @@ class OpenAgentTargetAssessmentRunner:
         specialist_runs: list[dict],
         synthesis: str,
         proposed_edits: list[dict],
+        ask_candidate_call_id: str | None = None,
     ) -> Iterator[TargetAssessmentUpdate]:
         """Continue a paused run. The live agent object from the original
         `run()` call is long gone (a fresh runner/request handles every HTTP
@@ -144,6 +145,9 @@ class OpenAgentTargetAssessmentRunner:
         they live only in this module's stream parsing, not in anything the
         checkpointer stores -- see Task 1's finding that a persona subagent's
         own submission never appears in the parent's own checkpointed state.
+        `ask_candidate_call_id` (the id of the tool call that caused the
+        pause) is passed to skip that call's replayed re-emission on resume
+        -- see `_drive`'s `skip_tool_call_ids` for why that replay happens.
         """
         agent = self._build_agent(self._model_factory())
         run_config = {
@@ -174,6 +178,7 @@ class OpenAgentTargetAssessmentRunner:
             specialist_runs=list(specialist_runs),
             synthesis=synthesis,
             initial_edits=list(proposed_edits),
+            skip_tool_call_ids={ask_candidate_call_id} if ask_candidate_call_id else None,
         )
 
     def _drive(
@@ -186,14 +191,19 @@ class OpenAgentTargetAssessmentRunner:
         specialist_runs: list[dict],
         synthesis: str,
         initial_edits: list[dict] | None = None,
+        skip_tool_call_ids: set[str] | None = None,
     ) -> Iterator[TargetAssessmentUpdate]:
         pending_question: str | None = None
+        pending_question_call_id: str | None = None
         with context.assessment_context(request, initial_edits=initial_edits):
             try:
-                for event in iter_progress_events(agent, payload, run_config):
+                for event in iter_progress_events(
+                    agent, payload, run_config, skip_tool_call_ids=skip_tool_call_ids
+                ):
                     if event["kind"] == "tool_call":
                         if event["tool_name"] == ask_candidate.name:
                             pending_question = (event.get("args") or {}).get("question")
+                            pending_question_call_id = event.get("id")
                         yield TargetAssessmentProgress(
                             team_member=event["team_member"],
                             status="running",
@@ -247,6 +257,7 @@ class OpenAgentTargetAssessmentRunner:
                     detail={
                         "question": pending_question,
                         "pause_token": run_config["configurable"]["thread_id"],
+                        "ask_candidate_call_id": pending_question_call_id,
                         # Carried by the caller onto the artifact row so a
                         # later resume() call can seed them back in -- this
                         # module has no durable storage of its own for

@@ -26,7 +26,13 @@ from __future__ import annotations
 from typing import Any, Iterator
 
 
-def iter_progress_events(agent: Any, payload: Any, run_config: dict) -> Iterator[dict]:
+def iter_progress_events(
+    agent: Any,
+    payload: Any,
+    run_config: dict,
+    *,
+    skip_tool_call_ids: set[str] | None = None,
+) -> Iterator[dict]:
     """Yield one normalized event per meaningful message anywhere in the run,
     at the top level (team_member="coordinator") or inside a delegated
     persona subagent (team_member=<persona_id>, learned from that subagent's
@@ -36,8 +42,17 @@ def iter_progress_events(agent: Any, payload: Any, run_config: dict) -> Iterator
     tool is a schema-enforced submission), "message" (a plain final reply
     with no tool call -- how a turn, the orchestrator's or a persona
     subagent's own, naturally ends; the last coordinator-level one of these
-    is the run's synthesis text)."""
+    is the run's synthesis text).
+
+    `skip_tool_call_ids` filters out tool_call events whose id is in the
+    set, consumed on first match. Needed because resuming past an
+    interrupted `ask_candidate` call replays that same AIMessage (LangChain's
+    HumanInTheLoopMiddleware.after_model returns the original AIMessage,
+    tool_calls intact, when the decision is "respond") as a fresh node
+    update on resume -- without this, every resume double-counts the
+    already-answered call as a brand new one in the activity log."""
     active_persona_by_namespace: dict[tuple, str] = {}
+    pending_skip_ids = set(skip_tool_call_ids or ())
 
     for namespace, chunk in agent.stream(
         payload, config=run_config, stream_mode="updates", subgraphs=True
@@ -53,11 +68,16 @@ def iter_progress_events(agent: Any, payload: Any, run_config: dict) -> Iterator
                         active_persona_by_namespace[namespace] = persona_name
                     team_member = active_persona_by_namespace.get(namespace, "coordinator")
                     for call in tool_calls:
+                        call_id = call.get("id")
+                        if call_id is not None and call_id in pending_skip_ids:
+                            pending_skip_ids.discard(call_id)
+                            continue
                         yield {
                             "kind": "tool_call",
                             "team_member": team_member,
                             "tool_name": call.get("name"),
                             "args": call.get("args"),
+                            "id": call_id,
                         }
                 elif hasattr(message, "tool_call_id"):
                     team_member = active_persona_by_namespace.get(namespace, "coordinator")

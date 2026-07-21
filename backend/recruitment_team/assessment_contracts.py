@@ -75,6 +75,7 @@ class TargetAssessmentRunner(Protocol):
         specialist_runs: list[dict],
         synthesis: str,
         proposed_edits: list[dict],
+        ask_candidate_call_id: str | None = None,
     ) -> Iterator[TargetAssessmentUpdate]: ...
 
 
@@ -88,6 +89,7 @@ class ScriptedTargetAssessmentRunner:
         self._resume_updates = tuple(resume_updates) if resume_updates is not None else ()
         self.call_count = 0
         self.resume_calls: list[tuple[str, str]] = []
+        self.resume_call_args: list[dict] = []
 
     def run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]:
         self.call_count += 1
@@ -101,8 +103,19 @@ class ScriptedTargetAssessmentRunner:
         specialist_runs: list[dict],
         synthesis: str,
         proposed_edits: list[dict],
+        ask_candidate_call_id: str | None = None,
     ) -> Iterator[TargetAssessmentUpdate]:
         self.resume_calls.append((pause_token, answer))
+        self.resume_call_args.append(
+            {
+                "pause_token": pause_token,
+                "answer": answer,
+                "specialist_runs": specialist_runs,
+                "synthesis": synthesis,
+                "proposed_edits": proposed_edits,
+                "ask_candidate_call_id": ask_candidate_call_id,
+            }
+        )
         yield from self._resume_updates
 
 

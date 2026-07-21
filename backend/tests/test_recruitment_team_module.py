@@ -637,6 +637,103 @@ def test_running_activity_is_committed_and_published_before_model_completion():
     assert [event.status for event in activity.events] == ["running", "completed"]
 
 
+def test_two_concurrent_commands_on_the_same_thread_are_serialized_not_raced():
+    """Regression guard for a real race an adversarial review found: nothing
+    previously prevented two concurrent requests against the same thread
+    from both passing a check-then-act (e.g. the workflow_state guard on
+    AnswerAssessmentQuestion) before either committed its transition. This
+    proves a per-thread lock now genuinely blocks a second command from even
+    starting its own model call while a first is still in flight against the
+    same thread -- using two entirely independent RecruitmentTeam instances
+    with independent DB sessions, mirroring two separate HTTP requests each
+    getting their own Depends(get_db) session."""
+    from recruitment_team import RecruitmentTeam
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.conversation_model import ModelReply
+    from recruitment_team.interface import SendMessage, StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    SHORT_WAIT_SECONDS = 0.3
+
+    class BlockingModel:
+        def __init__(self, reply_content: str):
+            self.started = Event()
+            self.release = Event()
+            self._reply_content = reply_content
+
+        def respond(self, messages, resume_text, current_preferences=()):
+            self.started.set()
+            assert self.release.wait(TEST_WAIT_SECONDS), "test did not release model"
+            return ModelReply(content=self._reply_content, model_name="blocking-model")
+
+    class InstantModel:
+        def respond(self, messages, resume_text, current_preferences=()):
+            return ModelReply(content="Started.", model_name="instant")
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+
+    with sessions() as setup_db:
+        setup_team = RecruitmentTeam(
+            setup_db,
+            InstantModel(),
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        started = setup_team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Start my search."),
+            "concurrency-setup",
+        )
+        thread_id = started.thread_id
+
+    model_a = BlockingModel("Reply A.")
+    model_b = BlockingModel("Reply B.")
+    outcome_a: list = []
+    outcome_b: list = []
+
+    with sessions() as db_a, sessions() as db_b:
+        team_a = RecruitmentTeam(
+            db_a, model_a, _discovery(), _role_profiler(), RecordedTelemetry(), IgnoreActivityPublisher()
+        )
+        team_b = RecruitmentTeam(
+            db_b, model_b, _discovery(), _role_profiler(), RecordedTelemetry(), IgnoreActivityPublisher()
+        )
+
+        worker_a = Thread(
+            target=lambda: outcome_a.append(
+                team_a.execute(owner_id, SendMessage(thread_id, "Message A."), "concurrency-a")
+            )
+        )
+        worker_a.start()
+        assert model_a.started.wait(TEST_WAIT_SECONDS), "worker A never reached its model call"
+
+        worker_b = Thread(
+            target=lambda: outcome_b.append(
+                team_b.execute(owner_id, SendMessage(thread_id, "Message B."), "concurrency-b")
+            )
+        )
+        worker_b.start()
+        assert not model_b.started.wait(SHORT_WAIT_SECONDS), (
+            "worker B reached its model call while worker A still held the same thread's lock -- "
+            "the per-thread lock did not serialize these two commands"
+        )
+
+        model_a.release.set()
+        worker_a.join(TEST_WAIT_SECONDS)
+        assert not worker_a.is_alive()
+
+        assert model_b.started.wait(TEST_WAIT_SECONDS), "worker B never proceeded after A released the lock"
+        model_b.release.set()
+        worker_b.join(TEST_WAIT_SECONDS)
+        assert not worker_b.is_alive()
+
+    assert outcome_a[0].status == "completed"
+    assert outcome_b[0].status == "completed"
+
+
 def test_resume_data_cannot_break_out_of_the_untrusted_prompt_boundary():
     from langchain_core.messages import AIMessage
 
@@ -2568,3 +2665,422 @@ def test_public_http_streams_and_persists_the_bounded_target_assessment():
             get_target_assessment_runner,
         ):
             main.app.dependency_overrides.pop(dependency, None)
+
+
+def _http_paused_assessment_setup():
+    """Shared setup for the answer-endpoint HTTP tests below: real FastAPI
+    app, real dependency overrides, a thread walked through profile/search/
+    select, and a runner scripted to pause on the very first assessment
+    attempt. Returns (client, thread_id, runner, cleanup)."""
+    from fastapi.testclient import TestClient
+
+    import main
+    from auth import get_current_user
+    from database import get_db
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.conversation_model import ScriptedConversationModel
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.http_routes import (
+        get_candidate_profiler_factory,
+        get_conversation_model,
+        get_job_discovery,
+        get_recruitment_telemetry,
+        get_role_success_profiler,
+        get_target_assessment_runner,
+    )
+    from recruitment_team.assessment_contracts import (
+        ScriptedTargetAssessmentRunner,
+        TargetAssessmentProgress,
+        TargetAssessmentResult,
+        target_assessment_execution_policy,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery(
+        [JobSearchResult("agent systems", (job,), 1, 1, False, False)],
+        jobs_by_id={job.job_id: job},
+    )
+    runner = ScriptedTargetAssessmentRunner(
+        [
+            TargetAssessmentProgress(
+                team_member="coordinator",
+                status="paused",
+                summary="Run paused: waiting on the candidate to answer a question.",
+                detail={
+                    "question": "How large was the team you led?",
+                    "pause_token": "http-pause-token",
+                    "ask_candidate_call_id": "http-call-1",
+                    "specialist_runs": [],
+                    "synthesis": "",
+                    "proposed_edits": [],
+                },
+            ),
+        ],
+        resume_updates=[
+            TargetAssessmentResult(
+                status="completed",
+                specialist_runs=({"persona_id": "recruiter", "status": "completed", "submission": {}},),
+                synthesis="Answered and completed via HTTP.",
+                judge={"disposition": "pass", "score": 90},
+                correction=None,
+                error=None,
+                execution_policy=target_assessment_execution_policy(),
+            ),
+        ],
+    )
+    telemetry = RecordedTelemetry()
+
+    def override_db():
+        with sessions() as db:
+            yield db
+
+    main.app.dependency_overrides[get_db] = override_db
+    main.app.dependency_overrides[get_current_user] = lambda: type(
+        "AuthenticatedUser", (), {"id": owner_id}
+    )()
+    main.app.dependency_overrides[get_conversation_model] = lambda: ScriptedConversationModel(
+        ["I will use the selected resume as immutable evidence."]
+    )
+    main.app.dependency_overrides[get_job_discovery] = lambda: discovery
+    main.app.dependency_overrides[get_recruitment_telemetry] = lambda: telemetry
+    main.app.dependency_overrides[get_role_success_profiler] = lambda: _role_profiler([_role_profile_run(job.job_id)])
+    main.app.dependency_overrides[get_candidate_profiler_factory] = lambda: ScriptedCandidateProfilerFactory(
+        [_candidate_profile_run()]
+    )
+    main.app.dependency_overrides[get_target_assessment_runner] = lambda: runner
+
+    def cleanup():
+        for dependency in (
+            get_db,
+            get_current_user,
+            get_conversation_model,
+            get_job_discovery,
+            get_recruitment_telemetry,
+            get_role_success_profiler,
+            get_candidate_profiler_factory,
+            get_target_assessment_runner,
+        ):
+            main.app.dependency_overrides.pop(dependency, None)
+
+    client = TestClient(main.app)
+    started = client.post(
+        "/api/recruitment-team/threads",
+        json={
+            "resume_version_id": resume_id,
+            "message": "Find an evidence-backed target role.",
+            "idempotency_key": "http-pause-start",
+        },
+    )
+    assert started.status_code == 201
+    thread_id = started.json()["thread_id"]
+    client.post(
+        f"/api/recruitment-team/threads/{thread_id}/candidate-profile/stream",
+        json={"idempotency_key": "http-pause-profile"},
+    )
+    client.post(
+        f"/api/recruitment-team/threads/{thread_id}/jobs/search/stream",
+        json={"query": "agent systems", "idempotency_key": "http-pause-search"},
+    )
+    client.post(
+        f"/api/recruitment-team/threads/{thread_id}/jobs/{job.job_id}/select",
+        json={"idempotency_key": "http-pause-select"},
+    )
+    paused = client.post(
+        f"/api/recruitment-team/threads/{thread_id}/assessment/stream",
+        json={"idempotency_key": "http-pause-assess"},
+    )
+    assert paused.status_code == 200
+    return client, thread_id, runner, cleanup
+
+
+def test_public_http_answer_endpoint_resumes_a_paused_assessment_to_completion():
+    """Closes a real test-coverage gap: the answer_assessment_question HTTP
+    endpoint (non-streaming) had zero coverage through the actual FastAPI app
+    -- every prior test called team.execute() directly, bypassing routing,
+    request validation, and the InvalidCommand->HTTP status mapping."""
+    client, thread_id, runner, cleanup = _http_paused_assessment_setup()
+    try:
+        artifact_before = client.get(f"/api/recruitment-team/threads/{thread_id}/assessment")
+        assert artifact_before.json()["status"] == "paused"
+
+        answered = client.post(
+            f"/api/recruitment-team/threads/{thread_id}/assessment/answer",
+            json={"answer": "Led a team of 12 engineers.", "idempotency_key": "http-answer-non-stream"},
+        )
+        assert answered.status_code == 200
+
+        artifact_after = client.get(f"/api/recruitment-team/threads/{thread_id}/assessment")
+        snapshot = client.get(f"/api/recruitment-team/threads/{thread_id}")
+        assert artifact_after.json()["status"] == "completed"
+        assert artifact_after.json()["synthesis"] == "Answered and completed via HTTP."
+        assert snapshot.json()["workflow_state"] == "assessment_ready"
+        assert runner.resume_calls == [("http-pause-token", "Led a team of 12 engineers.")]
+        assert runner.resume_call_args[0]["ask_candidate_call_id"] == "http-call-1"
+    finally:
+        cleanup()
+
+
+def test_public_http_answer_stream_endpoint_resumes_a_paused_assessment_to_completion():
+    """Same gap as above, for the SSE-streaming answer endpoint specifically
+    -- proves the activity events actually reach the client, not just that
+    the underlying command executes."""
+    import json
+
+    client, thread_id, runner, cleanup = _http_paused_assessment_setup()
+    try:
+        streamed = client.post(
+            f"/api/recruitment-team/threads/{thread_id}/assessment/answer/stream",
+            json={"answer": "Led a team of 12 engineers.", "idempotency_key": "http-answer-stream"},
+        )
+        assert streamed.status_code == 200
+        blocks = [block.splitlines() for block in streamed.text.strip().split("\n\n")]
+        assert blocks[-1][0] == "event: receipt"
+        streamed_payloads = [json.loads(lines[1].removeprefix("data: ")) for lines in blocks[:-1]]
+        assert any(payload.get("event_type") == "run" and payload.get("status") == "completed" for payload in streamed_payloads)
+
+        artifact = client.get(f"/api/recruitment-team/threads/{thread_id}/assessment")
+        assert artifact.json()["status"] == "completed"
+        assert runner.resume_calls == [("http-pause-token", "Led a team of 12 engineers.")]
+    finally:
+        cleanup()
+
+
+def test_public_http_answer_endpoint_rejects_when_no_pending_question():
+    """The InvalidCommand -> 422 mapping specifically for this endpoint,
+    exercised through the real app rather than only unit-tested against
+    RecruitmentTeam.execute() directly."""
+    from fastapi.testclient import TestClient
+
+    import main
+    from auth import get_current_user
+    from database import get_db
+    from recruitment_team.conversation_model import ScriptedConversationModel
+    from recruitment_team.discovery import ScriptedDiscovery
+    from recruitment_team.http_routes import (
+        get_conversation_model,
+        get_job_discovery,
+        get_recruitment_telemetry,
+        get_role_success_profiler,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+
+    def override_db():
+        with sessions() as db:
+            yield db
+
+    main.app.dependency_overrides[get_db] = override_db
+    main.app.dependency_overrides[get_current_user] = lambda: type(
+        "AuthenticatedUser", (), {"id": owner_id}
+    )()
+    main.app.dependency_overrides[get_conversation_model] = lambda: ScriptedConversationModel(["Ready."])
+    main.app.dependency_overrides[get_job_discovery] = lambda: ScriptedDiscovery([])
+    main.app.dependency_overrides[get_recruitment_telemetry] = lambda: RecordedTelemetry()
+    main.app.dependency_overrides[get_role_success_profiler] = lambda: _role_profiler([])
+    try:
+        client = TestClient(main.app)
+        started = client.post(
+            "/api/recruitment-team/threads",
+            json={
+                "resume_version_id": resume_id,
+                "message": "Find a role.",
+                "idempotency_key": "http-no-pause-start",
+            },
+        )
+        assert started.status_code == 201
+        thread_id = started.json()["thread_id"]
+
+        rejected = client.post(
+            f"/api/recruitment-team/threads/{thread_id}/assessment/answer",
+            json={"answer": "An answer nobody asked for.", "idempotency_key": "http-no-pause-answer"},
+        )
+        assert rejected.status_code == 422
+    finally:
+        for dependency in (
+            get_db,
+            get_current_user,
+            get_conversation_model,
+            get_job_discovery,
+            get_recruitment_telemetry,
+            get_role_success_profiler,
+        ):
+            main.app.dependency_overrides.pop(dependency, None)
+
+
+def test_pending_columns_are_populated_at_pause_time_not_just_cleared_after():
+    """The existing pause test only asserts artifact.status == "paused"
+    via the public snapshot (which has no pending_* fields at all). This
+    queries the DB row directly at the moment of pause and asserts the
+    pending_* columns hold the values the runner actually reported, closing
+    a real gap: no test previously proved these columns are populated
+    correctly, only that they're cleared to None after a later completion."""
+    from models import TargetAssessmentArtifact
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.interface import (
+        AssessTargetJob,
+        BuildCandidateProfile,
+        SearchJobs,
+        SelectTargetJob,
+        StartThread,
+    )
+    from recruitment_team.assessment_contracts import (
+        ScriptedTargetAssessmentRunner,
+        TargetAssessmentProgress,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery([JobSearchResult("agent systems", (job,), 1, 1, False, False)])
+    expected_specialist_runs = [{"persona_id": "recruiter", "status": "completed", "submission": {"score": 70}}]
+    runner = ScriptedTargetAssessmentRunner(
+        [
+            TargetAssessmentProgress(
+                team_member="coordinator",
+                status="paused",
+                summary="Run paused: waiting on the candidate to answer a question.",
+                detail={
+                    "question": "How large was the team you led?",
+                    "pause_token": "populate-check-token",
+                    "ask_candidate_call_id": "populate-check-call",
+                    "specialist_runs": expected_specialist_runs,
+                    "synthesis": "Partial synthesis before the pause.",
+                    "proposed_edits": [{"block_id": "b1", "rewrite": "x", "original": "y", "document_revision": "rev-1"}],
+                },
+            ),
+        ]
+    )
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            discovery,
+            _role_profiler([_role_profile_run(job.job_id)]),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([_candidate_profile_run()]),
+            runner,
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "populate-start",
+        )
+        team.execute(owner_id, BuildCandidateProfile(started.thread_id), "populate-profile")
+        team.execute(owner_id, SearchJobs(started.thread_id, "agent systems"), "populate-search")
+        team.execute(owner_id, SelectTargetJob(started.thread_id, job.job_id), "populate-select")
+        team.execute(owner_id, AssessTargetJob(started.thread_id), "populate-run")
+
+        artifact_id = team.target_assessment(owner_id, started.thread_id).artifact_id
+        row = db.query(TargetAssessmentArtifact).filter(TargetAssessmentArtifact.id == artifact_id).one()
+
+    assert row.pending_specialist_runs == expected_specialist_runs
+    assert row.pending_synthesis == "Partial synthesis before the pause."
+    assert row.pending_proposed_edits == [
+        {"block_id": "b1", "rewrite": "x", "original": "y", "document_revision": "rev-1"}
+    ]
+
+
+def test_answering_with_an_empty_synthesis_result_fails_closed_not_silently_completed():
+    """The existing empty-synthesis guard (EmptySynthesis) was only ever
+    proven for the initial AssessTargetJob run. This proves the same guard
+    fires for a resumed run too -- the panel's exact "no test for a failed
+    resume other than PauseTokenNotFound" gap."""
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.errors import TargetAssessmentUnavailable
+    from recruitment_team.interface import (
+        AnswerAssessmentQuestion,
+        AssessTargetJob,
+        BuildCandidateProfile,
+        SearchJobs,
+        SelectTargetJob,
+        StartThread,
+    )
+    from recruitment_team.assessment_contracts import (
+        ScriptedTargetAssessmentRunner,
+        TargetAssessmentProgress,
+        TargetAssessmentResult,
+        target_assessment_execution_policy,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery([JobSearchResult("agent systems", (job,), 1, 1, False, False)])
+    runner = ScriptedTargetAssessmentRunner(
+        [
+            TargetAssessmentProgress(
+                team_member="coordinator",
+                status="paused",
+                summary="Run paused: waiting on the candidate to answer a question.",
+                detail={
+                    "question": "How large was the team you led?",
+                    "pause_token": "empty-synthesis-token",
+                    "ask_candidate_call_id": "empty-synthesis-call",
+                    "specialist_runs": [],
+                    "synthesis": "",
+                    "proposed_edits": [],
+                },
+            ),
+        ],
+        resume_updates=[
+            TargetAssessmentResult(
+                status="completed",
+                specialist_runs=(),
+                synthesis="   ",
+                judge={"disposition": "pass", "score": 90},
+                correction=None,
+                error=None,
+                execution_policy=target_assessment_execution_policy(),
+            ),
+        ],
+    )
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            discovery,
+            _role_profiler([_role_profile_run(job.job_id)]),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([_candidate_profile_run()]),
+            runner,
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "empty-synth-start",
+        )
+        team.execute(owner_id, BuildCandidateProfile(started.thread_id), "empty-synth-profile")
+        team.execute(owner_id, SearchJobs(started.thread_id, "agent systems"), "empty-synth-search")
+        team.execute(owner_id, SelectTargetJob(started.thread_id, job.job_id), "empty-synth-select")
+        team.execute(owner_id, AssessTargetJob(started.thread_id), "empty-synth-run")
+
+        try:
+            team.execute(
+                owner_id,
+                AnswerAssessmentQuestion(started.thread_id, "Led a team of 12 engineers."),
+                "empty-synth-answer",
+            )
+            assert False, "expected TargetAssessmentUnavailable when a resumed run reports empty synthesis"
+        except TargetAssessmentUnavailable as error:
+            assert error.failure_type == "workflow"
+
+        artifact = team.target_assessment(owner_id, started.thread_id)
+        assert artifact.status == "failed"
+        assert artifact.error["error_type"] == "EmptySynthesis"
