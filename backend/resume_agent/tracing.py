@@ -53,7 +53,7 @@ class ToolSpanRecorder(BaseCallbackHandler):
             "result": {},
         }
 
-    def on_tool_start(self, serialized, _input_str, *, run_id, inputs=None, **kwargs) -> None:
+    def on_tool_start(self, serialized, input_str, *, run_id, inputs=None, **kwargs) -> None:
         name = str((serialized or {}).get("name") or kwargs.get("name") or "tool")
         span = self._base_span("tool", name)
         span["input_keys"] = (
@@ -72,10 +72,10 @@ class ToolSpanRecorder(BaseCallbackHandler):
     def on_tool_error(self, error, *, run_id, **_kwargs) -> None:
         self._finish_tool(run_id, "error", {"error": type(error).__name__})
 
-    def on_chat_model_start(self, serialized, _messages, *, run_id, **kwargs) -> None:
+    def on_chat_model_start(self, serialized, messages, *, run_id, **kwargs) -> None:
         self._start_model(serialized, run_id, kwargs)
 
-    def on_llm_start(self, serialized, _prompts, *, run_id, **kwargs) -> None:
+    def on_llm_start(self, serialized, prompts, *, run_id, **kwargs) -> None:
         self._start_model(serialized, run_id, kwargs)
 
     def on_llm_end(self, response, *, run_id, **_kwargs) -> None:
