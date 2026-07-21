@@ -84,7 +84,7 @@ from models import (
     UserMemory,
     ResumeVersion,
 )
-from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
+from sanitizer import sanitize_html, sanitize_job, sanitize_resume_text, sanitize_user_input
 from recruitment_team.http_routes import router as recruitment_team_router
 from schemas import (
     ApplicationWorkspaceCreate,
@@ -92,6 +92,7 @@ from schemas import (
     ApplicationPackRequest,
     AuthResponse,
     ChangePasswordRequest,
+    ClientErrorReport,
     CloudflareRegisterRequest,
     ContactRequest,
     CoverLetterRequest,
@@ -2389,6 +2390,27 @@ def public_health(db: Session = Depends(get_db)) -> dict:
         "version": app.version,
         "mcp_enabled": bool(os.environ.get("MCP_API_KEY", "").strip()),
     }
+
+
+@app.post("/api/client-error", status_code=status.HTTP_204_NO_CONTENT)
+def report_client_error(request: Request, body: ClientErrorReport) -> None:
+    """Unauthenticated-safe sink for uncaught frontend errors, so a client-side
+    failure leaves a trace here instead of vanishing the moment the tab closes.
+    No third party involved -- this goes straight into the same log stream as
+    every other backend log line."""
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"client-error:{_get_client_ip(request)}",
+        limit=20,
+        window_seconds=3600,
+    ):
+        raise HTTPException(status_code=429, detail="Too many error reports. Please try again later.")
+    log.error(
+        "[CLIENT ERROR] %s | url=%s | user_agent=%s | stack=%s",
+        sanitize_html(body.message),
+        sanitize_html(body.url),
+        sanitize_html(body.user_agent),
+        sanitize_html(body.stack),
+    )
 
 
 @app.get("/api/privacy")
