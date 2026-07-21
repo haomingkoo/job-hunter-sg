@@ -152,7 +152,7 @@ def test_integrate_keywords_accepts_the_schema_requested_from_the_model(monkeypa
         "keyword": "cross-functional collaboration",
         "edit": {
             "original": "Partnered with IT and operations teams",
-            "rewritten": "Drove cross-functional collaboration with IT and operations teams",
+            "rewritten": "Partnered with IT and operations teams through cross-functional collaboration",
             "reason": "Uses the existing teamwork evidence",
         },
         "new": None,

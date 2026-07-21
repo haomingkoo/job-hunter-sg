@@ -1,0 +1,7 @@
+Alex Example
+alex@example.invalid
+
+EXPERIENCE
+Example Civic Lab | AI Project Lead | Jan 2022 - Present
+- Led delivery of a document assistant for an operations team.
+- Coordinated engineers, policy users, and QA reviewers during rollout.

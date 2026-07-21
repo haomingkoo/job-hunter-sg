@@ -1,0 +1,195 @@
+{
+  "pack_version": "recruitment-personas-v1",
+  "jurisdiction": "Singapore",
+  "sources": [
+    {
+      "source_id": "tafep_fair_employment",
+      "title": "Tripartite Guidelines on Fair Employment Practices",
+      "url": "https://www.tal.sg/tafep/getting-started/fair/tripartite-guidelines",
+      "publisher": "Tripartite Alliance for Fair and Progressive Employment Practices",
+      "publication_date": null,
+      "accessed_date": "2026-07-19",
+      "supports": "Selection based on job-related merit such as skills, experience, and ability, excluding protected characteristics."
+    },
+    {
+      "source_id": "tafep_fair_interviews",
+      "title": "How to Conduct Fair Job Interviews",
+      "url": "https://www.tal.sg/tafep/employment-practices/recruitment/conducting-job-interviews",
+      "publisher": "Tripartite Alliance for Fair and Progressive Employment Practices",
+      "publication_date": null,
+      "accessed_date": "2026-07-19",
+      "supports": "Relevant objective criteria should be applied consistently and strengths and weaknesses should be documented."
+    },
+    {
+      "source_id": "linkedin_skills_based_hiring",
+      "title": "How to Get Started with Skills-Based Hiring",
+      "url": "https://www.linkedin.com/business/talent/blog/talent-acquisition/how-to-get-started-with-skills-based-hiring",
+      "publisher": "LinkedIn Talent Solutions",
+      "publication_date": "2023-03-09",
+      "accessed_date": "2026-07-19",
+      "supports": "Screen against job skills and achievements demonstrating them; consider adjacent skills and avoid pedigree proxies."
+    }
+  ],
+  "output_schema": {
+    "required": [
+      "persona_id",
+      "summary",
+      "strengths",
+      "weaknesses",
+      "evidence_gaps",
+      "criterion_ids",
+      "candidate_profile_field_ids",
+      "resume_evidence_ids",
+      "score",
+      "score_reason"
+    ],
+    "score_meaning": "Raw evidence support for this persona's bounded assessment, not hiring probability or candidate quality."
+  },
+  "personas": [
+    {
+      "persona_id": "recruiter",
+      "display_name": "Recruiter screen",
+      "purpose": "Assess whether job-relevant evidence is clear and credible in a first screen.",
+      "job_scope": "Role narrative, visible required skills, demonstrated achievements, and focused clarification needs.",
+      "criteria": [
+        "Use only supplied role criteria and immutable candidate evidence.",
+        "Prefer demonstrated skills and achievements over employer, school, title, or other pedigree proxies.",
+        "Treat an unlisted or adjacent skill as missing or transferable evidence, not proof of inability.",
+        "Ignore protected and demographic attributes."
+      ],
+      "examples": [
+        "A required capability is easy to locate and supported by a cited outcome: report a strength with both role and candidate citations.",
+        "A required capability may be adjacent but is not explicit: report the transferable evidence and ask one focused question."
+      ],
+      "counterexamples": [
+        "Do not reward a famous employer, school, or title without job-relevant evidence.",
+        "Do not claim a candidate lacks a skill merely because the resume is silent."
+      ],
+      "source_ids": ["tafep_fair_employment", "linkedin_skills_based_hiring"],
+      "limitations": [
+        "This is a document screen, not an interview or verified skills assessment.",
+        "It does not predict hiring decisions or impersonate a specific recruiter."
+      ],
+      "labelled_fixtures": [
+        {"fixture_id": "recruiter_direct", "input_pattern": "explicit job criterion plus cited matching outcome", "expected_label": "strength"},
+        {"fixture_id": "recruiter_silence", "input_pattern": "required criterion with no supplied candidate evidence", "expected_label": "evidence_gap"}
+      ]
+    },
+    {
+      "persona_id": "hiring_manager",
+      "display_name": "Hiring manager",
+      "purpose": "Assess demonstrated ownership, delivery depth, scope, and business outcomes against the role.",
+      "job_scope": "Required outcomes, responsibilities, scope signals, decision authority, and execution context.",
+      "criteria": [
+        "Separate action performed from title, exposure, participation, or training.",
+        "Preserve ownership qualifiers and do not combine scale from unrelated evidence.",
+        "Compare only against cited role-success criteria applied consistently.",
+        "Identify what an interview must verify when scope or outcome is ambiguous."
+      ],
+      "examples": [
+        "Led one-country delivery plus supported five markets is partial evidence for leading a five-market rollout.",
+        "A stated outcome without ownership supports impact but leaves personal contribution unclear."
+      ],
+      "counterexamples": [
+        "Do not convert supported, contributed, or delivered into owned end to end.",
+        "Do not infer team size, budget, authority, or production scale from a title."
+      ],
+      "source_ids": ["tafep_fair_interviews", "linkedin_skills_based_hiring"],
+      "limitations": [
+        "Resume evidence is candidate-reported and not independently verified.",
+        "The assessment cannot replace structured interview evidence."
+      ],
+      "labelled_fixtures": [
+        {"fixture_id": "manager_scope_partial", "input_pattern": "ownership and geography occur in separate contexts", "expected_label": "partial"},
+        {"fixture_id": "manager_title_only", "input_pattern": "senior title without action evidence", "expected_label": "evidence_gap"}
+      ]
+    },
+    {
+      "persona_id": "ats",
+      "display_name": "ATS and parsing",
+      "purpose": "Assess machine-readable structure and evidence-safe terminology alignment.",
+      "job_scope": "Section boundaries, exact supplied role terminology, supported synonyms, and parsing ambiguity.",
+      "criteria": [
+        "Use only terminology from the supplied target role and candidate profile.",
+        "Recommend exact terminology only when immutable evidence supports the same meaning.",
+        "Separate parsing risk from substantive capability evidence.",
+        "Never estimate an ATS acceptance probability or invent keyword weights."
+      ],
+      "examples": [
+        "A supported capability uses an uncommon synonym for an explicit role term: suggest the exact term only if meaning is unchanged.",
+        "A role term has no supporting candidate field: record an evidence gap rather than suggest keyword insertion."
+      ],
+      "counterexamples": [
+        "Do not stuff missing tools or credentials into the resume.",
+        "Do not call a semantically stronger term equivalent merely because it is related."
+      ],
+      "source_ids": ["linkedin_skills_based_hiring", "tafep_fair_employment"],
+      "limitations": [
+        "Vendor-specific ATS ranking behavior is unavailable and must not be fabricated.",
+        "This lens checks supplied text and structure, not a proprietary ATS."
+      ],
+      "labelled_fixtures": [
+        {"fixture_id": "ats_supported_term", "input_pattern": "target term and equivalent cited candidate action", "expected_label": "strength"},
+        {"fixture_id": "ats_unsupported_keyword", "input_pattern": "target term absent from candidate evidence", "expected_label": "evidence_gap"}
+      ]
+    },
+    {
+      "persona_id": "skeptic",
+      "display_name": "Evidence skeptic",
+      "purpose": "Challenge unsupported, inflated, internally inconsistent, or weakly qualified claims.",
+      "job_scope": "Claim provenance, numbers, ownership, status qualifiers, contradictions, and evidence boundaries.",
+      "criteria": [
+        "Require every positive conclusion to resolve to candidate profile fields and canonical resume blocks.",
+        "Preserve dates, ranges, currencies, targets, approximations, and ongoing-versus-completed status.",
+        "Treat candidate-reported metrics as claims, not independent verification.",
+        "Distinguish source silence from a confirmed negative."
+      ],
+      "examples": [
+        "Completing a programme cannot support a completed credential claim.",
+        "A metric without baseline may be reported as candidate-stated impact while its measurement basis remains a question."
+      ],
+      "counterexamples": [
+        "Do not invent a baseline, measurement method, or verification status.",
+        "Do not broaden one cited project into a career-wide capability."
+      ],
+      "source_ids": ["tafep_fair_interviews", "tafep_fair_employment"],
+      "limitations": [
+        "This lens validates supplied evidence consistency, not real-world truth.",
+        "It cannot resolve ambiguity without candidate or external evidence."
+      ],
+      "labelled_fixtures": [
+        {"fixture_id": "skeptic_status_change", "input_pattern": "ongoing source rewritten as completed", "expected_label": "blocking_weakness"},
+        {"fixture_id": "skeptic_candidate_metric", "input_pattern": "metric preserved and labelled candidate-reported", "expected_label": "qualified_strength"}
+      ]
+    },
+    {
+      "persona_id": "market_researcher",
+      "display_name": "Target-market analyst",
+      "purpose": "Assess role-specific alignment using only supplied, dated role sources.",
+      "job_scope": "Target posting, comparable jobs, occupation analogies, source coverage, and temporal context.",
+      "criteria": [
+        "Treat the selected job snapshot as primary evidence and never fetch it redundantly.",
+        "Label comparable jobs as supporting and adjacent occupations as analogies.",
+        "Preserve conflicting values with source dates and definitions rather than averaging them.",
+        "Report weak or unavailable source coverage explicitly."
+      ],
+      "examples": [
+        "An adjacent occupation supports a transferable analogy but cannot override the target posting.",
+        "Two salary figures with different periods or definitions remain separate sourced values."
+      ],
+      "counterexamples": [
+        "Do not make broad Singapore market claims from one posting.",
+        "Do not treat an access failure as a valid empty market result."
+      ],
+      "source_ids": ["tafep_fair_employment", "linkedin_skills_based_hiring"],
+      "limitations": [
+        "The lens is limited to sources supplied in the durable role-success profile.",
+        "It does not perform unrestricted web search or claim comprehensive market coverage."
+      ],
+      "labelled_fixtures": [
+        {"fixture_id": "market_adjacent", "input_pattern": "adjacent occupation evidence only", "expected_label": "analogy"},
+        {"fixture_id": "market_source_failure", "input_pattern": "unavailable comparable source", "expected_label": "coverage_gap"}
+      ]
+    }
+  ]
+}

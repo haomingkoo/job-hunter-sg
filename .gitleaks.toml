@@ -1,0 +1,10 @@
+title = "job-hunter-sg gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "detect-secrets baseline records known-safe hashes; it is not itself a secret source"
+paths = [
+  '''\.secrets\.baseline$''',
+]

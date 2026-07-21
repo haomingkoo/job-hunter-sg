@@ -1,0 +1,15 @@
+{
+  "label_version": "v1",
+  "expected_fields": [
+    {
+      "field_path": "evidence.document_automation.alignment",
+      "expected": "partial",
+      "required": true
+    },
+    {
+      "field_path": "evidence.stakeholder_rollout.alignment",
+      "expected": "direct",
+      "required": true
+    }
+  ]
+}

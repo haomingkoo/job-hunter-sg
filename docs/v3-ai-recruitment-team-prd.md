@@ -1,0 +1,544 @@
+# Job Hunter SG V3 — AI Recruitment Team PRD
+
+Status: ready-for-agent
+
+## Implementation status — 2026-07-19
+
+Implemented and locally verified: persistent V3 threads, canonical resume parsing,
+resumable Candidate Evidence Profile artifacts, source-backed role profiles, five
+versioned/cited recruiting persona packs, native isolated specialist calls,
+evidence-preserving synthesis, fresh independent judge, at most one configured
+correction and re-judge, durable target-assessment artifacts, streamed activity,
+literal output rendering, and metadata-only OpenTelemetry spans. The target-assessment
+execution artifact exposes timeout, transport retries, semantic validation attempts,
+specialist concurrency, correction limit, prompt/pack versions, no fallback model,
+no raw-resume duplication, and no content truncation.
+
+Live whole-flow status: not complete. Both real PDFs parse at 100/100 quality and
+checkpoint accepted scopes, but the configured SEA-LION agent model has unstable
+tool-call latency. Hui Shan stopped at `experience_04` after a 120.79-second timeout;
+Haoming stopped at a three-block `experience_02` scope after 120.01 seconds. The
+second trace disproves a simple scope-size explanation. Completed work is preserved
+and no transport retry, fallback, or truncation occurs.
+
+Still required before deployment: complete both real-resume canaries, compare model
+candidates on identical failed scopes, run literal-output reference benchmarks,
+implement clarification/HITL and user-approved edits, generate durable resume and
+battle-plan artifacts, validate OTLP collection in staging, and pass a deployed
+semantic canary. HTTP 200 alone is not an acceptance criterion.
+Date: 2026-07-19
+Working product name: AI Recruitment Team
+Tracker: [GitHub issue #88](https://github.com/haomingkoo/job-hunter-sg/issues/88)
+
+## Problem Statement
+
+Job seekers currently move between job search, resume review, tailoring, and
+application tracking as separate activities. Even when each feature is useful,
+the experience does not feel like a team that understands the candidate, explores
+the market with them, remembers prior decisions, and carries one opportunity from
+discovery through application preparation.
+
+The existing Resume Deep Agent proves that several specialist model calls can
+produce and independently judge an evidence-backed assessment. It is still
+presented as a bounded review rather than a persistent career conversation. Chat
+state is process-local, job exploration is not the conversational starting point,
+assessment and editing are not presented as explicit handoffs, and operational
+traces are not yet a user-facing activity narrative or a durable improvement loop.
+
+Users should feel that they have an AI recruitment team working with them: a team
+that searches real jobs, explains recommendations, debates fit, asks for missing
+evidence, critiques the resume, proposes safe edits, remembers the conversation,
+and helps track the resulting application. Transparency must make the experience
+trustworthy and impressive without exposing private chain-of-thought or inventing
+theatrical agent activity.
+
+## Solution
+
+Add a persistent **AI Recruitment Team** panel to Job Hunter SG. A signed-in user
+starts or resumes a multi-turn thread, selects or uploads a resume, describes what
+they want, explores real jobs, shortlists opportunities, and hands a selected job
+to a bounded specialist workflow.
+
+The product presents a team activity stream alongside the conversation. It shows
+which specialist is active, what operation it is performing, which evidence and
+sources it used, what artifact it produced, whether it failed or retried, and what
+handoff happens next. It shows concise evidence-backed rationale, confidence basis,
+disagreement, and quality-judge feedback. It never exposes hidden chain-of-thought,
+private prompts, secrets, or fabricated internal dialogue.
+
+The primary end-to-end journey is:
+
+```text
+saved or uploaded resume
+→ persistent career conversation
+→ job search and exploration
+→ evidence-backed shortlist
+→ selected target job
+→ independent recruitment-team assessment
+→ quality judge and bounded correction
+→ candidate clarification for missing evidence
+→ explicit editing workflow
+→ accept or reject validated edits
+→ saved tailored resume and application workspace
+→ tracked application outcome
+```
+
+V3 reuses the existing job corpus, search tools, resume versions, application
+workspace, tracker, multi-reviewer assessment, validation gates, and OpenTelemetry
+instrumentation. It does not create a parallel job database, resume system, or
+application tracker.
+
+## Product Outcomes and Release Boundaries
+
+V3 is delivered as dependency-ordered tracer bullets rather than one big-bang
+release. Each slice must be usable through the real application interface, persist
+its durable state, render its visible outcome, and emit its production telemetry.
+
+- **Foundation:** persist and resume a two-turn recruitment conversation with an
+  attached resume, truthful activity events, ownership isolation, and trace
+  correlation.
+- **Core journey:** search and shortlist real jobs, select a target, run the bounded
+  recruitment-team assessment and independent judge, clarify missing evidence,
+  approve safe edits, and create a linked application.
+- **Learning and hardening:** connect traces to semantic evaluations and user
+  outcomes, recover interrupted runs, prove provider portability, and pass an
+  authenticated Railway staging canary.
+
+Promotion decisions compare V3 against a checked-in labelled baseline. V3 must not
+regress any blocking quality category, silently increase model calls, or trade a
+material cost or latency increase for no measured quality gain. Initial baselines
+determine thresholds; the PRD does not invent unsupported target percentages or
+magic scores.
+
+## User Stories
+
+1. As a candidate, I want to open an AI Recruitment Team panel, so that my job search and application work happen in one coherent place.
+2. As a candidate, I want to start a new conversation, so that I can explore a new career goal without mixing it with an older search.
+3. As a candidate, I want to resume a saved conversation after signing in again, so that I do not lose prior context or decisions.
+4. As a candidate, I want to rename and archive conversations, so that I can organize searches for different role families.
+5. As a candidate, I want to delete a conversation and its retained artifacts, so that I control my personal data.
+6. As a candidate, I want to select an existing resume version, so that the team works from the exact evidence I choose.
+7. As a candidate, I want to upload a resume inside the conversation, so that I can begin without navigating to another feature first.
+8. As a candidate, I want the team to preserve exact resume facts, dates, employers, and metrics, so that later turns do not degrade critical evidence.
+9. As a candidate, I want to describe target titles, industries, locations, seniority, salary expectations, and constraints conversationally, so that recommendations reflect what I actually want.
+10. As a candidate, I want the team to ask one focused clarification when essential preferences are missing, so that it does not search blindly.
+11. As a candidate, I want to search the real Job Hunter SG job corpus from the conversation, so that recommendations are actionable rather than invented.
+12. As a candidate, I want to refine a search over multiple turns, so that I can explore adjacent titles and change constraints naturally.
+13. As a candidate, I want search results to show company, title, location, source, publication context, and current availability, so that I can assess each opportunity.
+14. As a candidate, I want to open a job without leaving the conversation, so that exploration remains continuous.
+15. As a candidate, I want to save and remove jobs from a shortlist, so that the team remembers opportunities I care about.
+16. As a candidate, I want duplicate or expired jobs labelled clearly, so that the team does not present stale results as active opportunities.
+17. As a candidate, I want every recommendation to explain why the job fits my resume, so that ranking is understandable.
+18. As a candidate, I want recommendations to distinguish direct evidence, partial alignment, and missing evidence, so that similarity is not presented as proof.
+19. As a candidate, I want recommendation confidence accompanied by its evidence basis, so that a number alone does not create false certainty.
+20. As a candidate, I want conflicting job information preserved with source and date context, so that the system does not silently choose one value.
+21. As a candidate, I want to select one shortlisted job as the target, so that the recruitment team can evaluate it deeply.
+22. As a candidate, I want a Scout to summarize the target role and relevant market language, so that I understand the opportunity before tailoring.
+23. As a candidate, I want a Recruiter reviewer to assess first-screen clarity, so that I know whether the resume communicates fit quickly.
+24. As a candidate, I want a Hiring Manager reviewer to assess ownership and delivery scope, so that weak leadership claims are identified.
+25. As a candidate, I want an ATS reviewer to assess structure and exact terminology, so that parsing risk is separated from actual capability.
+26. As a candidate, I want a Skeptic reviewer to challenge unsupported or inflated claims, so that the application remains defensible.
+27. As a candidate, I want a Market reviewer to compare the supplied evidence with relevant job expectations, so that the assessment has current role context.
+28. As a candidate, I want an independent Quality Judge to grade the final assessment, so that reviewer agreement alone is not treated as proof.
+29. As a candidate, I want the judge to report evidence-cited strengths, weaknesses, score, deductions, confidence bases, and evidence gaps, so that quality is inspectable.
+30. As a candidate, I want blocking judge feedback to trigger one visible correction and re-check, so that errors are repaired without an unbounded loop.
+31. As a candidate, I want the final assessment withheld when the quality gate fails, so that plausible text is not mistaken for validated advice.
+32. As a candidate, I want the activity stream to show which team member is searching, reviewing, synthesizing, or judging, so that the workflow feels alive and understandable.
+33. As a candidate, I want activity events to show status, elapsed time, source count, and artifact produced, so that progress is informative rather than theatrical.
+34. As a candidate, I want to expand an activity event into concise rationale and citations, so that I can verify important decisions.
+35. As a candidate, I want agent disagreements summarized without raw internal chatter, so that I see useful tradeoffs without noise.
+36. As a candidate, I want failures and retries shown honestly, so that unavailable research is not presented as an empty result or success.
+37. As a candidate, I want long-running activity streamed incrementally, so that the interface remains responsive during multi-agent work.
+38. As a candidate, I want completed activity preserved when a later specialist fails, so that useful work is not discarded.
+39. As a candidate, I want the team to ask me for missing automation scope, ownership boundaries, or metrics, so that it can improve evidence without fabrication.
+40. As a candidate, I want assessment and editing to be separate actions, so that a review cannot silently change my resume.
+41. As a candidate, I want to explicitly request resume edits after confirming missing evidence, so that rewrites use facts I approved.
+42. As a candidate, I want every proposed edit validated against the original bullet, so that new numbers, ownership, tools, or outcomes cannot be invented.
+43. As a candidate, I want each edit shown as an accept-or-reject diff, so that I remain in control of the final resume.
+44. As a candidate, I want rejected edit attempts excluded from the visible resume, so that unsafe drafts cannot leak into an application artifact.
+45. As a candidate, I want accepted edits saved as a new resume version, so that the source resume remains recoverable.
+46. As a candidate, I want the selected job, assessment, accepted resume version, and application workspace linked, so that the proof chain remains intact.
+47. As a candidate, I want to create a tracked application from the conversation, so that discovery flows naturally into execution.
+48. As a candidate, I want application stage changes preserved as history, so that the team can later learn from actual outcomes.
+49. As a candidate, I want the team to remember which recommendations and edits I accepted or rejected, so that future assistance becomes more relevant.
+50. As a candidate, I want recommendations based on prior outcomes labelled as signals rather than causal proof, so that the system does not overlearn from limited data.
+51. As a candidate, I want visible token, latency, and retry summaries hidden by default but available for diagnostics, so that normal use stays simple while failures remain inspectable.
+52. As a candidate, I want an accessible reduced-motion activity view, so that streaming agent activity remains usable for everyone.
+53. As a candidate, I want mobile and narrow-screen access to the conversation and shortlist, so that job exploration is not desktop-only.
+54. As a candidate, I want clear retention and privacy controls, so that I understand what chat, resume, and trace data is stored.
+55. As a product operator, I want trace-level call graphs, so that I can identify slow, duplicated, failed, or unnecessary model and tool calls.
+56. As a product operator, I want quality metrics segmented by model, prompt version, workflow phase, and failure category, so that aggregate success does not hide regressions.
+57. As a product operator, I want labelled end-to-end fixtures and literal-output assertions, so that HTTP 200 cannot pass a broken deployment.
+58. As a product operator, I want user feedback and edit acceptance connected to trace keys without storing secrets in telemetry, so that quality can improve safely.
+59. As a product operator, I want a separate Railway staging environment and authenticated canary account, so that the complete workflow is proven before production promotion.
+60. As a product operator, I want model access behind provider-neutral LangChain interfaces, so that the team can change models without rewriting orchestration logic.
+61. As a candidate, I want reviewer personas grounded in cited public recruiting practices, so that their advice reflects documented methods rather than invented authority.
+62. As a candidate, I want every persona pack to show its sources, jurisdiction, version, and limitations, so that I can understand where its criteria came from.
+63. As a candidate, I want salary benchmarks for a selected role from current attributable sources, so that I can distinguish market evidence from guesswork.
+64. As a candidate, I want salary evidence to preserve whether a figure is monthly basic pay, monthly gross pay, annual base, or total package, so that incompatible figures are not averaged together.
+65. As a candidate, I want conflicting salary ranges displayed with source dates and methodologies, so that the system does not manufacture a false single market rate.
+66. As a candidate, I want a negotiation plan with an evidence-backed range, questions, trade-offs, and a rehearsal, so that I can prepare without the system making decisions for me.
+67. As a candidate, I want my minimum acceptable package and non-salary priorities treated as private user choices, so that the model does not invent a walk-away point.
+68. As a product operator, I want salary and persona sources to be refreshable and regression-tested, so that stale external guidance is detected before it affects advice.
+69. As a candidate targeting a niche role, I want the team to define what excellent performance means for that exact role before scoring me, so that a generic recruiter rubric does not distort the assessment.
+70. As a candidate, I want role-success criteria separated into required evidence, preferred evidence, transferable evidence, and unknowns, so that absence is not treated as failure automatically.
+71. As a candidate, I want adjacent occupation data labelled as an analogy rather than direct evidence, so that niche-role recommendations remain honest.
+72. As a product operator, I want niche-role fixtures and coverage diagnostics, so that common-role accuracy cannot hide failures on sparse occupations.
+
+## Implementation Decisions
+
+- V3 is named **AI Recruitment Team**. “Career Agent” may be used as a short navigation label, but product copy should emphasize the team of specialists.
+- Build V3 inside the existing authenticated Job Hunter SG application and host it with the existing Railway service architecture.
+- Use one persistent recruitment-team thread as the primary product seam. The thread owns visible messages, durable case facts, selected resume, preferences, shortlist, selected target job, produced artifacts, and links to applications.
+- Persist user and assistant messages. Do not persist hidden chain-of-thought. Persist concise rationale, citations, confidence basis, structured reviewer and judge outputs, tool summaries, and user-visible activity events.
+- Use a coordinator with bounded hub-and-spoke specialist calls. Specialists do not communicate directly; the coordinator passes explicit evidence and aggregates results.
+- Keep the proven assessment graph: isolated structured reviewers, read-only synthesis, independent structured quality judge, and at most one visible synthesis correction and re-judge.
+- Keep assessment and editing as separate capabilities. Assessment receives no edit tool. Editing is entered only after an explicit user action and exposes the validated edit tool.
+- Introduce a durable activity-event contract shared by streaming, persistence, observability, and UI. Events include team member, operation, phase, status, attempt, timestamps, trace key, input type metadata, output artifact reference, source count, and a concise user-safe summary.
+- Present “what the team is doing” and “why this conclusion was reached,” not private reasoning. Never display raw prompts, hidden chain-of-thought, secrets, or invented agent dialogue.
+- Reuse the current internal job corpus and constrained job tools. A supplied target-job snapshot is durable context and must not trigger a redundant search or re-fetch.
+- Use progressive disclosure for job tools: compact search results first, explicit detail expansion, source provenance, valid empty results, and structured access failures.
+- Reuse existing resume versions and uploaded resume artifacts. Do not introduce a separate V3 resume store.
+- Reuse the existing Application Workspace and application stage history. A V3 thread links to those records rather than duplicating them.
+- Add persistent thread, message, activity-event, artifact-link, and user-feedback storage only where those records have an independent lifecycle. Keep high-volume OpenTelemetry spans in the trace backend rather than duplicating complete spans into PostgreSQL.
+- Preserve transactional case facts outside summarized narrative history: resume version, target titles, locations, constraints, shortlisted job IDs, selected job snapshot, confirmed claims, and application identifiers.
+- Never silently truncate chat or evidence. Named limits must expose original length, retained length, and truncation status, or fail visibly. Durable case facts and artifacts are never summarized away.
+- Keep the V3 control plane explicit. Every model choice, timeout, retry bound,
+  search/result limit, truncation decision, and fallback policy is a named validated
+  setting or request policy and is recorded in run metadata when it affects a run.
+  Delete stale environment variables and reject undocumented feature flags; secrets
+  remain private and are never copied into artifacts or telemetry.
+- Apply the versioned [retry and recovery policy](v3-retry-recovery-policy.md) at
+  every model, tool, and workflow stage. Transport recovery, semantic correction,
+  and workflow resume have separate persisted counters and never multiply or reset
+  invisibly. Accepted stages are checkpointed and never repeated on resume.
+- Continue metadata-only OpenTelemetry for operational spans by default. Do not export resume text, prompts, model output, credentials, email addresses, or raw session IDs as span attributes.
+- Store visible chat content in the application database under user ownership and retention controls. Optional content-level LLM observability requires an explicit privacy decision and redaction policy.
+- Use an OTLP-compatible backend so observability remains vendor-neutral. LangSmith or Langfuse integration may consume the same structured run metadata, but core workflow correctness must not depend on either service.
+- Create a separate Railway staging environment before production deployment. Staging uses isolated secrets and a canary account and runs the authenticated two-turn E2E gate before promotion.
+- Keep model selection behind the existing LangChain model factory and pass model instances into reviewer, synthesis, and judge interfaces. Do not spread provider names through prompts or orchestration code.
+- Version prompts, structured schemas, and evaluation datasets independently from the pipeline. A prompt adjustment must not require changing session control flow.
+- Store reviewer behavior as versioned, cited persona packs outside orchestration
+  code. A pack contains its purpose, job scope, explicit criteria, examples,
+  counterexamples, source manifest, jurisdiction, limitations, output schema, and
+  evaluation fixtures. Public sources inform criteria; the product does not claim
+  to impersonate a named recruiter or reproduce proprietary firm methodologies.
+- Add a Compensation Advisor capability after target selection. It compares live
+  job-posting ranges, Singapore official wage statistics, accessible public salary
+  guides, and user-supplied evidence without flattening unlike definitions or
+  reporting periods into one number.
+- Do not scrape Glassdoor or another restricted platform. Glassdoor information is
+  accepted only when supplied by the user or through an authorized integration and
+  is labelled as dated, self-reported evidence with its limitations.
+- Compensation output includes source-cited ranges, wage definition, data period,
+  role/industry mapping, uncertainties, an optional negotiation anchor, questions,
+  trade-offs, and a rehearsal. The user supplies the private walk-away point and
+  decides what to communicate.
+- Build one versioned Candidate Evidence Profile per immutable resume version before
+  job-specific comparison. It records chronology, demonstrated capabilities,
+  transferable capabilities, seniority and scope signals, domains, outcomes,
+  credentials, and unresolved ambiguities as structured fields. Every field carries
+  canonical resume evidence IDs, a raw evidence-support score with its reason, and
+  labelled correctness when evaluation data exists. It is reusable across searches
+  and target roles; free-form conversation text is not the canonical profile.
+- Candidate profile extraction must remain role-neutral. Suggested role families are
+  separately derived hypotheses and must not rewrite or suppress profile evidence.
+  Missing salary, location, or target-title preferences never block resume study.
+- Build a versioned Role Success Profile before recommendation scoring or target
+  assessment. The selected job description is primary evidence. Comparable live
+  jobs, Singapore Skills Framework role descriptions, and public occupation
+  taxonomies may add context but never override explicit target-job requirements.
+- A Role Success Profile separates outcomes, responsibilities, technical skills,
+  transferable skills, scope and seniority signals, work context, required
+  credentials, preferred signals, unknowns, and prohibited criteria. Each criterion
+  carries provenance and evidence strength.
+- Every role criterion stores the exact source field path and a whitespace-normalized
+  contiguous excerpt that must exist in that field. Every positive candidate claim
+  stores resolvable canonical resume block IDs and a persisted verbatim evidence
+  ledger. Candidate numbers must occur in cited resume blocks; numbers from the job
+  requirement cannot validate a candidate claim.
+- Compound criteria should be split when components can differ, while examples and
+  source alternatives remain explicitly linked. Deterministic validation checks
+  structure and provenance; it does not infer compound meaning from punctuation or
+  rewrite candidate alignment. An independent evidence assessor decides whether
+  several cited blocks collectively establish the criterion. Unresolved semantic
+  defects return `quality_blocked` or `needs_clarification`, never a silently rewritten
+  successful profile.
+- Fair-hiring rules are assessment policy constraints, not candidate evidence rows,
+  and are excluded from candidate alignment counts.
+- For niche roles, report source coverage and taxonomy match quality. Adjacent-role
+  evidence is marked `analogy`, not `direct`. When coverage is insufficient, the
+  team asks the candidate or a domain expert for clarification and withholds false
+  precision rather than forcing a generic fit score.
+- Require explicit user approval before saving a tailored resume, creating an application, sending any external message, or taking any action outside the Job Hunter SG account.
+- Use the existing fairness policy. Protected and demographic attributes are excluded from job-fit scoring and recommendation ranking.
+- Avoid global “success rate” claims. Monitor by workflow phase, job source, model, prompt version, failure category, and quality segment.
+
+## Architecture and Module Interface
+
+V3 is implemented as one deep **recruitment-team module**. Its external interface
+is the test seam and the only way HTTP routes, background work, deployment canaries,
+and module E2E tests drive the workflow:
+
+```text
+execute(owner, command, idempotency_key) -> run receipt or completed result
+events(owner, thread_id, after_sequence) -> ordered durable activity events
+snapshot(owner, thread_id) -> current user-visible thread state and artifacts
+```
+
+Commands are a versioned tagged union for starting and updating a thread, attaching
+a resume, searching or shortlisting jobs, selecting a target, requesting an
+assessment, submitting clarification, requesting edits, deciding an edit, and
+creating an application. The module owns validation, state transitions,
+orchestration, persistence, event emission, trace correlation, and safe error
+mapping. Callers do not orchestrate individual agents or tools.
+
+The FastAPI routes are thin transport adapters: authenticate, validate the command,
+call the module, and serialize the result or event stream. The React panel renders
+snapshots and durable activity events; it contains no workflow rules. Local E2E,
+public API E2E, and Railway canaries therefore exercise the same implementation.
+
+Internal seams exist only where behavior genuinely varies:
+
+- **Model port:** the production LangChain chat-model adapter and a deterministic
+  scripted adapter both support structured output, tool calls, streaming metadata,
+  token usage, cancellation, and explicit failure responses.
+- **Tool port:** the production constrained LangChain/MCP tool registry and an
+  in-memory fixture adapter expose the same versioned tool contracts. Tool
+  descriptions state purpose, inputs, examples, limitations, error behavior, and
+  explicit boundaries against related tools.
+- **Telemetry port:** the production OpenTelemetry adapter and an in-memory span
+  collector receive the same privacy-safe run metadata.
+
+Role profiling remains one external module operation with two bounded internal
+semantic stages. A role-definition generator extracts material criteria and exact
+role-source citations. A fresh independent evidence assessor receives the validated
+definition, canonical resume evidence, and original role sources, then returns one
+structured judgment per criterion: alignment, evidence IDs, supported strength,
+remaining gap, raw evidence-support score, and score reason. A correction reruns only
+the invalid stage and preserves already validated artifacts.
+
+Pure validation is deliberately role-agnostic. It verifies schema, unique and complete
+criterion coverage, resolvable source/evidence IDs, literal source excerpts, quoted
+evidence provenance, candidate-number provenance, source-strength labels, and call
+bounds. It never changes a criterion, alignment, confidence, explanation, or evidence
+citation. Semantic decisions—alternatives, cross-block duration, ownership, domain
+equivalence, required versus illustrative tools, and direct/partial/transferable fit—
+belong to the independent assessor and labelled evaluation suite.
+
+Persistence does not gain a repository abstraction solely for testing. Production
+and tests use the same SQLAlchemy persistence implementation against their
+respective databases. Prompts, rubrics, tool descriptions, and output schemas live
+in dedicated versioned folders and contain no session-control logic.
+
+The workflow state machine is explicit:
+
+```text
+exploring
+-> target_selected
+-> assessing
+-> assessment_ready | needs_clarification | quality_blocked
+-> editing
+-> ready_to_apply
+-> application_linked
+```
+
+Thread lifecycle (`active`, `archived`, `deleting`, `deleted`) and run lifecycle
+(`queued`, `running`, `waiting_for_user`, `completed`, `partial`, `failed`,
+`cancelled`) are separate from workflow state. Commands are owner-bound and
+idempotent. Every event has a thread ID, run ID, monotonically increasing sequence,
+event type, status, attempt, timestamp, trace key, artifact reference, and
+user-safe summary. Reconnect resumes after the last acknowledged sequence without
+replaying side effects.
+
+The coordinator selects tools during exploration but does not invoke the complete
+review team for ordinary chat. A target assessment intentionally runs the five
+existing isolated reviewer contracts in parallel, followed by one synthesis and
+one independent judge. Only blocking, actionable judge feedback may trigger one
+synthesis correction and one re-judge. The call graph and token use are observable;
+adding calls requires a measured quality gain against the reference benchmark.
+
+After the fixed journey and evaluation plane are proven, a bounded **agent factory**
+may compose a temporary specialist for an uncovered task. Activation requires an
+explicit reason code: uncovered target criterion, low niche-role taxonomy coverage,
+conflicting sources requiring a domain method, a judge-identified coverage gap, or
+a user-requested specialist simulation. The factory produces a versioned
+`AgentSpecification` containing objective, evidence/persona pack, approved tools,
+structured output schema, source requirements, model policy, budget, deadline,
+stop condition, and escalation rule. It may select and configure registered tools;
+it cannot generate executable tool code, grant credentials, perform external
+side effects, or recursively create agents. Missing approved capability returns a
+visible `capability_gap`. Every specification, activation reason, call, result,
+cost, and judgment is persisted and benchmarked against the fixed-team baseline.
+
+The judge returns versioned structured dimensions rather than an unexplained pass
+number: evidence-cited strengths, evidence-cited weaknesses, deductions, missing
+evidence, rubric scores, confidence bases, and recommended disposition. A separate
+versioned quality policy converts that judgment into `pass`, `revise`, or `block`.
+The prompt does not embed the expected final score or a fixture-specific answer.
+
+## Observability and Improvement Loop
+
+Observability has two connected planes:
+
+1. **Operational telemetry:** OpenTelemetry traces model calls, tool calls,
+   coordinator phases, retries, failures, cancellation, latency, token usage,
+   parentage, and shutdown flushing. Attributes contain metadata only.
+2. **Semantic evaluation:** a durable evaluation record links the privacy-safe
+   trace key to workflow, prompt, rubric, schema, model, tool, and dataset versions;
+   judge dimensions; quality disposition; user feedback; recommendation decisions;
+   edit acceptance; and application outcomes.
+
+Structured outputs also retain a field-level evaluation report: field path,
+value/artifact reference, supporting evidence references, validation findings,
+raw confidence basis, calibrated confidence, labelled correctness when available,
+failure pattern, retry history, and recommended intervention. Calibration is
+segmented by field and relevant document or role type; raw model confidence is
+never treated as accuracy. The intervention taxonomy distinguishes prompt/example
+changes, schema changes, tool or retrieval changes, missing resume evidence that
+requires a user question, genuine ambiguity requiring review, and model or
+decomposition weaknesses.
+
+The evaluation record stores references to user-owned artifacts rather than
+copying resume or conversation content into spans. Labelled evaluation fixtures
+may contain content only when explicitly curated and approved for that purpose.
+Conversation deletion cascades through live user-owned records and creates a
+deletion request for linked trace/evaluation records; backup expiry follows the
+displayed platform retention policy.
+
+Each candidate prompt, rubric, tool-description, orchestration, or model change is
+evaluated against the same versioned dataset and compared with its baseline by
+quality category, call graph, latency, and cost. Human feedback and downstream
+outcomes are evaluation signals, not automatic ground truth. Fine-tuning model
+weights is considered only after a consented labelled dataset exists and simpler
+prompt, tool, rubric, and routing changes no longer explain the quality gap.
+
+## Source-Backed Persona and Compensation Packs
+
+Persona and compensation knowledge is maintained as versioned evidence packs,
+not copied into the coordinator. Every pack records source title, URL, publisher,
+publication or data date, retrieval date, jurisdiction, methodology summary,
+licensing or access constraint, supported criteria, and known limitations. A
+source change produces a new pack version and runs its labelled regression set.
+
+The initial recruiting pack may derive public criteria from:
+
+- [TAFEP Tripartite Guidelines on Fair Employment Practices](https://www.tal.sg/tafep/getting-started/fair/tripartite-guidelines): merit-based, job-related, consistently applied selection criteria and fair-hiring constraints for Singapore.
+- [TAFEP Fair Recruitment and Selection Handbook](https://www.tal.sg/tafep/resources/publications/2019/fair-recruitment-and-selection-handbook): public Singapore recruitment-process guidance.
+- [CIPD Selection Methods](https://www.cipd.org/uk/knowledge/factsheets/selection-factsheet/): structured, job-relevant selection and evidence on skill-based assessment and multiple perspectives.
+- [Korn Ferry skills-based hiring guidance](https://www.kornferry.com/insights/featured-topics/talent-recruitment/3-skills-based-hiring-practices-that-work): public guidance on transferable skills, careful resume reading, and ATS limitations. Proprietary Korn Ferry frameworks are not reproduced.
+- [Spencer Stuart executive assessment overview](https://www.spencerstuart.com/what-we-do/our-capabilities/executive-assessment-services): public distinctions among career evidence, capability, capacity, motivation, and role context. Proprietary tools are not reproduced.
+- [McKinsey interviewing guidance](https://www.mckinsey.com/careers/interviewing): public examples of evaluating specific role, actions, impact, problem solving, and job-relevant technical skills. The product does not represent itself as McKinsey.
+
+Role Success Profiles may also use:
+
+- [SkillsFuture Singapore Skills Framework](https://www.skillsfuture.gov.sg/skills-framework/skills-frameworks-faq): Singapore role descriptions and industry-developed technical and generic competencies, treated as adaptable benchmarks rather than guarantees of fit or salary.
+- [O*NET OnLine](https://www.onetonline.org/) and [O*NET Web Services](https://services.onetcenter.org/about): versioned occupation tasks, knowledge, skills, abilities, and technology information for US occupations, labelled with its US jurisdiction.
+- [European Commission ESCO API](https://esco.ec.europa.eu/en/use-esco/use-esco-services-api/esco-web-service-api): versioned multilingual occupation-skill mappings, labelled with its European scope.
+
+For a niche role, the system starts with the exact job snapshot, searches comparable
+live roles, then consults occupation frameworks. It records unmatched criteria and
+asks focused questions about company context or domain-specific expectations. It
+does not fabricate a universal definition of “great.”
+
+The initial Singapore compensation pack uses this evidence hierarchy:
+
+1. Salary ranges stated on the selected live job posting, preserved with the job
+   snapshot and source date.
+2. [Singapore MOM Occupational Wages](https://stats.mom.gov.sg/Pages/Occupational-Wages-Tables2025.aspx), including median, 25th percentile, and 75th percentile basic and gross monthly wages with occupation, industry, population, and data-period context.
+3. Accessible public recruiter surveys such as the [2026 Hays Asia Salary Guide](https://www.hays.com.sg/salary-guide) and [Michael Page Singapore salary benchmark tool](https://www.michaelpage.com.sg/salary-benchmark-tool), labelled with their survey populations, package definitions, access conditions, and publication dates.
+4. User-supplied offer, current package, benefits, and authorized third-party
+   evidence, kept private and never exported to metadata telemetry.
+
+The advisor presents ranges as separate observations when definitions, populations,
+or dates differ. It may explain possible reasons for the variance but must not
+silently average incompatible figures.
+
+## Testing Decisions
+
+- The module interface is the primary E2E test seam. A suite of narrow tracer
+  journeys covers persistence, discovery, assessment, editing, and application
+  handoff; one final authenticated canary composes the complete journey.
+- The module E2E uses the production orchestration and SQLAlchemy implementation
+  with deterministic model and tool adapters. A separate opt-in live evaluation
+  swaps in real production adapters without changing workflow code.
+- Tests assert external behavior and durable artifacts, not internal function calls or private model reasoning.
+- Reuse existing Resume Agent adversarial tests for isolated reviewers, structured submissions, semantic retries, quality correction, no hidden fallbacks, no presentation leakage, and span completeness.
+- Reuse existing job-search tests for source visibility, valid empty results, access failures, deduplication, and constrained result payloads.
+- Reuse existing resume-version and application-workspace tests for ownership, artifact linkage, accepted edits, and append-only stage history.
+- Add persistence tests proving a conversation survives process restart, remains owner-isolated, and can be deleted with its artifacts according to retention policy.
+- Add streaming contract tests proving events are ordered, resumable, deduplicated, and do not expose private prompts or resume content in telemetry.
+- Add activity-view component tests for live, completed, failed, retrying, partial, and reduced-motion states.
+- Add labelled recommendation fixtures with known relevant and irrelevant jobs. Measure precision by role family and evidence segment rather than aggregate ranking alone.
+- Include sparse and niche-role fixtures where occupation taxonomies are an exact
+  match, adjacent analogy, and no match. Assert that provenance and coverage change
+  the output and that the system withholds unsupported precision.
+- Add labelled assessment fixtures comparing V3 output with independent reference agents. Assert literal output, cited gaps, judge verdict, presentation contract, model-call graph, and token budget.
+- Add edit tests for fabricated metrics, leadership-to-ownership inflation, unsupported technology, stale resume revisions, acceptance, rejection, and artifact persistence.
+- Add a real opt-in local model E2E that fails non-zero unless output, activity events, reviewer coverage, structured judge submissions, and final quality status pass.
+- The local E2E must write its complete report on both success and failure, including
+  structured failure type, retryability, root validation code, activity, and spans.
+  It must audit literal source excerpts, resolvable resume evidence IDs, and candidate
+  numbers rather than treating a completed request as semantic success.
+- Add an authenticated Railway staging canary that runs two turns, resumes the same durable thread, verifies target context, inspects OpenTelemetry trace correlation, and rejects HTTP-only success.
+- Add provider-swap contract tests using at least two LangChain-compatible fake models; run an opt-in second-provider live benchmark before claiming provider portability.
+- Add observability tests that verify span parentage, redaction, model/tool duration, token counts, attempt numbers, error status, and shutdown flushing.
+- Add product evaluation metrics for clean-pass rate, revision rate, judge score, blocking category frequency, recommendation saves, edit acceptance, application creation, and later outcomes.
+- Add field-level calibration fixtures and reports that expose correctness,
+  evidence coverage, calibrated confidence, failure patterns, and recommended
+  prompt/tool/schema/user-evidence interventions without relying on aggregate
+  accuracy or self-reported confidence.
+- Add architecture tests proving FastAPI and the canary enter through the module
+  interface, production orchestration is not duplicated in test helpers, and
+  changing prompts or model adapters does not change session-control flow.
+- Add the fault-injection matrix from the
+  [retry and recovery policy](v3-retry-recovery-policy.md), including valid-empty,
+  transport, semantic, truncation, restart, duplicate-delivery, and downstream
+  checkpoint cases.
+
+## Dependency-Ordered Delivery Map
+
+1. [#89 Persist and resume a two-turn recruitment conversation](https://github.com/haomingkoo/job-hunter-sg/issues/89).
+2. [#90 Manage conversation lifecycle and privacy](https://github.com/haomingkoo/job-hunter-sg/issues/90); blocked by #89.
+3. [#91 Search, define role success, explain, and shortlist jobs conversationally](https://github.com/haomingkoo/job-hunter-sg/issues/91); blocked by #89.
+4. [#92 Assess one selected job with source-backed recruiting personas and the bounded recruitment team](https://github.com/haomingkoo/job-hunter-sg/issues/92); blocked by #91.
+5. [#93 Research compensation and rehearse negotiation for a selected job](https://github.com/haomingkoo/job-hunter-sg/issues/93); blocked by #91.
+6. [#94 Turn an evidence gap into a user-approved resume edit](https://github.com/haomingkoo/job-hunter-sg/issues/94); blocked by #92.
+7. [#95 Create and track an application from approved artifacts](https://github.com/haomingkoo/job-hunter-sg/issues/95); blocked by #94.
+8. [#96 Close the trace-to-evaluation tuning loop](https://github.com/haomingkoo/job-hunter-sg/issues/96); blocked by #92 through #94.
+9. [#97 Recover safely from failed, interrupted, and duplicate runs](https://github.com/haomingkoo/job-hunter-sg/issues/97); blocked by #90, #95, and #96.
+10. [#98 Complete the journey on mobile and with reduced motion](https://github.com/haomingkoo/job-hunter-sg/issues/98); blocked by #91 through #95.
+11. [#99 Validate model portability and Railway staging deployment](https://github.com/haomingkoo/job-hunter-sg/issues/99); blocked by #95 through #98.
+12. [#100 Compose bounded specialists for uncovered recruitment tasks](https://github.com/haomingkoo/job-hunter-sg/issues/100);
+    blocked by #96 and #97. Benchmark niche-case coverage and cost against the
+    fixed team before enabling it by default.
+13. [#102 Preserve cumulative model-call evidence across resumable runs](https://github.com/haomingkoo/job-hunter-sg/issues/102); blocks #105.
+14. [#104 Fail closed on truncated or unsupported structured outputs](https://github.com/haomingkoo/job-hunter-sg/issues/104); blocks #105.
+15. [#108 Centralize retry classification and persist one attempt ledger](https://github.com/haomingkoo/job-hunter-sg/issues/108); blocked by #102 and #104.
+16. [#105 Resume role and assessment work from accepted stage checkpoints](https://github.com/haomingkoo/job-hunter-sg/issues/105); blocked by #102, #104, and #108.
+17. [#107 Prove semantic E2E locally and on Railway](https://github.com/haomingkoo/job-hunter-sg/issues/107); blocked by #103 through #106 and #108.
+
+Every slice crosses persistence, module behavior, transport, visible UI, tests,
+and telemetry where those layers participate. Issue 7 adds the semantic evaluation
+plane, but operational trace correlation is required from slice 1 onward.
+
+## Out of Scope
+
+- Displaying or persisting hidden model chain-of-thought, private prompts, or raw internal scratchpads.
+- Invented agent conversations or fake progress intended only to make the interface look busy.
+- Fully autonomous job application submission.
+- Sending recruiter messages, emails, or external forms without explicit user confirmation.
+- Automatically accepting resume edits or creating a final submitted resume without approval.
+- Scraping sources behind authentication, paywalls, CAPTCHAs, robots restrictions, or private communities.
+- Replacing the existing job database, resume version system, application workspace, or tracker with V3-specific duplicates.
+- Unbounded agent recursion, open-ended self-improvement, or arbitrary tool access.
+- Treating model self-confidence, reviewer consensus, or HTTP success as proof of quality.
+- Production self-hosting of a large observability platform before the OTLP volume, privacy requirement, and operating cost justify it.
+
+## Further Notes
+
+- The strongest visual moment is not simulated thinking. It is a truthful activity stream that shows real specialists, real tool use, cited evidence, visible disagreement, correction, and a final independent quality verdict.
+- The current local assessment benchmark proves the core team workflow. V3 product work should preserve its bounded call graph and should not reintroduce edit tools into assessment.
+- Current hosting is Railway production at `job.kooexperience.com`. A distinct staging environment does not yet exist and is a V3 prerequisite for deployment validation.
+- Current OpenTelemetry export is disabled unless Railway receives OTLP configuration. V3 should configure a durable OTLP backend before calling observability production-ready.
+- Full self-hosted LangSmith is an Enterprise/Kubernetes-scale decision. V3 should start with provider-neutral OpenTelemetry and choose managed or self-hosted trace storage based on privacy, volume, and operating cost.

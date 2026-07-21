@@ -24,13 +24,14 @@ import RemindersTab from "./components/RemindersTab.jsx";
 import AccountTab from "./components/AccountTab.jsx";
 import StoriesTab from "./components/StoriesTab.jsx";
 import ResumeTab from "./components/ResumeTab.jsx";
+import RecruitmentTeamPanel from "./components/RecruitmentTeamPanel.jsx";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const AUTH_LINK_TOKEN_NAMES = ["reset_token", "verify_token"];
-const APP_TABS = new Set(["jobs", "resume", "stories", "tracker", "reminders", "analytics", "power", "account"]);
+const APP_TABS = new Set(["team", "jobs", "resume", "stories", "tracker", "reminders", "analytics", "power", "account"]);
 
 export function readActiveTab(hash = window.location.hash) {
   const fragment = hash.replace(/^#/, "");
@@ -466,6 +467,13 @@ export default function JobHunterSG() {
                   setSelectedJob={setSelectedJob}
                   onSignIn={() => setShowAuthModal(true)}
                 />
+              )}
+              {activeTab === "team" && (
+                user ? (
+                  <RecruitmentTeamPanel user={user} />
+                ) : (
+                  <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="AI Recruitment Team" />
+                )
               )}
               {activeTab === "power" && (
                 user ? (

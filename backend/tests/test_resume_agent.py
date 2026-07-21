@@ -9,6 +9,24 @@ from typing import ClassVar
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
+class _ToolBindingModel:
+    def bind_tools(self, _tools, **_kwargs):
+        return self
+
+
+def _submission_message(payload):
+    import json
+
+    from langchain_core.messages import AIMessage
+
+    args = json.loads(payload) if isinstance(payload, str) else payload
+    return AIMessage(content="", tool_calls=[{
+        "name": "submit_assessment",
+        "args": args,
+        "id": "submit-assessment",
+    }])
+
+
 def _persisted_user_id() -> int:
     from database import SessionLocal
     from models import User
@@ -104,8 +122,87 @@ def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
         "score": 0.99,
         "jd_summary": "Build data platforms.",
         "skills": ["Python", "SQL"],
+        "posted_date": "",
+        "closing_date": "",
+        "scraped_at": "",
+        "employment_type": "",
+        "seniority": "",
+        "source_posting_id": "",
+        "availability": "current",
+        "posting_variants": [{
+            "id": 1,
+            "salary": None,
+            "source": "careers.gov.sg",
+            "url": None,
+            "source_posting_id": "",
+            "posted_date": "",
+            "closing_date": "",
+            "scraped_at": "",
+            "availability": "current",
+        }],
+        "duplicate_count": 0,
     }
+    assert result["truncated"] is True
+    assert result["original_result_count"] > result["retained_result_count"]
     assert "description" not in result["results"][0]
+
+
+def test_job_dedup_preserves_posting_and_salary_variants():
+    from agent_tool_contract import deduplicate_job_payloads
+
+    postings = [{
+        "id": job_id,
+        "title": "Principal AI Engineer",
+        "company": "Example Employer Pte. Ltd.",
+        "location": "Singapore",
+        "description": "Design and operate the same agentic AI platform.",
+        "salary": salary,
+        "source": "MyCareersFuture",
+        "url": f"https://example.test/jobs/{posting_id}",
+        "source_posting_id": posting_id,
+        "posted_date": "2026-06-30",
+        "closing_date": "",
+        "scraped_at": "2026-07-04T00:00:00Z",
+        "availability": "current",
+    } for job_id, posting_id, salary in (
+        (1, "posting-a", "$17,000 - $20,000"),
+        (2, "posting-b", "$14,000 - $17,000"),
+        (3, "posting-c", "$11,000 - $14,000"),
+    )]
+
+    deduplicated = deduplicate_job_payloads(postings)
+
+    assert len(deduplicated) == 1
+    assert deduplicated[0]["duplicate_count"] == 2
+    assert [variant["source_posting_id"] for variant in deduplicated[0]["posting_variants"]] == [
+        "posting-a",
+        "posting-b",
+        "posting-c",
+    ]
+    assert [variant["salary"] for variant in deduplicated[0]["posting_variants"]] == [
+        "$17,000 - $20,000",
+        "$14,000 - $17,000",
+        "$11,000 - $14,000",
+    ]
+
+
+def test_job_dedup_keeps_same_title_at_same_company_when_descriptions_differ():
+    from agent_tool_contract import deduplicate_job_payloads
+
+    postings = [{
+        "id": job_id,
+        "title": "AI Engineer",
+        "company": "Example Employer",
+        "location": "Singapore",
+        "description": description,
+        "source": "MyCareersFuture",
+        "source_posting_id": f"posting-{job_id}",
+    } for job_id, description in (
+        (1, "Build computer vision systems for manufacturing."),
+        (2, "Build language model agents for customer support."),
+    )]
+
+    assert len(deduplicate_job_payloads(postings)) == 2
 
 
 def test_search_jobs_detail_expands_job_payload(monkeypatch):
@@ -299,6 +396,8 @@ def test_agent_prompt_marks_job_tool_results_as_untrusted():
 
     assert "search_jobs and get_job" in ORCHESTRATOR_SYSTEM_PROMPT
     assert "untrusted reference data" in ORCHESTRATOR_SYSTEM_PROMPT
+    assert "Do not mention reviewers, reviewer lenses, reviewer counts" in ORCHESTRATOR_SYSTEM_PROMPT
+    assert "Do not turn an absent detail into a weakness" in ORCHESTRATOR_SYSTEM_PROMPT
 
 
 def test_agent_prompt_puts_summary_first_and_preserves_worker_score():
@@ -387,19 +486,85 @@ def test_span_recorder_tracks_redacted_llm_latency_and_tokens():
     assert "secret prompt" not in json.dumps(span)
 
 
-def test_quality_judge_scores_the_writeup_with_cited_strengths_and_weaknesses():
-    import json
+def test_span_recorder_exports_linked_metadata_only_opentelemetry_spans():
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from resume_agent.tracing import ToolSpanRecorder
 
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("resume-agent-test")
+    recorder = ToolSpanRecorder(
+        worker="ats",
+        trace_id="secret resume text",
+        attempt=1,
+        tracer=tracer,
+    )
+
+    with tracer.start_as_current_span("resume_agent.review") as parent:
+        recorder.on_chat_model_start(
+            {"name": "ChatOpenAI"},
+            [["secret resume text"]],
+            run_id="llm-otel",
+            invocation_params={"model_name": "agent-model"},
+        )
+        recorder.on_llm_end(
+            type("Response", (), {"llm_output": {"token_usage": {"total_tokens": 12}}})(),
+            run_id="llm-otel",
+        )
+
+    spans = exporter.get_finished_spans()
+    child = next(span for span in spans if span.name == "resume_agent.model")
+    assert child.parent.span_id == parent.get_span_context().span_id
+    assert child.attributes["resume_agent.worker"] == "ats"
+    assert child.attributes["resume_agent.result.total_tokens"] == 12
+    assert "secret resume text" not in repr(child.attributes)
+
+
+def test_completed_event_stream_is_not_traced_as_an_error(monkeypatch):
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    import resume_agent.telemetry as telemetry
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    test_tracer = provider.get_tracer("resume-agent-events-test")
+    monkeypatch.setattr(telemetry, "tracer", lambda: test_tracer)
+
+    events = list(telemetry.traced_events(iter([{"event": "done"}]), trace_key="safe"))
+
+    assert events == [{"event": "done"}]
+    span = exporter.get_finished_spans()[0]
+    assert span.name == "resume_agent.review"
+    assert span.status.status_code.name == "UNSET"
+
+
+def test_quality_judge_scores_the_writeup_with_cited_strengths_and_weaknesses():
     from langchain_core.messages import AIMessage
 
     from resume_agent.judge import judge_assessment
 
     class FakeJudgeModel:
+        def bind_tools(self, _tools, **_kwargs):
+            return self
+
         def invoke(self, messages, config=None):
             assert "<rubric>" in messages[0].content
+            assert "<rubric_examples>" in messages[0].content
+            assert "does not permit unsupported ownership" in messages[0].content
+            assert "single deterministic aggregate score is required" in messages[0].content
+            assert "Do not invent evaluation criteria" in messages[0].content
+            assert '"resume_evidence"' in messages[0].content
             assert "<final_assessment_data>" in messages[1].content
-            return AIMessage(content=json.dumps({
+            assert "<resume_evidence_data>" in messages[1].content
+            assert "<target_job_data>" in messages[1].content
+            payload = {
                 "verdict": "The assessment is useful but omits one failed specialist lens.",
+                "requires_revision": True,
                 "strengths": [{
                     "finding": "It leads with a decision-useful conclusion.",
                     "source": "final_assessment",
@@ -408,6 +573,8 @@ def test_quality_judge_scores_the_writeup_with_cited_strengths_and_weaknesses():
                 }],
                 "weaknesses": [{
                     "finding": "It does not disclose the unavailable market comparison.",
+                    "category": "coverage",
+                    "severity": "blocking",
                     "source": "worker_failure:market_researcher",
                     "confidence": 0.95,
                     "confidence_basis": "The failed worker is supplied but absent from the write-up.",
@@ -415,7 +582,13 @@ def test_quality_judge_scores_the_writeup_with_cited_strengths_and_weaknesses():
                 "score": 76,
                 "reasoning": "Evidence use is strong, with a material honesty deduction.",
                 "evidence_gaps": ["Market comparison is unavailable."],
-            }))
+            }
+            return AIMessage(content="", tool_calls=[{
+                "name": "submit_quality_judgment",
+                "args": payload,
+                "id": "judge-test",
+                "type": "tool_call",
+            }])
 
     run = judge_assessment(
         "Summary\nClear role fit.",
@@ -427,6 +600,8 @@ def test_quality_judge_scores_the_writeup_with_cited_strengths_and_weaknesses():
             "remaining_gap": "Market comparison is unavailable.",
             "retryable": True,
         }],
+        resume_evidence={"blocks": [{"id": "b1", "text": "Led delivery"}]},
+        job_context={"description": "Own delivery"},
         trace_id="judge-test",
         model=FakeJudgeModel(),
     )
@@ -447,6 +622,9 @@ def test_quality_judge_does_not_retry_authentication_failure():
     AuthenticationError = type("AuthenticationError", (Exception,), {})
 
     class UnauthorizedModel:
+        def bind_tools(self, _tools, **_kwargs):
+            return self
+
         def invoke(self, _messages, config=None):
             raise AuthenticationError("secret provider detail")
 
@@ -454,6 +632,8 @@ def test_quality_judge_does_not_retry_authentication_failure():
         "Summary\nClear role fit.",
         [{"persona": "recruiter", "summary": "Clear role fit.", "score": 80}],
         [],
+        resume_evidence={"blocks": []},
+        job_context={},
         trace_id="judge-auth-test",
         model=UnauthorizedModel(),
     )
@@ -484,6 +664,23 @@ def test_multi_agent_score_is_deterministic_median_with_disagreement_range():
     assert result["score"] == 74
     assert result["score_method"] == "median of independent worker scores"
     assert result["score_range"] == 22
+
+
+def test_assessment_presentation_contract_rejects_examples_placeholders_and_counts():
+    from resume_agent.prompts import assessment_presentation_violations
+
+    assert assessment_presentation_violations(
+        "Try e.g. [X] metrics after 5 independent reviewers agree. Some lenses differ. I can propose edits."
+    ) == [
+        "example_marker",
+        "placeholder",
+        "reviewer_count",
+        "reviewer_mechanism",
+        "future_offer",
+    ]
+    assert assessment_presentation_violations(
+        "Ask the candidate which real metric and ownership scope are supported."
+    ) == []
 
 
 def test_agent_calls_search_jobs_for_role_query():
@@ -548,6 +745,7 @@ def test_propose_edit_accepts_clean_rewrite():
         )
 
     assert result["accepted"] is True
+    assert result["application_status"] == "pending_user_review"
     assert result["bullet_id"] == "bullet-1"
     assert result["rewrite"] == rewrite
 
@@ -564,7 +762,24 @@ def test_propose_edit_rejects_fabricated_metric():
         )
 
     assert result["accepted"] is False
+    assert result["application_status"] == "rejected"
     assert "Unsupported numeric facts" in result["reason"]
+
+
+def test_propose_edit_rejects_ownership_inflation():
+    import resume_agent.tools as agent_tools
+
+    original = "Led delivery of an internal document assistant for operations teams"
+    rewrite = "Owned end-to-end document automation delivery, replacing manual workflows"
+
+    with agent_tools.bullet_context({"bullet-1": original}):
+        result = agent_tools.propose_edit.invoke(
+            {"bullet_id": "bullet-1", "rewrite": rewrite}
+        )
+
+    assert result["accepted"] is False
+    assert result["application_status"] == "rejected"
+    assert "unsupported" in result["reason"].lower()
 
 
 def test_persona_subagents_have_bounded_shared_tools(monkeypatch):
@@ -576,7 +791,9 @@ def test_persona_subagents_have_bounded_shared_tools(monkeypatch):
 
     subagents = personas.create_persona_subagents()
 
-    assert len(subagents) == config.AGENT_PERSONA_COUNT
+    from resume_agent.contracts import TARGET_JOB_PERSONAS
+
+    assert len(subagents) == len(TARGET_JOB_PERSONAS)
     assert {subagent["name"] for subagent in subagents} == {
         "recruiter",
         "hiring_manager",
@@ -585,14 +802,14 @@ def test_persona_subagents_have_bounded_shared_tools(monkeypatch):
         "market_researcher",
     }
     for subagent in subagents:
-        assert subagent["tools"] == personas._WORKER_TOOLS[subagent["name"]]
+        assert [tool.name for tool in subagent["tools"]] == ["submit_assessment"]
         assert subagent["model"].model_name == config.SEALION_AGENT_MODEL
         assert "Workflow:" in subagent["system_prompt"]
         assert "Good:" in subagent["system_prompt"]
         assert "Avoid:" in subagent["system_prompt"]
 
 
-def test_research_personas_must_cite_a_job_returned_by_their_search():
+def test_personas_use_supplied_evidence_without_mandatory_research_calls():
     import resume_agent.personas as personas
 
     hiring_prompt = personas._worker_system_prompt(
@@ -604,11 +821,12 @@ def test_research_personas_must_cite_a_job_returned_by_their_search():
         personas._PERSONA_BY_NAME["recruiter"][1],
     )
 
-    assert "research_job_ids must contain" in hiring_prompt
-    assert "research_job_ids must contain" not in recruiter_prompt
+    assert "supplied resume and target-job blocks" in hiring_prompt
+    assert "supplied resume and target-job blocks" in recruiter_prompt
+    assert "Mandatory tools" not in hiring_prompt
 
 
-def test_research_worker_places_returned_job_ids_in_final_citation_check(monkeypatch):
+def test_worker_submits_one_structured_assessment_without_planning_call():
     from langchain_core.messages import AIMessage
 
     import resume_agent.personas as personas
@@ -623,13 +841,6 @@ def test_research_worker_places_returned_job_ids_in_final_citation_check(monkeyp
 
         def invoke(self, messages, config=None):
             self.calls.append(messages)
-            if len(self.calls) == 1:
-                return AIMessage(content="", tool_calls=[{
-                    "name": "search_jobs",
-                    "args": {"query": "Finance Manager", "n": 1},
-                    "id": "search-1",
-                }])
-            assert any("internal job IDs 42" in message.content for message in messages)
             return AIMessage(content="", tool_calls=[{
                 "name": "submit_assessment",
                 "args": {
@@ -637,7 +848,7 @@ def test_research_worker_places_returned_job_ids_in_final_citation_check(monkeyp
                     "category": "research",
                     "findings": [],
                     "conflicts": [],
-                    "research_job_ids": [42],
+                    "research_job_ids": [],
                     "score": 70,
                     "reasoning": "Compared the supplied evidence.",
                     "suggested_actions": ["Clarify scope."],
@@ -645,16 +856,6 @@ def test_research_worker_places_returned_job_ids_in_final_citation_check(monkeyp
                 "id": "submit-1",
             }])
 
-    monkeypatch.setattr(
-        personas.search_jobs,
-        "func",
-        lambda **_kwargs: {
-            "ok": True,
-            "query_executed": True,
-            "results": [{"id": 42, "title": "Finance Manager"}],
-            "result_count": 1,
-        },
-    )
     model = BoundModel()
     personas._invoke_worker(
         model,
@@ -663,6 +864,8 @@ def test_research_worker_places_returned_job_ids_in_final_citation_check(monkeyp
         "Resume evidence.",
         ToolSpanRecorder("hiring_manager"),
     )
+    assert len(model.calls) == 1
+    assert [tool.name for tool in model.tools] == ["submit_assessment"]
 
 
 def test_research_worker_can_cite_a_secondary_job_separately_from_primary_evidence():
@@ -722,10 +925,10 @@ def test_persona_reviews_require_canonical_evidence_ids():
     document = create_resume_document("EXPERIENCE\n- Built a data platform")
     evidence_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
 
-    class FakeModel:
-        def invoke(self, messages):
+    class FakeModel(_ToolBindingModel):
+        def invoke(self, messages, config=None):
             persona = messages[0].content.split("\n", 1)[0].split(":", 1)[1].strip()
-            return AIMessage(content=json.dumps({
+            return _submission_message({
                 "summary": f"{persona} conclusion",
                 "category": "clarity",
                 "findings": [
@@ -735,7 +938,7 @@ def test_persona_reviews_require_canonical_evidence_ids():
                 "score": 72,
                 "reasoning": "The cited block supports the assessment.",
                 "suggested_actions": ["Clarify the result without inventing metrics."],
-            }))
+            })
 
     findings = list(personas.iter_persona_reviews(document, FakeModel(), include_market=False))
 
@@ -745,7 +948,7 @@ def test_persona_reviews_require_canonical_evidence_ids():
     assert all(finding["evidence_ids"] == [evidence_id] for finding in findings)
 
 
-def test_persona_worker_uses_required_tool_and_records_its_own_span():
+def test_persona_worker_uses_one_structured_submission_call_and_records_span():
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     from langchain_core.messages import AIMessage
     from resume_document import create_resume_document
@@ -759,11 +962,6 @@ def test_persona_worker_uses_required_tool_and_records_its_own_span():
             return self
 
     model = ToolCallingFakeModel(responses=[
-        AIMessage(content="", tool_calls=[{
-            "name": "score_resume",
-            "args": {"resume_text": document["raw_text"]},
-            "id": "score-call",
-        }]),
         AIMessage(content="", tool_calls=[{
             "name": "submit_assessment",
             "args": {
@@ -790,13 +988,15 @@ def test_persona_worker_uses_required_tool_and_records_its_own_span():
     assert finding["findings"][0]["confidence"] == 0.9
     assert finding["findings"][0]["source_mapping"]["relevant_excerpt"] == "Built a data platform for 100 users"
     assert finding["findings"][0]["claim_id"] == "recruiter-1-1"
+    model_spans = [span for span in finding["tool_spans"] if span["kind"] == "llm"]
+    assert len(model_spans) == 1
     tool_span = next(span for span in finding["tool_spans"] if span["kind"] == "tool")
     assert tool_span["worker"] == "recruiter"
-    assert tool_span["name"] == "score_resume"
+    assert tool_span["name"] == "submit_assessment"
     assert tool_span["status"] == "success"
 
 
-def test_persona_worker_result_is_rejected_when_required_tool_is_skipped(caplog):
+def test_persona_worker_result_is_rejected_when_structured_submission_is_skipped(caplog):
     import json
 
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -827,7 +1027,7 @@ def test_persona_worker_result_is_rejected_when_required_tool_is_skipped(caplog)
     run = personas._worker_run("recruiter", document, model)
 
     assert run["status"] == "error"
-    assert run["failure_type"] == "tool"
+    assert run["failure_type"] == "validation"
     assert run["attempted_operation"] == "recruiter resume assessment"
     assert run["attempt_count"] == 2
     assert run["partial_results"] == []
@@ -880,7 +1080,7 @@ def test_persona_worker_preserves_findings_when_optional_tool_fails(monkeypatch)
             "suggested_actions": ["Add supported scope evidence."],
         })
 
-    class FakeModel:
+    class FakeModel(_ToolBindingModel):
         def bind_tools(self, *_args, **_kwargs):
             return self
 
@@ -909,12 +1109,12 @@ def test_persona_review_discards_unknown_evidence_ids():
 
     document = create_resume_document("EXPERIENCE\n- Built a data platform")
 
-    class FakeModel:
+    class FakeModel(_ToolBindingModel):
         calls = 0
 
-        def invoke(self, _messages):
+        def invoke(self, _messages, config=None):
             self.calls += 1
-            return AIMessage(content=json.dumps({
+            return _submission_message({
                 "summary": "The citation is invalid.",
                 "category": "clarity",
                 "findings": [
@@ -924,7 +1124,7 @@ def test_persona_review_discards_unknown_evidence_ids():
                 "score": 40,
                 "reasoning": "The evidence ID is invalid.",
                 "suggested_actions": ["Change it."],
-            }))
+            })
 
     model = FakeModel()
     assert list(personas.iter_persona_reviews(
@@ -946,16 +1146,16 @@ def test_persona_review_retries_once_after_fixable_validation_failure():
     document = create_resume_document("EXPERIENCE\n- Built a data platform")
     evidence_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
 
-    class FakeModel:
+    class FakeModel(_ToolBindingModel):
         calls = 0
         retry_prompt = ""
 
-        def invoke(self, messages):
+        def invoke(self, messages, config=None):
             self.calls += 1
             if self.calls == 1:
                 return AIMessage(content="not json")
             self.retry_prompt = messages[-1].content
-            return AIMessage(content=json.dumps({
+            return _submission_message({
                 "summary": "The delivery result needs clarification.",
                 "category": "clarity",
                 "findings": [
@@ -965,7 +1165,7 @@ def test_persona_review_retries_once_after_fixable_validation_failure():
                 "score": 65,
                 "reasoning": "The cited bullet describes work without its outcome.",
                 "suggested_actions": ["Add the supported result."],
-            }))
+            })
 
     model = FakeModel()
     finding = personas._persona_review("recruiter", document, model)
@@ -973,6 +1173,50 @@ def test_persona_review_retries_once_after_fixable_validation_failure():
     assert finding is not None
     assert model.calls == 2
     assert "invalid_json" in model.retry_prompt
+    assert "not json" in model.retry_prompt
+    assert "resume_evidence_data" in model.retry_prompt
+
+
+def test_persona_retry_explains_allowed_target_job_fields():
+    import json
+
+    from langchain_core.messages import AIMessage
+    from resume_document import create_resume_document
+    import resume_agent.personas as personas
+
+    document = create_resume_document("EXPERIENCE\n- Built a data platform")
+    evidence_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
+    job_context = {"title": "Data Lead", "description": "Lead data delivery"}
+
+    class FakeModel(_ToolBindingModel):
+        calls = 0
+        retry_prompt = ""
+
+        def invoke(self, messages, config=None):
+            self.calls += 1
+            location = "job_description" if self.calls == 1 else "description"
+            if self.calls == 2:
+                self.retry_prompt = messages[-1].content
+            return _submission_message({
+                "summary": "The delivery evidence is relevant but underspecified.",
+                "category": "scope",
+                "findings": [
+                    {"kind": "strength", "finding": "The bullet shows platform delivery.", "source": "resume", "source_location": evidence_id, "method": "Reviewed delivery evidence.", "relevance_score": 0.8},
+                    {"kind": "weakness", "finding": "The target scope is not explicit.", "source": "target_job", "source_location": location, "method": "Compared the role description with the resume.", "relevance_score": 0.9},
+                ],
+                "score": 65,
+                "reasoning": "The role requires delivery leadership, while the resume gives limited scope detail.",
+                "suggested_actions": ["Clarify supported delivery scope."],
+            })
+
+    model = FakeModel()
+    finding = personas._persona_review("hiring_manager", document, model, job_context)
+
+    assert finding is not None
+    assert model.calls == 2
+    assert "unknown_target_job_field" in model.retry_prompt
+    assert "job_description" in model.retry_prompt
+    assert "title, company, description, terms, location, source" in model.retry_prompt
 
 
 def test_persona_review_retries_oversized_exact_finding_instead_of_clipping():
@@ -996,11 +1240,11 @@ def test_persona_review_retries_oversized_exact_finding_instead_of_clipping():
         "suggested_actions": ["Add the supported result."],
     }
 
-    class FakeModel:
+    class FakeModel(_ToolBindingModel):
         calls = 0
         retry_prompt = ""
 
-        def invoke(self, messages):
+        def invoke(self, messages, config=None):
             self.calls += 1
             payload = dict(valid_payload)
             payload["findings"] = [dict(item) for item in valid_payload["findings"]]
@@ -1008,7 +1252,7 @@ def test_persona_review_retries_oversized_exact_finding_instead_of_clipping():
                 payload["findings"][0]["finding"] = "x" * (personas.MAX_FINDING_CHARS + 1)
             else:
                 self.retry_prompt = messages[-1].content
-            return AIMessage(content=json.dumps(payload))
+            return _submission_message(payload)
 
     model = FakeModel()
     finding = personas._persona_review("recruiter", document, model)
@@ -1050,12 +1294,12 @@ def test_market_persona_receives_xml_delimited_job_snapshot():
     document = create_resume_document("EXPERIENCE\n- Led finance process automation")
     evidence_id = next(block["id"] for block in document["blocks"] if block["kind"] == "bullet")
 
-    class FakeModel:
+    class FakeModel(_ToolBindingModel):
         messages = None
 
-        def invoke(self, messages):
+        def invoke(self, messages, config=None):
             self.messages = messages
-            return AIMessage(content=json.dumps({
+            return _submission_message({
                 "summary": "The resume shows partial alignment with the target role.",
                 "category": "role alignment",
                 "findings": [
@@ -1065,7 +1309,7 @@ def test_market_persona_receives_xml_delimited_job_snapshot():
                 "score": 78,
                 "reasoning": "The cited bullet aligns with the selected role.",
                 "suggested_actions": ["Make the finance scope easier to scan."],
-            }))
+            })
 
     model = FakeModel()
     finding = personas._persona_review(
@@ -1117,6 +1361,7 @@ def test_session_streams_and_persists_independent_persona_findings(monkeypatch):
         "attempt_count": 1,
         "assessment": {
             "verdict": "The synthesis is clear.",
+            "requires_revision": False,
             "strengths": [{"finding": "Clear conclusion.", "source": "final_assessment"}],
             "weaknesses": [{"finding": "Limited evidence.", "source": "reviewer:recruiter"}],
             "score": 82,
@@ -1143,6 +1388,57 @@ def test_session_streams_and_persists_independent_persona_findings(monkeypatch):
     assert state["persona_findings"][0]["message"] == "Clarify the outcome."
     assert state["judge_assessment"]["score"] == 82
     assert any(event["event"] == "judge" for event in events)
+
+
+def test_session_preserves_target_job_context_across_follow_up_turns(monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    import resume_agent.session as agent_session
+
+    reviewer_calls = []
+
+    def fake_worker_runs(_document, include_market, job_context=None, session_id=""):
+        reviewer_calls.append({
+            "include_market": include_market,
+            "job_context": job_context,
+            "session_id": session_id,
+        })
+        return iter([])
+
+    class FakeAgent:
+        def invoke(self, _payload, config=None):
+            return {"messages": [AIMessage(content="Review complete.")]}
+
+    monkeypatch.setattr(agent_session, "iter_persona_worker_runs", fake_worker_runs)
+    monkeypatch.setattr(agent_session, "create_resume_agent", lambda **_kwargs: FakeAgent())
+    monkeypatch.setattr(agent_session, "judge_assessment", lambda *_args, **_kwargs: {
+        "status": "error",
+        "tool_spans": [],
+    })
+
+    first = {
+        "session_id": "target-context-session",
+        "message": "Review this resume",
+        "resume_text": "EXPERIENCE\n- Built a data platform",
+        "job_context": {
+            "title": "Data Lead",
+            "description": "Lead data delivery",
+        },
+    }
+    list(agent_session.stream_chat_events(first, owner_key="target-context-owner"))
+    list(agent_session.stream_chat_events({
+        "session_id": "target-context-session",
+        "message": "Give me one concrete improvement.",
+    }, owner_key="target-context-owner"))
+
+    state = agent_session.get_state("target-context-session", owner_key="target-context-owner")
+    assert reviewer_calls == [{
+        "include_market": True,
+        "job_context": first["job_context"],
+        "session_id": "target-context-session",
+    }]
+    assert state["job_context"] == first["job_context"]
+    assert state["mode"] == "target_job"
 
 
 def test_session_keeps_successful_reviews_when_one_worker_fails(monkeypatch):
@@ -1208,7 +1504,9 @@ def test_session_keeps_successful_reviews_when_one_worker_fails(monkeypatch):
     assert state["persona_findings"] == [completed]
     assert len(state["worker_runs"]) == 2
     assert any(event["event"] == "persona_error" for event in events)
-    assert any(event.get("content") == "Partial synthesis with clear limitation." for event in events)
+    assert any(event["event"] == "judge_error" for event in events)
+    assert any(event["event"] == "error" for event in events)
+    assert not any(event["event"] == "token" for event in events)
 
 
 def test_session_keeps_partial_review_and_discloses_its_gap(monkeypatch):
@@ -1475,12 +1773,21 @@ def test_synthesis_prompt_excludes_worker_traces_and_compatibility_duplicates():
             "message": "duplicate compatibility text",
             "rationale": "duplicate reasoning",
         }],
+        "multi_agent_assessment": {
+            "score": 80,
+            "scores_by_worker": {"ats": 80, "recruiter": 70},
+            "score_range": 10,
+        },
     })
 
     assert "Clear structure." in prompt
     assert "score_resume" not in prompt
     assert "duplicate compatibility text" not in prompt
     assert "duplicate reasoning" not in prompt
+    assert "scores_by_worker" not in prompt
+    assert "score_range" not in prompt
+    assert '"persona":"ats"' not in prompt
+    assert '"score":80' in prompt
 
 
 def test_missing_agent_credentials_return_error_event(monkeypatch):
@@ -1970,10 +2277,11 @@ def test_owner_run_reservation_can_be_released_without_streaming(monkeypatch):
 
 
 def test_owner_run_reservation_has_a_global_cap(monkeypatch):
+    import config
     import resume_agent.session as agent_session
 
     monkeypatch.setattr(agent_session, "_active_runs", {})
-    monkeypatch.setattr(agent_session, "_MAX_ACTIVE_RUNS", 2)
+    monkeypatch.setattr(config, "AGENT_MAX_ACTIVE_RUNS", 2)
 
     assert agent_session.reserve_owner_run("user:1") is True
     assert agent_session.reserve_owner_run("user:2") is True
@@ -2068,6 +2376,7 @@ def test_background_start_rejects_invalid_or_oversized_context_snapshots():
     from types import SimpleNamespace
 
     import main
+    import config
     from auth import get_current_user
 
     user_id = _persisted_user_id()
@@ -2077,12 +2386,16 @@ def test_background_start_rejects_invalid_or_oversized_context_snapshots():
         invalid = client.post("/api/resume/agent/start", json={"job_context": "not-an-object"})
         oversized = client.post(
             "/api/resume/agent/start",
-            json={"job_context": {"description": "x" * 20_001}},
+            json={"job_context": {"description": "x" * (config.AGENT_MAX_JOB_CONTEXT_CHARS + 1)}},
         )
         invalid_score = client.post("/api/resume/agent/start", json={"score_context": "not-an-object"})
         oversized_score = client.post(
             "/api/resume/agent/start",
-            json={"score_context": {"detail": "x" * 10_001}},
+            json={"score_context": {"detail": "x" * (config.AGENT_MAX_SCORE_CONTEXT_CHARS + 1)}},
+        )
+        invalid_chat = client.post(
+            "/api/resume/agent/chat",
+            json={"job_context": None},
         )
     finally:
         main.app.dependency_overrides.pop(get_current_user, None)
@@ -2091,6 +2404,7 @@ def test_background_start_rejects_invalid_or_oversized_context_snapshots():
     assert oversized.status_code == 413
     assert invalid_score.status_code == 422
     assert oversized_score.status_code == 413
+    assert invalid_chat.status_code == 422
 
 
 def test_resume_agent_sse_sends_keepalive_while_agent_runs(monkeypatch):

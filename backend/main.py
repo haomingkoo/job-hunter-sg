@@ -85,6 +85,7 @@ from models import (
     ResumeVersion,
 )
 from sanitizer import sanitize_job, sanitize_resume_text, sanitize_user_input
+from recruitment_team.http_routes import router as recruitment_team_router
 from schemas import (
     ApplicationWorkspaceCreate,
     ApplicationWorkspaceOut,
@@ -163,8 +164,6 @@ _JD_ENRICHMENT_IN_FLIGHT: set[int] = set()
 _JD_ENRICHMENT_LOCK = threading.Lock()
 _JD_ENRICHMENT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=app_config.JD_ENRICHMENT_MAX_WORKERS)
 _FAILED_RETRY_SECONDS = app_config.FAILED_SUMMARY_RETRY_SECONDS
-_STARTUP_ANALYTICS_WARM_DELAY_SECONDS = app_config.STARTUP_ANALYTICS_WARM_DELAY_SECONDS
-_STARTUP_MAINTENANCE_WARM_WAIT_SECONDS = app_config.STARTUP_MAINTENANCE_WARM_WAIT_SECONDS
 
 # ── Cached filter metadata (avoid 3 GROUP BY queries per page 1 load) ────────
 _filter_meta_cache: dict = {}
@@ -314,6 +313,9 @@ from contextlib import asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup and shutdown lifecycle for the app."""
     # ── Startup ──
+    from resume_agent.telemetry import configure_telemetry, shutdown_telemetry
+
+    configure_telemetry()
     log.info("[STARTUP] Initializing database...")
     init_db()
     log.info("[STARTUP] Database initialized")
@@ -495,24 +497,6 @@ async def lifespan(application: FastAPI):
     _filler_thread = threading.Thread(target=_idle_summary_filler, daemon=True)
     _filler_thread.start()
 
-    # Pre-warm analytics cache on startup so first page load is instant
-    def _warm_analytics():
-        import time as _time
-        _time.sleep(_STARTUP_ANALYTICS_WARM_DELAY_SECONDS)
-        if not startup_maintenance_done.wait(_STARTUP_MAINTENANCE_WARM_WAIT_SECONDS):
-            log.warning("[STARTUP] Analytics warm skipped because maintenance is still running")
-            return
-        try:
-            import requests as _req
-            port = int(os.environ.get("PORT", 8000))
-            _req.get(f"http://127.0.0.1:{port}/api/analytics/skills?limit=50", timeout=60)
-            _req.get(f"http://127.0.0.1:{port}/api/analytics/trends?weeks=52", timeout=60)
-            log.info("[STARTUP] Analytics cache warmed")
-        except Exception as exc:
-            log.warning(f"[STARTUP] Analytics warm failed: {exc}")
-
-    threading.Thread(target=_warm_analytics, daemon=True).start()
-
     global jobhunter_mcp
     jobhunter_mcp = create_public_mcp()
     mcp_http_app = jobhunter_mcp.streamable_http_app()
@@ -534,6 +518,7 @@ async def lifespan(application: FastAPI):
 
     # ── Shutdown ──
     log.info("Shutting down Job Hunter SG API")
+    shutdown_telemetry()
     _JD_ENRICHMENT_POOL.shutdown(wait=False, cancel_futures=True)
 
 
@@ -553,6 +538,7 @@ app.add_middleware(
         "/api/applications/workspaces/*": MAX_FILE_SIZE + 256 * 1024,
     },
 )
+app.include_router(recruitment_team_router)
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
 
@@ -8462,6 +8448,30 @@ def delete_resume_version(
 # ── Resume Deep Agent v2 ────────────────────────────────────────────────────
 
 
+def _validate_resume_agent_request(body: dict) -> None:
+    session_id = str(body.get("session_id") or "").strip()
+    if len(session_id) > app_config.AGENT_MAX_SESSION_ID_CHARS:
+        raise HTTPException(status_code=422, detail="Agent session ID is too long")
+    if len(str(body.get("message") or "")) > app_config.AGENT_MAX_MESSAGE_CHARS:
+        raise HTTPException(status_code=413, detail="Agent message is too large")
+    if len(str(body.get("resume_text") or "")) > app_config.AGENT_MAX_DRAFT_CHARS:
+        raise HTTPException(status_code=413, detail="Resume draft is too large")
+    if len(str(body.get("profile_context") or "")) > app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS:
+        raise HTTPException(status_code=413, detail="Profile context is too large")
+
+    for field, limit, label in (
+        ("job_context", app_config.AGENT_MAX_JOB_CONTEXT_CHARS, "Job context"),
+        ("score_context", app_config.AGENT_MAX_SCORE_CONTEXT_CHARS, "Score context"),
+    ):
+        if field not in body:
+            continue
+        value = body[field]
+        if not isinstance(value, dict):
+            raise HTTPException(status_code=422, detail=f"{label} must be an object")
+        if len(json.dumps(value, ensure_ascii=False)) > limit:
+            raise HTTPException(status_code=413, detail=f"{label} is too large")
+
+
 def _stream_resume_agent_events(body: dict):
     from resume_agent.session import stream_chat_events
 
@@ -8471,7 +8481,10 @@ def _stream_resume_agent_events(body: dict):
     )
 
 
-def _resume_agent_sse(body: dict, heartbeat_seconds: float = 15):
+def _resume_agent_sse(
+    body: dict,
+    heartbeat_seconds: float = app_config.AGENT_SSE_HEARTBEAT_SECONDS,
+):
     events: queue.Queue[dict | None] = queue.Queue()
 
     def produce() -> None:
@@ -8510,25 +8523,8 @@ def start_resume_agent_review(
     )
 
     owner_key = f"user:{user.id}"
+    _validate_resume_agent_request(body)
     session_id = str(body.get("session_id") or "").strip()
-    if len(session_id) > 200:
-        raise HTTPException(status_code=422, detail="Agent session ID is too long")
-    if len(str(body.get("message") or "")) > 10_000:
-        raise HTTPException(status_code=413, detail="Agent message is too large")
-    if len(str(body.get("resume_text") or "")) > app_config.AGENT_MAX_DRAFT_CHARS:
-        raise HTTPException(status_code=413, detail="Resume draft is too large")
-    if len(str(body.get("profile_context") or "")) > app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS:
-        raise HTTPException(status_code=413, detail="Profile context is too large")
-    job_context = body.get("job_context")
-    if job_context is not None and not isinstance(job_context, dict):
-        raise HTTPException(status_code=422, detail="Job context must be an object")
-    if len(json.dumps(job_context or {}, ensure_ascii=False)) > 20_000:
-        raise HTTPException(status_code=413, detail="Job context is too large")
-    score_context = body.get("score_context")
-    if score_context is not None and not isinstance(score_context, dict):
-        raise HTTPException(status_code=422, detail="Score context must be an object")
-    if len(json.dumps(score_context or {}, ensure_ascii=False)) > 10_000:
-        raise HTTPException(status_code=413, detail="Score context is too large")
 
     with _account_lifecycle_lock(user.id):
         if not db.query(User.id).filter(User.id == user.id).first():
@@ -8558,18 +8554,8 @@ def resume_agent_chat(
     from resume_agent.session import release_owner_run, reserve_owner_run
 
     owner_key = f"user:{user.id}"
+    _validate_resume_agent_request(body)
     session_id = str(body.get("session_id") or "").strip()
-    if len(session_id) > 200:
-        raise HTTPException(status_code=422, detail="Agent session ID is too long")
-    if len(str(body.get("message") or "")) > 10_000:
-        raise HTTPException(status_code=413, detail="Agent message is too large")
-    if len(str(body.get("resume_text") or "")) > app_config.AGENT_MAX_DRAFT_CHARS:
-        raise HTTPException(status_code=413, detail="Resume draft is too large")
-    if (
-        len(str(body.get("profile_context") or ""))
-        > app_config.AGENT_MAX_PROFILE_CONTEXT_CHARS
-    ):
-        raise HTTPException(status_code=413, detail="Profile context is too large")
     with _account_lifecycle_lock(user.id):
         if not db.query(User.id).filter(User.id == user.id).first():
             raise HTTPException(status_code=401, detail="Account no longer exists")

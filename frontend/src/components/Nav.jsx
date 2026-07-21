@@ -1,11 +1,12 @@
 import { motion } from "framer-motion";
 import {
-  Search, Briefcase, Bell, FileText, BookOpen,
+  Search, Briefcase, Bell, FileText, BookOpen, Users,
   Sparkles, BarChart2, User,
 } from "lucide-react";
 
 export default function Nav({ active, setActive }) {
   const tabs = [
+    { id: "team", label: "Recruitment Team", icon: Users },
     { id: "jobs", label: "Jobs", icon: Search },
     { id: "resume", label: "Resume", icon: FileText },
     { id: "stories", label: "Stories", icon: BookOpen },

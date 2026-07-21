@@ -7,6 +7,7 @@ from contextvars import ContextVar
 from typing import Any
 
 import agent_tool_contract as contract
+import config
 from database import SessionLocal
 from embedding_service import encode_text, find_similar_jobs
 from job_visibility import apply_public_job_visibility
@@ -66,7 +67,11 @@ def search_jobs(query: str, n: int | None = None, detail: bool = False) -> dict:
     try:
         db = SessionLocal()
         query_vector = encode_text(clean_query)
-        similar = find_similar_jobs(query_vector, db, top_k=max(limit * 10, limit))
+        similar = find_similar_jobs(
+            query_vector,
+            db,
+            top_k=max(limit * config.AGENT_SEARCH_CANDIDATE_MULTIPLIER, limit),
+        )
         if not similar:
             return contract.search_jobs_result(clean_query, limit, [], detail=detail)
 
@@ -86,8 +91,16 @@ def search_jobs(query: str, n: int | None = None, detail: bool = False) -> dict:
             )
             for job_id, _score in similar
             if job_id in by_id
-        ][:limit]
-        return contract.search_jobs_result(clean_query, limit, results, detail=detail)
+        ]
+        deduplicated = contract.deduplicate_job_payloads(results)
+        return contract.search_jobs_result(
+            clean_query,
+            limit,
+            deduplicated,
+            detail=detail,
+            candidate_count=len(similar),
+            visible_candidate_count=len(results),
+        )
     except Exception as exc:
         return contract.search_jobs_error(
             clean_query,
@@ -237,8 +250,9 @@ def propose_edit(bullet_id: str, rewrite: str) -> dict:
     """Validate one evidence-safe bullet rewrite without changing the resume.
 
     `bullet_id` must be a supplied canonical resume block ID. `rewrite` must keep
-    the original facts and numbers. Returns `accepted`, gate results, and the safe
-    rewrite; rejection means the worker should recommend clarification instead.
+    the original facts and numbers. A valid proposal remains pending user review
+    and is never applied or described as accepted by the user; rejection means
+    the worker should recommend clarification instead.
     """
     from validation_gates import _extract_numbers, validate_and_fix
 
@@ -247,6 +261,7 @@ def propose_edit(bullet_id: str, rewrite: str) -> dict:
     if not original:
         return {
             "accepted": False,
+            "application_status": "rejected",
             "bullet_id": bullet_id,
             "rewrite": "",
             "reason": "Unknown bullet_id.",
@@ -258,6 +273,7 @@ def propose_edit(bullet_id: str, rewrite: str) -> dict:
     if new_numbers:
         return {
             "accepted": False,
+            "application_status": "rejected",
             "bullet_id": bullet_id,
             "rewrite": "",
             "reason": f"Unsupported numeric facts: {', '.join(sorted(new_numbers))}",
@@ -269,6 +285,7 @@ def propose_edit(bullet_id: str, rewrite: str) -> dict:
     if final_text == original and clean_rewrite != original:
         return {
             "accepted": False,
+            "application_status": "rejected",
             "bullet_id": bullet_id,
             "rewrite": "",
             "reason": "; ".join(gate.message for gate in failed)
@@ -278,6 +295,7 @@ def propose_edit(bullet_id: str, rewrite: str) -> dict:
 
     return {
         "accepted": True,
+        "application_status": "pending_user_review",
         "bullet_id": bullet_id,
         "rewrite": final_text,
         "reason": "",
