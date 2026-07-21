@@ -82,3 +82,55 @@ def test_iter_progress_events_reports_two_sequential_persona_delegations(monkeyp
     assert any(e["team_member"] == "coordinator" and e["content"] == "Consulted both personas." for e in messages)
     assert any(e["team_member"] == "recruiter" and e["content"] == "Recruiter done." for e in messages)
     assert any(e["team_member"] == "ats" and e["content"] == "ATS done." for e in messages)
+
+
+def test_iter_progress_events_yields_tool_call_ids(monkeypatch):
+    import resume_agent.models as agent_models
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+
+    read_call = AIMessage(
+        content="", tool_calls=[{"name": "some_tool", "args": {}, "id": "call-abc"}]
+    )
+    model = _ScriptedModel(responses=[read_call, AIMessage(content="Done.")])
+    agent = create_resume_agent(model=model, tools=[], subagents=[])
+
+    events = list(iter_progress_events(
+        agent,
+        {"messages": [{"role": "user", "content": "Go."}]},
+        {"recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS},
+    ))
+
+    tool_call = next(e for e in events if e["kind"] == "tool_call")
+    assert tool_call["id"] == "call-abc"
+
+
+def test_iter_progress_events_skips_a_tool_call_id_exactly_once(monkeypatch):
+    """Proves the skip_tool_call_ids mechanism the resume path relies on to
+    suppress LangGraph's replay of an interrupted ask_candidate call: a
+    matching id is dropped the first time and the set is consumed, so a
+    second, genuinely distinct call sharing no id is never affected."""
+    import resume_agent.models as agent_models
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+
+    first_call = AIMessage(
+        content="", tool_calls=[{"name": "some_tool", "args": {"n": 1}, "id": "call-skip-me"}]
+    )
+    second_call = AIMessage(
+        content="", tool_calls=[{"name": "some_tool", "args": {"n": 2}, "id": "call-keep-me"}]
+    )
+    model = _ScriptedModel(responses=[first_call, second_call, AIMessage(content="Done.")])
+    agent = create_resume_agent(model=model, tools=[], subagents=[])
+
+    events = list(iter_progress_events(
+        agent,
+        {"messages": [{"role": "user", "content": "Go."}]},
+        {"recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS},
+        skip_tool_call_ids={"call-skip-me"},
+    ))
+
+    tool_calls = [e for e in events if e["kind"] == "tool_call"]
+    ids = [e["id"] for e in tool_calls]
+    assert "call-skip-me" not in ids
+    assert "call-keep-me" in ids

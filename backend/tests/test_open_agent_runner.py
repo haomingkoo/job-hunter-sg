@@ -428,6 +428,76 @@ def test_runner_resume_yields_failed_result_for_an_unknown_pause_token(monkeypat
     assert judge_calls == [], "the judge must never be invoked for a token that was never paused"
 
 
+def test_resume_suppresses_the_replayed_ask_candidate_call_and_reports_a_genuine_second_pause(monkeypatch):
+    """Regression guard for a real bug an adversarial review found: resuming
+    past an interrupted ask_candidate call replays that same AIMessage as a
+    fresh node update (LangChain's HumanInTheLoopMiddleware.after_model
+    returns the original AIMessage, tool_calls intact, for a "respond"
+    decision), which iter_progress_events can't tell apart from a genuine new
+    decision -- so without ask_candidate_call_id/skip_tool_call_ids wired
+    through, every resume double-counts the already-answered question as a
+    second paused event. This proves resuming into a SECOND, real
+    ask_candidate call yields exactly one paused event (the new one), not
+    two."""
+    import resume_agent.models as agent_models
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+
+    first_ask = AIMessage(
+        content="",
+        tool_calls=[{"name": "ask_candidate", "args": {"question": "Q1"}, "id": "call-q1"}],
+    )
+    first_runner = OpenAgentTargetAssessmentRunner(
+        model_factory=lambda: _ScriptedModel(responses=[first_ask]),
+        judge_model_factory=lambda: _ScriptedModel(responses=[_judge_call()]),
+        telemetry=RecordedTelemetry(),
+    )
+    updates = list(first_runner.run(_request()))
+    first_paused = next(
+        item for item in updates if isinstance(item, TargetAssessmentProgress) and item.status == "paused"
+    )
+    pause_token = first_paused.detail["pause_token"]
+    first_call_id = first_paused.detail["ask_candidate_call_id"]
+    assert first_call_id == "call-q1"
+
+    second_ask = AIMessage(
+        content="",
+        tool_calls=[{"name": "ask_candidate", "args": {"question": "Q2"}, "id": "call-q2"}],
+    )
+    judge_calls: list[int] = []
+
+    def _judge_model_factory():
+        judge_calls.append(1)
+        return _ScriptedModel(responses=[_judge_call(call_id="judge-call-2")])
+
+    second_runner = OpenAgentTargetAssessmentRunner(
+        model_factory=lambda: _ScriptedModel(responses=[second_ask]),
+        judge_model_factory=_judge_model_factory,
+        telemetry=RecordedTelemetry(),
+    )
+    resumed = list(second_runner.resume(
+        pause_token,
+        "Answer to Q1.",
+        _request(),
+        [],
+        "",
+        [],
+        ask_candidate_call_id=first_call_id,
+    ))
+
+    paused_events = [
+        item for item in resumed if isinstance(item, TargetAssessmentProgress) and item.status == "paused"
+    ]
+    assert len(paused_events) == 1, (
+        "expected exactly one paused event (the genuine second question), not a phantom "
+        "duplicate of the first, already-answered one"
+    )
+    assert paused_events[0].detail["question"] == "Q2"
+    assert paused_events[0].detail["ask_candidate_call_id"] == "call-q2"
+    assert not [item for item in resumed if isinstance(item, TargetAssessmentResult)]
+    assert judge_calls == [], "the judge must never run while a second question is still pending"
+
+
 def test_runner_pauses_and_yields_no_result_when_ask_candidate_interrupts(monkeypatch):
     import resume_agent.models as agent_models
 

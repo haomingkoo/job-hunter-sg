@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import uuid
+import weakref
 from dataclasses import asdict
 from datetime import datetime, timezone
 
@@ -103,6 +105,24 @@ COMPLETION_SUMMARIES = {
     "quality_judge": "The independent quality judge completed this turn.",
 }
 
+# One lock per thread_id, serializing every command against that thread so two
+# concurrent requests (e.g. a double-click answering a paused assessment, or
+# two browser tabs) can't both pass a workflow_state check-then-act before
+# either commits its transition. Weakly held so the registry doesn't grow
+# unbounded over a long-running process -- an entry disappears once nothing
+# is actively holding that thread's lock.
+_THREAD_LOCKS: "weakref.WeakValueDictionary[str, threading.Lock]" = weakref.WeakValueDictionary()
+_THREAD_LOCKS_REGISTRY_LOCK = threading.Lock()
+
+
+def _thread_lock(thread_id: str) -> threading.Lock:
+    with _THREAD_LOCKS_REGISTRY_LOCK:
+        lock = _THREAD_LOCKS.get(thread_id)
+        if lock is None:
+            lock = threading.Lock()
+            _THREAD_LOCKS[thread_id] = lock
+        return lock
+
 
 class RecruitmentTeam:
     """The sole orchestration interface used by transports, canaries, and tests."""
@@ -128,6 +148,18 @@ class RecruitmentTeam:
         self._target_assessment_runner = target_assessment_runner
 
     def execute(
+        self,
+        owner_id: int,
+        command: Command,
+        idempotency_key: str,
+    ) -> RunReceipt:
+        thread_id = getattr(command, "thread_id", None)
+        if thread_id is None:
+            return self._execute_locked(owner_id, command, idempotency_key)
+        with _thread_lock(thread_id):
+            return self._execute_locked(owner_id, command, idempotency_key)
+
+    def _execute_locked(
         self,
         owner_id: int,
         command: Command,
@@ -758,6 +790,7 @@ class RecruitmentTeam:
             list(artifact.pending_specialist_runs or []),
             artifact.pending_synthesis or "",
             list(artifact.pending_proposed_edits or []),
+            ask_candidate_call_id=facts.get("target_assessment_pause_call_id") or None,
         )
         return self._consume_target_assessment_updates(owner_id, thread, resume, run, artifact, updates)
 
@@ -826,6 +859,7 @@ class RecruitmentTeam:
                 facts = dict(thread.case_facts)
                 facts["target_assessment_status"] = "paused"
                 facts["target_assessment_pause_token"] = str(pause_detail.get("pause_token") or "")
+                facts["target_assessment_pause_call_id"] = str(pause_detail.get("ask_candidate_call_id") or "")
                 thread.case_facts = facts
                 thread.workflow_state = "awaiting_candidate_answer"
                 self._db.commit()
@@ -872,6 +906,7 @@ class RecruitmentTeam:
         facts = dict(thread.case_facts)
         facts["target_assessment_status"] = effective_status
         facts.pop("target_assessment_pause_token", None)
+        facts.pop("target_assessment_pause_call_id", None)
         thread.case_facts = facts
         self._db.commit()
 
