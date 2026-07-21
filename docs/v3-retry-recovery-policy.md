@@ -84,10 +84,20 @@ policy and recorded in the artifact:
 - maximum delay; and
 - maximum accepted `Retry-After`.
 
-The current production default remains zero transport retries until live evidence
-shows that retrying improves completion without unacceptable duplicate cost. There
-is no silent provider fallback. A fallback model is a new, explicitly identified
-run, not a retry.
+The production default is 2 transport retries (`RECRUITMENT_MODEL_TRANSPORT_RETRIES`),
+raised from zero on 2026-07-21 on direct live evidence: three back-to-back local
+runs against the real candidate-profile pipeline showed the identical
+`document_header_01` scope complete in anywhere from 2.5s to 62s with no code
+change between runs, and two heavier scopes (`summary_01`, `experience_01`) each
+failed at least once with a transport error (`APITimeoutError` at the configured
+300s ceiling, and separately an `InternalServerError` after ~600s) before
+succeeding on a later attempt. Enabling retries let `summary_01` and `skills_01`
+complete in a run where they had failed outright without retries. Retries are not
+a complete fix -- the same run still hit an `experience_01` failure after ~900s
+even with retries exhausted -- so the existing per-scope checkpoint-and-resume
+design remains the correct backstop for whatever retries don't catch. There is no
+silent provider fallback. A fallback model is a new, explicitly identified run,
+not a retry.
 
 ### 2. Semantic correction
 
