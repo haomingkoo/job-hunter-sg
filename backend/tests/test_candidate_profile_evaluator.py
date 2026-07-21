@@ -285,8 +285,15 @@ def test_cross_profile_integration_can_mark_a_cross_group_duplicate():
     assert duplicate.weaknesses == ("It repeats the same close-cycle outcome at lower specificity.",)
 
 
-def test_evaluator_propagates_transport_failure_with_stage_and_no_hidden_retry():
+def test_evaluator_propagates_transport_failure_with_stage_and_no_hidden_retry(monkeypatch):
+    import config
     from recruitment_team.telemetry import RecordedTelemetry
+
+    # This test's FailingModel double always raises immediately -- it doesn't
+    # implement real transport-retry semantics, so it can't exercise a
+    # non-zero configured value meaningfully. Pin to 0 explicitly rather than
+    # depend on whatever the global default happens to be.
+    monkeypatch.setattr(config, "RECRUITMENT_MODEL_TRANSPORT_RETRIES", 0)
 
     class FailingModel(_Model):
         def __init__(self):
