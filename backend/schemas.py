@@ -408,3 +408,10 @@ class SkillsFutureRecommendRequest(BaseModel):
 class ResumeChatRequest(BaseModel):
     messages: list = Field(..., description="Chat history: [{role: 'user'|'assistant', content: '...'}]")
     action: str = Field("chat", description="'chat' for next question, 'generate' to produce resume")
+
+
+class ClientErrorReport(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    stack: str = Field(default="", max_length=4000)
+    url: str = Field(default="", max_length=500)
+    user_agent: str = Field(default="", max_length=300)
