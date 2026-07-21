@@ -24,6 +24,7 @@ from resume_agent.telemetry import trace_key
 
 from .interface import (
     ActivityEvent,
+    AnswerAssessmentQuestion,
     AssessTargetJob,
     BuildCandidateProfile,
     CandidateProfileArtifactSnapshot,
@@ -189,6 +190,11 @@ class RecruitmentTeam:
                 resume = self._owned_resume(owner_id, thread.resume_version_id)
                 command_type = "assess_target_job"
                 message = ASSESS_TARGET_JOB_MESSAGE
+            elif isinstance(command, AnswerAssessmentQuestion):
+                thread = self._owned_thread(owner_id, command.thread_id)
+                resume = self._owned_resume(owner_id, thread.resume_version_id)
+                command_type = "answer_assessment_question"
+                message = command.answer
             else:
                 raise InvalidCommand("unsupported recruitment-team command")
 
@@ -270,6 +276,21 @@ class RecruitmentTeam:
                     # "awaiting_candidate_answer" for exactly that case, so
                     # use it to avoid crediting the judge for a turn it never
                     # ran on.
+                    completion_member = (
+                        "coordinator"
+                        if thread.workflow_state == "awaiting_candidate_answer"
+                        else "quality_judge"
+                    )
+                elif isinstance(command, AnswerAssessmentQuestion):
+                    reply, completion_detail = self._answer_assessment_question(
+                        owner_id,
+                        thread,
+                        resume,
+                        run,
+                        command.answer,
+                    )
+                    # Same reasoning as AssessTargetJob above: answering may
+                    # itself pause again on a follow-up question.
                     completion_member = (
                         "coordinator"
                         if thread.workflow_state == "awaiting_candidate_answer"
@@ -635,6 +656,23 @@ class RecruitmentTeam:
             "candidate_profile_field_count": len(candidate_profile.fields),
         }
 
+    def _target_assessment_request(
+        self,
+        thread: RecruitmentThread,
+        resume: ResumeVersion,
+        trace_key_value: str,
+    ) -> TargetAssessmentRequest:
+        from resume_document import create_resume_document
+
+        facts = thread.case_facts
+        return TargetAssessmentRequest(
+            candidate_profile=self._completed_candidate_profile(thread, resume),
+            role_profile=self._role_profile_from_dict(facts["role_success_profile"]),
+            target_job=self._job_from_dict(facts["selected_target"]),
+            trace_key=trace_key_value,
+            resume_document=create_resume_document(resume.resume_text),
+        )
+
     def _assess_target(
         self,
         owner_id: int,
@@ -644,20 +682,16 @@ class RecruitmentTeam:
     ) -> tuple[ModelReply, dict]:
         if self._target_assessment_runner is None:
             raise InvalidCommand("target assessment capability is not configured")
-        from resume_document import create_resume_document
 
-        resume_document = create_resume_document(resume.resume_text)
         facts = dict(thread.case_facts)
         if not isinstance(facts.get("selected_target"), dict):
             raise InvalidCommand("select a target job before running its assessment")
         if not isinstance(facts.get("role_success_profile"), dict):
             raise InvalidCommand("build the role success profile before running its assessment")
-        candidate_profile = self._completed_candidate_profile(thread, resume)
         candidate_profile_artifact_id = str(facts["candidate_profile_artifact_id"])
-        target = self._job_from_dict(facts["selected_target"])
-        role_profile = self._role_profile_from_dict(facts["role_success_profile"])
+        request = self._target_assessment_request(thread, resume, run.trace_key)
         target_snapshot_sha256 = hashlib.sha256(
-            json.dumps(asdict(target), sort_keys=True, separators=(",", ":")).encode()
+            json.dumps(asdict(request.target_job), sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
         artifact = TargetAssessmentArtifact(
             id=str(uuid.uuid4()),
@@ -666,7 +700,7 @@ class RecruitmentTeam:
             run_id=run.id,
             resume_version_id=resume.id,
             candidate_profile_artifact_id=candidate_profile_artifact_id,
-            target_job_id=target.job_id,
+            target_job_id=request.target_job.job_id,
             target_snapshot_sha256=target_snapshot_sha256,
             status="running",
             specialist_runs=[],
@@ -680,23 +714,73 @@ class RecruitmentTeam:
         thread.workflow_state = "assessing"
         self._db.commit()
 
+        return self._consume_target_assessment_updates(
+            owner_id, thread, resume, run, artifact, self._target_assessment_runner.run(request)
+        )
+
+    def _answer_assessment_question(
+        self,
+        owner_id: int,
+        thread: RecruitmentThread,
+        resume: ResumeVersion,
+        run: RecruitmentRun,
+        answer: str,
+    ) -> tuple[ModelReply, dict]:
+        if self._target_assessment_runner is None:
+            raise InvalidCommand("target assessment capability is not configured")
+        if thread.workflow_state != "awaiting_candidate_answer":
+            raise InvalidCommand("there is no pending assessment question to answer")
+
+        facts = dict(thread.case_facts)
+        artifact_id = facts.get("target_assessment_artifact_id")
+        pause_token = facts.get("target_assessment_pause_token")
+        if not artifact_id or not pause_token:
+            raise InvalidCommand("no paused assessment found for this thread")
+        artifact = (
+            self._db.query(TargetAssessmentArtifact)
+            .filter(
+                TargetAssessmentArtifact.id == artifact_id,
+                TargetAssessmentArtifact.user_id == owner_id,
+            )
+            .first()
+        )
+        if artifact is None:
+            raise ThreadNotFound(f"assessment artifact {artifact_id} not found")
+
+        request = self._target_assessment_request(thread, resume, run.trace_key)
+        thread.workflow_state = "assessing"
+        self._db.commit()
+
+        updates = self._target_assessment_runner.resume(
+            str(pause_token),
+            answer,
+            request,
+            list(artifact.pending_specialist_runs or []),
+            artifact.pending_synthesis or "",
+            list(artifact.pending_proposed_edits or []),
+        )
+        return self._consume_target_assessment_updates(owner_id, thread, resume, run, artifact, updates)
+
+    def _consume_target_assessment_updates(
+        self,
+        owner_id: int,
+        thread: RecruitmentThread,
+        resume: ResumeVersion,
+        run: RecruitmentRun,
+        artifact: TargetAssessmentArtifact,
+        updates,
+    ) -> tuple[ModelReply, dict]:
         result: TargetAssessmentResult | None = None
         last_progress_status: str | None = None
         pending_question = ""
+        pause_detail: dict = {}
         try:
-            for update in self._target_assessment_runner.run(
-                TargetAssessmentRequest(
-                    candidate_profile=candidate_profile,
-                    role_profile=role_profile,
-                    target_job=target,
-                    trace_key=run.trace_key,
-                    resume_document=resume_document,
-                )
-            ):
+            for update in updates:
                 if isinstance(update, TargetAssessmentProgress):
                     last_progress_status = update.status
                     if update.status == "paused":
                         pending_question = str((update.detail or {}).get("question") or "")
+                        pause_detail = update.detail or {}
                     progress_event = self._event(
                         thread,
                         run,
@@ -735,9 +819,13 @@ class RecruitmentTeam:
         if result is None:
             if last_progress_status == "paused":
                 artifact.status = "paused"
+                artifact.pending_specialist_runs = pause_detail.get("specialist_runs") or []
+                artifact.pending_synthesis = str(pause_detail.get("synthesis") or "")
+                artifact.pending_proposed_edits = pause_detail.get("proposed_edits") or []
                 artifact.updated_at = _utcnow()
                 facts = dict(thread.case_facts)
                 facts["target_assessment_status"] = "paused"
+                facts["target_assessment_pause_token"] = str(pause_detail.get("pause_token") or "")
                 thread.case_facts = facts
                 thread.workflow_state = "awaiting_candidate_answer"
                 self._db.commit()
@@ -773,6 +861,9 @@ class RecruitmentTeam:
         artifact.status = effective_status
         artifact.specialist_runs = list(result.specialist_runs) if effective_status == "completed" else []
         artifact.synthesis = result.synthesis if effective_status == "completed" else ""
+        artifact.pending_specialist_runs = None
+        artifact.pending_synthesis = None
+        artifact.pending_proposed_edits = None
         artifact.judge = result.judge
         artifact.correction = result.correction
         artifact.error = effective_error
@@ -780,6 +871,7 @@ class RecruitmentTeam:
         artifact.updated_at = _utcnow()
         facts = dict(thread.case_facts)
         facts["target_assessment_status"] = effective_status
+        facts.pop("target_assessment_pause_token", None)
         thread.case_facts = facts
         self._db.commit()
 

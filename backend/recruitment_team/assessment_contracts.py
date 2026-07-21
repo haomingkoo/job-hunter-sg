@@ -67,15 +67,43 @@ TargetAssessmentUpdate = TargetAssessmentProgress | TargetAssessmentResult
 class TargetAssessmentRunner(Protocol):
     def run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]: ...
 
+    def resume(
+        self,
+        pause_token: str,
+        answer: str,
+        request: TargetAssessmentRequest,
+        specialist_runs: list[dict],
+        synthesis: str,
+        proposed_edits: list[dict],
+    ) -> Iterator[TargetAssessmentUpdate]: ...
+
 
 class ScriptedTargetAssessmentRunner:
-    def __init__(self, updates: list[TargetAssessmentUpdate]):
+    def __init__(
+        self,
+        updates: list[TargetAssessmentUpdate],
+        resume_updates: list[TargetAssessmentUpdate] | None = None,
+    ):
         self._updates = tuple(updates)
+        self._resume_updates = tuple(resume_updates) if resume_updates is not None else ()
         self.call_count = 0
+        self.resume_calls: list[tuple[str, str]] = []
 
     def run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]:
         self.call_count += 1
         yield from self._updates
+
+    def resume(
+        self,
+        pause_token: str,
+        answer: str,
+        request: TargetAssessmentRequest,
+        specialist_runs: list[dict],
+        synthesis: str,
+        proposed_edits: list[dict],
+    ) -> Iterator[TargetAssessmentUpdate]:
+        self.resume_calls.append((pause_token, answer))
+        yield from self._resume_updates
 
 
 class SpecialistSubmission(BaseModel):

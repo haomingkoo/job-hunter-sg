@@ -32,6 +32,7 @@ from .errors import (
     TargetAssessmentUnavailable,
 )
 from .interface import (
+    AnswerAssessmentQuestion,
     BuildCandidateProfile,
     AssessTargetJob,
     SearchJobs,
@@ -68,6 +69,11 @@ class SearchJobsRequest(BaseModel):
 
 
 class JobActionRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class AnswerAssessmentQuestionRequest(BaseModel):
+    answer: str = Field(min_length=1)
     idempotency_key: str = Field(min_length=1, max_length=200)
 
 
@@ -381,6 +387,68 @@ def stream_target_assessment(
             ),
             user.id,
             AssessTargetJob(thread_id=thread_id),
+            body.idempotency_key,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@router.post("/threads/{thread_id}/assessment/answer")
+def answer_assessment_question(
+    thread_id: str,
+    body: AnswerAssessmentQuestionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    conversation_model: ConversationModel = Depends(get_conversation_model),
+    discovery: DiscoveryPort = Depends(get_job_discovery),
+    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+    target_assessment_runner: TargetAssessmentRunner = Depends(get_target_assessment_runner),
+):
+    try:
+        return asdict(
+            _team(
+                db,
+                conversation_model,
+                discovery,
+                role_profiler,
+                telemetry,
+                target_assessment_runner=target_assessment_runner,
+            ).execute(
+                user.id,
+                AnswerAssessmentQuestion(thread_id=thread_id, answer=body.answer),
+                body.idempotency_key,
+            )
+        )
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.post("/threads/{thread_id}/assessment/answer/stream")
+def stream_answer_assessment_question(
+    thread_id: str,
+    body: AnswerAssessmentQuestionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    conversation_model: ConversationModel = Depends(get_conversation_model),
+    discovery: DiscoveryPort = Depends(get_job_discovery),
+    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+    target_assessment_runner: TargetAssessmentRunner = Depends(get_target_assessment_runner),
+):
+    return StreamingResponse(
+        stream_command(
+            _streaming_team_factory(
+                db,
+                conversation_model,
+                discovery,
+                role_profiler,
+                telemetry,
+                target_assessment_runner=target_assessment_runner,
+            ),
+            user.id,
+            AnswerAssessmentQuestion(thread_id=thread_id, answer=body.answer),
             body.idempotency_key,
         ),
         media_type="text/event-stream",

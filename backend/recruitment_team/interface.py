@@ -50,8 +50,21 @@ class AssessTargetJob:
     thread_id: str
 
 
+@dataclass(frozen=True)
+class AnswerAssessmentQuestion:
+    thread_id: str
+    answer: str
+
+
 Command = (
-    StartThread | SendMessage | BuildCandidateProfile | SearchJobs | ShortlistJob | SelectTargetJob | AssessTargetJob
+    StartThread
+    | SendMessage
+    | BuildCandidateProfile
+    | SearchJobs
+    | ShortlistJob
+    | SelectTargetJob
+    | AssessTargetJob
+    | AnswerAssessmentQuestion
 )
 
 

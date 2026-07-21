@@ -1637,6 +1637,144 @@ def test_paused_target_assessment_does_not_raise_and_awaits_the_candidate():
     assert run_completed_event.summary == "The coordinator completed this turn."
 
 
+def test_answering_the_assessment_question_resumes_and_completes_it():
+    from models import TargetAssessmentArtifact
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.interface import (
+        AnswerAssessmentQuestion,
+        AssessTargetJob,
+        BuildCandidateProfile,
+        SearchJobs,
+        SelectTargetJob,
+        StartThread,
+    )
+    from recruitment_team.assessment_contracts import (
+        ScriptedTargetAssessmentRunner,
+        TargetAssessmentProgress,
+        TargetAssessmentResult,
+        target_assessment_execution_policy,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery([JobSearchResult("agent systems", (job,), 1, 1, False, False)])
+    runner = ScriptedTargetAssessmentRunner(
+        [
+            TargetAssessmentProgress(
+                team_member="coordinator",
+                status="paused",
+                summary="Run paused: waiting on the candidate to answer a question.",
+                detail={
+                    "question": "How large was the team you led?",
+                    "pause_token": "pause-token-abc",
+                    "specialist_runs": [{"persona_id": "recruiter", "status": "completed", "submission": {}}],
+                    "synthesis": "",
+                    "proposed_edits": [],
+                },
+            ),
+        ],
+        resume_updates=[
+            TargetAssessmentResult(
+                status="completed",
+                specialist_runs=({"persona_id": "recruiter", "status": "completed", "submission": {}},),
+                synthesis="Consulted the recruiter; candidate confirmed the team size.",
+                judge={"disposition": "pass", "score": 90},
+                correction=None,
+                error=None,
+                execution_policy=target_assessment_execution_policy(),
+            ),
+        ],
+    )
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            discovery,
+            _role_profiler([_role_profile_run(job.job_id)]),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([_candidate_profile_run()]),
+            runner,
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "answer-start",
+        )
+        team.execute(owner_id, BuildCandidateProfile(started.thread_id), "answer-profile")
+        team.execute(owner_id, SearchJobs(started.thread_id, "agent systems"), "answer-search")
+        team.execute(owner_id, SelectTargetJob(started.thread_id, job.job_id), "answer-select")
+        team.execute(owner_id, AssessTargetJob(started.thread_id), "answer-run")
+
+        team.execute(
+            owner_id,
+            AnswerAssessmentQuestion(started.thread_id, "Led a team of 12 engineers."),
+            "answer-reply",
+        )
+
+        artifact = team.target_assessment(owner_id, started.thread_id)
+        snapshot = team.snapshot(owner_id, started.thread_id)
+        row = db.query(TargetAssessmentArtifact).filter(TargetAssessmentArtifact.id == artifact.artifact_id).one()
+
+    assert runner.resume_calls == [("pause-token-abc", "Led a team of 12 engineers.")]
+    assert snapshot.workflow_state == "assessment_ready"
+    assert snapshot.case_facts.target_assessment_status == "completed"
+    assert artifact.status == "completed"
+    assert artifact.synthesis == "Consulted the recruiter; candidate confirmed the team size."
+    # The pending-state columns exist only to survive the pause -- once the
+    # assessment actually completes they must not linger.
+    assert row.pending_specialist_runs is None
+    assert row.pending_synthesis is None
+    assert row.pending_proposed_edits is None
+
+
+def test_answering_without_a_pending_question_is_rejected():
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import ScriptedDiscovery
+    from recruitment_team.errors import InvalidCommand
+    from recruitment_team.interface import AnswerAssessmentQuestion, StartThread
+    from recruitment_team.assessment_contracts import ScriptedTargetAssessmentRunner
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            ScriptedDiscovery([]),
+            _role_profiler([]),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([]),
+            ScriptedTargetAssessmentRunner([]),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "no-pause-start",
+        )
+
+        try:
+            team.execute(
+                owner_id,
+                AnswerAssessmentQuestion(started.thread_id, "An answer nobody asked for."),
+                "no-pause-answer",
+            )
+            assert False, "expected InvalidCommand when there is no pending assessment question"
+        except InvalidCommand:
+            pass
+
+
 def _role_definition_submission(
     source_id="target_job:101",
     *,

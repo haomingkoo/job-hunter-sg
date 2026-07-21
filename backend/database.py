@@ -177,14 +177,30 @@ def _apply_lightweight_migrations() -> None:
             if idx_name not in usage_indexes:
                 statements.append(idx_sql)
 
-    # Widen jd_summary_status if it was created as VARCHAR(30) (too short for model names)
-    summary_status_column = next(
-        (column for column in inspector.get_columns("scraped_jobs") if column["name"] == "jd_summary_status"),
-        None,
-    )
-    summary_status_length = getattr(summary_status_column["type"], "length", None) if summary_status_column else None
-    if summary_status_length is not None and summary_status_length < 100:
-        statements.append("ALTER TABLE scraped_jobs ALTER COLUMN jd_summary_status TYPE VARCHAR(100)")
+    # target_assessment_artifacts: pending-state columns for resuming a paused
+    # (ask_candidate) run with the candidate's answer
+    if "target_assessment_artifacts" in inspector.get_table_names():
+        assessment_columns = {col["name"] for col in inspector.get_columns("target_assessment_artifacts")}
+        if "pending_specialist_runs" not in assessment_columns:
+            statements.append("ALTER TABLE target_assessment_artifacts ADD COLUMN pending_specialist_runs JSON")
+        if "pending_synthesis" not in assessment_columns:
+            statements.append("ALTER TABLE target_assessment_artifacts ADD COLUMN pending_synthesis TEXT")
+        if "pending_proposed_edits" not in assessment_columns:
+            statements.append("ALTER TABLE target_assessment_artifacts ADD COLUMN pending_proposed_edits JSON")
+
+    # Widen jd_summary_status if it was created as VARCHAR(30) (too short for
+    # model names). SQLite's ALTER TABLE has no "change column type"
+    # operation -- this only runs against Postgres, which does.
+    if not DATABASE_URL.startswith("sqlite"):
+        summary_status_column = next(
+            (column for column in inspector.get_columns("scraped_jobs") if column["name"] == "jd_summary_status"),
+            None,
+        )
+        summary_status_length = (
+            getattr(summary_status_column["type"], "length", None) if summary_status_column else None
+        )
+        if summary_status_length is not None and summary_status_length < 100:
+            statements.append("ALTER TABLE scraped_jobs ALTER COLUMN jd_summary_status TYPE VARCHAR(100)")
 
     if not statements:
         return

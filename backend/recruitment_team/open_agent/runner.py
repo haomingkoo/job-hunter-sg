@@ -6,14 +6,16 @@ reporting built on Task 9's verified streaming mechanism."""
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
 from dataclasses import asdict
 from types import SimpleNamespace
 from typing import Iterator
 
 from langchain_core.tools import tool
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.errors import GraphRecursionError
+from langgraph.types import Command
 
 import config
 from resume_agent.agent import create_resume_agent
@@ -59,6 +61,15 @@ def guarded_search_jobs(query: str, n: int | None = None, detail: bool = False) 
     return result
 
 
+# A durable checkpointer so an ask_candidate pause survives a process
+# restart and can be resumed by any worker, not just the one that hit the
+# pause -- LangGraph's own persistence, not a hand-rolled process-local
+# cache. SqliteSaver manages its own internal lock for concurrent access.
+_checkpointer_conn = sqlite3.connect(config.OPEN_AGENT_CHECKPOINT_DB_PATH, check_same_thread=False)
+_CHECKPOINTER = SqliteSaver(_checkpointer_conn)
+_CHECKPOINTER.setup()
+
+
 class OpenAgentTargetAssessmentRunner:
     """Open-ended replacement for NativeTargetAssessmentRunner."""
 
@@ -81,20 +92,22 @@ class OpenAgentTargetAssessmentRunner:
         self._telemetry = telemetry or OpenTelemetryRecorder()
         self._registry = persona_registry or load_persona_pack_registry()
 
+    def _build_agent(self, orchestrator_model):
+        persona_subagents = create_target_persona_subagents(self._registry, orchestrator_model)
+        return create_resume_agent(
+            model=orchestrator_model,
+            tools=[read_candidate_evidence, read_target_job, guarded_search_jobs, propose_resume_edit, ask_candidate],
+            subagents=persona_subagents,
+            checkpointer=_CHECKPOINTER,
+            interrupt_on={"ask_candidate": True},
+        )
+
     def run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]:
         yield TargetAssessmentProgress(
             team_member="coordinator", status="running", summary="Open-agent run started.", detail={}
         )
 
-        orchestrator_model = self._model_factory()
-        persona_subagents = create_target_persona_subagents(self._registry, orchestrator_model)
-        agent = create_resume_agent(
-            model=orchestrator_model,
-            tools=[read_candidate_evidence, read_target_job, guarded_search_jobs, propose_resume_edit, ask_candidate],
-            subagents=persona_subagents,
-            checkpointer=MemorySaver(),
-            interrupt_on={"ask_candidate": True},
-        )
+        agent = self._build_agent(self._model_factory())
         payload = {"messages": [{
             "role": "user",
             "content": (
@@ -109,11 +122,73 @@ class OpenAgentTargetAssessmentRunner:
             "recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS,
             "configurable": {"thread_id": str(uuid.uuid4())},
         }
+        yield from self._drive(agent, payload, run_config, request, specialist_runs=[], synthesis="")
 
-        specialist_runs: list[dict] = []
-        synthesis = ""
+    def resume(
+        self,
+        pause_token: str,
+        answer: str,
+        request: TargetAssessmentRequest,
+        specialist_runs: list[dict],
+        synthesis: str,
+        proposed_edits: list[dict],
+    ) -> Iterator[TargetAssessmentUpdate]:
+        """Continue a paused run. The live agent object from the original
+        `run()` call is long gone (a fresh runner/request handles every HTTP
+        call) -- what makes this a real continuation, not a new run, is the
+        durable checkpointer: rebuilding an equivalent agent bound to the same
+        checkpointer and the same thread_id (`pause_token`) reattaches
+        LangGraph's own persisted conversation state. `specialist_runs`/
+        `synthesis`/`proposed_edits` accumulated before the pause come from
+        the caller (persisted on the TargetAssessmentArtifact row) because
+        they live only in this module's stream parsing, not in anything the
+        checkpointer stores -- see Task 1's finding that a persona subagent's
+        own submission never appears in the parent's own checkpointed state.
+        """
+        agent = self._build_agent(self._model_factory())
+        run_config = {
+            "recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS,
+            "configurable": {"thread_id": pause_token},
+        }
+        if not agent.get_state(run_config).interrupts:
+            yield TargetAssessmentResult(
+                status="failed",
+                specialist_runs=(),
+                synthesis="",
+                judge=None,
+                correction=None,
+                error={
+                    "failure_type": "workflow",
+                    "error_type": "PauseTokenNotFound",
+                    "retryable": False,
+                },
+                execution_policy=target_assessment_execution_policy(),
+            )
+            return
+        payload = Command(resume={"decisions": [{"type": "respond", "message": answer}]})
+        yield from self._drive(
+            agent,
+            payload,
+            run_config,
+            request,
+            specialist_runs=list(specialist_runs),
+            synthesis=synthesis,
+            initial_edits=list(proposed_edits),
+        )
+
+    def _drive(
+        self,
+        agent,
+        payload,
+        run_config: dict,
+        request: TargetAssessmentRequest,
+        *,
+        specialist_runs: list[dict],
+        synthesis: str,
+        initial_edits: list[dict] | None = None,
+    ) -> Iterator[TargetAssessmentUpdate]:
         pending_question: str | None = None
-        with context.assessment_context(request):
+        with context.assessment_context(request, initial_edits=initial_edits):
             try:
                 for event in iter_progress_events(agent, payload, run_config):
                     if event["kind"] == "tool_call":
@@ -169,7 +244,17 @@ class OpenAgentTargetAssessmentRunner:
                     team_member="coordinator",
                     status="paused",
                     summary="Run paused: waiting on the candidate to answer a question.",
-                    detail={"question": pending_question},
+                    detail={
+                        "question": pending_question,
+                        "pause_token": run_config["configurable"]["thread_id"],
+                        # Carried by the caller onto the artifact row so a
+                        # later resume() call can seed them back in -- this
+                        # module has no durable storage of its own for
+                        # anything the checkpointer itself doesn't persist.
+                        "specialist_runs": specialist_runs,
+                        "synthesis": synthesis,
+                        "proposed_edits": list(edits),
+                    },
                 )
                 return
 

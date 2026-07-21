@@ -63,6 +63,7 @@ export default function RecruitmentTeamPanel({ user }) {
     () => resumeVersions.find((resume) => String(resume.id) === String(resumeVersionId)),
     [resumeVersionId, resumeVersions],
   );
+  const awaitingAnswer = snapshot?.workflow_state === "awaiting_candidate_answer";
   const recommendations = snapshot?.case_facts?.recommendations || [];
   const shortlistedJobs = snapshot?.case_facts?.shortlisted_jobs || [];
   const displayedJobs = [
@@ -270,6 +271,28 @@ export default function RecruitmentTeamPanel({ user }) {
     }
   }
 
+  async function answerAssessmentQuestion(event) {
+    event.preventDefault();
+    const answer = message.trim();
+    if (!threadId || !answer || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await streamRecruitmentCommand(
+        `/api/recruitment-team/threads/${threadId}/assessment/answer/stream`,
+        { answer, idempotency_key: globalThis.crypto.randomUUID() },
+        appendActivity,
+      );
+      setMessage("");
+      await refreshThread(threadId);
+    } catch (answerError) {
+      setError(answerError.message);
+      await refreshThread(threadId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function updateJob(path) {
     if (busy) return;
     setBusy(true);
@@ -343,12 +366,21 @@ export default function RecruitmentTeamPanel({ user }) {
           </div>
 
           {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
-          <form onSubmit={submit} className="mt-4 flex items-end gap-2">
+          {awaitingAnswer && (
+            <p className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              The assessment paused on a question above -- answer it below to continue.
+            </p>
+          )}
+          <form onSubmit={awaitingAnswer ? answerAssessmentQuestion : submit} className="mt-4 flex items-end gap-2">
             <textarea
               value={message}
               onChange={(event) => setMessage(event.target.value)}
               rows={2}
-              placeholder="Describe your target role, constraints, or follow-up..."
+              placeholder={
+                awaitingAnswer
+                  ? "Answer the assessment's question..."
+                  : "Describe your target role, constraints, or follow-up..."
+              }
               className="min-h-12 flex-1 resize-y rounded-2xl border border-[#BDDDFC] px-4 py-3 text-sm text-[#384959] focus:outline-none focus:ring-2 focus:ring-[#88BDF2]"
             />
             <button
@@ -357,9 +389,9 @@ export default function RecruitmentTeamPanel({ user }) {
               className="inline-flex h-12 items-center gap-2 rounded-2xl bg-[#384959] px-4 text-sm font-semibold text-white disabled:opacity-40"
             >
               <Send size={15} />
-              {busy ? "Working" : "Send"}
+              {busy ? "Working" : awaitingAnswer ? "Send answer" : "Send"}
             </button>
-            {threadId && (
+            {!awaitingAnswer && threadId && (
               <button
                 type="button"
                 onClick={searchCurrentJobs}
@@ -369,7 +401,7 @@ export default function RecruitmentTeamPanel({ user }) {
                 Search jobs
               </button>
             )}
-            {threadId && (
+            {!awaitingAnswer && threadId && (
               <button
                 type="button"
                 onClick={studyResume}

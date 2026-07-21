@@ -312,6 +312,122 @@ def test_runner_still_reaches_a_judged_result_when_the_iteration_cap_is_hit(monk
     assert result.judge["disposition"] == "pass"
 
 
+def test_runner_resume_carries_forward_specialist_runs_and_proposed_edits_from_before_the_pause(monkeypatch):
+    """The pause and the resume happen on two entirely separate runner (and
+    model) instances, mirroring two separate HTTP requests in production --
+    proving the durable SqliteSaver checkpointer, not any shared in-memory
+    object, is what makes this a real continuation."""
+    import resume_agent.models as agent_models
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+
+    delegate_call = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "task",
+            "args": {"description": "Review as the recruiter.", "subagent_type": "recruiter"},
+            "id": "call-1",
+        }],
+    )
+    submit_call = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "submit_target_specialist_assessment",
+            "args": _valid_specialist_args("recruiter", "Strong hands-on leadership evidence.", 82),
+            "id": "submit-1",
+        }],
+    )
+    persona_final = AIMessage(content="Recruiter assessment complete.")
+    propose_call = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "propose_resume_edit",
+            "args": {"block_id": "b1", "rewrite": "Led a team of 12 engineers."},
+            "id": "call-2",
+        }],
+    )
+    ask_call = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "ask_candidate",
+            "args": {"question": "How large was the team you led?"},
+            "id": "call-3",
+        }],
+    )
+    orchestrator_model = _ScriptedModel(
+        responses=[delegate_call, submit_call, persona_final, propose_call, ask_call]
+    )
+
+    first_runner = OpenAgentTargetAssessmentRunner(
+        model_factory=lambda: orchestrator_model,
+        judge_model_factory=lambda: _ScriptedModel(responses=[_judge_call()]),
+        telemetry=RecordedTelemetry(),
+    )
+    updates = list(first_runner.run(_request()))
+    paused = next(
+        item for item in updates if isinstance(item, TargetAssessmentProgress) and item.status == "paused"
+    )
+    pause_token = paused.detail["pause_token"]
+    assert pause_token
+    assert len(paused.detail["specialist_runs"]) == 1
+    assert paused.detail["specialist_runs"][0]["persona_id"] == "recruiter"
+    assert len(paused.detail["proposed_edits"]) == 1
+    assert paused.detail["proposed_edits"][0]["block_id"] == "b1"
+
+    final_reply = AIMessage(
+        content="Consulted the recruiter persona and proposed one rewrite; candidate confirmed the team size."
+    )
+    second_runner = OpenAgentTargetAssessmentRunner(
+        model_factory=lambda: _ScriptedModel(responses=[final_reply]),
+        judge_model_factory=lambda: _ScriptedModel(responses=[_judge_call(call_id="judge-call-2")]),
+        telemetry=RecordedTelemetry(),
+    )
+    resumed = list(second_runner.resume(
+        pause_token,
+        "Led a team of 12 engineers.",
+        _request(),
+        list(paused.detail["specialist_runs"]),
+        paused.detail["synthesis"],
+        list(paused.detail["proposed_edits"]),
+    ))
+    result = next(item for item in resumed if isinstance(item, TargetAssessmentResult))
+    assert result.status == "completed"
+    assert len(result.specialist_runs) == 1
+    assert result.specialist_runs[0]["persona_id"] == "recruiter"
+    assert len(result.proposed_edits) == 1
+    assert result.proposed_edits[0]["block_id"] == "b1"
+    assert result.synthesis == (
+        "Consulted the recruiter persona and proposed one rewrite; candidate confirmed the team size."
+    )
+
+
+def test_runner_resume_yields_failed_result_for_an_unknown_pause_token(monkeypatch):
+    import resume_agent.models as agent_models
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+
+    judge_calls: list[int] = []
+
+    def _judge_model_factory():
+        judge_calls.append(1)
+        return _ScriptedModel(responses=[_judge_call()])
+
+    runner = OpenAgentTargetAssessmentRunner(
+        model_factory=lambda: _ScriptedModel(responses=[AIMessage(content="unused")]),
+        judge_model_factory=_judge_model_factory,
+        telemetry=RecordedTelemetry(),
+    )
+
+    updates = list(runner.resume("token-nobody-ever-paused-on", "some answer", _request(), [], "", []))
+
+    assert len(updates) == 1
+    result = updates[0]
+    assert isinstance(result, TargetAssessmentResult)
+    assert result.status == "failed"
+    assert result.error["error_type"] == "PauseTokenNotFound"
+    assert judge_calls == [], "the judge must never be invoked for a token that was never paused"
+
+
 def test_runner_pauses_and_yields_no_result_when_ask_candidate_interrupts(monkeypatch):
     import resume_agent.models as agent_models
 

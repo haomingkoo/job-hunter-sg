@@ -494,6 +494,14 @@ class TargetAssessmentArtifact(Base):
     correction: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     execution_policy: Mapped[dict] = mapped_column(JSON, nullable=False)
+    # Internal-only bookkeeping for an ask_candidate pause: what the open
+    # agent had accumulated before pausing, so a later answer can resume with
+    # it. Never exposed on TargetAssessmentArtifactSnapshot / the public API --
+    # only specialist_runs/synthesis above (gated on status == "completed")
+    # are ever served.
+    pending_specialist_runs: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    pending_synthesis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pending_proposed_edits: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
 

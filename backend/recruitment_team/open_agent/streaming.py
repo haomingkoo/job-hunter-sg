@@ -26,7 +26,7 @@ from __future__ import annotations
 from typing import Any, Iterator
 
 
-def iter_progress_events(agent: Any, payload: dict, run_config: dict) -> Iterator[dict]:
+def iter_progress_events(agent: Any, payload: Any, run_config: dict) -> Iterator[dict]:
     """Yield one normalized event per meaningful message anywhere in the run,
     at the top level (team_member="coordinator") or inside a delegated
     persona subagent (team_member=<persona_id>, learned from that subagent's

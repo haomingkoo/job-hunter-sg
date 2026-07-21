@@ -87,6 +87,10 @@ SMART_MIN_MAX_TOKENS: int = _int_env("SMART_MIN_MAX_TOKENS", 3000)
 # ── Resume deep-agent v2 knobs ───────────────────────────────────────────────
 AGENT_MAX_TOOL_ITERATIONS: int = _positive_int_env("AGENT_MAX_TOOL_ITERATIONS", 20)
 OPEN_AGENT_MAX_PROPOSED_EDITS: int = _positive_int_env("OPEN_AGENT_MAX_PROPOSED_EDITS", 8)
+# Durable LangGraph checkpoint store, so an ask_candidate pause survives a
+# process restart and can be resumed from any worker, not just the one that
+# hit the pause.
+OPEN_AGENT_CHECKPOINT_DB_PATH: str = os.getenv("OPEN_AGENT_CHECKPOINT_DB_PATH", "open_agent_checkpoints.db")
 AGENT_PERSONA_VALIDATION_ATTEMPTS: int = _positive_int_env(
     "AGENT_PERSONA_VALIDATION_ATTEMPTS",
     2,

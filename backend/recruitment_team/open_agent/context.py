@@ -25,10 +25,20 @@ _tool_call_history: ContextVar[list[Any] | None] = ContextVar(
 
 
 @contextmanager
-def assessment_context(request: TargetAssessmentRequest) -> Iterator[None]:
+def assessment_context(
+    request: TargetAssessmentRequest,
+    *,
+    initial_edits: list[dict[str, Any]] | None = None,
+) -> Iterator[None]:
+    """`initial_edits` lets a resumed run (after an `ask_candidate` pause)
+    carry forward edits proposed before the pause, since each `with` block
+    otherwise starts this fresh. The no-repeat-call guardrail's memory is
+    not carried forward the same way -- it resets on resume, a deliberate,
+    low-stakes gap (worst case: one call the guardrail would have rejected
+    re-executes)."""
     request_token = _current_request.set(request)
     document_token = _current_document.set(request.resume_document)
-    edits_token = _proposed_edits.set([])
+    edits_token = _proposed_edits.set(initial_edits if initial_edits is not None else [])
     history_token = _tool_call_history.set([])
     try:
         yield
