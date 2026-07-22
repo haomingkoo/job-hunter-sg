@@ -23,7 +23,11 @@ from .agent import create_resume_agent, run_agent_turn
 from .judge import judge_assessment
 from .models import ResumeAgentConfigurationError
 from .personas import iter_persona_worker_runs
-from .prompts import assessment_presentation_violations, synthesis_score_context
+from .prompts import (
+    assessment_presentation_violation_snippets,
+    assessment_presentation_violations,
+    synthesis_score_context,
+)
 from .tooling import SYNTHESIS_TOOLS
 from .tracing import ToolSpanRecorder
 from .telemetry import trace_key, traced_events
@@ -762,10 +766,24 @@ def _stream_chat_events(
                     "session_id": session_id,
                     "message": "Correcting evidence issues found by the quality check",
                 }
-                revision_prompt = "\n\n".join((
+                violation_snippets = assessment_presentation_violation_snippets(
+                    final_assessment
+                )
+                revision_instruction = (
                     "Revise your immediately preceding assessment using the quality feedback. "
                     "Correct factual, evidence, attribution, consensus, and placeholder issues. "
-                    "Preserve the required section order and deterministic reviewer score.",
+                    "Preserve the required section order and deterministic reviewer score."
+                )
+                if violation_snippets:
+                    quoted = "; ".join(
+                        f'{name}: "{snippet}"' for name, snippet in violation_snippets
+                    )
+                    revision_instruction += (
+                        f" Remove these exact policy-violating fragments entirely -- do not "
+                        f"rephrase them into another example, hypothetical figure, or placeholder: {quoted}."
+                    )
+                revision_prompt = "\n\n".join((
+                    revision_instruction,
                     xml_data_block("failed_assessment_data", final_assessment),
                     xml_data_block(
                         "quality_feedback_data",

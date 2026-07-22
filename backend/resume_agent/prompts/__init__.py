@@ -4,6 +4,7 @@ from .judge import JUDGE_WEAKNESS_CATEGORIES, build_judge_system_prompt
 from .orchestrator import ORCHESTRATOR_SYSTEM_PROMPT, synthesis_score_context
 from .policy import (
     FAIRNESS_AND_ANTI_FABRICATION_GUARDRAILS,
+    assessment_presentation_violation_snippets,
     assessment_presentation_violations,
 )
 from .reviewers import (
@@ -24,5 +25,6 @@ __all__ = [
     "build_judge_system_prompt",
     "build_reviewer_system_prompt",
     "assessment_presentation_violations",
+    "assessment_presentation_violation_snippets",
     "synthesis_score_context",
 ]
