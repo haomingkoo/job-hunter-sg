@@ -109,6 +109,57 @@ describe("RecruitmentTeamPanel", () => {
     );
   });
 
+  it("starts a new conversation without resurrecting the old thread on the next render", async () => {
+    let threadsFetchCount = 0;
+    streamRecruitmentCommand.mockImplementation(async () => (
+      { thread_id: "thread-1", run_id: "run-1", status: "completed" }
+    ));
+    apiFetch.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/resume/versions") {
+        return response([{ id: 7, label: "AI resume", is_master: true }]);
+      }
+      if (path === "/api/recruitment-team/threads" && !options.method) {
+        threadsFetchCount += 1;
+        return response([]);
+      }
+      if (path === "/api/recruitment-team/threads/thread-1") {
+        return response({
+          thread_id: "thread-1",
+          workflow_state: "exploring",
+          case_facts: { resume_label: "AI resume" },
+          messages: [{ role: "assistant", content: "I will focus on evidence-backed matches." }],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-1/events") return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => {
+      root.render(<RecruitmentTeamPanel user={{ id: 42 }} />);
+    });
+
+    const textarea = container.querySelector("textarea");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")
+        .set.call(textarea, "Find roles for me.");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      textarea.closest("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(container.textContent).toContain("I will focus on evidence-backed matches.");
+    expect(localStorage.getItem("jobhunter:recruitment-thread:42")).toBe("thread-1");
+    const fetchesBeforeReset = threadsFetchCount;
+
+    const newConversationButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Start new conversation");
+    await act(async () => newConversationButton.click());
+
+    expect(localStorage.getItem("jobhunter:recruitment-thread:42")).toBeNull();
+    expect(container.textContent).not.toContain("I will focus on evidence-backed matches.");
+    expect(container.textContent).toContain("Tell the team what kind of work you want next.");
+    expect(threadsFetchCount).toBe(fetchesBeforeReset);
+  });
+
   it("discovers the latest owned thread without a browser pointer", async () => {
     apiFetch.mockImplementation(async (path) => {
       if (path === "/api/resume/versions") return response([]);
