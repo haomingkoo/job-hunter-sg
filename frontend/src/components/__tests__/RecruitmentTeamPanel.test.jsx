@@ -498,4 +498,109 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).toContain("one targeted correction was judged independently");
     expect(container.textContent).toContain("no fallback model · no content truncation");
   });
+
+  it("hands off a completed target assessment to a resume-agent session", async () => {
+    sessionStorage.clear();
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-handoff");
+    let assessed = false;
+    const roleProfile = {
+      criteria: [],
+      candidate_evidence: [],
+      cited_resume_evidence: [],
+      sources: [],
+      source_coverage: { taxonomy_match_quality: "unmatched" },
+    };
+    streamRecruitmentCommand.mockImplementation(async (_path, _body, onActivity) => {
+      onActivity({
+        sequence: 4,
+        team_member: "recruiter",
+        status: "completed",
+        summary: "Recruiter screen completed.",
+      });
+      assessed = true;
+      return { thread_id: "thread-handoff", status: "completed" };
+    });
+    const handoffCalls = [];
+    apiFetch.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-handoff") {
+        return response({
+          thread_id: "thread-handoff",
+          workflow_state: assessed ? "assessment_ready" : "target_selected",
+          case_facts: {
+            selected_target: { job_id: 101 },
+            role_success_profile: roleProfile,
+            target_assessment_artifact_id: assessed ? "assessment-1" : null,
+          },
+          messages: [],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-handoff/events") {
+        return response([]);
+      }
+      if (path === "/api/recruitment-team/threads/thread-handoff/assessment") {
+        return response({
+          artifact_id: "assessment-1",
+          status: "completed",
+          specialist_runs: [],
+          synthesis: "Evidence-grounded target assessment.",
+          judge: {
+            disposition: "pass",
+            score: 92,
+            confidence: 90,
+            score_reason: "reason",
+            confidence_reason: "reason",
+            strengths: [],
+            weaknesses: [],
+            evidence_gaps: [],
+            rubric_scores: {},
+            deductions: [],
+          },
+          correction: { attempted: false },
+          execution_policy: {
+            persona_pack_version: "recruitment-personas-v1",
+            specialist_max_concurrency: 5,
+            specialist_validation_attempts: 2,
+            synthesis_validation_attempts: 2,
+            judge_validation_attempts: 2,
+            transport_retries: 0,
+          },
+        });
+      }
+      if (
+        path === "/api/recruitment-team/threads/thread-handoff/resume-agent-handoff" &&
+        options.method === "POST"
+      ) {
+        handoffCalls.push({ path, options });
+        return response({ session_id: "resume-agent-session-9", status: "queued" });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    const setActiveTab = vi.fn();
+    await act(async () => {
+      root.render(<RecruitmentTeamPanel user={{ id: 42 }} setActiveTab={setActiveTab} />);
+    });
+
+    expect(
+      [...container.querySelectorAll("button")].some((button) =>
+        button.textContent.includes("Draft resume edits for this job"),
+      ),
+    ).toBe(false);
+
+    const assessButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Run assessment");
+    await act(async () => assessButton.click());
+
+    const handoffButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Draft resume edits for this job"));
+    expect(handoffButton).not.toBeUndefined();
+
+    await act(async () => handoffButton.click());
+
+    expect(handoffCalls).toHaveLength(1);
+    expect(sessionStorage.getItem("jh_resume_agent_session")).toBe("resume-agent-session-9");
+    expect(sessionStorage.getItem("jh_resume_agent_autoopen")).toBe("1");
+    expect(setActiveTab).toHaveBeenCalledWith("resume");
+  });
 });

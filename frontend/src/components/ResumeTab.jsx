@@ -357,7 +357,17 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [activeSuggestionHint, setActiveSuggestionHint] = useState(null);
   const [selectedInjectKeyword, setSelectedInjectKeyword] = useState(null);
   const chatEndRef = useRef(null);
-  const [editorMode, setEditorMode] = useState("classic");
+  const [editorMode, setEditorMode] = useState(() => {
+    try {
+      if (sessionStorage.getItem("jh_resume_agent_autoopen")) {
+        sessionStorage.removeItem("jh_resume_agent_autoopen");
+        return "agent";
+      }
+    } catch {
+      // ignore
+    }
+    return "classic";
+  });
   const [agentInput, setAgentInput] = useState("");
   const [agentProfileContext, setAgentProfileContext] = useState("");
   const [agentMessages, setAgentMessages] = useState([]);

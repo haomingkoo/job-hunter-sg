@@ -2667,6 +2667,225 @@ def test_public_http_streams_and_persists_the_bounded_target_assessment():
             main.app.dependency_overrides.pop(dependency, None)
 
 
+def test_handoff_endpoint_starts_resume_agent_session_with_assessment_job_context(monkeypatch):
+    """'Draft resume edits for this job' must start a SEPARATE resume_agent
+    session grounded in the completed target assessment. This must never
+    give recruitment-team's own specialists/synthesis/judge an edit tool of
+    their own -- it only reads their already-persisted findings and hands
+    them to resume_agent, which owns propose_edit/apply/dismiss as-is."""
+    from fastapi.testclient import TestClient
+
+    import main
+    import resume_agent.session as agent_session
+    from auth import get_current_user
+    from database import get_db
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.conversation_model import ScriptedConversationModel
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.http_routes import (
+        get_candidate_profiler_factory,
+        get_conversation_model,
+        get_job_discovery,
+        get_recruitment_telemetry,
+        get_role_success_profiler,
+        get_target_assessment_runner,
+    )
+    from recruitment_team.assessment_contracts import (
+        ScriptedTargetAssessmentRunner,
+        TargetAssessmentResult,
+        target_assessment_execution_policy,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery(
+        [JobSearchResult("agent systems", (job,), 1, 1, False, False)],
+        jobs_by_id={job.job_id: job},
+    )
+    runner = ScriptedTargetAssessmentRunner(
+        [
+            TargetAssessmentResult(
+                status="completed",
+                specialist_runs=(
+                    {
+                        "persona_id": "recruiter",
+                        "status": "completed",
+                        "submission": {
+                            "summary": "Strong evidence.",
+                            "score": 90,
+                            "score_reason": "Direct match.",
+                        },
+                    },
+                ),
+                synthesis="Evidence-grounded target assessment synthesis.",
+                judge={
+                    "disposition": "pass",
+                    "strengths": ["Uses canonical evidence."],
+                    "weaknesses": ["No leadership scale evidence."],
+                    "evidence_gaps": ["Team size is unclear."],
+                    "score": 91,
+                    "score_reason": "Grounded in cited resume evidence.",
+                    "confidence": 88,
+                    "confidence_reason": "All required artifacts were available.",
+                },
+                correction={"attempted": False},
+                error=None,
+                execution_policy=target_assessment_execution_policy(),
+            ),
+        ]
+    )
+    telemetry = RecordedTelemetry()
+
+    def override_db():
+        with sessions() as db:
+            yield db
+
+    main.app.dependency_overrides[get_db] = override_db
+    main.app.dependency_overrides[get_current_user] = lambda: type(
+        "AuthenticatedUser", (), {"id": owner_id}
+    )()
+    main.app.dependency_overrides[get_conversation_model] = lambda: ScriptedConversationModel(
+        ["Using the selected resume as immutable evidence."]
+    )
+    main.app.dependency_overrides[get_job_discovery] = lambda: discovery
+    main.app.dependency_overrides[get_recruitment_telemetry] = lambda: telemetry
+    main.app.dependency_overrides[get_role_success_profiler] = lambda: _role_profiler([_role_profile_run(job.job_id)])
+    main.app.dependency_overrides[get_candidate_profiler_factory] = lambda: ScriptedCandidateProfilerFactory(
+        [_candidate_profile_run()]
+    )
+    main.app.dependency_overrides[get_target_assessment_runner] = lambda: runner
+
+    monkeypatch.setattr(main, "_consume_ai_credit", lambda *args: None)
+    monkeypatch.setattr(agent_session, "reserve_owner_run", lambda _owner: True)
+    captured_bodies = []
+
+    def fake_start_background_review(body, _owner_key):
+        captured_bodies.append(body)
+        return "handoff-session-1"
+
+    monkeypatch.setattr(agent_session, "start_background_review", fake_start_background_review)
+
+    try:
+        client = TestClient(main.app)
+        started = client.post(
+            "/api/recruitment-team/threads",
+            json={
+                "resume_version_id": resume_id,
+                "message": "Find an evidence-backed target role.",
+                "idempotency_key": "handoff-start",
+            },
+        )
+        assert started.status_code == 201
+        thread_id = started.json()["thread_id"]
+        client.post(
+            f"/api/recruitment-team/threads/{thread_id}/candidate-profile/stream",
+            json={"idempotency_key": "handoff-profile"},
+        )
+        client.post(
+            f"/api/recruitment-team/threads/{thread_id}/jobs/search/stream",
+            json={"query": "agent systems", "idempotency_key": "handoff-search"},
+        )
+        client.post(
+            f"/api/recruitment-team/threads/{thread_id}/jobs/{job.job_id}/select",
+            json={"idempotency_key": "handoff-select"},
+        )
+        assessed = client.post(
+            f"/api/recruitment-team/threads/{thread_id}/assessment/stream",
+            json={"idempotency_key": "handoff-assess"},
+        )
+        assert assessed.status_code == 200
+
+        handoff = client.post(f"/api/recruitment-team/threads/{thread_id}/resume-agent-handoff")
+    finally:
+        for dependency in (
+            get_db,
+            get_current_user,
+            get_conversation_model,
+            get_job_discovery,
+            get_recruitment_telemetry,
+            get_role_success_profiler,
+            get_candidate_profiler_factory,
+            get_target_assessment_runner,
+        ):
+            main.app.dependency_overrides.pop(dependency, None)
+
+    assert handoff.status_code == 202
+    assert handoff.json() == {"session_id": "handoff-session-1", "status": "queued"}
+    assert len(captured_bodies) == 1
+    body = captured_bodies[0]
+    assert body["resume_text"] == "Built a production agent platform with traced model and tool calls."
+    assert body["job_id"] == job.job_id
+    job_context = body["job_context"]
+    assert job_context["title"] == job.title
+    assert job_context["company"] == job.company
+    assert job_context["criteria"][0]["criterion_id"] == "design_agent_systems"
+    assert job_context["candidate_evidence"][0]["criterion_id"] == "design_agent_systems"
+    assert job_context["synthesis"] == "Evidence-grounded target assessment synthesis."
+    assert job_context["weaknesses"] == ["No leadership scale evidence."]
+    assert job_context["evidence_gaps"] == ["Team size is unclear."]
+
+
+def test_handoff_endpoint_rejects_an_incomplete_target_assessment():
+    """Before the assessment finishes, there is nothing to hand off yet."""
+    from fastapi.testclient import TestClient
+
+    import main
+    from auth import get_current_user
+    from database import get_db
+    from recruitment_team.conversation_model import ScriptedConversationModel
+    from recruitment_team.http_routes import (
+        get_conversation_model,
+        get_job_discovery,
+        get_recruitment_telemetry,
+        get_role_success_profiler,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+
+    def override_db():
+        with sessions() as db:
+            yield db
+
+    main.app.dependency_overrides[get_db] = override_db
+    main.app.dependency_overrides[get_current_user] = lambda: type(
+        "AuthenticatedUser", (), {"id": owner_id}
+    )()
+    main.app.dependency_overrides[get_conversation_model] = lambda: ScriptedConversationModel(["Ready."])
+    main.app.dependency_overrides[get_job_discovery] = _discovery
+    main.app.dependency_overrides[get_recruitment_telemetry] = lambda: RecordedTelemetry()
+    main.app.dependency_overrides[get_role_success_profiler] = _role_profiler
+    try:
+        client = TestClient(main.app)
+        started = client.post(
+            "/api/recruitment-team/threads",
+            json={
+                "resume_version_id": resume_id,
+                "message": "Find an evidence-backed target role.",
+                "idempotency_key": "handoff-incomplete-start",
+            },
+        )
+        assert started.status_code == 201
+        thread_id = started.json()["thread_id"]
+
+        handoff = client.post(f"/api/recruitment-team/threads/{thread_id}/resume-agent-handoff")
+    finally:
+        for dependency in (
+            get_db,
+            get_current_user,
+            get_conversation_model,
+            get_job_discovery,
+            get_recruitment_telemetry,
+            get_role_success_profiler,
+        ):
+            main.app.dependency_overrides.pop(dependency, None)
+
+    assert handoff.status_code == 409
+
+
 def _http_paused_assessment_setup():
     """Shared setup for the answer-endpoint HTTP tests below: real FastAPI
     app, real dependency overrides, a thread walked through profile/search/

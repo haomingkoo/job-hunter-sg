@@ -470,7 +470,7 @@ export default function JobHunterSG() {
               )}
               {activeTab === "team" && (
                 user ? (
-                  <RecruitmentTeamPanel user={user} />
+                  <RecruitmentTeamPanel user={user} setActiveTab={navigateTo} />
                 ) : (
                   <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="AI Recruitment Team" />
                 )
