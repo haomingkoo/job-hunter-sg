@@ -58,6 +58,7 @@ export default function RecruitmentTeamPanel({ user }) {
   const [error, setError] = useState("");
   const [visibleProfileCount, setVisibleProfileCount] = useState(EVIDENCE_PAGE_SIZE);
   const [visibleCriteriaCount, setVisibleCriteriaCount] = useState(EVIDENCE_PAGE_SIZE);
+  const [suppressAutoResume, setSuppressAutoResume] = useState(false);
 
   const selectedResume = useMemo(
     () => resumeVersions.find((resume) => String(resume.id) === String(resumeVersionId)),
@@ -156,7 +157,7 @@ export default function RecruitmentTeamPanel({ user }) {
   }, [threadId]);
 
   useEffect(() => {
-    if (threadId) return undefined;
+    if (threadId || suppressAutoResume) return undefined;
     let cancelled = false;
     (async () => {
       try {
@@ -171,7 +172,22 @@ export default function RecruitmentTeamPanel({ user }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [threadId, user.id]);
+  }, [threadId, suppressAutoResume, user.id]);
+
+  function startNewConversation() {
+    if (busy) return;
+    localStorage.removeItem(storedThreadKey(user.id));
+    setSuppressAutoResume(true);
+    setThreadId("");
+    setSnapshot(null);
+    setEvents([]);
+    setCandidateProfile(null);
+    setTargetAssessment(null);
+    setMessage("");
+    setError("");
+    setVisibleProfileCount(EVIDENCE_PAGE_SIZE);
+    setVisibleCriteriaCount(EVIDENCE_PAGE_SIZE);
+  }
 
   async function submit(event) {
     event.preventDefault();
@@ -313,12 +329,24 @@ export default function RecruitmentTeamPanel({ user }) {
   return (
     <section aria-labelledby="recruitment-team-title" className="space-y-5">
       <header className="rounded-3xl bg-[#384959] px-6 py-6 text-white sm:px-8">
-        <div className="flex items-center gap-3">
-          <div className="rounded-2xl bg-white/10 p-3"><Users size={22} /></div>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#BDDDFC]">V3</p>
-            <h1 id="recruitment-team-title" className="text-2xl font-semibold">AI Recruitment Team</h1>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="rounded-2xl bg-white/10 p-3"><Users size={22} /></div>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#BDDDFC]">V3</p>
+              <h1 id="recruitment-team-title" className="text-2xl font-semibold">AI Recruitment Team</h1>
+            </div>
           </div>
+          {threadId && (
+            <button
+              type="button"
+              onClick={startNewConversation}
+              disabled={busy}
+              className="rounded-xl border border-white/30 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
+            >
+              Start new conversation
+            </button>
+          )}
         </div>
         <p className="mt-4 max-w-2xl text-sm leading-relaxed text-[#dbeaf8]">
           Explore your next move with a persistent team that preserves evidence and shows real activity.
