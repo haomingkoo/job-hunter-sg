@@ -683,6 +683,20 @@ def test_assessment_presentation_contract_rejects_examples_placeholders_and_coun
     ) == []
 
 
+def test_assessment_presentation_violation_snippets_quotes_matched_text():
+    from resume_agent.prompts import assessment_presentation_violation_snippets
+
+    snippets = assessment_presentation_violation_snippets(
+        "Try e.g. [X] metrics after 5 independent reviewers agree."
+    )
+
+    assert ("example_marker", "e.g.") in snippets
+    assert ("placeholder", "[X]") in snippets
+    assert assessment_presentation_violation_snippets(
+        "Ask the candidate which real metric and ownership scope are supported."
+    ) == []
+
+
 def test_agent_calls_search_jobs_for_role_query():
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     from langchain_core.messages import AIMessage

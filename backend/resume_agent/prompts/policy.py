@@ -25,6 +25,17 @@ def assessment_presentation_violations(text: str) -> list[str]:
     return [name for name, pattern in _PRESENTATION_RULES if pattern.search(text or "")]
 
 
+def assessment_presentation_violation_snippets(text: str) -> list[tuple[str, str]]:
+    """Return (violation_name, matched_text) pairs so revision prompts can quote
+    the exact offending fragment instead of only naming the violated rule."""
+    matches = []
+    for name, pattern in _PRESENTATION_RULES:
+        match = pattern.search(text or "")
+        if match:
+            matches.append((name, match.group(0).strip()))
+    return matches
+
+
 FAIRNESS_AND_ANTI_FABRICATION_GUARDRAILS = f"""Guardrails:
 - Evaluate only skills, responsibility scope, project complexity, evidence,
   impact, and job relevance.

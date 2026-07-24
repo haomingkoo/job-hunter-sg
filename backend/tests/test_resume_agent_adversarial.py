@@ -329,6 +329,83 @@ def test_synthesis_is_revised_and_rechecked_when_judge_finds_evidence_error(monk
     ]
 
 
+def test_revision_prompt_quotes_the_exact_offending_presentation_snippet(monkeypatch):
+    import resume_agent.session as agent_session
+
+    completed = {
+        "persona": "recruiter",
+        "status": "success",
+        "tool_spans": [],
+        "assessment": {
+            "persona": "recruiter",
+            "summary": "One supported finding.",
+            "category": "fit",
+            "findings": [],
+            "conflicts": [],
+            "score": 70,
+            "reasoning": "Evidence is limited.",
+            "suggested_actions": [],
+        },
+    }
+    synthesis_results = iter([
+        ({"messages": [AIMessage(content="Impact is strong, e.g., revenue grew under USD 100M.")]}, [
+            {"kind": "llm", "worker": "orchestrator", "phase": "orchestrator", "status": "success"}
+        ]),
+        ({"messages": [AIMessage(content="Impact is strong with confirmed revenue growth.")]}, [
+            {"kind": "llm", "worker": "orchestrator", "phase": "orchestrator_revision", "status": "success"}
+        ]),
+    ])
+    judge_results = iter([
+        {
+            "status": "success",
+            "assessment": {
+                "verdict": "Uses a hypothetical example metric.",
+                "requires_revision": True,
+                "strengths": [],
+                "weaknesses": [{"finding": "Example metric is not evidenced."}],
+                "score": 60,
+                "reasoning": "Presentation violation.",
+                "evidence_gaps": [],
+            },
+            "tool_spans": [{"kind": "llm", "worker": "quality_judge", "status": "success"}],
+        },
+        {
+            "status": "success",
+            "assessment": {
+                "verdict": "Clean.",
+                "requires_revision": False,
+                "strengths": [],
+                "weaknesses": [],
+                "score": 95,
+                "reasoning": "No violations.",
+                "evidence_gaps": [],
+            },
+            "tool_spans": [{"kind": "llm", "worker": "quality_judge", "status": "success"}],
+        },
+    ])
+    recorded_prompts = []
+
+    def fake_run_synthesis(*args, **kwargs):
+        recorded_prompts.append(args[1])
+        return next(synthesis_results)
+
+    monkeypatch.setattr(agent_session, "iter_persona_worker_runs", lambda *_args, **_kwargs: iter([completed]))
+    monkeypatch.setattr(agent_session, "create_resume_agent", lambda **_kwargs: object())
+    monkeypatch.setattr(agent_session, "_run_synthesis", fake_run_synthesis)
+    monkeypatch.setattr(agent_session, "judge_assessment", lambda *_args, **_kwargs: next(judge_results))
+
+    list(agent_session.stream_chat_events({
+        "session_id": "presentation-violation-revision",
+        "message": "Review this resume.",
+        "resume_text": "EXPERIENCE\n- Led delivery",
+    }, owner_key="presentation-violation-owner"))
+
+    assert len(recorded_prompts) == 2
+    revision_prompt = recorded_prompts[1]
+    assert 'example_marker: "e.g."' in revision_prompt
+    assert "do not" in revision_prompt.lower()
+
+
 def test_failed_quality_judge_prevents_assessment_publication(monkeypatch):
     import resume_agent.session as agent_session
 
