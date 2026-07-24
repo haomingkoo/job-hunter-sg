@@ -43,7 +43,7 @@ function storedThreadKey(userId) {
 }
 
 
-export default function RecruitmentTeamPanel({ user }) {
+export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   const [resumeVersions, setResumeVersions] = useState([]);
   const [resumeVersionId, setResumeVersionId] = useState("");
   const [threadId, setThreadId] = useState(
@@ -304,6 +304,26 @@ export default function RecruitmentTeamPanel({ user }) {
     } catch (answerError) {
       setError(answerError.message);
       await refreshThread(threadId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handoffToResumeAgent() {
+    if (!threadId || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await apiFetch(
+        `/api/recruitment-team/threads/${threadId}/resume-agent-handoff`,
+        { method: "POST" },
+      );
+      const { session_id } = await response.json();
+      sessionStorage.setItem("jh_resume_agent_session", session_id);
+      sessionStorage.setItem("jh_resume_agent_autoopen", "1");
+      setActiveTab?.("resume");
+    } catch (handoffError) {
+      setError(handoffError.message);
     } finally {
       setBusy(false);
     }
@@ -697,14 +717,26 @@ export default function RecruitmentTeamPanel({ user }) {
                     Five isolated evidence reviews, synthesis, then an independent quality judgment.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={assessTarget}
-                  disabled={busy || targetAssessment?.status === "completed"}
-                  className="rounded-xl bg-[#384959] px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
-                >
-                  {targetAssessment?.status === "completed" ? "Assessment complete" : targetAssessment ? "Run assessment again" : "Run assessment"}
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  {targetAssessment?.status === "completed" && (
+                    <button
+                      type="button"
+                      onClick={handoffToResumeAgent}
+                      disabled={busy}
+                      className="rounded-xl border border-[#384959] px-3 py-2 text-xs font-medium text-[#384959] disabled:opacity-40"
+                    >
+                      Draft resume edits for this job
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={assessTarget}
+                    disabled={busy || targetAssessment?.status === "completed"}
+                    className="rounded-xl bg-[#384959] px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
+                  >
+                    {targetAssessment?.status === "completed" ? "Assessment complete" : targetAssessment ? "Run assessment again" : "Run assessment"}
+                  </button>
+                </div>
               </div>
               {targetAssessment && (
                 <div className="mt-4 space-y-3">

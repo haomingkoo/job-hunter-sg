@@ -85,7 +85,20 @@ from models import (
     ResumeVersion,
 )
 from sanitizer import sanitize_html, sanitize_job, sanitize_resume_text, sanitize_user_input
-from recruitment_team.http_routes import router as recruitment_team_router
+from recruitment_team.conversation_model import ConversationModel
+from recruitment_team.discovery import DiscoveryPort
+from recruitment_team.http_routes import (
+    _raise_http_error as _raise_recruitment_team_http_error,
+    _team as _recruitment_team,
+    get_conversation_model,
+    get_job_discovery,
+    get_recruitment_telemetry,
+    get_role_success_profiler,
+    router as recruitment_team_router,
+)
+from recruitment_team.interface import CaseFacts, TargetAssessmentArtifactSnapshot
+from recruitment_team.role_success import RoleSuccessProfiler
+from recruitment_team.telemetry import RecruitmentTelemetry
 from schemas import (
     ApplicationWorkspaceCreate,
     ApplicationWorkspaceOut,
@@ -8565,6 +8578,121 @@ def start_resume_agent_review(
             release_owner_run(owner_key)
             raise
     return {"session_id": next_session_id, "status": "queued"}
+
+
+def _target_assessment_job_context(
+    case_facts: CaseFacts,
+    assessment: TargetAssessmentArtifactSnapshot,
+) -> dict:
+    """Summarize a completed target assessment into the resume_agent
+    job_context shape (an arbitrary JSON dict — see resume_agent/session.py).
+    """
+    target = case_facts.selected_target
+    role_profile = case_facts.role_success_profile
+    judge = assessment.judge or {}
+    return {
+        "title": target.title,
+        "company": target.company,
+        "description": target.description,
+        "criteria": [
+            {
+                "criterion_id": criterion.criterion_id,
+                "category": criterion.category,
+                "requirement_level": criterion.requirement_level,
+                "statement": criterion.statement,
+            }
+            for criterion in (role_profile.criteria if role_profile else ())
+        ],
+        "candidate_evidence": [
+            {
+                "criterion_id": evidence.criterion_id,
+                "alignment": evidence.alignment,
+                "supported_strength": evidence.supported_strength,
+                "remaining_gap": evidence.remaining_gap,
+            }
+            for evidence in (role_profile.candidate_evidence if role_profile else ())
+        ],
+        "synthesis": assessment.synthesis,
+        "weaknesses": judge.get("weaknesses", []),
+        "evidence_gaps": judge.get("evidence_gaps", []),
+    }
+
+
+@app.post("/api/recruitment-team/threads/{thread_id}/resume-agent-handoff", status_code=202)
+def handoff_target_assessment_to_resume_agent(
+    thread_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    conversation_model: ConversationModel = Depends(get_conversation_model),
+    discovery: DiscoveryPort = Depends(get_job_discovery),
+    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+) -> dict:
+    """Start a SEPARATE resume_agent review session pre-grounded in one
+    thread's completed target assessment. This never gives the recruitment
+    team's own specialists/synthesis/judge an edit tool -- it only reads their
+    already-persisted findings and hands them to resume_agent, which owns
+    propose_edit/apply/dismiss on its own.
+    """
+    from resume_agent.session import (
+        release_owner_run,
+        reserve_owner_run,
+        start_background_review,
+    )
+
+    team = _recruitment_team(db, conversation_model, discovery, role_profiler, telemetry)
+    try:
+        snapshot = team.snapshot(user.id, thread_id)
+        assessment = team.target_assessment(user.id, thread_id)
+    except Exception as error:
+        _raise_recruitment_team_http_error(error)
+        raise
+
+    if assessment is None or assessment.status != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail="Target assessment must be completed before drafting resume edits",
+        )
+    case_facts = snapshot.case_facts
+    target = case_facts.selected_target
+    if target is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Target assessment must be completed before drafting resume edits",
+        )
+
+    resume_version = (
+        db.query(ResumeVersion)
+        .filter(ResumeVersion.id == case_facts.resume_version_id, ResumeVersion.user_id == user.id)
+        .first()
+    )
+    if resume_version is None:
+        raise HTTPException(status_code=404, detail="Resume version not found")
+
+    body = {
+        "message": (
+            f"Draft evidence-safe resume edits for the {target.title} role at {target.company}, "
+            "using the recruitment team's target assessment findings below."
+        ),
+        "resume_text": resume_version.resume_text,
+        "job_id": target.job_id,
+        "job_context": _target_assessment_job_context(case_facts, assessment),
+    }
+    _validate_resume_agent_request(body)
+
+    owner_key = f"user:{user.id}"
+    with _account_lifecycle_lock(user.id):
+        if not db.query(User.id).filter(User.id == user.id).first():
+            raise HTTPException(status_code=401, detail="Account no longer exists")
+        if not reserve_owner_run(owner_key):
+            raise HTTPException(status_code=429, detail="Agent Review is already running")
+        try:
+            _consume_ai_credit(user, db, "resume_agent_chat")
+            session_id = start_background_review(body, owner_key)
+        except Exception:
+            release_owner_run(owner_key)
+            raise
+    return {"session_id": session_id, "status": "queued"}
 
 
 @app.post("/api/resume/agent/chat")
