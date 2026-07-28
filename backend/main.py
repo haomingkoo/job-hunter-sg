@@ -34,7 +34,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import and_, case, func, or_, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, load_only
+from sqlalchemy.orm import Session, aliased, load_only
 from starlette.concurrency import run_in_threadpool
 from starlette.routing import Route
 
@@ -4832,7 +4832,7 @@ def list_cached_jobs(
     experience: Optional[list[str]] = Query(None),
     sector: Optional[str] = Query(None, max_length=100),
     min_salary: Optional[int] = Query(None, ge=0),
-    sort: str = Query("newest", pattern="^(newest|salary)$"),
+    sort: str = Query("balanced", pattern="^(balanced|newest|salary)$"),
     direct_employers_only: bool = Query(False),
     page: int = Query(1, ge=1, le=500),
     per_page: int = Query(20, ge=1, le=100),
@@ -4994,6 +4994,23 @@ def list_cached_jobs(
     if sort == "salary":
         ordering.append(ScrapedJob.salary_floor.desc().nullslast())
     ordering.extend([ScrapedJob.posted_at_sort.desc(), ScrapedJob.id.desc()])
+
+    if sort == "balanced":
+        # Newest-first alone rewards whoever reposts most often, so a handful of
+        # high-volume employers owned the whole first page. Cap each company's
+        # run before paginating; `sort=newest` still returns raw chronological.
+        company_rank = (
+            func.row_number()
+            .over(partition_by=ScrapedJob.company, order_by=ordering)
+            .label("company_rank")
+        )
+        ranked = query.add_columns(company_rank).subquery()
+        balanced_job = aliased(ScrapedJob, ranked)
+        query = db.query(balanced_job).filter(
+            ranked.c.company_rank <= app_config.JOBS_MAX_PER_COMPANY
+        )
+        ordering = [ranked.c.posted_at_sort.desc(), ranked.c.id.desc()]
+
     ordered_query = query.order_by(*ordering)
 
     total = query.count()
