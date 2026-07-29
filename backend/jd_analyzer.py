@@ -159,14 +159,20 @@ _PROMO_PATTERNS: list[tuple[str, re.Pattern]] = [
 ]
 
 
-def detect_promotional_spam(title: str, description: str = "") -> dict:
-    """Score how hard a posting is selling itself, 0-100.
+# Promotional scoring weights. Emoji and hashtags in a title dominate because a
+# real employer does not use them; phrase tells are weak individually.
+PROMOTIONAL_THRESHOLD = 40
+_EMOJI_BASE, _EMOJI_PER_HIT, _EMOJI_CAP = 25, 5, 40
+_HASHTAG_BASE, _HASHTAG_PER_HIT, _HASHTAG_CAP = 15, 5, 25
+_STYLE_WEIGHT = 10
+_PHRASE_WEIGHT = 10
+_SHOUT_MIN_TITLE_CHARS = 12
+_SHOUT_UPPERCASE_RATIO = 0.7
+_EXCLAMATION_PILE = 2
 
-    Emoji and hashtags in a *title* carry most of the signal: a real employer
-    writing "Senior Platform Engineer" does not reach for 🎯, while the same
-    six companies account for most of the corpus that does. Phrase tells are
-    weighted lower because each appears innocently in real postings.
-    """
+
+def detect_promotional_spam(title: str, description: str = "") -> dict:
+    """Score how hard a posting sells itself, 0-100."""
     title = title or ""
     signals: list[str] = []
     score = 0
@@ -174,34 +180,31 @@ def detect_promotional_spam(title: str, description: str = "") -> dict:
     emoji_hits = len(_EMOJI_PATTERN.findall(title))
     if emoji_hits:
         signals.append("emoji_in_title")
-        score += min(40, 25 + 5 * emoji_hits)
+        score += min(_EMOJI_CAP, _EMOJI_BASE + _EMOJI_PER_HIT * emoji_hits)
 
     hashtags = len(re.findall(r"#\w+", title))
     if hashtags:
         signals.append("hashtags_in_title")
-        score += min(25, 15 + 5 * hashtags)
+        score += min(_HASHTAG_CAP, _HASHTAG_BASE + _HASHTAG_PER_HIT * hashtags)
 
-    if len(title) >= 12:
+    if len(title) >= _SHOUT_MIN_TITLE_CHARS:
         letters = [c for c in title if c.isalpha()]
-        if letters and sum(1 for c in letters if c.isupper()) / len(letters) > 0.7:
+        if letters and sum(1 for c in letters if c.isupper()) / len(letters) > _SHOUT_UPPERCASE_RATIO:
             signals.append("shouting_title")
-            score += 10
+            score += _STYLE_WEIGHT
 
-    if title.count("!") >= 2:
+    if title.count("!") >= _EXCLAMATION_PILE:
         signals.append("exclamation_pile")
-        score += 10
+        score += _STYLE_WEIGHT
 
     haystack = f"{title}\n{description or ''}"
     for label, pattern in _PROMO_PATTERNS:
         if pattern.search(haystack):
             signals.append(label)
-            score += 10
+            score += _PHRASE_WEIGHT
 
-    return {
-        "score": min(100, score),
-        "signals": signals,
-        "is_promotional": score >= 40,
-    }
+    score = min(100, score)
+    return {"score": score, "signals": signals, "is_promotional": score >= PROMOTIONAL_THRESHOLD}
 
 
 def detect_red_flags(text: str) -> list[dict]:

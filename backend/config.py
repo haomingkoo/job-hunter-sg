@@ -203,6 +203,19 @@ ANALYTICS_MAX_ROWS: int = _int_env("ANALYTICS_MAX_ROWS", 12000)
 # Cap how many postings one company contributes so a handful of high-volume
 # employers cannot own the browse feed.
 JOBS_MAX_PER_COMPANY: int = _positive_int_env("JOBS_MAX_PER_COMPANY", 3)
+# A company counts as a promotional poster when at least this share of its
+# postings carry the tells. Deliberately a ratio, not a count: measured on the
+# 16,390-row corpus, a count rule taints RECRUIT EXPRESS, a real agency with 608
+# postings of which only 2% are flagged. At 50% every company caught is an
+# MLM-style outfit, and 89 of their quiet postings get caught with them.
+COMPANY_PROMOTIONAL_MIN_POSTS: int = _positive_int_env("COMPANY_PROMOTIONAL_MIN_POSTS", 5)
+COMPANY_PROMOTIONAL_RATIO: float = _float_env("COMPANY_PROMOTIONAL_RATIO", 0.5)
+# A company is treated as a promotional poster when at least this share of its
+# postings carry the tells. Deliberately high: measured on 16,390 rows, a count
+# based rule taints RECRUIT EXPRESS, a real agency with 608 postings of which
+# only 2% are flagged. At 50% the flagged set is entirely MLM-style outfits.
+COMPANY_PROMOTIONAL_MIN_POSTS: int = _positive_int_env("COMPANY_PROMOTIONAL_MIN_POSTS", 5)
+COMPANY_PROMOTIONAL_RATIO: float = _float_env("COMPANY_PROMOTIONAL_RATIO", 0.5)
 ANALYTICS_YIELD_PER: int = _int_env("ANALYTICS_YIELD_PER", 500)
 
 # ── Resume-tailoring pipeline token budgets (all on the FAST tier) ────────────

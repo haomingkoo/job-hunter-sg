@@ -149,6 +149,7 @@ from tailoring_pipeline import (
     run_pipeline,
 )
 from validation_gates import numeric_metric_claims_verifiable
+from jd_analyzer import PROMOTIONAL_THRESHOLD
 from jd_preparser import preparse_job_description as preparse_jd
 from jd_summary import summarize_job_description
 from mcp_public import create_mcp as create_public_mcp
@@ -1968,6 +1969,21 @@ def admin_backfill_enrichment(
 
 _embedding_backfill_progress: dict = {"running": False, "done": 0, "total": 0, "phase": "idle"}
 
+@app.post("/api/admin/rollup-company-promotional")
+def admin_rollup_company_promotional(
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Recompute which companies post promotionally. Protected by ADMIN_API_KEY."""
+    _require_admin(authorization)
+    from job_precompute import rollup_company_promotional_scores
+
+    db = SessionLocal()
+    try:
+        return rollup_company_promotional_scores(db)
+    finally:
+        db.close()
+
+
 @app.post("/api/admin/backfill-content-hash")
 def admin_backfill_content_hash(
     body: dict | None = None,
@@ -3048,7 +3064,10 @@ def trending_skills(
     return get_trending_skills(db, limit=limit)
 
 
-_JOB_PRECOMPUTE_MARKER = "sector_ssic_v1"
+# Bumped when apply_job_precomputes gains a field. The marker gates a one-time
+# full pass; without a bump, existing rows never get the new column, and a
+# default of 0 is indistinguishable from "not yet computed".
+_JOB_PRECOMPUTE_MARKER = "sector_ssic_promotional_v2"
 
 
 _PRECOMPUTE_LOAD_ONLY = (
@@ -3099,6 +3118,9 @@ def _precompute_batch(db: Session, filter_clause, batch_size: int) -> tuple[int,
         job.company_ssic_source = data.get("company_ssic_source", "")
         job.salary_floor = data["salary_floor"]
         job.skills_flat = data["skills_flat"]
+        # Every field apply_job_precomputes writes must be copied back here, or it
+        # is computed and silently discarded.
+        job.promotional_score = data["promotional_score"]
 
     done = len(jobs)
     if done:
@@ -4471,7 +4493,13 @@ def _contains_like_pattern(value: str) -> str:
 
 # detect_promotional_spam's own is_promotional cut-off. Named here because the
 # feed both filters and orders on it.
-_PROMOTIONAL_SCORE_THRESHOLD = 40
+def _effective_promotional_score():
+    """Worse of a posting's own score and its company's rate."""
+    # case(), not func.max(): max() is an aggregate in Postgres, so func.max(a, b)
+    # passes every local test and fails in production.
+    own = func.coalesce(ScrapedJob.promotional_score, 0)
+    company = func.coalesce(ScrapedJob.company_promotional_score, 0)
+    return case((own >= company, own), else_=company)
 
 # Columns the job list renders. Kept as a constant because the balanced sort
 # re-fetches its page by id and must load exactly the same set.
@@ -4523,7 +4551,7 @@ def list_cached_jobs(
     sort: str = Query("balanced", pattern="^(balanced|newest|salary)$"),
     direct_employers_only: bool = Query(False),
     # Separate axis from direct_employers_only: the heaviest promotional posters
-    # are legitimately direct employers, so the agency filter cannot see them.
+    # are legitimately direct employers.
     exclude_promotional: bool = Query(False),
     page: int = Query(1, ge=1, le=500),
     per_page: int = Query(20, ge=1, le=100),
@@ -4638,7 +4666,7 @@ def list_cached_jobs(
         )
     if exclude_promotional:
         query = query.filter(
-            func.coalesce(ScrapedJob.promotional_score, 0) < _PROMOTIONAL_SCORE_THRESHOLD
+            _effective_promotional_score() < PROMOTIONAL_THRESHOLD
         )
     if min_salary is not None:
         query = query.filter(
@@ -4677,7 +4705,7 @@ def list_cached_jobs(
             ScrapedJob.id.label("job_id"),
             ScrapedJob.posted_at_sort.label("job_posted_at_sort"),
             ScrapedJob.salary_floor.label("job_salary_floor"),
-            func.coalesce(ScrapedJob.promotional_score, 0).label("job_promotional"),
+            _effective_promotional_score().label("job_promotional"),
             company_rank,
         ).subquery()
 
@@ -4686,12 +4714,10 @@ def list_cached_jobs(
             balanced_ordering.append(
                 case((ranked.c.job_salary_floor >= min_salary, 0), else_=1)
             )
-        # Demoted, not dropped, for the same reason as the company cap: a
-        # promotional posting is still a real job someone may want, and the
-        # company cap alone cannot reach these because many separate MLM
-        # outfits each post a few listings rather than one posting many.
+        # Demoted, not dropped: the company cap cannot reach these because many
+        # separate outfits each post a few listings rather than one posting many.
         balanced_ordering.append(
-            case((ranked.c.job_promotional < _PROMOTIONAL_SCORE_THRESHOLD, 0), else_=1)
+            case((ranked.c.job_promotional < PROMOTIONAL_THRESHOLD, 0), else_=1)
         )
         balanced_ordering.append(
             case((ranked.c.company_rank <= app_config.JOBS_MAX_PER_COMPANY, 0), else_=1)

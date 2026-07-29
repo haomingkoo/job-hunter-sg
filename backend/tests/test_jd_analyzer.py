@@ -46,3 +46,46 @@ def test_analysis_carries_the_promotional_verdict():
     )
     assert analysis["is_promotional"] is True
     assert analysis["promotional"]["score"] >= 40
+
+
+def test_company_rollup_needs_a_ratio_not_a_count():
+    """A big agency has more flagged postings than a small outfit has postings."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from database import Base
+    from job_precompute import rollup_company_promotional_scores
+    from models import ScrapedJob
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+
+    def add(company, score, n, offset):
+        for i in range(n):
+            db.add(ScrapedJob(
+                title=f"{company} {i}", company=company, source="s",
+                dedup_key=f"{company}-{offset}-{i}", promotional_score=score,
+            ))
+
+    # A real agency: many postings, a few bad titles. Must NOT be tainted.
+    add("BIG AGENCY", 55, 12, 0)
+    add("BIG AGENCY", 0, 200, 1)
+    # An outfit: most postings promotional, plus quiet ones hiding among them.
+    add("TINY ORG", 55, 8, 2)
+    add("TINY ORG", 0, 2, 3)
+    db.commit()
+
+    result = rollup_company_promotional_scores(db)
+
+    assert "TINY ORG" in result["scores"]
+    assert "BIG AGENCY" not in result["scores"], "a 6%-flagged agency was tainted"
+
+    quiet = db.query(ScrapedJob).filter(
+        ScrapedJob.company == "TINY ORG", ScrapedJob.promotional_score == 0
+    ).all()
+    assert all(job.company_promotional_score >= 40 for job in quiet)
+
+    untouched = db.query(ScrapedJob).filter(ScrapedJob.company == "BIG AGENCY").first()
+    assert untouched.company_promotional_score == 0

@@ -225,3 +225,50 @@ def apply_job_precomputes(job_data: dict) -> dict:
     )["score"]
     apply_company_taxonomy(job_data)
     return job_data
+
+
+def rollup_company_promotional_scores(db) -> dict:
+    """Spread a company's promotional rate onto every one of its postings.
+
+    A single emoji title is weak evidence. A company where most postings carry
+    the tells is an outfit, and its plain-looking listings are the same
+    operation wearing a quieter title, so they should rank with the rest.
+
+    Keyed on the share of a company's postings that are flagged, never the
+    count: a large legitimate agency has more flagged postings in absolute
+    terms than a small MLM outfit has postings at all.
+    """
+    import config
+    from sqlalchemy import case, func
+
+    from jd_analyzer import PROMOTIONAL_THRESHOLD
+
+    from models import ScrapedJob
+
+    flagged = func.sum(
+        case((ScrapedJob.promotional_score >= PROMOTIONAL_THRESHOLD, 1), else_=0)
+    )
+    total = func.count(ScrapedJob.id)
+    rows = (
+        db.query(ScrapedJob.company, total.label("total"), flagged.label("flagged"))
+        .filter(ScrapedJob.company != "")
+        .group_by(ScrapedJob.company)
+        .having(total >= config.COMPANY_PROMOTIONAL_MIN_POSTS)
+        .all()
+    )
+
+    tainted = {
+        company: round(100 * (flagged_count or 0) / total_count)
+        for company, total_count, flagged_count in rows
+        if total_count and (flagged_count or 0) / total_count >= config.COMPANY_PROMOTIONAL_RATIO
+    }
+
+    db.query(ScrapedJob).filter(ScrapedJob.company_promotional_score != 0).update(
+        {ScrapedJob.company_promotional_score: 0}, synchronize_session=False
+    )
+    for company, score in tainted.items():
+        db.query(ScrapedJob).filter(ScrapedJob.company == company).update(
+            {ScrapedJob.company_promotional_score: score}, synchronize_session=False
+        )
+    db.commit()
+    return {"companies": len(tainted), "scores": tainted}

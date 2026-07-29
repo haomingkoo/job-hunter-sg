@@ -103,6 +103,10 @@ def _apply_lightweight_migrations() -> None:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN content_hash VARCHAR(64) DEFAULT ''")
     if "promotional_score" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN promotional_score INTEGER DEFAULT 0")
+    if "company_promotional_score" not in existing_columns:
+        statements.append(
+            "ALTER TABLE scraped_jobs ADD COLUMN company_promotional_score INTEGER DEFAULT 0"
+        )
 
     existing_indexes = {idx["name"] for idx in inspector.get_indexes("scraped_jobs")}
     index_defs = {
