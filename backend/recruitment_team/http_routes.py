@@ -77,6 +77,13 @@ class AnswerAssessmentQuestionRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=200)
 
 
+class ProposedEditActionRequest(BaseModel):
+    """Omit edit_ids on accept to take every pending edit."""
+
+    edit_ids: list[str] | None = Field(default=None, max_length=100)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
 def get_recruitment_telemetry() -> RecruitmentTelemetry:
     return OpenTelemetryRecorder()
 
@@ -652,5 +659,62 @@ def get_thread_events(
                 after_sequence,
             )
         ]
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.get("/threads/{thread_id}/proposed-edits")
+def list_proposed_edits(
+    thread_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    conversation_model: ConversationModel = Depends(get_conversation_model),
+    discovery: DiscoveryPort = Depends(get_job_discovery),
+    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    try:
+        return _team(db, conversation_model, discovery, role_profiler, telemetry).proposed_edits(
+            user.id,
+            thread_id,
+        )
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.post("/threads/{thread_id}/proposed-edits/accept")
+def accept_proposed_edits(
+    thread_id: str,
+    body: ProposedEditActionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    conversation_model: ConversationModel = Depends(get_conversation_model),
+    discovery: DiscoveryPort = Depends(get_job_discovery),
+    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    try:
+        return _team(
+            db, conversation_model, discovery, role_profiler, telemetry
+        ).accept_proposed_edits(user.id, thread_id, body.edit_ids)
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.post("/threads/{thread_id}/proposed-edits/reject")
+def reject_proposed_edits(
+    thread_id: str,
+    body: ProposedEditActionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    conversation_model: ConversationModel = Depends(get_conversation_model),
+    discovery: DiscoveryPort = Depends(get_job_discovery),
+    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    try:
+        return _team(
+            db, conversation_model, discovery, role_profiler, telemetry
+        ).reject_proposed_edits(user.id, thread_id, body.edit_ids or [])
     except Exception as error:
         _raise_http_error(error)

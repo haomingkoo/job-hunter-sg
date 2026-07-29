@@ -1152,6 +1152,130 @@ class RecruitmentTeam:
         self._db.flush()
         return thread, resume
 
+    def proposed_edits(self, owner_id: int, thread_id: str) -> list[dict]:
+        """Pending agent-drafted edits, newest run last, with applicability resolved.
+
+        `stale` means the source resume no longer contains the text the edit was
+        drafted against, so accepting it would silently do nothing.
+        """
+        thread = self._owned_thread(owner_id, thread_id)
+        edits = (
+            self._db.query(ProposedResumeEdit)
+            .filter(
+                ProposedResumeEdit.user_id == owner_id,
+                ProposedResumeEdit.thread_id == thread.id,
+                ProposedResumeEdit.status == "pending",
+            )
+            .order_by(ProposedResumeEdit.created_at)
+            .all()
+        )
+        if not edits:
+            return []
+        resume_text = self._owned_resume(owner_id, thread.resume_version_id).resume_text or ""
+        return [
+            {
+                "id": edit.id,
+                "block_id": edit.block_id,
+                "section_key": edit.section_key,
+                "entry_id": edit.entry_id,
+                "original": edit.original,
+                "rewrite": edit.rewrite,
+                "status": edit.status,
+                "applicable": bool(edit.original) and edit.original in resume_text,
+                "created_at": edit.created_at.isoformat() if edit.created_at else "",
+            }
+            for edit in edits
+        ]
+
+    def accept_proposed_edits(
+        self,
+        owner_id: int,
+        thread_id: str,
+        edit_ids: list[str] | None = None,
+    ) -> dict:
+        """Apply accepted edits into a NEW resume version.
+
+        Never writes over the source version, so accepting is reversible and the
+        candidate keeps the original. Edits whose original text no longer appears
+        are marked stale rather than applied, so an accept-all can never silently
+        drop a change without saying so.
+        """
+        thread = self._owned_thread(owner_id, thread_id)
+        query = self._db.query(ProposedResumeEdit).filter(
+            ProposedResumeEdit.user_id == owner_id,
+            ProposedResumeEdit.thread_id == thread.id,
+            ProposedResumeEdit.status == "pending",
+        )
+        if edit_ids:
+            query = query.filter(ProposedResumeEdit.id.in_(edit_ids))
+        edits = query.order_by(ProposedResumeEdit.created_at).all()
+        if not edits:
+            raise InvalidCommand("no pending resume edits to accept")
+
+        source = self._owned_resume(owner_id, thread.resume_version_id)
+        text = source.resume_text or ""
+        applied: list[str] = []
+        stale: list[str] = []
+        for edit in edits:
+            if edit.original and edit.original in text:
+                text = text.replace(edit.original, edit.rewrite, 1)
+                edit.status = "accepted"
+                applied.append(edit.id)
+            else:
+                edit.status = "stale"
+                stale.append(edit.id)
+
+        if not applied:
+            self._db.commit()
+            raise InvalidCommand(
+                "every selected edit was drafted against resume text that has since changed"
+            )
+
+        target = (thread.case_facts or {}).get("selected_target") or {}
+        job_title = str(target.get("title") or "")
+        version = ResumeVersion(
+            user_id=owner_id,
+            label=f"Tailored for {job_title}" if job_title else "Recruitment team edits",
+            source="recruitment_team",
+            resume_text=text,
+            job_id=target.get("job_id"),
+            job_title=job_title,
+            job_company=str(target.get("company") or ""),
+            word_count=len(text.split()),
+        )
+        self._db.add(version)
+        self._db.commit()
+        return {
+            "resume_version_id": version.id,
+            "label": version.label,
+            "accepted_edit_ids": applied,
+            "stale_edit_ids": stale,
+        }
+
+    def reject_proposed_edits(
+        self,
+        owner_id: int,
+        thread_id: str,
+        edit_ids: list[str],
+    ) -> dict:
+        thread = self._owned_thread(owner_id, thread_id)
+        edits = (
+            self._db.query(ProposedResumeEdit)
+            .filter(
+                ProposedResumeEdit.user_id == owner_id,
+                ProposedResumeEdit.thread_id == thread.id,
+                ProposedResumeEdit.status == "pending",
+                ProposedResumeEdit.id.in_(edit_ids),
+            )
+            .all()
+        )
+        if not edits:
+            raise InvalidCommand("no matching pending resume edits")
+        for edit in edits:
+            edit.status = "rejected"
+        self._db.commit()
+        return {"rejected_edit_ids": [edit.id for edit in edits]}
+
     def _owned_thread(self, owner_id: int, thread_id: str) -> RecruitmentThread:
         thread = (
             self._db.query(RecruitmentThread)

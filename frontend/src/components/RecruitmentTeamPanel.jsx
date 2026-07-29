@@ -5,6 +5,7 @@ const EVIDENCE_PAGE_SIZE = 25;
 
 import TeamActivityPanel from "./TeamActivityPanel.jsx";
 import SpecialistReport from "./SpecialistReport.jsx";
+import ProposedEditsPanel from "./ProposedEditsPanel.jsx";
 import { apiFetch } from "../lib/api.js";
 import { streamRecruitmentCommand } from "../lib/recruitmentTeamApi.js";
 
@@ -24,6 +25,8 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   const [events, setEvents] = useState([]);
   const [candidateProfile, setCandidateProfile] = useState(null);
   const [targetAssessment, setTargetAssessment] = useState(null);
+  const [proposedEdits, setProposedEdits] = useState([]);
+  const [editResult, setEditResult] = useState(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -98,6 +101,40 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
       setTargetAssessment(await assessmentResponse.json());
     } else {
       setTargetAssessment(null);
+    }
+    const editsResponse = await apiFetch(`/api/recruitment-team/threads/${id}/proposed-edits`);
+    setProposedEdits(await editsResponse.json());
+  }
+
+  async function acceptEdits(editIds) {
+    setBusy(true);
+    setError("");
+    try {
+      const response = await apiFetch(
+        `/api/recruitment-team/threads/${threadId}/proposed-edits/accept`,
+        {
+          method: "POST",
+          body: JSON.stringify({ edit_ids: editIds, idempotency_key: crypto.randomUUID() }),
+        },
+      );
+      setEditResult(await response.json());
+      await refreshThread(threadId);
+    } catch (acceptError) {
+      setError(acceptError.message || "Could not save those edits.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rejectEdits(editIds) {
+    try {
+      await apiFetch(`/api/recruitment-team/threads/${threadId}/proposed-edits/reject`, {
+        method: "POST",
+        body: JSON.stringify({ edit_ids: editIds, idempotency_key: crypto.randomUUID() }),
+      });
+      await refreshThread(threadId);
+    } catch (rejectError) {
+      setError(rejectError.message || "Could not dismiss that edit.");
     }
   }
 
@@ -779,6 +816,14 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
               )}
             </section>
           )}
+
+          <ProposedEditsPanel
+            edits={proposedEdits}
+            onAccept={acceptEdits}
+            onReject={rejectEdits}
+            busy={busy}
+            result={editResult}
+          />
         </div>
 
         <TeamActivityPanel events={events} busy={busy} awaitingAnswer={awaitingAnswer} />
