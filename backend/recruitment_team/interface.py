@@ -91,8 +91,12 @@ class PreferenceFact:
 class RunReceipt:
     run_id: str
     thread_id: str
+    # The command completed. That is not the same as the work finishing: a
+    # target assessment that stops to ask the candidate a question also
+    # completes its command. workflow_state is what says which happened.
     status: Literal["completed"]
     trace_key: str
+    workflow_state: str = ""
 
 
 @dataclass(frozen=True)

@@ -39,6 +39,33 @@ from .subagents import create_target_persona_subagents
 from .tools import ask_candidate, propose_resume_edit, read_candidate_evidence, read_target_job
 
 
+def _format_questions(args: dict) -> str:
+    """One pause can carry several questions, so render them as one message."""
+    questions = args.get("questions")
+    if isinstance(questions, str):
+        questions = [questions]
+    questions = [str(q).strip() for q in (questions or []) if str(q).strip()]
+    if not questions:
+        return ""
+    if len(questions) == 1:
+        return questions[0]
+    return "\n".join(f"{i}. {q}" for i, q in enumerate(questions, 1))
+
+
+def _ask_rounds_so_far(agent, run_config: dict) -> int:
+    """How many times this run has already stopped to ask the candidate."""
+    try:
+        messages = agent.get_state(run_config).values.get("messages") or []
+    except Exception:
+        return 0
+    return sum(
+        1
+        for message in messages
+        for call in (getattr(message, "tool_calls", None) or [])
+        if call.get("name") == "ask_candidate"
+    )
+
+
 @tool
 def guarded_search_jobs(query: str, n: int | None = None, detail: bool = False) -> dict:
     """Search the current internal Singapore job corpus by role or responsibility.
@@ -177,7 +204,23 @@ class OpenAgentTargetAssessmentRunner:
                 execution_policy=target_assessment_execution_policy(),
             )
             return
-        payload = Command(resume={"decisions": [{"type": "respond", "message": answer}]})
+        # Nothing else bounds ask_candidate: the guardrails only reject a materially
+        # identical repeat, so a reworded question always passes and a run can
+        # ping-pong until it never reaches synthesis, the judge or a single
+        # proposed edit. Observed in production: three pauses across two runs and
+        # zero edits. Past the cap, say so plainly in the answer the orchestrator
+        # reads, since that is the only channel back into a resumed graph.
+        resume_message = answer
+        if _ask_rounds_so_far(agent, run_config) >= config.OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS:
+            resume_message = (
+                f"{answer}\n\n[System: you have reached this assessment's question limit. "
+                "Do not call ask_candidate again. Finish now using the resume, the "
+                "specialist reports and the answers already given: submit your assessment "
+                "and call propose_resume_edit for every gap the candidate's own evidence "
+                "already supports. Where a gap is missing experience rather than weak "
+                "wording, report it and draft no edit for it.]"
+            )
+        payload = Command(resume={"decisions": [{"type": "respond", "message": resume_message}]})
         yield from self._drive(
             agent,
             payload,
@@ -210,7 +253,7 @@ class OpenAgentTargetAssessmentRunner:
                 ):
                     if event["kind"] == "tool_call":
                         if event["tool_name"] == ask_candidate.name:
-                            pending_question = (event.get("args") or {}).get("question")
+                            pending_question = _format_questions(event.get("args") or {})
                             pending_question_call_id = event.get("id")
                         yield TargetAssessmentProgress(
                             team_member=event["team_member"],

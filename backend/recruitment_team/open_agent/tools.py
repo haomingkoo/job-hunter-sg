@@ -14,8 +14,13 @@ from . import context
 
 
 @tool
-def ask_candidate(question: str) -> dict:
-    """Ask the candidate one focused question about a real evidence gap.
+def ask_candidate(questions: list[str]) -> dict:
+    """Ask the candidate about real evidence gaps. Send every question you have at once.
+
+    Pass all the gaps you want closed in one call. Calling this pauses the whole
+    assessment until the candidate replies, so asking three times in a row costs
+    them three waits; asking once costs one. Only ask about gaps you cannot
+    resolve from their resume or an answer they already gave.
 
     This tool must be bound with interrupt_on={"ask_candidate": True} on the
     orchestrator agent -- calling it pauses the graph before any further tool
@@ -23,7 +28,7 @@ def ask_candidate(question: str) -> dict:
     becomes citable evidence for later propose_resume_edit calls in this
     thread. This is enforced by the interrupt, not by prompted convention.
     """
-    return {"ok": True, "question": question}
+    return {"ok": True, "questions": list(questions)}
 
 
 @tool

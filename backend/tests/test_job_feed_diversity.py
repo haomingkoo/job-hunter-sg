@@ -205,3 +205,8 @@ def test_ordinary_postings_are_untouched_by_the_promotional_filter():
         assert client.get("/api/jobs?exclude_promotional=true").json()["total"] == 2
     finally:
         teardown()
+
+def test_every_sort_mode_is_reachable_from_a_client(feed_client):
+    """The UI used to omit sort for "newest", so it silently returned balanced."""
+    for mode in ("balanced", "newest", "salary"):
+        assert feed_client.get(f"/api/jobs?per_page=5&sort={mode}").status_code == 200

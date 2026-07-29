@@ -77,6 +77,13 @@ SMART_MIN_MAX_TOKENS: int = _int_env("SMART_MIN_MAX_TOKENS", 3000)
 # ── Resume deep-agent v2 knobs ───────────────────────────────────────────────
 AGENT_MAX_TOOL_ITERATIONS: int = _positive_int_env("AGENT_MAX_TOOL_ITERATIONS", 20)
 OPEN_AGENT_MAX_PROPOSED_EDITS: int = _positive_int_env("OPEN_AGENT_MAX_PROPOSED_EDITS", 8)
+# Each ask_candidate call pauses the whole graph, and the guardrails only reject a
+# materially identical repeat, so without a cap a run can keep asking and never
+# reach synthesis, the judge, or a proposed edit.
+OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS: int = _positive_int_env(
+    "OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS",
+    2,
+)
 # Durable LangGraph checkpoint store, so an ask_candidate pause survives a
 # process restart and can be resumed from any worker, not just the one that
 # hit the pause.
@@ -192,8 +199,12 @@ DATABASE_POOL_TIMEOUT: int = _int_env("DATABASE_POOL_TIMEOUT", 30)
 DATABASE_POOL_RECYCLE_SECONDS: int = _int_env("DATABASE_POOL_RECYCLE_SECONDS", 1800)
 CAREERSGOV_CACHE_TTL_SECONDS: int = _int_env("CAREERSGOV_CACHE_TTL_SECONDS", 3600)
 CAREERSGOV_HTTP_TIMEOUT_SECONDS: int = _int_env("CAREERSGOV_HTTP_TIMEOUT_SECONDS", 30)
-JD_ENRICHMENT_MAX_WORKERS: int = _int_env("JD_ENRICHMENT_MAX_WORKERS", 3)
-FAILED_SUMMARY_RETRY_SECONDS: int = _int_env("FAILED_SUMMARY_RETRY_SECONDS", 300)
+# A "generating" row is only truthful while a worker is alive; past this the
+# process that claimed it is assumed dead and the row is reclaimed.
+JD_SUMMARY_STALE_GENERATING_SECONDS: int = _positive_int_env(
+    "JD_SUMMARY_STALE_GENERATING_SECONDS",
+    1800,
+)
 ANALYTICS_FILTER_META_TTL_SECONDS: int = _int_env("ANALYTICS_FILTER_META_TTL_SECONDS", 300)
 ANALYTICS_CACHE_TTL_SECONDS: int = _int_env("ANALYTICS_CACHE_TTL_SECONDS", 86400)
 ANALYTICS_QUERY_CACHE_TTL_SECONDS: int = _int_env("ANALYTICS_QUERY_CACHE_TTL_SECONDS", 3600)

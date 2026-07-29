@@ -51,6 +51,5 @@ backend/data/*.xlsx
 backend/data/company_ssic_cache.json
 backend/data/learned_skills.json
 .superpowers/
-
-# roborev local review state
-.roborev/
+# roborev snapshots
+/.roborev/

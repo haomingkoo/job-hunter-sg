@@ -3303,3 +3303,111 @@ def test_answering_with_an_empty_synthesis_result_fails_closed_not_silently_comp
         artifact = team.target_assessment(owner_id, started.thread_id)
         assert artifact.status == "failed"
         assert artifact.error["error_type"] == "EmptySynthesis"
+
+
+def test_receipt_reports_the_workflow_state_the_run_actually_ended_in():
+    """A replayed key must report the state at the time, not the thread's state now.
+
+    The first version of this test built two RunReceipt objects by hand and
+    asserted they differed, which passes even when _receipt returns an empty
+    string. This drives the real method.
+    """
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import RecordedActivityPublisher
+    from recruitment_team.interface import StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+    from models import RecruitmentThread
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Understood."]),
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            RecordedActivityPublisher(),
+        )
+        receipt = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find me a role."),
+            idempotency_key="k1",
+        )
+        assert receipt.workflow_state, "_receipt returned an empty workflow_state"
+        recorded = receipt.workflow_state
+
+        # The thread moves on, exactly as it does when a paused run resumes.
+        thread = db.query(RecruitmentThread).filter(RecruitmentThread.id == receipt.thread_id).one()
+        thread.workflow_state = "assessment_ready"
+        db.commit()
+
+        replayed = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find me a role."),
+            idempotency_key="k1",
+        )
+
+        assert replayed.run_id == receipt.run_id
+        assert replayed.workflow_state == recorded, (
+            "replay reported the thread's current state instead of the run's"
+        )
+
+
+def test_a_paused_assessment_still_shows_what_specialists_reported():
+    """Pausing is the normal HITL state. Verdicts already given must stay visible."""
+    import uuid
+
+    from models import CandidateProfileArtifact, RecruitmentThread, TargetAssessmentArtifact
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import RecordedActivityPublisher
+    from recruitment_team.interface import StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db, ScriptedConversationModel(["Understood."]), _discovery(),
+            _role_profiler(), RecordedTelemetry(), RecordedActivityPublisher(),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find me a role."),
+            idempotency_key=f"k-{uuid.uuid4()}",
+        )
+
+        verdicts = [{"persona_id": "recruiter", "status": "completed",
+                     "submission": {"summary": "Strong on platform work.", "score": 71}}]
+        profile_id = str(uuid.uuid4())
+        db.add(CandidateProfileArtifact(
+            id=profile_id, user_id=owner_id, resume_version_id=resume_id,
+            checkpoint_id="c1", prompt_version="p1", decomposition_version="d1",
+            model_name="scripted", execution_policy={}, status="completed", scopes={},
+        ))
+        artifact_id = str(uuid.uuid4())
+        db.add(TargetAssessmentArtifact(
+            id=artifact_id, user_id=owner_id, thread_id=started.thread_id,
+            run_id=started.run_id, resume_version_id=resume_id,
+            candidate_profile_artifact_id=profile_id, target_job_id=101,
+            target_snapshot_sha256="x" * 64, status="paused",
+            specialist_runs=[], synthesis="", execution_policy={},
+            pending_specialist_runs=verdicts,
+        ))
+        thread = db.query(RecruitmentThread).filter(
+            RecruitmentThread.id == started.thread_id
+        ).one()
+        facts = dict(thread.case_facts)
+        facts["target_assessment_artifact_id"] = artifact_id
+        thread.case_facts = facts
+        db.commit()
+
+        snapshot = team.target_assessment(owner_id, started.thread_id)
+
+        assert snapshot.status == "paused"
+        assert len(snapshot.specialist_runs) == 1, (
+            "a paused run hid the verdicts its specialists had already submitted"
+        )
+        assert snapshot.specialist_runs[0]["submission"]["score"] == 71

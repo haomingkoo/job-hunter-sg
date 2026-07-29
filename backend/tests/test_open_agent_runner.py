@@ -349,7 +349,7 @@ def test_runner_resume_carries_forward_specialist_runs_and_proposed_edits_from_b
         content="",
         tool_calls=[{
             "name": "ask_candidate",
-            "args": {"question": "How large was the team you led?"},
+            "args": {"questions": ["How large was the team you led?"]},
             "id": "call-3",
         }],
     )
@@ -444,7 +444,7 @@ def test_resume_suppresses_the_replayed_ask_candidate_call_and_reports_a_genuine
 
     first_ask = AIMessage(
         content="",
-        tool_calls=[{"name": "ask_candidate", "args": {"question": "Q1"}, "id": "call-q1"}],
+        tool_calls=[{"name": "ask_candidate", "args": {"questions": ["Q1"]}, "id": "call-q1"}],
     )
     first_runner = OpenAgentTargetAssessmentRunner(
         model_factory=lambda: _ScriptedModel(responses=[first_ask]),
@@ -461,7 +461,7 @@ def test_resume_suppresses_the_replayed_ask_candidate_call_and_reports_a_genuine
 
     second_ask = AIMessage(
         content="",
-        tool_calls=[{"name": "ask_candidate", "args": {"question": "Q2"}, "id": "call-q2"}],
+        tool_calls=[{"name": "ask_candidate", "args": {"questions": ["Q2"]}, "id": "call-q2"}],
     )
     judge_calls: list[int] = []
 
@@ -506,7 +506,7 @@ def test_runner_pauses_and_yields_no_result_when_ask_candidate_interrupts(monkey
         content="",
         tool_calls=[{
             "name": "ask_candidate",
-            "args": {"question": "How large was the team you led?"},
+            "args": {"questions": ["How large was the team you led?"]},
             "id": "call-1",
         }],
     )
