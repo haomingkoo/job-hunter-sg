@@ -374,6 +374,10 @@ class RecruitmentTeam:
                 "thread_id": run.thread_id,
                 "status": run.status,
                 "trace_key": run.trace_key,
+                # Frozen here, not read from the thread at receipt time: the
+                # thread moves on, so replaying a paused run's idempotency key
+                # after it resumed would otherwise report the later state.
+                "workflow_state": thread.workflow_state or "",
             }
             completed_event = self._event(
                 thread,
@@ -1557,15 +1561,21 @@ class RecruitmentTeam:
     def _receipt(self, run: RecruitmentRun) -> RunReceipt:
         if run.status != "completed":
             raise InvalidCommand(f"command is {run.status}")
-        thread = (
-            self._db.query(RecruitmentThread)
-            .filter(RecruitmentThread.id == run.thread_id)
-            .first()
-        )
+        stored = run.result if isinstance(run.result, dict) else {}
+        workflow_state = stored.get("workflow_state")
+        if workflow_state is None:
+            # Runs recorded before workflow_state was stored; the thread's
+            # current state is the best available answer for those.
+            thread = (
+                self._db.query(RecruitmentThread)
+                .filter(RecruitmentThread.id == run.thread_id)
+                .first()
+            )
+            workflow_state = thread.workflow_state if thread else ""
         return RunReceipt(
             run_id=run.id,
             thread_id=run.thread_id,
             status="completed",
             trace_key=run.trace_key,
-            workflow_state=(thread.workflow_state if thread else "") or "",
+            workflow_state=workflow_state or "",
         )
