@@ -122,9 +122,15 @@ def test_propose_resume_edit_rejects_via_validation_gates_with_no_new_numbers():
     assert "25" not in (result.get("reason") or "")
 
 
-def test_ask_candidate_returns_the_question_unchanged():
-    result = ask_candidate.invoke({"question": "How large was the team you led?"})
-    assert result["question"] == "How large was the team you led?"
+def test_ask_candidate_carries_every_question_in_one_pause():
+    """One call, many questions: each pause costs the candidate a full wait."""
+    result = ask_candidate.invoke(
+        {"questions": ["How large was the team you led?", "Which storage did you operate?"]}
+    )
+    assert result["questions"] == [
+        "How large was the team you led?",
+        "Which storage did you operate?",
+    ]
     assert result["ok"] is True
 
 
@@ -143,3 +149,54 @@ def test_propose_resume_edit_stops_at_the_cap(monkeypatch):
     assert first["accepted"] is True
     assert second["accepted"] is False
     assert second["checkpoint_required"] is True
+
+
+def test_several_questions_render_as_one_numbered_message():
+    """The pause surfaces one message however many gaps the agent found."""
+    from recruitment_team.open_agent.runner import _format_questions
+
+    assert _format_questions({"questions": ["Only one?"]}) == "Only one?"
+    assert _format_questions({"questions": ["First?", "Second?"]}) == "1. First?\n2. Second?"
+    assert _format_questions({"questions": []}) == ""
+    # A model that sends a bare string instead of a list must still surface.
+    assert _format_questions({"questions": "Bare string?"}) == "Bare string?"
+
+
+def test_question_rounds_are_counted_from_the_graph_state():
+    """The cap has to read real history; nothing else bounds ask_candidate."""
+    from recruitment_team.open_agent.runner import _ask_rounds_so_far
+
+    class _Msg:
+        def __init__(self, calls):
+            self.tool_calls = calls
+
+    class _State:
+        def __init__(self, messages):
+            self.values = {"messages": messages}
+
+    class _Agent:
+        def __init__(self, messages):
+            self._messages = messages
+
+        def get_state(self, _config):
+            return _State(self._messages)
+
+    messages = [
+        _Msg([{"name": "ask_candidate", "args": {}}]),
+        _Msg([{"name": "read_target_job", "args": {}}]),
+        _Msg([{"name": "ask_candidate", "args": {}}]),
+    ]
+
+    assert _ask_rounds_so_far(_Agent(messages), {}) == 2
+    assert _ask_rounds_so_far(_Agent([]), {}) == 0
+
+
+def test_counting_rounds_never_breaks_a_resume():
+    """A state read failure must not take down the run it is guarding."""
+    from recruitment_team.open_agent.runner import _ask_rounds_so_far
+
+    class _Broken:
+        def get_state(self, _config):
+            raise RuntimeError("checkpointer unavailable")
+
+    assert _ask_rounds_so_far(_Broken(), {}) == 0
