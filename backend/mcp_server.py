@@ -46,7 +46,7 @@ def get_job(job_id: int) -> str:
     return tools.get_job(job_id)
 
 
-@mcp.tool(name="jobhunter.get_job")
+@mcp.tool(name="jobhunter_get_job")
 def jobhunter_get_job(job_id: int) -> str:
     """Fetch one public job by ID from the internal jobs DB."""
     return tools.get_job(job_id)
@@ -62,49 +62,49 @@ def search_jobs(
     return tools.search_jobs(query, limit, detail)
 
 
-@mcp.tool(name="jobhunter.search_jobs")
+@mcp.tool(name="jobhunter_search_jobs")
 def jobhunter_search_jobs(query: str, limit: int = 7) -> str:
     """Search public jobs semantically. Call jobhunter.get_job for full details."""
     return tools.search_jobs(query, limit)
 
 
-@mcp.tool(name="jobhunter.latest_jobs")
+@mcp.tool(name="jobhunter_latest_jobs")
 def jobhunter_latest_jobs(limit: int = 10) -> str:
     """Fetch the latest public jobs from the internal jobs DB."""
     return tools.latest_jobs(limit)
 
 
-@mcp.tool(name="jobhunter.latest_careersgov_jobs")
+@mcp.tool(name="jobhunter_latest_careersgov_jobs")
 def jobhunter_latest_careersgov_jobs(limit: int = 10) -> str:
     """Fetch the latest public Careers@Gov jobs."""
     return tools.latest_careersgov_jobs(limit)
 
 
-@mcp.tool(name="jobhunter.latest_mycareersfuture_jobs")
+@mcp.tool(name="jobhunter_latest_mycareersfuture_jobs")
 def jobhunter_latest_mycareersfuture_jobs(limit: int = 10) -> str:
     """Fetch the latest public MyCareersFuture jobs."""
     return tools.latest_mycareersfuture_jobs(limit)
 
 
-@mcp.tool(name="jobhunter.source_stats")
+@mcp.tool(name="jobhunter_source_stats")
 def jobhunter_source_stats() -> str:
     """Report public job counts and freshness by source."""
     return tools.source_stats()
 
 
-@mcp.tool(name="jobhunter.recommend_skillsfuture_courses")
+@mcp.tool(name="jobhunter_recommend_skillsfuture_courses")
 def jobhunter_recommend_skillsfuture_courses(skills: list[str], per_skill: int = 3) -> str:
     """Recommend official MySkillsFuture courses for skill gaps."""
     return tools.recommend_skillsfuture_courses(skills, per_skill)
 
 
-@mcp.tool(name="jobhunter.match_resume_to_jobs")
+@mcp.tool(name="jobhunter_match_resume_to_jobs")
 def jobhunter_match_resume_to_jobs(resume_text: str, limit: int = 10) -> str:
     """Rank public jobs against pasted resume text without storing it."""
     return tools.match_resume_to_jobs(resume_text, limit)
 
 
-@mcp.tool(name="jobhunter.ats_precompute_status")
+@mcp.tool(name="jobhunter_ats_precompute_status")
 def jobhunter_ats_precompute_status() -> str:
     """Report public job ATS precompute readiness."""
     return tools.ats_precompute_status()

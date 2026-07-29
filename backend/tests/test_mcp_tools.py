@@ -446,7 +446,10 @@ def test_fastapi_mcp_exact_path_initializes_without_redirect(monkeypatch):
     assert "location" not in response.headers
     assert "Job Hunter SG Jobs" in response.text
     assert tools_response.status_code == 200
-    assert "jobhunter.latest_jobs" in tools_response.text
+    # Underscores, not dots: the Claude API's tool-name charset rejects a dot, so a
+    # dot-namespaced name is spec-legal and still unusable on the largest client.
+    assert "jobhunter_latest_jobs" in tools_response.text
+    assert "jobhunter." not in tools_response.text
 
 
 def test_fastapi_public_mcp_discovery_endpoints():
@@ -464,3 +467,41 @@ def test_fastapi_public_mcp_discovery_endpoints():
     assert health_response.json()["mcp_enabled"] is False
     assert sitemap_response.status_code == 200
     assert "https://job.kooexperience.com/llms.txt" in sitemap_response.text
+
+
+def test_public_surface_uses_all_four_primitives_and_no_dotted_names():
+    """Dots are spec-legal but rejected by the Claude API's tool-name charset."""
+    import asyncio
+
+    import mcp_public
+
+    async def _surface():
+        server = mcp_public.mcp
+        return (
+            [t.name for t in await server.list_tools()],
+            [str(r.uri) for r in await server.list_resources()],
+            [t.uriTemplate for t in await server.list_resource_templates()],
+            [p.name for p in await server.list_prompts()],
+        )
+
+    tools_, resources, templates, prompts = asyncio.run(_surface())
+
+    assert not [n for n in tools_ + prompts if "." in n]
+    assert "jobhunter_latest_jobs" in tools_
+    # The two single-source variants collapsed into latest_jobs(source=...).
+    assert not [n for n in tools_ if "careersgov" in n or "mycareersfuture" in n]
+    assert "jobhunter://sources" in resources
+    assert "jobhunter://job/{job_id}" in templates
+    assert len(prompts) >= 2
+
+
+def test_every_public_resource_declares_a_mime_type():
+    """FastMCP silently serves resources as text/plain when mime_type is omitted."""
+    import asyncio
+
+    import mcp_public
+
+    resources = asyncio.run(mcp_public.mcp.list_resources())
+
+    assert resources
+    assert all(r.mimeType == "application/json" for r in resources)
