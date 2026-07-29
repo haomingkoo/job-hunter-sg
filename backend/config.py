@@ -204,6 +204,10 @@ ANALYTICS_CACHE_TTL_SECONDS: int = _int_env("ANALYTICS_CACHE_TTL_SECONDS", 86400
 ANALYTICS_QUERY_CACHE_TTL_SECONDS: int = _int_env("ANALYTICS_QUERY_CACHE_TTL_SECONDS", 3600)
 ANALYTICS_QUERY_CACHE_MAX: int = _int_env("ANALYTICS_QUERY_CACHE_MAX", 64)
 ANALYTICS_MAX_ROWS: int = _int_env("ANALYTICS_MAX_ROWS", 12000)
+# Default job feed is chronological, which rewards whoever reposts most often.
+# Cap how many postings one company contributes so a handful of high-volume
+# employers cannot own the browse feed.
+JOBS_MAX_PER_COMPANY: int = _positive_int_env("JOBS_MAX_PER_COMPANY", 3)
 ANALYTICS_YIELD_PER: int = _int_env("ANALYTICS_YIELD_PER", 500)
 
 # ── Resume-tailoring pipeline token budgets (all on the FAST tier) ────────────

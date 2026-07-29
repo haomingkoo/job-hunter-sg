@@ -1,39 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Bot, CheckCircle2, ChevronDown, Loader2, Send, Users, XCircle } from "lucide-react";
+import { Bot, ChevronDown, Send, Users } from "lucide-react";
 
 const EVIDENCE_PAGE_SIZE = 25;
 
-const STATUS_STYLE = {
-  running: { icon: Loader2, color: "text-[#88BDF2]" },
-  completed: { icon: CheckCircle2, color: "text-emerald-600" },
-  failed: { icon: XCircle, color: "text-amber-700" },
-  quality_blocked: { icon: XCircle, color: "text-amber-700" },
-};
-
-function StatusIcon({ status }) {
-  const { icon: Icon, color } = STATUS_STYLE[status] || { icon: Loader2, color: "text-[#6A89A7]" };
-  return <Icon size={14} className={`${color} ${status === "running" ? "animate-spin" : ""}`} />;
-}
-
-function groupActivityByRun(events) {
-  const groups = [];
-  const byRunId = new Map();
-  for (const item of events) {
-    let group = byRunId.get(item.run_id);
-    if (!group) {
-      group = { runId: item.run_id, coordinatorEvents: [], memberEvents: [] };
-      byRunId.set(item.run_id, group);
-      groups.push(group);
-    }
-    if (item.team_member === "coordinator") {
-      group.coordinatorEvents.push(item);
-    } else {
-      group.memberEvents.push(item);
-    }
-  }
-  return groups;
-}
-
+import TeamActivityPanel from "./TeamActivityPanel.jsx";
+import SpecialistReport from "./SpecialistReport.jsx";
+import ProposedEditsPanel from "./ProposedEditsPanel.jsx";
 import { apiFetch } from "../lib/api.js";
 import { streamRecruitmentCommand } from "../lib/recruitmentTeamApi.js";
 
@@ -53,6 +25,8 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   const [events, setEvents] = useState([]);
   const [candidateProfile, setCandidateProfile] = useState(null);
   const [targetAssessment, setTargetAssessment] = useState(null);
+  const [proposedEdits, setProposedEdits] = useState([]);
+  const [editResult, setEditResult] = useState(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -127,6 +101,40 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
       setTargetAssessment(await assessmentResponse.json());
     } else {
       setTargetAssessment(null);
+    }
+    const editsResponse = await apiFetch(`/api/recruitment-team/threads/${id}/proposed-edits`);
+    setProposedEdits(await editsResponse.json());
+  }
+
+  async function acceptEdits(editIds) {
+    setBusy(true);
+    setError("");
+    try {
+      const response = await apiFetch(
+        `/api/recruitment-team/threads/${threadId}/proposed-edits/accept`,
+        {
+          method: "POST",
+          body: JSON.stringify({ edit_ids: editIds, idempotency_key: crypto.randomUUID() }),
+        },
+      );
+      setEditResult(await response.json());
+      await refreshThread(threadId);
+    } catch (acceptError) {
+      setError(acceptError.message || "Could not save those edits.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rejectEdits(editIds) {
+    try {
+      await apiFetch(`/api/recruitment-team/threads/${threadId}/proposed-edits/reject`, {
+        method: "POST",
+        body: JSON.stringify({ edit_ids: editIds, idempotency_key: crypto.randomUUID() }),
+      });
+      await refreshThread(threadId);
+    } catch (rejectError) {
+      setError(rejectError.message || "Could not dismiss that edit.");
     }
   }
 
@@ -740,40 +748,16 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
               </div>
               {targetAssessment && (
                 <div className="mt-4 space-y-3">
-                  <div className="rounded-2xl border border-[#BDDDFC]/60 p-4 text-xs text-[#6A89A7]">
+                  <div className="rounded-2xl border border-[#DCE7F2] p-4 text-xs">
                     <p className="font-medium capitalize text-[#384959]">{targetAssessment.status.replaceAll("_", " ")}</p>
-                    <p className="mt-1">
-                      {targetAssessment.execution_policy.persona_pack_version} ·{" "}
-                      {targetAssessment.execution_policy.specialist_max_concurrency} max concurrent specialists ·{" "}
-                      {targetAssessment.execution_policy.specialist_validation_attempts} specialist validation attempts ·{" "}
-                      {targetAssessment.execution_policy.synthesis_validation_attempts} synthesis validation attempts ·{" "}
-                      {targetAssessment.execution_policy.judge_validation_attempts} judge validation attempts ·{" "}
-                      {targetAssessment.execution_policy.transport_retries} transport retries · no fallback model · no content truncation
+                    <p className="mt-1 text-[#4A6785]">
+                      {(targetAssessment.specialist_runs || []).length}{" "}
+                      {(targetAssessment.specialist_runs || []).length === 1 ? "specialist" : "specialists"} reviewed
+                      this role against your evidence, then an independent judge reviewed their verdict.
                     </p>
                   </div>
                   {(targetAssessment.specialist_runs || []).map((run) => (
-                    <article key={run.persona_id} className="rounded-2xl border border-[#BDDDFC]/60 p-4">
-                      <div className="flex items-center justify-between gap-2">
-                        <h3 className="text-sm font-semibold capitalize text-[#384959]">
-                          {run.persona_id.replaceAll("_", " ")}
-                        </h3>
-                        <span className="rounded-full bg-[#f0f5fa] px-2 py-1 text-xs capitalize text-[#384959]">
-                          {run.status}
-                        </span>
-                      </div>
-                      {run.submission ? (
-                        <>
-                          <p className="mt-2 text-sm text-[#384959]">{run.submission.summary}</p>
-                          <p className="mt-2 text-xs text-[#6A89A7]">
-                            Raw evidence support {run.submission.score}/100 · {run.submission.score_reason}
-                          </p>
-                        </>
-                      ) : (
-                        <p className="mt-2 text-xs text-amber-800">
-                          {run.failure_type || "unknown"} failure · attempts {run.attempt_count || 0}
-                        </p>
-                      )}
-                    </article>
+                    <SpecialistReport key={run.persona_id} run={run} />
                   ))}
                   {targetAssessment.synthesis && (
                     <article className="whitespace-pre-wrap rounded-2xl border border-[#BDDDFC]/60 p-4 text-sm text-[#384959]">
@@ -832,53 +816,17 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
               )}
             </section>
           )}
+
+          <ProposedEditsPanel
+            edits={proposedEdits}
+            onAccept={acceptEdits}
+            onReject={rejectEdits}
+            busy={busy}
+            result={editResult}
+          />
         </div>
 
-        <aside className="rounded-3xl border border-[#BDDDFC]/40 bg-[#f5f8fb] p-5">
-          <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">
-            <Activity size={16} /> Team activity
-          </div>
-          <p className="mt-1 text-xs text-[#6A89A7]">
-            Real workflow events, not hidden reasoning.
-          </p>
-          <ol className="mt-4 space-y-3">
-            {groupActivityByRun(events).map((group) => {
-              const trunk = group.coordinatorEvents[group.coordinatorEvents.length - 1];
-              const branches = group.memberEvents;
-              return (
-                <li key={group.runId} className="rounded-2xl bg-white p-3 text-sm shadow-sm">
-                  {trunk && (
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-1.5 font-medium capitalize text-[#384959]">
-                        <StatusIcon status={trunk.status} /> {trunk.team_member}
-                      </span>
-                      <span className="text-xs capitalize text-[#6A89A7]">{trunk.status}</span>
-                    </div>
-                  )}
-                  {trunk && <p className="mt-1 leading-relaxed text-[#6A89A7]">{trunk.summary}</p>}
-                  {branches.length > 0 && (
-                    <ol className={`space-y-2 ${trunk ? "mt-3 border-l-2 border-[#BDDDFC]/70 pl-3" : ""}`}>
-                      {branches.map((branch) => (
-                        <li key={branch.sequence} className="rounded-xl bg-[#f5f8fb] px-3 py-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="flex items-center gap-1.5 text-xs font-semibold capitalize text-[#384959]">
-                              <StatusIcon status={branch.status} /> {branch.team_member.replaceAll("_", " ")}
-                            </span>
-                            <span className="text-[11px] capitalize text-[#6A89A7]">{branch.status}</span>
-                          </div>
-                          <p className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{branch.summary}</p>
-                        </li>
-                      ))}
-                    </ol>
-                  )}
-                </li>
-              );
-            })}
-            {events.length === 0 && (
-              <li className="text-sm text-[#6A89A7]">Activity will appear after your first message.</li>
-            )}
-          </ol>
-        </aside>
+        <TeamActivityPanel events={events} busy={busy} awaitingAnswer={awaitingAnswer} />
       </div>
     </section>
   );

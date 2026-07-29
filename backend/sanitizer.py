@@ -83,6 +83,12 @@ def sanitize_job(job_dict: dict) -> dict:
         sanitized["openings"] = max(1, min(int(sanitized.get("openings") or 1), 10000))
     except (TypeError, ValueError):
         sanitized["openings"] = 1
+    # Stamped here because this is the one point every write path shares, and the
+    # hash has to be taken after sanitising so the same listing hashes identically
+    # regardless of how much markup its source shipped.
+    from job_store import compute_content_hash
+
+    sanitized["content_hash"] = compute_content_hash(sanitized)
     return sanitized
 
 

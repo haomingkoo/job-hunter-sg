@@ -113,9 +113,18 @@ class OpenAgentTargetAssessmentRunner:
             "content": (
                 "Assess this candidate against the target job. Consult whichever "
                 "personas you judge useful, however many times you judge useful. "
-                "Propose resume edits only where you have real evidence or an answer "
-                "the candidate gave you. Ask the candidate directly if you hit a real "
-                "evidence gap."
+                "Ask the candidate directly if you hit a real evidence gap.\n\n"
+                "Drafting resume edits is part of this job, not an optional extra. "
+                "Once the personas have reported, call propose_resume_edit for every "
+                "gap where the candidate's own evidence already supports stronger "
+                "wording, whether that evidence is in their resume or in an answer "
+                "they gave you. Many gaps are vocabulary rather than experience: the "
+                "candidate did the work but did not phrase it the way this posting "
+                "does, and those are the edits worth drafting.\n\n"
+                "Never invent experience. Where the gap is genuinely missing "
+                "experience rather than weak wording, say so in your assessment and "
+                "do not draft an edit for it. The candidate has to defend every line "
+                "of their resume in an interview."
             ),
         }]}
         run_config = {
