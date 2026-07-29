@@ -199,8 +199,6 @@ DATABASE_POOL_TIMEOUT: int = _int_env("DATABASE_POOL_TIMEOUT", 30)
 DATABASE_POOL_RECYCLE_SECONDS: int = _int_env("DATABASE_POOL_RECYCLE_SECONDS", 1800)
 CAREERSGOV_CACHE_TTL_SECONDS: int = _int_env("CAREERSGOV_CACHE_TTL_SECONDS", 3600)
 CAREERSGOV_HTTP_TIMEOUT_SECONDS: int = _int_env("CAREERSGOV_HTTP_TIMEOUT_SECONDS", 30)
-JD_ENRICHMENT_MAX_WORKERS: int = _int_env("JD_ENRICHMENT_MAX_WORKERS", 3)
-FAILED_SUMMARY_RETRY_SECONDS: int = _int_env("FAILED_SUMMARY_RETRY_SECONDS", 300)
 # A "generating" row is only truthful while a worker is alive; past this the
 # process that claimed it is assumed dead and the row is reclaimed.
 JD_SUMMARY_STALE_GENERATING_SECONDS: int = _positive_int_env(

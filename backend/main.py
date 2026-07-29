@@ -14,7 +14,6 @@ import logging
 import os
 import sys
 import time
-import concurrent.futures
 import re
 import secrets
 import threading
@@ -174,10 +173,6 @@ log = logging.getLogger("jobhunter")
 _is_production = is_production_environment()
 
 _CAREERSGOV_PATH_RE = re.compile(r"(?:/en-US/PublicServiceCareers(/job/.+)$|(/jobs/hrp/[^?#]+))")
-_JD_ENRICHMENT_IN_FLIGHT: set[int] = set()
-_JD_ENRICHMENT_LOCK = threading.Lock()
-_JD_ENRICHMENT_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=app_config.JD_ENRICHMENT_MAX_WORKERS)
-_FAILED_RETRY_SECONDS = app_config.FAILED_SUMMARY_RETRY_SECONDS
 
 # ── Cached filter metadata (avoid 3 GROUP BY queries per page 1 load) ────────
 _filter_meta_cache: dict = {}
@@ -547,7 +542,6 @@ async def lifespan(application: FastAPI):
     # ── Shutdown ──
     log.info("Shutting down Job Hunter SG API")
     shutdown_telemetry()
-    _JD_ENRICHMENT_POOL.shutdown(wait=False, cancel_futures=True)
 
 
 app = FastAPI(
@@ -1154,105 +1148,6 @@ def _compute_and_cache_term_preview(
     labels = _job_term_labels(terms, limit=limit)
     job.job_terms_preview = labels
     return labels
-
-
-def _enrich_job_background(job_id: int) -> None:
-    """Background worker: generate JD summary + cache term preview."""
-    from database import SessionLocal
-
-    db = SessionLocal()
-    try:
-        job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
-        if not job or not (job.description or "").strip():
-            return
-
-        if not job.job_terms_preview:
-            _compute_and_cache_term_preview(job, db)
-            db.commit()
-
-        if (job.jd_summary or "").strip():
-            return
-
-        parsed = job.parsed_jd if isinstance(job.parsed_jd, dict) and job.parsed_jd else preparse_jd(
-            job.description or "",
-            skills=job.skills if isinstance(job.skills, list) else [],
-            db_session=db,
-            job_title=job.title or "",
-        )
-        if parsed and parsed != (job.parsed_jd or {}):
-            job.parsed_jd = parsed
-
-        job.jd_summary_status = "generating"
-        db.commit()
-
-        summary, model_used = summarize_job_description(
-            job_title=job.title or "",
-            description=job.description or "",
-            parsed_jd=parsed,
-        )
-
-        now_iso = datetime.now(timezone.utc).isoformat()
-        if summary:
-            job.jd_summary = summary
-            job.jd_summary_generated_at = now_iso
-            job.jd_summary_status = model_used
-        else:
-            job.jd_summary_generated_at = now_iso
-            job.jd_summary_status = "unavailable"
-        db.commit()
-    except Exception as exc:
-        log.warning("JD enrichment failed for job_id=%s: %s", job_id, exc)
-        try:
-            db.rollback()
-            job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
-            if job and not (job.jd_summary or "").strip():
-                job.jd_summary_status = "failed"
-                job.jd_summary_generated_at = datetime.now(timezone.utc).isoformat()
-                db.commit()
-        except Exception:
-            pass
-    finally:
-        db.close()
-        with _JD_ENRICHMENT_LOCK:
-            _JD_ENRICHMENT_IN_FLIGHT.discard(job_id)
-
-
-def _should_queue_enrichment(job: ScrapedJob) -> bool:
-    """Check if this job needs background enrichment (summary or preview)."""
-    if not job or not job.id or not (job.description or "").strip():
-        return False
-    needs_preview = not job.job_terms_preview
-    needs_summary = not (job.jd_summary or "").strip()
-    if not needs_preview and not needs_summary:
-        return False
-    # Allow retry for failed/unavailable summaries after cooldown
-    status = (job.jd_summary_status or "").strip()
-    if status in ("failed", "unavailable"):
-        generated_at = job.jd_summary_generated_at or ""
-        if generated_at:
-            try:
-                attempted_at = datetime.fromisoformat(generated_at)
-                if (datetime.now(timezone.utc) - attempted_at).total_seconds() < _FAILED_RETRY_SECONDS:
-                    return needs_preview  # only queue if preview still needed
-            except (ValueError, TypeError):
-                pass
-    if status == "generating":
-        return needs_preview  # already in progress for summary
-    return True
-
-
-def _queue_enrichment_if_needed(job: ScrapedJob) -> None:
-    if not _should_queue_enrichment(job):
-        return
-    if not get_ai_health()["is_healthy"]:
-        return
-    with _JD_ENRICHMENT_LOCK:
-        if job.id in _JD_ENRICHMENT_IN_FLIGHT:
-            return
-        if len(_JD_ENRICHMENT_IN_FLIGHT) >= 50:
-            return
-        _JD_ENRICHMENT_IN_FLIGHT.add(job.id)
-    _JD_ENRICHMENT_POOL.submit(_enrich_job_background, job.id)
 
 
 def _refresh_careersgov_terms_if_weak(job: ScrapedJob, db: Session) -> bool:

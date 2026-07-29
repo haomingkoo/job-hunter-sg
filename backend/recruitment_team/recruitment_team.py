@@ -374,6 +374,10 @@ class RecruitmentTeam:
                 "thread_id": run.thread_id,
                 "status": run.status,
                 "trace_key": run.trace_key,
+                # Frozen here, not read from the thread at receipt time: the
+                # thread moves on, so replaying a paused run's idempotency key
+                # after it resumed would otherwise report the later state.
+                "workflow_state": thread.workflow_state or "",
             }
             completed_event = self._event(
                 thread,
@@ -1073,11 +1077,18 @@ class RecruitmentTeam:
         )
         if artifact is None:
             raise InvalidCommand("target assessment artifact reference is invalid")
+        # A paused run parks completed specialist work in pending_specialist_runs,
+        # so reading specialist_runs alone showed a candidate nothing while their
+        # scored verdicts sat in the row. Pausing is the normal HITL state, not an
+        # error, so surface what the specialists already reported.
+        reported = list(artifact.specialist_runs or []) or list(
+            artifact.pending_specialist_runs or []
+        )
         return TargetAssessmentArtifactSnapshot(
             artifact_id=artifact.id,
             target_job_id=artifact.target_job_id,
             status=artifact.status,
-            specialist_runs=tuple(artifact.specialist_runs),
+            specialist_runs=tuple(reported),
             synthesis=artifact.synthesis,
             judge=artifact.judge,
             correction=artifact.correction,
@@ -1554,13 +1565,24 @@ class RecruitmentTeam:
             created_at=item.created_at,
         )
 
-    @staticmethod
-    def _receipt(run: RecruitmentRun) -> RunReceipt:
+    def _receipt(self, run: RecruitmentRun) -> RunReceipt:
         if run.status != "completed":
             raise InvalidCommand(f"command is {run.status}")
+        stored = run.result if isinstance(run.result, dict) else {}
+        workflow_state = stored.get("workflow_state")
+        if workflow_state is None:
+            # Runs recorded before workflow_state was stored; the thread's
+            # current state is the best available answer for those.
+            thread = (
+                self._db.query(RecruitmentThread)
+                .filter(RecruitmentThread.id == run.thread_id)
+                .first()
+            )
+            workflow_state = thread.workflow_state if thread else ""
         return RunReceipt(
             run_id=run.id,
             thread_id=run.thread_id,
             status="completed",
             trace_key=run.trace_key,
+            workflow_state=workflow_state or "",
         )
