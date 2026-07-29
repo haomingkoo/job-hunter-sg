@@ -1077,11 +1077,18 @@ class RecruitmentTeam:
         )
         if artifact is None:
             raise InvalidCommand("target assessment artifact reference is invalid")
+        # A paused run parks completed specialist work in pending_specialist_runs,
+        # so reading specialist_runs alone showed a candidate nothing while their
+        # scored verdicts sat in the row. Pausing is the normal HITL state, not an
+        # error, so surface what the specialists already reported.
+        reported = list(artifact.specialist_runs or []) or list(
+            artifact.pending_specialist_runs or []
+        )
         return TargetAssessmentArtifactSnapshot(
             artifact_id=artifact.id,
             target_job_id=artifact.target_job_id,
             status=artifact.status,
-            specialist_runs=tuple(artifact.specialist_runs),
+            specialist_runs=tuple(reported),
             synthesis=artifact.synthesis,
             judge=artifact.judge,
             correction=artifact.correction,
