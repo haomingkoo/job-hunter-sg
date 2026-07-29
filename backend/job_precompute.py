@@ -215,5 +215,13 @@ def apply_job_precomputes(job_data: dict) -> dict:
     )
     job_data["salary_floor"] = salary_floor_from_text(job_data.get("salary", "") or "")
     job_data["skills_flat"] = skills_flat_text(job_data.get("skills"))
+    # Stored as a column rather than read from parsed_jd["_analysis"], because the
+    # feed orders on it and a JSON extract cannot use an index across 450k rows.
+    from jd_analyzer import detect_promotional_spam
+
+    job_data["promotional_score"] = detect_promotional_spam(
+        job_data.get("title", "") or "",
+        job_data.get("description", "") or "",
+    )["score"]
     apply_company_taxonomy(job_data)
     return job_data

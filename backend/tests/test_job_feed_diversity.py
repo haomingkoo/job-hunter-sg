@@ -148,3 +148,60 @@ def test_blank_company_rows_are_still_all_reachable():
         assert len(set(seen)) == 9, "blank-company rows were dropped by the cap"
     finally:
         teardown()
+
+
+def _promotional_client():
+    """Newest postings are all promotional; two plain employers are older."""
+    rows = [("SIMPLE RECRUIT", 0)] * 6 + [(e, 0) for e in ("Acme Pte Ltd", "Beta Labs")]
+    client, teardown = _build_client(rows)
+    return client, teardown
+
+
+def test_promotional_postings_sink_below_ordinary_ones():
+    """The company cap cannot reach these: many separate outfits post a few each."""
+    from database import get_db
+    from models import ScrapedJob
+
+    client, teardown = _promotional_client()
+    try:
+        db = next(main.app.dependency_overrides[get_db]())
+        for job in db.query(ScrapedJob).filter(ScrapedJob.company == "SIMPLE RECRUIT"):
+            job.promotional_score = 55
+        db.commit()
+
+        jobs = client.get("/api/jobs?per_page=8").json()["jobs"]
+        leading = [job["company"] for job in jobs[:2]]
+
+        assert set(leading) == {"Acme Pte Ltd", "Beta Labs"}, (
+            "promotional postings still outranked ordinary employers"
+        )
+    finally:
+        teardown()
+
+
+def test_exclude_promotional_removes_them_entirely():
+    from database import get_db
+    from models import ScrapedJob
+
+    client, teardown = _promotional_client()
+    try:
+        db = next(main.app.dependency_overrides[get_db]())
+        for job in db.query(ScrapedJob).filter(ScrapedJob.company == "SIMPLE RECRUIT"):
+            job.promotional_score = 55
+        db.commit()
+
+        body = client.get("/api/jobs?per_page=8&exclude_promotional=true").json()
+
+        assert body["total"] == 2
+        assert {job["company"] for job in body["jobs"]} == {"Acme Pte Ltd", "Beta Labs"}
+    finally:
+        teardown()
+
+
+def test_ordinary_postings_are_untouched_by_the_promotional_filter():
+    """A zero score must never be filtered, and defaults must not change."""
+    client, teardown = _build_client([("Acme Pte Ltd", 0), ("Beta Labs", 0)])
+    try:
+        assert client.get("/api/jobs?exclude_promotional=true").json()["total"] == 2
+    finally:
+        teardown()

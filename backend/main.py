@@ -3064,6 +3064,7 @@ _PRECOMPUTE_LOAD_ONLY = (
     ScrapedJob.company_ssic_source,
     ScrapedJob.salary_floor,
     ScrapedJob.skills_flat,
+    ScrapedJob.promotional_score,
 )
 
 
@@ -4468,6 +4469,10 @@ def _contains_like_pattern(value: str) -> str:
     return f"%{escaped}%"
 
 
+# detect_promotional_spam's own is_promotional cut-off. Named here because the
+# feed both filters and orders on it.
+_PROMOTIONAL_SCORE_THRESHOLD = 40
+
 # Columns the job list renders. Kept as a constant because the balanced sort
 # re-fetches its page by id and must load exactly the same set.
 _JOB_LIST_COLUMNS = (
@@ -4500,6 +4505,7 @@ _JOB_LIST_COLUMNS = (
     ScrapedJob.company_ssic_source,
     ScrapedJob.salary_floor,
     ScrapedJob.skills_flat,
+    ScrapedJob.promotional_score,
 )
 
 
@@ -4516,6 +4522,9 @@ def list_cached_jobs(
     min_salary: Optional[int] = Query(None, ge=0),
     sort: str = Query("balanced", pattern="^(balanced|newest|salary)$"),
     direct_employers_only: bool = Query(False),
+    # Separate axis from direct_employers_only: the heaviest promotional posters
+    # are legitimately direct employers, so the agency filter cannot see them.
+    exclude_promotional: bool = Query(False),
     page: int = Query(1, ge=1, le=500),
     per_page: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -4627,6 +4636,10 @@ def list_cached_jobs(
                 ScrapedJob.description,
             )
         )
+    if exclude_promotional:
+        query = query.filter(
+            func.coalesce(ScrapedJob.promotional_score, 0) < _PROMOTIONAL_SCORE_THRESHOLD
+        )
     if min_salary is not None:
         query = query.filter(
             or_(
@@ -4664,6 +4677,7 @@ def list_cached_jobs(
             ScrapedJob.id.label("job_id"),
             ScrapedJob.posted_at_sort.label("job_posted_at_sort"),
             ScrapedJob.salary_floor.label("job_salary_floor"),
+            func.coalesce(ScrapedJob.promotional_score, 0).label("job_promotional"),
             company_rank,
         ).subquery()
 
@@ -4672,6 +4686,13 @@ def list_cached_jobs(
             balanced_ordering.append(
                 case((ranked.c.job_salary_floor >= min_salary, 0), else_=1)
             )
+        # Demoted, not dropped, for the same reason as the company cap: a
+        # promotional posting is still a real job someone may want, and the
+        # company cap alone cannot reach these because many separate MLM
+        # outfits each post a few listings rather than one posting many.
+        balanced_ordering.append(
+            case((ranked.c.job_promotional < _PROMOTIONAL_SCORE_THRESHOLD, 0), else_=1)
+        )
         balanced_ordering.append(
             case((ranked.c.company_rank <= app_config.JOBS_MAX_PER_COMPANY, 0), else_=1)
         )
@@ -4799,6 +4820,7 @@ def list_cached_jobs(
                 "company_ssic_description": j.company_ssic_description or "",
                 "company_ssic_source": j.company_ssic_source or "",
                 "archetype": (j.parsed_jd or {}).get("archetype", "") if isinstance(j.parsed_jd, dict) else "",
+                "promotional_score": int(j.promotional_score or 0),
             }
             for j in jobs
         ],

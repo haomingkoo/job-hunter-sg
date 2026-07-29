@@ -101,6 +101,8 @@ def _apply_lightweight_migrations() -> None:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN skills_flat TEXT DEFAULT ''")
     if "content_hash" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN content_hash VARCHAR(64) DEFAULT ''")
+    if "promotional_score" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN promotional_score INTEGER DEFAULT 0")
 
     existing_indexes = {idx["name"] for idx in inspector.get_indexes("scraped_jobs")}
     index_defs = {
@@ -115,6 +117,7 @@ def _apply_lightweight_migrations() -> None:
         "ix_scraped_jobs_ssic_source": "CREATE INDEX ix_scraped_jobs_ssic_source ON scraped_jobs (company_ssic_source)",
         "ix_scraped_jobs_salary_floor": "CREATE INDEX ix_scraped_jobs_salary_floor ON scraped_jobs (salary_floor)",
         "ix_scraped_jobs_content_hash": "CREATE INDEX ix_scraped_jobs_content_hash ON scraped_jobs (content_hash)",
+        "ix_scraped_jobs_promotional": "CREATE INDEX ix_scraped_jobs_promotional ON scraped_jobs (promotional_score)",
     }
     for idx_name, idx_sql in index_defs.items():
         if idx_name not in existing_indexes:
