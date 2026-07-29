@@ -808,6 +808,7 @@ def test_agent_admission_and_account_deletion_share_a_lifecycle_barrier(
     monkeypatch,
 ) -> None:
     from auth import hash_password
+    import resume_agent.session as agent_session_module
     from resume_agent.session import release_owner_run
     from schemas import DeleteAccountRequest
 
@@ -850,16 +851,19 @@ def test_agent_admission_and_account_deletion_share_a_lifecycle_barrier(
 
     monkeypatch.setattr(main, "_consume_ai_credit", blocked_credit)
     monkeypatch.setattr(main._PUBLIC_RATE_LIMITER, "allow", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        agent_session_module, "start_background_review", lambda _body, _owner: "detached-session"
+    )
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            admitted = pool.submit(main.resume_agent_chat, {}, agent_user, agent_db)
+            admitted = pool.submit(main.start_resume_agent_review, {}, agent_user, agent_db)
             assert credit_started.wait(5)
             deleting = pool.submit(run_deletion)
             assert deletion_started.wait(5)
             with pytest.raises(TimeoutError):
                 deleting.result(timeout=0.2)
             release_credit.set()
-            assert admitted.result(timeout=5).media_type == "text/event-stream"
+            assert admitted.result(timeout=5)["status"] == "queued"
             with pytest.raises(HTTPException) as exc_info:
                 deleting.result(timeout=5)
             assert exc_info.value.status_code == 409
@@ -980,7 +984,7 @@ def test_completed_deletion_rejects_an_agent_request_already_waiting_for_admissi
 
     def run_agent():
         agent_started.set()
-        return main.resume_agent_chat({}, SimpleNamespace(id=user_id), agent_db)
+        return main.start_resume_agent_review({}, SimpleNamespace(id=user_id), agent_db)
 
     monkeypatch.setattr(main, "_delete_owned_account_rows", blocked_delete)
     monkeypatch.setattr(main._PUBLIC_RATE_LIMITER, "allow", lambda *_args, **_kwargs: True)
@@ -1018,6 +1022,7 @@ def test_completed_deletion_rejects_an_agent_request_already_waiting_for_admissi
 
 def test_lifecycle_barrier_does_not_block_another_account(monkeypatch) -> None:
     from auth import hash_password
+    import resume_agent.session as agent_session_module
     from resume_agent.session import release_owner_run
     from schemas import DeleteAccountRequest
 
@@ -1055,9 +1060,12 @@ def test_lifecycle_barrier_does_not_block_another_account(monkeypatch) -> None:
 
     monkeypatch.setattr(main, "_consume_ai_credit", blocked_credit)
     monkeypatch.setattr(main._PUBLIC_RATE_LIMITER, "allow", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(
+        agent_session_module, "start_background_review", lambda _body, _owner: "detached-session"
+    )
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            admitted = pool.submit(main.resume_agent_chat, {}, agent_user, agent_db)
+            admitted = pool.submit(main.start_resume_agent_review, {}, agent_user, agent_db)
             assert credit_started.wait(5)
             deleting = pool.submit(
                 main.delete_account,
@@ -1070,7 +1078,7 @@ def test_lifecycle_barrier_does_not_block_another_account(monkeypatch) -> None:
             )
             assert deleting.result(timeout=2) == {"message": "Account deleted."}
             release_credit.set()
-            assert admitted.result(timeout=5).media_type == "text/event-stream"
+            assert admitted.result(timeout=5)["status"] == "queued"
     finally:
         release_credit.set()
         release_owner_run(owner_key)

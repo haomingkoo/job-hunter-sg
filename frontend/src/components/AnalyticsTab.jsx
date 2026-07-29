@@ -244,7 +244,6 @@ export default function AnalyticsTab() {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Client-side skill search filter
   const filteredSkills = useMemo(() => {
     const skills = data?.top_skills || [];
     if (!skillSearch.trim()) return skills;

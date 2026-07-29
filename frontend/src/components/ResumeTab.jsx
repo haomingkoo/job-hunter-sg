@@ -1,5 +1,3 @@
-// ResumeTab component extracted from App.jsx (Phase 3)
-
 import { useState, useEffect, useMemo, useCallback, useRef, Fragment, memo } from "react";
 import {
   Search, FileText, Plus, X, ChevronRight,
@@ -327,7 +325,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     } catch {
       // ignore corrupt data
     }
-    // Default: if resume text exists in session, start at step 3; otherwise step 1
     try {
       const text = sessionStorage.getItem("jh_resume_text") || "";
       return text.trim() ? 3 : 1;
@@ -1095,7 +1092,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   };
 
   // ── Resume Versions ──────────────────────────────────────────────────
-  // Auto-load versions for logged-in users
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (user) fetchVersions(); }, [user]);
 
@@ -1628,16 +1624,13 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         );
         let nextText = resumeText;
         if (summaryParagraphs.length > 0) {
-          // Replace all summary paragraph lines with the new summary
           const lines = nextText.replace(/\r\n?/g, "\n").split("\n");
           const allLineIndices = summaryParagraphs.flatMap(
             (s) => (Array.isArray(s.lineIndices) && s.lineIndices.length > 0) ? s.lineIndices : [s.lineIndex],
           ).sort((a, b) => b - a); // reverse order to preserve indices
-          // Remove all old summary lines
           for (const idx of allLineIndices) {
             lines.splice(idx, 1);
           }
-          // Insert new summary at the position of the first removed line
           const insertAt = Math.min(...summaryParagraphs.map((s) => s.lineIndex));
           lines.splice(insertAt, 0, data.summary);
           nextText = lines.join("\n");
@@ -2017,7 +2010,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       return isResumeActionVerb(firstWord);
     }).length;
 
-    // Check for missing template sections
     const foundSectionKeys = new Set(parsedSections.filter((s) => s.type === "heading").map((s) => s.sectionKey).filter(Boolean));
     const expectedSections = RESUME_TEMPLATE_SECTION_ORDER[selectedTemplate] || [];
     const missingSections = expectedSections.filter((key) => key && !foundSectionKeys.has(key));
@@ -5385,7 +5377,6 @@ CERTIFICATIONS
                           );
                         })() : null;
 
-                      // Wrap bullets in SortableBulletItem for drag-and-drop
                       if (section.type === "bullet") {
                         return (
                           <SortableBulletItem key={section.id} id={section.id}>

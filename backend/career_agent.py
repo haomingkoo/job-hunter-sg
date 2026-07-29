@@ -12,7 +12,8 @@ import json
 import re
 from typing import Any
 
-from ai_service import SEALION_MODEL, call_sealion_json
+from ai_service import call_sealion_json
+from config import SEALION_FAST_MODEL
 from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
 from resume_structurer import get_all_bullets, structure_resume
 from validation_gates import gate_unsupported_claims, numeric_metric_claims_verifiable
@@ -519,7 +520,7 @@ SECURITY: {untrusted_rule}""".format(untrusted_rule=UNTRUSTED_DATA_RULE)
             },
         ],
         max_tokens=4500,
-        model=SEALION_MODEL,
+        model=SEALION_FAST_MODEL,
         max_retries=1,
     )
     if not content:

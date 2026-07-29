@@ -12,6 +12,7 @@ from typing import Iterator
 from fastapi.encoders import jsonable_encoder
 
 from .activity_publisher import ActivityPublisher
+from .errors import RecruitmentTeamError
 from .interface import ActivityEvent, Command, RunReceipt
 from .recruitment_team import RecruitmentTeam
 
@@ -59,15 +60,23 @@ def stream_command(
                 type(command).__name__,
                 getattr(command, "thread_id", None),
             )
-            output.put(
-                (
-                    "error",
-                    {
-                        "error_type": type(error).__name__,
-                        "message": "The recruitment team could not complete this turn.",
-                    },
-                )
-            )
+            # Module errors carry an authored, user-facing message, and the REST
+            # routes already return exactly that via _raise_http_error. Streaming
+            # replaced every one of them with a single sentence, so a candidate
+            # could not tell a stale saved resume from the model being down, and
+            # had nothing to act on. Anything else stays generic: an unexpected
+            # exception's text is not written for a user to read.
+            payload = {
+                "error_type": type(error).__name__,
+                "message": "The recruitment team could not complete this turn.",
+            }
+            if isinstance(error, RecruitmentTeamError):
+                payload["message"] = str(error)
+                if hasattr(error, "retryable"):
+                    payload["retryable"] = bool(error.retryable)
+                if hasattr(error, "failure_type"):
+                    payload["failure_type"] = error.failure_type
+            output.put(("error", payload))
 
     worker = Thread(target=execute, name="recruitment-team-command")
     worker.start()

@@ -16,8 +16,6 @@ from skill_extractor import extract_skill_phrases
 
 log = logging.getLogger("jobhunter.jd_preparser")
 
-# ── Constants ───────────────────────────────────────────────────────────────
-
 SINGLE_WORD_TECH: set[str] = {
     "python", "java", "javascript", "typescript", "go", "golang",
     "rust", "c++", "c#", "ruby", "php", "swift", "kotlin", "scala",
@@ -71,7 +69,6 @@ _BULLET_LINE_RE = re.compile(
     re.MULTILINE,
 )
 
-# Word boundary helper for single-word tech matching
 # Precompile patterns for tech terms that contain special regex chars
 _TECH_PATTERNS: dict[str, re.Pattern[str]] = {}
 for _term in SINGLE_WORD_TECH:
@@ -80,8 +77,6 @@ for _term in SINGLE_WORD_TECH:
         rf"\b{_escaped}\b", re.IGNORECASE
     )
 
-
-# ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _find_preferred_split(text: str) -> int:
     """Find the character index where 'preferred' section begins.
@@ -177,7 +172,6 @@ def _extract_prose_noun_phrases(text: str) -> list[str]:
         if len(words) < 2 or len(words) > 4:
             return
         lower = cleaned.lower()
-        # Skip generic phrases
         if lower in {
             "the role", "the team", "the company", "the candidate",
             "we are", "you will", "you are", "this role",
@@ -189,25 +183,21 @@ def _extract_prose_noun_phrases(text: str) -> list[str]:
             seen.add(lower)
             found.append(cleaned)
 
-    # Capitalized noun phrases
     for m in pattern.finditer(text):
         _add(m.group(1))
 
-    # Enumerated terms after "such as X, Y, Z"
     for m in enum_pattern.finditer(text):
         chunk = m.group(1)
         for part in re.split(r",\s*(?:and\s+|or\s+)?|\s+and\s+|\s+or\s+", chunk):
             part = part.strip()
             if part and len(part) >= 3:
                 _add(part)
-                # Also add single capitalized terms from enumerations
                 if len(part.split()) == 1 and part[0].isupper() and len(part) >= 3:
                     lower = part.lower()
                     if lower not in seen:
                         seen.add(lower)
                         found.append(part)
 
-    # Parenthetical abbreviations
     for m in paren_pattern.finditer(text):
         term = m.group(1).strip()
         if 2 <= len(term) <= 10 and term.upper() == term:
@@ -251,10 +241,7 @@ def _extract_requirement_phrases(text: str) -> list[str]:
 
 
 def _extract_bullet_lines(text: str, limit: int = 8) -> list[str]:
-    """Extract responsibility phrases from bullet-point lines.
-
-    Returns the first `limit` bullet lines found in the JD.
-    """
+    """Extract up to `limit` responsibility phrases from bullet-point lines."""
     lines = text.split("\n")
     bullets: list[str] = []
 
@@ -265,7 +252,6 @@ def _extract_bullet_lines(text: str, limit: int = 8) -> list[str]:
         if not _BULLET_LINE_RE.match(line):
             continue
 
-        # Strip the bullet prefix
         cleaned = re.sub(
             r"^\s*(?:[-*\u2022\u2023\u25E6\u2043\u2219]"
             r"|\d{1,2}[.)]\s)\s*",
@@ -284,11 +270,7 @@ def _extract_bullet_lines(text: str, limit: int = 8) -> list[str]:
 def _extract_competency_signals(
     text: str,
 ) -> dict[str, list[str]]:
-    """Match COMPETENCY_KEYWORDS against JD text.
-
-    Returns a dict mapping competency names to lists of matched
-    keywords found in the text.
-    """
+    """Match COMPETENCY_KEYWORDS against JD text, keeping the matched keywords."""
     text_lower = text.lower()
     signals: dict[str, list[str]] = {}
 
@@ -299,8 +281,6 @@ def _extract_competency_signals(
 
     return signals
 
-
-# ── Archetype classifier ──────────────────────────────────────────────────
 
 _ARCHETYPE_SIGNALS: dict[str, list[str]] = {
     "Builder": [
@@ -343,8 +323,6 @@ def classify_archetype(
     return best if scores[best] >= 2 else "Generalist"
 
 
-# ── Main function ───────────────────────────────────────────────────────────
-
 def preparse_job_description(
     description: str,
     skills: list[str] | None = None,
@@ -354,15 +332,6 @@ def preparse_job_description(
     """Pre-parse a job description into structured fields.
 
     Pure regex/string matching, no LLM calls. Runs in ~50ms.
-
-    Args:
-        description: Raw job description text.
-        skills: Optional list of skill tags from the job listing.
-
-    Returns:
-        Dict with required_skills, preferred_skills,
-        single_word_skills, competency_signals, experience_years,
-        education_level, key_responsibilities, and parsed_at.
     """
     if not description or not description.strip():
         return {
@@ -376,7 +345,6 @@ def preparse_job_description(
             "parsed_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    # Split JD into required vs preferred sections
     split_idx = _find_preferred_split(description)
 
     if split_idx != -1:
@@ -386,7 +354,6 @@ def preparse_job_description(
         required_text = description
         preferred_text = ""
 
-    # Extract multi-word skill phrases per section
     all_skills = extract_skill_phrases(
         description,
         skills,
@@ -437,19 +404,10 @@ def preparse_job_description(
         else:
             required_skills.append(skill)
 
-    # Single-word tech terms
     single_word = _extract_single_word_tech(description)
-
-    # Competency signals
     competency_signals = _extract_competency_signals(description)
-
-    # Experience years
     experience_years = _extract_experience_years(description)
-
-    # Education level
     education_level = _extract_education_level(description)
-
-    # Key responsibilities (bullet points)
     key_responsibilities = _extract_bullet_lines(description)
 
     return {

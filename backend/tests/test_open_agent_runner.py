@@ -1,4 +1,3 @@
-# backend/tests/test_open_agent_runner.py
 from __future__ import annotations
 
 import json

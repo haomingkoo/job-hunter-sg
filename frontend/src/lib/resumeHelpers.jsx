@@ -1,4 +1,3 @@
-// Resume helper functions extracted from App.jsx (Phase 3)
 // Some functions return JSX, so React is required.
 
 import { Fragment } from "react";
@@ -699,17 +698,14 @@ function extractEducationFields(items) {
       }
     }
 
-    // Extract GPA
     if (!gpa) {
       const gpaMatch = text.match(EDUCATION_GPA_RE);
       if (gpaMatch) gpa = gpaMatch[0].trim();
     }
 
-    // Extract honors
     const honorsMatch = text.match(EDUCATION_HONORS_RE);
     if (honorsMatch && !honors.includes(honorsMatch[0])) honors.push(honorsMatch[0]);
 
-    // Classify by item type
     if (item.type === "bullet") {
       bullets.push(item);
       continue;
@@ -764,7 +760,6 @@ function extractEducationFields(items) {
       if (!gpa && EDUCATION_GPA_RE.test(text)) {
         gpa = text.match(EDUCATION_GPA_RE)?.[0] || "";
       }
-      // Always strip GPA from detail text
       const remaining = text.replace(EDUCATION_GPA_RE, "").replace(/^[,·|\s]+|[,·|\s]+$/g, "").trim();
       if (remaining) details.push(remaining);
     } else if (!degree && (RESUME_DEGREE_RE.test(text) || DEGREE_START_RE.test(text))) {
@@ -795,7 +790,6 @@ function extractEducationFields(items) {
   // Remove honors that already appear in degree text (redundant)
   const filteredHonors = honors.filter((h) => !(degree && degree.toLowerCase().includes(h.toLowerCase())));
 
-  // Deduplicate details
   const uniqueDetails = [...new Set(details)].filter((d) => {
     if (!d.trim()) return false;
     const dLower = d.toLowerCase().trim();
@@ -821,7 +815,6 @@ function splitEmbeddedDegree(text, primaryDegree) {
   while ((match = degreePatterns.exec(text)) !== null) {
     // Skip if this matches the primary degree (already captured)
     if (!foundFirst) { foundFirst = true; continue; }
-    // Found a second degree - split here
     const splitIdx = match.index;
     const before = text.slice(0, splitIdx).replace(/[·|\s,]+$/, "").trim();
     const after = text.slice(splitIdx).trim();
@@ -1748,7 +1741,6 @@ export function renderHighlightedText(text, keywords) {
   });
 }
 
-// ─── Resume Line Editing ───────────────────────────────────────────────────
 export function updateResumeLine(text, section, nextValue) {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   const cleanValue = nextValue.replace(/\r/g, "").trim();

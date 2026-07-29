@@ -14,12 +14,9 @@ module is the one place that knows this shape; nothing downstream should
 re-derive it.
 
 Confirmed 2026-07-20 with two sequential persona delegations (recruiter then
-ats) in one run, not just one: each subagent invocation gets its own
-namespace tuple, so `active_persona_by_namespace` never collides between
-them -- the recruiter's and the ats persona's tool_call/tool_result/message
-events are attributed correctly and independently, with their distinct
-submit_assessment scores (80 vs 65) intact. The single-persona shape holds
-unchanged for the two-persona case."""
+ats) in one run: each subagent invocation gets its own namespace tuple, so
+`active_persona_by_namespace` never collides between them and each persona's
+tool_call/tool_result/message events are attributed independently."""
 
 from __future__ import annotations
 
@@ -88,11 +85,8 @@ def iter_progress_events(
                         "content": message.content,
                     }
                 elif message.content:
-                    # A plain final reply with no tool call -- this is how a
-                    # turn (the orchestrator's or a persona subagent's own)
-                    # naturally ends. The runner needs the LAST coordinator-
-                    # level one of these as its synthesis text; without this
-                    # branch it would never see it at all.
+                    # Without this branch the runner would never see its
+                    # synthesis text -- the last coordinator-level plain reply.
                     team_member = active_persona_by_namespace.get(namespace, "coordinator")
                     yield {
                         "kind": "message",

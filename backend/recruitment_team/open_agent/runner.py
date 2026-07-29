@@ -1,7 +1,6 @@
-"""Open-ended orchestrator over the target-assessment tool set, with a
-mandatory independent judge as the one non-optional step regardless of the
-reasoning path the orchestrator took to get there, and real-time progress
-reporting built on Task 9's verified streaming mechanism."""
+"""Open-ended orchestrator over the target-assessment tool set, streaming
+progress as it goes. The independent judge is the one non-optional step,
+whatever reasoning path the orchestrator took to get there."""
 
 from __future__ import annotations
 
@@ -71,7 +70,7 @@ _CHECKPOINTER.setup()
 
 
 class OpenAgentTargetAssessmentRunner:
-    """Open-ended replacement for NativeTargetAssessmentRunner."""
+    """Drives the open-agent target assessment, then the mandatory judge."""
 
     def __init__(
         self,
@@ -152,8 +151,8 @@ class OpenAgentTargetAssessmentRunner:
         `synthesis`/`proposed_edits` accumulated before the pause come from
         the caller (persisted on the TargetAssessmentArtifact row) because
         they live only in this module's stream parsing, not in anything the
-        checkpointer stores -- see Task 1's finding that a persona subagent's
-        own submission never appears in the parent's own checkpointed state.
+        checkpointer stores -- a persona subagent's own submission never
+        appears in the parent's own checkpointed state.
         `ask_candidate_call_id` (the id of the tool call that caused the
         pause) is passed to skip that call's replayed re-emission on resume
         -- see `_drive`'s `skip_tool_call_ids` for why that replay happens.
@@ -239,16 +238,15 @@ class OpenAgentTargetAssessmentRunner:
                         synthesis = str(event["content"])
             except GraphRecursionError:
                 # The orchestrator hit its recursion_limit before reaching a
-                # natural stopping point. Per the design spec's "Mandatory
-                # final judge" section, whatever specialist_runs/synthesis
-                # were accumulated so far must still go through the judge
-                # rather than being discarded -- so just stop consuming
-                # events and fall through to the same judge-calling path a
-                # normal completion takes.
+                # natural stopping point. Whatever specialist_runs/synthesis
+                # accumulated so far must still go through the judge rather
+                # than being discarded, so stop consuming events and fall
+                # through to the same judge-calling path a normal completion
+                # takes.
                 pass
             edits = context.proposed_edits() or []
 
-            # iter_progress_events (Task 9) only forwards dict-shaped node
+            # iter_progress_events only forwards dict-shaped node
             # updates (see streaming.py's `isinstance(node_update, dict)`
             # check), so the raw `{"__interrupt__": (...)}` chunk LangGraph
             # emits when the HumanInTheLoopMiddleware pauses the graph is

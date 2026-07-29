@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import re
 
-# Map of AI-sounding phrases -> simpler replacements
 # Keys are lowercase for case-insensitive matching.
 AI_PHRASE_REPLACEMENTS: dict[str, str] = {
     # ── Truly AI-generated / cringeworthy verbs ─────────────────────────
@@ -120,12 +119,8 @@ def clean_ai_phrases(
     """Replace AI-sounding phrases with simpler alternatives.
 
     Phrases present in jd_text are protected (not replaced).
-    Returns (cleaned_text, list of changes made).
-
-    Each change dict contains:
-        - original_phrase: the phrase matched in text
-        - replacement: the simpler alternative (or "PROTECTED")
-        - protected: True if the phrase was skipped because it appears in the JD
+    Returns (cleaned_text, changes), each change being
+    {original_phrase, replacement (or "PROTECTED"), protected}.
     """
     if not text:
         return text, []
@@ -140,14 +135,11 @@ def clean_ai_phrases(
     )
 
     for phrase, replacement in sorted_phrases:
-        # Case-insensitive search using word boundaries where sensible
-        # For multi-word phrases, use escaped literal match
         pattern = re.compile(re.escape(phrase), re.IGNORECASE)
 
         if not pattern.search(text):
             continue
 
-        # Phrase exists in text -- check if JD protects it
         if jd_lower and phrase.lower() in jd_lower:
             changes.append(
                 {
@@ -158,7 +150,6 @@ def clean_ai_phrases(
             )
             continue
 
-        # Replace all occurrences, preserving surrounding text
         text = pattern.sub(replacement, text)
         changes.append(
             {

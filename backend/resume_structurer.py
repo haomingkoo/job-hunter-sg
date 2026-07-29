@@ -110,13 +110,9 @@ _ENTRY_SECTIONS = {
     "experience", "projects", "activities", "education", "certifications",
     "career_break",
 }
-# Sections rendered as plain text blocks
 _TEXT_SECTIONS = {"summary", "objective"}
-# Sections rendered as skill lists
 _SKILL_SECTIONS = {"skills"}
 
-
-# ── Contact extraction ───────────────────────────────────────────────────────
 
 def _extract_contact(lines: list[str]) -> dict[str, str]:
     """Extract contact info from the first few lines of the resume."""
@@ -134,12 +130,10 @@ def _extract_contact(lines: list[str]) -> dict[str, str]:
         if not cleaned:
             continue
 
-        # Grab email if present on any header line
         email_match = _EMAIL_RE.search(cleaned)
         if email_match and not email:
             email = email_match.group()
 
-        # Grab LinkedIn
         li_match = _LINKEDIN_RE.search(cleaned)
         if li_match and not linkedin:
             linkedin = li_match.group()
@@ -201,7 +195,6 @@ def _is_section_heading(line: str) -> str | None:
     if section_key:
         return section_key
 
-    # Line ending with colon and short enough to be a header
     if stripped.endswith(":") and len(stripped.split()) <= 5:
         return _section_key(stripped)
 
@@ -332,7 +325,6 @@ def _is_entry_heading(line: str) -> bool:
             else:
                 has_separator = True
 
-    # Lines with dates AND separators are entry headings
     if has_date and has_separator:
         return True
 
@@ -526,12 +518,10 @@ def _parse_education_entry(
         if line_date and not date_range:
             date_range = line_date
 
-        # Extract GPA
         gpa_match = _GPA_RE.search(stripped)
         if gpa_match and not gpa:
             gpa = gpa_match.group(0).strip()
 
-        # Classify the line
         text_no_date = stripped
         if line_date:
             text_no_date = _DATE_RANGE_RE.sub("", text_no_date).strip()
@@ -540,7 +530,6 @@ def _parse_education_entry(
         text_no_date = re.sub(r"\s+", " ", text_no_date).strip(",").strip()
 
         if is_degree_line and not degree:
-            # Remove date from degree text
             degree = text_no_date or stripped
         elif is_institution_line and not institution:
             institution = text_no_date or stripped
@@ -564,7 +553,6 @@ def _parse_education_entry(
         elif degree and not institution:
             institution = text_no_date or stripped
         else:
-            # Extra line - treat as detail
             if stripped not in (degree, institution, date_range, gpa):
                 details.append(stripped)
 
@@ -608,7 +596,6 @@ def _build_education_entries(
         if not current_lines:
             return
         entry = _parse_education_entry(current_lines, len(entries), id_prefix)
-        # Only add if there's meaningful content
         if entry["heading"] or entry["degree"] or entry["institution"]:
             entries.append(entry)
         current_lines = []
@@ -618,7 +605,6 @@ def _build_education_entries(
         if not stripped:
             continue
 
-        # Strip bullet prefix for education lines
         is_bullet = bool(_BULLET_CHAR_RE.match(line))
         clean_text = _strip_bullet_prefix(line) if is_bullet else stripped
 
@@ -658,7 +644,6 @@ def _build_education_entries(
             if _EDUCATION_DETAIL_RE.search(clean_text):
                 current_lines.append(clean_text)
                 continue
-            # Otherwise start a new entry
             current_lines = [clean_text]
             continue
 
@@ -841,8 +826,6 @@ def _build_entries(
     return entries
 
 
-# ── Bullet analysis ──────────────────────────────────────────────────────────
-
 def _analyze_bullet(text: str, bullet_id: str) -> dict[str, Any]:
     """Compute metrics and issues for a single bullet."""
     cleaned = _clean_line(text)
@@ -866,7 +849,6 @@ def _analyze_bullet(text: str, bullet_id: str) -> dict[str, Any]:
     if word_count < 8:
         issues.append("too_short")
 
-    # Check for weak/avoided verbs at the start
     lower_text = cleaned.lower()
     for phrase in AVOIDED_PHRASES:
         if lower_text.startswith(phrase):
@@ -884,8 +866,6 @@ def _analyze_bullet(text: str, bullet_id: str) -> dict[str, Any]:
     }
 
 
-# ── Skills parsing ───────────────────────────────────────────────────────────
-
 def _parse_skill_list(lines: list[str]) -> list[str]:
     """Extract individual skills from a skills section."""
     raw = " ".join(_clean_line(ln) for ln in lines if _clean_line(ln))
@@ -901,8 +881,6 @@ def _parse_skill_list(lines: list[str]) -> list[str]:
             skills.append(cleaned)
     return skills
 
-
-# ── Section type classification ──────────────────────────────────────────────
 
 def _classify_section(key: str) -> str:
     """Return 'text', 'entries', or 'skills' for a given section key."""
@@ -943,13 +921,11 @@ def structure_resume(resume_text: str) -> dict[str, Any]:
     normalized_text = _join_broken_lines(text)
     all_lines = _iter_resume_lines(normalized_text)
 
-    # 1. Extract contact info from raw lines (before noise filtering)
+    # Contact comes from the raw lines, before noise filtering.
     contact = _extract_contact(text.split("\n"))
 
-    # 2. Split into sections
     raw_sections = _split_into_sections(all_lines)
 
-    # 3. Build structured sections
     sections: list[dict[str, Any]] = []
     total_bullets = 0
     bullets_with_action_verb = 0

@@ -229,10 +229,7 @@ def test_cross_account_agent_chat_and_tailoring_return_404(monkeypatch):
     client = TestClient(main.app)
 
     try:
-        assert client.post(
-            "/api/resume/agent/chat",
-            json={"session_id": "private-agent", "message": "continue"},
-        ).status_code == 404
+        assert client.get("/api/resume/agent/private-agent/state").status_code == 404
         assert client.get("/api/resume/tailor/private-tailor/status").status_code == 404
         assert client.post("/api/resume/tailor/private-tailor/result").status_code == 404
         assert client.post(

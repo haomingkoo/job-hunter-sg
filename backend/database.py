@@ -102,7 +102,6 @@ def _apply_lightweight_migrations() -> None:
     if "content_hash" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN content_hash VARCHAR(64) DEFAULT ''")
 
-    # Add indexes if they don't exist (safe for Postgres and SQLite)
     existing_indexes = {idx["name"] for idx in inspector.get_indexes("scraped_jobs")}
     index_defs = {
         "ix_scraped_jobs_posted_sort": "CREATE INDEX ix_scraped_jobs_posted_sort ON scraped_jobs (posted_at_sort)",
@@ -121,7 +120,6 @@ def _apply_lightweight_migrations() -> None:
         if idx_name not in existing_indexes:
             statements.append(idx_sql)
 
-    # users: explicit legal acceptance timestamps for password signup accounts
     if "users" in inspector.get_table_names():
         user_columns = {col["name"] for col in inspector.get_columns("users")}
         if "terms_accepted_at" not in user_columns:
@@ -135,7 +133,6 @@ def _apply_lightweight_migrations() -> None:
                 "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0"
             )
 
-    # tracked_jobs: new columns for resume versioning and stage history
     if "tracked_jobs" in inspector.get_table_names():
         tracked_columns = {col["name"] for col in inspector.get_columns("tracked_jobs")}
         if "resume_version_id" not in tracked_columns:
@@ -155,7 +152,6 @@ def _apply_lightweight_migrations() -> None:
         if "resume_embedding" not in memory_columns:
             statements.append("ALTER TABLE user_memories ADD COLUMN resume_embedding JSON")
 
-    # job_alert_preferences: opt-in and unsubscribe metadata
     if "job_alert_preferences" in inspector.get_table_names():
         alert_columns = {col["name"] for col in inspector.get_columns("job_alert_preferences")}
         if "consented_at" not in alert_columns:

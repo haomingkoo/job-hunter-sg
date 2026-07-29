@@ -12,7 +12,6 @@ import io
 import json
 import logging
 import os
-import queue
 import sys
 import time
 import concurrent.futures
@@ -24,7 +23,7 @@ from collections import Counter
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 from pathlib import Path
 
@@ -132,7 +131,8 @@ from schemas import (
     TrackedJobUpdate,
     UserOut,
 )
-from ai_service import SEALION_MODEL, _call_sealion, apply_uk_spelling, coach_resume, get_ai_health, get_ai_status, integrate_keywords, rewrite_bullet
+from ai_service import _call_sealion, apply_uk_spelling, coach_resume, get_ai_health, get_ai_status, integrate_keywords, rewrite_bullet
+from config import SEALION_FAST_MODEL
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms, merge_job_terms_with_match
 from career_agent import build_application_pack
 from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
@@ -357,7 +357,6 @@ async def lifespan(application: FastAPI):
         except Exception as e:
             log.warning(f"[STARTUP] Stale job cleanup failed: {e}")
 
-        # Backfill sortable posted timestamps for existing rows
         db_sort = SessionLocal()
         try:
             missing_count = (
@@ -399,7 +398,6 @@ async def lifespan(application: FastAPI):
 
     threading.Thread(target=_startup_maintenance, daemon=True).start()
 
-    # Auto-create admin account if configured
     try:
         db2 = SessionLocal()
         admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
@@ -424,7 +422,6 @@ async def lifespan(application: FastAPI):
     except Exception as e:
         log.warning(f"Admin account creation failed: {e}")
 
-    # Start idle summary filler in background
     _idle_filler_stop = threading.Event()
 
     def _idle_summary_filler() -> None:
@@ -436,7 +433,6 @@ async def lifespan(application: FastAPI):
         log.info("[IDLE-FILL] Background summary filler started")
         while not _idle_filler_stop.is_set():
             try:
-                # Only run if AI is healthy and no queue pressure
                 if not get_ai_health()["is_healthy"]:
                     _idle_filler_stop.wait(60)
                     continue
@@ -463,7 +459,6 @@ async def lifespan(application: FastAPI):
                         .first()
                     )
                     if not job:
-                        # All done - check again in 5 min
                         _idle_filler_stop.wait(300)
                         continue
 
@@ -523,7 +518,7 @@ async def lifespan(application: FastAPI):
 
     try:
         async with jobhunter_mcp.session_manager.run():
-            yield  # App is running
+            yield
     finally:
         _mcp_exact_proxy.target = None
         _mcp_mount_proxy.target = None
@@ -744,10 +739,6 @@ POWER_BRIDGE_LIBRARY = [
         "suggestion": "Bridge this with process-improvement coursework, one before/after case study, and quantified quality or efficiency wins.",
     },
 ]
-
-
-
-# Startup logic moved to lifespan() context manager above.
 
 
 def _normalize_skill_strings(raw_skills) -> list[str]:
@@ -1101,7 +1092,6 @@ def _title_case_skill(skill: str) -> str:
     # Already has mixed case (e.g., "Power BI", "JavaScript") - keep it
     if skill != skill.lower() and skill != skill.upper():
         return skill
-    # Known acronyms to preserve
     _ACRONYMS = {"ai", "ml", "bi", "hr", "it", "ux", "ui", "qa", "pm", "sql",
                  "api", "aws", "gcp", "ci", "cd", "iot", "erp", "crm", "sop",
                  "kpi", "roi", "seo", "cet", "amr", "dna", "wsq"}
@@ -1114,7 +1104,6 @@ def _title_case_skill(skill: str) -> str:
             result.append(w.lower())
         else:
             result.append(w.capitalize())
-    # Always capitalize first word
     if result:
         result[0] = result[0].capitalize() if result[0] == result[0].lower() else result[0]
     return " ".join(result)
@@ -1158,12 +1147,10 @@ def _enrich_job_background(job_id: int) -> None:
         if not job or not (job.description or "").strip():
             return
 
-        # --- term preview ---
         if not job.job_terms_preview:
             _compute_and_cache_term_preview(job, db)
             db.commit()
 
-        # --- JD summary (skip if already done) ---
         if (job.jd_summary or "").strip():
             return
 
@@ -1676,204 +1663,6 @@ def _require_admin(authorization: Optional[str]) -> None:
         raise HTTPException(status_code=403, detail="Invalid admin API key")
 
 
-@app.get("/api/admin/stats")
-def admin_stats(
-    authorization: Optional[str] = Header(None),
-    db: Session = Depends(get_db),
-) -> dict:
-    """
-    Dashboard stats: users, resumes, AI usage, jobs, traffic.
-    Protected by ADMIN_API_KEY.
-    """
-    _require_admin(authorization)
-
-    from models import ResumeVersion, TailoredResume
-
-    now = datetime.now(timezone.utc)
-    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    week_ago = now - timedelta(days=7)
-    month_ago = now - timedelta(days=30)
-
-    # ── Users ──────────────────────────────────────────────────────
-    total_users = db.query(func.count(User.id)).scalar() or 0
-    users_this_week = (
-        db.query(func.count(User.id))
-        .filter(User.created_at >= week_ago)
-        .scalar() or 0
-    )
-    users_this_month = (
-        db.query(func.count(User.id))
-        .filter(User.created_at >= month_ago)
-        .scalar() or 0
-    )
-    active_this_week = (
-        db.query(func.count(func.distinct(UsageLog.user_id)))
-        .filter(UsageLog.created_at >= week_ago, UsageLog.user_id.isnot(None))
-        .scalar() or 0
-    )
-
-    # ── Resumes ────────────────────────────────────────────────────
-    total_resume_versions = (
-        db.query(func.count(ResumeVersion.id))
-        .filter(ResumeVersion.is_active == True)
-        .scalar() or 0
-    )
-    total_tailored = db.query(func.count(TailoredResume.id)).scalar() or 0
-    tailored_this_week = (
-        db.query(func.count(TailoredResume.id))
-        .filter(TailoredResume.created_at >= week_ago)
-        .scalar() or 0
-    )
-
-    # Resume uploads
-    uploads_total = (
-        db.query(func.count(UsageLog.id))
-        .filter(UsageLog.action == "resume_upload")
-        .scalar() or 0
-    )
-    uploads_this_week = (
-        db.query(func.count(UsageLog.id))
-        .filter(UsageLog.action == "resume_upload", UsageLog.created_at >= week_ago)
-        .scalar() or 0
-    )
-
-    # Resume downloads
-    downloads_total = (
-        db.query(func.count(UsageLog.id))
-        .filter(UsageLog.action.in_(["resume_download", "resume_download_pdf"]))
-        .scalar() or 0
-    )
-
-    # Resume scores
-    scores_total = (
-        db.query(func.count(UsageLog.id))
-        .filter(UsageLog.action == "resume_score")
-        .scalar() or 0
-    )
-
-    # Chat-built resumes
-    chat_generates = (
-        db.query(func.count(UsageLog.id))
-        .filter(UsageLog.detail == "resume_chat_generate")
-        .scalar() or 0
-    )
-
-    # ── AI usage ───────────────────────────────────────────────────
-    ai_today = (
-        db.query(func.count(UsageLog.id))
-        .filter(UsageLog.action.in_(["ai", "ai_rewrite", "ai_integrate"]), UsageLog.created_at >= today)
-        .scalar() or 0
-    )
-    ai_this_week = (
-        db.query(func.count(UsageLog.id))
-        .filter(UsageLog.action.in_(["ai", "ai_rewrite", "ai_integrate"]), UsageLog.created_at >= week_ago)
-        .scalar() or 0
-    )
-    ai_total = (
-        db.query(func.count(UsageLog.id))
-        .filter(UsageLog.action.in_(["ai", "ai_rewrite", "ai_integrate"]))
-        .scalar() or 0
-    )
-
-    # ── AI breakdown (last 7 days) ─────────────────────────────────
-    ai_breakdown_rows = (
-        db.query(UsageLog.detail, func.count(UsageLog.id))
-        .filter(
-            UsageLog.action.in_(["ai", "ai_rewrite", "ai_integrate"]),
-            UsageLog.created_at >= week_ago,
-        )
-        .group_by(UsageLog.detail)
-        .all()
-    )
-    ai_breakdown = {detail or "unknown": count for detail, count in ai_breakdown_rows}
-
-    # ── Searches ───────────────────────────────────────────────────
-    searches_today = (
-        db.query(func.count(UsageLog.id))
-        .filter(UsageLog.action == "search", UsageLog.created_at >= today)
-        .scalar() or 0
-    )
-    searches_this_week = (
-        db.query(func.count(UsageLog.id))
-        .filter(UsageLog.action == "search", UsageLog.created_at >= week_ago)
-        .scalar() or 0
-    )
-
-    # ── Jobs ───────────────────────────────────────────────────────
-    total_jobs = db.query(func.count(ScrapedJob.id)).filter(ScrapedJob.hidden == 0).scalar() or 0
-    jobs_with_summary = (
-        db.query(func.count(ScrapedJob.id))
-        .filter(ScrapedJob.hidden == 0, ScrapedJob.jd_summary != "")
-        .scalar() or 0
-    )
-
-    # ── Tracked jobs ───────────────────────────────────────────────
-    total_tracked = db.query(func.count(TrackedJob.id)).scalar() or 0
-    tracked_this_week = (
-        db.query(func.count(TrackedJob.id))
-        .filter(TrackedJob.created_at >= week_ago)
-        .scalar() or 0
-    )
-
-    # ── Daily active users (last 7 days) ───────────────────────────
-    daily_active = []
-    for days_back in range(6, -1, -1):
-        day_start = (now - timedelta(days=days_back)).replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(days=1)
-        dau = (
-            db.query(func.count(func.distinct(UsageLog.user_id)))
-            .filter(
-                UsageLog.created_at >= day_start,
-                UsageLog.created_at < day_end,
-                UsageLog.user_id.isnot(None),
-            )
-            .scalar() or 0
-        )
-        daily_active.append({
-            "date": day_start.strftime("%Y-%m-%d"),
-            "users": dau,
-        })
-
-    return {
-        "generated_at": now.isoformat(),
-        "users": {
-            "total": total_users,
-            "new_this_week": users_this_week,
-            "new_this_month": users_this_month,
-            "active_this_week": active_this_week,
-            "daily_active": daily_active,
-        },
-        "resumes": {
-            "saved_versions": total_resume_versions,
-            "tailoring_sessions": total_tailored,
-            "tailored_this_week": tailored_this_week,
-            "uploads_total": uploads_total,
-            "uploads_this_week": uploads_this_week,
-            "downloads_total": downloads_total,
-            "scores_total": scores_total,
-            "chat_built": chat_generates,
-        },
-        "ai": {
-            "calls_today": ai_today,
-            "calls_this_week": ai_this_week,
-            "calls_total": ai_total,
-            "breakdown_this_week": ai_breakdown,
-        },
-        "searches": {
-            "today": searches_today,
-            "this_week": searches_this_week,
-        },
-        "jobs": {
-            "total_visible": total_jobs,
-            "with_summary": jobs_with_summary,
-        },
-        "tracked_jobs": {
-            "total": total_tracked,
-            "this_week": tracked_this_week,
-        },
-    }
-
-
 def _start_seed_task(target) -> bool:
     if not _SEED_RUN_LOCK.acquire(blocking=False):
         return False
@@ -1911,7 +1700,6 @@ def admin_seed_jobs(
     from seed_jobs import seed_jobs, crawl_all_jobs
 
     if body.get("full"):
-        # Run full crawl in background thread
         def run_full_crawl():
             crawl_all_jobs()
             _clear_analytics_cache()
@@ -1919,67 +1707,6 @@ def admin_seed_jobs(
         if not _start_seed_task(run_full_crawl):
             raise HTTPException(status_code=409, detail="A seed is already running")
         return {"status": "started", "mode": "full_crawl", "message": "Full crawl started in background"}
-    elif body.get("careersgov_only"):
-        # Quick refresh: CareersGov only via OpenGovSG JSON (~3 seconds)
-        def run_cgov():
-            from scraper import CareersGovScraper
-            from dataclasses import asdict
-            from database import SessionLocal
-            db = SessionLocal()
-            try:
-                cgov = CareersGovScraper()
-                jobs = cgov.fetch_all()
-                if len(jobs) < 500:
-                    log.warning(f"[CareersGov] Only {len(jobs)} jobs, skipping")
-                    return
-                # Upsert: update existing by dedup_key, insert new ones
-                # (can't DELETE all — resume_versions has foreign key refs)
-                new_count, updated_count = 0, 0
-                new_keys: set[str] = set()
-                for job in jobs:
-                    raw = asdict(job)
-                    raw["dedup_key"] = job.dedup_key
-                    if raw["dedup_key"] in new_keys:
-                        continue  # skip duplicate titles in same batch
-                    new_keys.add(raw["dedup_key"])
-                    clean = sanitize_job(raw)
-                    clean["search_keyword"] = "all"
-                    clean["posted_at_sort"] = _parse_job_posted_at(
-                        clean.get("posted_date", ""), clean.get("scraped_at", "")
-                    ).isoformat()
-                    _apply_job_precomputes(clean)
-                    if preparse_jd and clean.get("description"):
-                        clean["parsed_jd"] = preparse_jd(clean["description"], job_title=clean.get("title", ""))
-                    existing = find_existing_scraped_job(db, clean)
-                    if existing:
-                        for key, val in clean.items():
-                            if key != "id":
-                                setattr(existing, key, val)
-                        updated_count += 1
-                    else:
-                        db.add(ScrapedJob(**clean))
-                        db.flush()  # make visible to subsequent queries
-                        new_count += 1
-                # Commit upserts first so stale-deletion rollback can't wipe them
-                db.commit()
-                # Hide stale CareersGov entries not in new data
-                hidden_count = db.query(ScrapedJob).filter(
-                    ScrapedJob.source == "Careers@Gov",
-                    ScrapedJob.hidden == 0,
-                    ~ScrapedJob.dedup_key.in_(new_keys),
-                ).update({"hidden": 1}, synchronize_session=False)
-                db.commit()
-                if new_count or updated_count or hidden_count:
-                    _clear_analytics_cache()
-                log.info(f"[CareersGov] Refreshed: {new_count} new, {updated_count} updated, {hidden_count} stale hidden")
-            except Exception as e:
-                db.rollback()
-                log.error(f"[CareersGov] Refresh failed, rolled back: {e}")
-            finally:
-                db.close()
-        if not _start_seed_task(run_cgov):
-            raise HTTPException(status_code=409, detail="A seed is already running")
-        return {"status": "started", "mode": "careersgov_only", "message": "CareersGov refresh started (~3s)"}
     else:
         sources = body.get("sources", "mcf,careersgov").split(",")
         limit = body.get("limit", 20)
@@ -2089,7 +1816,6 @@ def admin_jd_analysis(
 
     db = SessionLocal()
     try:
-        # Get all jobs with analysis
         jobs_with_analysis = (
             db.query(ScrapedJob)
             .filter(ScrapedJob.parsed_jd.isnot(None))
@@ -2112,7 +1838,6 @@ def admin_jd_analysis(
             score = quality.get("score", 0)
             quality_scores.append(score)
 
-            # Track duplicates by content hash
             ch = analysis.get("content_hash", "")
             if ch:
                 if ch not in content_hashes:
@@ -2153,14 +1878,12 @@ def admin_jd_analysis(
                     "red_flags": analysis.get("red_flags", []),
                 })
 
-        # Find actual duplicates (same hash, multiple jobs)
         duplicates = [
             {"content_hash": h, "count": len(jobs), "jobs": jobs[:5]}
             for h, jobs in sorted(content_hashes.items(), key=lambda x: -len(x[1]))
             if len(jobs) > 1
         ]
 
-        # Quality distribution
         total_analyzed = len(quality_scores)
         quality_dist = {
             "excellent_70_plus": sum(1 for s in quality_scores if s >= 70),
@@ -2388,8 +2111,6 @@ def admin_rebuild_skills_taxonomy(
     }
 
 
-# ── SEO: Sitemap ─────────────────────────────────────────────────────────────
-
 @app.get("/sitemap.xml")
 def sitemap_xml() -> Response:
     """Dynamic sitemap for search engines."""
@@ -2409,8 +2130,6 @@ def sitemap_xml() -> Response:
 </urlset>"""
     return Response(content=xml, media_type="application/xml")
 
-
-# ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
 def health(db: Session = Depends(get_db)) -> dict:
@@ -3213,7 +2932,7 @@ def search_jobs(
     sources: Optional[str] = Query(
         None,
         max_length=200,
-        description="Comma-separated: mcf,careersgov,nodeflair,indeed,jobstreet",
+        description="Comma-separated: mcf,careersgov,adzuna,jooble",
     ),
     limit: int = Query(20, ge=1, le=100),
     skills: bool = Query(True, description="Enrich with SSG skills"),
@@ -3241,7 +2960,6 @@ def search_jobs(
         enrich_skills=skills,
     )
 
-    # Sanitize and cache jobs
     sanitized_jobs: list[dict] = []
     analytics_dirty = False
     analytics_fields = {
@@ -3333,6 +3051,61 @@ def trending_skills(
 _JOB_PRECOMPUTE_MARKER = "sector_ssic_v1"
 
 
+_PRECOMPUTE_LOAD_ONLY = (
+    ScrapedJob.id,
+    ScrapedJob.title,
+    ScrapedJob.salary,
+    ScrapedJob.skills,
+    ScrapedJob.description,
+    ScrapedJob.company,
+    ScrapedJob.sector,
+    ScrapedJob.company_ssic_code,
+    ScrapedJob.company_ssic_description,
+    ScrapedJob.company_ssic_source,
+    ScrapedJob.salary_floor,
+    ScrapedJob.skills_flat,
+)
+
+
+def _precompute_batch(db: Session, filter_clause, batch_size: int) -> tuple[int, int]:
+    """Recompute precomputed fields for one batch; returns (rows done, highest id)."""
+    jobs = (
+        db.query(ScrapedJob)
+        .options(load_only(*_PRECOMPUTE_LOAD_ONLY))
+        .filter(filter_clause)
+        .order_by(ScrapedJob.id.asc())
+        .limit(batch_size)
+        .all()
+    )
+    last_id = 0
+    for job in jobs:
+        last_id = max(last_id, job.id)
+        data = {
+            "title": job.title or "",
+            "company": job.company or "",
+            "salary": job.salary or "",
+            "skills": job.skills,
+            "description": job.description or "",
+            "sector": job.sector or "",
+            "company_ssic_code": job.company_ssic_code or "",
+            "company_ssic_description": job.company_ssic_description or "",
+            "company_ssic_source": job.company_ssic_source or "",
+        }
+        _apply_job_precomputes(data)
+        job.sector = data["sector"]
+        job.company_ssic_code = data.get("company_ssic_code", "")
+        job.company_ssic_description = data.get("company_ssic_description", "")
+        job.company_ssic_source = data.get("company_ssic_source", "")
+        job.salary_floor = data["salary_floor"]
+        job.skills_flat = data["skills_flat"]
+
+    done = len(jobs)
+    if done:
+        db.commit()
+        db.expunge_all()
+    return done, last_id
+
+
 def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
     total_done = 0
     marker_exists = (
@@ -3349,56 +3122,10 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
     if not marker_exists:
         last_id = 0
         while True:
-            jobs = (
-                db.query(ScrapedJob)
-                .options(
-                    load_only(
-                        ScrapedJob.id,
-                        ScrapedJob.title,
-                        ScrapedJob.salary,
-                        ScrapedJob.skills,
-                        ScrapedJob.description,
-                        ScrapedJob.company,
-                        ScrapedJob.sector,
-                        ScrapedJob.company_ssic_code,
-                        ScrapedJob.company_ssic_description,
-                        ScrapedJob.company_ssic_source,
-                        ScrapedJob.salary_floor,
-                        ScrapedJob.skills_flat,
-                    )
-                )
-                .filter(ScrapedJob.id > last_id)
-                .order_by(ScrapedJob.id.asc())
-                .limit(batch_size)
-                .all()
-            )
-            if not jobs:
+            done, last_id = _precompute_batch(db, ScrapedJob.id > last_id, batch_size)
+            if not done:
                 break
-
-            for job in jobs:
-                last_id = max(last_id, job.id)
-                data = {
-                    "title": job.title or "",
-                    "company": job.company or "",
-                    "salary": job.salary or "",
-                    "skills": job.skills,
-                    "description": job.description or "",
-                    "sector": job.sector or "",
-                    "company_ssic_code": job.company_ssic_code or "",
-                    "company_ssic_description": job.company_ssic_description or "",
-                    "company_ssic_source": job.company_ssic_source or "",
-                }
-                _apply_job_precomputes(data)
-                job.sector = data["sector"]
-                job.company_ssic_code = data.get("company_ssic_code", "")
-                job.company_ssic_description = data.get("company_ssic_description", "")
-                job.company_ssic_source = data.get("company_ssic_source", "")
-                job.salary_floor = data["salary_floor"]
-                job.skills_flat = data["skills_flat"]
-
-            db.commit()
-            total_done += len(jobs)
-            db.expunge_all()
+            total_done += done
             if total_done % 5000 == 0:
                 log.info("[STARTUP] Precomputed job fields for %s jobs", total_done)
 
@@ -3406,64 +3133,19 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
         db.commit()
         return total_done
 
+    missing_precomputes = or_(
+        ScrapedJob.sector.is_(None),
+        ScrapedJob.sector == "",
+        ScrapedJob.company_ssic_source.is_(None),
+        ScrapedJob.company_ssic_source == "",
+        ScrapedJob.salary_floor.is_(None),
+        ScrapedJob.skills_flat.is_(None),
+    )
     while True:
-        jobs = (
-            db.query(ScrapedJob)
-            .options(
-                load_only(
-                    ScrapedJob.id,
-                    ScrapedJob.title,
-                    ScrapedJob.salary,
-                    ScrapedJob.skills,
-                    ScrapedJob.description,
-                    ScrapedJob.company,
-                    ScrapedJob.sector,
-                    ScrapedJob.company_ssic_code,
-                    ScrapedJob.company_ssic_description,
-                    ScrapedJob.company_ssic_source,
-                    ScrapedJob.salary_floor,
-                    ScrapedJob.skills_flat,
-                )
-            )
-            .filter(
-                or_(
-                    ScrapedJob.sector.is_(None),
-                    ScrapedJob.sector == "",
-                    ScrapedJob.company_ssic_source.is_(None),
-                    ScrapedJob.company_ssic_source == "",
-                    ScrapedJob.salary_floor.is_(None),
-                    ScrapedJob.skills_flat.is_(None),
-                )
-            )
-            .limit(batch_size)
-            .all()
-        )
-        if not jobs:
+        done, _last_id = _precompute_batch(db, missing_precomputes, batch_size)
+        if not done:
             break
-
-        for job in jobs:
-            data = {
-                "title": job.title or "",
-                "company": job.company or "",
-                "salary": job.salary or "",
-                "skills": job.skills,
-                "description": job.description or "",
-                "sector": job.sector or "",
-                "company_ssic_code": job.company_ssic_code or "",
-                "company_ssic_description": job.company_ssic_description or "",
-                "company_ssic_source": job.company_ssic_source or "",
-            }
-            _apply_job_precomputes(data)
-            job.sector = data["sector"]
-            job.company_ssic_code = data.get("company_ssic_code", "")
-            job.company_ssic_description = data.get("company_ssic_description", "")
-            job.company_ssic_source = data.get("company_ssic_source", "")
-            job.salary_floor = data["salary_floor"]
-            job.skills_flat = data["skills_flat"]
-
-        db.commit()
-        total_done += len(jobs)
-        db.expunge_all()
+        total_done += done
         if total_done % 5000 == 0:
             log.info("[STARTUP] Precomputed job fields for %s jobs", total_done)
 
@@ -3481,13 +3163,11 @@ def _normalize_title(raw_title: str) -> str:
     """Normalize a job title for grouping (strip seniority prefixes, title case)."""
     import re
     t = raw_title.strip()
-    # Remove common prefix patterns like "Senior ", "Junior ", "Lead ", etc.
     t = re.sub(
         r"^(Senior|Junior|Jr\.?|Sr\.?|Lead|Principal|Staff|Chief|Head of|"
         r"Associate|Assistant|Intern\b)[,\s]+",
         "", t, flags=re.IGNORECASE,
     ).strip()
-    # Collapse multiple spaces
     t = re.sub(r"\s+", " ", t)
     # Title case normalization (fix "PROJECT ENGINEER" -> "Project Engineer")
     _SMALL_WORDS = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"}
@@ -4030,11 +3710,19 @@ def _build_overindexed_skills(
     return sorted(rows, key=lambda item: (-item["lift"], -item["count"]))[:_ANALYTICS_OVERINDEX_LIMIT]
 
 
-def _build_market_movers(
+def _build_label_movers(
     recent_counts: dict[str, dict],
     recent_total: int,
     older_counts: dict[str, dict],
     older_total: int,
+    label_key: str,
+    *,
+    min_count: int = _ANALYTICS_LABEL_MOVER_MIN_COUNT,
+    recent_min_share: float = _ANALYTICS_LABEL_MOVER_MIN_SHARE,
+    older_min_share: float = _ANALYTICS_LABEL_MOVER_MIN_SHARE,
+    skip: Callable[[str], bool] | None = None,
+    display_fallback: Callable[[str], str] = str.title,
+    sparse_note: str = "Needs enough dated postings to compare recent hiring against older hiring.",
 ) -> dict:
     if recent_total < _ANALYTICS_MARKET_MIN_TOTAL or older_total < _ANALYTICS_MARKET_MIN_TOTAL:
         return {
@@ -4043,23 +3731,16 @@ def _build_market_movers(
             "older_total": older_total,
             "rising": [],
             "cooling": [],
-            "note": "Needs enough dated postings to compare recent demand against older demand.",
+            "note": sparse_note,
         }
 
-    minimum_recent = max(
-        _ANALYTICS_MARKET_MIN_COUNT,
-        round(recent_total * _ANALYTICS_MARKET_RECENT_MIN_SHARE),
-    )
-    minimum_older = max(
-        _ANALYTICS_MARKET_MIN_COUNT,
-        round(older_total * _ANALYTICS_MARKET_OLDER_MIN_SHARE),
-    )
-    all_keys = set(recent_counts) | set(older_counts)
+    minimum_recent = max(min_count, round(recent_total * recent_min_share))
+    minimum_older = max(min_count, round(older_total * older_min_share))
     rising = []
     cooling = []
 
-    for key in all_keys:
-        if _is_generic_analytics_skill(key):
+    for key in set(recent_counts) | set(older_counts):
+        if skip is not None and skip(key):
             continue
         recent_count = int(recent_counts.get(key, {}).get("count", 0))
         older_count = int(older_counts.get(key, {}).get("count", 0))
@@ -4068,14 +3749,14 @@ def _build_market_movers(
         display = (
             recent_counts.get(key, {}).get("display")
             or older_counts.get(key, {}).get("display")
-            or _analytics_skill_display(key)
+            or display_fallback(key)
         )
 
         if recent_count >= minimum_recent and older_count >= minimum_older and older_rate > 0:
             lift = recent_rate / older_rate
             if lift >= _ANALYTICS_MARKET_LIFT_THRESHOLD:
                 rising.append({
-                    "skill": display,
+                    label_key: display,
                     "recent_count": recent_count,
                     "older_count": older_count,
                     "lift": round(lift, 1),
@@ -4091,7 +3772,7 @@ def _build_market_movers(
             drop = older_rate / recent_rate
             if drop >= _ANALYTICS_MARKET_LIFT_THRESHOLD:
                 cooling.append({
-                    "skill": display,
+                    label_key: display,
                     "recent_count": recent_count,
                     "older_count": older_count,
                     "drop": round(drop, 1),
@@ -4109,81 +3790,25 @@ def _build_market_movers(
     }
 
 
-def _build_label_movers(
+def _build_market_movers(
     recent_counts: dict[str, dict],
     recent_total: int,
     older_counts: dict[str, dict],
     older_total: int,
-    label_key: str,
 ) -> dict:
-    if recent_total < _ANALYTICS_MARKET_MIN_TOTAL or older_total < _ANALYTICS_MARKET_MIN_TOTAL:
-        return {
-            "window_days": _ANALYTICS_MARKET_WINDOW_DAYS,
-            "recent_total": recent_total,
-            "older_total": older_total,
-            "rising": [],
-            "cooling": [],
-            "note": "Needs enough dated postings to compare recent hiring against older hiring.",
-        }
-
-    minimum_recent = max(
-        _ANALYTICS_LABEL_MOVER_MIN_COUNT,
-        round(recent_total * _ANALYTICS_LABEL_MOVER_MIN_SHARE),
+    return _build_label_movers(
+        recent_counts,
+        recent_total,
+        older_counts,
+        older_total,
+        "skill",
+        min_count=_ANALYTICS_MARKET_MIN_COUNT,
+        recent_min_share=_ANALYTICS_MARKET_RECENT_MIN_SHARE,
+        older_min_share=_ANALYTICS_MARKET_OLDER_MIN_SHARE,
+        skip=_is_generic_analytics_skill,
+        display_fallback=_analytics_skill_display,
+        sparse_note="Needs enough dated postings to compare recent demand against older demand.",
     )
-    minimum_older = max(
-        _ANALYTICS_LABEL_MOVER_MIN_COUNT,
-        round(older_total * _ANALYTICS_LABEL_MOVER_MIN_SHARE),
-    )
-    rising = []
-    cooling = []
-
-    for key in set(recent_counts) | set(older_counts):
-        recent_count = int(recent_counts.get(key, {}).get("count", 0))
-        older_count = int(older_counts.get(key, {}).get("count", 0))
-        recent_rate = recent_count / recent_total if recent_total else 0
-        older_rate = older_count / older_total if older_total else 0
-        display = (
-            recent_counts.get(key, {}).get("display")
-            or older_counts.get(key, {}).get("display")
-            or key.title()
-        )
-
-        if recent_count >= minimum_recent and older_count >= minimum_older and older_rate > 0:
-            lift = recent_rate / older_rate
-            if lift >= _ANALYTICS_MARKET_LIFT_THRESHOLD:
-                rising.append({
-                    label_key: display,
-                    "recent_count": recent_count,
-                    "older_count": older_count,
-                    "lift": round(lift, 1),
-                    "recent_rate_percent": round(recent_rate * 100, 1),
-                    "older_rate_percent": round(older_rate * 100, 1),
-                })
-
-        if (
-            older_count >= minimum_older
-            and recent_count >= _ANALYTICS_MARKET_COOLING_MIN_RECENT_COUNT
-            and recent_rate > 0
-        ):
-            drop = older_rate / recent_rate
-            if drop >= _ANALYTICS_MARKET_LIFT_THRESHOLD:
-                cooling.append({
-                    label_key: display,
-                    "recent_count": recent_count,
-                    "older_count": older_count,
-                    "drop": round(drop, 1),
-                    "recent_rate_percent": round(recent_rate * 100, 1),
-                    "older_rate_percent": round(older_rate * 100, 1),
-                })
-
-    return {
-        "window_days": _ANALYTICS_MARKET_WINDOW_DAYS,
-        "recent_total": recent_total,
-        "older_total": older_total,
-        "rising": sorted(rising, key=lambda item: (-item["lift"], -item["recent_count"]))[:_ANALYTICS_MARKET_MOVER_LIMIT],
-        "cooling": sorted(cooling, key=lambda item: (-item["drop"], -item["older_count"]))[:_ANALYTICS_MARKET_MOVER_LIMIT],
-        "note": f"Compares dated postings from the last {_ANALYTICS_MARKET_WINDOW_DAYS} days against older dated postings in the current corpus.",
-    }
 
 
 @app.get("/api/analytics/skills")
@@ -4231,7 +3856,6 @@ def analytics_skills(
         if cached_query and now - cached_query[0] < _ANALYTICS_QUERY_CACHE_TTL:
             return cached_query[1]
 
-        # Serve from cache when no filters and cache is fresh
         cached = (
             _analytics_cache
             if not has_filter
@@ -4403,7 +4027,6 @@ def analytics_skills(
             _increment_analytics_skill(skill_counts, key)
             term_keys.add(key)
 
-        # Aggregate title and sector
         if norm_title:
             title_key = norm_title.lower()
             if title_key:
@@ -4454,7 +4077,6 @@ def analytics_skills(
                 for key in term_keys:
                     _increment_analytics_skill(older_skill_counts, key)
 
-    # Sort by count descending
     sorted_skills = sorted(skill_counts.values(), key=lambda x: -x["count"])
 
     all_skills = [
@@ -4589,7 +4211,6 @@ def analytics_skills(
         for option in _analytics_agency_subset_options()
     ]
 
-    # Cache the full result when no filters active
     cache_payload = None
     if not has_filter:
         cache_payload = {
@@ -4622,7 +4243,6 @@ def analytics_skills(
             "direct_employers_only": direct_employers_only,
         }
 
-    # Apply skill search filter if provided
     filtered_skills = all_skills
     if q:
         q_lower = q.lower()
@@ -5206,7 +4826,6 @@ def get_similar_jobs(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # Extract key words from title (remove common filler)
     filler = {"senior", "junior", "lead", "staff", "principal", "intern", "contract", "the", "a", "an", "at", "in", "for", "and", "or"}
     title_words = [w.lower() for w in re.sub(r"[^a-zA-Z\s]", "", job.title).split() if w.lower() not in filler and len(w) > 2]
 
@@ -5673,12 +5292,10 @@ def match_resume_to_job(
     if not _PUBLIC_RATE_LIMITER.allow(f"job-match:{user.id}", limit=30, window_seconds=60):
         raise HTTPException(status_code=429, detail="Too many match requests")
 
-    # Get skills from the job's database record + description
     db_skills = job.skills if isinstance(job.skills, list) else json.loads(job.skills) if job.skills else []
     jd_text = job.description or ""
     canonical_terms = _build_canonical_job_terms(job)
 
-    # Match against resume
     resume_text = sanitize_resume_text(body.resume_text)
     result = match_resume_against_job_terms(
         resume_text=resume_text,
@@ -6155,7 +5772,6 @@ def create_story(
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
 
-    # Validate tags
     tags = body.get("tags", [])
     if not isinstance(tags, list):
         tags = []
@@ -6436,7 +6052,7 @@ def generate_stories_from_resume(
         f"SECURITY: {UNTRUSTED_DATA_RULE}"
     )
 
-    from ai_service import _call_sealion, SEALION_MODEL
+    from ai_service import _call_sealion
 
     content = _call_sealion(
         messages=[
@@ -6448,7 +6064,7 @@ def generate_stories_from_resume(
             },
         ],
         max_tokens=3500,
-        model=SEALION_MODEL,
+        model=SEALION_FAST_MODEL,
         temperature=0.3,  # Low temperature for factual extraction, slight creativity for reflections
     )
 
@@ -6458,7 +6074,6 @@ def generate_stories_from_resume(
             detail="AI service unavailable. Try again shortly.",
         )
 
-    # Parse JSON from response
     content = content.strip()
     # Strip markdown code blocks if present
     if content.startswith("```"):
@@ -6469,7 +6084,6 @@ def generate_stories_from_resume(
     try:
         stories = json.loads(content)
     except json.JSONDecodeError:
-        # Try to extract JSON array from response
         match = re.search(r"\[.*\]", content, re.DOTALL)
         if match:
             try:
@@ -6485,7 +6099,6 @@ def generate_stories_from_resume(
     # ── Validation gate: verify facts against resume (ISO 29119 + ISO 23894) ──
     resume_lower = resume_text.lower()
 
-    # Extract all numbers from resume for verification
     resume_numbers = set(re.findall(r"\d+[\d,.]*%?", resume_text))
     resume_companies = set()
     # Extract company-like names (lines with dates often have company names)
@@ -6498,30 +6111,26 @@ def generate_stories_from_resume(
                     resume_companies.add(company.lower())
 
     validated_stories = []
-    for story in stories[:5]:  # Cap at 5
+    for story in stories[:5]:
         if not isinstance(story, dict) or not story.get("title"):
             continue
 
         warnings = []
 
-        # Verify numbers in result field match resume
         result_text = story.get("result", "")
         result_numbers = set(re.findall(r"\d+[\d,.]*%?", result_text))
         fabricated_numbers = result_numbers - resume_numbers
         if fabricated_numbers:
             warnings.append(f"Numbers not found in resume: {', '.join(fabricated_numbers)}")
 
-        # Verify company name exists in resume
         project = (story.get("project_name") or "").lower()
         if project and not any(c in resume_lower for c in project.split()):
             warnings.append(f"Company/project '{story.get('project_name')}' not found in resume")
 
-        # Validate tags
         valid_tags = {"motivation", "proactiveness", "ambiguity", "perseverance",
                       "conflict_resolution", "empathy", "growth", "communication"}
         story["tags"] = [t for t in (story.get("tags") or []) if t in valid_tags]
 
-        # Validate seniority
         if story.get("seniority") not in ("junior", "mid", "senior", "staff"):
             story["seniority"] = "mid"
 
@@ -6590,7 +6199,6 @@ def score_resume(
                     scored_parsed_jd = json.loads(raw)
                 except (ValueError, TypeError):
                     scored_parsed_jd = None
-            # Use the job's description as JD text if caller didn't supply one
             if not jd_text.strip() and job_row.description:
                 jd_text = sanitize_user_input(job_row.description)
 
@@ -6820,7 +6428,6 @@ def ai_coach_resume(
     session_id = secrets.token_hex(16)
     _consume_ai_credit(user, db, f"session:{session_id}")
 
-    # Inject memory context for logged-in users
     memory_context = _get_memory_context(user, db)
     resume_text = sanitize_resume_text(body.resume_text)
     jd = sanitize_user_input(body.job_description)
@@ -6905,7 +6512,6 @@ def ai_rewrite_bullet(
         if result == []:
             return {"original": bullet, "options": [], "no_change": True, "message": "This bullet is already strong -- no changes needed."}
 
-        # Validate each option through the gates + AI phrase cleanup
         validated_options = []
         for option in result:
             # Run AI phrase cleanup first (remove overused words)
@@ -7003,7 +6609,6 @@ def ai_regenerate_summary(
 
     resume_text = sanitize_resume_text(body.resume_text)
 
-    # Load parsed JD context if a job is selected
     parsed_jd: dict = {}
     jd_text = ""
     if body.job_id:
@@ -7068,7 +6673,7 @@ Return ONLY the summary text, nothing else."""
                 {"role": "user", "content": user_msg},
             ],
             max_tokens=200,
-            model=SEALION_MODEL,
+            model=SEALION_FAST_MODEL,
             temperature=0.3,
         )
         summary = (content or "").strip().strip('"')
@@ -7097,7 +6702,6 @@ def generate_cover_letter(
 
     resume_text = sanitize_resume_text(body.resume_text)
 
-    # Load parsed JD context if a job_id is provided
     jd_context = ""
     job_title = body.job_title
     job_company = body.job_company
@@ -7133,7 +6737,6 @@ def generate_cover_letter(
                 jd_context = (target_job.description or "")[:1500]
                 job_description = job_description or jd_context
 
-    # Build the prompt
     system = """You are an expert cover letter writer for the Singapore job market.
 
 Generate a professional cover letter (250-350 words) with this structure:
@@ -7185,7 +6788,7 @@ Return ONLY the cover letter text. No subject lines, no labels, no markdown form
                 {"role": "user", "content": user_msg},
             ],
             max_tokens=600,
-            model=SEALION_MODEL,
+            model=SEALION_FAST_MODEL,
             temperature=0.4,
         )
         cover_letter = (content or "").strip().strip('"')
@@ -7307,9 +6910,7 @@ def resume_chat_step(
         messages = messages[-30:]
     for msg in messages:
         if isinstance(msg.get("content"), str):
-            # Sanitize HTML from user messages
             msg["content"] = sanitize_user_input(msg["content"])[:3000]
-        # Only allow user/assistant roles
         if msg.get("role") not in ("user", "assistant"):
             msg["role"] = "user"
 
@@ -7357,7 +6958,7 @@ def resume_chat_step(
         content = _call_sealion(
             messages=llm_messages,
             max_tokens=1500,
-            model=SEALION_MODEL,
+            model=SEALION_FAST_MODEL,
             temperature=0.3,
         )
 
@@ -7400,7 +7001,7 @@ def resume_chat_step(
         refine_content = _call_sealion(
             messages=llm_messages,
             max_tokens=200,
-            model=SEALION_MODEL,
+            model=SEALION_FAST_MODEL,
             temperature=0.4,
         )
 
@@ -7425,7 +7026,6 @@ def resume_chat_step(
         try:
             from collections import Counter
             skill_counts: Counter = Counter()
-            # Search jobs matching user's keywords
             keywords = [w for w in user_text.split() if len(w) >= 4][:5]
             if keywords:
                 sample_jobs = (
@@ -7504,7 +7104,7 @@ def resume_chat_step(
     content = _call_sealion(
         messages=llm_messages,
         max_tokens=500,
-        model=SEALION_MODEL,
+        model=SEALION_FAST_MODEL,
         temperature=0.5,
     )
 
@@ -7516,10 +7116,8 @@ def resume_chat_step(
 
     reply = content.strip()
     ready_to_generate = "[READY]" in reply.upper()
-    # Strip the tag from the visible reply (case-insensitive)
     reply_clean = apply_uk_spelling(re.sub(r"\[READY\]", "", reply, flags=re.IGNORECASE).strip())
 
-    # Determine conversation stage from message count
     user_msg_count = sum(1 for m in messages if m.get("role") == "user")
     if user_msg_count <= 1:
         stage = "contact"
@@ -7617,7 +7215,6 @@ def review_all_bullets(
     """
     Review ALL bullets at once — returns per-bullet suggestions WITHOUT changing anything.
     User reviews each suggestion, accepts/rejects individually, then applies all.
-    This replaces the old "AI Improve All" which blindly rewrote everything.
     """
     _consume_ai_credit(user, db, "review_all")
 
@@ -7668,7 +7265,6 @@ Return a JSON array:
             detail="AI service unavailable. Try again shortly.",
         )
 
-    # Parse JSON from AI response
     suggestions = []
     try:
         start = content.find("[")
@@ -8407,14 +8003,12 @@ def save_resume_version(
         raise HTTPException(status_code=413, detail="Structured resume is too large")
 
     is_master = body.get("is_master", False)
-    # If setting as master, unset previous master
     if is_master:
         db.query(ResumeVersion).filter(
             ResumeVersion.user_id == user.id,
             ResumeVersion.is_master == True,
         ).update({"is_master": False})
 
-    # Look up job details if job_id provided
     job_title = ""
     job_company = ""
     job_id = body.get("job_id")
@@ -8444,6 +8038,21 @@ def save_resume_version(
     return {"id": version.id, "label": version.label, "created_at": version.created_at.isoformat()}
 
 
+def _owned_resume_version(db: Session, user_id: int, version_id: int) -> ResumeVersion:
+    version = (
+        db.query(ResumeVersion)
+        .filter(
+            ResumeVersion.id == version_id,
+            ResumeVersion.user_id == user_id,
+            ResumeVersion.is_active == True,
+        )
+        .first()
+    )
+    if not version:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return version
+
+
 @app.get("/api/resume/versions/{version_id}")
 def get_resume_version(
     version_id: int,
@@ -8451,19 +8060,7 @@ def get_resume_version(
     db: Session = Depends(get_db),
 ) -> dict:
     """Load a specific resume version."""
-    from models import ResumeVersion
-
-    version = (
-        db.query(ResumeVersion)
-        .filter(
-            ResumeVersion.id == version_id,
-            ResumeVersion.user_id == user.id,
-            ResumeVersion.is_active == True,
-        )
-        .first()
-    )
-    if not version:
-        raise HTTPException(status_code=404, detail="Version not found")
+    version = _owned_resume_version(db, user.id, version_id)
 
     return {
         "id": version.id,
@@ -8492,17 +8089,7 @@ def update_resume_version(
     """Update label, text, or master status of a resume version."""
     from models import ResumeVersion
 
-    version = (
-        db.query(ResumeVersion)
-        .filter(
-            ResumeVersion.id == version_id,
-            ResumeVersion.user_id == user.id,
-            ResumeVersion.is_active == True,
-        )
-        .first()
-    )
-    if not version:
-        raise HTTPException(status_code=404, detail="Version not found")
+    version = _owned_resume_version(db, user.id, version_id)
 
     if "label" in body:
         version.label = sanitize_user_input(body["label"]).strip()[:200]
@@ -8539,19 +8126,7 @@ def delete_resume_version(
     db: Session = Depends(get_db),
 ) -> dict:
     """Soft-delete a resume version."""
-    from models import ResumeVersion
-
-    version = (
-        db.query(ResumeVersion)
-        .filter(
-            ResumeVersion.id == version_id,
-            ResumeVersion.user_id == user.id,
-            ResumeVersion.is_active == True,
-        )
-        .first()
-    )
-    if not version:
-        raise HTTPException(status_code=404, detail="Version not found")
+    version = _owned_resume_version(db, user.id, version_id)
 
     version.is_active = False
     db.commit()
@@ -8592,35 +8167,6 @@ def _stream_resume_agent_events(body: dict):
         body,
         owner_run_reserved=bool(body.get("_owner_run_reserved")),
     )
-
-
-def _resume_agent_sse(
-    body: dict,
-    heartbeat_seconds: float = app_config.AGENT_SSE_HEARTBEAT_SECONDS,
-):
-    events: queue.Queue[dict | None] = queue.Queue()
-
-    def produce() -> None:
-        try:
-            for event in _stream_resume_agent_events(body):
-                events.put(event)
-        except Exception:
-            events.put({"event": "error", "message": "Agent Review stopped unexpectedly."})
-        finally:
-            events.put(None)
-
-    threading.Thread(target=produce, daemon=True).start()
-    while True:
-        try:
-            event = events.get(timeout=heartbeat_seconds)
-        except queue.Empty:
-            yield ": keepalive\n\n"
-            continue
-        if event is None:
-            return
-        event_name = event.get("event", "message")
-        yield f"event: {event_name}\n"
-        yield f"data: {json.dumps(event)}\n\n"
 
 
 @app.post("/api/resume/agent/start", status_code=202)
@@ -8773,44 +8319,6 @@ def handoff_target_assessment_to_resume_agent(
     return {"session_id": session_id, "status": "queued"}
 
 
-@app.post("/api/resume/agent/chat")
-def resume_agent_chat(
-    body: dict,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    from resume_agent.session import release_owner_run, reserve_owner_run
-
-    owner_key = f"user:{user.id}"
-    _validate_resume_agent_request(body)
-    session_id = str(body.get("session_id") or "").strip()
-    with _account_lifecycle_lock(user.id):
-        if not db.query(User.id).filter(User.id == user.id).first():
-            raise HTTPException(status_code=401, detail="Account no longer exists")
-        if session_id:
-            try:
-                _get_resume_agent_state(session_id, owner_key=owner_key)
-            except (KeyError, PermissionError):
-                raise HTTPException(status_code=404, detail="Agent session not found")
-        if not reserve_owner_run(owner_key):
-            raise HTTPException(status_code=429, detail="Agent Review is already running")
-        try:
-            _consume_ai_credit(user, db, "resume_agent_chat")
-            body = {
-                **body,
-                "_owner_key": owner_key,
-                "_owner_run_reserved": True,
-            }
-            return StreamingResponse(
-                _resume_agent_sse(body),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
-        except Exception:
-            release_owner_run(owner_key)
-            raise
-
-
 def _get_resume_agent_state(session_id: str, owner_key: str | None = None) -> dict:
     from resume_agent.session import get_state
 
@@ -8902,7 +8410,6 @@ def start_tailoring(
     if intensity not in ("nudge", "keywords", "full"):
         raise HTTPException(status_code=400, detail="Intensity must be nudge, keywords, or full.")
 
-    # Load job and its pre-parsed JD
     jd_text = ""
     parsed_jd = None
     job = None
@@ -9093,7 +8600,7 @@ def submit_tailoring_feedback(
         raise HTTPException(status_code=400, detail="Pipeline has not completed yet.")
 
     bullet_id = str(body.get("bullet_id") or "")[:200]
-    action = str(body.get("action") or "")  # "accept" | "reject" | "edit"
+    action = str(body.get("action") or "")
     edited_text = str(body.get("edited_text") or "")
 
     if action not in ("accept", "reject", "edit"):
@@ -9167,7 +8674,6 @@ def apply_tailoring_changes(
         if user_status == "pending":
             continue  # skip unreviewed changes
 
-        # Determine the final text for this change
         if user_status == "edit":
             final_text = change.get("user_edited_text", change.get("tailored", ""))
         else:
@@ -9184,7 +8690,6 @@ def apply_tailoring_changes(
         )
         applied_count += int(replaced)
 
-    # Re-score the final version
     scorer = ResumeScorer()
     final_score = scorer.analyze(tailored_text)
 
@@ -9269,8 +8774,6 @@ if _static_dir.is_dir():
 # Register this last so it also wraps responses replaced by the SPA fallback.
 app.add_middleware(SecurityHeadersMiddleware, hsts=_is_production)
 
-
-# ── Run ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn

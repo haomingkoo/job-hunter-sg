@@ -95,6 +95,22 @@ const formatApplicationPack = (pack) => {
   return lines.join("\n");
 };
 
+const filterOptionClass = (active) => `flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${active ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`;
+
+const FilterOption = ({ name, active, onChange, children }) => (
+  <label className={filterOptionClass(active)}>
+    <input type="radio" name={name} checked={active} onChange={onChange} className="w-3.5 h-3.5 accent-[#384959]" />
+    {children}
+  </label>
+);
+
+const CheckboxFilter = ({ active, onChange, children }) => (
+  <label className={filterOptionClass(active)}>
+    <input type="checkbox" checked={active} onChange={onChange} className="w-3.5 h-3.5 accent-[#384959] rounded" />
+    {children}
+  </label>
+);
+
 export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, onSignIn }) {
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
@@ -121,7 +137,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [directEmployersOnly, setDirectEmployersOnly] = useState(false);
   const activeSearchQuery = submittedQuery;
 
-  // Track which jobs are already tracked (Feature 3)
   const trackedJobIds = useMemo(() => {
     const ids = new Set();
     for (const tj of (trackedJobs || [])) {
@@ -612,39 +627,29 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         <div>
           <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Data Source</label>
           <div className="space-y-0.5">
-            <label
-              className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${!sourceFilter ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+            <FilterOption
+              name="source"
+              active={!sourceFilter}
+              onChange={() => {
+                setSourceFilter("");
+                loadJobs(activeSearchQuery, 1, { sourceFilter: "" });
+              }}
             >
-              <input
-                type="radio"
-                name="source"
-                checked={!sourceFilter}
-                onChange={() => {
-                  setSourceFilter("");
-                  loadJobs(activeSearchQuery, 1, { sourceFilter: "" });
-                }}
-                className="w-3.5 h-3.5 accent-[#384959]"
-              />
               <span className="flex-1">All sources</span>
-            </label>
+            </FilterOption>
             {filterMeta.sources.map((source) => (
-              <label
+              <FilterOption
                 key={source.value}
-                className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${sourceFilter === source.value ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+                name="source"
+                active={sourceFilter === source.value}
+                onChange={() => {
+                  setSourceFilter(source.value);
+                  loadJobs(activeSearchQuery, 1, { sourceFilter: source.value });
+                }}
               >
-                <input
-                  type="radio"
-                  name="source"
-                  checked={sourceFilter === source.value}
-                  onChange={() => {
-                    setSourceFilter(source.value);
-                    loadJobs(activeSearchQuery, 1, { sourceFilter: source.value });
-                  }}
-                  className="w-3.5 h-3.5 accent-[#384959]"
-                />
                 <span className="flex-1">{source.label || source.value}</span>
                 <span className="text-[11px] tabular-nums text-[#6A89A7]">{Number(source.count || 0).toLocaleString()}</span>
-              </label>
+              </FilterOption>
             ))}
           </div>
         </div>
@@ -684,23 +689,18 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           {levelOptions.map(({ value, label }) => {
             const active = levelFilter === value;
             return (
-              <label
+              <FilterOption
                 key={value}
-                className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${active ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+                name="level"
+                active={active}
+                onChange={() => {
+                  const next = active ? "all" : value;
+                  setLevelFilter(next);
+                  loadJobs(activeSearchQuery, 1, { levelFilter: next });
+                }}
               >
-                <input
-                  type="radio"
-                  name="level"
-                  checked={active}
-                  onChange={() => {
-                    const next = active ? "all" : value;
-                    setLevelFilter(next);
-                    loadJobs(activeSearchQuery, 1, { levelFilter: next });
-                  }}
-                  className="w-3.5 h-3.5 accent-[#384959]"
-                />
                 {label}
-              </label>
+              </FilterOption>
             );
           })}
         </div>
@@ -714,23 +714,18 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             {employmentTypeOptions.map((option) => {
               const active = employmentFilter.has(option.value);
               return (
-                <label
+                <CheckboxFilter
                   key={option.value}
-                  className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${active ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+                  active={active}
+                  onChange={() => {
+                    const next = new Set(employmentFilter);
+                    if (active) next.delete(option.value); else next.add(option.value);
+                    setEmploymentFilter(next);
+                    loadJobs(activeSearchQuery, 1, { employmentFilter: next });
+                  }}
                 >
-                  <input
-                    type="checkbox"
-                    checked={active}
-                    onChange={() => {
-                      const next = new Set(employmentFilter);
-                      if (active) next.delete(option.value); else next.add(option.value);
-                      setEmploymentFilter(next);
-                      loadJobs(activeSearchQuery, 1, { employmentFilter: next });
-                    }}
-                    className="w-3.5 h-3.5 accent-[#384959] rounded"
-                  />
                   {option.label}
-                </label>
+                </CheckboxFilter>
               );
             })}
           </div>
@@ -742,20 +737,22 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         <div>
           <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Industry</label>
           <div className="space-y-0.5">
-            <label
-              className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${!sectorFilter ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+            <FilterOption
+              name="sector"
+              active={!sectorFilter}
+              onChange={() => { setSectorFilter(""); loadJobs(activeSearchQuery, 1, { sectorFilter: "" }); }}
             >
-              <input type="radio" name="sector" checked={!sectorFilter} onChange={() => { setSectorFilter(""); loadJobs(activeSearchQuery, 1, { sectorFilter: "" }); }} className="w-3.5 h-3.5 accent-[#384959]" />
               All Industries
-            </label>
+            </FilterOption>
             {filterMeta.sectors.slice(0, 12).map((s) => (
-              <label
+              <FilterOption
                 key={s.value}
-                className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${sectorFilter === s.value ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+                name="sector"
+                active={sectorFilter === s.value}
+                onChange={() => { setSectorFilter(s.value); loadJobs(activeSearchQuery, 1, { sectorFilter: s.value }); }}
               >
-                <input type="radio" name="sector" checked={sectorFilter === s.value} onChange={() => { setSectorFilter(s.value); loadJobs(activeSearchQuery, 1, { sectorFilter: s.value }); }} className="w-3.5 h-3.5 accent-[#384959]" />
                 {s.value}
-              </label>
+              </FilterOption>
             ))}
           </div>
         </div>
@@ -769,24 +766,19 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             {locationOptions.map((location) => {
               const active = locationFilter.has(location.value);
               return (
-                <label
+                <CheckboxFilter
                   key={location.value}
-                  className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${active ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+                  active={active}
+                  onChange={() => {
+                    const next = new Set(locationFilter);
+                    if (active) next.delete(location.value); else next.add(location.value);
+                    setLocationFilter(next);
+                    loadJobs(activeSearchQuery, 1, { locationFilter: next });
+                  }}
                 >
-                  <input
-                    type="checkbox"
-                    checked={active}
-                    onChange={() => {
-                      const next = new Set(locationFilter);
-                      if (active) next.delete(location.value); else next.add(location.value);
-                      setLocationFilter(next);
-                      loadJobs(activeSearchQuery, 1, { locationFilter: next });
-                    }}
-                    className="w-3.5 h-3.5 accent-[#384959] rounded"
-                  />
                   <span className="flex-1">{location.label || location.value}</span>
                   <span className="text-[11px] tabular-nums text-[#6A89A7]">{Number(location.count || 0).toLocaleString()}</span>
-                </label>
+                </CheckboxFilter>
               );
             })}
           </div>
@@ -800,23 +792,18 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           {["0-2 yrs", "3-5 yrs", "6-10 yrs", "10+ yrs"].map((label) => {
             const active = expYearsFilter.has(label);
             return (
-              <label
+              <CheckboxFilter
                 key={label}
-                className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${active ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`}
+                active={active}
+                onChange={() => {
+                  const next = new Set(expYearsFilter);
+                  if (active) next.delete(label); else next.add(label);
+                  setExpYearsFilter(next);
+                  loadJobs(activeSearchQuery, 1, { expYearsFilter: next });
+                }}
               >
-                <input
-                  type="checkbox"
-                  checked={active}
-                  onChange={() => {
-                    const next = new Set(expYearsFilter);
-                    if (active) next.delete(label); else next.add(label);
-                    setExpYearsFilter(next);
-                    loadJobs(activeSearchQuery, 1, { expYearsFilter: next });
-                  }}
-                  className="w-3.5 h-3.5 accent-[#384959] rounded"
-                />
                 {label}
-              </label>
+              </CheckboxFilter>
             );
           })}
         </div>

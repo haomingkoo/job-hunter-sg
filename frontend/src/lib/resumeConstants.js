@@ -1,5 +1,3 @@
-// Resume-related constants extracted from App.jsx (Phase 3)
-
 import sharedConfig from "../../../shared/resume-classification.json";
 
 export const DEFAULT_RESUME_TEMPLATES = [

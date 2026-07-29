@@ -8,7 +8,6 @@ import html
 import re
 
 
-# Pre-compiled patterns
 _TAG_RE = re.compile(r"<[^>]+>", re.DOTALL)
 _WHITESPACE_RE = re.compile(r"\s+")
 _SCRIPT_RE = re.compile(
@@ -33,16 +32,11 @@ def sanitize_html(text: str) -> str:
     """Strip ALL HTML tags, decode entities, collapse whitespace."""
     if not text:
         return ""
-    # Remove script and style blocks first
     text = _SCRIPT_RE.sub("", text)
     text = _STYLE_RE.sub("", text)
-    # Remove event handlers
     text = _EVENT_HANDLER_RE.sub("", text)
-    # Strip remaining tags
     text = _TAG_RE.sub(" ", text)
-    # Decode HTML entities (e.g. &amp; → &)
     text = html.unescape(text)
-    # Collapse whitespace
     text = _WHITESPACE_RE.sub(" ", text).strip()
     return text
 

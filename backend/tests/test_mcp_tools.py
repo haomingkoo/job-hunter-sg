@@ -211,21 +211,43 @@ def test_latest_jobs_returns_compact_public_jobs(monkeypatch):
     assert "description" not in data["jobs"][0]
 
 
-def test_latest_source_wrappers_use_expected_sources(monkeypatch):
+def test_latest_jobs_filters_by_source(monkeypatch):
+    """The two single-source wrappers collapsed into this parameter."""
     import mcp_tools
 
-    calls = []
+    seen = {}
 
-    def fake_latest_jobs(limit, source=None):
-        calls.append((limit, source))
-        return json.dumps({"jobs": []})
+    class FakeQuery:
+        def filter(self, *args):
+            seen.setdefault("filters", 0)
+            seen["filters"] += 1
+            return self
 
-    monkeypatch.setattr(mcp_tools, "latest_jobs", fake_latest_jobs)
+        def order_by(self, *args):
+            return self
 
-    mcp_tools.latest_careersgov_jobs(limit=3)
-    mcp_tools.latest_mycareersfuture_jobs(limit=4)
+        def limit(self, n):
+            return self
 
-    assert calls == [(3, "Careers@Gov"), (4, "MyCareersFuture")]
+        def all(self):
+            return []
+
+    class FakeDb:
+        def query(self, _model):
+            return FakeQuery()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mcp_tools, "SessionLocal", FakeDb)
+
+    unfiltered = json.loads(mcp_tools.latest_jobs(limit=3))
+    baseline = seen["filters"]
+    filtered = json.loads(mcp_tools.latest_jobs(limit=3, source="Careers@Gov"))
+
+    assert unfiltered["jobs"] == []
+    assert filtered["jobs"] == []
+    assert seen["filters"] > baseline, "source did not add a filter"
 
 
 def test_source_stats_returns_counts_by_source(monkeypatch):
@@ -446,7 +468,10 @@ def test_fastapi_mcp_exact_path_initializes_without_redirect(monkeypatch):
     assert "location" not in response.headers
     assert "Job Hunter SG Jobs" in response.text
     assert tools_response.status_code == 200
-    assert "jobhunter.latest_jobs" in tools_response.text
+    # Underscores, not dots: the Claude API's tool-name charset rejects a dot, so a
+    # dot-namespaced name is spec-legal and still unusable on the largest client.
+    assert "jobhunter_latest_jobs" in tools_response.text
+    assert "jobhunter." not in tools_response.text
 
 
 def test_fastapi_public_mcp_discovery_endpoints():
@@ -464,3 +489,41 @@ def test_fastapi_public_mcp_discovery_endpoints():
     assert health_response.json()["mcp_enabled"] is False
     assert sitemap_response.status_code == 200
     assert "https://job.kooexperience.com/llms.txt" in sitemap_response.text
+
+
+def test_public_surface_uses_all_four_primitives_and_no_dotted_names():
+    """Dots are spec-legal but rejected by the Claude API's tool-name charset."""
+    import asyncio
+
+    import mcp_public
+
+    async def _surface():
+        server = mcp_public.mcp
+        return (
+            [t.name for t in await server.list_tools()],
+            [str(r.uri) for r in await server.list_resources()],
+            [t.uriTemplate for t in await server.list_resource_templates()],
+            [p.name for p in await server.list_prompts()],
+        )
+
+    tools_, resources, templates, prompts = asyncio.run(_surface())
+
+    assert not [n for n in tools_ + prompts if "." in n]
+    assert "jobhunter_latest_jobs" in tools_
+    # The two single-source variants collapsed into latest_jobs(source=...).
+    assert not [n for n in tools_ if "careersgov" in n or "mycareersfuture" in n]
+    assert "jobhunter://sources" in resources
+    assert "jobhunter://job/{job_id}" in templates
+    assert len(prompts) >= 2
+
+
+def test_every_public_resource_declares_a_mime_type():
+    """FastMCP silently serves resources as text/plain when mime_type is omitted."""
+    import asyncio
+
+    import mcp_public
+
+    resources = asyncio.run(mcp_public.mcp.list_resources())
+
+    assert resources
+    assert all(r.mimeType == "application/json" for r in resources)

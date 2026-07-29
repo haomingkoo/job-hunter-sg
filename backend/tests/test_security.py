@@ -575,7 +575,7 @@ def test_rag_agent_and_legacy_live_search_require_accounts():
 
     client = TestClient(app)
 
-    assert client.post("/api/resume/agent/chat", json={"message": "Find jobs"}).status_code == 401
+    assert client.post("/api/resume/agent/start", json={"message": "Find jobs"}).status_code == 401
     assert client.post("/api/search", params={"q": "engineer"}).status_code == 401
     assert client.get("/api/search", params={"q": "engineer"}).status_code == 405
     assert client.get("/api/jobs/power-match").status_code == 405

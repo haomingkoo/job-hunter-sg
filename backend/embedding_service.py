@@ -58,11 +58,10 @@ def build_job_embed_text(
     description: str,
     skills: list[str] | str | None,
 ) -> str:
-    """
-    Combine job fields into a single text optimised for embedding.
+    """Combine job fields into one embedding input.
 
-    Title is doubled for emphasis, skills are joined, and description
-    is truncated to keep total length manageable.
+    The title is repeated twice to weight it, and the description is truncated
+    to 1500 characters to cap total length.
     """
     title_part = (title or "").strip()
     if isinstance(skills, list):
@@ -113,7 +112,6 @@ def _refresh_matrix_if_stale(db_session: Session) -> None:
         return
 
     with _matrix_lock:
-        # Double-check after acquiring lock
         if _job_matrix is not None and (time.monotonic() - _matrix_ts) < _MATRIX_TTL:
             return
 
@@ -152,10 +150,9 @@ def find_similar_jobs(
     db_session: Session,
     top_k: int = 50,
 ) -> list[tuple[int, float]]:
-    """
-    Return (job_id, cosine_similarity) pairs sorted by descending similarity.
+    """Return (job_id, cosine_similarity) pairs, highest similarity first.
 
-    Uses cached in-memory matrix, refreshed every 5 minutes.
+    Served from the in-memory matrix cache, rebuilt when stale.
     """
     _refresh_matrix_if_stale(db_session)
 
@@ -171,7 +168,6 @@ def find_similar_jobs(
     # Cosine similarity via dot product (vectors are normalized)
     similarities = (_job_matrix @ query.T).flatten()
 
-    # Get top-k indices
     k = min(top_k, len(similarities))
     top_indices = np.argpartition(similarities, -k)[-k:]
     top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]

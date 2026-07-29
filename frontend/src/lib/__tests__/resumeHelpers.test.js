@@ -43,8 +43,6 @@ describe("getRewriteCacheKey", () => {
   });
 });
 
-// ── Load curated resume fixtures ────────────────────────────────────────────
-
 const FIXTURES_DIR = path.resolve(__dirname, "../../../../tests/fixtures/resumes_curated");
 const fixtureFiles = fs.readdirSync(FIXTURES_DIR)
   .filter((f) => f.endsWith(".txt"))
@@ -58,8 +56,6 @@ const fixtures = fixtureFiles.map((filename) => ({
 function getFixtureText(filename) {
   return fs.readFileSync(path.join(FIXTURES_DIR, filename), "utf-8");
 }
-
-// ── Property tests: parseResumeToSections ───────────────────────────────────
 
 describe("parseResumeToSections - property tests", () => {
   const VALID_TYPES = new Set([
@@ -117,8 +113,6 @@ describe("parseResumeToSections - property tests", () => {
   });
 });
 
-// ── Unit tests: stripResumeMarkdown ─────────────────────────────────────────
-
 describe("stripResumeMarkdown", () => {
   it("strips single asterisks", () => {
     expect(stripResumeMarkdown("*hello*")).toBe("hello");
@@ -145,8 +139,6 @@ describe("stripResumeMarkdown", () => {
     expect(stripResumeMarkdown(undefined)).toBe("");
   });
 });
-
-// ── Unit tests: isHeadingLine ───────────────────────────────────────────────
 
 describe("isHeadingLine", () => {
   it("detects CERTIFICATIONS & UPSKILLING", () => {
@@ -207,8 +199,6 @@ describe("isHeadingLine", () => {
   });
 });
 
-// ── Unit tests: getResumeSectionKey ─────────────────────────────────────────
-
 describe("getResumeSectionKey", () => {
   it("returns awards for awards heading", () => {
     expect(getResumeSectionKey("Awards")).toBe("awards");
@@ -261,8 +251,6 @@ it("keeps descriptive headings as separate sections through the UI parser", () =
     "education",
   ]);
 });
-
-// ── Unit tests: parseSubheadingParts ────────────────────────────────────────
 
 describe("parseSubheadingParts", () => {
   it("detects comma-separated company line", () => {

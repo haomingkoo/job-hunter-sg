@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import json
 
-from ai_service import SEALION_MODEL_INTERACTIVE, _call_sealion
+from ai_service import _call_sealion
+from config import SEALION_FAST_MODEL
 from jd_analyzer import sanitize_for_llm
 from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
 
@@ -102,10 +103,10 @@ def summarize_job_description(
             {"role": "user", "content": user},
         ],
         max_tokens=260,
-        model=SEALION_MODEL_INTERACTIVE,
+        model=SEALION_FAST_MODEL,
         temperature=0.2,
     )
     cleaned = " ".join(str(summary or "").split()).strip()
     if not cleaned:
-        return None, SEALION_MODEL_INTERACTIVE
-    return cleaned, SEALION_MODEL_INTERACTIVE
+        return None, SEALION_FAST_MODEL
+    return cleaned, SEALION_FAST_MODEL

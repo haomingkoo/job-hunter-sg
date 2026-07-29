@@ -66,8 +66,6 @@ function Counter({ target, suffix = "" }) {
   return <span ref={ref}>{value.toLocaleString()}{suffix}</span>;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════ */
-
 export default function HomePage({ onNavigate }) {
   const [jobCount, setJobCount] = useState(null);
   const heroRef = useRef(null);
@@ -93,9 +91,7 @@ export default function HomePage({ onNavigate }) {
   return (
     <div className="relative font-body w-full overflow-x-hidden bg-[#f0f4f8]">
 
-      {/* ═══════ HERO ═══════════════════════════════════════════════════════
-          Full viewport hero with parallax fade-out on scroll
-      ═══════════════════════════════════════════════════════════════════════ */}
+      {/* ═══════ HERO ══════════════════════════════════════════════════════ */}
       <section ref={heroRef} className="relative min-h-[92vh] flex flex-col justify-center overflow-hidden px-6">
         {/* Ambient gradient orbs */}
         <div className="absolute top-[-15%] right-[-8%] w-[600px] h-[600px] rounded-full bg-[#88BDF2] opacity-[0.07] blur-[100px]" />
@@ -269,9 +265,7 @@ export default function HomePage({ onNavigate }) {
         </motion.div>
       </section>
 
-      {/* ═══════ THREE PILLARS ═══════════════════════════════════════════════
-          Dark section with 3 clickable cards - clear CTAs
-      ═══════════════════════════════════════════════════════════════════════ */}
+      {/* ═══════ THREE PILLARS ═════════════════════════════════════════════ */}
       <section id="homepage-pillars" className="relative overflow-hidden py-20 sm:py-28 bg-[#384959]">
         <div className="mx-auto max-w-5xl px-6">
           <motion.div
@@ -322,9 +316,7 @@ export default function HomePage({ onNavigate }) {
         </div>
       </section>
 
-      {/* ═══════ HOW IT WORKS ═══════════════════════════════════════════════
-          Apple-style alternating sections with product mockups
-      ═══════════════════════════════════════════════════════════════════════ */}
+      {/* ═══════ HOW IT WORKS ══════════════════════════════════════════════ */}
       <section className="py-20 sm:py-28 px-6">
         <div className="mx-auto max-w-5xl">
           <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-80px" }} variants={staggerContainer}>

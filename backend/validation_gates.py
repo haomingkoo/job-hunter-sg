@@ -2,7 +2,6 @@
 Validation gates -- local checks on every AI-generated resume change.
 
 All gates are pure functions. No LLM calls. Run in <10ms each.
-Inspired by Resume-Matcher's 4-gate validation system.
 """
 
 from __future__ import annotations
@@ -15,9 +14,6 @@ from ai_phrases import clean_ai_phrases
 from config import VALIDATION_REWRITE_MAX_EXPANSION_RATIO
 
 log = logging.getLogger("jobhunter.gates")
-
-# ── Result type ─────────────────────────────────────────────────────────────
-
 
 @dataclass
 class GateResult:
@@ -245,9 +241,6 @@ def numeric_metric_claims_verifiable(source: str, generated: str) -> bool:
     )
 
 
-# ── Gate 1: Fact Preservation ───────────────────────────────────────────────
-
-
 def gate_fact_preservation(original: str, tailored: str) -> GateResult:
     """Ensure numeric facts are preserved and not newly introduced."""
     orig_numbers = _extract_numbers(original)
@@ -278,9 +271,6 @@ def gate_fact_preservation(original: str, tailored: str) -> GateResult:
         gate_name="fact_preservation",
         message="All original facts preserved.",
     )
-
-
-# ── Gate 2: AI Phrase Detection ─────────────────────────────────────────────
 
 
 def gate_ai_phrases(tailored: str, jd_text: str = "") -> GateResult:
@@ -314,9 +304,6 @@ def gate_ai_phrases(tailored: str, jd_text: str = "") -> GateResult:
     )
 
 
-# ── Gate 3: Keyword Verbatim Check ──────────────────────────────────────────
-
-
 def gate_keyword_verbatim(
     tailored: str,
     required_keywords: list[str] | None = None,
@@ -343,9 +330,6 @@ def gate_keyword_verbatim(
         gate_name="keyword_verbatim",
         message=f"All {len(required_keywords)} required keyword(s) present.",
     )
-
-
-# ── Gate 4: Length Sanity ───────────────────────────────────────────────────
 
 
 def gate_length_sanity(original: str, tailored: str) -> GateResult:
@@ -385,9 +369,6 @@ def gate_length_sanity(original: str, tailored: str) -> GateResult:
     )
 
 
-# ── Gate 5: Hallucination Detection ────────────────────────────────────────
-
-
 def gate_hallucination(
     original: str,
     tailored: str,
@@ -413,9 +394,6 @@ def gate_hallucination(
         gate_name="hallucination",
         message="No hallucinated terms detected.",
     )
-
-
-# ── Gate 6: Unsupported Claims ──────────────────────────────────────────────
 
 
 def gate_unsupported_claims(original: str, tailored: str) -> GateResult:
@@ -461,7 +439,7 @@ def run_all_gates(
     required_keywords: list[str] | None = None,
     injectable_keywords: set[str] | None = None,
 ) -> list[GateResult]:
-    """Run all validation gates. Returns list of results."""
+    """Run all validation gates."""
     return [
         gate_fact_preservation(original, tailored),
         gate_ai_phrases(tailored, jd_text),
@@ -494,7 +472,6 @@ def validate_and_fix(
 
     final_text = normalized
 
-    # Check for critical failures -- revert to original
     critical_gates = {"fact_preservation", "hallucination", "unsupported_claims"}
     for result in results:
         if not result.passed and result.gate_name in critical_gates:
@@ -504,12 +481,10 @@ def validate_and_fix(
             )
             return original, results
 
-    # Apply auto-fixes from non-critical gates
     for result in results:
         if result.auto_fixed and result.fixed_text:
             final_text = result.fixed_text
 
-    # Check length failure -- revert to original
     for result in results:
         if not result.passed and result.gate_name == "length_sanity":
             log.info(f"[GATE] Length failure: {result.message}. Reverting.")

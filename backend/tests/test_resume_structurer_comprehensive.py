@@ -19,7 +19,6 @@ from resume_structurer import structure_resume
 
 FIXTURES_DIR = pathlib.Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "resumes_curated"
 
-# Collect all .txt fixture files
 _fixture_files = sorted(FIXTURES_DIR.glob("*.txt"))
 _fixture_ids = [f.stem for f in _fixture_files]
 
@@ -35,18 +34,12 @@ def resume_result(request: pytest.FixtureRequest) -> dict:
     return structure_resume(text)
 
 
-# ── Contact tests ────────────────────────────────────────────────────────────
-
-
 def test_returns_contact_dict(resume_result: dict) -> None:
     """Result has contact dict with name, email, phone, location keys."""
     contact = resume_result.get("contact")
     assert isinstance(contact, dict), "contact must be a dict"
     for key in ("name", "email", "phone", "location"):
         assert key in contact, f"contact missing key: {key}"
-
-
-# ── Sections tests ───────────────────────────────────────────────────────────
 
 
 def test_returns_sections_list(resume_result: dict) -> None:

@@ -15,9 +15,6 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 1. Skill Extractor
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestSkillExtractor:
@@ -318,9 +315,6 @@ class TestSkillExtractor:
         assert "python or c++" not in labels
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 2. Resume Parser
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestResumeParser:
@@ -441,7 +435,6 @@ class TestResumeParser:
         from resume_parser import parse_resume
         import io
 
-        # Create a minimal DOCX for testing
         try:
             from docx import Document
 
@@ -556,9 +549,6 @@ class TestResumeParser:
         ]
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 3. Resume Scorer
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestResumeScorer:
@@ -668,9 +658,6 @@ class TestResumeScorer:
         assert result["overall_score"] < 50
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 4. Sanitizer
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestSanitizer:
@@ -687,7 +674,7 @@ class TestSanitizer:
         from sanitizer import sanitize_resume_text
 
         result = sanitize_resume_text("  Normal resume text  \n  With lines  ")
-        assert result.strip() == result  # Should be stripped
+        assert result.strip() == result
         assert result == "Normal resume text\nWith lines"
 
     def test_sanitize_resume_text_preserves_resume_sections(self):
@@ -728,9 +715,6 @@ class TestSanitizer:
         assert result["description"] == description
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 5. Auth
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestAuth:
@@ -764,9 +748,6 @@ class TestAuth:
         assert len(token) > 0
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# 6. API Endpoints (integration)
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 class TestAPIEndpoints:
@@ -788,7 +769,6 @@ class TestAPIEndpoints:
         resp = client.get("/api/jobs")
         assert resp.status_code == 200
         data = resp.json()
-        # Returns paginated response with jobs list
         assert "jobs" in data or isinstance(data, list)
 
     def test_parse_job_posted_at_prefers_newer_relative_dates(self):
@@ -847,7 +827,6 @@ class TestAPIEndpoints:
             lambda _user, token: sent.setdefault("token", token),
         )
 
-        # Signup
         resp = client.post("/api/auth/signup", json={
             "email": email,
             "password": pw,
@@ -870,7 +849,6 @@ class TestAPIEndpoints:
         assert resp.json()["user"]["email"] == email
         assert resp.json()["user"]["tier"] == "user"
 
-        # Login
         resp = client.post("/api/auth/login", json={
             "email": email,
             "password": pw,

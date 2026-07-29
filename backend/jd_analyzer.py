@@ -12,8 +12,6 @@ import hashlib
 import re
 
 
-# ── Prompt injection patterns ────────────────────────────────────────────────
-
 _INJECTION_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("instruction_override", re.compile(
         r"(ignore|disregard|forget)\s+(all\s+)?(previous|above|prior|earlier)\s+"
@@ -48,7 +46,6 @@ def detect_prompt_injection(text: str) -> list[dict]:
     for label, pattern in _INJECTION_PATTERNS:
         matches = pattern.findall(text)
         if matches:
-            # Find actual position for context
             for m in pattern.finditer(text):
                 start = max(0, m.start() - 40)
                 end = min(len(text), m.end() + 40)
@@ -62,10 +59,7 @@ def detect_prompt_injection(text: str) -> list[dict]:
     return findings
 
 
-# ── Red flag detection ───────────────────────────────────────────────────────
-
 _RED_FLAG_PATTERNS: list[tuple[str, str, re.Pattern]] = [
-    # Scam signals
     ("scam", "upfront_payment", re.compile(
         r"(pay\s+(a\s+)?fee|registration\s+fee|processing\s+fee|"
         r"deposit\s+required|investment\s+required|buy\s+(our|the)\s+kit)",
@@ -83,7 +77,6 @@ _RED_FLAG_PATTERNS: list[tuple[str, str, re.Pattern]] = [
         re.IGNORECASE,
     )),
 
-    # Discriminatory language
     ("discrimination", "age", re.compile(
         r"(young\s+(and\s+)?energetic|fresh\s+grad(uate)?s?\s+only|"
         r"below\s+\d{2}\s+years|maximum\s+age|age\s+limit|"
@@ -108,7 +101,6 @@ _RED_FLAG_PATTERNS: list[tuple[str, str, re.Pattern]] = [
         re.IGNORECASE,
     )),
 
-    # Exploitative conditions
     ("exploitative", "unpaid_labor", re.compile(
         r"(unpaid\s+(internship|position|role|work)|"
         r"no\s+(salary|pay|compensation|remuneration)|"
@@ -122,7 +114,6 @@ _RED_FLAG_PATTERNS: list[tuple[str, str, re.Pattern]] = [
         re.IGNORECASE,
     )),
 
-    # Low effort / spam
     ("low_quality", "copy_paste_spam", re.compile(
         r"(!!{3,}|urgently?\s+hiring|immediate\s+hiring|"
         r"fast\s+hiring|walk.?in\s+interview|"
@@ -149,8 +140,6 @@ def detect_red_flags(text: str) -> list[dict]:
             break  # one example per category
     return findings
 
-
-# ── JD quality scoring ───────────────────────────────────────────────────────
 
 def score_jd_quality(
     *,
@@ -216,10 +205,8 @@ def score_jd_quality(
         clarity += 8  # right length range
     elif word_count > 800:
         clarity += 4  # too long but at least has content
-    # Has some structure (bullets, line breaks)
     if desc.count("\n") >= 3 or desc.count("•") >= 2 or desc.count("- ") >= 2:
         clarity += 4
-    # Not all caps
     upper_ratio = sum(1 for c in desc if c.isupper()) / max(1, len(desc))
     if upper_ratio < 0.3:
         clarity += 3
@@ -233,8 +220,6 @@ def score_jd_quality(
         "word_count": word_count,
     }
 
-
-# ── Duplicate detection ──────────────────────────────────────────────────────
 
 def compute_content_hash(description: str) -> str:
     """Compute a normalized hash for duplicate detection."""
@@ -250,17 +235,13 @@ def compute_content_hash(description: str) -> str:
     return hashlib.md5(normalized.encode()).hexdigest()[:16]
 
 
-# ── Sanitize for LLM input ──────────────────────────────────────────────────
-
 def sanitize_for_llm(text: str) -> str:
     """
     Strip potential injection patterns from text before sending to LLM.
     Preserves legitimate JD content.
     """
     cleaned = text
-    # Remove encoded content
     cleaned = re.sub(r"base64[:\s]+[A-Za-z0-9+/=]{20,}", "[REMOVED_ENCODED]", cleaned)
-    # Remove suspicious instruction-like blocks
     cleaned = re.sub(
         r"(ignore|disregard|forget)\s+(all\s+)?(previous|above|prior)\s+"
         r"(instructions?|prompts?|rules?|context)[^.]*\.",
@@ -268,19 +249,15 @@ def sanitize_for_llm(text: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     )
-    # Remove role hijack attempts
     cleaned = re.sub(
         r"(you\s+are\s+now|act\s+as|pretend\s+to\s+be)\s+[^.]{0,100}\.",
         "[REMOVED_ROLE_OVERRIDE]",
         cleaned,
         flags=re.IGNORECASE,
     )
-    # Remove system prompt markers
     cleaned = re.sub(r"<\|system\|>|<\|assistant\|>|<\|user\|>", "", cleaned)
     return cleaned
 
-
-# ── Main analysis entry point ────────────────────────────────────────────────
 
 def analyze_job_description(
     *,
@@ -291,10 +268,7 @@ def analyze_job_description(
     company: str = "",
     agency: str = "",
 ) -> dict:
-    """
-    Full analysis of a job description. Returns a dict to store in
-    parsed_jd["_analysis"].
-    """
+    """Full analysis of a job description, for storage at parsed_jd["_analysis"]."""
     desc = (description or "").strip()
     if not desc:
         return {"skipped": True, "reason": "empty_description"}

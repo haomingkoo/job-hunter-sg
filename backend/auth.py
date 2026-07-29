@@ -426,9 +426,7 @@ def get_current_user(
     cf_access_assertion: Optional[str] = Header(None, alias="Cf-Access-Jwt-Assertion"),
     db: Session = Depends(get_db),
 ) -> User:
-    """
-    Get the authenticated user for the configured authentication mode.
-    """
+    """Return the user for the configured authentication mode, or raise 401."""
     if AUTH_MODE == "cloudflare":
         # A partial or invalid Cloudflare identity must not fall through.
         if cf_access_email is not None or cf_access_assertion is not None:
@@ -468,7 +466,6 @@ def get_optional_user(
                 raise
         return None
 
-    # Mode 2: JWT
     token = _extract_token(authorization)
     if not token:
         return None
