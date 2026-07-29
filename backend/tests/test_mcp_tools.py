@@ -211,21 +211,43 @@ def test_latest_jobs_returns_compact_public_jobs(monkeypatch):
     assert "description" not in data["jobs"][0]
 
 
-def test_latest_source_wrappers_use_expected_sources(monkeypatch):
+def test_latest_jobs_filters_by_source(monkeypatch):
+    """The two single-source wrappers collapsed into this parameter."""
     import mcp_tools
 
-    calls = []
+    seen = {}
 
-    def fake_latest_jobs(limit, source=None):
-        calls.append((limit, source))
-        return json.dumps({"jobs": []})
+    class FakeQuery:
+        def filter(self, *args):
+            seen.setdefault("filters", 0)
+            seen["filters"] += 1
+            return self
 
-    monkeypatch.setattr(mcp_tools, "latest_jobs", fake_latest_jobs)
+        def order_by(self, *args):
+            return self
 
-    mcp_tools.latest_careersgov_jobs(limit=3)
-    mcp_tools.latest_mycareersfuture_jobs(limit=4)
+        def limit(self, n):
+            return self
 
-    assert calls == [(3, "Careers@Gov"), (4, "MyCareersFuture")]
+        def all(self):
+            return []
+
+    class FakeDb:
+        def query(self, _model):
+            return FakeQuery()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mcp_tools, "SessionLocal", FakeDb)
+
+    unfiltered = json.loads(mcp_tools.latest_jobs(limit=3))
+    baseline = seen["filters"]
+    filtered = json.loads(mcp_tools.latest_jobs(limit=3, source="Careers@Gov"))
+
+    assert unfiltered["jobs"] == []
+    assert filtered["jobs"] == []
+    assert seen["filters"] > baseline, "source did not add a filter"
 
 
 def test_source_stats_returns_counts_by_source(monkeypatch):

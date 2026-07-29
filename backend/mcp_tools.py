@@ -217,16 +217,6 @@ def latest_jobs(limit: int = 10, source: str | None = None) -> str:
         db.close()
 
 
-def latest_careersgov_jobs(limit: int = 10) -> str:
-    """Return the latest public Careers@Gov jobs."""
-    return latest_jobs(limit=limit, source="Careers@Gov")
-
-
-def latest_mycareersfuture_jobs(limit: int = 10) -> str:
-    """Return the latest public MyCareersFuture jobs."""
-    return latest_jobs(limit=limit, source="MyCareersFuture")
-
-
 def source_stats() -> str:
     """Return public job counts and freshness by source."""
     db = SessionLocal()
