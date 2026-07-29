@@ -89,3 +89,34 @@ def test_company_rollup_needs_a_ratio_not_a_count():
 
     untouched = db.query(ScrapedJob).filter(ScrapedJob.company == "BIG AGENCY").first()
     assert untouched.company_promotional_score == 0
+
+
+def test_a_qualifying_company_always_scores_high_enough_to_demote():
+    """The stored value doubles as the demotion signal, so it must clear the bar."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    import config
+    from database import Base
+    from jd_analyzer import PROMOTIONAL_THRESHOLD
+    from job_precompute import rollup_company_promotional_scores
+    from models import ScrapedJob
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+    for i in range(10):
+        db.add(ScrapedJob(
+            title=f"t{i}", company="EDGE ORG", source="s", dedup_key=f"e{i}",
+            promotional_score=55 if i < 4 else 0,
+        ))
+    db.commit()
+
+    original = config.COMPANY_PROMOTIONAL_RATIO
+    config.COMPANY_PROMOTIONAL_RATIO = 0.3  # 40% flagged qualifies, raw pct is 40
+    try:
+        result = rollup_company_promotional_scores(db)
+        assert result["scores"]["EDGE ORG"] >= PROMOTIONAL_THRESHOLD
+    finally:
+        config.COMPANY_PROMOTIONAL_RATIO = original

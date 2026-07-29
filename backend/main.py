@@ -391,6 +391,15 @@ async def lifespan(application: FastAPI):
             if precomputed:
                 _clear_analytics_cache()
                 log.info(f"[STARTUP] job precompute backfill complete: {precomputed} jobs")
+                # Per-job scores just changed, and the company rollup reads them.
+                # Without this it only ever runs from the admin endpoint, so a
+                # nightly crawl leaves company scores stale or zero.
+                from job_precompute import rollup_company_promotional_scores
+
+                rolled = rollup_company_promotional_scores(db_sort)
+                log.info(
+                    "[STARTUP] promotional company rollup: %s companies", rolled["companies"]
+                )
         except Exception as e:
             log.warning(f"[STARTUP] job metadata backfill failed: {e}")
         finally:

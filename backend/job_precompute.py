@@ -257,8 +257,12 @@ def rollup_company_promotional_scores(db) -> dict:
         .all()
     )
 
+    # Floor a qualifying company at the threshold. The stored value doubles as
+    # the demotion signal, so if COMPANY_PROMOTIONAL_RATIO is tuned below the
+    # threshold a company could qualify and still store a score too low to
+    # demote or filter anything, silently doing nothing.
     tainted = {
-        company: round(100 * (flagged_count or 0) / total_count)
+        company: max(PROMOTIONAL_THRESHOLD, round(100 * (flagged_count or 0) / total_count))
         for company, total_count, flagged_count in rows
         if total_count and (flagged_count or 0) / total_count >= config.COMPANY_PROMOTIONAL_RATIO
     }
