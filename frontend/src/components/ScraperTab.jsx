@@ -121,7 +121,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [expYearsFilter, setExpYearsFilter] = useState(new Set());
   const [minSalaryFilter, setMinSalaryFilter] = useState("");
   const [filterMeta, setFilterMeta] = useState({ employment_types: [], locations: [], sources: [] });
-  const [sortBy, setSortBy] = useState("newest");
+  const [sortBy, setSortBy] = useState("balanced");
   const [error, setError] = useState("");
   const [trackError, setTrackError] = useState("");
   const [page, setPage] = useState(1);
@@ -199,7 +199,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         activeLocations.forEach((value) => params.append("location", value));
       }
       if (String(activeMinSalary).trim()) params.set("min_salary", String(activeMinSalary).trim());
-      if (activeSort !== "newest") params.set("sort", activeSort);
+      params.set("sort", activeSort);
       const activeSector = nextFilters.sectorFilter ?? sectorFilter;
       if (activeSector) params.set("sector", activeSector);
 
@@ -850,6 +850,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           }}
           className="w-full text-sm border border-[#BDDDFC]/30 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
         >
+          <option value="balanced">Best mix</option>
           <option value="newest">Newest first</option>
           <option value="salary">Salary (high to low)</option>
         </select>

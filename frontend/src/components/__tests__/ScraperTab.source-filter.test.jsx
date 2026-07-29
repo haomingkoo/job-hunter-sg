@@ -72,7 +72,7 @@ describe("ScraperTab source filter", () => {
     });
 
     expect(apiFetch).toHaveBeenLastCalledWith(
-      "/api/jobs?page=1&per_page=20&source=MyCareersFuture",
+      "/api/jobs?page=1&per_page=20&source=MyCareersFuture&sort=balanced",
       { method: "GET" },
     );
   });
@@ -101,7 +101,7 @@ describe("ScraperTab source filter", () => {
       findCheckbox("Central Area").click();
     });
     expect(apiFetch).toHaveBeenLastCalledWith(
-      "/api/jobs?page=1&per_page=20&location=Central+Area",
+      "/api/jobs?page=1&per_page=20&location=Central+Area&sort=balanced",
       { method: "GET" },
     );
 
@@ -109,7 +109,7 @@ describe("ScraperTab source filter", () => {
       findCheckbox("3-5 yrs").click();
     });
     expect(apiFetch).toHaveBeenLastCalledWith(
-      "/api/jobs?page=1&per_page=20&experience=3-5+yrs&location=Central+Area",
+      "/api/jobs?page=1&per_page=20&experience=3-5+yrs&location=Central+Area&sort=balanced",
       { method: "GET" },
     );
 
