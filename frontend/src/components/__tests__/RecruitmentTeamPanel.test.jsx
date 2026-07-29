@@ -547,7 +547,11 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).toContain("evidence grounding96/100");
     expect(container.textContent).toContain("Deduction · decision usefulness · 8 points");
     expect(container.textContent).toContain("one targeted correction was judged independently");
-    expect(container.textContent).toContain("no fallback model · no content truncation");
+    // The execution-policy dump (validation attempts, transport retries, "no fallback
+    // model") described knobs the runner does not enforce and meant nothing to a
+    // candidate, so the panel now states what actually happened instead.
+    expect(container.textContent).toContain("1 specialist reviewed this role against your evidence");
+    expect(container.textContent).not.toContain("no fallback model");
   });
 
   it("hands off a completed target assessment to a resume-agent session", async () => {
