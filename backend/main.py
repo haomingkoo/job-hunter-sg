@@ -34,7 +34,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import and_, case, func, or_, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, aliased, load_only
+from sqlalchemy.orm import Session, load_only
 from starlette.concurrency import run_in_threadpool
 from starlette.routing import Route
 
@@ -4821,6 +4821,41 @@ def _contains_like_pattern(value: str) -> str:
     return f"%{escaped}%"
 
 
+# Columns the job list renders. Kept as a constant because the balanced sort
+# re-fetches its page by id and must load exactly the same set.
+_JOB_LIST_COLUMNS = (
+    ScrapedJob.id,
+    ScrapedJob.title,
+    ScrapedJob.company,
+    ScrapedJob.location,
+    ScrapedJob.salary,
+    ScrapedJob.source,
+    ScrapedJob.url,
+    ScrapedJob.posted_date,
+    ScrapedJob.employment_type,
+    ScrapedJob.seniority,
+    ScrapedJob.description,
+    ScrapedJob.skills,
+    ScrapedJob.agency,
+    ScrapedJob.source_posting_id,
+    ScrapedJob.openings,
+    ScrapedJob.scraped_at,
+    ScrapedJob.posted_at_sort,
+    ScrapedJob.parsed_jd,
+    ScrapedJob.jd_summary,
+    ScrapedJob.jd_summary_status,
+    ScrapedJob.jd_summary_generated_at,
+    ScrapedJob.job_terms_preview,
+    ScrapedJob.closing_date,
+    ScrapedJob.sector,
+    ScrapedJob.company_ssic_code,
+    ScrapedJob.company_ssic_description,
+    ScrapedJob.company_ssic_source,
+    ScrapedJob.salary_floor,
+    ScrapedJob.skills_flat,
+)
+
+
 @app.get("/api/jobs")
 def list_cached_jobs(
     request: Request,
@@ -4845,39 +4880,7 @@ def list_cached_jobs(
     ):
         raise HTTPException(status_code=429, detail="Too many job searches")
     query = apply_public_job_visibility(
-        db.query(ScrapedJob).options(
-            load_only(
-                ScrapedJob.id,
-                ScrapedJob.title,
-                ScrapedJob.company,
-                ScrapedJob.location,
-                ScrapedJob.salary,
-                ScrapedJob.source,
-                ScrapedJob.url,
-                ScrapedJob.posted_date,
-                ScrapedJob.employment_type,
-                ScrapedJob.seniority,
-                ScrapedJob.description,
-                ScrapedJob.skills,
-                ScrapedJob.agency,
-                ScrapedJob.source_posting_id,
-                ScrapedJob.openings,
-                ScrapedJob.scraped_at,
-                ScrapedJob.posted_at_sort,
-                ScrapedJob.parsed_jd,
-                ScrapedJob.jd_summary,
-                ScrapedJob.jd_summary_status,
-                ScrapedJob.jd_summary_generated_at,
-                ScrapedJob.job_terms_preview,
-                ScrapedJob.closing_date,
-                ScrapedJob.sector,
-                ScrapedJob.company_ssic_code,
-                ScrapedJob.company_ssic_description,
-                ScrapedJob.company_ssic_source,
-                ScrapedJob.salary_floor,
-                ScrapedJob.skills_flat,
-            )
-        ),
+        db.query(ScrapedJob).options(load_only(*_JOB_LIST_COLUMNS)),
     )
     if q:
         # Split query into words — match ALL words (AND logic)
@@ -4995,26 +4998,57 @@ def list_cached_jobs(
         ordering.append(ScrapedJob.salary_floor.desc().nullslast())
     ordering.extend([ScrapedJob.posted_at_sort.desc(), ScrapedJob.id.desc()])
 
+    total = query.count()
+
     if sort == "balanced":
         # Newest-first alone rewards whoever reposts most often, so a handful of
-        # high-volume employers owned the whole first page. Cap each company's
-        # run before paginating; `sort=newest` still returns raw chronological.
+        # high-volume employers owned the whole first page. Demote a company's
+        # 4th and later postings rather than dropping them: the first pages get
+        # variety, `total` still counts every match, and nothing becomes
+        # unreachable. `sort=newest` still returns raw chronological order.
         company_rank = (
             func.row_number()
             .over(partition_by=ScrapedJob.company, order_by=ordering)
             .label("company_rank")
         )
-        ranked = query.add_columns(company_rank).subquery()
-        balanced_job = aliased(ScrapedJob, ranked)
-        query = db.query(balanced_job).filter(
-            ranked.c.company_rank <= app_config.JOBS_MAX_PER_COMPANY
+        # Rank over the sort keys alone. Selecting whole rows here would drag
+        # every column, embedding_vector included, through the window sort.
+        ranked = query.with_entities(
+            ScrapedJob.id.label("job_id"),
+            ScrapedJob.posted_at_sort.label("job_posted_at_sort"),
+            ScrapedJob.salary_floor.label("job_salary_floor"),
+            company_rank,
+        ).subquery()
+
+        balanced_ordering = []
+        if min_salary is not None:
+            balanced_ordering.append(
+                case((ranked.c.job_salary_floor >= min_salary, 0), else_=1)
+            )
+        balanced_ordering.append(
+            case((ranked.c.company_rank <= app_config.JOBS_MAX_PER_COMPANY, 0), else_=1)
         )
-        ordering = [ranked.c.posted_at_sort.desc(), ranked.c.id.desc()]
+        balanced_ordering.extend(
+            [ranked.c.job_posted_at_sort.desc(), ranked.c.job_id.desc()]
+        )
 
-    ordered_query = query.order_by(*ordering)
-
-    total = query.count()
-    jobs = ordered_query.offset(offset).limit(per_page).all()
+        page_ids = [
+            row[0]
+            for row in db.query(ranked.c.job_id)
+            .order_by(*balanced_ordering)
+            .offset(offset)
+            .limit(per_page)
+            .all()
+        ]
+        by_id = {
+            job.id: job
+            for job in db.query(ScrapedJob)
+            .options(load_only(*_JOB_LIST_COLUMNS))
+            .filter(ScrapedJob.id.in_(page_ids))
+        }
+        jobs = [by_id[job_id] for job_id in page_ids if job_id in by_id]
+    else:
+        jobs = query.order_by(*ordering).offset(offset).limit(per_page).all()
 
     # Build filter metadata (cached for 5 min to avoid 3 GROUP BY per page 1)
     filter_meta = {}
