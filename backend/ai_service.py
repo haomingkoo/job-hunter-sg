@@ -21,9 +21,7 @@ from config import (
     SEALION_DISABLE_THINKING_MODELS,
     SEALION_FAST_MODEL,
     SEALION_HTTP_TIMEOUT,
-    SEALION_PIPELINE_MODEL,
     SEALION_REQ_PER_MIN,
-    SEALION_SMART_MODEL,
 )
 from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
 from validation_gates import validate_and_fix
@@ -72,17 +70,6 @@ class _RateLimiter:
 
 
 SEALION_BASE_URL = "https://api.sea-lion.ai/v1"
-SEALION_MODEL_INTERACTIVE = SEALION_FAST_MODEL
-SEALION_MODEL_PIPELINE_BULLETS = SEALION_PIPELINE_MODEL
-# v1 pipeline retired the 70B-R reasoning model (couldn't tool-call, leaked
-# chain-of-thought into output, slow). The classic pipeline is env-switchable via
-# SEALION_PIPELINE_MODEL; v4 32B remains the default because it follows strict
-# JSON/prose prompts better than v4.5 Qwen on this path.
-SEALION_MODEL_REASONING = SEALION_PIPELINE_MODEL
-SEALION_MODEL_SMART = SEALION_SMART_MODEL
-
-# Backwards-compatible alias used by older call sites.
-SEALION_MODEL = SEALION_MODEL_INTERACTIVE
 
 
 def _load_api_keys() -> list[str]:
@@ -215,7 +202,7 @@ def get_ai_health() -> dict:
 def _call_sealion(
     messages: list[dict],
     max_tokens: int = 500,
-    model: str = SEALION_MODEL,
+    model: str = SEALION_FAST_MODEL,
     temperature: float = 0.7,
     response_format: dict | None = None,
 ) -> Optional[str]:
@@ -289,7 +276,7 @@ def _call_sealion(
 def call_sealion_json(
     messages: list[dict],
     max_tokens: int = 1000,
-    model: str = SEALION_MODEL,
+    model: str = SEALION_FAST_MODEL,
     max_retries: int = 2,
 ) -> Optional[str]:
     """Call SEA-LION with progressive temperature retry for JSON responses.

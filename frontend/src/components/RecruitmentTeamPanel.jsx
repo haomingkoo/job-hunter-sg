@@ -106,10 +106,23 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
     setProposedEdits(await editsResponse.json());
   }
 
-  async function acceptEdits(editIds) {
+  async function runTurn(action, { clearMessage = false, refreshOnError = false, fallbackError = "" } = {}) {
     setBusy(true);
     setError("");
     try {
+      await action();
+      if (clearMessage) setMessage("");
+      await refreshThread(threadId);
+    } catch (turnError) {
+      setError(turnError.message || fallbackError);
+      if (refreshOnError) await refreshThread(threadId);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function acceptEdits(editIds) {
+    return runTurn(async () => {
       const response = await apiFetch(
         `/api/recruitment-team/threads/${threadId}/proposed-edits/accept`,
         {
@@ -118,12 +131,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
         },
       );
       setEditResult(await response.json());
-      await refreshThread(threadId);
-    } catch (acceptError) {
-      setError(acceptError.message || "Could not save those edits.");
-    } finally {
-      setBusy(false);
-    }
+    }, { fallbackError: "Could not save those edits." });
   }
 
   async function rejectEdits(editIds) {
@@ -237,84 +245,55 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
     }
   }
 
-  async function searchCurrentJobs() {
+  function searchCurrentJobs() {
     const query = message.trim();
-    if (!threadId || !query || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await streamRecruitmentCommand(
+    if (!threadId || !query || busy) return undefined;
+    return runTurn(
+      () => streamRecruitmentCommand(
         `/api/recruitment-team/threads/${threadId}/jobs/search/stream`,
         { query, idempotency_key: globalThis.crypto.randomUUID() },
         appendActivity,
-      );
-      setMessage("");
-      await refreshThread(threadId);
-    } catch (searchError) {
-      setError(searchError.message);
-    } finally {
-      setBusy(false);
-    }
+      ),
+      { clearMessage: true },
+    );
   }
 
-  async function studyResume() {
-    if (!threadId || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await streamRecruitmentCommand(
+  function studyResume() {
+    if (!threadId || busy) return undefined;
+    return runTurn(
+      () => streamRecruitmentCommand(
         `/api/recruitment-team/threads/${threadId}/candidate-profile/stream`,
         { idempotency_key: globalThis.crypto.randomUUID() },
         appendActivity,
-      );
-      await refreshThread(threadId);
-    } catch (profileError) {
-      setError(profileError.message);
-      await refreshThread(threadId);
-    } finally {
-      setBusy(false);
-    }
+      ),
+      { refreshOnError: true },
+    );
   }
 
-  async function assessTarget() {
-    if (!threadId || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await streamRecruitmentCommand(
+  function assessTarget() {
+    if (!threadId || busy) return undefined;
+    return runTurn(
+      () => streamRecruitmentCommand(
         `/api/recruitment-team/threads/${threadId}/assessment/stream`,
         { idempotency_key: globalThis.crypto.randomUUID() },
         appendActivity,
-      );
-      await refreshThread(threadId);
-    } catch (assessmentError) {
-      setError(assessmentError.message);
-      await refreshThread(threadId);
-    } finally {
-      setBusy(false);
-    }
+      ),
+      { refreshOnError: true },
+    );
   }
 
-  async function answerAssessmentQuestion(event) {
+  function answerAssessmentQuestion(event) {
     event.preventDefault();
     const answer = message.trim();
-    if (!threadId || !answer || busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await streamRecruitmentCommand(
+    if (!threadId || !answer || busy) return undefined;
+    return runTurn(
+      () => streamRecruitmentCommand(
         `/api/recruitment-team/threads/${threadId}/assessment/answer/stream`,
         { answer, idempotency_key: globalThis.crypto.randomUUID() },
         appendActivity,
-      );
-      setMessage("");
-      await refreshThread(threadId);
-    } catch (answerError) {
-      setError(answerError.message);
-      await refreshThread(threadId);
-    } finally {
-      setBusy(false);
-    }
+      ),
+      { clearMessage: true, refreshOnError: true },
+    );
   }
 
   async function handoffToResumeAgent() {
@@ -337,21 +316,12 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
     }
   }
 
-  async function updateJob(path) {
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await apiFetch(path, {
-        method: "POST",
-        body: JSON.stringify({ idempotency_key: globalThis.crypto.randomUUID() }),
-      });
-      await refreshThread(threadId);
-    } catch (actionError) {
-      setError(actionError.message);
-    } finally {
-      setBusy(false);
-    }
+  function updateJob(path) {
+    if (busy) return undefined;
+    return runTurn(() => apiFetch(path, {
+      method: "POST",
+      body: JSON.stringify({ idempotency_key: globalThis.crypto.randomUUID() }),
+    }));
   }
 
   return (

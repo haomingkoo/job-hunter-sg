@@ -28,14 +28,10 @@ from config import (
     PIPELINE_REWRITE_TOKENS_PER_BULLET,
     PIPELINE_STRATEGY_MAX_TOKENS,
     PIPELINE_SUMMARY_MAX_TOKENS,
+    SEALION_PIPELINE_MODEL,
     VALIDATION_REWRITE_MAX_EXPANSION_RATIO,
 )
-from ai_service import (
-    SEALION_MODEL_PIPELINE_BULLETS,
-    SEALION_MODEL_REASONING,
-    _call_sealion,
-    call_sealion_json,
-)
+from ai_service import _call_sealion, call_sealion_json
 from jd_preparser import preparse_job_description
 from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
 from resume_scorer import ResumeScorer
@@ -364,7 +360,7 @@ Only include bullets that need work in bullet_priorities. Skip strong bullets.""
             {"role": "user", "content": user_msg},
         ],
         max_tokens=PIPELINE_STRATEGY_MAX_TOKENS,
-        model=SEALION_MODEL_REASONING,
+        model=SEALION_PIPELINE_MODEL,
     )
 
     fallback = {
@@ -560,7 +556,7 @@ SECURITY: {UNTRUSTED_DATA_RULE}"""
                 {"role": "user", "content": user_msg},
             ],
             max_tokens=PIPELINE_REWRITE_TOKENS_PER_BULLET * len(batch),
-            model=SEALION_MODEL_PIPELINE_BULLETS,
+            model=SEALION_PIPELINE_MODEL,
         )
 
         rewrites = []
@@ -798,7 +794,7 @@ Return ONLY the summary text, nothing else."""
             {"role": "user", "content": user_msg},
         ],
         max_tokens=PIPELINE_SUMMARY_MAX_TOKENS,
-        model=SEALION_MODEL_REASONING,
+        model=SEALION_PIPELINE_MODEL,
         temperature=0.3,
     )
 

@@ -954,7 +954,11 @@ def test_persona_reviews_require_canonical_evidence_ids():
                 "suggested_actions": ["Clarify the result without inventing metrics."],
             })
 
-    findings = list(personas.iter_persona_reviews(document, FakeModel(), include_market=False))
+    findings = [
+        run["assessment"]
+        for run in personas.iter_persona_worker_runs(document, FakeModel(), include_market=False)
+        if run["status"] in {"success", "partial"}
+    ]
 
     assert {finding["persona"] for finding in findings} == {
         "recruiter", "hiring_manager", "ats", "skeptic",
@@ -995,7 +999,7 @@ def test_persona_worker_uses_one_structured_submission_call_and_records_span():
         }]),
     ])
 
-    finding = personas._persona_review("recruiter", document, model)
+    finding = personas._worker_run("recruiter", document, model).get("assessment")
 
     assert finding is not None
     assert finding["score"] == 74
@@ -1141,12 +1145,13 @@ def test_persona_review_discards_unknown_evidence_ids():
             })
 
     model = FakeModel()
-    assert list(personas.iter_persona_reviews(
+    runs = list(personas.iter_persona_worker_runs(
         document,
         model,
         include_market=False,
         persona_names=("recruiter",),
-    )) == []
+    ))
+    assert [run for run in runs if run["status"] in {"success", "partial"}] == []
     assert model.calls == 2
 
 
@@ -1182,7 +1187,7 @@ def test_persona_review_retries_once_after_fixable_validation_failure():
             })
 
     model = FakeModel()
-    finding = personas._persona_review("recruiter", document, model)
+    finding = personas._worker_run("recruiter", document, model).get("assessment")
 
     assert finding is not None
     assert model.calls == 2
@@ -1224,7 +1229,7 @@ def test_persona_retry_explains_allowed_target_job_fields():
             })
 
     model = FakeModel()
-    finding = personas._persona_review("hiring_manager", document, model, job_context)
+    finding = personas._worker_run("hiring_manager", document, model, job_context).get("assessment")
 
     assert finding is not None
     assert model.calls == 2
@@ -1269,7 +1274,7 @@ def test_persona_review_retries_oversized_exact_finding_instead_of_clipping():
             return _submission_message(payload)
 
     model = FakeModel()
-    finding = personas._persona_review("recruiter", document, model)
+    finding = personas._worker_run("recruiter", document, model).get("assessment")
 
     assert finding is not None
     assert model.calls == 2
@@ -1326,12 +1331,12 @@ def test_market_persona_receives_xml_delimited_job_snapshot():
             })
 
     model = FakeModel()
-    finding = personas._persona_review(
+    finding = personas._worker_run(
         "market_researcher",
         document,
         model,
         {"title": "Finance Transformation Lead", "description": "Own process automation"},
-    )
+    ).get("assessment")
 
     assert finding is not None
     payload = model.messages[1].content
@@ -1627,41 +1632,6 @@ def test_background_review_returns_immediately_and_completes_in_session():
 
     assert state["response"] == "Detached review complete."
     assert agent_session.owner_has_active_sessions(owner_key) is False
-
-
-def test_per_bullet_diff_preserves_bullet_ids():
-    from resume_structurer import get_all_bullets, structure_resume
-
-    import resume_agent.diffs as agent_diffs
-
-    resume_text = """
-Jane Doe
-jane@example.com
-
-EXPERIENCE
-GovTech | Data Engineer | Jan 2020 - Present
-- Built data pipeline processing 10M events daily
-- Led analytics migration for reporting workloads
-"""
-    bullets = get_all_bullets(structure_resume(resume_text))
-
-    pending = agent_diffs.build_pending_diffs(
-        resume_text,
-        [
-            {
-                "bullet_id": bullets[0]["id"],
-                "rewrite": "Built reliable data pipeline processing 10M events daily",
-            },
-            {
-                "bullet_id": bullets[1]["id"],
-                "rewrite": "Led analytics migration for reporting workloads and improved uptime by 50%",
-            },
-        ],
-    )
-
-    assert [diff["bullet_id"] for diff in pending] == [bullets[0]["id"]]
-    assert pending[0]["original"] == bullets[0]["text"]
-    assert pending[0]["rewrite"] == "Built reliable data pipeline processing 10M events daily"
 
 
 def test_general_mode_runs_without_target_job():
@@ -2305,57 +2275,6 @@ def test_owner_run_reservation_has_a_global_cap(monkeypatch):
     assert agent_session.reserve_owner_run("user:3") is True
 
 
-def test_chat_endpoint_streams_token_and_tool_events(monkeypatch):
-    from fastapi.testclient import TestClient
-    from types import SimpleNamespace
-
-    import main
-    from auth import get_current_user
-
-    monkeypatch.setattr(
-        main,
-        "_stream_resume_agent_events",
-        lambda _body: iter(
-            [
-                {"event": "session", "session_id": "sid-1"},
-                {
-                    "event": "tool",
-                    "session_id": "sid-1",
-                    "name": "search_jobs",
-                    "content": "[]",
-                },
-                {
-                    "event": "token",
-                    "session_id": "sid-1",
-                    "content": "Found a role.",
-                },
-                {"event": "done", "session_id": "sid-1"},
-            ]
-        ),
-    )
-    user_id = _persisted_user_id()
-    main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id, tier="user")
-    monkeypatch.setattr(main, "_consume_ai_credit", lambda *args: None)
-
-    try:
-        response = TestClient(main.app).post(
-            "/api/resume/agent/chat",
-            json={"message": "Find data jobs"},
-        )
-    finally:
-        main.app.dependency_overrides.pop(get_current_user, None)
-        from resume_agent.session import release_owner_run
-
-        release_owner_run(f"user:{user_id}")
-
-    assert response.status_code == 200
-    body = response.text
-    assert body.index("event: tool") < body.index("event: token")
-    assert '"name": "search_jobs"' in body
-    assert '"content": "Found a role."' in body
-    assert response.headers["cache-control"] == "no-cache, no-store"
-
-
 def test_background_start_endpoint_returns_session_immediately(monkeypatch):
     from fastapi.testclient import TestClient
     from types import SimpleNamespace
@@ -2407,8 +2326,8 @@ def test_background_start_rejects_invalid_or_oversized_context_snapshots():
             "/api/resume/agent/start",
             json={"score_context": {"detail": "x" * (config.AGENT_MAX_SCORE_CONTEXT_CHARS + 1)}},
         )
-        invalid_chat = client.post(
-            "/api/resume/agent/chat",
+        null_context = client.post(
+            "/api/resume/agent/start",
             json={"job_context": None},
         )
     finally:
@@ -2418,30 +2337,7 @@ def test_background_start_rejects_invalid_or_oversized_context_snapshots():
     assert oversized.status_code == 413
     assert invalid_score.status_code == 422
     assert oversized_score.status_code == 413
-    assert invalid_chat.status_code == 422
-
-
-def test_resume_agent_sse_sends_keepalive_while_agent_runs(monkeypatch):
-    import main
-
-    release = threading.Event()
-
-    def slow_events(_body):
-        release.wait()
-        yield {"event": "done", "session_id": "sid-1"}
-
-    monkeypatch.setattr(main, "_stream_resume_agent_events", slow_events)
-    stream = main._resume_agent_sse({}, heartbeat_seconds=0.001)
-
-    assert next(stream) == ": keepalive\n\n"
-    release.set()
-    for _attempt in range(1_000):
-        chunk = next(stream)
-        if "event: done" in chunk:
-            break
-        assert chunk == ": keepalive\n\n"
-    else:
-        raise AssertionError("agent stream never emitted its done event")
+    assert null_context.status_code == 422
 
 
 def test_state_endpoint_returns_draft_todos_and_pending_diffs(monkeypatch):
@@ -2539,30 +2435,23 @@ def test_explicit_missing_agent_session_returns_404_before_quota(monkeypatch):
         agent_session._sessions.pop(session_id, None)
 
     quota_calls = []
-    stream_calls = []
     monkeypatch.setattr(main, "_consume_ai_credit", lambda *args: quota_calls.append(args))
-    monkeypatch.setattr(
-        main,
-        "_stream_resume_agent_events",
-        lambda body: stream_calls.append(body) or iter(()),
-    )
     user_id = _persisted_user_id()
     main.app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id=user_id, tier="user")
 
     try:
         client = TestClient(main.app)
-        chat_response = client.post(
-            "/api/resume/agent/chat",
+        start_response = client.post(
+            "/api/resume/agent/start",
             json={"message": "Continue", "session_id": session_id},
         )
         state_response = client.get(f"/api/resume/agent/{session_id}/state")
     finally:
         main.app.dependency_overrides.pop(get_current_user, None)
 
-    assert chat_response.status_code == 404
+    assert start_response.status_code == 404
     assert state_response.status_code == 404
     assert quota_calls == []
-    assert stream_calls == []
 
 
 def test_smart_persona_output_strips_think_tags():
@@ -2583,8 +2472,8 @@ def test_smart_persona_output_strips_think_tags():
 def test_fairness_counterfactual_name_school_swap():
     from resume_structurer import get_all_bullets, structure_resume
 
-    import resume_agent.diffs as agent_diffs
     from resume_agent.prompts import FAIRNESS_AND_ANTI_FABRICATION_GUARDRAILS
+    from resume_agent.tools import bullet_context, propose_edit
 
     resume_a = """
 Jane Doe
@@ -2607,18 +2496,20 @@ GovTech | Data Engineer | Jan 2020 - Present
 
     bullet_a = get_all_bullets(structure_resume(resume_a))[0]
     bullet_b = get_all_bullets(structure_resume(resume_b))[0]
-    proposal_a = {
-        "bullet_id": bullet_a["id"],
-        "rewrite": "Built reliable data pipeline processing 10M events daily",
-    }
-    proposal_b = {**proposal_a, "bullet_id": bullet_b["id"]}
+    rewrite = "Built reliable data pipeline processing 10M events daily"
 
-    pending_a = agent_diffs.build_pending_diffs(resume_a, [proposal_a])
-    pending_b = agent_diffs.build_pending_diffs(resume_b, [proposal_b])
+    def propose(bullet):
+        with bullet_context({bullet["id"]: bullet["text"]}):
+            return propose_edit.invoke({"bullet_id": bullet["id"], "rewrite": rewrite})
 
-    assert [diff["rewrite"] for diff in pending_a] == [
-        diff["rewrite"] for diff in pending_b
-    ]
+    result_a = propose(bullet_a)
+    result_b = propose(bullet_b)
+
+    assert result_a["accepted"] is True
+    assert (result_a["accepted"], result_a["rewrite"]) == (
+        result_b["accepted"],
+        result_b["rewrite"],
+    )
 
 
 def test_existing_pipeline_endpoints_unchanged():

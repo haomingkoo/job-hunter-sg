@@ -46,8 +46,6 @@ MAX_SOURCE_EXCERPT_CHARS = 500
 
 _PERSONAS = REVIEWER_CONFIGS
 _PERSONA_BY_NAME = {name: (description, prompt) for name, description, prompt in _PERSONAS}
-_WORKER_TOOLS = {name: [] for name, _description, _prompt in _PERSONAS}
-_REQUIRED_TOOL_NAMES = {name: set() for name, _description, _prompt in _PERSONAS}
 _SCORING_RUBRICS = REVIEWER_SCORING_RUBRICS
 _OUTPUT_INSTRUCTIONS = REVIEWER_OUTPUT_INSTRUCTIONS
 
@@ -242,16 +240,6 @@ def _validated_finding(
     if len(reasoning) > MAX_REASONING_CHARS:
         return None, "oversized_reasoning"
 
-    if recorder is not None:
-        successful = [
-            span
-            for span in recorder.spans
-            if span.get("status") == "success" and span.get("result", {}).get("ok") is not False
-        ]
-        completed_names = {str(span.get("name")) for span in successful}
-        missing_tools = _REQUIRED_TOOL_NAMES[name] - completed_names
-        if missing_tools:
-            return None, f"missing_required_tools:{','.join(sorted(missing_tools))}"
     clean_findings = []
     for item in findings:
         if not isinstance(item, dict):
@@ -546,13 +534,12 @@ def _partial_tool_results(spans: list[dict]) -> list[dict]:
     ]
 
 
-def _optional_tool_failures(name: str, spans: list[dict]) -> list[dict]:
-    required = _REQUIRED_TOOL_NAMES[name]
+def _optional_tool_failures(spans: list[dict]) -> list[dict]:
     return [
         span
         for span in spans
         if span.get("kind", "tool") == "tool"
-        and span.get("name") not in {*required, _SUBMIT_ASSESSMENT_TOOL.name}
+        and span.get("name") != _SUBMIT_ASSESSMENT_TOOL.name
         and (span.get("status") == "error" or span.get("result", {}).get("ok") is False)
     ]
 
@@ -819,10 +806,7 @@ def _worker_run_impl(
             finding["tool_spans"] = all_spans
             duration_ms = round((time.perf_counter() - started_at) * 1000)
             finding["duration_ms"] = duration_ms
-            optional_failures = _optional_tool_failures(
-                name,
-                recorder.spans if recorder else [],
-            )
+            optional_failures = _optional_tool_failures(recorder.spans if recorder else [])
             partial = bool(optional_failures)
             failed_optional = optional_failures[0] if optional_failures else {}
             failure_result = failed_optional.get("result", {})
@@ -950,17 +934,6 @@ def _worker_run(
         return _worker_run_impl(name, document, model, job_context, session_id)
 
 
-def _persona_review(
-    name: str,
-    document: dict,
-    model: Any | None,
-    job_context: dict | None = None,
-) -> dict | None:
-    """Compatibility helper returning only a completed assessment."""
-    run = _worker_run(name, document, model, job_context)
-    return run.get("assessment") if run.get("status") in {"success", "partial"} else None
-
-
 def iter_persona_worker_runs(
     document: dict,
     model: Any | None = None,
@@ -1004,25 +977,3 @@ def iter_persona_worker_runs(
                     message="The reviewer stopped unexpectedly. No finding was used.",
                     trace_id=session_id,
                 )
-
-
-def iter_persona_reviews(
-    document: dict,
-    model: Any | None = None,
-    *,
-    include_market: bool,
-    job_context: dict | None = None,
-    persona_names: tuple[str, ...] | None = None,
-    session_id: str = "",
-):
-    """Yield valid persona findings independently as each reviewer completes."""
-    for run in iter_persona_worker_runs(
-        document,
-        model,
-        include_market=include_market,
-        job_context=job_context,
-        persona_names=persona_names,
-        session_id=session_id,
-    ):
-        if run.get("status") in {"success", "partial"}:
-            yield run["assessment"]

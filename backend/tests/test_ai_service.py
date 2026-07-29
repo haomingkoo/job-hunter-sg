@@ -525,11 +525,10 @@ def test_pipeline_model_can_be_overridden(monkeypatch):
     original = os.environ.get("SEALION_PIPELINE_MODEL")
     monkeypatch.setenv("SEALION_PIPELINE_MODEL", "test-pipeline-model")
     try:
-        importlib.reload(config)
-        reloaded = importlib.reload(ai_service)
+        reloaded = importlib.reload(config)
+        importlib.reload(ai_service)
 
-        assert reloaded.SEALION_MODEL_PIPELINE_BULLETS == "test-pipeline-model"
-        assert reloaded.SEALION_MODEL_REASONING == "test-pipeline-model"
+        assert reloaded.SEALION_PIPELINE_MODEL == "test-pipeline-model"
     finally:
         if original is None:
             monkeypatch.delenv("SEALION_PIPELINE_MODEL", raising=False)

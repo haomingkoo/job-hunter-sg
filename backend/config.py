@@ -46,13 +46,6 @@ def _nonnegative_int_env(name: str, default: int) -> int:
     return value
 
 
-def _zero_or_one_env(name: str, default: int) -> int:
-    value = _int_env(name, default)
-    if value not in {0, 1}:
-        raise ValueError(f"{name} must be zero or one, got {value}")
-    return value
-
-
 def _csv_env(name: str, default: str) -> tuple[str, ...]:
     raw = os.getenv(name, default)
     return tuple(item.strip() for item in raw.split(",") if item.strip())
@@ -129,10 +122,15 @@ RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS: int = _positive_int_env(
     "RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS",
     2,
 )
-RECRUITMENT_MAX_SYNTHESIS_CORRECTIONS: int = _zero_or_one_env(
+RECRUITMENT_MAX_SYNTHESIS_CORRECTIONS: int = _int_env(
     "RECRUITMENT_MAX_SYNTHESIS_CORRECTIONS",
     1,
 )
+if RECRUITMENT_MAX_SYNTHESIS_CORRECTIONS not in {0, 1}:
+    raise ValueError(
+        "RECRUITMENT_MAX_SYNTHESIS_CORRECTIONS must be zero or one, "
+        f"got {RECRUITMENT_MAX_SYNTHESIS_CORRECTIONS}"
+    )
 CANDIDATE_PROFILE_VALIDATION_ATTEMPTS: int = _positive_int_env(
     "CANDIDATE_PROFILE_VALIDATION_ATTEMPTS",
     2,

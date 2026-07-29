@@ -6,19 +6,16 @@ Scrapes / queries multiple Singapore job portals:
   1. MyCareersFuture  (MCF public API)
   2. Careers@Gov      (via OpenGovSG pre-parsed JSON dump)
   3. SSG-WSG Skills Framework API (job roles + skills data)
-  4. NodeFlair        (HTML scrape)
-  5. Indeed SG        (HTML scrape)
-  6. JobStreet SG     (HTML scrape)
+  4. Adzuna           (official API)
+  5. Jooble           (official API)
 
 Careers@Gov data courtesy of Alwyn Tan @ Open Government Products:
   https://github.com/opengovsg/careersgovsg-jobs-data
 
-Uses APIs where available, falls back to HTML scraping, and deduplicates
-across all sources.
+Queries each source's API and deduplicates across all of them.
 """
 
 import hashlib
-import json
 import logging
 import os
 import re
@@ -26,7 +23,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
-from urllib.parse import quote_plus, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -67,11 +64,6 @@ def _canonical_job_url(value: str) -> str:
         return value.strip().lower()
     path = re.sub(r"/+$", "", parsed.path or "")
     return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), path, "", ""))
-
-
-def _source_id_from_url(url: str) -> str:
-    canonical = _canonical_job_url(url)
-    return canonical.rsplit("/", 1)[-1] if canonical else ""
 
 
 def _extract_openings(item: dict) -> int:
@@ -539,231 +531,7 @@ class SSGSkillsFrameworkAPI:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SOURCE 4: NodeFlair (HTML Scrape)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class NodeFlairScraper:
-    """Scrapes NodeFlair for tech jobs with salary data."""
-    BASE_URL = "https://www.nodeflair.com/jobs"
-
-    def search(self, keyword: str, limit: int = 20) -> list[Job]:
-        log.info(f"[NodeFlair] Searching for '{keyword}'...")
-        jobs = []
-        try:
-            params = {"query": keyword, "page": 1}
-            resp = SESSION.get(self.BASE_URL, params=params, timeout=15)
-            resp.raise_for_status()
-
-            soup = BeautifulSoup(resp.text, "html.parser")
-            cards = soup.select('[class*="jobListingCard"], [class*="job-card"], .listingCard, article')
-
-            if not cards:
-                cards = soup.find_all("div", {"data-testid": re.compile(r"job", re.I)})
-                if not cards:
-                    cards = soup.find_all("a", href=re.compile(r"/jobs/"))
-
-            log.info(f"[NodeFlair] Found {len(cards)} cards")
-
-            for card in cards[:limit]:
-                try:
-                    title_el = (
-                        card.select_one('[class*="title"], h2, h3') or
-                        card.find("a", href=re.compile(r"/jobs/"))
-                    )
-                    title = title_el.get_text(strip=True) if title_el else ""
-                    if not title:
-                        continue
-
-                    company_el = card.select_one('[class*="company"], [class*="Company"]')
-                    company = company_el.get_text(strip=True) if company_el else ""
-
-                    salary_el = card.select_one('[class*="salary"], [class*="Salary"]')
-                    salary = salary_el.get_text(strip=True) if salary_el else ""
-
-                    link_el = card.find("a", href=True)
-                    href = link_el["href"] if link_el else ""
-                    url = f"https://www.nodeflair.com{href}" if href and not href.startswith("http") else href
-
-                    job = Job(
-                        title=title,
-                        company=company,
-                        location="Singapore",
-                        salary=salary,
-                        source="NodeFlair",
-                        url=url,
-                        source_posting_id=_source_id_from_url(url),
-                    )
-                    if job.title:
-                        jobs.append(job)
-                except Exception:
-                    continue
-
-        except requests.exceptions.RequestException as e:
-            log.warning(f"[NodeFlair] Request failed: {e}")
-
-        return jobs
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SOURCE 5: Indeed SG (HTML Scrape)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class IndeedSGScraper:
-    """Scrapes Indeed Singapore for job listings."""
-    BASE_URL = "https://sg.indeed.com/jobs"
-
-    def search(self, keyword: str, limit: int = 20) -> list[Job]:
-        log.info(f"[Indeed SG] Searching for '{keyword}'...")
-        jobs = []
-        try:
-            params = {"q": keyword, "l": "Singapore", "limit": min(limit, 50)}
-            resp = SESSION.get(self.BASE_URL, params=params, timeout=15)
-            resp.raise_for_status()
-
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-            # Indeed uses various class patterns
-            cards = soup.select(".job_seen_beacon, .jobsearch-ResultsList .result, .tapItem, [data-jk]")
-            log.info(f"[Indeed SG] Found {len(cards)} cards")
-
-            for card in cards[:limit]:
-                try:
-                    title_el = card.select_one("h2 a, .jobTitle a, [class*='jobTitle'] a, h2 span")
-                    title = title_el.get_text(strip=True) if title_el else ""
-                    if not title:
-                        title_el = card.select_one("h2, .jobTitle, [class*='jobTitle']")
-                        title = title_el.get_text(strip=True) if title_el else ""
-
-                    company_el = card.select_one("[data-testid='company-name'], .companyName, [class*='company']")
-                    company = company_el.get_text(strip=True) if company_el else ""
-
-                    location_el = card.select_one("[data-testid='text-location'], .companyLocation, [class*='location']")
-                    location = location_el.get_text(strip=True) if location_el else "Singapore"
-
-                    salary_el = card.select_one("[class*='salary'], .salary-snippet, [data-testid='attribute_snippet_testid']")
-                    salary = salary_el.get_text(strip=True) if salary_el else ""
-
-                    link_el = card.select_one("h2 a, .jobTitle a, a[data-jk]")
-                    href = link_el.get("href", "") if link_el else ""
-                    url = f"https://sg.indeed.com{href}" if href and not href.startswith("http") else href
-                    posting_id = card.get("data-jk", "") or _source_id_from_url(url)
-
-                    snippet_el = card.select_one(".job-snippet, [class*='snippet']")
-                    desc = snippet_el.get_text(strip=True) if snippet_el else ""
-
-                    if title:
-                        jobs.append(Job(
-                            title=title,
-                            company=company,
-                            location=location,
-                            salary=salary,
-                            source="Indeed SG",
-                            url=url,
-                            description=desc,
-                            source_posting_id=posting_id,
-                        ))
-                except Exception:
-                    continue
-
-        except requests.exceptions.RequestException as e:
-            log.warning(f"[Indeed SG] Request failed: {e}")
-
-        return jobs
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SOURCE 6: JobStreet SG (HTML Scrape)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class JobStreetScraper:
-    """Scrapes JobStreet Singapore for job listings."""
-    BASE_URL = "https://www.jobstreet.com.sg"
-
-    def search(self, keyword: str, limit: int = 20) -> list[Job]:
-        log.info(f"[JobStreet] Searching for '{keyword}'...")
-        jobs = []
-        try:
-            url = f"{self.BASE_URL}/jobs/{quote_plus(keyword)}-jobs"
-            resp = SESSION.get(url, timeout=15)
-            resp.raise_for_status()
-
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-            # JobStreet markup varies, so try several card shapes
-            cards = soup.select("article[data-search-sol-meta], [data-testid*='job-card'], article")
-            if not cards:
-                scripts = soup.find_all("script", type="application/json")
-                for script in scripts:
-                    try:
-                        data = json.loads(script.string)
-                        self._extract_from_json(data, jobs, limit)
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-
-            log.info(f"[JobStreet] Found {len(cards)} cards")
-
-            for card in cards[:limit]:
-                try:
-                    title_el = card.select_one("h1 a, h3 a, [data-automation='jobTitle'] a, [class*='title'] a")
-                    if not title_el:
-                        title_el = card.select_one("h1, h3, [data-automation='jobTitle'], [class*='title']")
-                    title = title_el.get_text(strip=True) if title_el else ""
-
-                    company_el = card.select_one("[data-automation='jobCompany'], [class*='company']")
-                    company = company_el.get_text(strip=True) if company_el else ""
-
-                    location_el = card.select_one("[data-automation='jobLocation'], [class*='location']")
-                    location = location_el.get_text(strip=True) if location_el else "Singapore"
-
-                    salary_el = card.select_one("[data-automation='jobSalary'], [class*='salary']")
-                    salary = salary_el.get_text(strip=True) if salary_el else ""
-
-                    link_el = card.select_one("a[href*='/job/'], h1 a, h3 a")
-                    href = link_el.get("href", "") if link_el else ""
-                    full_url = href if href.startswith("http") else f"{self.BASE_URL}{href}" if href else ""
-
-                    if title:
-                        jobs.append(Job(
-                            title=title,
-                            company=company,
-                            location=location,
-                            salary=salary,
-                            source="JobStreet",
-                            url=full_url,
-                            source_posting_id=_source_id_from_url(full_url),
-                        ))
-                except Exception:
-                    continue
-
-        except requests.exceptions.RequestException as e:
-            log.warning(f"[JobStreet] Request failed: {e}")
-
-        return jobs
-
-    def _extract_from_json(self, data, jobs: list, limit: int, _depth: int = 0):
-        """Try to extract jobs from embedded JSON data."""
-        if _depth > 5:  # Guard against deeply nested / malicious JSON
-            return
-        if isinstance(data, dict):
-            for key, val in data.items():
-                if key in ("jobs", "jobCards", "data") and isinstance(val, list):
-                    for item in val[:limit]:
-                        if isinstance(item, dict) and ("title" in item or "jobTitle" in item):
-                            jobs.append(Job(
-                                title=item.get("title") or item.get("jobTitle", ""),
-                                company=item.get("company", {}).get("name", "") if isinstance(item.get("company"), dict) else item.get("company", ""),
-                                location=item.get("location", "Singapore"),
-                                salary=item.get("salary", ""),
-                                source="JobStreet",
-                                url=item.get("url", item.get("jobUrl", "")),
-                                source_posting_id=str(item.get("id") or item.get("jobId") or ""),
-                            ))
-                elif isinstance(val, dict):
-                    self._extract_from_json(val, jobs, limit, _depth + 1)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SOURCE 7: Adzuna API (Official — free tier at developer.adzuna.com)
+# SOURCE 4: Adzuna API (Official — free tier at developer.adzuna.com)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class AdzunaScraper:
@@ -833,7 +601,7 @@ class AdzunaScraper:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SOURCE 8: Jooble API (Official — free at jooble.org/api/about)
+# SOURCE 5: Jooble API (Official — free at jooble.org/api/about)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class JoobleScraper:
@@ -888,15 +656,10 @@ class JobAggregator:
     """Aggregates jobs from all sources and deduplicates."""
 
     SOURCE_MAP = {
-        # API-based sources (reliable)
         "mcf": ("MyCareersFuture", MyCareersFutureScraper),
         "careersgov": ("Careers@Gov", CareersGovScraper),
         "adzuna": ("Adzuna", AdzunaScraper),
         "jooble": ("Jooble", JoobleScraper),
-        # HTML scrapers — may be blocked (403) by the target site
-        "nodeflair": ("NodeFlair", NodeFlairScraper),
-        "indeed": ("Indeed SG", IndeedSGScraper),
-        "jobstreet": ("JobStreet SG", JobStreetScraper),
     }
 
     def __init__(self):
