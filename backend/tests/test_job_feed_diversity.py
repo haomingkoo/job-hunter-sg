@@ -148,3 +148,9 @@ def test_blank_company_rows_are_still_all_reachable():
         assert len(set(seen)) == 9, "blank-company rows were dropped by the cap"
     finally:
         teardown()
+
+
+def test_every_sort_mode_is_reachable_from_a_client(feed_client):
+    """The UI used to omit sort for "newest", so it silently returned balanced."""
+    for mode in ("balanced", "newest", "salary"):
+        assert feed_client.get(f"/api/jobs?per_page=5&sort={mode}").status_code == 200
