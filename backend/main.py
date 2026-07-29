@@ -454,6 +454,25 @@ async def lifespan(application: FastAPI):
                             (ScrapedJob.jd_summary_status.is_(None))
                             | (ScrapedJob.jd_summary_status == "")
                             | (ScrapedJob.jd_summary_status == "failed")
+                            # "unavailable" means the model was down at the time,
+                            # not that this job can never have a summary. Without
+                            # it here a transient outage writes a job off forever:
+                            # measured 969 stranded rows on a 16,390-row corpus.
+                            | (ScrapedJob.jd_summary_status == "unavailable")
+                            # "generating" is only truthful while a worker is
+                            # alive. A process that died mid-call leaves the row
+                            # claimed by nobody, so reclaim stale ones.
+                            | (
+                                (ScrapedJob.jd_summary_status == "generating")
+                                & (
+                                    (ScrapedJob.jd_summary_generated_at == "")
+                                    | (ScrapedJob.jd_summary_generated_at.is_(None))
+                                    | (
+                                        ScrapedJob.jd_summary_generated_at
+                                        < _stale_generating_cutoff()
+                                    )
+                                )
+                            )
                         )
                         .order_by(ScrapedJob.id.desc())
                         .first()
@@ -3104,6 +3123,15 @@ def _precompute_batch(db: Session, filter_clause, batch_size: int) -> tuple[int,
         db.commit()
         db.expunge_all()
     return done, last_id
+
+
+def _stale_generating_cutoff() -> str:
+    """ISO cutoff past which a "generating" row is treated as abandoned.
+
+    jd_summary_generated_at is a string column, so this compares ISO text.
+    """
+    cutoff = datetime.now() - timedelta(seconds=app_config.JD_SUMMARY_STALE_GENERATING_SECONDS)
+    return cutoff.isoformat()
 
 
 def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
