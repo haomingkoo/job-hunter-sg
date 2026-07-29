@@ -3303,3 +3303,25 @@ def test_answering_with_an_empty_synthesis_result_fails_closed_not_silently_comp
         artifact = team.target_assessment(owner_id, started.thread_id)
         assert artifact.status == "failed"
         assert artifact.error["error_type"] == "EmptySynthesis"
+
+
+def test_a_paused_assessment_receipt_does_not_read_as_finished():
+    """The command completes when a run pauses; the assessment does not.
+
+    The receipt reported status="completed" either way, so a client could not
+    tell a finished assessment from one waiting on the candidate.
+    """
+    from recruitment_team.interface import RunReceipt
+
+    finished = RunReceipt(
+        run_id="r1", thread_id="t1", status="completed", trace_key="k",
+        workflow_state="assessment_ready",
+    )
+    paused = RunReceipt(
+        run_id="r2", thread_id="t1", status="completed", trace_key="k",
+        workflow_state="awaiting_candidate_answer",
+    )
+
+    assert finished.status == paused.status
+    assert finished.workflow_state != paused.workflow_state
+    assert paused.workflow_state == "awaiting_candidate_answer"

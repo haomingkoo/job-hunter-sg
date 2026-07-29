@@ -1554,13 +1554,18 @@ class RecruitmentTeam:
             created_at=item.created_at,
         )
 
-    @staticmethod
-    def _receipt(run: RecruitmentRun) -> RunReceipt:
+    def _receipt(self, run: RecruitmentRun) -> RunReceipt:
         if run.status != "completed":
             raise InvalidCommand(f"command is {run.status}")
+        thread = (
+            self._db.query(RecruitmentThread)
+            .filter(RecruitmentThread.id == run.thread_id)
+            .first()
+        )
         return RunReceipt(
             run_id=run.id,
             thread_id=run.thread_id,
             status="completed",
             trace_key=run.trace_key,
+            workflow_state=(thread.workflow_state if thread else "") or "",
         )
