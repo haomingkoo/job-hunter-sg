@@ -30,8 +30,6 @@ from validation_gates import validate_and_fix
 
 log = logging.getLogger("jobhunter.ai")
 
-# ── Rate limiter (token bucket, 10 req/min) ────────────────────────────────
-
 class _RateLimiter:
     """Thread-safe token-bucket rate limiter."""
 
@@ -73,8 +71,6 @@ class _RateLimiter:
             time.sleep(0.5)
 
 
-# ── SEA-LION Client ─────────────────────────────────────────────────────────
-
 SEALION_BASE_URL = "https://api.sea-lion.ai/v1"
 SEALION_MODEL_INTERACTIVE = SEALION_FAST_MODEL
 SEALION_MODEL_PIPELINE_BULLETS = SEALION_PIPELINE_MODEL
@@ -88,13 +84,6 @@ SEALION_MODEL_SMART = SEALION_SMART_MODEL
 # Backwards-compatible alias used by older call sites.
 SEALION_MODEL = SEALION_MODEL_INTERACTIVE
 
-# Available models (for reference):
-# - aisingapore/Qwen-SEA-LION-v4-32B-IT  (best interactive / batched rewrite model)
-# - aisingapore/Gemma-SEA-LION-v4-27B-IT (27B, good alternative)
-# - aisingapore/Llama-SEA-LION-v3.5-70B-R (70B reasoning, slower but stronger)
-# - aisingapore/Llama-SEA-LION-v3-70B-IT  (70B instruct)
-# - aisingapore/SEA-Guard (safety model)
-
 
 def _load_api_keys() -> list[str]:
     """Load the canonical key pool plus legacy numbered variables."""
@@ -103,11 +92,9 @@ def _load_api_keys() -> list[str]:
         for key in re.split(r"[,\n]", os.environ.get("SEALION_API_KEYS", ""))
         if key.strip()
     ]
-    # Primary key
     k1 = os.environ.get("SEALION_API", os.environ.get("sealion_api", ""))
     if k1:
         keys.append(k1)
-    # Additional keys (sealion_api2, sealion_api3, etc.)
     for i in range(2, 10):
         k = os.environ.get(f"SEALION_API{i}", os.environ.get(f"sealion_api{i}", ""))
         if k:
@@ -148,7 +135,7 @@ def _get_api_key() -> str:
 _failure_count = 0
 _failure_lock = threading.Lock()
 _last_alert_time = 0
-_ALERT_THRESHOLD = 5          # Alert after 5 consecutive failures
+_ALERT_THRESHOLD = 5
 _ALERT_COOLDOWN = 300         # Don't spam alerts — max once per 5 min
 _ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
 
@@ -299,8 +286,6 @@ def _call_sealion(
         _AI_CALL_SLOTS.release()
 
 
-# ── JSON-safe call with progressive retry ──────────────────────────────────
-
 def call_sealion_json(
     messages: list[dict],
     max_tokens: int = 1000,
@@ -340,7 +325,7 @@ def call_sealion_json(
             if json_start >= 0 and json_end > json_start:
                 candidate = stripped[json_start:json_end]
                 try:
-                    json.loads(candidate)  # Actually parse to validate
+                    json.loads(candidate)  # parse to validate
                     return candidate
                 except (json.JSONDecodeError, ValueError):
                     pass  # Fall through to retry
@@ -355,15 +340,12 @@ def call_sealion_json(
     return None
 
 
-# ── Status ──────────────────────────────────────────────────────────────────
-
 def get_ai_status() -> dict:
     """Return current AI service status for display to users."""
     wait = _limiter.wait_seconds
     capacity = _limiter._max
     available = max(0, int(_limiter._tokens)) if hasattr(_limiter, '_tokens') else capacity
 
-    # Check if service is down (consecutive failures)
     if _failure_count >= _ALERT_THRESHOLD:
         return {
             "status": "down",
@@ -392,10 +374,7 @@ def get_ai_status() -> dict:
 
 
 def coach_resume(resume_text: str, job_description: str = "") -> Optional[dict]:
-    """
-    AI-powered resume coaching.
-    Returns structured, conversational coaching like a real career advisor.
-    """
+    """AI-powered resume coaching."""
     system = """You are an expert career coach with 10+ years of experience helping job seekers in Singapore land roles at top companies and government agencies. You've reviewed thousands of resumes and know exactly what hiring managers and ATS systems look for.
 
 Your coaching style:
@@ -475,7 +454,7 @@ def rewrite_bullet(
     rewrite_focus: str = "",
     focused_feedback: str = "",
 ) -> Optional[list]:
-    """Rewrite a single resume bullet — returns 3 OPTIONS, not just one."""
+    """Rewrite a single resume bullet into 3 options."""
     focus_tokens = {token.strip().lower() for token in rewrite_focus.split(",") if token.strip()}
     focus_rules = []
     if "bullet_length" in focus_tokens or "shorten" in focus_tokens:
@@ -556,7 +535,6 @@ SECURITY: {UNTRUSTED_DATA_RULE}"""
     if not content:
         return None
 
-    # Check if AI says no change needed
     if "NO_CHANGE" in content:
         return []
 

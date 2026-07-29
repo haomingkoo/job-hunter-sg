@@ -270,7 +270,6 @@ def _stage_0_analyze(
     score_result = scorer.analyze(resume_text, jd_text, parsed_jd=parsed_jd)
     state.update_progress(2, 3, "Analyzing skill gaps...")
 
-    # Skill gap from parsed JD
     all_jd_skills = (
         parsed_jd.get("required_skills", [])
         + parsed_jd.get("preferred_skills", [])
@@ -286,7 +285,6 @@ def _stage_0_analyze(
     non_injectable = []
     for skill in missing_skills:
         words = skill.lower().split()
-        # If any word from the skill appears in resume, it's injectable
         if any(w in resume_lower for w in words if len(w) > 3):
             injectable.append(skill)
         else:
@@ -415,7 +413,6 @@ def _stage_2_local_cleanup(
     for i, bullet in enumerate(bullets):
         cleaned, phrase_changes = clean_ai_phrases(bullet["text"], jd_text)
         if phrase_changes:
-            # Apply the change to the structured resume
             _update_bullet_text(structured, bullet["id"], cleaned)
             changes.append({
                 "bullet_id": bullet["id"],
@@ -441,13 +438,11 @@ def _stage_3_bullet_rewrite(
     bullets = get_all_bullets(structured)
     changes = []
 
-    # Build priority map from strategy
     priority_map = {}
     if strategy and "bullet_priorities" in strategy:
         for p in strategy["bullet_priorities"]:
             priority_map[p["id"]] = p
 
-    # Build keyword placement map
     keyword_map: dict[str, list[str]] = {}
     if strategy and "keyword_placements" in strategy:
         for kp in strategy["keyword_placements"]:
@@ -456,7 +451,6 @@ def _stage_3_bullet_rewrite(
             if bid and kw:
                 keyword_map.setdefault(bid, []).append(kw)
 
-    # Filter to high/medium priority bullets
     rewrite_bullets = []
     for bullet in bullets:
         priority_info = priority_map.get(bullet["id"])
@@ -500,7 +494,6 @@ def _stage_3_bullet_rewrite(
                     sibling_map[bid] = siblings
                     entry_context_map[bid] = entry_label
 
-        # Build batched prompt with full context
         bullet_lines = []
         for idx, b in enumerate(batch):
             keywords_for_bullet = keyword_map.get(b["id"], [])
@@ -601,7 +594,6 @@ SECURITY: {UNTRUSTED_DATA_RULE}"""
         for idx, b in enumerate(batch):
             if idx < len(rewrites):
                 rewritten = rewrites[idx]
-                # Run validation gates
                 final_text, gate_results = validate_and_fix(
                     original=b["text"],
                     tailored=rewritten,
@@ -751,7 +743,6 @@ def _stage_5_full_polish(
     """Stage 5: 70B -- executive summary generation + full review."""
     state.update_progress(0, 1, "AI polishing executive summary (70B)...")
 
-    # Get current summary, or create one if the resume has none.
     summary_section = _find_section(structured, "summary")
     summary_was_missing = summary_section is None
     if summary_was_missing:
@@ -890,10 +881,8 @@ def _stage_6_validate(
 
     state.update_progress(2, 4, "Building ATS gap report...")
 
-    # ATS gap report: what's still missing and WHERE to add it
     ats_gaps = _build_ats_gap_report(structured, missing_after, parsed_jd)
 
-    # Skills section reorder: move matched skills to the top
     skills_reordered = _reorder_skills_section(structured, matched_after)
 
     state.update_progress(4, 4, "Validation complete.")
@@ -933,7 +922,6 @@ def _build_ats_gap_report(
         is_required = skill_lower in required_set
         words = skill_lower.split()
 
-        # Find the best placement by scanning sections
         best_section = None
         best_entry = None
         best_reason = ""
@@ -998,7 +986,6 @@ def _reorder_skills_section(
             continue
         skill_list = section.get("skill_list", [])
         if not skill_list:
-            # Try parsing from content
             content = section.get("content", "")
             if content:
                 skill_list = [s.strip() for s in re.split(r"[,;|]", content) if s.strip()]
@@ -1006,7 +993,6 @@ def _reorder_skills_section(
         if not skill_list:
             return False
 
-        # Split into matched (front) and unmatched (back)
         front = [s for s in skill_list if s.lower() in matched_lower]
         back = [s for s in skill_list if s.lower() not in matched_lower]
         reordered = front + back
@@ -1017,9 +1003,6 @@ def _reorder_skills_section(
             return True
 
     return False
-
-
-# ── Bullet text updater ────────────────────────────────────────────────────
 
 
 def _update_bullet_text(structured: dict, bullet_id: str, new_text: str) -> bool:
@@ -1046,16 +1029,9 @@ def run_pipeline(
 ) -> PipelineState:
     """Start the tailoring pipeline in a background thread.
 
-    Args:
-        resume_text: Raw resume text.
-        job_description: Full JD text.
-        parsed_jd: Pre-parsed JD dict (from DB), or None to parse on the fly.
-        intensity: "nudge" (local only), "keywords" (+ keyword injection),
-                   or "full" (complete pipeline).
-        session_id: Optional session ID; generated if not provided.
-
-    Returns:
-        PipelineState that can be polled for progress.
+    intensity is "nudge" (local only), "keywords" (+ keyword injection) or
+    "full" (every stage). parsed_jd may be None to parse the JD on the fly.
+    Returns a PipelineState that can be polled for progress.
     """
     if not session_id:
         session_id = secrets.token_hex(16)
@@ -1106,11 +1082,9 @@ def _execute_pipeline(
     """Execute all pipeline stages sequentially."""
     start_time = time.monotonic()
 
-    # Pre-parse JD if not already done
     if not parsed_jd:
         parsed_jd = preparse_job_description(jd_text)
 
-    # ── Stage 0: Analyze ────────────────────────────────────────
     state.update_progress(0, 0, "Analyzing resume and job description...")
     analysis = _stage_0_analyze(resume_text, parsed_jd, jd_text, state)
     state.advance("Analysis complete. Planning strategy...")
@@ -1132,7 +1106,6 @@ def _execute_pipeline(
         state.advance("Validation done.")
 
     else:
-        # ── Stage 1: Strategize (70B) ──────────────────────────
         strategy = _stage_1_strategize(analysis, parsed_jd, jd_text, state)
         if strategy and strategy.get("_degraded"):
             pipeline_notes.append({
@@ -1141,12 +1114,10 @@ def _execute_pipeline(
             })
         state.advance("Strategy ready. Cleaning up...")
 
-        # ── Stage 2: Local cleanup ─────────────────────────────
         cleanup = _stage_2_local_cleanup(analysis, jd_text, state)
         all_changes.extend(cleanup["changes"])
         state.advance("Cleanup done. Rewriting bullets...")
 
-        # ── Stage 3: Bullet rewrites (32B) ─────────────────────
         bullet_changes = _stage_3_bullet_rewrite(
             analysis["structured"],
             strategy,
@@ -1158,13 +1129,11 @@ def _execute_pipeline(
         all_changes.extend(bullet_changes)
         state.advance("Bullets rewritten. Polishing sections...")
 
-        # ── Stage 4: Section coherence ─────────────────────────
         coherence_changes = _stage_4_section_coherence(analysis["structured"], state)
         all_changes.extend(coherence_changes)
         state.advance("Sections polished.")
 
         if intensity == "full":
-            # ── Stage 5: Full polish (70B) ─────────────────────
             polish = _stage_5_full_polish(
                 analysis["structured"], strategy, parsed_jd, jd_text, state,
             )
@@ -1182,7 +1151,6 @@ def _execute_pipeline(
                 })
             state.advance("Full polish done. Validating...")
 
-        # ── Stage 6: Validate ──────────────────────────────────
         final = _stage_6_validate(analysis["structured"], resume_text, jd_text, parsed_jd, state)
 
     elapsed = round(time.monotonic() - start_time, 1)

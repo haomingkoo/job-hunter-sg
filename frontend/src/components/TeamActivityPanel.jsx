@@ -2,9 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 
 /**
- * The team panel is the product's differentiator, so it renders the specialists as
- * persistent identities rather than as a log. Every member keeps its row for the whole
- * run: waiting, working, then reported with its own findings.
+ * Renders the specialists as persistent identities rather than as a log. Every member
+ * keeps its row for the whole run: waiting, working, then reported with its own findings.
  *
  * Only tool steps and submitted conclusions are shown. Private reasoning never reaches
  * this component, per the never-leak-reasoning invariant.

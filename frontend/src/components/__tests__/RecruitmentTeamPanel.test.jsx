@@ -133,7 +133,6 @@ describe("RecruitmentTeamPanel", () => {
         });
       }
       if (path === "/api/recruitment-team/threads/thread-1/events") return response([]);
-      // refreshThread loads pending agent-drafted edits on every thread refresh.
       if (path.includes("/proposed-edits")) return response([]);
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -185,7 +184,6 @@ describe("RecruitmentTeamPanel", () => {
       if (path === "/api/recruitment-team/threads/persisted-thread/events") {
         return response([]);
       }
-      // refreshThread loads pending agent-drafted edits on every thread refresh.
       if (path.includes("/proposed-edits")) return response([]);
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -262,7 +260,6 @@ describe("RecruitmentTeamPanel", () => {
           },
         });
       }
-      // refreshThread loads pending agent-drafted edits on every thread refresh.
       if (path.includes("/proposed-edits")) return response([]);
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -314,7 +311,6 @@ describe("RecruitmentTeamPanel", () => {
       if (path === "/api/recruitment-team/threads/thread-paged/candidate-profile") {
         return response({ artifact_id: "artifact-paged", status: "completed", profile: { fields } });
       }
-      // refreshThread loads pending agent-drafted edits on every thread refresh.
       if (path.includes("/proposed-edits")) return response([]);
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -411,7 +407,6 @@ describe("RecruitmentTeamPanel", () => {
         selected = true;
         return response({ status: "completed" });
       }
-      // refreshThread loads pending agent-drafted edits on every thread refresh.
       if (path.includes("/proposed-edits")) return response([]);
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -539,7 +534,6 @@ describe("RecruitmentTeamPanel", () => {
           },
         });
       }
-      // refreshThread loads pending agent-drafted edits on every thread refresh.
       if (path.includes("/proposed-edits")) return response([]);
       throw new Error(`Unexpected request: ${path}`);
     });
@@ -643,7 +637,6 @@ describe("RecruitmentTeamPanel", () => {
         handoffCalls.push({ path, options });
         return response({ session_id: "resume-agent-session-9", status: "queued" });
       }
-      // refreshThread loads pending agent-drafted edits on every thread refresh.
       if (path.includes("/proposed-edits")) return response([]);
       throw new Error(`Unexpected request: ${path}`);
     });

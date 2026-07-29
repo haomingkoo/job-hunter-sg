@@ -176,7 +176,6 @@ def backfill_previews(
                     )
                     job.job_terms_preview = labels
 
-                # Run JD analysis and store in parsed_jd
                 parsed = job.parsed_jd if isinstance(job.parsed_jd, dict) else {}
                 if "_analysis" not in parsed:
                     analysis = analyze_job_description(

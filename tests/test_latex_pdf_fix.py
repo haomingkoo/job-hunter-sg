@@ -1,5 +1,5 @@
 """
-Playwright test: verify LaTeX PDF space-stripping fix.
+Verify the LaTeX PDF space-stripping fix.
 
 Creates a synthetic PDF where pdfplumber strips spaces (mimicking LaTeX behavior),
 uploads it to /api/resume/upload, and asserts that the parsed text has proper spaces.
@@ -21,14 +21,10 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
 
-# ---------------------------------------------------------------------------
-# Build a test PDF that simulates LaTeX space-stripping:
+# Simulates LaTeX space-stripping:
 # - Words positioned with 2pt visual gaps (pdfplumber misses spaces here)
 # - No actual space characters in the text stream
 # - pdfplumber.extract_text() strips spaces; page.chars has gaps for our fix
-# ---------------------------------------------------------------------------
-
-
 def _make_latex_style_pdf(word_gap: float = 2.0) -> bytes:
     """Create a PDF with individually-positioned words and no space glyphs."""
     from reportlab.pdfgen import canvas
@@ -46,7 +42,6 @@ def _make_latex_style_pdf(word_gap: float = 2.0) -> bytes:
             c.drawString(x, y, word)
             x += c.stringWidth(word, font, size) + word_gap
 
-    # Resume-like content
     row(["Viknesh", "Jaya", "Kumar"], 780)
     row(["Data", "Scientist"], 762)
     row(["Singapore"], 744)
@@ -69,11 +64,6 @@ def pdf_bytes() -> bytes:
     return _make_latex_style_pdf(word_gap=2.0)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _has_missing_spaces_str(text: str) -> bool:
     """Mirror of the backend function (kept local so test can import independently)."""
     import re
@@ -88,11 +78,6 @@ def _has_missing_spaces_str(text: str) -> bool:
     return long_words > len(words) * 0.15
 
 
-# ---------------------------------------------------------------------------
-# Test 1: Confirm raw extraction strips spaces
-# ---------------------------------------------------------------------------
-
-
 def test_raw_extraction_strips_spaces(pdf_bytes: bytes) -> None:
     import pdfplumber
 
@@ -103,11 +88,6 @@ def test_raw_extraction_strips_spaces(pdf_bytes: bytes) -> None:
         f"Expected space-stripped text in raw extraction, got: {raw[:100]!r}"
     )
     print("  [OK] Raw extraction confirmed space-stripped ('VikneshJayaKumar' present)")
-
-
-# ---------------------------------------------------------------------------
-# Test 2: _has_missing_spaces() detects camelCase merges
-# ---------------------------------------------------------------------------
 
 
 def test_has_missing_spaces_detection(pdf_bytes: bytes) -> None:
@@ -131,11 +111,6 @@ def test_has_missing_spaces_detection(pdf_bytes: bytes) -> None:
     print("  [OK] _has_missing_spaces() correctly passes normal text")
 
 
-# ---------------------------------------------------------------------------
-# Test 3: pdfplumber's proportional tolerance restores spaces
-# ---------------------------------------------------------------------------
-
-
 def test_native_spacing_tolerance_restores_spaces(pdf_bytes: bytes) -> None:
     import pdfplumber
     from resume_parser import PDF_X_TOLERANCE_RATIO, _has_missing_spaces
@@ -155,11 +130,6 @@ def test_native_spacing_tolerance_restores_spaces(pdf_bytes: bytes) -> None:
     print("  [OK] pdfplumber's native tolerance restored spaces")
 
 
-# ---------------------------------------------------------------------------
-# Test 4: extract_text_from_pdf() end-to-end
-# ---------------------------------------------------------------------------
-
-
 def test_end_to_end_parser(pdf_bytes: bytes) -> None:
     from resume_parser import _has_missing_spaces, extract_text_from_pdf
 
@@ -168,15 +138,9 @@ def test_end_to_end_parser(pdf_bytes: bytes) -> None:
     assert not _has_missing_spaces(full), (
         f"extract_text_from_pdf() should return spaced text, got:\n{full[:300]!r}"
     )
-    # Check specific tokens are separated
     for token in ["Viknesh", "Jaya", "Kumar", "Data", "Scientist"]:
         assert token in full, f"Expected token '{token}' in parsed text"
     print("  [OK] extract_text_from_pdf() end-to-end: spaces restored")
-
-
-# ---------------------------------------------------------------------------
-# Test 5: API test
-# ---------------------------------------------------------------------------
 
 
 def test_api_upload(pdf_bytes: bytes) -> None:
@@ -205,11 +169,6 @@ def test_api_upload(pdf_bytes: bytes) -> None:
             f"Token '{token}' missing from API response — may still be merged.\n"
             f"Text: {text[:200]!r}"
         )
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 
 def main() -> None:

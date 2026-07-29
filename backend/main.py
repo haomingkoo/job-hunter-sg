@@ -357,7 +357,6 @@ async def lifespan(application: FastAPI):
         except Exception as e:
             log.warning(f"[STARTUP] Stale job cleanup failed: {e}")
 
-        # Backfill sortable posted timestamps for existing rows
         db_sort = SessionLocal()
         try:
             missing_count = (
@@ -399,7 +398,6 @@ async def lifespan(application: FastAPI):
 
     threading.Thread(target=_startup_maintenance, daemon=True).start()
 
-    # Auto-create admin account if configured
     try:
         db2 = SessionLocal()
         admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
@@ -424,7 +422,6 @@ async def lifespan(application: FastAPI):
     except Exception as e:
         log.warning(f"Admin account creation failed: {e}")
 
-    # Start idle summary filler in background
     _idle_filler_stop = threading.Event()
 
     def _idle_summary_filler() -> None:
@@ -436,7 +433,6 @@ async def lifespan(application: FastAPI):
         log.info("[IDLE-FILL] Background summary filler started")
         while not _idle_filler_stop.is_set():
             try:
-                # Only run if AI is healthy and no queue pressure
                 if not get_ai_health()["is_healthy"]:
                     _idle_filler_stop.wait(60)
                     continue
@@ -463,7 +459,6 @@ async def lifespan(application: FastAPI):
                         .first()
                     )
                     if not job:
-                        # All done - check again in 5 min
                         _idle_filler_stop.wait(300)
                         continue
 
@@ -523,7 +518,7 @@ async def lifespan(application: FastAPI):
 
     try:
         async with jobhunter_mcp.session_manager.run():
-            yield  # App is running
+            yield
     finally:
         _mcp_exact_proxy.target = None
         _mcp_mount_proxy.target = None
@@ -744,10 +739,6 @@ POWER_BRIDGE_LIBRARY = [
         "suggestion": "Bridge this with process-improvement coursework, one before/after case study, and quantified quality or efficiency wins.",
     },
 ]
-
-
-
-# Startup logic moved to lifespan() context manager above.
 
 
 def _normalize_skill_strings(raw_skills) -> list[str]:
@@ -1101,7 +1092,6 @@ def _title_case_skill(skill: str) -> str:
     # Already has mixed case (e.g., "Power BI", "JavaScript") - keep it
     if skill != skill.lower() and skill != skill.upper():
         return skill
-    # Known acronyms to preserve
     _ACRONYMS = {"ai", "ml", "bi", "hr", "it", "ux", "ui", "qa", "pm", "sql",
                  "api", "aws", "gcp", "ci", "cd", "iot", "erp", "crm", "sop",
                  "kpi", "roi", "seo", "cet", "amr", "dna", "wsq"}
@@ -1114,7 +1104,6 @@ def _title_case_skill(skill: str) -> str:
             result.append(w.lower())
         else:
             result.append(w.capitalize())
-    # Always capitalize first word
     if result:
         result[0] = result[0].capitalize() if result[0] == result[0].lower() else result[0]
     return " ".join(result)
@@ -1158,12 +1147,10 @@ def _enrich_job_background(job_id: int) -> None:
         if not job or not (job.description or "").strip():
             return
 
-        # --- term preview ---
         if not job.job_terms_preview:
             _compute_and_cache_term_preview(job, db)
             db.commit()
 
-        # --- JD summary (skip if already done) ---
         if (job.jd_summary or "").strip():
             return
 
@@ -1725,7 +1712,6 @@ def admin_stats(
         .scalar() or 0
     )
 
-    # Resume uploads
     uploads_total = (
         db.query(func.count(UsageLog.id))
         .filter(UsageLog.action == "resume_upload")
@@ -1737,21 +1723,18 @@ def admin_stats(
         .scalar() or 0
     )
 
-    # Resume downloads
     downloads_total = (
         db.query(func.count(UsageLog.id))
         .filter(UsageLog.action.in_(["resume_download", "resume_download_pdf"]))
         .scalar() or 0
     )
 
-    # Resume scores
     scores_total = (
         db.query(func.count(UsageLog.id))
         .filter(UsageLog.action == "resume_score")
         .scalar() or 0
     )
 
-    # Chat-built resumes
     chat_generates = (
         db.query(func.count(UsageLog.id))
         .filter(UsageLog.detail == "resume_chat_generate")
@@ -1911,7 +1894,6 @@ def admin_seed_jobs(
     from seed_jobs import seed_jobs, crawl_all_jobs
 
     if body.get("full"):
-        # Run full crawl in background thread
         def run_full_crawl():
             crawl_all_jobs()
             _clear_analytics_cache()
@@ -2089,7 +2071,6 @@ def admin_jd_analysis(
 
     db = SessionLocal()
     try:
-        # Get all jobs with analysis
         jobs_with_analysis = (
             db.query(ScrapedJob)
             .filter(ScrapedJob.parsed_jd.isnot(None))
@@ -2112,7 +2093,6 @@ def admin_jd_analysis(
             score = quality.get("score", 0)
             quality_scores.append(score)
 
-            # Track duplicates by content hash
             ch = analysis.get("content_hash", "")
             if ch:
                 if ch not in content_hashes:
@@ -2153,14 +2133,12 @@ def admin_jd_analysis(
                     "red_flags": analysis.get("red_flags", []),
                 })
 
-        # Find actual duplicates (same hash, multiple jobs)
         duplicates = [
             {"content_hash": h, "count": len(jobs), "jobs": jobs[:5]}
             for h, jobs in sorted(content_hashes.items(), key=lambda x: -len(x[1]))
             if len(jobs) > 1
         ]
 
-        # Quality distribution
         total_analyzed = len(quality_scores)
         quality_dist = {
             "excellent_70_plus": sum(1 for s in quality_scores if s >= 70),
@@ -2388,8 +2366,6 @@ def admin_rebuild_skills_taxonomy(
     }
 
 
-# ── SEO: Sitemap ─────────────────────────────────────────────────────────────
-
 @app.get("/sitemap.xml")
 def sitemap_xml() -> Response:
     """Dynamic sitemap for search engines."""
@@ -2409,8 +2385,6 @@ def sitemap_xml() -> Response:
 </urlset>"""
     return Response(content=xml, media_type="application/xml")
 
-
-# ── Health ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
 def health(db: Session = Depends(get_db)) -> dict:
@@ -3241,7 +3215,6 @@ def search_jobs(
         enrich_skills=skills,
     )
 
-    # Sanitize and cache jobs
     sanitized_jobs: list[dict] = []
     analytics_dirty = False
     analytics_fields = {
@@ -3481,13 +3454,11 @@ def _normalize_title(raw_title: str) -> str:
     """Normalize a job title for grouping (strip seniority prefixes, title case)."""
     import re
     t = raw_title.strip()
-    # Remove common prefix patterns like "Senior ", "Junior ", "Lead ", etc.
     t = re.sub(
         r"^(Senior|Junior|Jr\.?|Sr\.?|Lead|Principal|Staff|Chief|Head of|"
         r"Associate|Assistant|Intern\b)[,\s]+",
         "", t, flags=re.IGNORECASE,
     ).strip()
-    # Collapse multiple spaces
     t = re.sub(r"\s+", " ", t)
     # Title case normalization (fix "PROJECT ENGINEER" -> "Project Engineer")
     _SMALL_WORDS = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"}
@@ -4231,7 +4202,6 @@ def analytics_skills(
         if cached_query and now - cached_query[0] < _ANALYTICS_QUERY_CACHE_TTL:
             return cached_query[1]
 
-        # Serve from cache when no filters and cache is fresh
         cached = (
             _analytics_cache
             if not has_filter
@@ -4403,7 +4373,6 @@ def analytics_skills(
             _increment_analytics_skill(skill_counts, key)
             term_keys.add(key)
 
-        # Aggregate title and sector
         if norm_title:
             title_key = norm_title.lower()
             if title_key:
@@ -4454,7 +4423,6 @@ def analytics_skills(
                 for key in term_keys:
                     _increment_analytics_skill(older_skill_counts, key)
 
-    # Sort by count descending
     sorted_skills = sorted(skill_counts.values(), key=lambda x: -x["count"])
 
     all_skills = [
@@ -4589,7 +4557,6 @@ def analytics_skills(
         for option in _analytics_agency_subset_options()
     ]
 
-    # Cache the full result when no filters active
     cache_payload = None
     if not has_filter:
         cache_payload = {
@@ -4622,7 +4589,6 @@ def analytics_skills(
             "direct_employers_only": direct_employers_only,
         }
 
-    # Apply skill search filter if provided
     filtered_skills = all_skills
     if q:
         q_lower = q.lower()
@@ -5206,7 +5172,6 @@ def get_similar_jobs(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    # Extract key words from title (remove common filler)
     filler = {"senior", "junior", "lead", "staff", "principal", "intern", "contract", "the", "a", "an", "at", "in", "for", "and", "or"}
     title_words = [w.lower() for w in re.sub(r"[^a-zA-Z\s]", "", job.title).split() if w.lower() not in filler and len(w) > 2]
 
@@ -5673,12 +5638,10 @@ def match_resume_to_job(
     if not _PUBLIC_RATE_LIMITER.allow(f"job-match:{user.id}", limit=30, window_seconds=60):
         raise HTTPException(status_code=429, detail="Too many match requests")
 
-    # Get skills from the job's database record + description
     db_skills = job.skills if isinstance(job.skills, list) else json.loads(job.skills) if job.skills else []
     jd_text = job.description or ""
     canonical_terms = _build_canonical_job_terms(job)
 
-    # Match against resume
     resume_text = sanitize_resume_text(body.resume_text)
     result = match_resume_against_job_terms(
         resume_text=resume_text,
@@ -6155,7 +6118,6 @@ def create_story(
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
 
-    # Validate tags
     tags = body.get("tags", [])
     if not isinstance(tags, list):
         tags = []
@@ -6458,7 +6420,6 @@ def generate_stories_from_resume(
             detail="AI service unavailable. Try again shortly.",
         )
 
-    # Parse JSON from response
     content = content.strip()
     # Strip markdown code blocks if present
     if content.startswith("```"):
@@ -6469,7 +6430,6 @@ def generate_stories_from_resume(
     try:
         stories = json.loads(content)
     except json.JSONDecodeError:
-        # Try to extract JSON array from response
         match = re.search(r"\[.*\]", content, re.DOTALL)
         if match:
             try:
@@ -6485,7 +6445,6 @@ def generate_stories_from_resume(
     # ── Validation gate: verify facts against resume (ISO 29119 + ISO 23894) ──
     resume_lower = resume_text.lower()
 
-    # Extract all numbers from resume for verification
     resume_numbers = set(re.findall(r"\d+[\d,.]*%?", resume_text))
     resume_companies = set()
     # Extract company-like names (lines with dates often have company names)
@@ -6498,30 +6457,26 @@ def generate_stories_from_resume(
                     resume_companies.add(company.lower())
 
     validated_stories = []
-    for story in stories[:5]:  # Cap at 5
+    for story in stories[:5]:
         if not isinstance(story, dict) or not story.get("title"):
             continue
 
         warnings = []
 
-        # Verify numbers in result field match resume
         result_text = story.get("result", "")
         result_numbers = set(re.findall(r"\d+[\d,.]*%?", result_text))
         fabricated_numbers = result_numbers - resume_numbers
         if fabricated_numbers:
             warnings.append(f"Numbers not found in resume: {', '.join(fabricated_numbers)}")
 
-        # Verify company name exists in resume
         project = (story.get("project_name") or "").lower()
         if project and not any(c in resume_lower for c in project.split()):
             warnings.append(f"Company/project '{story.get('project_name')}' not found in resume")
 
-        # Validate tags
         valid_tags = {"motivation", "proactiveness", "ambiguity", "perseverance",
                       "conflict_resolution", "empathy", "growth", "communication"}
         story["tags"] = [t for t in (story.get("tags") or []) if t in valid_tags]
 
-        # Validate seniority
         if story.get("seniority") not in ("junior", "mid", "senior", "staff"):
             story["seniority"] = "mid"
 
@@ -6590,7 +6545,6 @@ def score_resume(
                     scored_parsed_jd = json.loads(raw)
                 except (ValueError, TypeError):
                     scored_parsed_jd = None
-            # Use the job's description as JD text if caller didn't supply one
             if not jd_text.strip() and job_row.description:
                 jd_text = sanitize_user_input(job_row.description)
 
@@ -6820,7 +6774,6 @@ def ai_coach_resume(
     session_id = secrets.token_hex(16)
     _consume_ai_credit(user, db, f"session:{session_id}")
 
-    # Inject memory context for logged-in users
     memory_context = _get_memory_context(user, db)
     resume_text = sanitize_resume_text(body.resume_text)
     jd = sanitize_user_input(body.job_description)
@@ -6905,7 +6858,6 @@ def ai_rewrite_bullet(
         if result == []:
             return {"original": bullet, "options": [], "no_change": True, "message": "This bullet is already strong -- no changes needed."}
 
-        # Validate each option through the gates + AI phrase cleanup
         validated_options = []
         for option in result:
             # Run AI phrase cleanup first (remove overused words)
@@ -7003,7 +6955,6 @@ def ai_regenerate_summary(
 
     resume_text = sanitize_resume_text(body.resume_text)
 
-    # Load parsed JD context if a job is selected
     parsed_jd: dict = {}
     jd_text = ""
     if body.job_id:
@@ -7097,7 +7048,6 @@ def generate_cover_letter(
 
     resume_text = sanitize_resume_text(body.resume_text)
 
-    # Load parsed JD context if a job_id is provided
     jd_context = ""
     job_title = body.job_title
     job_company = body.job_company
@@ -7133,7 +7083,6 @@ def generate_cover_letter(
                 jd_context = (target_job.description or "")[:1500]
                 job_description = job_description or jd_context
 
-    # Build the prompt
     system = """You are an expert cover letter writer for the Singapore job market.
 
 Generate a professional cover letter (250-350 words) with this structure:
@@ -7307,9 +7256,7 @@ def resume_chat_step(
         messages = messages[-30:]
     for msg in messages:
         if isinstance(msg.get("content"), str):
-            # Sanitize HTML from user messages
             msg["content"] = sanitize_user_input(msg["content"])[:3000]
-        # Only allow user/assistant roles
         if msg.get("role") not in ("user", "assistant"):
             msg["role"] = "user"
 
@@ -7425,7 +7372,6 @@ def resume_chat_step(
         try:
             from collections import Counter
             skill_counts: Counter = Counter()
-            # Search jobs matching user's keywords
             keywords = [w for w in user_text.split() if len(w) >= 4][:5]
             if keywords:
                 sample_jobs = (
@@ -7516,10 +7462,8 @@ def resume_chat_step(
 
     reply = content.strip()
     ready_to_generate = "[READY]" in reply.upper()
-    # Strip the tag from the visible reply (case-insensitive)
     reply_clean = apply_uk_spelling(re.sub(r"\[READY\]", "", reply, flags=re.IGNORECASE).strip())
 
-    # Determine conversation stage from message count
     user_msg_count = sum(1 for m in messages if m.get("role") == "user")
     if user_msg_count <= 1:
         stage = "contact"
@@ -7617,7 +7561,6 @@ def review_all_bullets(
     """
     Review ALL bullets at once — returns per-bullet suggestions WITHOUT changing anything.
     User reviews each suggestion, accepts/rejects individually, then applies all.
-    This replaces the old "AI Improve All" which blindly rewrote everything.
     """
     _consume_ai_credit(user, db, "review_all")
 
@@ -7668,7 +7611,6 @@ Return a JSON array:
             detail="AI service unavailable. Try again shortly.",
         )
 
-    # Parse JSON from AI response
     suggestions = []
     try:
         start = content.find("[")
@@ -8407,14 +8349,12 @@ def save_resume_version(
         raise HTTPException(status_code=413, detail="Structured resume is too large")
 
     is_master = body.get("is_master", False)
-    # If setting as master, unset previous master
     if is_master:
         db.query(ResumeVersion).filter(
             ResumeVersion.user_id == user.id,
             ResumeVersion.is_master == True,
         ).update({"is_master": False})
 
-    # Look up job details if job_id provided
     job_title = ""
     job_company = ""
     job_id = body.get("job_id")
@@ -8902,7 +8842,6 @@ def start_tailoring(
     if intensity not in ("nudge", "keywords", "full"):
         raise HTTPException(status_code=400, detail="Intensity must be nudge, keywords, or full.")
 
-    # Load job and its pre-parsed JD
     jd_text = ""
     parsed_jd = None
     job = None
@@ -9093,7 +9032,7 @@ def submit_tailoring_feedback(
         raise HTTPException(status_code=400, detail="Pipeline has not completed yet.")
 
     bullet_id = str(body.get("bullet_id") or "")[:200]
-    action = str(body.get("action") or "")  # "accept" | "reject" | "edit"
+    action = str(body.get("action") or "")
     edited_text = str(body.get("edited_text") or "")
 
     if action not in ("accept", "reject", "edit"):
@@ -9167,7 +9106,6 @@ def apply_tailoring_changes(
         if user_status == "pending":
             continue  # skip unreviewed changes
 
-        # Determine the final text for this change
         if user_status == "edit":
             final_text = change.get("user_edited_text", change.get("tailored", ""))
         else:
@@ -9184,7 +9122,6 @@ def apply_tailoring_changes(
         )
         applied_count += int(replaced)
 
-    # Re-score the final version
     scorer = ResumeScorer()
     final_score = scorer.analyze(tailored_text)
 
@@ -9269,8 +9206,6 @@ if _static_dir.is_dir():
 # Register this last so it also wraps responses replaced by the SPA fallback.
 app.add_middleware(SecurityHeadersMiddleware, hsts=_is_production)
 
-
-# ── Run ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn

@@ -127,7 +127,6 @@ def _retire_stale_jobs(db, source: str, crawl_marker: str) -> int:
         .update({ScrapedJob.hidden: 1}, synchronize_session=False)
     )
 
-# Popular SG job search keywords to pre-cache
 DEFAULT_KEYWORDS = [
     "software engineer",
     "data engineer",
@@ -157,10 +156,7 @@ def seed_jobs(
     sources: list[str] | None = None,
     limit_per_source: int = 20,
 ) -> dict:
-    """
-    Scrape jobs for each keyword and cache in the database.
-    Returns stats.
-    """
+    """Scrape jobs for each keyword, cache them in the database, return stats."""
     init_db()
     db = SessionLocal()
     aggregator = JobAggregator()
@@ -194,7 +190,6 @@ def seed_jobs(
                 f"(raw: {results['total_raw']}, dupes removed: {results['duplicates_removed']})"
             )
 
-            # Cache each job in the database
             for job in results["jobs"]:
                 raw = asdict(job)
                 raw["dedup_key"] = job.dedup_key  # Property not included by asdict()
@@ -208,7 +203,6 @@ def seed_jobs(
                     for key, val in clean.items():
                         if key != "id":
                             setattr(existing, key, val)
-                    # Pre-parse JD if not already done
                     if preparse_job_description and not existing.parsed_jd:
                         existing.parsed_jd = preparse_job_description(
                             existing.description or "",
@@ -244,7 +238,6 @@ def seed_jobs(
 
     stats["duration_seconds"] = round(time.time() - start, 1)
 
-    # Final count
     total_in_db = db.query(ScrapedJob).count()
     db.close()
 
@@ -374,7 +367,7 @@ def crawl_all_jobs() -> dict:
                     mcf_complete = False
 
             db.commit()
-            db.expunge_all()  # Release ORM objects from session to free memory
+            db.expunge_all()
             stats["new"] += page_new
             stats["updated"] += page_updated
             stats["reactivated"] += page_reactivated
@@ -474,7 +467,6 @@ def crawl_all_jobs() -> dict:
                     )
                     apply_job_precomputes(clean)
 
-                    # Pre-parse JD at insert time
                     if preparse_job_description and clean.get("description"):
                         clean["parsed_jd"] = preparse_job_description(
                             clean["description"], job_title=clean.get("title", "")
@@ -570,7 +562,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Full crawl mode — get EVERYTHING
     if args.full:
         log.info("Starting FULL CRAWL of all SG job portals...")
         crawl_all_jobs()

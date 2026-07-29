@@ -1,4 +1,3 @@
-// ─── API Config ────────────────────────────────────────────────────────────────
 export const API_BASE = import.meta.env.VITE_API_URL || "";
 export const AUTH_EXPIRED_EVENT = "jobhunter:auth-expired";
 export const AUTH_SYNC_KEY = "jobhunter:auth-change";

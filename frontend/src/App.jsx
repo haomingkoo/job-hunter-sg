@@ -26,10 +26,6 @@ import StoriesTab from "./components/StoriesTab.jsx";
 import ResumeTab from "./components/ResumeTab.jsx";
 import RecruitmentTeamPanel from "./components/RecruitmentTeamPanel.jsx";
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// MAIN APP
-// ═══════════════════════════════════════════════════════════════════════════════
-
 const AUTH_LINK_TOKEN_NAMES = ["reset_token", "verify_token"];
 const APP_TABS = new Set(["team", "jobs", "resume", "stories", "tracker", "reminders", "analytics", "power", "account"]);
 
@@ -86,7 +82,6 @@ export default function JobHunterSG() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Auth state
   const [user, setUser] = useState(null);
   const activeUserIdRef = useRef(null);
   const identityGenerationRef = useRef(0);
@@ -240,7 +235,6 @@ export default function JobHunterSG() {
     return () => { cancelled = true; };
   }, [authConfig, token, authGeneration]);
 
-  // Load tracked jobs once authenticated
   const refreshJobs = useCallback(async () => {
     const expectedUserId = activeUserIdRef.current;
     const expectedGeneration = identityGenerationRef.current;
@@ -341,7 +335,6 @@ export default function JobHunterSG() {
     window.history.pushState({ tab }, "", url);
   };
 
-  // Handle browser back button
   useEffect(() => {
     const handlePopState = () => {
       setActiveTab(readActiveTab());
@@ -351,7 +344,6 @@ export default function JobHunterSG() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  // Loading state
   if (authLoading) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
@@ -367,7 +359,6 @@ export default function JobHunterSG() {
 
   return (
     <div className="min-h-screen bg-[#f0f4f8]">
-      {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className={`sticky top-0 z-50 border-b transition-all duration-300 ${
         isHome
           ? `${scrolled ? "bg-[#384959]/90 backdrop-blur-md shadow-md" : "bg-[#384959]"} border-[#2d3a47]`
@@ -441,7 +432,6 @@ export default function JobHunterSG() {
         />
       )}
 
-      {/* ── Content ────────────────────────────────────────────────────── */}
       {isHome ? (
         <HomePage
           onNavigate={navigateTo}

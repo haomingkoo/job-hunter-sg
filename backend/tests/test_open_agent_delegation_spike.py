@@ -1,5 +1,3 @@
-# backend/tests/test_open_agent_delegation_spike.py
-#
 # Spike for issue #110: does deepagents' `task`-based subagent delegation
 # (the mechanism `create_persona_subagents()` is built for) actually work?
 # The only production call site (`resume_agent/session.py`) has always passed

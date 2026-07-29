@@ -1,7 +1,4 @@
-/**
- * Premium shimmer skeleton loader for job listing cards.
- * Matches the shape of real job cards in ScraperTab.
- */
+/** Shimmer loading placeholder shaped like the job cards in ScraperTab. */
 export default function JobCardSkeleton({ count = 5 }) {
   const shimmerClass = "rounded bg-[#BDDDFC]/20 animate-shimmer";
   const shimmerStyle = {

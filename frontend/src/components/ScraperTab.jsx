@@ -121,7 +121,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [directEmployersOnly, setDirectEmployersOnly] = useState(false);
   const activeSearchQuery = submittedQuery;
 
-  // Track which jobs are already tracked (Feature 3)
   const trackedJobIds = useMemo(() => {
     const ids = new Set();
     for (const tj of (trackedJobs || [])) {

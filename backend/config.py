@@ -1,9 +1,7 @@
 """Central tunable config: SEA-LION model tiers + operational knobs.
 
 Named constants for product values; ``os.getenv(...)`` for operational knobs that
-should be tunable in prod without a redeploy. Foundation from the ponytail
-magic-number audit (2026-06-26) — the highest-value cost/throughput levers land
-here first; the broader named-constant sweep across scoring rubrics is a follow-up.
+should be tunable in prod without a redeploy.
 
 Model-tier rationale: FAST stays on the cheaper v4 instruct model for classic
 interactive calls. AGENT/SMART use v4.5 Qwen, the current SEA-LION agentic line.
@@ -15,7 +13,6 @@ import os
 
 
 def _int_env(name: str, default: int) -> int:
-    """Read an int from the environment."""
     raw = os.getenv(name)
     if raw is None:
         return default

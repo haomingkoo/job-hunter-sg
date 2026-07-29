@@ -1,5 +1,3 @@
-# backend/tests/test_open_agent_checkpoint_spike.py
-#
 # Spike for issue #112 / #113: does `deepagents.create_deep_agent(...,
 # interrupt_on={...})` produce a real LangGraph interrupt that pauses
 # execution before the next tool call runs, and does `Command(resume=...)`

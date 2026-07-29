@@ -154,11 +154,7 @@ class TrackedJob(Base):
 
 
 class UserMemory(Base):
-    """
-    Persistent memory for each user — injected into AI prompts so the
-    coach "remembers" their background, goals, and past feedback.
-    Users can view and edit their memory.
-    """
+    """Per-user memory injected into AI prompts. User-viewable and editable."""
 
     __tablename__ = "user_memories"
 
@@ -179,7 +175,6 @@ class UserMemory(Base):
     # RAG embedding vector (384-dim, all-MiniLM-L6-v2)
     resume_embedding: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
 
-    # AI coaching memory — accumulated across sessions
     coaching_notes: Mapped[str] = mapped_column(Text, default="")  # AI summary of past sessions
     session_count: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -243,10 +238,7 @@ class PowerMatchSnapshot(Base):
 
 
 class TailoredResume(Base):
-    """
-    Stores a structured resume tailoring session tied to a user and a job.
-    Tracks pipeline progress, changes made, and before/after metrics.
-    """
+    """Structured resume tailoring session tied to a user and a job."""
 
     __tablename__ = "tailored_resumes"
 
@@ -255,18 +247,14 @@ class TailoredResume(Base):
     job_id: Mapped[int] = mapped_column(Integer, ForeignKey("scraped_jobs.id"), nullable=False)
     session_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
 
-    # Structured resume snapshots
     original_resume: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     tailored_resume: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
-    # Pipeline state
     pipeline_stage: Mapped[str] = mapped_column(String(50), default="init")
     pipeline_progress: Mapped[dict | None] = mapped_column(JSON, default=dict)
 
-    # Change tracking
     changes: Mapped[list | None] = mapped_column(JSON, default=list)
 
-    # Before/after metrics
     match_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
     match_after: Mapped[int | None] = mapped_column(Integer, nullable=True)
     score_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -277,21 +265,16 @@ class TailoredResume(Base):
 
 
 class ResumeVersion(Base):
-    """
-    Saved resume versions - from uploads, tailoring pipeline, or manual edits.
-    Users can label, compare, and attach versions to tracked jobs.
-    """
+    """Saved resume version from an upload, the tailoring pipeline, or a manual edit."""
 
     __tablename__ = "resume_versions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
 
-    # Identity
     label: Mapped[str] = mapped_column(String(200), nullable=False)  # "PM version", "Tailored for DBS"
     source: Mapped[str] = mapped_column(String(50), default="upload")  # upload, tailored, manual, import
 
-    # Content
     resume_text: Mapped[str] = mapped_column(Text, default="")
     resume_structured: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # parsed sections/bullets
 
@@ -300,11 +283,9 @@ class ResumeVersion(Base):
     job_title: Mapped[str] = mapped_column(String(500), default="")  # denormalized for display
     job_company: Mapped[str] = mapped_column(String(500), default="")
 
-    # Metrics snapshot
     score: Mapped[int | None] = mapped_column(Integer, nullable=True)
     word_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    # Flags
     is_master: Mapped[bool] = mapped_column(default=False)  # user's primary/base resume
     is_active: Mapped[bool] = mapped_column(default=True)  # soft delete
 
@@ -544,17 +525,13 @@ class ProposedResumeEdit(Base):
 
 
 class InterviewStory(Base):
-    """
-    STAR+R story bank for interview prep.
-    Users build reusable stories tagged with behavioral categories.
-    """
+    """STAR+R story bank for interview prep, tagged with behavioral categories."""
 
     __tablename__ = "interview_stories"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
 
-    # Identity
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     project_name: Mapped[str] = mapped_column(String(300), default="")
 
@@ -570,10 +547,8 @@ class InterviewStory(Base):
     # conflict_resolution, empathy, growth, communication
     tags: Mapped[list | None] = mapped_column(JSON, default=list)
 
-    # Target seniority level
     seniority: Mapped[str] = mapped_column(String(20), default="mid")  # junior|mid|senior|staff
 
-    # Soft delete
     is_active: Mapped[bool] = mapped_column(Integer, default=1)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

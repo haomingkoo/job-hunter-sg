@@ -220,7 +220,6 @@ def _split_action_sentences(text: str) -> list[str]:
     if len(parts) <= 1:
         return [text]
 
-    # Only split if each part starts with an action verb
     result: list[str] = []
     for part in parts:
         cleaned = part.strip().rstrip(".")
@@ -343,7 +342,6 @@ class ResumeScorer:
                 context_window = max(0, context_window - 1)
                 continue
 
-            # Track whether we're after a subheading/date line
             is_header = _all_caps_header.match(stripped)
             has_date = bool(_date_re.search(stripped))
             has_role_sep = bool(_role_separator.search(stripped))
@@ -389,9 +387,6 @@ class ResumeScorer:
             }
 
             if bullet_friendly_section and context_window > 0 and (starts_with_action or looks_like_achievement):
-                # Split multi-sentence lines where each sentence starts
-                # with an action verb (common when PDF joins bullets onto
-                # one line, e.g. "Led X. Directed Y. Achieved Z.")
                 _sub_bullets = _split_action_sentences(stripped)
                 bullets.extend(_sub_bullets)
                 context_window = max(0, context_window - 1)
@@ -421,7 +416,6 @@ class ResumeScorer:
             if section_key:
                 found.append(section_key)
                 continue
-            # ALL-CAPS line with 2+ chars and no lowercase
             if (
                 len(stripped) >= 2
                 and stripped == stripped.upper()
@@ -430,7 +424,6 @@ class ResumeScorer:
             ):
                 found.append(_section_key(stripped))
                 continue
-            # Line ending with colon, short enough to be a header
             if stripped.endswith(":") and len(stripped.split()) <= 5:
                 found.append(_section_key(stripped))
         return list(dict.fromkeys(found))  # dedupe, preserve order
@@ -661,7 +654,6 @@ class ResumeScorer:
         }
 
         # section_count (5)
-        # Use template's expected sections when available, else generic core
         if template_sections:
             expected = set(template_sections)
         else:
@@ -867,7 +859,6 @@ class ResumeScorer:
                 "score_percent": result.get("match_percent", 0),
             }
         except Exception:
-            # Fallback: simple word matching if skill_extractor fails
             return {"matched": [], "missing": [], "score_percent": 0}
 
     # ── Suggestions builder ──────────────────────────────────────────────
@@ -1149,13 +1140,9 @@ class ResumeScorer:
     ) -> dict:
         """Score ATS keyword overlap between resume and a pre-parsed JD.
 
-        Extracts skill terms from ``parsed_jd`` (required_skills,
-        preferred_skills, single_word_skills), normalises to lowercase,
-        and counts how many appear as substrings in the resume text.
-
-        Returns:
-            dict with matched, total, match_pct (0-100), and the
-            lists of hit/miss terms.
+        Terms come from required_skills, preferred_skills and
+        single_word_skills, lowercased and matched as substrings of the
+        resume text.
         """
         terms: list[str] = []
         for key in ("required_skills", "preferred_skills", "single_word_skills"):
@@ -1246,7 +1233,6 @@ class ResumeScorer:
             " -- list specific skills",
         ]
 
-        # Blend with ATS match when parsed JD is available
         ats_match: dict | None = None
         if parsed_jd:
             ats_match = self._ats_match_from_parsed_jd(text, parsed_jd)

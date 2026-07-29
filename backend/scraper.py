@@ -13,19 +13,8 @@ Scrapes / queries multiple Singapore job portals:
 Careers@Gov data courtesy of Alwyn Tan @ Open Government Products:
   https://github.com/opengovsg/careersgovsg-jobs-data
 
-Features:
-  - Uses APIs where available, falls back to scraping
-  - Deduplicates across all sources
-  - Exports to JSON and CSV
-  - CLI with keyword search
-
-Requirements:
-  pip install requests beautifulsoup4
-
-Usage:
-  python sg_job_scraper.py "software engineer"
-  python sg_job_scraper.py "data analyst" --sources mcf,careersgov
-  python sg_job_scraper.py "react developer" --limit 50 --output jobs.csv
+Uses APIs where available, falls back to HTML scraping, and deduplicates
+across all sources.
 """
 
 import hashlib
@@ -43,8 +32,6 @@ import requests
 from bs4 import BeautifulSoup
 
 import config as app_config
-
-# ─── Configuration ──────────────────────────────────────────────────────────────
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,8 +53,6 @@ HEADERS = {
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
 
-
-# ─── Data Model ─────────────────────────────────────────────────────────────────
 
 def _normalize_key_part(value: str) -> str:
     return re.sub(r"\s+", " ", (value or "").strip().lower())
@@ -207,7 +192,6 @@ class MyCareersFutureScraper:
             log.info(f"[MCF] Got {len(results)} results (total: {data.get('total', '?')})")
 
             for item in results:
-                # Salary — API now returns {minimum: int, maximum: int} directly
                 salary_data = item.get("salary") or {}
                 salary_min = salary_data.get("minimum")
                 salary_max = salary_data.get("maximum")
@@ -222,7 +206,6 @@ class MyCareersFutureScraper:
                 elif salary_min:
                     salary_str = f"${int(salary_min):,}+"
 
-                # Extract skills from metadata
                 skills = []
                 for skill in item.get("skills", []):
                     if isinstance(skill, dict):
@@ -285,7 +268,7 @@ class CareersGovScraper:
 
     @classmethod
     def _fetch_data(cls) -> list[dict]:
-        """Fetch and cache the full JSON (cache for 1 hour)."""
+        """Fetch the full JSON dump, cached for CAREERSGOV_CACHE_TTL_SECONDS."""
         if cls._cached_jobs is not None and (time.time() - cls._cache_time) < app_config.CAREERSGOV_CACHE_TTL_SECONDS:
             return cls._cached_jobs
         log.info("[Careers@Gov] Fetching from OpenGovSG JSON dump...")
@@ -543,7 +526,6 @@ class SSGSkillsFrameworkAPI:
             role_id = role.get("id") or role.get("jobRoleId", "")
             if role_id:
                 details = self.get_job_role_details(str(role_id))
-                # Extract skills from various possible fields
                 for field in ("skills", "tsc", "ccs"):
                     for s in details.get(field, []):
                         name = ""
@@ -576,7 +558,6 @@ class NodeFlairScraper:
             cards = soup.select('[class*="jobListingCard"], [class*="job-card"], .listingCard, article')
 
             if not cards:
-                # Try finding job items by common patterns
                 cards = soup.find_all("div", {"data-testid": re.compile(r"job", re.I)})
                 if not cards:
                     cards = soup.find_all("a", href=re.compile(r"/jobs/"))
@@ -585,7 +566,6 @@ class NodeFlairScraper:
 
             for card in cards[:limit]:
                 try:
-                    # Try multiple selectors for title
                     title_el = (
                         card.select_one('[class*="title"], h2, h3') or
                         card.find("a", href=re.compile(r"/jobs/"))
@@ -663,7 +643,6 @@ class IndeedSGScraper:
                     salary_el = card.select_one("[class*='salary'], .salary-snippet, [data-testid='attribute_snippet_testid']")
                     salary = salary_el.get_text(strip=True) if salary_el else ""
 
-                    # Get job URL
                     link_el = card.select_one("h2 a, .jobTitle a, a[data-jk]")
                     href = link_el.get("href", "") if link_el else ""
                     url = f"https://sg.indeed.com{href}" if href and not href.startswith("http") else href
@@ -710,10 +689,9 @@ class JobStreetScraper:
 
             soup = BeautifulSoup(resp.text, "html.parser")
 
-            # JobStreet uses data attributes and article tags
+            # JobStreet markup varies, so try several card shapes
             cards = soup.select("article[data-search-sol-meta], [data-testid*='job-card'], article")
             if not cards:
-                # Try script tag with JSON data
                 scripts = soup.find_all("script", type="application/json")
                 for script in scripts:
                     try:
@@ -1013,12 +991,10 @@ def _extract_employment_type(item: dict) -> str:
     - employmentTypes (list of dicts with {employmentType: str})
     - employment_type (string)
     """
-    # Try singular string first
     emp = item.get("employmentType")
     if isinstance(emp, str) and emp:
         return emp
 
-    # Try plural list: [{employmentType: "Full Time", ...}]
     emp_list = item.get("employmentTypes", [])
     if isinstance(emp_list, list) and emp_list:
         first = emp_list[0]
@@ -1027,7 +1003,6 @@ def _extract_employment_type(item: dict) -> str:
         if isinstance(first, str):
             return first
 
-    # Try snake_case
     emp_snake = item.get("employment_type")
     if isinstance(emp_snake, str) and emp_snake:
         return emp_snake
