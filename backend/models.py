@@ -107,7 +107,13 @@ class ScrapedJob(Base):
     # RAG embedding vector (384-dim, all-MiniLM-L6-v2)
     embedding_vector: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
 
+    # Hash of the listing's visible content. dedup_key, source_posting_id and url all
+    # identify a *posting*, and a repost gets fresh values for all three, so identical
+    # content reposted next week looks brand new. This collapses those.
+    content_hash: Mapped[str] = mapped_column(String(64), default="")
+
     __table_args__ = (
+        Index("ix_scraped_jobs_content_hash", "content_hash"),
         Index("ix_scraped_jobs_keyword", "search_keyword"),
         Index("ix_scraped_jobs_posted_sort", "posted_at_sort"),
         Index("ix_scraped_jobs_source", "source"),

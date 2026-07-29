@@ -2245,6 +2245,33 @@ def admin_backfill_enrichment(
 
 _embedding_backfill_progress: dict = {"running": False, "done": 0, "total": 0, "phase": "idle"}
 
+@app.post("/api/admin/backfill-content-hash")
+def admin_backfill_content_hash(
+    body: dict | None = None,
+    authorization: Optional[str] = Header(None),
+) -> dict:
+    """Stamp content_hash on pre-existing rows so repost dedup can match them.
+
+    Batched: call repeatedly until `stamped` is 0. Protected by ADMIN_API_KEY.
+    """
+    _require_admin(authorization)
+    from job_store import backfill_content_hashes
+
+    try:
+        limit = int((body or {}).get("limit", 5000))
+    except (TypeError, ValueError):
+        limit = 5000
+    limit = max(1, min(limit, 20000))
+
+    db = SessionLocal()
+    try:
+        stamped = backfill_content_hashes(db, limit)
+        remaining = db.query(ScrapedJob).filter(ScrapedJob.content_hash == "").count()
+    finally:
+        db.close()
+    return {"stamped": stamped, "remaining": remaining}
+
+
 @app.post("/api/admin/backfill-embeddings")
 def admin_backfill_embeddings(
     body: dict | None = None,
