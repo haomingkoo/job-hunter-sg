@@ -112,8 +112,17 @@ class ScrapedJob(Base):
     # content reposted next week looks brand new. This collapses those.
     content_hash: Mapped[str] = mapped_column(String(64), default="")
 
+    # How hard the posting sells itself, 0-100. A column rather than a read from
+    # parsed_jd["_analysis"] because the feed orders on it.
+    promotional_score: Mapped[int] = mapped_column(Integer, default=0)
+    # The company's own promotional rate, rolled up across its postings. A single
+    # emoji title is weak evidence; a company where most postings carry the tells
+    # taints its quiet ones too, which is how MLM outfits hide plain listings.
+    company_promotional_score: Mapped[int] = mapped_column(Integer, default=0)
+
     __table_args__ = (
         Index("ix_scraped_jobs_content_hash", "content_hash"),
+        Index("ix_scraped_jobs_promotional", "promotional_score"),
         Index("ix_scraped_jobs_keyword", "search_keyword"),
         Index("ix_scraped_jobs_posted_sort", "posted_at_sort"),
         Index("ix_scraped_jobs_source", "source"),

@@ -123,6 +123,90 @@ _RED_FLAG_PATTERNS: list[tuple[str, str, re.Pattern]] = [
 ]
 
 
+_EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001F000-\U0001FAFF"  # pictographs, emoticons, transport, supplemental
+    "\U00002600-\U000027BF"  # misc symbols and dingbats
+    "\U0001F1E6-\U0001F1FF"  # regional indicators
+    "\U00002B00-\U00002BFF"  # arrows and stars
+    "\U0000FE0F"             # variation selector, the ‼️ / ⚠️ tail
+    "]"
+)
+
+# Promotional-recruiting tells. Individually weak and legal; a title carrying
+# several is the shape MLM and lead-generation postings take. Deliberately
+# separate from red flags: this is style, not a scam allegation.
+_PROMO_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("no_experience_needed", re.compile(
+        r"no\s+(prior\s+)?experience\s+(needed|required|necessary)|"
+        r"training\s+(will\s+be\s+)?provided|fresh\s+grad(uate)?s?\s+welcome",
+        re.IGNORECASE,
+    )),
+    ("earnings_bait", re.compile(
+        r"high\s+comm(ission)?|weekly\s+pay(out)?|daily\s+pay(out)?|"
+        r"earn\s+up\s+to|uncapped\s+(commission|earning)|\$\$+",
+        re.IGNORECASE,
+    )),
+    ("urgency_bait", re.compile(
+        r"\burgent(ly)?\b|\basap\b|immediate\s+start|hiring\s+now|start\s+tomorrow",
+        re.IGNORECASE,
+    )),
+    ("fast_progression", re.compile(
+        r"fast\s+(track\s+)?promotion|rapid\s+(career\s+)?(growth|progression)|"
+        r"be\s+your\s+own\s+boss|management\s+trainee\s+program",
+        re.IGNORECASE,
+    )),
+]
+
+
+# Promotional scoring weights. Emoji and hashtags in a title dominate because a
+# real employer does not use them; phrase tells are weak individually.
+PROMOTIONAL_THRESHOLD = 40
+_EMOJI_BASE, _EMOJI_PER_HIT, _EMOJI_CAP = 25, 5, 40
+_HASHTAG_BASE, _HASHTAG_PER_HIT, _HASHTAG_CAP = 15, 5, 25
+_STYLE_WEIGHT = 10
+_PHRASE_WEIGHT = 10
+_SHOUT_MIN_TITLE_CHARS = 12
+_SHOUT_UPPERCASE_RATIO = 0.7
+_EXCLAMATION_PILE = 2
+
+
+def detect_promotional_spam(title: str, description: str = "") -> dict:
+    """Score how hard a posting sells itself, 0-100."""
+    title = title or ""
+    signals: list[str] = []
+    score = 0
+
+    emoji_hits = len(_EMOJI_PATTERN.findall(title))
+    if emoji_hits:
+        signals.append("emoji_in_title")
+        score += min(_EMOJI_CAP, _EMOJI_BASE + _EMOJI_PER_HIT * emoji_hits)
+
+    hashtags = len(re.findall(r"#\w+", title))
+    if hashtags:
+        signals.append("hashtags_in_title")
+        score += min(_HASHTAG_CAP, _HASHTAG_BASE + _HASHTAG_PER_HIT * hashtags)
+
+    if len(title) >= _SHOUT_MIN_TITLE_CHARS:
+        letters = [c for c in title if c.isalpha()]
+        if letters and sum(1 for c in letters if c.isupper()) / len(letters) > _SHOUT_UPPERCASE_RATIO:
+            signals.append("shouting_title")
+            score += _STYLE_WEIGHT
+
+    if title.count("!") >= _EXCLAMATION_PILE:
+        signals.append("exclamation_pile")
+        score += _STYLE_WEIGHT
+
+    haystack = f"{title}\n{description or ''}"
+    for label, pattern in _PROMO_PATTERNS:
+        if pattern.search(haystack):
+            signals.append(label)
+            score += _PHRASE_WEIGHT
+
+    score = min(100, score)
+    return {"score": score, "signals": signals, "is_promotional": score >= PROMOTIONAL_THRESHOLD}
+
+
 def detect_red_flags(text: str) -> list[dict]:
     """Scan for suspicious, discriminatory, or exploitative content."""
     findings: list[dict] = []
@@ -283,14 +367,17 @@ def analyze_job_description(
         company=company,
     )
     content_hash = compute_content_hash(desc)
+    promotional = detect_promotional_spam(title, desc)
 
     return {
         "prompt_injection": injection_findings,
         "red_flags": red_flags,
         "quality": quality,
+        "promotional": promotional,
         "content_hash": content_hash,
         "agency": (agency or "").strip(),
         "has_injection": len(injection_findings) > 0,
         "has_red_flags": len(red_flags) > 0,
+        "is_promotional": promotional["is_promotional"],
         "flag_count": len(injection_findings) + len(red_flags),
     }
