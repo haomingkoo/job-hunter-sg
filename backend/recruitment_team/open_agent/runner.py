@@ -52,6 +52,15 @@ def _format_questions(args: dict) -> str:
     return "\n".join(f"{i}. {q}" for i, q in enumerate(questions, 1))
 
 
+_QUESTION_LIMIT_REPLY = (
+    "[System: this assessment's question limit is reached and no further question "
+    "will be delivered. Finish now using the resume, the specialist reports and the "
+    "answers already given: submit your assessment and call propose_resume_edit for "
+    "every gap the candidate's own evidence already supports. Where a gap is missing "
+    "experience rather than weak wording, report it and draft no edit for it.]"
+)
+
+
 def _ask_rounds_so_far(agent, run_config: dict) -> int:
     """How many times this run has already stopped to ask the candidate."""
     try:
@@ -299,7 +308,25 @@ class OpenAgentTargetAssessmentRunner:
             # checkpointer + thread_id wired, agent.get_state(run_config)
             # after the loop still exposes the pending interrupt via
             # `state.interrupts`, because the checkpointer persisted it.
-            if agent.get_state(run_config).interrupts:
+            # Past the cap the pause is not surfaced at all. Appending a "do not
+            # ask again" sentence to the resume message only asks the model
+            # nicely, and has_repeated_call rejects a materially identical repeat
+            # rather than a reworded one, so nothing actually stopped a run
+            # pausing forever. Refusing to yield the pause is what bounds it.
+            if agent.get_state(run_config).interrupts and _ask_rounds_so_far(
+                agent, run_config
+            ) > config.OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS:
+                yield TargetAssessmentProgress(
+                    team_member="coordinator",
+                    status="running",
+                    summary="Question limit reached; finishing with the evidence on hand.",
+                    detail={"question_limit": config.OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS},
+                )
+                agent.invoke(
+                    Command(resume={"decisions": [{"type": "respond", "message": _QUESTION_LIMIT_REPLY}]}),
+                    run_config,
+                )
+            elif agent.get_state(run_config).interrupts:
                 yield TargetAssessmentProgress(
                     team_member="coordinator",
                     status="paused",

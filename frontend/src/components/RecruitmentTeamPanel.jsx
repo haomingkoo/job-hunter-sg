@@ -205,8 +205,11 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
     setVisibleCriteriaCount(EVIDENCE_PAGE_SIZE);
   }
 
+  // Prefixed so the backend can tell this apart from something the candidate
+  // typed. Without the marker it became the search query itself, which meant
+  // every "personalised" autopilot search ran this identical sentence.
   const AUTOPILOT_OPENER =
-    "Read my resume and tell me what roles I should be targeting, then find them. "
+    "[autopilot] Read my resume and tell me what roles I should be targeting. "
     + "Ask me something only if my resume genuinely does not answer it.";
 
   async function startAutopilot() {

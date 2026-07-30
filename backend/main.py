@@ -387,15 +387,16 @@ async def lifespan(application: FastAPI):
             if precomputed:
                 _clear_analytics_cache()
                 log.info(f"[STARTUP] job precompute backfill complete: {precomputed} jobs")
-                # Per-job scores just changed, and the company rollup reads them.
-                # Without this it only ever runs from the admin endpoint, so a
-                # nightly crawl leaves company scores stale or zero.
-                from job_precompute import rollup_company_promotional_scores
 
-                rolled = rollup_company_promotional_scores(db_sort)
-                log.info(
-                    "[STARTUP] promotional company rollup: %s companies", rolled["companies"]
-                )
+            # Outside the `if`: _backfill_job_precomputes returns non-zero only on
+            # its one-time marker pass, because every later insert already fills
+            # sector, ssic, salary_floor and skills_flat, so the incremental clause
+            # matches nothing. Gating on it meant the rollup ran once per marker
+            # bump and then silently decayed as new postings arrived.
+            from job_precompute import rollup_company_promotional_scores
+
+            rolled = rollup_company_promotional_scores(db_sort)
+            log.info("[STARTUP] promotional company rollup: %s companies", rolled["companies"])
         except Exception as e:
             log.warning(f"[STARTUP] job metadata backfill failed: {e}")
         finally:
@@ -3027,7 +3028,11 @@ def _precompute_batch(db: Session, filter_clause, batch_size: int) -> tuple[int,
         data = {
             "title": job.title or "",
             "company": job.company or "",
-            "salary": _display_salary(job.salary),
+            # The raw string, never the display form. apply_job_precomputes derives
+            # salary_floor from whatever it is handed, and display_salary turns
+            # "$1 - $10,000" into "Up to $10,000", which would store 10000 as the
+            # floor for a posting every other write path records as 1.
+            "salary": job.salary or "",
             "skills": job.skills,
             "description": job.description or "",
             "sector": job.sector or "",

@@ -112,9 +112,21 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
             record.execution_policy,
         )
         if actual != expected:
+            # Only a resumable partial checkpoint is disposable. A completed
+            # artifact is the candidate's finished profile and is still read by
+            # target assessment, so deleting it because a timeout constant moved
+            # would destroy real work. Leave it and return None, which makes the
+            # caller start a fresh checkpoint alongside it.
+            if record.status == "completed":
+                log.info(
+                    "Superseded candidate-profile artifact %s is completed; "
+                    "keeping it and starting a fresh checkpoint.",
+                    checkpoint_id,
+                )
+                return None
             log.info(
-                "Discarding candidate-profile checkpoint %s: built under a "
-                "superseded prompt/model/decomposition/policy version.",
+                "Discarding partial candidate-profile checkpoint %s: built under "
+                "a superseded prompt/model/decomposition/policy version.",
                 checkpoint_id,
             )
             self._db.delete(record)
