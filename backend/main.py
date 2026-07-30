@@ -59,6 +59,7 @@ from email_service import email_configured, send_email
 from employer_filter import direct_employer_condition, is_recruitment_employer
 from job_precompute import (
     apply_job_precomputes as _apply_job_precomputes,
+    display_salary as _display_salary,
     salary_bounds_from_text as _salary_bounds_from_text,
 )
 from job_alerts import verify_unsubscribe_token
@@ -3026,7 +3027,7 @@ def _precompute_batch(db: Session, filter_clause, batch_size: int) -> tuple[int,
         data = {
             "title": job.title or "",
             "company": job.company or "",
-            "salary": job.salary or "",
+            "salary": _display_salary(job.salary),
             "skills": job.skills,
             "description": job.description or "",
             "sector": job.sector or "",
@@ -4760,7 +4761,7 @@ def list_cached_jobs(
         "jobs": [
             {
                 "id": j.id, "title": j.title, "company": j.company,
-                "location": j.location, "salary": j.salary, "source": j.source,
+                "location": j.location, "salary": _display_salary(j.salary), "source": j.source,
                 "url": j.url, "posted_date": j.posted_date,
                 "employment_type": j.employment_type, "seniority": j.seniority,
                 "description": j.description, "skills": j.skills or [],
@@ -5113,7 +5114,7 @@ def get_power_match(
                 "title": job.title,
                 "company": job.company,
                 "location": job.location,
-                "salary": job.salary,
+                "salary": _display_salary(job.salary),
                 "source": job.source,
                 "url": job.url,
                 "posted_date": job.posted_date,

@@ -97,6 +97,8 @@ def _utcnow() -> datetime:
 
 
 FIRST_ATTEMPT = 1
+# A derived query stands in for a typed one, so keep it to a search-sized phrase.
+MAX_DERIVED_QUERY_CHARS = 200
 BUILD_CANDIDATE_PROFILE_MESSAGE = "Study my attached resume and build its evidence profile."
 ASSESS_TARGET_JOB_MESSAGE = "Run the bounded recruitment-team assessment for my selected target."
 COMPLETION_SUMMARIES = {
@@ -204,7 +206,7 @@ class RecruitmentTeam:
                 thread = self._owned_thread(owner_id, command.thread_id)
                 resume = self._owned_resume(owner_id, thread.resume_version_id)
                 command_type = "search_jobs"
-                message = command.query
+                message = command.query.strip() or self._query_from_candidate(thread)
             elif isinstance(command, ShortlistJob):
                 thread = self._owned_thread(owner_id, command.thread_id)
                 resume = self._owned_resume(owner_id, thread.resume_version_id)
@@ -281,7 +283,7 @@ class RecruitmentTeam:
 
             try:
                 if isinstance(command, SearchJobs):
-                    reply, completion_detail = self._search_jobs(thread, command)
+                    reply, completion_detail = self._search_jobs(thread, command, message)
                     completion_member = "coordinator"
                 elif isinstance(command, BuildCandidateProfile):
                     reply, completion_detail = self._build_candidate_profile(
@@ -442,10 +444,28 @@ class RecruitmentTeam:
                 model_span.set_attribute("output_tokens", reply.output_tokens)
             return reply
 
+    def _query_from_candidate(self, thread: RecruitmentThread) -> str:
+        """Build a search query from what the candidate has already told us.
+
+        Their most recent message is the best signal, since it is where they say
+        what they are after. Falling back to the resume label keeps an autopilot
+        search working on a thread with no messages yet.
+        """
+        latest = (
+            self._db.query(RecruitmentMessage)
+            .filter(RecruitmentMessage.thread_id == thread.id, RecruitmentMessage.role == "user")
+            .order_by(RecruitmentMessage.id.desc())
+            .first()
+        )
+        if latest and (latest.content or "").strip():
+            return latest.content.strip()[:MAX_DERIVED_QUERY_CHARS]
+        return (thread.case_facts or {}).get("resume_label") or "roles matching my experience"
+
     def _search_jobs(
         self,
         thread: RecruitmentThread,
         command: SearchJobs,
+        resolved_query: str,
     ) -> tuple[ModelReply, dict]:
         with self._telemetry.operation(
             "job.search",
@@ -453,7 +473,8 @@ class RecruitmentTeam:
                 "attempt": FIRST_ATTEMPT,
             },
         ) as search_span:
-            result = self._discovery.search_jobs(command.query.strip())
+            search_span.set_attribute("query_derived", not command.query.strip())
+            result = self._discovery.search_jobs(resolved_query)
             search_span.set_attribute("valid_empty", result.valid_empty)
             search_span.set_attribute("result_count", len(result.jobs))
             search_span.set_attribute("truncated", result.truncated)

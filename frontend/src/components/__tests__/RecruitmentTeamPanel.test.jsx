@@ -159,7 +159,9 @@ describe("RecruitmentTeamPanel", () => {
 
     expect(localStorage.getItem("jobhunter:recruitment-thread:42")).toBeNull();
     expect(container.textContent).not.toContain("I will focus on evidence-backed matches.");
-    expect(container.textContent).toContain("Tell the team what kind of work you want next.");
+    // The empty state now offers a choice rather than an empty box: autopilot, or
+    // say what you want. Either way it names the resume it will work from.
+    expect(container.textContent).toContain("Find roles for me");
     expect(threadsFetchCount).toBe(fetchesBeforeReset);
   });
 

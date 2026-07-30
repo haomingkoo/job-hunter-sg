@@ -64,7 +64,9 @@ class SendMessageRequest(BaseModel):
 
 
 class SearchJobsRequest(BaseModel):
-    query: str = Field(min_length=1)
+    """Omit query to search from what the candidate has already said."""
+
+    query: str = Field(default="", max_length=500)
     idempotency_key: str = Field(min_length=1, max_length=200)
 
 
