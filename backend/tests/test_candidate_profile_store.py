@@ -9,7 +9,6 @@ from database import Base
 from models import ResumeVersion, User
 from recruitment_team.candidate_profile import CandidateEvidenceProfile
 from recruitment_team.candidate_profile_store import (
-    CandidateProfileCheckpointMismatch,
     SQLAlchemyCandidateProfileStore,
 )
 
@@ -134,9 +133,14 @@ def test_candidate_profile_store_raises_a_distinct_error_on_checkpoint_mismatch(
             resume_version_id=resume_id,
             model_name="model-b",
         )
-        with pytest.raises(CandidateProfileCheckpointMismatch) as excinfo:
-            store_b.load(checkpoint_id)
-        assert excinfo.value.checkpoint_id == checkpoint_id
+        # A superseded checkpoint is abandoned, not fatal. Raising here left the
+        # candidate permanently unable to build a profile after any deploy that
+        # changed a value inside execution_policy.
+        assert store_b.load(checkpoint_id) == {}
+
+        # And the next save starts a clean checkpoint under the new version.
+        store_b.save(checkpoint_id, "summary_01", {"fields": [{"field_id": "f1"}]})
+        assert store_b.load(checkpoint_id) == {"summary_01": {"fields": [{"field_id": "f1"}]}}
 
 
 def test_candidate_profile_store_is_owner_isolated():

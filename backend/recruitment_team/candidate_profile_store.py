@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -18,6 +19,8 @@ from .candidate_profile import (
     candidate_profile_execution_policy,
 )
 from .prompts import CANDIDATE_PROFILE_PROMPT_VERSION
+
+log = logging.getLogger("jobhunter.recruitment_team")
 
 
 RETRY_FEEDBACK_SCOPE_KEY = "__retry_feedback__"
@@ -83,6 +86,16 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         return record
 
     def _validated_record(self, checkpoint_id: str) -> CandidateProfileArtifact | None:
+        """The stored checkpoint, or None when it belongs to a superseded version.
+
+        A checkpoint exists to resume partial work. When the prompt, model,
+        decomposition or execution policy has moved on, its scopes were produced
+        under different rules and cannot be trusted, so it is abandoned and the
+        caller starts a fresh one. Treating a stale optimisation as a hard
+        failure left the candidate permanently unable to build a profile: any
+        deploy that changed a validation-attempt count or a timeout, both of
+        which sit inside execution_policy, bricked every existing checkpoint.
+        """
         record = self._record(checkpoint_id)
         if record is None:
             return None
@@ -99,7 +112,14 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
             record.execution_policy,
         )
         if actual != expected:
-            raise CandidateProfileCheckpointMismatch(checkpoint_id)
+            log.info(
+                "Discarding candidate-profile checkpoint %s: built under a "
+                "superseded prompt/model/decomposition/policy version.",
+                checkpoint_id,
+            )
+            self._db.delete(record)
+            self._db.flush()
+            return None
         return record
 
     def load(self, checkpoint_id: str) -> dict[str, dict[str, Any]]:
