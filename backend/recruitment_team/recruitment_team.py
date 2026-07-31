@@ -100,10 +100,9 @@ def _utcnow() -> datetime:
 FIRST_ATTEMPT = 1
 # A derived query stands in for a typed one, so keep it to a search-sized phrase.
 MAX_DERIVED_QUERY_CHARS = 200
-# Only what the candidate wants belongs in a similarity query. An embedding has
-# no way to represent "not": searching "not computer vision" scores computer
-# vision roles higher, and a stray "Senior" outranks the role itself. Exclusions
-# and hard limits are constraints to filter on, not text to match against.
+# Fallback for turns where the model composed no phrase. Only what the candidate
+# wants belongs in a similarity query: an embedding has no way to represent
+# "not", so searching "not computer vision" scores computer vision roles higher.
 SEMANTIC_PREFERENCE_FIELDS = frozenset({"role"})
 # A UI-sent opener is an instruction to the team, not something the candidate
 # wants searched, so it must never become the query.
@@ -470,6 +469,8 @@ class RecruitmentTeam:
                 raise InvalidCommand(update_error)
             if reply.preference_updates:
                 self._merge_preference_updates(thread, reply, latest_user)
+            if reply.search_query:
+                self._remember_search_query(thread, reply.search_query)
             model_span.set_attribute("model", reply.model_name)
             model_span.set_attribute("prompt_version", CONVERSATION_PROMPT_VERSION)
             model_span.set_attribute("preference_update_count", len(reply.preference_updates))
@@ -489,9 +490,16 @@ class RecruitmentTeam:
         said nothing at all, and searching their resume beats searching whatever
         instruction the UI happened to send on their behalf.
 
-        Only the role preference reaches the query. See SEMANTIC_PREFERENCE_FIELDS.
+        The model that just read the thread composes the phrase itself, so it can
+        turn "not computer vision, senior, finance" into terms a posting would
+        actually use. SEMANTIC_PREFERENCE_FIELDS is the fallback for turns where
+        it offered none.
         """
         facts = thread.case_facts or {}
+        composed = str(facts.get("search_query") or "").strip()
+        if composed:
+            return _trim_to_word(composed, MAX_DERIVED_QUERY_CHARS)
+
         preferences = " ".join(
             str(fact.get("value") or "")
             for fact in (facts.get("preferences") or [])
@@ -1604,6 +1612,13 @@ class RecruitmentTeam:
             )
             for item in facts.get("preferences", [])
         )
+
+    @staticmethod
+    def _remember_search_query(thread: RecruitmentThread, query: str) -> None:
+        """Keep the phrase the model wrote for the latest turn."""
+        facts = dict(thread.case_facts)
+        facts["search_query"] = _trim_to_word(query.strip(), MAX_DERIVED_QUERY_CHARS)
+        thread.case_facts = facts
 
     @staticmethod
     def _merge_preference_updates(

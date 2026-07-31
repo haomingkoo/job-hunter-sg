@@ -53,3 +53,35 @@ def test_query_from_resume_falls_back_to_label_when_the_resume_is_empty():
     resume = SimpleNamespace(resume_text="", label="Data roles")
 
     assert RecruitmentTeam._query_from_resume(resume) == "Data roles"
+
+
+def _thread(case_facts):
+    return SimpleNamespace(id="t1", case_facts=case_facts)
+
+
+def test_model_composed_query_wins_over_preference_fields():
+    """The model read the thread; a field whitelist did not."""
+    thread = _thread({
+        "search_query": "AI engineer financial services tax automation",
+        "preferences": [{"field": "role", "value": "something vaguer"}],
+    })
+
+    query = RecruitmentTeam._query_from_candidate(
+        RecruitmentTeam.__new__(RecruitmentTeam), thread, SimpleNamespace(resume_text="", label="CV")
+    )
+
+    assert query == "AI engineer financial services tax automation"
+
+
+def test_exclusions_never_reach_the_query_when_the_model_offers_none():
+    thread = _thread({"preferences": [
+        {"field": "role", "value": "AI engineer"},
+        {"field": "constraints", "value": "not computer vision"},
+    ]})
+
+    query = RecruitmentTeam._query_from_candidate(
+        RecruitmentTeam.__new__(RecruitmentTeam), thread, SimpleNamespace(resume_text="", label="CV")
+    )
+
+    assert "computer vision" not in query
+    assert query == "AI engineer"
