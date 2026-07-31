@@ -105,7 +105,15 @@ def is_similarity_matrix_ready() -> bool:
 
 
 def _refresh_matrix_if_stale(db_session: Session) -> None:
-    """Rebuild the matrix from DB if older than TTL."""
+    """Rebuild the matrix from the searchable corpus if older than TTL.
+
+    Only jobs a user could actually be shown belong here. Ranking the whole
+    embedded history and filtering the winners afterwards starves as the corpus
+    ages: in production 64,926 rows carried embeddings but 1,257 were still
+    inside the age cutoff, so every nearest neighbour was discarded after the
+    fact and search returned nothing. Constraining the candidates instead keeps
+    a stale index from silently emptying every result.
+    """
     global _job_matrix, _job_ids, _matrix_ts
     now = time.monotonic()
     if _job_matrix is not None and (now - _matrix_ts) < _MATRIX_TTL:
@@ -115,6 +123,7 @@ def _refresh_matrix_if_stale(db_session: Session) -> None:
         if _job_matrix is not None and (time.monotonic() - _matrix_ts) < _MATRIX_TTL:
             return
 
+        from job_visibility import apply_public_job_visibility
         from models import ScrapedJob
 
         # Release the old matrix before loading new data so peak memory
@@ -125,7 +134,9 @@ def _refresh_matrix_if_stale(db_session: Session) -> None:
         ids: list[int] = []
         vectors: list[list[float]] = []
         query = (
-            db_session.query(ScrapedJob.id, ScrapedJob.embedding_vector)
+            apply_public_job_visibility(
+                db_session.query(ScrapedJob.id, ScrapedJob.embedding_vector)
+            )
             .filter(ScrapedJob.embedding_vector.isnot(None))
             .yield_per(500)
         )
