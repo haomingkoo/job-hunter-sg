@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import uuid
 import weakref
@@ -103,8 +104,21 @@ MAX_DERIVED_QUERY_CHARS = 200
 # wants searched, so it must never become the query.
 AUTOPILOT_MARKER = "[autopilot]"
 RESUME_TITLE_LINES = 6
-RESUME_TITLE_MAX_CHARS = 80
+RESUME_TITLE_MAX_CHARS = 60
+RESUME_TITLE_LINES = 3
 RESUME_FALLBACK_WORDS = 30
+# A LinkedIn PDF export is two-column, and text extraction interleaves the
+# sidebar with the body, so nothing can be inferred from a line's position.
+# These pick title-shaped lines out of that jumble wherever they landed.
+_ROLE_WORD = re.compile(
+    r"\b(engineer|analyst|manager|accountant|consultant|specialist|developer"
+    r"|director|lead|officer|executive|scientist|architect)\b",
+    re.IGNORECASE,
+)
+# Contact details are not signal, and a query is not a place to put someone's
+# email address.
+_CONTACT_LINE = re.compile(r"@|https?://|linkedin\.com|www\.|\+\d{6,}", re.IGNORECASE)
+_FIRST_PERSON = re.compile(r"\b(i|i'm|my|me|we)\b", re.IGNORECASE)
 BUILD_CANDIDATE_PROFILE_MESSAGE = "Study my attached resume and build its evidence profile."
 ASSESS_TARGET_JOB_MESSAGE = "Run the bounded recruitment-team assessment for my selected target."
 COMPLETION_SUMMARIES = {
@@ -483,22 +497,39 @@ class RecruitmentTeam:
 
     @staticmethod
     def _query_from_resume(resume: ResumeVersion) -> str:
-        """The candidate's most recent roles, as a search phrase.
+        """Role titles plus extracted skills, as a search phrase.
 
-        Job titles carry the signal; the rest of a resume is dates, employers and
-        prose that pull a semantic search off target. Reading from the top matters
-        for a career changer, whose newest role is the one they want more of.
+        Whole sentences pull the search toward what the candidate has already
+        done; a career changer searching their own prose gets more of their old
+        job. Titles and skills keep it on the roles themselves.
         """
-        lines = [line.strip() for line in (resume.resume_text or "").splitlines()]
-        titles = [
-            line for line in lines
-            if line and len(line) <= RESUME_TITLE_MAX_CHARS and not line.endswith((".", ":"))
-        ]
-        phrase = " ".join(titles[:RESUME_TITLE_LINES]).strip()
+        from resume_agent.tools import extract_skills
+
+        text = resume.resume_text or ""
+        titles: list[str] = []
+        seen: set[str] = set()
+        for raw in text.splitlines():
+            line = raw.strip().rstrip("\u00b7").strip()
+            if not line or len(line) > RESUME_TITLE_MAX_CHARS or line.endswith("."):
+                continue
+            if _CONTACT_LINE.search(line) or _FIRST_PERSON.search(line):
+                continue
+            if not _ROLE_WORD.search(line) or line.lower() in seen:
+                continue
+            seen.add(line.lower())
+            titles.append(line)
+            if len(titles) >= RESUME_TITLE_LINES:
+                break
+
+        phrase = " ".join(titles + extract_skills.invoke({"text": text})).strip()
         if not phrase:
-            # A prose resume has no short title lines, so use its opening text.
-            # Still the candidate's own words, which the label may not be.
-            phrase = " ".join((resume.resume_text or "").split()[:RESUME_FALLBACK_WORDS]).strip()
+            # A prose resume has no title lines and may name no known skill, so
+            # use its own opening words rather than the label the candidate typed.
+            body = [
+                line.strip() for line in text.splitlines()
+                if line.strip() and not _CONTACT_LINE.search(line)
+            ]
+            phrase = " ".join(" ".join(body).split()[:RESUME_FALLBACK_WORDS]).strip()
         return (phrase or resume.label or "roles matching my experience")[:MAX_DERIVED_QUERY_CHARS]
 
     def _search_jobs(
