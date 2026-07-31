@@ -67,6 +67,8 @@ from .candidate_profile_store import (
     CandidateProfileCheckpointMismatch,
     SQLAlchemyCandidateProfileStore,
 )
+from job_visibility import JUNIOR_SENIORITY_LABELS
+
 from .discovery import DiscoveryPort, JobPostingVariant, JobSnapshot, JobSource
 from .role_success import (
     CandidateEvidenceMatch,
@@ -571,7 +573,9 @@ class RecruitmentTeam:
             },
         ) as search_span:
             search_span.set_attribute("query_derived", not command.query.strip())
-            result = self._discovery.search_jobs(resolved_query)
+            result = self._discovery.search_jobs(
+                resolved_query, exclude_junior=self._wants_experienced_roles(thread)
+            )
             search_span.set_attribute("valid_empty", result.valid_empty)
             search_span.set_attribute("result_count", len(result.jobs))
             search_span.set_attribute("truncated", result.truncated)
@@ -1612,6 +1616,22 @@ class RecruitmentTeam:
             )
             for item in facts.get("preferences", [])
         )
+
+    @staticmethod
+    def _wants_experienced_roles(thread: RecruitmentThread) -> bool:
+        """True once the candidate has named a level above the junior tier.
+
+        Similarity cannot tell a traineeship from senior work in the same field,
+        so a stated level has to be enforced as a filter. It was previously only
+        spent as query text, where "Senior" retrieved Senior Technical Architects
+        and left the trainee postings in place.
+        """
+        for fact in (thread.case_facts or {}).get("preferences") or []:
+            if isinstance(fact, dict) and fact.get("field") == "seniority":
+                value = str(fact.get("value") or "").strip().lower()
+                if value and value not in JUNIOR_SENIORITY_LABELS:
+                    return True
+        return False
 
     @staticmethod
     def _remember_search_query(thread: RecruitmentThread, query: str) -> None:

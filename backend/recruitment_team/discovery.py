@@ -103,7 +103,7 @@ class JobSearchResult:
 
 
 class DiscoveryPort(Protocol):
-    def search_jobs(self, query: str) -> JobSearchResult: ...
+    def search_jobs(self, query: str, exclude_junior: bool = False) -> JobSearchResult: ...
 
     def get_job(self, job_id: int) -> JobSnapshot | None: ...
 
@@ -111,10 +111,12 @@ class DiscoveryPort(Protocol):
 class LangChainJobDiscovery:
     """Production adapter that reuses the existing constrained LangChain tools."""
 
-    def search_jobs(self, query: str) -> JobSearchResult:
+    def search_jobs(self, query: str, exclude_junior: bool = False) -> JobSearchResult:
         from resume_agent.tools import search_jobs
 
-        result = search_jobs.invoke({"query": query, "detail": True})
+        result = search_jobs.invoke(
+            {"query": query, "detail": True, "exclude_junior": exclude_junior}
+        )
         if not result.get("ok"):
             return JobSearchResult(
                 query=query,
@@ -159,7 +161,7 @@ class ScriptedDiscovery:
         self._jobs_by_id = dict(jobs_by_id or {})
         self.search_count = 0
 
-    def search_jobs(self, query: str) -> JobSearchResult:
+    def search_jobs(self, query: str, exclude_junior: bool = False) -> JobSearchResult:
         self.search_count += 1
         result = next(self._searches)
         return JobSearchResult(query=query, **{key: value for key, value in result.__dict__.items() if key != "query"})

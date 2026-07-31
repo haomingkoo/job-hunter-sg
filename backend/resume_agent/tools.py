@@ -10,7 +10,7 @@ import agent_tool_contract as contract
 import config
 from database import SessionLocal
 from embedding_service import encode_text, find_similar_jobs
-from job_visibility import apply_public_job_visibility
+from job_visibility import apply_public_job_visibility, is_junior_posting
 from langchain_core.tools import tool
 from models import ScrapedJob
 
@@ -45,13 +45,16 @@ def bullet_context(bullets: dict[str, str]):
 
 
 @tool
-def search_jobs(query: str, n: int | None = None, detail: bool = False) -> dict:
+def search_jobs(query: str, n: int | None = None, detail: bool = False,
+                exclude_junior: bool = False) -> dict:
     """Search the current internal Singapore job corpus by role or responsibility.
 
     Use this to compare a resume with similar active postings, not to make broad
     market claims. `query` should describe the role or capability, `n` is the
     desired result count, and `detail=True` includes descriptions. Returns job
     IDs and source fields that may be cited; an empty result is valid.
+    `exclude_junior` drops traineeships and entry-level postings, which
+    similarity alone cannot tell apart from senior work in the same field.
     """
     clean_query = (query or "").strip()
     if not clean_query:
@@ -81,6 +84,11 @@ def search_jobs(query: str, n: int | None = None, detail: bool = False) -> dict:
             .filter(ScrapedJob.id.in_(scores.keys()))
             .all()
         )
+        if exclude_junior:
+            jobs = [
+                job for job in jobs
+                if not is_junior_posting(job.seniority, job.title)
+            ]
         by_id = {job.id: job for job in jobs}
         results = [
             contract.job_payload(
