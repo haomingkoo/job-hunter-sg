@@ -536,3 +536,23 @@ def test_pipeline_model_can_be_overridden(monkeypatch):
             monkeypatch.setenv("SEALION_PIPELINE_MODEL", original)
         importlib.reload(config)
         importlib.reload(ai_service)
+
+
+def test_ai_status_never_exposes_credentials_or_infrastructure():
+    """This is shown to any candidate, so it must carry no attack surface."""
+    from ai_service import get_ai_status
+
+    payload = get_ai_status()
+    flat = " ".join(f"{k} {v}" for k, v in payload.items()).lower()
+
+    assert set(payload) == {"status", "message", "wait_seconds"}
+    for leak in ("key", "token", "secret", "sea-lion", "sealion", "qwen", "aisingapore",
+                 "api.sea", "http", "model"):
+        assert leak not in flat, f"/api/ai/status leaked {leak!r}"
+
+
+def test_ai_health_stays_internal():
+    """get_ai_health reports key count, so it must not be what the UI reads."""
+    from ai_service import get_ai_health
+
+    assert "keys_loaded" in get_ai_health()
