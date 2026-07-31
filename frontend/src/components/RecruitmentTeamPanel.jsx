@@ -6,6 +6,7 @@ const EVIDENCE_PAGE_SIZE = 25;
 import TeamActivityPanel from "./TeamActivityPanel.jsx";
 import SpecialistReport from "./SpecialistReport.jsx";
 import ProposedEditsPanel from "./ProposedEditsPanel.jsx";
+import AiServiceStatus from "./AiServiceStatus.jsx";
 import { apiFetch } from "../lib/api.js";
 import { streamRecruitmentCommand } from "../lib/recruitmentTeamApi.js";
 
@@ -472,6 +473,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
           </div>
 
           {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+          <AiServiceStatus />
           {awaitingAnswer && (
             <p className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
               The assessment paused on a question above -- answer it below to continue.
