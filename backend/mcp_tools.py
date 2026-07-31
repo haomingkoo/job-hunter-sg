@@ -15,6 +15,7 @@ from ats_terms import build_job_ats_terms, match_resume_against_job_terms
 from database import SessionLocal
 from embedding_service import encode_text, find_similar_jobs
 from job_visibility import apply_public_job_visibility
+from job_precompute import display_salary
 from models import ScrapedJob
 from resume_scorer import ResumeScorer
 from resume_structurer import get_all_bullets, structure_resume
@@ -421,7 +422,7 @@ def _job_payload(job: ScrapedJob) -> dict[str, Any]:
         "title": job.title,
         "company": job.company,
         "location": job.location,
-        "salary": job.salary,
+        "salary": display_salary(job.salary),
         "source": job.source,
         "url": job.url,
         "description": job.description,
@@ -483,7 +484,7 @@ def _latest_job_payload(job: ScrapedJob) -> dict[str, Any]:
         "title": job.title,
         "company": job.company,
         "location": job.location,
-        "salary": job.salary,
+        "salary": display_salary(job.salary),
         "source": job.source,
         "url": job.url,
         "posted_date": job.posted_date,

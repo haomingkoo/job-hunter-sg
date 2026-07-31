@@ -97,6 +97,14 @@ def _utcnow() -> datetime:
 
 
 FIRST_ATTEMPT = 1
+# A derived query stands in for a typed one, so keep it to a search-sized phrase.
+MAX_DERIVED_QUERY_CHARS = 200
+# A UI-sent opener is an instruction to the team, not something the candidate
+# wants searched, so it must never become the query.
+AUTOPILOT_MARKER = "[autopilot]"
+RESUME_TITLE_LINES = 6
+RESUME_TITLE_MAX_CHARS = 80
+RESUME_FALLBACK_WORDS = 30
 BUILD_CANDIDATE_PROFILE_MESSAGE = "Study my attached resume and build its evidence profile."
 ASSESS_TARGET_JOB_MESSAGE = "Run the bounded recruitment-team assessment for my selected target."
 COMPLETION_SUMMARIES = {
@@ -204,7 +212,7 @@ class RecruitmentTeam:
                 thread = self._owned_thread(owner_id, command.thread_id)
                 resume = self._owned_resume(owner_id, thread.resume_version_id)
                 command_type = "search_jobs"
-                message = command.query
+                message = command.query.strip() or self._query_from_candidate(thread, resume)
             elif isinstance(command, ShortlistJob):
                 thread = self._owned_thread(owner_id, command.thread_id)
                 resume = self._owned_resume(owner_id, thread.resume_version_id)
@@ -281,7 +289,7 @@ class RecruitmentTeam:
 
             try:
                 if isinstance(command, SearchJobs):
-                    reply, completion_detail = self._search_jobs(thread, command)
+                    reply, completion_detail = self._search_jobs(thread, command, message)
                     completion_member = "coordinator"
                 elif isinstance(command, BuildCandidateProfile):
                     reply, completion_detail = self._build_candidate_profile(
@@ -442,10 +450,62 @@ class RecruitmentTeam:
                 model_span.set_attribute("output_tokens", reply.output_tokens)
             return reply
 
+    def _query_from_candidate(self, thread: RecruitmentThread, resume: ResumeVersion) -> str:
+        """Build a search query from the candidate's own material.
+
+        Preference order matters. The team's own extracted preferences are the
+        sharpest signal because they are what the model concluded the candidate
+        wants. A typed message is next. The resume itself is last, and is the one
+        that has to work: a candidate who clicks straight through to a search has
+        said nothing at all, and searching their resume beats searching whatever
+        instruction the UI happened to send on their behalf.
+        """
+        facts = thread.case_facts or {}
+        preferences = " ".join(
+            str(fact.get("value") or "")
+            for fact in (facts.get("preferences") or [])
+            if isinstance(fact, dict)
+        ).strip()
+        if preferences:
+            return preferences[:MAX_DERIVED_QUERY_CHARS]
+
+        latest = (
+            self._db.query(RecruitmentMessage)
+            .filter(RecruitmentMessage.thread_id == thread.id, RecruitmentMessage.role == "user")
+            .order_by(RecruitmentMessage.id.desc())
+            .first()
+        )
+        typed = (latest.content or "").strip() if latest else ""
+        if typed and not typed.startswith(AUTOPILOT_MARKER):
+            return typed[:MAX_DERIVED_QUERY_CHARS]
+
+        return self._query_from_resume(resume)
+
+    @staticmethod
+    def _query_from_resume(resume: ResumeVersion) -> str:
+        """The candidate's most recent roles, as a search phrase.
+
+        Job titles carry the signal; the rest of a resume is dates, employers and
+        prose that pull a semantic search off target. Reading from the top matters
+        for a career changer, whose newest role is the one they want more of.
+        """
+        lines = [line.strip() for line in (resume.resume_text or "").splitlines()]
+        titles = [
+            line for line in lines
+            if line and len(line) <= RESUME_TITLE_MAX_CHARS and not line.endswith((".", ":"))
+        ]
+        phrase = " ".join(titles[:RESUME_TITLE_LINES]).strip()
+        if not phrase:
+            # A prose resume has no short title lines, so use its opening text.
+            # Still the candidate's own words, which the label may not be.
+            phrase = " ".join((resume.resume_text or "").split()[:RESUME_FALLBACK_WORDS]).strip()
+        return (phrase or resume.label or "roles matching my experience")[:MAX_DERIVED_QUERY_CHARS]
+
     def _search_jobs(
         self,
         thread: RecruitmentThread,
         command: SearchJobs,
+        resolved_query: str,
     ) -> tuple[ModelReply, dict]:
         with self._telemetry.operation(
             "job.search",
@@ -453,7 +513,8 @@ class RecruitmentTeam:
                 "attempt": FIRST_ATTEMPT,
             },
         ) as search_span:
-            result = self._discovery.search_jobs(command.query.strip())
+            search_span.set_attribute("query_derived", not command.query.strip())
+            result = self._discovery.search_jobs(resolved_query)
             search_span.set_attribute("valid_empty", result.valid_empty)
             search_span.set_attribute("result_count", len(result.jobs))
             search_span.set_attribute("truncated", result.truncated)

@@ -11,6 +11,8 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict
 
+from job_precompute import display_salary
+
 import config
 from prompt_safety import unescape_xml_data, xml_data_block
 
@@ -257,7 +259,7 @@ def _job_data(job: JobSnapshot, *, primary: bool) -> dict:
         data.update(
             {
                 "location": job.location,
-                "salary": job.salary,
+                "salary": display_salary(job.salary),
                 "description": job.description,
             }
         )

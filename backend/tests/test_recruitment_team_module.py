@@ -1122,6 +1122,9 @@ def test_search_shortlist_and_target_are_source_backed_and_durable():
     search_span = next(span for span in telemetry.spans if span.name == "job.search")
     assert search_span.attributes == {
         "attempt": 1,
+        # False here because this search supplied a query. An omitted query is
+        # derived from what the candidate already said, which powers autopilot.
+        "query_derived": False,
         "valid_empty": False,
         "result_count": 1,
         "truncated": False,
@@ -3411,3 +3414,109 @@ def test_a_paused_assessment_still_shows_what_specialists_reported():
             "a paused run hid the verdicts its specialists had already submitted"
         )
         assert snapshot.specialist_runs[0]["submission"]["score"] == 71
+
+
+def test_autopilot_searches_without_the_candidate_typing_a_query():
+    """The search box was a precondition, so a candidate had to know to type in it."""
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import RecordedActivityPublisher
+    from recruitment_team.discovery import ScriptedDiscovery
+    from recruitment_team.interface import SearchJobs, StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    from recruitment_team.discovery import JobSearchResult
+
+    discovery = ScriptedDiscovery(
+        [
+            JobSearchResult(
+                query="", jobs=(_job_snapshot(),), valid_empty=False, truncated=False,
+                candidate_count=1, visible_candidate_count=1,
+            )
+        ]
+    )
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db, ScriptedConversationModel(["Noted."]), discovery,
+            _role_profiler(), RecordedTelemetry(), RecordedActivityPublisher(),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(
+                resume_version_id=resume_id,
+                message="I want data engineering work in Singapore.",
+            ),
+            idempotency_key="auto-1",
+        )
+
+        team.execute(
+            owner_id,
+            SearchJobs(thread_id=started.thread_id, query=""),
+            idempotency_key="auto-2",
+        )
+
+        # It searched on what she already said rather than refusing.
+        assert discovery.search_count == 1
+        from models import RecruitmentThread
+
+        stored = db.query(RecruitmentThread).filter(
+            RecruitmentThread.id == started.thread_id
+        ).one()
+        assert stored.case_facts["latest_search_query"].startswith("I want data engineering")
+
+
+def test_autopilot_searches_the_resume_not_the_uis_own_instruction():
+    """The opener is an instruction to the team, never the thing to search.
+
+    Autopilot posts a fixed sentence then searches with an empty query. Deriving
+    that query from the latest message made every candidate's "personalised"
+    search run the identical boilerplate.
+    """
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import RecordedActivityPublisher
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.interface import SearchJobs, StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    discovery = ScriptedDiscovery([
+        JobSearchResult(
+            query="", jobs=(_job_snapshot(),), valid_empty=False, truncated=False,
+            candidate_count=1, visible_candidate_count=1,
+        )
+    ])
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db, ScriptedConversationModel(["Noted."]), discovery,
+            _role_profiler(), RecordedTelemetry(), RecordedActivityPublisher(),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(
+                resume_version_id=resume_id,
+                message="[autopilot] Read my resume and tell me what roles I should be targeting.",
+            ),
+            idempotency_key="marker-1",
+        )
+        team.execute(
+            owner_id,
+            SearchJobs(thread_id=started.thread_id, query=""),
+            idempotency_key="marker-2",
+        )
+
+        from models import RecruitmentThread
+
+        stored = db.query(RecruitmentThread).filter(
+            RecruitmentThread.id == started.thread_id
+        ).one()
+        used = stored.case_facts["latest_search_query"]
+
+        assert "[autopilot]" not in used, "the UI's own instruction became the search query"
+        assert "Read my resume" not in used
+        # It fell through to the candidate's own material, which is what makes
+        # the search personal rather than identical for everyone.
+        assert "agent platform" in used.lower()

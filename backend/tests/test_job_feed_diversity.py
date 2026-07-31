@@ -210,3 +210,19 @@ def test_every_sort_mode_is_reachable_from_a_client(feed_client):
     """The UI used to omit sort for "newest", so it silently returned balanced."""
     for mode in ("balanced", "newest", "salary"):
         assert feed_client.get(f"/api/jobs?per_page=5&sort={mode}").status_code == 200
+
+
+def test_placeholder_salaries_are_not_shown_as_offers():
+    """Scraped strings like "$1 - $1" are filler, not a wage."""
+    from job_precompute import display_salary
+
+    assert display_salary("$1 - $1") == ""
+    assert display_salary("$1 - $2") == ""
+    assert display_salary("") == ""
+
+    # A junk floor with a real ceiling still carries information.
+    assert display_salary("$1 - $10,000") == "Up to $10,000"
+
+    # Real ranges pass through untouched.
+    assert display_salary("$7,000 - $10,000") == "$7,000 - $10,000"
+    assert display_salary("$500 - $800") == "$500 - $800"

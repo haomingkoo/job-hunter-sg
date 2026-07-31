@@ -205,6 +205,46 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
     setVisibleCriteriaCount(EVIDENCE_PAGE_SIZE);
   }
 
+  // Prefixed so the backend can tell this apart from something the candidate
+  // typed. Without the marker it became the search query itself, which meant
+  // every "personalised" autopilot search ran this identical sentence.
+  const AUTOPILOT_OPENER =
+    "[autopilot] Read my resume and tell me what roles I should be targeting. "
+    + "Ask me something only if my resume genuinely does not answer it.";
+
+  async function startAutopilot() {
+    if (busy || !resumeVersionId) return;
+    setBusy(true);
+    setError("");
+    try {
+      const receipt = await streamRecruitmentCommand(
+        "/api/recruitment-team/threads/stream",
+        {
+          resume_version_id: Number(resumeVersionId),
+          message: AUTOPILOT_OPENER,
+          idempotency_key: globalThis.crypto.randomUUID(),
+        },
+        appendActivity,
+      );
+      const nextThreadId = receipt.thread_id;
+      setThreadId(nextThreadId);
+      localStorage.setItem(storedThreadKey(user.id), nextThreadId);
+      await refreshThread(nextThreadId);
+      // Search straight away with no query: the API derives one from what the
+      // candidate just said, so autopilot ends on roles rather than a question.
+      await streamRecruitmentCommand(
+        `/api/recruitment-team/threads/${nextThreadId}/jobs/search/stream`,
+        { query: "", idempotency_key: globalThis.crypto.randomUUID() },
+        appendActivity,
+      );
+      await refreshThread(nextThreadId);
+    } catch (autopilotError) {
+      setError(autopilotError.message || "Could not read your resume.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submit(event) {
     event.preventDefault();
     const text = message.trim();
@@ -247,7 +287,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
 
   function searchCurrentJobs() {
     const query = message.trim();
-    if (!threadId || !query || busy) return undefined;
+    if (!threadId || busy) return undefined;
     return runTurn(
       () => streamRecruitmentCommand(
         `/api/recruitment-team/threads/${threadId}/jobs/search/stream`,
@@ -383,10 +423,50 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
               </div>
             ))}
             {!snapshot?.messages?.length && (
-              <div className="flex min-h-56 flex-col items-center justify-center text-center text-[#6A89A7]">
-                <Bot size={28} />
-                <p className="mt-3 text-sm">Tell the team what kind of work you want next.</p>
-                {selectedResume && <p className="mt-1 text-xs">Starting from {selectedResume.label}</p>}
+              <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
+                <Bot size={28} className="text-[#6A89A7]" />
+                {selectedResume ? (
+                  <>
+                    <p className="mt-3 text-sm font-medium text-[#384959]">
+                      Working from {selectedResume.label}
+                    </p>
+                    <p className="mt-1 max-w-md text-xs leading-relaxed text-[#4A6785]">
+                      Five specialists read your resume against real Singapore postings: a
+                      recruiter, a hiring manager, an ATS reader, an evidence skeptic and a
+                      market analyst.
+                    </p>
+                    {/* Two doors, because a candidate who knows what they want should not
+                        have to answer questions first, and one who does not should not face
+                        an empty box. */}
+                    <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={startAutopilot}
+                        disabled={busy}
+                        className="rounded-2xl bg-[#384959] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-40"
+                      >
+                        {busy ? "Reading your resume" : "Find roles for me"}
+                      </button>
+                      <span className="text-xs text-[#4A6785]">or tell them what you want below</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="mt-3 text-sm font-medium text-[#384959]">
+                      The team works from a saved resume
+                    </p>
+                    <p className="mt-1 text-xs text-[#4A6785]">
+                      Add one and they can start reading it straight away.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab?.("resume")}
+                      className="mt-4 rounded-2xl bg-[#384959] px-4 py-2.5 text-sm font-semibold text-white"
+                    >
+                      Add a resume
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -421,7 +501,8 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
               <button
                 type="button"
                 onClick={searchCurrentJobs}
-                disabled={busy || !message.trim()}
+                disabled={busy}
+                title="Search using what you have already told the team, or type to narrow it"
                 className="h-12 rounded-2xl border border-[#384959] px-4 text-sm font-semibold text-[#384959] disabled:opacity-40"
               >
                 Search jobs

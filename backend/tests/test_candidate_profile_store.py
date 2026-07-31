@@ -166,3 +166,34 @@ def test_candidate_profile_store_is_owner_isolated():
 
         assert owner_store.load(checkpoint_id) == {"summary_01": {"fields": []}}
         assert other_store.load(checkpoint_id) == {}
+
+
+def test_a_completed_profile_survives_a_policy_change():
+    """Only a partial checkpoint is disposable. A finished profile is real work."""
+    from recruitment_team.candidate_profile_store import SQLAlchemyCandidateProfileStore
+    from models import CandidateProfileArtifact
+
+    factory = _session_factory()
+    owner_id, resume_id = _owner_resume(factory, "keeper@example.com")
+    checkpoint_id = "e" * 64
+
+    with factory() as db:
+        store_a = SQLAlchemyCandidateProfileStore(
+            db, owner_id=owner_id, resume_version_id=resume_id, model_name="model-a",
+        )
+        store_a.save(checkpoint_id, "summary_01", {"fields": []})
+        db.query(CandidateProfileArtifact).filter(
+            CandidateProfileArtifact.checkpoint_id == checkpoint_id
+        ).update({"status": "completed"})
+        db.commit()
+
+        store_b = SQLAlchemyCandidateProfileStore(
+            db, owner_id=owner_id, resume_version_id=resume_id, model_name="model-b",
+        )
+        assert store_b.load(checkpoint_id) == {}
+
+        survivor = db.query(CandidateProfileArtifact).filter(
+            CandidateProfileArtifact.checkpoint_id == checkpoint_id
+        ).first()
+        assert survivor is not None, "a completed profile was deleted by a policy change"
+        assert survivor.status == "completed"

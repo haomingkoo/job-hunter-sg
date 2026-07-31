@@ -276,3 +276,27 @@ def rollup_company_promotional_scores(db) -> dict:
         )
     db.commit()
     return {"companies": len(tainted), "scores": tainted}
+
+
+# Scraped salary strings include placeholders like "$1 - $1" and "$1 - $10,000",
+# where the floor is a filler value rather than an offer. Below this, treat the
+# low end as absent rather than showing it to a candidate.
+MIN_PLAUSIBLE_MONTHLY_SALARY = 500
+
+
+def display_salary(salary: str) -> str:
+    """The salary as a candidate should read it, or empty when it says nothing.
+
+    A junk floor does not always mean a junk posting: "$1 - $10,000" still
+    carries a real ceiling, so that becomes "Up to $10,000" instead of being
+    dropped or shown as written.
+    """
+    raw = (salary or "").strip()
+    if not raw:
+        return ""
+    low, high, _ = salary_bounds_from_text(raw)
+    if low >= MIN_PLAUSIBLE_MONTHLY_SALARY:
+        return raw
+    if high >= MIN_PLAUSIBLE_MONTHLY_SALARY:
+        return f"Up to ${high:,}"
+    return ""
