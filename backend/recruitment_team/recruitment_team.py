@@ -100,10 +100,25 @@ def _utcnow() -> datetime:
 FIRST_ATTEMPT = 1
 # A derived query stands in for a typed one, so keep it to a search-sized phrase.
 MAX_DERIVED_QUERY_CHARS = 200
+# Only what the candidate wants belongs in a similarity query. An embedding has
+# no way to represent "not": searching "not computer vision" scores computer
+# vision roles higher, and a stray "Senior" outranks the role itself. Exclusions
+# and hard limits are constraints to filter on, not text to match against.
+SEMANTIC_PREFERENCE_FIELDS = frozenset({"role"})
 # A UI-sent opener is an instruction to the team, not something the candidate
 # wants searched, so it must never become the query.
 AUTOPILOT_MARKER = "[autopilot]"
-RESUME_TITLE_LINES = 6
+
+
+def _trim_to_word(text: str, limit: int) -> str:
+    """Cut to a whole word. A slice mid-token leaves the model a fragment."""
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    cut = head.rfind(" ")
+    return (head[:cut] if cut > 0 else head).strip()
+
+
 RESUME_TITLE_MAX_CHARS = 60
 RESUME_TITLE_LINES = 3
 RESUME_FALLBACK_WORDS = 30
@@ -465,7 +480,7 @@ class RecruitmentTeam:
             return reply
 
     def _query_from_candidate(self, thread: RecruitmentThread, resume: ResumeVersion) -> str:
-        """Build a search query from the candidate's own material.
+        """Build a search query from what the candidate wants.
 
         Preference order matters. The team's own extracted preferences are the
         sharpest signal because they are what the model concluded the candidate
@@ -473,15 +488,17 @@ class RecruitmentTeam:
         that has to work: a candidate who clicks straight through to a search has
         said nothing at all, and searching their resume beats searching whatever
         instruction the UI happened to send on their behalf.
+
+        Only the role preference reaches the query. See SEMANTIC_PREFERENCE_FIELDS.
         """
         facts = thread.case_facts or {}
         preferences = " ".join(
             str(fact.get("value") or "")
             for fact in (facts.get("preferences") or [])
-            if isinstance(fact, dict)
+            if isinstance(fact, dict) and fact.get("field") in SEMANTIC_PREFERENCE_FIELDS
         ).strip()
         if preferences:
-            return preferences[:MAX_DERIVED_QUERY_CHARS]
+            return _trim_to_word(preferences, MAX_DERIVED_QUERY_CHARS)
 
         latest = (
             self._db.query(RecruitmentMessage)
@@ -491,7 +508,7 @@ class RecruitmentTeam:
         )
         typed = (latest.content or "").strip() if latest else ""
         if typed and not typed.startswith(AUTOPILOT_MARKER):
-            return typed[:MAX_DERIVED_QUERY_CHARS]
+            return _trim_to_word(typed, MAX_DERIVED_QUERY_CHARS)
 
         return self._query_from_resume(resume)
 
@@ -530,7 +547,8 @@ class RecruitmentTeam:
                 if line.strip() and not _CONTACT_LINE.search(line)
             ]
             phrase = " ".join(" ".join(body).split()[:RESUME_FALLBACK_WORDS]).strip()
-        return (phrase or resume.label or "roles matching my experience")[:MAX_DERIVED_QUERY_CHARS]
+        return _trim_to_word(phrase or resume.label or "roles matching my experience",
+                             MAX_DERIVED_QUERY_CHARS)
 
     def _search_jobs(
         self,
