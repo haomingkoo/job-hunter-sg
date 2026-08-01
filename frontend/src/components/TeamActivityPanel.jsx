@@ -66,10 +66,7 @@ const TOOL_PHRASES = {
   ask_candidate: "asking you a question",
   propose_resume_edit: "drafting a resume edit",
   submit_target_specialist_assessment: "writing up its assessment",
-  search_jobs: "searching current postings",
-  get_job: "opening a posting",
-  score_resume: "scoring your resume",
-  extract_skills: "extracting skills",
+  guarded_search_jobs: "searching current postings",
 };
 
 function humanize(summary, memberId) {

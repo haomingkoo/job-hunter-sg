@@ -7,10 +7,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 from legal_pages import render_privacy_html, render_terms_html
 
 
-def test_terms_include_hobby_and_liability_disclaimers():
+def test_terms_include_liability_disclaimers():
     html = render_terms_html("use the contact form")
 
-    assert "hobby project" in html
     assert "No Guarantees" in html
     assert "Limitation of Liability" in html
     assert "Job match alerts are optional" in html

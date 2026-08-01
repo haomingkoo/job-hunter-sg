@@ -87,7 +87,7 @@ def search_jobs(query: str, n: int | None = None, detail: bool = False,
         if exclude_junior:
             jobs = [
                 job for job in jobs
-                if not is_junior_posting(job.seniority, job.title)
+                if not is_junior_posting(job.seniority, job.title, job.salary_floor)
             ]
         by_id = {job.id: job for job in jobs}
         results = [

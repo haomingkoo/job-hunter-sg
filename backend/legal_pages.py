@@ -69,7 +69,7 @@ def render_terms_html(contact_line: str) -> str:
 or enabling job alerts, you agree to these Terms and our Privacy Notice.</p>
 
 <h2>1. What This Service Is</h2>
-<p>Job Hunter SG is a hobby project that helps users search job listings, review resumes,
+<p>Job Hunter SG helps users search job listings, review resumes,
 track applications, view market signals, and receive optional job match alerts. It is not an
 employment agency, recruiter, career adviser, financial adviser, legal adviser, or job placement service.</p>
 
@@ -107,7 +107,7 @@ activities. We may suspend or remove access if we reasonably believe the service
 
 <h2>8. Availability and Changes</h2>
 <p>The service is provided on a best-effort basis and may be changed, interrupted, rate-limited,
-disabled, or discontinued at any time. Because this is a hobby project, support and uptime are not guaranteed.</p>
+disabled, or discontinued at any time. Support and uptime are not guaranteed.</p>
 
 <h2>9. Disclaimer of Warranties</h2>
 <p>To the maximum extent permitted by law, the service is provided "as is" and "as available" without
@@ -126,7 +126,6 @@ amount you paid to use the service in the three months before the claim, or SGD 
 <h2>12. Contact</h2>
 <p>For questions, account deletion, privacy requests, or support, {contact}.</p>
 
-<div class="notice">This page is a practical notice for a small hobby project. It is not legal advice.</div>
 """
     return _page("Terms of Service", body)
 
@@ -192,7 +191,5 @@ security. No internet service is perfectly secure, so you should avoid uploading
 <h2>9. Contact</h2>
 <p>For privacy requests, account deletion, or questions, {contact}.</p>
 
-<div class="notice">This Privacy Notice is designed for a small Singapore-facing hobby project and should be
-reviewed by a qualified lawyer before heavy public use.</div>
 """
     return _page("Privacy Notice", body)

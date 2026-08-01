@@ -108,3 +108,33 @@ def test_a_stated_level_overrides_the_resume():
     resume = SimpleNamespace(resume_text="Tax Senior 2011 - 2016.")
 
     assert RecruitmentTeam._wants_experienced_roles(thread, resume) is False
+
+
+def test_education_years_do_not_count_as_career_length():
+    """A graduate must keep access to the entry-level roles they need."""
+    resume = SimpleNamespace(resume_text=(
+        "GCE O Level, 2018\nBachelor of Computing, 2025\nIntern, ACME 2024 - 2025"
+    ))
+
+    assert RecruitmentTeam._wants_experienced_roles(_thread({}), resume) is False
+
+
+def test_an_old_degree_does_not_inflate_a_short_career():
+    resume = SimpleNamespace(resume_text="Bachelor of Arts, 1998\nAnalyst, Bank 2015 - 2020")
+
+    assert RecruitmentTeam._wants_experienced_roles(_thread({}), resume) is True
+
+
+def test_salary_overrules_a_mislabelled_junior_posting():
+    """Employers self-report seniority; the corpus holds $18,000 "Non-executive" roles."""
+    from job_visibility import is_junior_posting
+
+    assert is_junior_posting("Non-executive", "IT Project Manager (Banking)", 10500) is False
+    assert is_junior_posting("Fresh/entry level", "Full-Stack AI Engineer", 5200) is False
+
+
+def test_a_genuine_internship_is_still_excluded():
+    from job_visibility import is_junior_posting
+
+    assert is_junior_posting("Fresh/entry level", "ML Engineer Intern", 1100) is True
+    assert is_junior_posting("Executive", "Automation Trainee", 2800) is True
