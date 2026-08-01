@@ -5,13 +5,41 @@ Design for issue #146. Companion to `docs/v4-study-first-recruitment.md` (branch
 the thread**.
 
 This document is the contract the tests in `backend/tests/test_coordinator_loop.py`
-assert against. Those tests are xfail today and are the specification.
+assert against. Those tests are xfail-strict today and are the specification.
+
+## Revision 2: what changed and why
+
+Revision 1 survived an adversarial review. Seventeen findings held up. Every one is
+applied below. The corrections that change what a build agent writes:
+
+| # | Was | Now | Section |
+|---|---|---|---|
+| 1 | new `conversation_context` manager | reuse `assessment_context(ctx, initial_edits=ctx.proposed_edits)` | §2 |
+| 2 | hand-scan the stream for a submission tool call, last one wins, one extra completion per turn | `response_format=ToolStrategy(ConversationReply)`, read `state["structured_response"]` | §5 |
+| 3 | acceptance a 10-line prompt injection also passes | baseline recorded as a control, acceptance strengthened to a self-chosen query and a re-query | §10 |
+| 4 | `DeepAgentConversationModel(discovery=…)` plus `ctx.discovery` | `ctx.discovery` only; the constructor parameter is gone | §2, §5, §8 |
+| 5 | empty-checkpoint branch replays `self._messages(thread.id)` | replays the `messages` parameter `respond()` already receives | §5 |
+| 6 | nothing proved the DI path reaches the loop | two wiring tests, one on `get_conversation_model`, one transport turn with no override | §8 |
+| 7 | the headline scenario was not a test | a two-turn test where turn 2 does not search and still names a job | §10 |
+| 8 | one empty search wiped a good shortlist | the drain replaces `recommendations` only when a search returned jobs | §3 |
+| 9 | the edit test asserted on a list it built itself | driven through `RecruitmentTeam.execute`, asserts `team.proposed_edits(...)` | §2 |
+| 10 | `search_query` asserted tautologically | the scripted wish differs from the executed query, both keys must equal the executed one | §5 |
+| 11 | preference extraction had zero coverage on the new path | valid and invalid evidence quotes both asserted | §5 |
+| 12 | the cap test passed whether or not the cap was honoured | model calls are bounded, and `calls` is separated from `consumed` | §5 |
+| 13 | the merge rule had no coverage | overlapping results through `RecruitmentTeam.execute`, ordering asserted | §3 |
+| 14 | the activity stream was untested | publisher summaries, sequence order, `skip_tool_call_ids` on resume, a vitest case | §7 |
+| 15 | `drive()` existed only so a test could read a dict | `drive()` is gone; `ConversationUnavailable.failure_type` carries the same discrimination | §5 |
+| 16 | seven dead `_get_api_key` monkeypatches | one autouse fixture that makes `create_agent_model` raise | §9 |
+| 17 | `thread_id: int` against a uuid string column | `thread_id: str` | §2 |
+
+Finding 17's second half (two discovery sources, no test able to tell them apart) is
+resolved by finding 4: there is now one source.
 
 ## The bug, stated exactly
 
 `LangChainConversationModel.respond()` is one `model.invoke()` binding one tool,
 `submit_recruitment_conversation`, with `tool_choice` forcing it
-(`conversation_model.py:165-196`). The loop at `conversation_model.py:171` is a
+(`conversation_model.py:161-192`). The loop at `conversation_model.py:167` is a
 schema-validation retry. Nothing executes between attempts.
 
 `respond(messages, resume_text, current_preferences)` has three parameters. The seven
@@ -47,7 +75,7 @@ routes were considered.
 
 | route | why not |
 |---|---|
-| constructor injection | `http_routes.py:93` builds the model through `Depends` before any thread is loaded, so per-turn construction would have to move inside `RecruitmentTeam`. That hides wiring in the orchestrator. |
+| constructor injection | `http_routes.py:91` builds the model through `Depends` before any thread is loaded, so per-turn construction would have to move inside `RecruitmentTeam`. That hides wiring in the orchestrator. |
 | a `ContextVar` set around the call | Keeps the Protocol literally unchanged, at the cost of making the data flow invisible. `activity_stream.stream_command` already runs commands on a spawned thread, so any future executor inside the loop breaks it silently. |
 | **a fourth defaulted parameter** | Chosen. Explicit, typed, and invisible to all 31 `ScriptedConversationModel` constructions because they construct with `replies` only and never call `respond()` directly. |
 
@@ -90,7 +118,10 @@ New module `backend/recruitment_team/coordinator/context.py`.
 ```python
 @dataclass(frozen=True)
 class ConversationContext:
-    thread_id: int
+    # RecruitmentThread.id is String(36) holding a uuid4 (models.py:312). An int
+    # annotation here would survive forever unnoticed, because a frozen dataclass
+    # does no runtime validation and f"coordinator-{thread_id}" formats either way.
+    thread_id: str
     trace_key: str
     # Field names below are deliberately identical to TargetAssessmentRequest's,
     # so read_candidate_evidence / read_target_job / propose_resume_edit read one
@@ -121,28 +152,44 @@ frozen contract (`_run_judge` calls `asdict(request.target_job)` and would crash
 where the shared tools touch it. The shared tools gain explicit `None` guards and
 nothing else.
 
-`context.py` grows a second context manager alongside `assessment_context`:
+### No second context manager
+
+**Corrected.** Revision 1 specified a `conversation_context` manager alongside
+`assessment_context`. It would have been a copy. `assessment_context`
+(`open_agent/context.py:27-49`) reads exactly one attribute off its argument,
+`request.resume_document`, and otherwise sets four ContextVars, one of them to the
+caller's own edits list when `initial_edits` is passed. `ConversationContext` has both
+attributes, so the existing manager already works:
 
 ```python
-@contextmanager
-def conversation_context(ctx: ConversationContext) -> Iterator[None]: ...
+with assessment_context(ctx, initial_edits=ctx.proposed_edits):
+    ...
 ```
 
-It sets the same four ContextVars. `_current_request` takes the union type
-`TargetAssessmentRequest | ConversationContext`. `_current_document` comes from
-`ctx.resume_document`, `_proposed_edits` is set to `ctx.proposed_edits` (the sink, so
-edits outlive the `with` block) and `_tool_call_history` starts empty. That is what
-makes `propose_resume_edit` and `has_repeated_call` work byte-identically on both
-paths.
+`initial_edits=ctx.proposed_edits` aliases the sink, so edits outlive the `with` block.
+The only change to `context.py` is widening `_current_request`'s annotation to
+`TargetAssessmentRequest | ConversationContext`, which is cosmetic: `pyproject.toml`
+scopes `ty check` to `backend/schemas.py` and `backend/resume_agent`, so this module is
+not type-checked at all. Do not add a second manager.
+
+`_tool_call_history` resetting per turn is correct here: a repeated search on a later
+turn, after the candidate has said something new, is a different call in a meaningful
+sense and must be allowed.
+
+### Draining edits into the pending table
 
 `_model_reply` drains `ctx.proposed_edits` into `ProposedResumeEdit` rows with the same
 field mapping `_assess_target` uses at `recruitment_team.py:1084-1100`, so a
 conversational edit reaches the same pending table and the same accept and reject
 endpoints.
 
-`_tool_call_history` resetting per turn is correct here: a repeated search on a later
-turn, after the candidate has said something new, is a different call in a meaningful
-sense and must be allowed.
+**This drain is the thing that has to be tested**, not the sink. `team.proposed_edits`
+(`recruitment_team.py:1323-1355`) is what a candidate can actually retrieve, and it
+computes `applicable = edit.original in resume_text`. A test that asserts on
+`ctx.proposed_edits` asserts on a list it constructed itself and would pass with the
+drain deleted. The specification test therefore runs through `RecruitmentTeam.execute`,
+builds the document with the real `create_resume_document`, and asserts one pending,
+applicable row comes back from `team.proposed_edits(...)`.
 
 ---
 
@@ -177,7 +224,11 @@ same reason they hold on the assessment path: it is the same function.
  "candidate_profile_available": true}
 ```
 
-This is the tool that closes the bug. Everything else is upside.
+This is the tool that closes the bug. Everything else is upside. It reads
+`ctx.recommendations` and `ctx.shortlisted_jobs`, which `_model_reply` seeds from
+`thread.case_facts` before the turn starts, so a shortlist built by the deterministic
+`SearchJobs` button in an earlier turn is visible to a later conversational turn. That
+is the exact scenario in §10.
 
 ### `search_jobs`, and why `exclude_junior` is a required parameter
 
@@ -193,6 +244,13 @@ It calls `ctx.discovery.search_jobs(query, exclude_junior=exclude_junior)`, whic
 `guarded_search_jobs`, which has no `exclude_junior` parameter and defaults
 `detail=False`. Binding that one would silently drop the junior filter and hand the
 model descriptionless payloads that `JobSnapshot.from_payload` stores as empty strings.
+
+**`ctx.discovery` is the only source of the port.** Revision 1 also took `discovery` in
+`DeepAgentConversationModel.__init__`, which nothing could ever read, because
+`ConversationContext.discovery` is required and has no default. Two sources for one
+collaborator with no precedence rule is a bug waiting for its first divergent test.
+`RecruitmentTeam` already holds the port at `self._discovery`, so `_model_reply` puts it
+on the context and `get_conversation_model` needs no `Depends(get_job_discovery)`.
 
 `has_repeated_call(history, "search_jobs", args)` runs first and returns
 `{"ok": false, "reason": "identical_call_no_new_information"}` on a materially identical
@@ -212,17 +270,34 @@ state and the agent decides. Two consequences, both stated rather than hidden:
   `_search_jobs`. If junior spam returns, the fix is better evidence in the seeded
   state, never a filter the agent cannot see.
 
+### Failures and empty results are returned, not raised
+
+The command path raises `DiscoveryUnavailable` before it touches `case_facts`
+(`recruitment_team.py:610-620`), so it can never destroy a shortlist. The tool has no
+such protection and must be given one explicitly.
+
+- `result.failure_type` set: return
+  `{"ok": false, "failure_type": …, "retryable": …}`. The agent sees the failure and
+  decides what to do about it. It does not raise, because a search failure mid-turn is
+  information, not the end of the turn.
+- `result.valid_empty`: return `{"ok": true, "jobs": [], "valid_empty": true}`. Nothing
+  was wrong; nothing matched.
+
+Every result, successful or not, is appended to `ctx.search_results`, so the turn's
+search history stays observable. The drain below is what decides which of them are
+allowed to change the thread.
+
 ### Persistence: how search results reach the thread
 
-The tool appends its `JobSearchResult` to `ctx.search_results`. After `respond()`
-returns, `_model_reply` drains the sink:
+After `respond()` returns, `_model_reply` drains the sink:
 
 ```python
-if context.search_results:
+useful = [result for result in context.search_results if result.jobs]
+if useful:
     facts = dict(thread.case_facts)
-    facts["latest_search_query"] = context.search_results[-1].query
+    facts["latest_search_query"] = useful[-1].query
     seen, merged = set(), []
-    for result in reversed(context.search_results):        # newest search first
+    for result in reversed(useful):                       # newest search first
         for job in result.jobs:
             if job.job_id not in seen:
                 seen.add(job.job_id)
@@ -231,6 +306,11 @@ if context.search_results:
     thread.case_facts = facts
 ```
 
+**Corrected.** Revision 1 replaced `recommendations` whenever the sink was non-empty. A
+turn whose only search returned nothing would then have silently emptied the previous
+turn's seven results, and the next Shortlist click would be a 422. `if result.jobs` is
+the whole fix: a search that returned nothing, or failed, leaves the shortlist alone.
+
 `asdict(job)` is the same shape `_search_jobs` writes at `recruitment_team.py:624`.
 This is not cosmetic. `_known_job` (`recruitment_team.py:1474-1486`) resolves a
 `job_id` only against `recommendations + shortlisted_jobs` and raises
@@ -238,9 +318,10 @@ This is not cosmetic. `_known_job` (`recruitment_team.py:1474-1486`) resolves a
 panel. A search inside the loop that does not land in `recommendations` breaks every
 subsequent `ShortlistJob` and `SelectTargetJob`.
 
-`recommendations` is replaced with this turn's searches, not appended across turns.
-That matches the command path's replace semantics and still covers a turn that searched
-more than once.
+`recommendations` is replaced with this turn's useful searches, not appended across
+turns. That matches the command path's replace semantics and still covers a turn that
+searched more than once. Ordering is newest search first, then dedupe by `job_id`: two
+searches returning `[201, 202]` then `[203, 201]` persist as `[203, 201, 202]`.
 
 Draining after `respond()` rather than writing from inside the tool is deliberate: the
 tool stays free of the ORM, and the write lands in the same transaction that writes the
@@ -248,21 +329,24 @@ assistant message, so a failed turn cannot leave a half-updated thread.
 
 ---
 
-## 4. `create_resume_agent` needs a `system_prompt` seam
+## 4. `create_resume_agent` needs two new seams
 
 `resume_agent/agent.py:34` hardcodes `system_prompt=ORCHESTRATOR_SYSTEM_PROMPT`. The
 coordinator's goal statement is the substance of this issue and there is no seam for it.
+§5 additionally needs `response_format`.
 
 ```python
 def create_resume_agent(
     model=None, tools=None, subagents=None,
     checkpointer=None, interrupt_on=None,
     system_prompt: str | None = None,          # new, defaults to ORCHESTRATOR_SYSTEM_PROMPT
+    response_format: Any | None = None,        # new, passed straight through, default None
 ):
 ```
 
-Defaulted, so the Resume Deep Agent v2 and `OpenAgentTargetAssessmentRunner` are
-unaffected.
+Both defaulted, so the Resume Deep Agent v2 and `OpenAgentTargetAssessmentRunner` are
+unaffected. `create_deep_agent` in the installed `deepagents` 0.6.12 already accepts
+`response_format`; this is pass-through, not new behaviour.
 
 The coordinator prompt is a new versioned module,
 `recruitment_team/prompts/coordinator.py`, carrying
@@ -281,22 +365,70 @@ New module `backend/recruitment_team/coordinator/model.py`, exported from
 
 ```python
 class DeepAgentConversationModel:
-    def __init__(self, *, discovery=None, model_factory=None, telemetry=None): ...
+    def __init__(self, *, model_factory=None, telemetry=None): ...
 
     def respond(self, messages, resume_text, current_preferences=(), context=None) -> ModelReply: ...
-
-    # The loop itself, public because respond() is only the port adapter over it.
-    def drive(self, context: ConversationContext, messages: list[Message], resume_text: str) -> dict: ...
 ```
 
-`drive()` returns `{"stopped": bool, "reason": str, "submission": dict | None,
-"paused": bool, "question": str, "search_queries": list[str]}`. `respond()` maps that
-onto `ModelReply` or raises. On the iteration cap the dict carries
-`stopped=True, reason="tool_iteration_cap"`, the shape `run_agent_turn` already uses at
-`resume_agent/agent.py:57-62`.
+**Corrected.** Revision 1 also exposed a public `drive()` returning a dict, whose only
+justification was that a test wanted to read `reason == "tool_iteration_cap"`.
+`ConversationUnavailable` carries `failure_type`, so `pytest.raises(...)` plus
+`error.failure_type` gives the same discrimination without a second public entry point,
+and it asserts on what a caller actually receives. `drive()` does not exist.
+
+`model_factory` is for tests and for nothing else. When it is `None`,
+`create_resume_agent(model=None, …)` falls through to `create_agent_model()` exactly as
+the assessment runner does. That is the single seam the autouse fixture in §9 patches.
 
 Subagents: `[]`. The coordinator delegates to no personas in this slice. Persona work is
 slice V4 (study-first).
+
+### Termination is `ToolStrategy`, not a hand-scan
+
+**Corrected, and this is the largest change in revision 2.** Revision 1 scanned
+`iter_progress_events` for a `submit_recruitment_conversation` tool call, applied a
+last-one-wins rule, and accepted an extra model completion per turn because the graph
+calls the model once more after the tool returns. LangChain 1.3.11 does all three jobs
+natively.
+
+```python
+from langchain.agents.structured_output import ToolStrategy
+
+agent = create_resume_agent(
+    model=…, tools=[…], subagents=[],
+    system_prompt=COORDINATOR_SYSTEM_PROMPT,
+    response_format=ToolStrategy(ConversationReply),
+    checkpointer=_CHECKPOINTER,
+    interrupt_on={"ask_candidate": True},
+)
+```
+
+Verified against the installed stack (deepagents 0.6.12, langchain 1.3.11), all four
+behaviours reproduced directly:
+
+- a one-tool plus one-structured-call script consumes exactly **2** model calls, with no
+  trailing completion;
+- the validated object is readable at `state["structured_response"]` as a
+  `ConversationReply` instance, already parsed;
+- an invalid payload (`reply=""`) is corrected **inside the loop** in 2 calls, which is
+  the `RECRUITMENT_CONVERSATION_VALIDATION_ATTEMPTS` retry for free;
+- `ToolStrategy` coexists with `interrupt_on={"ask_candidate": True}` plus a
+  checkpointer: `iter_progress_events` streams normally, `get_state().interrupts` is
+  truthy at the pause, `structured_response` is `None` at the pause and readable after
+  the resume.
+
+**The tool name is the schema class name.** `ToolStrategy` derives it from
+`schema.__name__`, so the model, the activity stream and `TOOL_PHRASES` would all see
+`_ConversationPayload`. Rename it: `_ConversationPayload` becomes `ConversationReply` in
+`conversation_model.py`, and its docstring becomes the tool description the model reads.
+`submit_recruitment_conversation` keeps its `args_schema` and is otherwise untouched,
+because `LangChainConversationModel` still uses it.
+
+One conceded loss, and it is a wash. `LangChainConversationModel` re-prompts in-loop when
+`preference_update_error` fails, and `ToolStrategy` cannot, because that rule needs the
+latest user message. But `preference_update_error` also runs in `_model_reply`
+(`recruitment_team.py:501-506`) on both paths, and revision 1's hand-scan design
+forfeited the same thing. No regression either way.
 
 ### Turn payload and the checkpoint
 
@@ -306,44 +438,54 @@ slice V4 (study-first).
 
 A stable per-thread graph id, rather than the fresh uuid the assessment runner uses, is
 what makes `ask_candidate` mean anything in a conversation. A pause has to survive to the
-next HTTP request or the interrupt guarantees nothing.
+next HTTP request or the interrupt guarantees nothing. `RecruitmentThread.id` is a uuid4
+string, so ids cannot collide in production.
+
+That shared checkpoint file is not isolated under pytest today.
+`config.OPEN_AGENT_CHECKPOINT_DB_PATH` defaults to a repo-relative
+`open_agent_checkpoints.db` and `runner.py` opens it at import time, so a test run
+accumulates state in the working tree and two runs can see each other's checkpoints. The
+root `conftest.py` now points it at a temp directory the same way it already pins
+`DATABASE_URL`.
 
 Each turn seeds only what is new:
 
 - Checkpoint has messages, no pending interrupt: one `HumanMessage` carrying an
   `xml_data_block("thread_state", …)` block followed by the latest user message.
 - Checkpoint has a pending interrupt: `Command(resume={"decisions": [{"type": "respond",
-  "message": <latest user message>}]})`. No new `HumanMessage`.
-- Checkpoint is empty (new thread, or a wiped checkpoint file): the full DB transcript
-  from `self._messages(thread.id)` is replayed first, then the state block and the
-  latest message. **The DB is the system of record. The checkpoint is a cache and is
-  never the only copy of anything.**
+  "message": <latest user message>}]})`, and `iter_progress_events` is passed
+  `skip_tool_call_ids={<the interrupted ask_candidate call id>}`. No new `HumanMessage`.
+  Without the skip set, the resume replays the same `ask_candidate` AIMessage as a fresh
+  node update and the activity log double-counts it. This is documented at
+  `streaming.py:44-50` and the assessment runner already had to fix it once.
+- Checkpoint is empty (new thread, or a wiped checkpoint file): the transcript in the
+  `messages` parameter is replayed first, then the state block and the latest message.
+  **Corrected:** revision 1 said `self._messages(thread.id)`, which is a `RecruitmentTeam`
+  method the adapter cannot reach. `respond()` already receives that exact list.
+  **The DB is the system of record. The checkpoint is a cache and is never the only copy
+  of anything.**
 
 `thread_state` is compact on purpose: counts, the selected target's id and title, the
 preference facts, `wants_experienced_roles`, and whether a candidate profile exists. The
 agent calls `read_shortlist` when it wants the postings.
 
-### Termination
+**It must not carry the postings themselves**, and there is a test that fails if it
+does. The headline scenario in §10 asserts that no company or job title appears in the
+turn's first model request and both appear in the request after `read_shortlist`
+returned. Stuffing the shortlist into `thread_state` would make `read_shortlist`
+decorative and put the whole shortlist into every turn's prompt.
 
-The loop ends on a `submit_recruitment_conversation` tool call at coordinator level.
-The existing tool and `_ConversationPayload` are reused unmodified, which is what keeps
-the evidence-quoted preference contract (`preference_update_error`) and
-`_merge_preference_updates` working without a line of change.
-
-Four exits, in precedence order:
+### Exits
 
 | exit | reply | thread effect |
 |---|---|---|
-| `submit_recruitment_conversation` seen (last one wins) | `payload.reply` | normal |
+| `state["structured_response"]` is a `ConversationReply` | `reply.reply` | normal |
 | pending interrupt after the stream ends | `_format_questions(args)` from the `ask_candidate` call | see §6 |
-| `GraphRecursionError` | last submission if one was already made, otherwise `ConversationUnavailable` | run fails, 503 |
-| stream ended, no submission, no interrupt | `ConversationUnavailable` | run fails, 503 |
+| `GraphRecursionError` | `ConversationUnavailable(failure_type="tool_iteration_cap", retryable=True)` | run fails, 503 |
+| stream ended, no structured response, no interrupt | `ConversationUnavailable(failure_type="no_submission", retryable=True)` | run fails, 503 |
 
-`_drive()` returns a dict, and on the cap it is exactly
-`{"stopped": True, "reason": "tool_iteration_cap"}`, matching `run_agent_turn`'s shape
-at `resume_agent/agent.py:57-62`. `respond()` maps that dict to a `ModelReply` or an
-error. **`GraphRecursionError` never propagates and no turn ever fabricates a reply.**
-HTTP 200 is not an acceptance criterion.
+**`GraphRecursionError` never propagates and no turn ever fabricates a reply.** HTTP 200
+is not an acceptance criterion.
 
 New error class:
 
@@ -352,15 +494,27 @@ class ConversationUnavailable(RecruitmentTeamError):
     def __init__(self, message: str, *, failure_type: str, retryable: bool): ...
 ```
 
-It must be added to the isinstance tuple at `http_routes.py:172-181`. That mapping is by
-explicit type, not by name suffix, so a new `*Unavailable` that nobody adds to the tuple
-becomes a 500.
+It must be added to the isinstance tuple at `http_routes.py:167-181`. That mapping is by
+explicit type and ends in a bare `raise error`, so a new `*Unavailable` that nobody adds
+to the tuple becomes a 500. There is a test for exactly that line.
 
-**Accepted cost.** After the submission tool returns `"submitted"`, the graph calls the
-model once more before ending, so a turn costs one extra cheap completion. The
-alternatives were `return_direct` (unverified against the installed `deepagents`) and
-`interrupt_on={"submit_recruitment_conversation": True}` (would collide with the
-`ask_candidate` interrupt). Measure the extra call before optimising it.
+`_execute_locked` already does the rest: on any exception it marks the run `failed`,
+records `detail["failure_type"]` on a failed activity event, and re-raises
+(`recruitment_team.py:402-424`). No assistant message is written.
+
+### Preference updates on the new path
+
+`ConversationReply.preference_updates` is carried out of `structured_response` into
+`ModelReply.preference_updates` as `PreferenceUpdate` tuples, exactly as
+`LangChainConversationModel` does at `conversation_model.py:205-216`. Everything
+downstream is unchanged: `preference_update_error` in `_model_reply` rejects a quote that
+does not occur verbatim in the latest user message, and `_merge_preference_updates`
+writes `case_facts["preferences"]`.
+
+This carry is one of the easiest things in the slice to drop wholesale with every test
+still green, so both halves are asserted: a valid quote must land in
+`case_facts["preferences"]`, and an invalid one must raise `InvalidCommand` and append no
+assistant message.
 
 ### `search_query` stops being a request
 
@@ -368,6 +522,20 @@ alternatives were `return_direct` (unverified against the installed `deepagents`
 actually passed to the `search_jobs` tool this turn, discarding whatever the model wrote
 in the payload. `case_facts["search_query"]` then records a query that was really run
 instead of one that was asked for. The field becomes an observation.
+
+Two keys, two meanings, and they can differ:
+
+- `case_facts["search_query"]` (written by `_remember_search_query`, read by
+  `_query_from_candidate` on the next `SearchJobs` command): the last query **executed**
+  this turn, whatever it returned.
+- `case_facts["latest_search_query"]`: the query of the last search that **returned
+  jobs**, kept consistent with `recommendations` so the panel never shows a query that
+  does not describe the list under it.
+
+The specification test scripts a submission whose `search_query` is deliberately
+different from the query the tool ran with, and asserts both keys equal the executed one.
+Revision 1's assertion compared `ScriptedDiscovery`'s echoed query to itself and could
+not fail.
 
 This does not resolve the optional-field trap for `LangChainConversationModel`. That is
 slice V2 / issue #147, where the field must become required in the submission schema.
@@ -393,6 +561,8 @@ On pause:
   runner. The pause is invisible to the transport, and the next ordinary `SendMessage`
   resumes it because §5's turn payload checks `interrupts` first. Zero frontend change.
 - No preference updates are merged for that turn, because no submission happened.
+- The interrupted call's id is recorded on `case_facts` so the resuming turn can pass it
+  as `skip_tool_call_ids`, mirroring `case_facts["target_assessment_pause_call_id"]`.
 
 Question volume is bounded the way the runner bounds it, by
 `config.OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS` counted over the checkpointed
@@ -433,9 +603,22 @@ Sequence numbers keep coming from `thread.next_event_sequence`
 Summary strings keep the `"{member} called {tool}."` shape that `humanize`
 (`TeamActivityPanel.jsx:72-82`) parses.
 
+**Corrected: this is tested, not assumed.** Acceptance criterion 4 in #146 is "visible in
+the activity stream", and revision 1 shipped no assertion on it at all. The specification
+now asserts, on `RecordedActivityPublisher.events`:
+
+- the per-tool summaries appear in call order, between the "running" and "completed"
+  run events;
+- `sequence` is strictly increasing across them;
+- the turn that resumes an `ask_candidate` pause does **not** publish a second
+  `ask_candidate` event.
+
 Frontend, `frontend/src/components/TeamActivityPanel.jsx`:
-- `TOOL_PHRASES` (L62-70) gains `read_shortlist` and `search_jobs`. Without them the raw
-  string `"coordinator called read_shortlist."` renders to candidates.
+- `TOOL_PHRASES` (L62-70) gains `read_shortlist`, `search_jobs` and `ConversationReply`.
+  `humanize` strips the subject when it finds no phrase, so without them a candidate
+  reads "Called read_shortlist." A vitest case in
+  `frontend/src/components/__tests__/TeamActivityPanel.test.jsx` covers all three; it is
+  written with `it.fails` today and flips to `it` when this lands.
 - The copy at L226-228, "A full assessment runs several specialists and an independent
   judge. This usually takes a few minutes.", is shown whenever `busy` and will now
   appear on ordinary chat turns. It has to become conditional on an assessment run.
@@ -444,20 +627,31 @@ Frontend, `frontend/src/components/TeamActivityPanel.jsx`:
 
 ## 8. Wiring
 
-`http_routes.py`. The `Depends` graph does not need a thread, because the context is a
-`respond()` parameter:
+`http_routes.py`:
 
 ```python
 def get_conversation_model(
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
-    discovery: DiscoveryPort = Depends(get_job_discovery),
 ) -> ConversationModel:
-    return DeepAgentConversationModel(discovery=discovery, telemetry=telemetry)
+    return DeepAgentConversationModel(telemetry=telemetry)
 ```
+
+No `Depends(get_job_discovery)`: the port arrives on the context (§3).
 
 The five `app.dependency_overrides[get_conversation_model]` in
 `test_recruitment_team_module.py` (L2586, 2752, 2860, 2966, 3103) override the whole
 callable and keep working.
+
+**Corrected: the wiring is tested.** Every existing reference to
+`get_conversation_model` in the suite replaces the callable, and every specification test
+in §10 injects the adapter by hand. So the loop could be built, the file could go green,
+and this one-line change could be forgotten with no signal. That is precisely the shape
+of the `search_query` scar this design keeps citing. Two tests close it:
+
+1. `get_conversation_model()` returns a `DeepAgentConversationModel`.
+2. One transport turn through the FastAPI app that does **not** override
+   `get_conversation_model`, patching only `resume_agent.agent.create_agent_model` to
+   return a `ScriptedDeepAgent`. The real DI path constructs the real adapter.
 
 `recruitment_team/__init__.py` exports `DeepAgentConversationModel` and
 `ConversationContext`.
@@ -473,11 +667,112 @@ assessment runner share. One env var tuning a chat turn and a full assessment me
 tuning either one starves the other.
 
 `_model_reply` is the only changed call site. It builds the context, passes it, drains
-`search_results`, and leaves preference validation, merge and telemetry untouched.
+`search_results` and `proposed_edits`, and leaves preference validation, merge and
+telemetry untouched.
 
 ---
 
-## 9. What is NOT built
+## 9. Test harness rules
+
+`backend/tests/scripted_deep_agent.py` scripts the **model**, never the graph. The graph,
+the tools, the guardrails and the LangGraph interrupt all really run.
+
+- **Exhaustion raises.** `FakeMessagesListChatModel` wraps to index 0 when its script
+  runs out. Here that is an `AssertionError` naming the call number.
+- **`consumed` and `calls` are different numbers.** `consumed` is how many scripted
+  responses were used; `calls` is how many times the model was actually invoked. With
+  `repeat_last=True` the first freezes and the second keeps climbing, so a test that
+  bounds model calls must bound `calls`. Revision 1's cap test asserted `consumed`, which
+  `repeat_last` pins at 1 whether the cap is honoured or ignored.
+- **Every request is recorded.** `requests[n]` is the full message list of call n. Where
+  the claim is "the agent read its own results", the assertion is on that list.
+
+**No fake API keys.** Revision 1 opened seven tests with
+`monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")`. All
+seven were dead, because `create_resume_agent` short-circuits on
+`model or create_agent_model()` and a model is always supplied. Worse than dead: a fake
+key lets `create_agent_model` construct a live SEA-LION client successfully, so if the
+loop ever did build its own model, the patch would enable a real network call rather than
+fail fast. Replaced by one autouse fixture that makes `create_agent_model` raise on both
+bindings, `resume_agent.agent` (imported at module level, used by `create_resume_agent`)
+and `resume_agent.models` (imported lazily by `conversation_model.py` and
+`role_success.py`). That is the protection those seven lines pretended to be.
+
+**The harness guard goes through `create_deep_agent`, not `create_resume_agent`**, and
+its reply schema is local. A guard has to be green today, and today the factory has
+neither §4 seam and the schema still has its private name. The seams get their own
+xfail test, which asserts the coordinator goal reached the model and
+`state["structured_response"]` came back, rather than introspecting the signature.
+
+**`OPEN_AGENT_CHECKPOINT_DB_PATH` is temp-scoped by the root `conftest.py`**, next to
+`DATABASE_URL`. Before this, a suite run wrote LangGraph checkpoints into the working
+tree and two runs could resume each other's paused graphs.
+
+---
+
+## 10. Acceptance
+
+### The control
+
+A ten-line change satisfies revision 1's acceptance criterion. `_model_reply` has
+`thread.case_facts` in scope at `recruitment_team.py:485`, and
+`LangChainConversationModel.respond` builds its prompt as an editable list of
+`HumanMessage` blocks (`conversation_model.py:126-158`). Inject the shortlist there and
+the single-shot model will name a job by title and stop asking for a pasted JD.
+
+Build that first, on a throwaway branch, and record what it does. It is the control. An
+acceptance criterion a non-loop change also passes is not evidence for a loop.
+
+### The criteria
+
+Necessary floor, the V1 rule from the PRD, driven in a browser against the real backend,
+asserting on rendered text:
+
+> Search returns matches, then ask "improve my resume for these roles". The reply names
+> at least one job from the shortlist by title. It must not ask the candidate to paste a
+> job description.
+
+Sufficient, and passable only by a loop. All three are pure observable behaviour:
+
+1. **A query nobody typed.** Send one chat message describing what you want and click
+   nothing. The activity stream shows a `search_jobs` step whose query is not the text
+   you typed, and the shortlist panel populates from that turn.
+2. **A re-query after reading.** State a constraint the first result set violates, for
+   example "not computer vision". In one turn the activity stream shows two `search_jobs`
+   steps with different queries, and the reply explains what was wrong with the first set.
+   Nothing in the code excludes computer vision. The agent noticed it by reading its own
+   results.
+3. **The shortlist survives the turn.** Click Shortlist on a job the agent found in its
+   own loop. It must not 422.
+
+Record the before-state for each first, so an inert change cannot pass.
+
+### The unit tests
+
+`backend/tests/test_coordinator_loop.py` is necessary and not sufficient. 851 tests
+passed while job search returned zero results for every user.
+
+| test | what would otherwise pass while broken |
+|---|---|
+| `create_resume_agent` takes a prompt and a response format | the coordinator silently running under `ORCHESTRATOR_SYSTEM_PROMPT` |
+| search, read, reply, persist | nothing: this is the one-turn form of the bug |
+| shortlist found by the button reaches the next turn | the headline #146 scenario; a turn-1 search leaves the title in the transcript, so only a shortlist the model never saw proves `read_shortlist` was used |
+| second search after reading the first results | a merge rule with no coverage; asserted against the persisted thread, not the sink |
+| repeated call rejected | a guardrail that silently blocks the second, different search too |
+| empty search leaves the shortlist alone | a drain that wipes seven results on one empty search |
+| failed search leaves the shortlist alone | the same, via `failure_type` |
+| iteration cap | a cap that is never honoured; bounded on `calls`, asserted on `failure_type` |
+| `ConversationUnavailable` maps to 503 | a new error class nobody added to the isinstance tuple, returning 500 |
+| `ask_candidate` pauses, then resumes | a pause that is prompt convention; and a resume that double-publishes the question |
+| preference updates, valid and invalid quote | the carry from `structured_response` dropped wholesale |
+| `search_query` records what ran | a tautology comparing a scripted arg to itself |
+| proposed edit reaches the pending table | a drain that never ran, asserted through `team.proposed_edits` |
+| `get_conversation_model` returns the loop | the one-line wiring change forgotten |
+| a transport turn with no dependency override | the same, end to end |
+
+---
+
+## 11. What is NOT built
 
 Stated so the absence is a decision and not an oversight.
 
@@ -490,8 +785,9 @@ Stated so the absence is a decision and not an oversight.
 - **No structured diff, no multi-axis ranking, no match rationale.** Slices V5 and V6.
 - **No exclusion predicate, junior heuristic or ranking formula in the tool layer.**
   `exclude_junior` is an agent decision (§3). The agent ranks by reading its own results.
-- **`LangChainConversationModel` is not deleted and not modified.** It stays as the
-  single-shot adapter and as the thing the loop is measured against.
+- **`LangChainConversationModel` is not deleted and not modified**, beyond the
+  `_ConversationPayload` to `ConversationReply` rename its `args_schema` points at. It
+  stays as the single-shot adapter and as the thing the loop is measured against.
 - **`SearchJobs`, `ShortlistJob` and `SelectTargetJob` commands are unchanged.**
   `SearchJobs` becomes a goal hint rather than the only way results reach the thread, and
   the deterministic path still works for the UI buttons.
@@ -499,19 +795,3 @@ Stated so the absence is a decision and not an oversight.
 - **No queued messages.** The per-thread lock still serialises turns. Slice V7.
 - **No live-model validation script.** Add one under `backend/scripts/` when the loop
   runs against SEA-LION.
-
----
-
-## 10. Acceptance
-
-The unit tests in `backend/tests/test_coordinator_loop.py` are necessary and not
-sufficient. 851 tests passed while job search returned zero results for every user.
-
-Acceptance for this slice is the V1 rule from the PRD, driven in a browser against the
-real backend, asserting on rendered text:
-
-> Search returns matches, then ask "improve my resume for these roles". The reply names
-> at least one job from the shortlist by title. It must not ask the candidate to paste a
-> job description.
-
-Record the before-state first, so an inert change cannot pass.

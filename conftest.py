@@ -24,6 +24,17 @@ if not test_database_url:
 # Never let an ambient DATABASE_URL point tests at a developer or production DB.
 os.environ["DATABASE_URL"] = test_database_url
 
+# The open-agent checkpointer opens config.OPEN_AGENT_CHECKPOINT_DB_PATH at import
+# time (open_agent/runner.py:103), and its default is a repo-relative file. Left
+# alone, a test run accumulates LangGraph checkpoints in the working tree and two
+# runs can resume each other's paused graphs. Pin it to the same temp directory
+# the test database uses.
+if not os.environ.get("OPEN_AGENT_CHECKPOINT_DB_PATH", "").strip():
+    _checkpoint_dir = _test_database_dir.name if _test_database_dir else tempfile.mkdtemp()
+    os.environ["OPEN_AGENT_CHECKPOINT_DB_PATH"] = str(
+        Path(_checkpoint_dir) / "open_agent_checkpoints.db"
+    )
+
 
 @pytest.fixture(scope="session", autouse=True)
 def isolated_test_database():

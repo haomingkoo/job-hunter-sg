@@ -1,6 +1,6 @@
 """Specification for #146: the conversational coordinator runs a tool loop.
 
-Design: `docs/v4-146-coordinator-loop.md`.
+Design: `docs/v4-146-coordinator-loop.md` (revision 2).
 
 Every test marked `_XFAIL_146` fails today, because the production symbols it
 imports do not exist. They are the specification, not a regression net. The
@@ -8,53 +8,131 @@ marker is `strict=True` on purpose: the moment the loop works, an XPASS turns th
 suite red and the marker has to come off. A non-strict xfail is an optional
 assertion, and this repo has already paid for an optional field.
 
-`test_scripted_deep_agent_drives_a_real_graph_today` is deliberately NOT xfail.
-It guards the harness. Without it, a broken double would make every xfail above
-pass for the wrong reason and nobody would know.
+The two `test_scripted_deep_agent_*` tests are deliberately NOT xfail. They guard
+the harness. Without them, a broken double would make every xfail below pass for
+the wrong reason and nobody would know.
 
 What the tests deliberately do NOT do: assert on a status code, assert on a reply
-string I scripted myself as if it were evidence of reasoning, or accept a call
-count as proof that a tool result reached the model. Where the claim is "the
-agent read its own results", the assertion is on the message list the model was
-handed.
+string scripted here as if it were evidence of reasoning, or accept a call count
+as proof that a tool result reached the model. Where the claim is "the agent read
+its own results", the assertion is on the message list the model was handed, or
+on state the model could not have seen any other way.
 """
 
 from __future__ import annotations
 
 import json
+import uuid
 
 import pytest
 
-from backend.tests.scripted_deep_agent import ScriptedDeepAgent, final, submission, tool_call
+from backend.tests.scripted_deep_agent import (
+    ScriptedDeepAgent,
+    final,
+    preference,
+    submission,
+    tool_call,
+)
 
 
 _XFAIL_146 = pytest.mark.xfail(
     reason=(
-        "#146: DeepAgentConversationModel, ConversationContext and the coordinator "
-        "tools (read_shortlist, search_jobs) are not implemented yet"
+        "#146: DeepAgentConversationModel, ConversationContext, ConversationUnavailable "
+        "and the coordinator tools (read_shortlist, search_jobs) are not implemented yet"
     ),
     strict=True,
 )
 
 
+# ── no live model, ever ──────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _no_live_model(monkeypatch):
+    """`create_agent_model` must never be reached from this file.
+
+    Revision 1 opened seven tests with
+    `monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")`.
+    Every one was dead: `create_resume_agent` short-circuits on
+    `model or create_agent_model()` and these tests always supply a model. Worse
+    than dead, a fake key lets `create_agent_model` build a live SEA-LION client
+    successfully, so the day the loop does construct its own model those lines
+    would have enabled a real network call instead of failing fast.
+
+    Both bindings are patched. `resume_agent/agent.py:11` imported the name at
+    module level, so patching `resume_agent.models` alone would miss
+    `create_resume_agent`; `conversation_model.py` and `role_success.py` import it
+    lazily from `resume_agent.models`, so patching `resume_agent.agent` alone
+    would miss those.
+    """
+    import resume_agent.agent as agent_module
+    import resume_agent.models as models_module
+
+    def _explode(*args, **kwargs):
+        raise AssertionError(
+            "a coordinator-loop test tried to construct a real SEA-LION model; "
+            "pass model_factory=lambda: ScriptedDeepAgent(...) instead"
+        )
+
+    monkeypatch.setattr(agent_module, "create_agent_model", _explode)
+    monkeypatch.setattr(models_module, "create_agent_model", _explode)
+
+
 # ── fixtures ─────────────────────────────────────────────────────────────────
 
 
-RESUME_TEXT = "Led team of 12 engineers building semiconductor yield analytics."
+RESUME_TEXT = (
+    "EXPERIENCE\n"
+    "Micron Technology, Singapore\n"
+    "Yield Engineering Manager, 2018-2026\n"
+    "- Led team of 12 engineers building semiconductor yield analytics.\n"
+    "- Cut wafer scrap by 18 percent across three fabs.\n"
+)
 
-RESUME_DOCUMENT = {
-    "schema_version": 1,
-    "revision": "rev-1",
-    "raw_text": RESUME_TEXT,
-    "blocks": [
-        {
-            "id": "b1",
-            "text": "Led team of 12 engineers.",
-            "section_key": "experience",
-            "entry_id": "e1",
-        }
-    ],
-}
+LEADERSHIP_BULLET = "Led team of 12 engineers building semiconductor yield analytics."
+
+
+def _resume_document() -> dict:
+    """The exact document `_model_reply` builds, from the exact resume text.
+
+    Block IDs are content hashes, so a script cannot hardcode one. It has to be
+    looked up here, which also proves the test and production derive it the same
+    way.
+    """
+    from resume_document import create_resume_document
+
+    return create_resume_document(RESUME_TEXT)
+
+
+def _leadership_block_id() -> str:
+    return next(
+        block["id"]
+        for block in _resume_document()["blocks"]
+        if block["text"] == LEADERSHIP_BULLET
+    )
+
+
+def _owner_with_resume(session_factory) -> tuple[int, int]:
+    """A user whose resume carries a numeric fact, so gate rejection is testable."""
+    from models import ResumeVersion, User
+
+    with session_factory() as db:
+        user = User(
+            email="candidate@example.com",
+            password_hash="test-only",  # pragma: allowlist secret
+            name="Candidate",
+        )
+        db.add(user)
+        db.flush()
+        resume = ResumeVersion(
+            user_id=user.id,
+            label="Yield engineering resume",
+            resume_text=RESUME_TEXT,
+            is_master=True,
+        )
+        db.add(resume)
+        db.commit()
+        return user.id, resume.id
 
 
 def _job(job_id: int, title: str, company: str, seniority: str = "Professional"):
@@ -97,6 +175,27 @@ def _search_result(jobs):
     )
 
 
+def _failed_search(failure_type: str = "unavailable"):
+    """What `LangChainJobDiscovery` really returns when the tool fails.
+
+    `discovery.py:120-130`: no jobs, `valid_empty=False`, a `failure_type`. The
+    command path raises `DiscoveryUnavailable` before touching `case_facts`, so it
+    can never destroy a shortlist. The tool has no such protection by accident.
+    """
+    from recruitment_team.discovery import JobSearchResult
+
+    return JobSearchResult(
+        query="",
+        jobs=(),
+        candidate_count=None,
+        visible_candidate_count=None,
+        truncated=False,
+        valid_empty=False,
+        failure_type=failure_type,
+        retryable=True,
+    )
+
+
 class _RecordingDiscovery:
     """Wraps ScriptedDiscovery to capture the exact args the loop searched with."""
 
@@ -122,12 +221,15 @@ def _context(discovery, *, recommendations=(), shortlisted=(), events=None, **ov
     from recruitment_team import ConversationContext
 
     kwargs = {
-        "thread_id": 1,
+        # RecruitmentThread.id is a uuid4 string (models.py:312). A fresh one per
+        # context also keeps the shared SqliteSaver from carrying a checkpoint
+        # between two tests that both used thread "1".
+        "thread_id": str(uuid.uuid4()),
         "trace_key": "coordinator-loop-trace",
         "candidate_profile": None,
         "role_profile": None,
         "target_job": None,
-        "resume_document": RESUME_DOCUMENT,
+        "resume_document": _resume_document(),
         "latest_search_query": "",
         "recommendations": tuple(recommendations),
         "shortlisted_jobs": tuple(shortlisted),
@@ -140,10 +242,32 @@ def _context(discovery, *, recommendations=(), shortlisted=(), events=None, **ov
     return ConversationContext(**kwargs)
 
 
-def _model(agent, discovery):
+def _model(agent):
+    """The loop adapter with a scripted brain.
+
+    No `discovery` parameter: the port arrives on the ConversationContext and
+    there is exactly one source for it. Passing it twice would mean no test could
+    ever observe which copy the tool read.
+    """
     from recruitment_team import DeepAgentConversationModel
 
-    return DeepAgentConversationModel(discovery=discovery, model_factory=lambda: agent)
+    return DeepAgentConversationModel(model_factory=lambda: agent)
+
+
+def _team(db, agent, discovery, publisher=None, telemetry=None):
+    from backend.tests.test_recruitment_team_module import _role_profiler
+    from recruitment_team import RecruitmentTeam
+    from recruitment_team.activity_publisher import RecordedActivityPublisher
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    return RecruitmentTeam(
+        db,
+        _model(agent),
+        discovery,
+        _role_profiler(),
+        telemetry or RecordedTelemetry(),
+        publisher or RecordedActivityPublisher(),
+    )
 
 
 def _tool_results(events, tool_name):
@@ -161,24 +285,35 @@ def _rendered(request) -> str:
     return "\n".join(str(getattr(message, "content", "")) for message in request)
 
 
+def _tool_summaries(publisher) -> list[str]:
+    """Published per-tool activity summaries, in publication order."""
+    return [
+        event.summary
+        for event in publisher.events
+        if event.summary.endswith(".") and " called " in event.summary
+    ]
+
+
+def _raw_case_facts(sessions, thread_id: str) -> dict:
+    """`case_facts` as stored, including keys CaseFacts does not project.
+
+    `search_query` is one of them (`interface.py:103-118` has no such field), and
+    it is the key `_query_from_candidate` reads on the next SearchJobs command.
+    """
+    from models import RecruitmentThread
+
+    with sessions() as db:
+        thread = (
+            db.query(RecruitmentThread).filter(RecruitmentThread.id == thread_id).first()
+        )
+        return dict(thread.case_facts)
+
+
 # ── the harness itself, guarded ──────────────────────────────────────────────
 
 
-def test_scripted_deep_agent_drives_a_real_graph_today(monkeypatch):
-    """The double must drive a genuine deep-agent graph, with real tool execution.
-
-    Not xfail. If this breaks, every xfail below would start passing for reasons
-    that have nothing to do with #146.
-    """
-    import resume_agent.models as agent_models
+def _echo_tool(executed: list[str]):
     from langchain_core.tools import tool
-
-    from resume_agent.agent import create_resume_agent
-    from recruitment_team.open_agent.streaming import iter_progress_events
-
-    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
-
-    executed: list[str] = []
 
     @tool
     def echo(text: str) -> dict:
@@ -186,10 +321,50 @@ def test_scripted_deep_agent_drives_a_real_graph_today(monkeypatch):
         executed.append(text)
         return {"ok": True, "echoed": text}
 
+    return echo
+
+
+def _harness_reply_schema():
+    from pydantic import BaseModel, Field
+
+    class HarnessReply(BaseModel):
+        """Submit the final reply."""
+
+        reply: str = Field(min_length=1)
+
+    return HarnessReply
+
+
+def test_scripted_deep_agent_drives_a_real_graph_today():
+    """The double must drive a genuine deep-agent graph, with real tool execution.
+
+    Not xfail. If this breaks, every xfail below would start passing for reasons
+    that have nothing to do with #146. It goes through `create_deep_agent`
+    directly, because `create_resume_agent` has no `system_prompt` or
+    `response_format` seam yet (§4) and a harness guard has to be green today. The
+    schema is local so this does not depend on the `_ConversationPayload` to
+    `ConversationReply` rename §5 asks for either.
+    """
+    from deepagents import create_deep_agent
+    from langchain.agents.structured_output import ToolStrategy
+
+    from recruitment_team.open_agent.streaming import iter_progress_events
+
+    executed: list[str] = []
+    harness_reply = _harness_reply_schema()
     agent = ScriptedDeepAgent(
-        responses=[tool_call("echo", {"text": "hello"}, "call-1"), final("done")]
+        responses=[
+            tool_call("echo", {"text": "hello"}, "call-1"),
+            tool_call("HarnessReply", {"reply": "done"}, "call-2"),
+        ]
     )
-    graph = create_resume_agent(model=agent, tools=[echo], subagents=[])
+    graph = create_deep_agent(
+        model=agent,
+        tools=[_echo_tool(executed)],
+        subagents=[],
+        system_prompt="Test coordinator.",
+        response_format=ToolStrategy(harness_reply),
+    )
 
     events = list(
         iter_progress_events(
@@ -201,13 +376,15 @@ def test_scripted_deep_agent_drives_a_real_graph_today(monkeypatch):
 
     assert executed == ["hello"], "the tool must really execute, not be simulated"
     assert _tool_results(events, "echo") == [{"ok": True, "echoed": "hello"}]
-    assert [item["kind"] for item in events] == ["tool_call", "tool_result", "message"]
-    assert agent.consumed == 2
     # deepagents binds its own builtins alongside ours; ours has to be in there.
     assert "echo" in agent.bound_tool_names[0]
     # The tool result really came back to the model, so a scripted decision can
     # depend on it.
     assert "hello" in _rendered(agent.requests[1])
+    # ToolStrategy terminates the loop on the structured call: no trailing
+    # completion, which is the extra model call revision 1 was going to pay for.
+    assert agent.consumed == 2
+    assert agent.calls == 2
 
 
 def test_scripted_deep_agent_raises_instead_of_wrapping_when_the_script_runs_out():
@@ -218,30 +395,68 @@ def test_scripted_deep_agent_raises_instead_of_wrapping_when_the_script_runs_out
         agent._generate([])
 
 
+def test_repeat_last_freezes_consumed_so_only_calls_can_bound_a_runaway_loop():
+    """The guard for the iteration-cap test's own assertion.
+
+    Under `repeat_last`, `consumed` stops at 1 forever. A cap test that asserted
+    `consumed` would pass whether the recursion limit was honoured, doubled or
+    ignored entirely.
+    """
+    agent = ScriptedDeepAgent(responses=[final("again")], repeat_last=True)
+    for _ in range(5):
+        agent._generate([])
+
+    assert agent.consumed == 1
+    assert agent.calls == 5
+
+
 # ── the specification ────────────────────────────────────────────────────────
 
 
 @_XFAIL_146
-def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job(monkeypatch):
-    """The bug in one test.
+def test_create_resume_agent_accepts_a_coordinator_prompt_and_a_response_format():
+    """§4's two seams, asserted on what the model actually received.
 
-    One turn: the coordinator searches, the results come back into its own
-    context, and it answers naming a job. Today the coordinator cannot search,
-    and a `SearchJobs` command's results never reach it at all.
+    `resume_agent/agent.py:34` hardcodes ORCHESTRATOR_SYSTEM_PROMPT. A coordinator
+    with a different goal cannot be expressed through the factory as written, and
+    §5's termination needs `response_format` passed through.
     """
-    import resume_agent.models as agent_models
+    from langchain.agents.structured_output import ToolStrategy
 
-    from backend.tests.test_recruitment_team_module import (
-        _owner_with_resume,
-        _role_profiler,
-        _session_factory,
+    from resume_agent.agent import create_resume_agent
+
+    goal = "Find roles worth applying to, and get this resume ready for them."
+    agent = ScriptedDeepAgent(
+        responses=[tool_call("HarnessReply", {"reply": "done"}, "call-1")]
     )
-    from recruitment_team import RecruitmentTeam
+    graph = create_resume_agent(
+        model=agent,
+        tools=[_echo_tool([])],
+        subagents=[],
+        system_prompt=goal,
+        response_format=ToolStrategy(_harness_reply_schema()),
+    )
+    state = graph.invoke(
+        {"messages": [{"role": "user", "content": "Start."}]},
+        config={"recursion_limit": 20},
+    )
+
+    assert goal in _rendered(agent.requests[0])
+    assert "ORCHESTRATOR" not in _rendered(agent.requests[0]).upper()
+    assert state["structured_response"].reply == "done"
+
+
+@_XFAIL_146
+def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
+    """The bug in one turn.
+
+    The coordinator searches, the results come back into its own context, and it
+    answers naming a job. Today the coordinator cannot search, and a `SearchJobs`
+    command's results never reach it at all.
+    """
+    from backend.tests.test_recruitment_team_module import _session_factory
     from recruitment_team.activity_publisher import RecordedActivityPublisher
     from recruitment_team.interface import StartThread
-    from recruitment_team.telemetry import RecordedTelemetry
-
-    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
 
     discovery = _RecordingDiscovery(
         [_search_result([_job(101, "Yield Enhancement Engineer", "Micron")])]
@@ -258,21 +473,14 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job(monk
                 "Yield Enhancement Engineer at Micron is the closest match to the "
                 "yield analytics work on your resume."
             ),
-            final("submitted"),
         ]
     )
+    publisher = RecordedActivityPublisher()
 
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
     with sessions() as db:
-        team = RecruitmentTeam(
-            db,
-            _model(agent, discovery),
-            discovery,
-            _role_profiler(),
-            RecordedTelemetry(),
-            RecordedActivityPublisher(),
-        )
+        team = _team(db, agent, discovery, publisher)
         receipt = team.execute(
             owner_id,
             StartThread(
@@ -305,22 +513,165 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job(monk
     assert "Micron" in snapshot.messages[-1].content
     assert "paste" not in snapshot.messages[-1].content.lower()
 
-    # search_query records the query that really ran, not one the model requested.
-    assert snapshot.case_facts.latest_search_query == discovery.calls[-1]["query"]
-    assert agent.consumed == 4
+    # Acceptance criterion 4 is "visible in the activity stream", so the stream is
+    # asserted rather than assumed.
+    assert _tool_summaries(publisher) == [
+        "coordinator called search_jobs.",
+        "coordinator called read_shortlist.",
+    ]
+    sequences = [event.sequence for event in publisher.events]
+    assert sequences == sorted(sequences) and len(set(sequences)) == len(sequences)
+
+    assert agent.calls == 3
 
 
 @_XFAIL_146
-def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results(monkeypatch):
+def test_a_shortlist_the_model_never_saw_reaches_the_next_conversational_turn():
+    """The headline #146 scenario, with its recorded before-state.
+
+    The candidate clicks Search (the deterministic command path, which never calls
+    the conversation model), then asks a question one turn later. Nothing about
+    those postings is anywhere in the model's transcript, so naming one proves
+    `read_shortlist` was read rather than remembered.
+
+    Before-state 2026-08-01: "I cannot ... I do not have access to the 7 job
+    postings mentioned in the previous turn."
+    """
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.interface import SearchJobs, SendMessage, StartThread
+
+    discovery = _RecordingDiscovery(
+        [
+            _search_result(
+                [
+                    _job(101, "Yield Enhancement Engineer", "Micron"),
+                    _job(102, "Process Integration Engineer", "GlobalFoundries"),
+                ]
+            )
+        ]
+    )
+    agent = ScriptedDeepAgent(
+        responses=[
+            # Turn 1: a plain reply, no tools.
+            submission("Tell me which fabs you have worked with."),
+            # Turn 2: the only way to learn what the button found.
+            tool_call("read_shortlist", {}, "call-read"),
+            submission(
+                "Your leadership bullet already matches Yield Enhancement Engineer "
+                "at Micron, so I would lead with it.",
+                preference_updates=[
+                    preference("location", "Singapore", "I want to stay in Singapore")
+                ],
+            ),
+        ]
+    )
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = _team(db, agent, discovery)
+        receipt = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Hello, I run yield analytics."),
+            idempotency_key="turn-1",
+        )
+        thread_id = receipt.thread_id
+        team.execute(
+            owner_id,
+            SearchJobs(thread_id=thread_id, query="semiconductor yield analytics"),
+            idempotency_key="button-search",
+        )
+        team.execute(
+            owner_id,
+            SendMessage(
+                thread_id=thread_id,
+                message="Improve my resume for these roles. I want to stay in Singapore.",
+            ),
+            idempotency_key="turn-2",
+        )
+        snapshot = team.snapshot(owner_id, thread_id)
+
+    # Turn 2 did not search. The one search on record is the button's.
+    assert discovery.search_count == 1
+
+    # requests[1] is turn 2's first decision, taken before read_shortlist returned.
+    # It replays turn 1 from the checkpoint plus the compact thread_state block,
+    # and neither contains a posting. If "Micron" leaks in here, thread_state is
+    # carrying the shortlist and read_shortlist is decorative.
+    assert "Micron" not in _rendered(agent.requests[1])
+    assert "Yield Enhancement Engineer" not in _rendered(agent.requests[1])
+
+    # requests[2] is the decision taken after it read the shortlist.
+    assert "Micron" in _rendered(agent.requests[2])
+    assert "GlobalFoundries" in _rendered(agent.requests[2])
+
+    assert "Micron" in snapshot.messages[-1].content
+    assert "paste" not in snapshot.messages[-1].content.lower()
+
+    # The preference carry out of structured_response is live: without it this
+    # whole path drops preference extraction and every existing test stays green,
+    # because they all run through ScriptedConversationModel.
+    assert [(fact.field, fact.value) for fact in snapshot.case_facts.preferences] == [
+        ("location", "Singapore")
+    ]
+
+    assert agent.calls == 3
+
+
+@_XFAIL_146
+def test_a_preference_quote_absent_from_the_user_message_fails_the_turn():
+    """The evidence-quote rule survives the new path, and a failed turn writes nothing."""
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.errors import InvalidCommand
+    from recruitment_team.interface import StartThread
+
+    discovery = _RecordingDiscovery([])
+    agent = ScriptedDeepAgent(
+        responses=[
+            submission(
+                "Noted.",
+                preference_updates=[
+                    preference("salary", "$15,000", "I need at least fifteen thousand")
+                ],
+            )
+        ]
+    )
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = _team(db, agent, discovery)
+        with pytest.raises(InvalidCommand) as error:
+            team.execute(
+                owner_id,
+                StartThread(
+                    resume_version_id=resume_id,
+                    message="Find me a yield engineering role.",
+                ),
+                idempotency_key="turn-1",
+            )
+
+    assert "evidence_quote" in str(error.value)
+
+    from models import RecruitmentMessage
+
+    with sessions() as db:
+        roles = [row.role for row in db.query(RecruitmentMessage).all()]
+    assert roles == ["user"], "a rejected turn must not append an assistant message"
+
+
+@_XFAIL_146
+def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results():
     """The agent decides to search again by reading its own results.
 
     No exclusion predicate and no ranking formula: what makes the second query
     different is that the first result set was in the model's context when it
-    chose the second one.
+    chose the second one. The merge is asserted against the persisted thread,
+    which is the only place it matters, and the two result sets overlap so the
+    dedupe has something to do.
     """
-    import resume_agent.models as agent_models
-
-    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.interface import StartThread
 
     discovery = _RecordingDiscovery(
         [
@@ -330,7 +681,12 @@ def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results(m
                     _job(202, "Intern, Data", "BOK SENG Logistics", seniority="Junior"),
                 ]
             ),
-            _search_result([_job(203, "Staff Yield Engineer", "NXP")]),
+            _search_result(
+                [
+                    _job(203, "Staff Yield Engineer", "NXP"),
+                    _job(201, "Graduate Trainee, Process", "HRNET Ventures", seniority="Junior"),
+                ]
+            ),
         ]
     )
     agent = ScriptedDeepAgent(
@@ -341,17 +697,25 @@ def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results(m
                 {"query": "staff semiconductor yield engineer", "exclude_junior": True},
                 "call-2",
             ),
-            submission("Staff Yield Engineer at NXP fits your level; the first pass returned trainee roles."),
-            final("submitted"),
+            submission(
+                "Staff Yield Engineer at NXP fits your level; the first pass returned "
+                "trainee roles."
+            ),
         ]
     )
-    events: list[dict] = []
-    context = _context(discovery, events=events)
 
-    reply = _model(agent, discovery).respond([], RESUME_TEXT, (), context)
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = _team(db, agent, discovery)
+        receipt = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find me a senior role."),
+            idempotency_key="turn-1",
+        )
+        snapshot = team.snapshot(owner_id, receipt.thread_id)
 
     assert discovery.search_count == 2
-    assert discovery.calls[0]["query"] != discovery.calls[1]["query"]
 
     # The first result set was in front of the model when it chose the second
     # query. That, and not the count, is what "read its own results" means.
@@ -359,32 +723,27 @@ def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results(m
     assert "HRNET Ventures" in second_decision_request
     assert "Graduate Trainee, Process" in second_decision_request
 
-    # Both searches in one turn land in the thread sink, newest first, deduped.
-    assert [job.job_id for result in context.search_results for job in result.jobs] == [
-        201,
-        202,
-        203,
-    ]
-    assert reply.search_query == "staff semiconductor yield engineer"
-    assert agent.consumed == 4
+    # Newest search first, deduped by job_id, persisted in the shape _known_job
+    # resolves against.
+    assert [job.job_id for job in snapshot.case_facts.recommendations] == [203, 201, 202]
+    assert snapshot.case_facts.latest_search_query == "staff semiconductor yield engineer"
+    assert agent.calls == 3
 
 
 @_XFAIL_146
-def test_has_repeated_call_rejects_a_materially_identical_repeat_within_a_turn(monkeypatch):
+def test_has_repeated_call_rejects_a_materially_identical_repeat_within_a_turn():
     """Guardrails limit volume, never choice.
 
     An identical repeat never reaches the discovery port. A materially different
     query does, so the guardrail is not quietly blocking a second search.
     """
-    import resume_agent.models as agent_models
-
-    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
-
     same = {"query": "semiconductor yield engineer", "exclude_junior": True}
     other = {"query": "process integration engineer", "exclude_junior": True}
     discovery = _RecordingDiscovery(
-        [_search_result([_job(301, "Yield Engineer", "Micron")]),
-         _search_result([_job(302, "Process Integration Engineer", "Avago")])]
+        [
+            _search_result([_job(301, "Yield Engineer", "Micron")]),
+            _search_result([_job(302, "Process Integration Engineer", "Avago")]),
+        ]
     )
     agent = ScriptedDeepAgent(
         responses=[
@@ -392,12 +751,11 @@ def test_has_repeated_call_rejects_a_materially_identical_repeat_within_a_turn(m
             tool_call("search_jobs", dict(same), "call-2"),
             tool_call("search_jobs", dict(other), "call-3"),
             submission("Two distinct searches; the duplicate added nothing."),
-            final("submitted"),
         ]
     )
     events: list[dict] = []
 
-    _model(agent, discovery).respond([], RESUME_TEXT, (), _context(discovery, events=events))
+    _model(agent).respond([], RESUME_TEXT, (), _context(discovery, events=events))
 
     results = _tool_results(events, "search_jobs")
     assert len(results) == 3
@@ -408,67 +766,277 @@ def test_has_repeated_call_rejects_a_materially_identical_repeat_within_a_turn(m
 
     # Only the two allowed calls reached the port. The rejected one never did.
     assert [call["query"] for call in discovery.calls] == [same["query"], other["query"]]
-    assert agent.consumed == 5
+    assert agent.calls == 4
 
 
 @_XFAIL_146
-def test_iteration_cap_returns_a_stopped_marker_and_never_raises(monkeypatch):
-    """`GraphRecursionError` must not escape, and the turn must not fabricate a reply.
+def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
+    """An empty search must not empty the panel and 422 the next click.
+
+    Revision 1 replaced `recommendations` whenever the sink was non-empty, so one
+    valid-empty result silently destroyed the previous turn's matches. The command
+    path never had this failure mode: it raises before touching `case_facts`.
+    """
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.interface import SearchJobs, SendMessage, ShortlistJob, StartThread
+
+    discovery = _RecordingDiscovery(
+        [
+            _search_result(
+                [
+                    _job(501, "Yield Enhancement Engineer", "Micron"),
+                    _job(502, "Process Integration Engineer", "GlobalFoundries"),
+                ]
+            ),
+            _search_result([]),
+        ]
+    )
+    agent = ScriptedDeepAgent(
+        responses=[
+            submission("Tell me more about the fabs you have run."),
+            tool_call(
+                "search_jobs",
+                {"query": "quantum photonics architect", "exclude_junior": True},
+                "call-empty",
+            ),
+            submission("Nothing current matched that; the earlier matches still stand."),
+        ]
+    )
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = _team(db, agent, discovery)
+        receipt = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Hello."),
+            idempotency_key="turn-1",
+        )
+        thread_id = receipt.thread_id
+        team.execute(
+            owner_id,
+            SearchJobs(thread_id=thread_id, query="semiconductor yield analytics"),
+            idempotency_key="button-search",
+        )
+        team.execute(
+            owner_id,
+            SendMessage(thread_id=thread_id, message="What about quantum photonics?"),
+            idempotency_key="turn-2",
+        )
+        snapshot = team.snapshot(owner_id, thread_id)
+        # The real consequence of a wiped shortlist is a 422 here, not a stale panel.
+        team.execute(
+            owner_id,
+            ShortlistJob(thread_id=thread_id, job_id=501),
+            idempotency_key="shortlist-501",
+        )
+
+    assert [job.job_id for job in snapshot.case_facts.recommendations] == [501, 502]
+    assert snapshot.case_facts.latest_search_query == "semiconductor yield analytics"
+    # The agent was told the search was fine and simply matched nothing.
+    assert "valid_empty" in _rendered(agent.requests[2])
+
+
+@_XFAIL_146
+def test_a_failed_search_is_surfaced_to_the_agent_and_leaves_the_shortlist_alone():
+    """A source failure is information mid-turn, not the end of the turn.
+
+    It is returned to the model so it can decide what to do, and it changes no
+    durable state.
+    """
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.interface import SearchJobs, SendMessage, StartThread
+
+    discovery = _RecordingDiscovery(
+        [
+            _search_result([_job(601, "Yield Enhancement Engineer", "Micron")]),
+            _failed_search("unavailable"),
+        ]
+    )
+    agent = ScriptedDeepAgent(
+        responses=[
+            submission("Hello, tell me what you are aiming for."),
+            tool_call(
+                "search_jobs",
+                {"query": "staff yield engineer", "exclude_junior": True},
+                "call-fail",
+            ),
+            submission("The job source did not answer just now; your earlier matches stand."),
+        ]
+    )
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = _team(db, agent, discovery)
+        receipt = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Hello."),
+            idempotency_key="turn-1",
+        )
+        thread_id = receipt.thread_id
+        team.execute(
+            owner_id,
+            SearchJobs(thread_id=thread_id, query="semiconductor yield analytics"),
+            idempotency_key="button-search",
+        )
+        team.execute(
+            owner_id,
+            SendMessage(thread_id=thread_id, message="Try a staff-level search."),
+            idempotency_key="turn-2",
+        )
+        snapshot = team.snapshot(owner_id, thread_id)
+
+    assert [job.job_id for job in snapshot.case_facts.recommendations] == [601]
+    assert snapshot.case_facts.latest_search_query == "semiconductor yield analytics"
+    assert "unavailable" in _rendered(agent.requests[2])
+
+
+@_XFAIL_146
+def test_search_query_records_the_query_that_ran_not_the_one_the_model_asked_for():
+    """`search_query` becomes an observation instead of a request.
+
+    The scripted submission deliberately asks for a different query than the one
+    the tool executed. Revision 1's assertion compared `ScriptedDiscovery`'s
+    echoed query against itself and could not fail.
+
+    Two keys, two meanings: `search_query` is what ran, and is what
+    `_query_from_candidate` reads on the next SearchJobs command;
+    `latest_search_query` is the query behind the list currently in
+    `recommendations`.
+    """
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.interface import StartThread
+
+    executed = "staff semiconductor yield engineer"
+    discovery = _RecordingDiscovery([_search_result([_job(701, "Staff Yield Engineer", "NXP")])])
+    agent = ScriptedDeepAgent(
+        responses=[
+            tool_call("search_jobs", {"query": executed, "exclude_junior": True}, "call-1"),
+            submission(
+                "Staff Yield Engineer at NXP is the strongest current match.",
+                search_query="remote product manager",
+            ),
+        ]
+    )
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = _team(db, agent, discovery)
+        receipt = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find me a staff role."),
+            idempotency_key="turn-1",
+        )
+        thread_id = receipt.thread_id
+
+    facts = _raw_case_facts(sessions, thread_id)
+    assert facts["search_query"] == executed
+    assert facts["latest_search_query"] == executed
+    assert "remote product manager" not in json.dumps(facts)
+
+
+@_XFAIL_146
+def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(monkeypatch):
+    """`GraphRecursionError` must not escape, and the turn must not invent an answer.
 
     HTTP 200 is not an acceptance criterion: a turn that never produced a
-    submission is a 503, not a cheerful empty answer.
+    submission is a 503, not a cheerful empty answer. The bound on `calls` is what
+    makes this test able to fail -- `repeat_last` pins `consumed` at 1 whether the
+    recursion limit is honoured or ignored.
     """
     import config
-    import resume_agent.models as agent_models
 
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from models import RecruitmentMessage
+    from recruitment_team.activity_publisher import RecordedActivityPublisher
     from recruitment_team.errors import ConversationUnavailable
+    from recruitment_team.interface import SendMessage, StartThread
 
-    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
     monkeypatch.setattr(config, "COORDINATOR_MAX_TOOL_ITERATIONS", 4)
 
     discovery = _RecordingDiscovery([])
+    opening = ScriptedDeepAgent(responses=[submission("Hello, what are you aiming for?")])
     # repeat_last makes the agent call read_shortlist forever, which is exactly
     # the run that blows through a recursion limit without ever submitting.
-    agent = ScriptedDeepAgent(
+    looping = ScriptedDeepAgent(
         responses=[tool_call("read_shortlist", {}, "call-loop")], repeat_last=True
     )
-    model = _model(agent, discovery)
-    context = _context(discovery)
+    publisher = RecordedActivityPublisher()
 
-    outcome = model.drive(context, [], RESUME_TEXT)
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        receipt = _team(db, opening, discovery).execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Hello."),
+            idempotency_key="turn-1",
+        )
+        thread_id = receipt.thread_id
 
-    assert outcome["stopped"] is True
-    assert outcome["reason"] == "tool_iteration_cap"
+    with sessions() as db:
+        team = _team(db, looping, discovery, publisher)
+        with pytest.raises(ConversationUnavailable) as error:
+            team.execute(
+                owner_id,
+                SendMessage(thread_id=thread_id, message="Keep going."),
+                idempotency_key="turn-2",
+            )
 
-    with pytest.raises(ConversationUnavailable):
-        model.respond([], RESUME_TEXT, (), _context(discovery))
+    assert error.value.failure_type == "tool_iteration_cap"
+
+    # The cap was really honoured. Without this bound the test passes whether the
+    # limit is 4, 40 or ignored.
+    assert 2 <= looping.calls <= 4
+
+    failed = [event for event in publisher.events if event.status == "failed"]
+    assert len(failed) == 1
+    assert failed[0].detail["failure_type"] == "tool_iteration_cap"
+
+    with sessions() as db:
+        roles = [row.role for row in db.query(RecruitmentMessage).all()]
+    assert roles == ["user", "assistant", "user"], (
+        "the capped turn wrote its user message and then nothing: no fabricated reply"
+    )
 
 
 @_XFAIL_146
-def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resumes_it(monkeypatch):
+def test_conversation_unavailable_maps_to_503():
+    """`_raise_http_error` matches by explicit type and ends in a bare `raise`.
+
+    A new `*Unavailable` that nobody adds to the isinstance tuple is a 500.
+    """
+    from fastapi import HTTPException
+
+    from recruitment_team.errors import ConversationUnavailable
+    from recruitment_team.http_routes import _raise_http_error
+
+    with pytest.raises(HTTPException) as error:
+        _raise_http_error(
+            ConversationUnavailable(
+                "coordinator loop hit its tool iteration cap",
+                failure_type="tool_iteration_cap",
+                retryable=True,
+            )
+        )
+
+    assert error.value.status_code == 503
+
+
+@_XFAIL_146
+def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resumes_it():
     """The interrupt, not the prompt, is what stops the next tool.
 
     Turn 1 scripts `ask_candidate` immediately followed by `search_jobs`. If the
     pause were prompt convention, the search would run on a guess. It must not.
     Turn 2's answer resumes the same checkpointed graph and the search then runs.
     """
-    import resume_agent.models as agent_models
-
-    from backend.tests.test_recruitment_team_module import (
-        _owner_with_resume,
-        _role_profiler,
-        _session_factory,
-    )
-    from recruitment_team import RecruitmentTeam
+    from backend.tests.test_recruitment_team_module import _session_factory
     from recruitment_team.activity_publisher import RecordedActivityPublisher
     from recruitment_team.interface import SendMessage, StartThread
-    from recruitment_team.telemetry import RecordedTelemetry
 
-    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
-
-    discovery = _RecordingDiscovery(
-        [_search_result([_job(401, "Staff Yield Engineer", "NXP")])]
-    )
+    discovery = _RecordingDiscovery([_search_result([_job(401, "Staff Yield Engineer", "NXP")])])
     agent = ScriptedDeepAgent(
         responses=[
             tool_call(
@@ -483,21 +1051,15 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
                 "call-search",
             ),
             submission("Staff Yield Engineer at NXP keeps you in semiconductors, as you asked."),
-            final("submitted"),
         ]
     )
+    first_publisher = RecordedActivityPublisher()
+    second_publisher = RecordedActivityPublisher()
 
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
     with sessions() as db:
-        team = RecruitmentTeam(
-            db,
-            _model(agent, discovery),
-            discovery,
-            _role_profiler(),
-            RecordedTelemetry(),
-            RecordedActivityPublisher(),
-        )
+        team = _team(db, agent, discovery, first_publisher)
         first = team.execute(
             owner_id,
             StartThread(resume_version_id=resume_id, message="Find me a role."),
@@ -509,24 +1071,18 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
         "the graph must pause before the next tool executes; a search that ran here "
         "would mean the pause is prompt convention rather than the interrupt"
     )
-    assert agent.consumed == 1
+    assert agent.calls == 1
     assert "Are you open to roles outside semiconductors?" in paused_snapshot.messages[-1].content
     # The pause stays invisible to the transport: setting awaiting_candidate_answer
     # would route the next message to the assessment runner's answer command.
     assert paused_snapshot.workflow_state != "awaiting_candidate_answer"
     assert paused_snapshot.case_facts.recommendations == ()
+    assert _tool_summaries(first_publisher) == ["coordinator called ask_candidate."]
 
     # A separate session and module instance: the resume rides the durable
     # checkpointer, not a live in-memory graph.
     with sessions() as db:
-        team = RecruitmentTeam(
-            db,
-            _model(agent, discovery),
-            discovery,
-            _role_profiler(),
-            RecordedTelemetry(),
-            RecordedActivityPublisher(),
-        )
+        team = _team(db, agent, discovery, second_publisher)
         team.execute(
             owner_id,
             SendMessage(
@@ -540,63 +1096,181 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
     assert discovery.search_count == 1
     assert [job.job_id for job in resumed.case_facts.recommendations] == [401]
     assert "NXP" in resumed.messages[-1].content
-    assert agent.consumed == 4
+    assert agent.calls == 3
+
+    # Resuming replays the interrupted AIMessage with its tool_calls intact
+    # (streaming.py:44-50). Without skip_tool_call_ids the candidate sees the same
+    # question published twice.
+    assert _tool_summaries(second_publisher) == ["coordinator called search_jobs."]
 
 
 @_XFAIL_146
-def test_propose_resume_edit_rejects_a_new_numeric_fact_and_a_dropped_one(monkeypatch):
-    """Invariant 3 holds on the conversational path because it is the same function.
+def test_a_proposed_edit_reaches_the_pending_table_and_the_rejections_reach_the_model():
+    """Invariant 3 and invariant 5 hold on the conversational path.
 
-    Three proposals against `Led team of 12 engineers.`:
+    Three proposals against the real leadership bullet:
       1. introduces `40`     -> rejected, the number is named
       2. drops `12`          -> rejected by run_all_gates' fact_preservation gate
       3. rewords, keeps `12` -> accepted, and stays pending
+
+    Asserted through `team.proposed_edits`, which is what a candidate can retrieve
+    and what proves the sink was drained into `ProposedResumeEdit`. Asserting on
+    the context's own list would pass with the drain deleted.
     """
-    import resume_agent.models as agent_models
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.interface import StartThread
 
-    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
-
+    block_id = _leadership_block_id()
+    accepted_rewrite = "Led a team of 12 engineers delivering semiconductor yield analytics."
     discovery = _RecordingDiscovery([])
     agent = ScriptedDeepAgent(
         responses=[
             tool_call(
                 "propose_resume_edit",
-                {"block_id": "b1", "rewrite": "Led a team of 40 engineers."},
+                {
+                    "block_id": block_id,
+                    "rewrite": "Led a team of 40 engineers building semiconductor yield analytics.",
+                },
                 "call-1",
             ),
             tool_call(
                 "propose_resume_edit",
-                {"block_id": "b1", "rewrite": "Led the platform engineering team."},
+                {"block_id": block_id, "rewrite": "Led the platform engineering team."},
                 "call-2",
             ),
             tool_call(
                 "propose_resume_edit",
-                {"block_id": "b1", "rewrite": "Led a team of 12 engineers."},
+                {"block_id": block_id, "rewrite": accepted_rewrite},
                 "call-3",
             ),
             submission("Drafted one evidence-safe rewrite of your leadership bullet."),
-            final("submitted"),
         ]
     )
-    events: list[dict] = []
-    context = _context(discovery, events=events)
 
-    _model(agent, discovery).respond([], RESUME_TEXT, (), context)
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = _team(db, agent, discovery)
+        receipt = team.execute(
+            owner_id,
+            StartThread(
+                resume_version_id=resume_id,
+                message="Sharpen my leadership bullet.",
+            ),
+            idempotency_key="turn-1",
+        )
+        pending = team.proposed_edits(owner_id, receipt.thread_id)
 
-    results = _tool_results(events, "propose_resume_edit")
-    assert len(results) == 3
+    # Exactly one edit survived, it is retrievable, and it is pending. No agent
+    # path writes a resume.
+    assert len(pending) == 1
+    assert pending[0]["status"] == "pending"
+    assert pending[0]["applicable"] is True
+    assert pending[0]["original"] == LEADERSHIP_BULLET
+    assert pending[0]["rewrite"] == accepted_rewrite
 
-    assert results[0]["accepted"] is False
-    assert "40" in results[0]["reason"]
+    # Both rejections came back to the model with a reason it could act on.
+    assert "40" in _rendered(agent.requests[1])
+    assert "Missing facts from original: 12" in _rendered(agent.requests[2])
+    assert agent.calls == 4
 
-    assert results[1]["accepted"] is False
-    assert "fact" in results[1]["reason"].lower() or "12" in results[1]["reason"]
 
-    assert results[2]["accepted"] is True
-    assert results[2]["application_status"] == "pending_user_review"
+@_XFAIL_146
+def test_get_conversation_model_returns_the_loop_adapter():
+    """The one-line wiring change, guarded.
 
-    # Exactly one edit survived, and it is pending. No agent path writes a resume.
-    assert len(context.proposed_edits) == 1
-    assert context.proposed_edits[0]["status"] == "pending"
-    assert context.proposed_edits[0]["rewrite"] == "Led a team of 12 engineers."
-    assert agent.consumed == 5
+    Every existing reference to `get_conversation_model` in the suite replaces the
+    callable, and every test above injects the adapter by hand. Without this the
+    loop can be built, the suite can go green, and `http_routes.py:91` can keep
+    returning the single-shot adapter with no signal at all.
+    """
+    from recruitment_team import DeepAgentConversationModel
+    from recruitment_team.http_routes import get_conversation_model
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    assert isinstance(
+        get_conversation_model(telemetry=RecordedTelemetry()),
+        DeepAgentConversationModel,
+    )
+
+
+@_XFAIL_146
+def test_a_transport_turn_reaches_the_loop_without_overriding_the_dependency(monkeypatch):
+    """End to end through FastAPI with the real DI graph for the conversation model.
+
+    `get_conversation_model` is deliberately NOT overridden. Only the model factory
+    is patched, at the seam `create_resume_agent` uses. If `http_routes.py:91` still
+    returns `LangChainConversationModel`, the scripted structured-output call is
+    never consumed and this fails.
+
+    `get_role_success_profiler` is overridden because it eagerly constructs a live
+    SEA-LION client (`role_success.py:354-360`). That is unrelated to the wiring
+    under test.
+    """
+    from fastapi.testclient import TestClient
+
+    import main
+    import resume_agent.agent as agent_module
+    from auth import get_current_user
+    from backend.tests.test_recruitment_team_module import _role_profiler, _session_factory
+    from database import get_db
+    from recruitment_team.http_routes import get_job_discovery, get_role_success_profiler
+
+    discovery = _RecordingDiscovery(
+        [_search_result([_job(801, "Yield Enhancement Engineer", "Micron")])]
+    )
+    agent = ScriptedDeepAgent(
+        responses=[
+            tool_call(
+                "search_jobs",
+                {"query": "semiconductor yield analytics", "exclude_junior": True},
+                "call-1",
+            ),
+            submission("Yield Enhancement Engineer at Micron is your closest current match."),
+        ]
+    )
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+
+    def override_db():
+        with sessions() as db:
+            yield db
+
+    monkeypatch.setattr(agent_module, "create_agent_model", lambda *a, **kw: agent)
+    main.app.dependency_overrides[get_db] = override_db
+    main.app.dependency_overrides[get_current_user] = lambda: type(
+        "AuthenticatedUser",
+        (),
+        {"id": owner_id},
+    )()
+    main.app.dependency_overrides[get_job_discovery] = lambda: discovery
+    main.app.dependency_overrides[get_role_success_profiler] = lambda: _role_profiler()
+    try:
+        client = TestClient(main.app)
+        started = client.post(
+            "/api/recruitment-team/threads",
+            json={
+                "resume_version_id": resume_id,
+                "message": "Find me yield analytics roles.",
+                "idempotency_key": "http-coordinator-loop",
+            },
+        )
+        assert started.status_code == 201
+        thread_id = started.json()["thread_id"]
+        state = client.get(f"/api/recruitment-team/threads/{thread_id}")
+        assert state.status_code == 200
+        body = state.json()
+    finally:
+        for dependency in (
+            get_db,
+            get_current_user,
+            get_job_discovery,
+            get_role_success_profiler,
+        ):
+            main.app.dependency_overrides.pop(dependency, None)
+
+    assert discovery.search_count == 1
+    assert [job["job_id"] for job in body["case_facts"]["recommendations"]] == [801]
+    assert "Micron" in body["messages"][-1]["content"]
+    assert agent.calls == 2
