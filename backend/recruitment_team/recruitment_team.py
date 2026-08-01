@@ -114,11 +114,31 @@ AUTOPILOT_MARKER = "[autopilot]"
 # Enough of a career that an entry-level posting is an insult rather than an option.
 EXPERIENCED_CANDIDATE_YEARS = 5
 _YEAR = re.compile(r"\b(19[89]\d|20[0-4]\d)\b")
+# Education dates are not career length.
+_EDUCATION_LINE = re.compile(
+    r"\b(o[-\s]?level|a[-\s]?level|bachelor|master|diploma|degree|university"
+    r"|college|polytechnic|school|graduated|gce|gpa|honours|honors)\b",
+    re.IGNORECASE,
+)
 
 
 def _career_years(resume_text: str) -> int:
-    """Years from the earliest plausible date in the resume until now."""
-    years = [int(match) for match in _YEAR.findall(resume_text)]
+    """Years since the candidate started working.
+
+    Every year in the document except the ones sitting on an education line.
+    Counting the whole document turns school into career: a resume listing
+    A-Levels in 2004 reported 22 years for someone who started work in 2011,
+    and a graduate listing O-Levels would be handed a career they have not
+    had, then filtered away from the entry-level roles they need.
+
+    Line-wise on purpose. Reading the parsed section tree instead returns
+    nothing at all for a LinkedIn PDF export, whose two columns interleave.
+    """
+    years: list[int] = []
+    for line in resume_text.splitlines():
+        if _EDUCATION_LINE.search(line):
+            continue
+        years.extend(int(match) for match in _YEAR.findall(line))
     if not years:
         return 0
     return max(0, _utcnow().year - min(years))

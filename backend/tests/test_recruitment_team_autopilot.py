@@ -108,3 +108,18 @@ def test_a_stated_level_overrides_the_resume():
     resume = SimpleNamespace(resume_text="Tax Senior 2011 - 2016.")
 
     assert RecruitmentTeam._wants_experienced_roles(thread, resume) is False
+
+
+def test_education_years_do_not_count_as_career_length():
+    """A graduate must keep access to the entry-level roles they need."""
+    resume = SimpleNamespace(resume_text=(
+        "GCE O Level, 2018\nBachelor of Computing, 2025\nIntern, ACME 2024 - 2025"
+    ))
+
+    assert RecruitmentTeam._wants_experienced_roles(_thread({}), resume) is False
+
+
+def test_an_old_degree_does_not_inflate_a_short_career():
+    resume = SimpleNamespace(resume_text="Bachelor of Arts, 1998\nAnalyst, Bank 2015 - 2020")
+
+    assert RecruitmentTeam._wants_experienced_roles(_thread({}), resume) is True
