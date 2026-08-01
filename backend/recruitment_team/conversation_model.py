@@ -27,18 +27,25 @@ class _PreferenceUpdatePayload(BaseModel):
 class _ConversationPayload(BaseModel):
     reply: str = Field(min_length=1)
     preference_updates: list[_PreferenceUpdatePayload] = Field(default_factory=list)
+    search_query: str = ""
 
 
 @tool(args_schema=_ConversationPayload)
 def submit_recruitment_conversation(
     reply: str,
     preference_updates: list[_PreferenceUpdatePayload],
+    search_query: str = "",
 ) -> str:
-    """Submit one recruitment-team reply and any durable candidate preferences.
+    """Submit one recruitment-team reply, durable preferences, and a search phrase.
 
     Use after every conversational turn. Each preference update must be explicitly
     stated in the latest user message and include an exact supporting quote. Do not
     use this tool to infer preferences from a resume or an earlier message.
+
+    search_query is what to look for, phrased only in the positive: the roles the
+    candidate wants, in the words a posting would use. Job search matches on
+    meaning, so it cannot express "not" -- naming what to avoid retrieves exactly
+    that. Leave it empty when the target is still unclear.
     """
     return "submitted"
 
@@ -50,6 +57,7 @@ class ModelReply:
     input_tokens: int | None = None
     output_tokens: int | None = None
     preference_updates: tuple[PreferenceUpdate, ...] = ()
+    search_query: str = ""
 
 
 class ConversationModel(Protocol):
@@ -218,6 +226,7 @@ class LangChainConversationModel:
                 input_tokens=input_tokens or None,
                 output_tokens=output_tokens or None,
                 preference_updates=updates,
+                search_query=payload.search_query.strip(),
             )
         raise ValueError(f"conversation structured output failed validation: {failure}")
 

@@ -42,6 +42,17 @@ Exploration-turn rules:
   such as potential, estimated, projected, target, approximately, and candidate-reported.
 - Prefer a short current-understanding delta over a new full resume summary.
 
+Search-phrase rules:
+- Every turn, set search_query to the roles worth looking at now, in the words a
+  job posting would use. Leave it empty only while the direction is genuinely open.
+- Write it positively. Job search matches on meaning and has no way to express
+  "not", so naming what to avoid retrieves exactly that.
+- Name the intersection where a candidate has one. Someone moving from accounting
+  into AI is a candidate for AI work inside finance, audit and tax, and that is
+  invisible to a phrase that says only "AI engineer".
+- Include the adjacent fields a candidate may not have considered themselves,
+  where their evidence supports it.
+
 Example:
 Resume: "preventing USD 100M+ in potential losses"
 Allowed: "The resume reports preventing USD 100M+ in potential losses."

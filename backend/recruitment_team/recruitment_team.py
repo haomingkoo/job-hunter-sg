@@ -67,6 +67,8 @@ from .candidate_profile_store import (
     CandidateProfileCheckpointMismatch,
     SQLAlchemyCandidateProfileStore,
 )
+from job_visibility import JUNIOR_SENIORITY_LABELS
+
 from .discovery import DiscoveryPort, JobPostingVariant, JobSnapshot, JobSource
 from .role_success import (
     CandidateEvidenceMatch,
@@ -100,14 +102,26 @@ def _utcnow() -> datetime:
 FIRST_ATTEMPT = 1
 # A derived query stands in for a typed one, so keep it to a search-sized phrase.
 MAX_DERIVED_QUERY_CHARS = 200
-# Only what the candidate wants belongs in a similarity query. An embedding has
-# no way to represent "not": searching "not computer vision" scores computer
-# vision roles higher, and a stray "Senior" outranks the role itself. Exclusions
-# and hard limits are constraints to filter on, not text to match against.
+# Fallback for turns where the model composed no phrase. Only what the candidate
+# wants belongs in a similarity query: an embedding has no way to represent
+# "not", so searching "not computer vision" scores computer vision roles higher.
 SEMANTIC_PREFERENCE_FIELDS = frozenset({"role"})
 # A UI-sent opener is an instruction to the team, not something the candidate
 # wants searched, so it must never become the query.
 AUTOPILOT_MARKER = "[autopilot]"
+
+
+# Enough of a career that an entry-level posting is an insult rather than an option.
+EXPERIENCED_CANDIDATE_YEARS = 5
+_YEAR = re.compile(r"\b(19[89]\d|20[0-4]\d)\b")
+
+
+def _career_years(resume_text: str) -> int:
+    """Years from the earliest plausible date in the resume until now."""
+    years = [int(match) for match in _YEAR.findall(resume_text)]
+    if not years:
+        return 0
+    return max(0, _utcnow().year - min(years))
 
 
 def _trim_to_word(text: str, limit: int) -> str:
@@ -318,7 +332,7 @@ class RecruitmentTeam:
 
             try:
                 if isinstance(command, SearchJobs):
-                    reply, completion_detail = self._search_jobs(thread, command, message)
+                    reply, completion_detail = self._search_jobs(thread, command, message, resume)
                     completion_member = "coordinator"
                 elif isinstance(command, BuildCandidateProfile):
                     reply, completion_detail = self._build_candidate_profile(
@@ -470,6 +484,8 @@ class RecruitmentTeam:
                 raise InvalidCommand(update_error)
             if reply.preference_updates:
                 self._merge_preference_updates(thread, reply, latest_user)
+            if reply.search_query:
+                self._remember_search_query(thread, reply.search_query)
             model_span.set_attribute("model", reply.model_name)
             model_span.set_attribute("prompt_version", CONVERSATION_PROMPT_VERSION)
             model_span.set_attribute("preference_update_count", len(reply.preference_updates))
@@ -489,9 +505,16 @@ class RecruitmentTeam:
         said nothing at all, and searching their resume beats searching whatever
         instruction the UI happened to send on their behalf.
 
-        Only the role preference reaches the query. See SEMANTIC_PREFERENCE_FIELDS.
+        The model that just read the thread composes the phrase itself, so it can
+        turn "not computer vision, senior, finance" into terms a posting would
+        actually use. SEMANTIC_PREFERENCE_FIELDS is the fallback for turns where
+        it offered none.
         """
         facts = thread.case_facts or {}
+        composed = str(facts.get("search_query") or "").strip()
+        if composed:
+            return _trim_to_word(composed, MAX_DERIVED_QUERY_CHARS)
+
         preferences = " ".join(
             str(fact.get("value") or "")
             for fact in (facts.get("preferences") or [])
@@ -555,6 +578,7 @@ class RecruitmentTeam:
         thread: RecruitmentThread,
         command: SearchJobs,
         resolved_query: str,
+        resume: ResumeVersion,
     ) -> tuple[ModelReply, dict]:
         with self._telemetry.operation(
             "job.search",
@@ -563,7 +587,10 @@ class RecruitmentTeam:
             },
         ) as search_span:
             search_span.set_attribute("query_derived", not command.query.strip())
-            result = self._discovery.search_jobs(resolved_query)
+            result = self._discovery.search_jobs(
+                resolved_query,
+                exclude_junior=self._wants_experienced_roles(thread, resume),
+            )
             search_span.set_attribute("valid_empty", result.valid_empty)
             search_span.set_attribute("result_count", len(result.jobs))
             search_span.set_attribute("truncated", result.truncated)
@@ -1604,6 +1631,30 @@ class RecruitmentTeam:
             )
             for item in facts.get("preferences", [])
         )
+
+    @staticmethod
+    def _wants_experienced_roles(thread: RecruitmentThread, resume: ResumeVersion) -> bool:
+        """True when the candidate is past the junior tier.
+
+        Similarity cannot tell a traineeship from senior work in the same field,
+        so this has to be enforced as a filter. A stated level wins, because a
+        candidate stepping down deliberately is entitled to. Otherwise the resume
+        decides: nobody with a decade behind them should be offered an
+        internship because they had not thought to rule one out.
+        """
+        for fact in (thread.case_facts or {}).get("preferences") or []:
+            if isinstance(fact, dict) and fact.get("field") == "seniority":
+                value = str(fact.get("value") or "").strip().lower()
+                if value:
+                    return value not in JUNIOR_SENIORITY_LABELS
+        return _career_years(resume.resume_text or "") >= EXPERIENCED_CANDIDATE_YEARS
+
+    @staticmethod
+    def _remember_search_query(thread: RecruitmentThread, query: str) -> None:
+        """Keep the phrase the model wrote for the latest turn."""
+        facts = dict(thread.case_facts)
+        facts["search_query"] = _trim_to_word(query.strip(), MAX_DERIVED_QUERY_CHARS)
+        thread.case_facts = facts
 
     @staticmethod
     def _merge_preference_updates(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_
@@ -36,3 +37,24 @@ def apply_public_job_visibility(query, include_old: bool = False):
             ScrapedJob.closing_date >= today,
         ),
     )
+
+
+# MyCareersFuture and Careers@Gov seniority labels, grouped so a candidate can be
+# kept away from tiers below their own. 42% of the live corpus sits in the junior
+# tier, which is why an experienced candidate otherwise gets shown traineeships.
+JUNIOR_SENIORITY_LABELS = frozenset({
+    "fresh/entry level", "entry level", "junior executive", "non-executive",
+    "intern", "internship", "traineeship", "student",
+})
+# Titles carry it even when the seniority column does not.
+_JUNIOR_TITLE = re.compile(
+    r"\b(intern|internship|trainee|traineeship|apprentice|fresh\s*grad\w*|entry[-\s]?level)\b",
+    re.IGNORECASE,
+)
+
+
+def is_junior_posting(seniority: str | None, title: str | None) -> bool:
+    """True when a posting is pitched below an experienced hire."""
+    if (seniority or "").strip().lower() in JUNIOR_SENIORITY_LABELS:
+        return True
+    return bool(_JUNIOR_TITLE.search(title or ""))
