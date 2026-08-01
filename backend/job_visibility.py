@@ -53,8 +53,29 @@ _JUNIOR_TITLE = re.compile(
 )
 
 
-def is_junior_posting(seniority: str | None, title: str | None) -> bool:
-    """True when a posting is pitched below an experienced hire."""
-    if (seniority or "").strip().lower() in JUNIOR_SENIORITY_LABELS:
-        return True
-    return bool(_JUNIOR_TITLE.search(title or ""))
+# Employers self-report seniority and often get it wrong: the corpus holds
+# "Non-executive" roles paying $18,000. Junior tiers sit at a $3,600-3,800 p90
+# and Executive at $5,000, so pay at or above this contradicts a junior label
+# outright, and the pay is the more honest signal.
+JUNIOR_LABEL_SALARY_CEILING = 5000
+
+
+def is_junior_posting(
+    seniority: str | None,
+    title: str | None,
+    salary_floor: int | float | None = None,
+) -> bool:
+    """True when a posting is genuinely pitched below an experienced hire.
+
+    Salary overrules the label. Dropping a $12,500 project manager because its
+    employer ticked "Non-executive" costs the candidate more than showing it.
+    """
+    looks_junior = (
+        (seniority or "").strip().lower() in JUNIOR_SENIORITY_LABELS
+        or bool(_JUNIOR_TITLE.search(title or ""))
+    )
+    if not looks_junior:
+        return False
+    if salary_floor and salary_floor >= JUNIOR_LABEL_SALARY_CEILING:
+        return False
+    return True
