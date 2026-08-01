@@ -113,6 +113,10 @@ class LangChainConversationModel:
             model = create_agent_model(
                 timeout=config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
                 max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
+                max_completion_tokens=max(
+                    config.RECRUITMENT_CONVERSATION_MAX_TOKENS,
+                    config.SMART_MIN_MAX_TOKENS,
+                ),
             )
         self._model = model
         self._telemetry = telemetry or OpenTelemetryRecorder()

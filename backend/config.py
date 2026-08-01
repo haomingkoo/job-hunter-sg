@@ -73,6 +73,10 @@ SEALION_DISABLE_THINKING_MODELS: tuple[str, ...] = _csv_env(
 # SMART is a reasoning model — under a tight budget it spends all tokens "thinking"
 # and returns empty. Floor its max_tokens at call sites that use it.
 SMART_MIN_MAX_TOKENS: int = _int_env("SMART_MIN_MAX_TOKENS", 3000)
+# The coordinator runs on a reasoning tier, which spends tokens thinking before it
+# writes anything. Left unset it had no floor at all, so the budget the reply itself
+# got was whatever thinking did not consume, and the replies came out thin.
+RECRUITMENT_CONVERSATION_MAX_TOKENS: int = _int_env("RECRUITMENT_CONVERSATION_MAX_TOKENS", 4000)
 
 # ── Resume deep-agent v2 knobs ───────────────────────────────────────────────
 AGENT_MAX_TOOL_ITERATIONS: int = _positive_int_env("AGENT_MAX_TOOL_ITERATIONS", 20)
