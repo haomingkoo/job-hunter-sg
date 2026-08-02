@@ -233,10 +233,7 @@ def score_jd_quality(
     salary: str,
     company: str,
 ) -> dict:
-    """
-    Score JD quality 0-100 across dimensions.
-    Higher = more complete and informative.
-    """
+    """Score JD quality 0-100; higher means more complete and informative."""
     parsed = parsed_jd if isinstance(parsed_jd, dict) else {}
     desc = (description or "").strip()
     word_count = len(desc.split())
@@ -320,10 +317,7 @@ def compute_content_hash(description: str) -> str:
 
 
 def sanitize_for_llm(text: str) -> str:
-    """
-    Strip potential injection patterns from text before sending to LLM.
-    Preserves legitimate JD content.
-    """
+    """Strip injection patterns before the text reaches an LLM, keeping real JD content."""
     cleaned = text
     cleaned = re.sub(r"base64[:\s]+[A-Za-z0-9+/=]{20,}", "[REMOVED_ENCODED]", cleaned)
     cleaned = re.sub(

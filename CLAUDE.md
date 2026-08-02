@@ -32,8 +32,13 @@ npm test                                # vitest run
 
 ### Tests
 
-799 tests across two roots. Both need `PYTHONPATH=backend`, and the root `conftest.py` forces
+919 tests across two roots. Both need `PYTHONPATH=backend`, and the root `conftest.py` forces
 `DATABASE_URL` to a temp SQLite file so a run can never touch `jobhunter.db`. Run from the repo root:
+
+A green suite is necessary and not sufficient on the agent paths. All 919 pass while
+"Improve my resume for these roles" returns a 503 in a browser, because a scripted agent
+terminates by construction and cannot reproduce a model that will not stop. Drive the real
+UI, or run `backend/scripts/trace_coordinator_turn.py`, before believing a turn works.
 
 ```bash
 PYTHONPATH=backend python -m pytest backend/tests tests -q     # what CI runs

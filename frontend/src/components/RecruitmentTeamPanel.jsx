@@ -367,13 +367,29 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
 
   return (
     <section aria-labelledby="recruitment-team-title" className="space-y-5">
-      <header className="rounded-3xl bg-[#384959] px-6 py-6 text-white sm:px-8">
-        <div className="flex items-start justify-between gap-3">
+      {/* Once a conversation exists the pitch is dead weight above every reply,
+          so the header collapses to a title bar and the explanation stays where
+          it is still doing a job: the empty state. */}
+      <header
+        className={`rounded-3xl bg-[#384959] text-white ${
+          threadId ? "px-5 py-3 sm:px-6" : "px-6 py-6 sm:px-8"
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="rounded-2xl bg-white/10 p-3"><Users size={22} /></div>
+            <div className={`rounded-2xl bg-white/10 ${threadId ? "p-2" : "p-3"}`}>
+              <Users size={threadId ? 18 : 22} />
+            </div>
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#BDDDFC]">V3</p>
-              <h1 id="recruitment-team-title" className="text-2xl font-semibold">AI Recruitment Team</h1>
+              {!threadId && (
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#BDDDFC]">V3</p>
+              )}
+              <h1
+                id="recruitment-team-title"
+                className={threadId ? "text-base font-semibold" : "text-2xl font-semibold"}
+              >
+                AI Recruitment Team
+              </h1>
             </div>
           </div>
           {threadId && (
@@ -387,9 +403,11 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
             </button>
           )}
         </div>
-        <p className="mt-4 max-w-2xl text-sm leading-relaxed text-[#dbeaf8]">
-          Explore your next move with a persistent team that preserves evidence and shows real activity.
-        </p>
+        {!threadId && (
+          <p className="mt-4 max-w-2xl text-sm leading-relaxed text-[#dbeaf8]">
+            Explore your next move with a persistent team that preserves evidence and shows real activity.
+          </p>
+        )}
       </header>
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">

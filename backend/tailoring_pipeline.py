@@ -40,8 +40,6 @@ from validation_gates import validate_and_fix
 
 log = logging.getLogger("jobhunter.pipeline")
 
-# ── Pipeline state ──────────────────────────────────────────────────────────
-
 STAGES = [
     "analyze",        # 0: local structure + baseline
     "strategize",     # 1: 70B strategic analysis
@@ -247,9 +245,6 @@ def _issue_guidance_for_bullet(issues: list[str]) -> str:
     return " ".join(guidance) or "Improve clarity while preserving the original facts."
 
 
-# ── Stage implementations ───────────────────────────────────────────────────
-
-
 def _stage_0_analyze(
     resume_text: str,
     parsed_jd: dict,
@@ -312,7 +307,6 @@ def _stage_1_strategize(
 
     state.update_progress(0, 1, "AI analyzing resume strategy (70B)...")
 
-    # Build compact bullet summary for the LLM
     bullet_summary = []
     for b in bullets:
         issues = ", ".join(b.get("issues", [])) or "none"
@@ -461,7 +455,6 @@ def _stage_3_bullet_rewrite(
         state.update_progress(0, 0, "No bullets need rewriting.")
         return changes
 
-    # Batch bullets into groups of 4 for efficiency
     batch_size = 4
     total = len(rewrite_bullets)
     completed = 0
@@ -744,7 +737,6 @@ def _stage_5_full_polish(
     if summary_was_missing:
         summary_section = _ensure_summary_section(structured)
 
-    # Build context from the polished bullets
     bullet_context = []
     for b in get_all_bullets(structured)[:12]:
         bullet_context.append(f"- {b['text']}")
@@ -893,19 +885,12 @@ def _stage_6_validate(
     }
 
 
-# ── ATS gap report builder ──────────────────────────────────────────────────
-
-
 def _build_ats_gap_report(
     structured: dict,
     missing_skills: list[str],
     parsed_jd: dict,
 ) -> list[dict]:
-    """Build actionable ATS gap report: what's missing and WHERE to add it.
-
-    For each missing skill, suggests the best section and entry to insert it,
-    or flags it as needing user input.
-    """
+    """The best section and entry to add each missing skill to, or a flag that it needs user input."""
     if not missing_skills:
         return []
 
@@ -965,7 +950,6 @@ def _build_ats_gap_report(
             "needs_user_input": best_section == "skills" or best_entry is None,
         })
 
-    # Sort: required first, then by whether user input is needed
     gaps.sort(key=lambda g: (not g["required"], g["needs_user_input"]))
     return gaps
 
@@ -1010,9 +994,6 @@ def _update_bullet_text(structured: dict, bullet_id: str, new_text: str) -> bool
                     bullet["text"] = new_text
                     return True
     return False
-
-
-# ── Main pipeline runner ────────────────────────────────────────────────────
 
 
 def run_pipeline(

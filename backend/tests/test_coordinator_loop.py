@@ -36,9 +36,6 @@ from backend.tests.scripted_deep_agent import (
 )
 
 
-# ── no live model, ever ──────────────────────────────────────────────────────
-
-
 @pytest.fixture(autouse=True)
 def _no_live_model(monkeypatch):
     """`create_agent_model` must never be reached from this file.
@@ -68,9 +65,6 @@ def _no_live_model(monkeypatch):
 
     monkeypatch.setattr(agent_module, "create_agent_model", _explode)
     monkeypatch.setattr(models_module, "create_agent_model", _explode)
-
-
-# ── fixtures ─────────────────────────────────────────────────────────────────
 
 
 RESUME_TEXT = (
@@ -301,9 +295,6 @@ def _raw_case_facts(sessions, thread_id: str) -> dict:
         return dict(thread.case_facts)
 
 
-# ── the harness itself, guarded ──────────────────────────────────────────────
-
-
 def _echo_tool(executed: list[str]):
     from langchain_core.tools import tool
 
@@ -400,9 +391,6 @@ def test_repeat_last_freezes_consumed_so_only_calls_can_bound_a_runaway_loop():
 
     assert agent.consumed == 1
     assert agent.calls == 5
-
-
-# ── the specification ────────────────────────────────────────────────────────
 
 
 def test_create_resume_agent_accepts_a_coordinator_prompt_and_a_response_format():

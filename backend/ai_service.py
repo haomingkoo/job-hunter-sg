@@ -117,8 +117,6 @@ def _get_api_key() -> str:
         return key
 
 
-# ── Failure tracking & alerting ─────────────────────────────────────────────
-
 _failure_count = 0
 _failure_lock = threading.Lock()
 _last_alert_time = 0
@@ -421,9 +419,6 @@ def get_ai_status() -> dict:
     }
 
 
-# ── Public AI Features ──────────────────────────────────────────────────────
-
-
 def coach_resume(resume_text: str, job_description: str = "") -> Optional[dict]:
     """AI-powered resume coaching."""
     system = """You are an expert career coach with 10+ years of experience helping job seekers in Singapore land roles at top companies and government agencies. You've reviewed thousands of resumes and know exactly what hiring managers and ATS systems look for.
@@ -676,7 +671,6 @@ If keyword only fits in Skills:
     if not content:
         return None
 
-    # Parse the exact object shape requested above.
     try:
         payload = json.loads(content)
         suggestions = payload.get("suggestions", []) if isinstance(payload, dict) else []

@@ -207,9 +207,6 @@ def _raw_case_facts(sessions, thread_id: str) -> dict:
         return dict(thread.case_facts)
 
 
-# ── read_shortlist ───────────────────────────────────────────────────────────
-
-
 def test_read_shortlist_returns_the_postings_with_enough_to_reason_about():
     """Naming a job is not the whole bug.
 
@@ -328,9 +325,6 @@ def test_read_shortlist_refuses_an_assessment_context():
     assert "recommendations" not in result
 
 
-# ── the shared tools on a conversation context ───────────────────────────────
-
-
 def test_read_target_job_and_read_candidate_evidence_say_what_is_missing():
     """A conversation turn has neither, so both must explain rather than crash.
 
@@ -353,11 +347,11 @@ def test_read_target_job_and_read_candidate_evidence_say_what_is_missing():
     # coordinator called this twelve times against a profile-less thread on
     # 2026-08-02 because the refusal named a gap without naming an alternative.
     assert "evidence profile" in evidence["reason"]
-    assert "thread_state" in evidence["reason"]
+    # Name the block the resume is actually in, and say the IDs are in it. The
+    # refusal used to point at thread_state, which never carries the resume.
+    assert "resume block" in evidence["reason"]
+    assert "propose_resume_edit" in evidence["reason"]
     assert evidence["retry"] is False
-
-
-# ── search_jobs ──────────────────────────────────────────────────────────────
 
 
 def test_search_jobs_goes_through_the_port_with_the_args_the_agent_chose():
@@ -459,9 +453,6 @@ def test_search_jobs_outside_a_conversation_never_touches_the_port():
 
     assert result["ok"] is False
     assert result["failure_type"] == "business"
-
-
-# ── the crux: what the tools find has to survive the turn ────────────────────
 
 
 def test_a_search_run_inside_a_turn_reaches_the_thread_and_survives_a_shortlist_click():
@@ -833,6 +824,82 @@ def test_a_rewrite_drafted_in_a_turn_reaches_the_pending_table_and_stays_pending
 
         stored = db.query(ResumeVersion).filter(ResumeVersion.id == resume_id).one()
         assert stored.resume_text == resume_text
+
+
+def test_an_unknown_block_refusal_names_the_blocks_the_agent_may_edit():
+    """Found live on 2026-08-02, in a browser, on the exact sentence #146 exists
+    to make work: "Improve my resume for these roles."
+
+    Block IDs are opaque hashes (`b_87156122e7ce1066fa93`). Nothing the agent can
+    read contains one until a study has run, so on a profile-less thread it
+    guesses, is told only "Unknown resume block.", guesses again, then repeats
+    the identical call until the turn dies on the iteration cap. That turn is a
+    503, and it is every candidate's second message.
+
+    The refusal has to carry the IDs. Same lesson as read_candidate_evidence:
+    a refusal a model cannot act on is a refusal it will retry.
+    """
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import propose_resume_edit
+
+    from resume_document import create_resume_document
+
+    document = create_resume_document(
+        "HAOMING KOO\n\nEXPERIENCE\n\nLed the yield ramp for four fabs.\n"
+    )
+    context = _context(_RecordingDiscovery([]), resume_document=document)
+
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        answer = propose_resume_edit.invoke(
+            {"block_id": "experience-bullet-1", "rewrite": "Led the yield ramp."}
+        )
+
+    assert answer["accepted"] is False
+    known = [block["id"] for block in document["blocks"]]
+    assert answer["known_block_ids"] == known
+    # Every id, not a sample: a truncated list is a refusal the agent can still
+    # only guess against, which is the bug.
+    assert all(block_id in answer["reason"] for block_id in known)
+
+
+def test_a_profile_less_turn_shows_the_agent_the_ids_it_must_cite():
+    """The turn payload, not the tool. Fixing only the refusal would still cost a
+    wasted call and a wasted step on every first edit.
+
+    Before the study runs, the resume reaches the agent as raw text, and raw text
+    has no block IDs in it. So the same payload that carries the resume has to
+    carry the IDs that make it citable.
+    """
+    from recruitment_team.coordinator.model import DeepAgentConversationModel
+    from recruitment_team.interface import Message
+
+    from resume_document import create_resume_document
+
+    resume_text = "HAOMING KOO\n\nEXPERIENCE\n\nLed the yield ramp for four fabs.\n"
+    document = create_resume_document(resume_text)
+    context = _context(_RecordingDiscovery([]), resume_document=document)
+
+    from datetime import datetime
+
+    payload = DeepAgentConversationModel()._new_turn_payload(
+        context,
+        [
+            Message(
+                message_id=1,
+                role="user",
+                content="Improve my resume for these roles.",
+                run_id="run-1",
+                created_at=datetime(2026, 8, 2, 21, 15),
+            )
+        ],
+        (),
+        resume_text,
+    )
+
+    turn = payload["messages"][-1].content
+    for block in document["blocks"]:
+        assert block["id"] in turn
+        assert block["text"] in turn
 
 
 def test_a_rejected_turn_persists_no_search_it_ran():

@@ -107,7 +107,9 @@ def read_candidate_evidence() -> dict:
             "reason": (
                 "No evidence profile exists for this thread yet, and calling this "
                 "again will not create one. The candidate's resume is in the "
-                "thread_state block of this turn: read it from there instead."
+                "resume block of this turn, one block per line as "
+                "'block_id: text': read it from there instead, and cite those "
+                "block IDs in propose_resume_edit."
             ),
             "retry": False,
         }
@@ -244,9 +246,21 @@ def propose_resume_edit(block_id: str, rewrite: str) -> dict:
             "block_id": block_id,
             "checkpoint_required": True,
         }
-    block = next((b for b in document.get("blocks", []) if b.get("id") == block_id), None)
+    blocks = document.get("blocks", [])
+    block = next((b for b in blocks if b.get("id") == block_id), None)
     if not block:
-        return {"accepted": False, "reason": "Unknown resume block.", "block_id": block_id}
+        # Name them. Block IDs are opaque hashes, so an agent that has not been
+        # handed one cannot derive it from any resume text it can read. Live on
+        # 2026-08-02 the coordinator guessed, was told only "Unknown resume
+        # block.", guessed again, then repeated the identical call to the
+        # iteration cap -- a 503 on "improve my resume for these roles".
+        known = [str(b.get("id")) for b in blocks]
+        return {
+            "accepted": False,
+            "reason": f"Unknown resume block. Editable block IDs: {', '.join(known)}.",
+            "block_id": block_id,
+            "known_block_ids": known,
+        }
 
     clean_rewrite = (rewrite or "").strip()
     if "\n" in clean_rewrite or "\r" in clean_rewrite:

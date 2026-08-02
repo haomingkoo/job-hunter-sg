@@ -17,8 +17,6 @@ if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
     from sqlalchemy.orm import Session
 
-# ── Lazy-loaded singleton model ───────────────────────────────────────────────
-
 _model: SentenceTransformer | None = None
 _model_lock = threading.Lock()
 _MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
@@ -36,8 +34,6 @@ def _get_model() -> SentenceTransformer:
         _model = SentenceTransformer(_MODEL_NAME)
         return _model
 
-
-# ── Encoding helpers ──────────────────────────────────────────────────────────
 
 def encode_text(text: str) -> list[float]:
     """Encode a single text string into a 384-dim normalized vector."""
