@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -75,6 +76,20 @@ class ModelReply:
     # holding the pending interrupt. RecruitmentTeam persists it so the next
     # message resumes that graph instead of starting a new one.
     pause_token: str = ""
+
+
+def paragraph_reply(content: str) -> str:
+    """Add readable paragraph breaks when a model returns one prose wall."""
+    text = content.strip()
+    if "\n" in text:
+        return text
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z0-9"“])', text)
+    if len(sentences) < 2:
+        return text
+    paragraphs = [" ".join(sentences[index:index + 2]) for index in range(0, len(sentences), 2)]
+    if len(paragraphs) > 4:
+        paragraphs = paragraphs[:3] + [" ".join(paragraphs[3:])]
+    return "\n\n".join(paragraphs)
 
 
 class ConversationModel(Protocol):

@@ -1454,9 +1454,21 @@ def test_a_turn_that_answers_in_prose_is_delivered_not_failed():
         snapshot = team.snapshot(owner_id, receipt.thread_id)
 
     assert [message.role for message in snapshot.messages] == ["user", "assistant"]
-    assert snapshot.messages[-1].content == prose
+    assert snapshot.messages[-1].content == (
+        "Your resume shows a semiconductor operations background moving into applied AI. "
+        "Two role families fit: agentic AI platform engineering, and applied AI in manufacturing.\n\n"
+        "Which of those interests you more?"
+    )
     # Nothing the submission would have carried is invented on this path.
     assert snapshot.case_facts.preferences == ()
+
+
+def test_paragraphing_preserves_model_supplied_markdown():
+    from recruitment_team.conversation_model import paragraph_reply
+
+    markdown = "Opening.\n\n- First role\n- Second role"
+
+    assert paragraph_reply(markdown) == markdown
 
 
 def test_a_turn_that_produces_no_text_at_all_still_fails():
