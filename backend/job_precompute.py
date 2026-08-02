@@ -5,7 +5,6 @@ Precomputed job metadata used to keep request-time filters cheap.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
 
 from company_taxonomy import apply_company_taxonomy
 
@@ -112,15 +111,7 @@ def _normalize_match_text(value: str) -> str:
 
 
 def _skill_text(skills) -> str:
-    if skills is None:
-        return ""
-    if isinstance(skills, str):
-        return skills
-    if isinstance(skills, dict):
-        return " ".join(_skill_text(child) for child in skills.values())
-    if isinstance(skills, Iterable):
-        return " ".join(_skill_text(child) for child in skills)
-    return str(skills)
+    return " ".join(_flatten_skill_values(skills))
 
 
 def _keyword_hits(text: str, keyword: str) -> int:

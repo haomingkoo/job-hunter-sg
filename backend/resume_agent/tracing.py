@@ -211,5 +211,3 @@ class ToolSpanRecorder(BaseCallbackHandler):
         if isinstance(model, str):
             summary["model"] = model
         return summary
-
-    _summarize = _tool_summary

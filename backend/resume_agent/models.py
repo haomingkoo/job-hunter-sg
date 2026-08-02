@@ -67,9 +67,6 @@ def create_agent_model(
     )
 
 
-create_fast_model = create_agent_model
-
-
 def create_smart_model(temperature: float = 0.0):
     """Return the SMART model used for single-shot persona critique."""
     from langchain_openai import ChatOpenAI

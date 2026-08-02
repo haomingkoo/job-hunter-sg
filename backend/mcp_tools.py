@@ -416,21 +416,6 @@ def propose_resume_diff(
             "rewrite": rewrite,
         }
     )
-def _job_payload(job: ScrapedJob) -> dict[str, Any]:
-    return {
-        "id": job.id,
-        "title": job.title,
-        "company": job.company,
-        "location": job.location,
-        "salary": display_salary(job.salary),
-        "source": job.source,
-        "url": job.url,
-        "description": job.description,
-        "skills": job.skills or [],
-        "parsed_jd": job.parsed_jd if isinstance(job.parsed_jd, dict) else {},
-    }
-
-
 def _normalize_skill_strings(raw_skills: Any) -> list[str]:
     if isinstance(raw_skills, list):
         return [str(skill).strip() for skill in raw_skills if str(skill).strip()]
