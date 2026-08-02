@@ -6,7 +6,7 @@ import {
   MapPin, DollarSign, Building2, X, SlidersHorizontal,
   PanelLeftClose, PanelLeftOpen, CheckCircle2, Bot, Copy,
 } from "lucide-react";
-import { apiFetch } from "../lib/api.js";
+import { apiFetch, downloadBlob } from "../lib/api.js";
 import { todayStr } from "../lib/helpers.js";
 import { buildJobSkillDisplay, normalizeJobTermLabels } from "../lib/jobSkillHelpers.js";
 import JobCardSkeleton from "./JobCardSkeleton.jsx";
@@ -369,14 +369,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     const jobTitle = coverLetterModal?.job?.title || "position";
     const company = coverLetterModal?.job?.company || "company";
     const filename = `Cover_Letter_${company.replace(/\s+/g, "_")}_${jobTitle.replace(/\s+/g, "_")}.txt`;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, filename);
   };
 
   const openApplicationPackModal = (job) => {

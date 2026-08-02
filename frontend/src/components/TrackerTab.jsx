@@ -6,7 +6,7 @@ import {
   Download, Loader2, Edit3, Save, Trash2,
   Briefcase, Search, FileText, GripVertical,
 } from "lucide-react";
-import { API_BASE, apiFetch } from "../lib/api.js";
+import { apiFetch, downloadBlob } from "../lib/api.js";
 import { STATUS_CONFIG, SG_JOB_PORTALS } from "../lib/constants.js";
 import { todayStr, daysBetween } from "../lib/helpers.js";
 import StatusBadge from "./StatusBadge.jsx";
@@ -270,16 +270,10 @@ export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiv
       formData.append("file", submittedFile);
       formData.append("submitted_date", submittedDate || todayStr());
       formData.append("notes", submittedNotes);
-      const token = localStorage.getItem("token");
-      const response = await fetch(`${API_BASE}/api/applications/workspaces/${workspace.id}/submitted-resume`, {
+      const response = await apiFetch(`/api/applications/workspaces/${workspace.id}/submitted-resume`, {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
         body: formData,
       });
-      if (!response.ok) {
-        const message = await response.text();
-        throw new Error(message || "Failed to save submitted resume.");
-      }
       setWorkspace(await response.json());
       setSubmittedFile(null);
       setSubmittedNotes("");
@@ -292,18 +286,9 @@ export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiv
 
   const handleExport = async () => {
     try {
-      const token = localStorage.getItem("token");
-      const resp = await fetch(`${API_BASE}/api/tracked/export`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!resp.ok) throw new Error(`Export failed (${resp.status})`);
+      const resp = await apiFetch("/api/tracked/export");
       const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "tracked_jobs.csv";
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, "tracked_jobs.csv");
     } catch (err) {
       setError(err.message || "Export failed. Please try again.");
     }
