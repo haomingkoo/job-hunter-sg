@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -556,3 +558,53 @@ def test_ai_health_stays_internal():
     from ai_service import get_ai_health
 
     assert "keys_loaded" in get_ai_health()
+
+
+def test_status_reports_down_when_the_model_does_not_answer():
+    """The failure counter is silent without traffic; the probe is not.
+
+    On 2026-08-02 the tier the recruitment team runs on stopped answering a
+    one-word prompt within four minutes, and this endpoint still said "ready".
+    """
+    import ai_service
+
+    previous = dict(ai_service._probe_state)
+    try:
+        ai_service._probe_state.update(ok=False, checked_at=time.time(), running=False)
+
+        status = ai_service.get_ai_status()
+
+        assert status["status"] == "down"
+        assert status["wait_seconds"] == -1
+    finally:
+        ai_service._probe_state.update(previous)
+
+
+def test_a_down_status_still_leaks_nothing():
+    import ai_service
+
+    previous = dict(ai_service._probe_state)
+    try:
+        ai_service._probe_state.update(ok=False, checked_at=time.time(), running=False)
+
+        status = ai_service.get_ai_status()
+
+        assert set(status) == {"status", "message", "wait_seconds"}
+        blob = json.dumps(status).lower()
+        for secret in ("sea-lion", "sealion", "qwen", "api_key", "bearer", "aisingapore"):
+            assert secret not in blob
+    finally:
+        ai_service._probe_state.update(previous)
+
+
+def test_a_healthy_probe_does_not_mask_rate_limiting():
+    """A live model that is merely busy must not be reported as down."""
+    import ai_service
+
+    previous = dict(ai_service._probe_state)
+    try:
+        ai_service._probe_state.update(ok=True, checked_at=time.time(), running=False)
+
+        assert ai_service.get_ai_status()["status"] != "down"
+    finally:
+        ai_service._probe_state.update(previous)

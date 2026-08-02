@@ -148,6 +148,63 @@ def _track_success() -> None:
     global _failure_count
     with _failure_lock:
         _failure_count = 0
+        _probe_state["ok"] = True
+        _probe_state["checked_at"] = time.time()
+
+
+# ── Liveness probe ────────────────────────────────────────────────────────────
+#
+# The failure counter only speaks when traffic does. It resets on any success and
+# needs several consecutive failures to trip, so on a quiet site it reads zero
+# through a total outage and the status endpoint reports "ready" on no evidence.
+# That happened: the model tier the recruitment team runs on stopped answering a
+# one-word prompt within four minutes while /api/ai/status still said ready.
+#
+# So ask the model directly, off the request path, and cache the answer.
+
+_probe_state: dict = {"ok": None, "checked_at": 0.0, "running": False}
+_probe_lock = threading.Lock()
+PROBE_TTL_SECONDS = 120
+PROBE_TIMEOUT_SECONDS = 25
+
+
+def _run_probe() -> None:
+    """Ask the model for one token. Never raises; never blocks a request."""
+    ok = False
+    try:
+        import config
+        from openai import OpenAI
+
+        key = _get_api_key()
+        if key:
+            client = OpenAI(
+                api_key=key,
+                base_url=os.environ.get("SEALION_BASE_URL", "https://api.sea-lion.ai/v1"),
+                timeout=PROBE_TIMEOUT_SECONDS,
+                max_retries=0,
+            )
+            client.chat.completions.create(
+                model=config.SEALION_AGENT_MODEL,
+                messages=[{"role": "user", "content": "ok"}],
+                max_completion_tokens=config.SMART_MIN_MAX_TOKENS,
+            )
+            ok = True
+    except Exception as error:
+        log.warning("[AI] liveness probe failed: %s", type(error).__name__)
+    finally:
+        with _probe_lock:
+            _probe_state["ok"] = ok
+            _probe_state["checked_at"] = time.time()
+            _probe_state["running"] = False
+
+
+def _refresh_probe_if_stale() -> None:
+    with _probe_lock:
+        fresh = (time.time() - _probe_state["checked_at"]) < PROBE_TTL_SECONDS
+        if fresh or _probe_state["running"]:
+            return
+        _probe_state["running"] = True
+    threading.Thread(target=_run_probe, daemon=True).start()
 
 
 # ── UK/Singapore English post-processing ──────────────────────────────────────
@@ -329,6 +386,13 @@ def call_sealion_json(
 
 def get_ai_status() -> dict:
     """Return current AI service status for display to users."""
+    _refresh_probe_if_stale()
+    if _probe_state["ok"] is False:
+        return {
+            "status": "down",
+            "message": "AI is not responding right now. Results will not generate until it recovers.",
+            "wait_seconds": -1,
+        }
     wait = _limiter.wait_seconds
     capacity = _limiter._max
     available = max(0, int(_limiter._tokens)) if hasattr(_limiter, '_tokens') else capacity
