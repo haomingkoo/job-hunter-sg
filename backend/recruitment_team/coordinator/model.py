@@ -161,16 +161,46 @@ class DeepAgentConversationModel:
         self._model_factory = model_factory
         self._telemetry = telemetry or OpenTelemetryRecorder()
 
+    def _build_model(self):
+        """The coordinator's model, always constructed explicitly.
+
+        create_deep_agent falls through to a bare create_agent_model() when
+        handed model=None, which silently takes SEALION_HTTP_TIMEOUT (60s) and
+        no retries -- a fifth of what every other recruitment path uses, on the
+        surface that now makes up to a dozen calls per turn.
+        """
+        if self._model_factory:
+            return self._model_factory()
+        from resume_agent.models import create_agent_model
+
+        return create_agent_model(
+            timeout=config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
+            max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
+            model=config.COORDINATOR_MODEL,
+            max_completion_tokens=config.RECRUITMENT_CONVERSATION_MAX_TOKENS,
+        )
+
     def _build_agent(self):
-        from resume_agent.agent import create_resume_agent
+        from langchain.agents import create_agent
+        from langchain.agents.middleware import (
+            HumanInTheLoopMiddleware,
+            TodoListMiddleware,
+        )
 
         # The assessment runner's module-level SqliteSaver, not a second store:
         # one checkpoint file, one durability story. Imported here so that
         # importing this module does not open a sqlite connection.
         from ..open_agent.runner import _CHECKPOINTER
 
-        return create_resume_agent(
-            model=self._model_factory() if self._model_factory else None,
+        # create_agent, not create_deep_agent. The deep-agent base stack binds
+        # edit_file, execute, glob, grep, ls, read_file, write_file and task
+        # whether or not they mean anything here, and its `middleware` argument
+        # only appends -- there is no way to decline them. Measured: ten tools
+        # bound for one real one. Composing up from create_agent gives the two
+        # that earn their place, and drops `execute` outright rather than
+        # trusting it to return an error string.
+        return create_agent(
+            model=self._build_model(),
             tools=[
                 read_shortlist,
                 search_jobs,
@@ -179,11 +209,13 @@ class DeepAgentConversationModel:
                 propose_resume_edit,
                 ask_candidate,
             ],
-            subagents=[],
+            middleware=[
+                TodoListMiddleware(),
+                HumanInTheLoopMiddleware(interrupt_on={"ask_candidate": True}),
+            ],
             system_prompt=COORDINATOR_SYSTEM_PROMPT,
             response_format=ToolStrategy(ConversationReply),
             checkpointer=_CHECKPOINTER,
-            interrupt_on={"ask_candidate": True},
         )
 
     @staticmethod

@@ -60,6 +60,14 @@ SEALION_FAST_MODEL: str = os.getenv(
 # Classic tailoring pipeline model. Defaults to FAST because v4.5 Qwen currently
 # leaks reasoning text into strict JSON/prose prompts on this path.
 SEALION_PIPELINE_MODEL: str = os.getenv("SEALION_PIPELINE_MODEL", SEALION_FAST_MODEL)
+# The coordinator is a tool loop making up to a dozen calls a turn, which is what
+# the 2026-06-26 eval rated v4-32B highest for. v4.5-27B was chosen for
+# single-shot persona reasoning, a different job, and on 2026-08-02 it stopped
+# answering a one-word prompt inside 240s while 32B answered in 1.5s.
+COORDINATOR_MODEL: str = os.getenv("COORDINATOR_MODEL", "").strip() or SEALION_FAST_MODEL
+# A reasoning tier spends tokens thinking before it writes, so with no floor the
+# reply gets whatever thinking did not consume.
+RECRUITMENT_CONVERSATION_MAX_TOKENS: int = _int_env("RECRUITMENT_CONVERSATION_MAX_TOKENS", 4000)
 # AGENT: Resume Agent v2 orchestration and tool-calling loop.
 SEALION_AGENT_MODEL: str = os.getenv("SEALION_AGENT_MODEL", "aisingapore/Qwen-SEA-LION-v4.5-27B-IT")
 # SMART: deep-agent persona reviews (single-shot, no tools, latency-tolerant).

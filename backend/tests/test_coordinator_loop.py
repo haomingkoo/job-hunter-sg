@@ -1238,7 +1238,13 @@ def test_a_transport_turn_reaches_the_loop_without_overriding_the_dependency(mon
         with sessions() as db:
             yield db
 
+    # Both bindings, for the reason the guard fixture documents: the coordinator
+    # imports create_agent_model lazily from resume_agent.models, so patching
+    # resume_agent.agent alone leaves the real factory reachable.
+    import resume_agent.models as models_module
+
     monkeypatch.setattr(agent_module, "create_agent_model", lambda *a, **kw: agent)
+    monkeypatch.setattr(models_module, "create_agent_model", lambda *a, **kw: agent)
     main.app.dependency_overrides[get_db] = override_db
     main.app.dependency_overrides[get_current_user] = lambda: type(
         "AuthenticatedUser",
@@ -1275,3 +1281,72 @@ def test_a_transport_turn_reaches_the_loop_without_overriding_the_dependency(mon
     assert [job["job_id"] for job in body["case_facts"]["recommendations"]] == [801]
     assert "Micron" in body["messages"][-1]["content"]
     assert agent.calls == 2
+
+
+def test_the_coordinator_binds_only_the_tools_it_needs():
+    """create_deep_agent's base stack cannot be declined, so we do not use it.
+
+    Measured on 2026-08-02: create_deep_agent bound ten tools for one real one --
+    edit_file, execute, glob, grep, ls, read_file, write_file and task ride along
+    whether or not they mean anything, and its `middleware` argument only appends.
+    Nine irrelevant tools compete for a mid-size model's attention on every turn.
+    """
+    from langchain_openai import ChatOpenAI
+
+    from recruitment_team.coordinator.model import DeepAgentConversationModel
+
+    model = DeepAgentConversationModel(
+        model_factory=lambda: ChatOpenAI(model="x", api_key="ph", base_url="http://localhost:1")
+    )
+
+    bound = _bound_tool_names(model._build_agent())
+
+    assert bound == {
+        "ask_candidate",
+        "propose_resume_edit",
+        "read_candidate_evidence",
+        "read_shortlist",
+        "read_target_job",
+        "search_jobs",
+        "write_todos",
+    }
+    for inherited in ("execute", "edit_file", "write_file", "glob", "grep", "ls", "task"):
+        assert inherited not in bound
+
+
+def test_the_coordinator_model_is_built_explicitly(monkeypatch):
+    """Handing model=None to the factory inherits a 60s timeout and no retries.
+
+    Every other recruitment path passes 300s and 2 retries. The loop makes up to
+    a dozen calls a turn, so it is the last surface that should get a fifth of
+    the time and no retry.
+    """
+    import config
+    import resume_agent.models as models_module
+
+    from recruitment_team.coordinator.model import DeepAgentConversationModel
+
+    captured: dict = {}
+    monkeypatch.setattr(
+        models_module,
+        "create_agent_model",
+        lambda *args, **kwargs: captured.update(kwargs) or object(),
+    )
+
+    DeepAgentConversationModel()._build_model()
+
+    assert captured["timeout"] == config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS
+    assert captured["max_retries"] == config.RECRUITMENT_MODEL_TRANSPORT_RETRIES
+    assert captured["model"] == config.COORDINATOR_MODEL
+    assert captured["max_completion_tokens"] == config.RECRUITMENT_CONVERSATION_MAX_TOKENS
+
+
+def _bound_tool_names(graph) -> set[str]:
+    for node in graph.nodes.values():
+        for attribute in ("tools_by_name", "_tools_by_name"):
+            found = getattr(node, attribute, None) or getattr(
+                getattr(node, "bound", None), attribute, None
+            )
+            if found:
+                return set(found)
+    raise AssertionError("no tool node found on the compiled graph")
