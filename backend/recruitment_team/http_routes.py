@@ -132,13 +132,14 @@ def _automatic_study_dispatcher(db: Session, telemetry, profiler_provider):
     if bind.dialect.name == "sqlite" and not bind.url.database:
         return None
     study_sessions = sessionmaker(bind=bind, expire_on_commit=False)
-    return lambda owner_id, resume_id, thread_id: dispatch_resume_study(
+    return lambda owner_id, resume_id, thread_id, activity_publisher=None: dispatch_resume_study(
         study_sessions,
         owner_id=owner_id,
         resume_version_id=resume_id,
         thread_id=thread_id,
         profiler_factory_provider=profiler_provider,
         telemetry=telemetry,
+        activity_publisher=activity_publisher,
     )
 
 
@@ -195,6 +196,18 @@ def _streaming_team_factory(
     study_dispatcher=None,
 ):
     def create(activity_publisher):
+        visible_study_dispatcher = (
+            (
+                lambda owner_id, resume_id, thread_id: study_dispatcher(
+                    owner_id,
+                    resume_id,
+                    thread_id,
+                    activity_publisher,
+                )
+            )
+            if study_dispatcher is not None
+            else None
+        )
         return RecruitmentTeam(
             db,
             conversation_model,
@@ -204,7 +217,7 @@ def _streaming_team_factory(
             activity_publisher,
             candidate_profiler_factory,
             target_assessment_runner,
-            study_dispatcher,
+            visible_study_dispatcher,
         )
 
     return create

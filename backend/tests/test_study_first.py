@@ -13,7 +13,7 @@ from recruitment_team.candidate_profile import (
 )
 from recruitment_team.study import _run_dispatched_study, study_resume_version
 from recruitment_team.telemetry import RecordedTelemetry
-from recruitment_team.activity_publisher import IgnoreActivityPublisher
+from recruitment_team.activity_publisher import IgnoreActivityPublisher, RecordedActivityPublisher
 from recruitment_team.conversation_model import ScriptedConversationModel
 from recruitment_team.discovery import ScriptedDiscovery
 from recruitment_team.interface import StartThread
@@ -104,6 +104,7 @@ def test_dispatched_study_is_visible_and_links_the_completed_artifact():
     sessions = _sessions()
     owner_id, resume_id, thread_id = _owner_resume_thread(sessions)
     factory = ScriptedCandidateProfilerFactory([_run()], model_name="study-model")
+    publisher = RecordedActivityPublisher()
 
     with sessions() as db:
         _run_dispatched_study(
@@ -113,6 +114,7 @@ def test_dispatched_study_is_visible_and_links_the_completed_artifact():
             thread_id=thread_id,
             profiler_factory=factory,
             telemetry=RecordedTelemetry(),
+            activity_publisher=publisher,
         )
 
         thread = db.query(RecruitmentThread).filter_by(id=thread_id).one()
@@ -121,6 +123,7 @@ def test_dispatched_study_is_visible_and_links_the_completed_artifact():
         assert "studying" in events[0].summary
         assert thread.case_facts["candidate_profile_status"] == "completed"
         assert thread.case_facts["candidate_profile_artifact_id"]
+        assert [event.status for event in publisher.events] == ["running", "completed"]
 
 
 def test_second_thread_resolves_the_resume_scoped_study_without_rerunning_it():
@@ -212,3 +215,31 @@ def test_start_thread_dispatches_the_resume_study_after_the_thread_is_durable():
 
         assert dispatched == [(owner_id, resume_id, receipt.thread_id)]
         assert db.query(RecruitmentThread).filter_by(id=receipt.thread_id).one()
+
+
+def test_streaming_team_routes_background_study_events_to_the_active_publisher():
+    from recruitment_team.http_routes import _streaming_team_factory
+
+    sessions = _sessions()
+    owner_id, resume_id, _ = _owner_resume_thread(sessions)
+    publisher = RecordedActivityPublisher()
+    dispatched = []
+
+    with sessions() as db:
+        create_team = _streaming_team_factory(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            ScriptedDiscovery([]),
+            None,
+            RecordedTelemetry(),
+            study_dispatcher=lambda owner, resume, thread, activity: dispatched.append(
+                (owner, resume, thread, activity)
+            ),
+        )
+        receipt = create_team(publisher).execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find roles for me."),
+            "stream-visible-study",
+        )
+
+    assert dispatched == [(owner_id, resume_id, receipt.thread_id, publisher)]

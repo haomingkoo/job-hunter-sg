@@ -260,8 +260,7 @@ export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
 
       {roster.length === 0 ? (
         <p className="mt-4 text-xs leading-relaxed text-[#4A6785]">
-          Your recruiter, hiring manager, ATS reader, evidence skeptic and market analyst start work
-          after your first message.
+          The coordinator and candidate profiler start work after your first message.
         </p>
       ) : (
         <ol className="mt-3 space-y-2">
