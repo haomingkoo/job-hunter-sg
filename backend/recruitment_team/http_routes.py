@@ -144,6 +144,21 @@ def _team(
     )
 
 
+def _read_team(db: Session, telemetry: RecruitmentTelemetry) -> RecruitmentTeam:
+    """A team for endpoints that only read, so none of them can need a model.
+
+    Every model-touching collaborator is None. Reading a thread, its events, its
+    profile or its pending edits calls no model, but taking them as `Depends`
+    made FastAPI construct all four before the handler ran, and
+    `create_agent_model` raises without a SEA-LION key. `GET /threads` was
+    therefore a 500 on any deployment missing one, and the browser reported it as
+    a CORS failure, because the exception escapes before CORSMiddleware adds its
+    headers. If a read path ever does reach for a model, it raises here rather
+    than silently working in dev and failing in production.
+    """
+    return RecruitmentTeam(db, None, None, None, telemetry, IgnoreActivityPublisher())
+
+
 def _streaming_team_factory(
     db: Session,
     conversation_model: ConversationModel,
@@ -328,19 +343,10 @@ def get_candidate_profile(
     thread_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    conversation_model: ConversationModel = Depends(get_conversation_model),
-    discovery: DiscoveryPort = Depends(get_job_discovery),
-    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
 ):
     try:
-        artifact = _team(
-            db,
-            conversation_model,
-            discovery,
-            role_profiler,
-            telemetry,
-        ).candidate_profile(user.id, thread_id)
+        artifact = _read_team(db, telemetry).candidate_profile(user.id, thread_id)
         return asdict(artifact) if artifact is not None else None
     except Exception as error:
         _raise_http_error(error)
@@ -475,19 +481,10 @@ def get_target_assessment(
     thread_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    conversation_model: ConversationModel = Depends(get_conversation_model),
-    discovery: DiscoveryPort = Depends(get_job_discovery),
-    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
 ):
     try:
-        artifact = _team(
-            db,
-            conversation_model,
-            discovery,
-            role_profiler,
-            telemetry,
-        ).target_assessment(user.id, thread_id)
+        artifact = _read_team(db, telemetry).target_assessment(user.id, thread_id)
         return asdict(artifact) if artifact is not None else None
     except Exception as error:
         _raise_http_error(error)
@@ -615,13 +612,10 @@ def select_thread_target(
 def list_threads(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    conversation_model: ConversationModel = Depends(get_conversation_model),
-    discovery: DiscoveryPort = Depends(get_job_discovery),
-    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
 ):
     return [
-        asdict(thread) for thread in _team(db, conversation_model, discovery, role_profiler, telemetry).threads(user.id)
+        asdict(thread) for thread in _read_team(db, telemetry).threads(user.id)
     ]
 
 
@@ -630,14 +624,11 @@ def get_thread(
     thread_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    conversation_model: ConversationModel = Depends(get_conversation_model),
-    discovery: DiscoveryPort = Depends(get_job_discovery),
-    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
 ):
     try:
         return asdict(
-            _team(db, conversation_model, discovery, role_profiler, telemetry).snapshot(
+            _read_team(db, telemetry).snapshot(
                 user.id,
                 thread_id,
             )
@@ -652,15 +643,12 @@ def get_thread_events(
     after_sequence: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    conversation_model: ConversationModel = Depends(get_conversation_model),
-    discovery: DiscoveryPort = Depends(get_job_discovery),
-    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
 ):
     try:
         return [
             asdict(event)
-            for event in _team(db, conversation_model, discovery, role_profiler, telemetry).events(
+            for event in _read_team(db, telemetry).events(
                 user.id,
                 thread_id,
                 after_sequence,
@@ -675,13 +663,10 @@ def list_proposed_edits(
     thread_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    conversation_model: ConversationModel = Depends(get_conversation_model),
-    discovery: DiscoveryPort = Depends(get_job_discovery),
-    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
 ):
     try:
-        return _team(db, conversation_model, discovery, role_profiler, telemetry).proposed_edits(
+        return _read_team(db, telemetry).proposed_edits(
             user.id,
             thread_id,
         )

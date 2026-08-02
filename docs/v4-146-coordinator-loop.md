@@ -565,8 +565,17 @@ writes `case_facts["preferences"]`.
 
 This carry is one of the easiest things in the slice to drop wholesale with every test
 still green, so both halves are asserted: a valid quote must land in
-`case_facts["preferences"]`, and an invalid one must raise `InvalidCommand` and append no
-assistant message.
+`case_facts["preferences"]`, and an invalid one must not.
+
+**Corrected in revision 5.** Revision 3 said an invalid quote must raise `InvalidCommand`
+and append no assistant message. Live on 2026-08-02, asked to improve a resume, the
+coordinator drafted eight edits that passed every validation gate and attached one
+preference update quoting a sentence the candidate never wrote. The turn was thrown away
+whole: no reply, no edits, a 422. The rule exists to keep a fabricated preference out of
+`case_facts`, and dropping the update does that. Failing the turn does that and destroys
+the work beside it. So `evidenced_preference_updates` splits them, the evidenced ones
+merge, and the rejections are recorded on the model span rather than raised. An empty
+reply is still fatal, and that is what the persistence test now uses.
 
 ### `search_query` stops being a request
 

@@ -604,10 +604,21 @@ def test_a_shortlist_the_model_never_saw_reaches_the_next_conversational_turn():
     assert agent.calls == 3
 
 
-def test_a_preference_quote_absent_from_the_user_message_fails_the_turn():
-    """The evidence-quote rule survives the new path, and a failed turn writes nothing."""
+def test_a_preference_quote_absent_from_the_user_message_is_dropped_not_fatal():
+    """The unevidenced preference is discarded. The turn still lands.
+
+    This reverses revision 3's rule, and the reason is a live run on 2026-08-02.
+    Asked to improve a resume, the coordinator drafted eight edits that passed
+    every validation gate, then attached one preference update quoting a sentence
+    the candidate never wrote. Raising InvalidCommand threw the whole turn away:
+    no reply, no edits, a 422, and eight gate-passing rewrites lost to one bad
+    quote.
+
+    The rule exists to stop a fabricated preference being persisted. Dropping the
+    update does that. Failing the turn does that and destroys the work next to it,
+    which is a harsher trade than the invariant asks for.
+    """
     from backend.tests.test_recruitment_team_module import _session_factory
-    from recruitment_team.errors import InvalidCommand
     from recruitment_team.interface import StartThread
 
     discovery = _RecordingDiscovery([])
@@ -616,7 +627,8 @@ def test_a_preference_quote_absent_from_the_user_message_fails_the_turn():
             submission(
                 "Noted.",
                 preference_updates=[
-                    preference("salary", "$15,000", "I need at least fifteen thousand")
+                    preference("salary", "$15,000", "I need at least fifteen thousand"),
+                    preference("location", "Singapore", "yield engineering role"),
                 ],
             )
         ]
@@ -626,23 +638,26 @@ def test_a_preference_quote_absent_from_the_user_message_fails_the_turn():
     owner_id, resume_id = _owner_with_resume(sessions)
     with sessions() as db:
         team = _team(db, agent, discovery)
-        with pytest.raises(InvalidCommand) as error:
-            team.execute(
-                owner_id,
-                StartThread(
-                    resume_version_id=resume_id,
-                    message="Find me a yield engineering role.",
-                ),
-                idempotency_key="turn-1",
-            )
-
-    assert "evidence_quote" in str(error.value)
+        receipt = team.execute(
+            owner_id,
+            StartThread(
+                resume_version_id=resume_id,
+                message="Find me a yield engineering role.",
+            ),
+            idempotency_key="turn-1",
+        )
+        snapshot = team.snapshot(owner_id, receipt.thread_id)
 
     from models import RecruitmentMessage
 
     with sessions() as db:
         roles = [row.role for row in db.query(RecruitmentMessage).all()]
-    assert roles == ["user"], "a rejected turn must not append an assistant message"
+    assert roles == ["user", "assistant"], "the turn survives one unevidenced update"
+
+    # The quotable one is kept, the fabricated one never reaches case_facts.
+    assert [(fact.field, fact.value) for fact in snapshot.case_facts.preferences] == [
+        ("location", "Singapore")
+    ]
 
 
 def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results():
@@ -1398,3 +1413,73 @@ def test_the_resume_is_withheld_once_a_profile_exists():
     )
 
     assert "Yield Engineering Manager" not in _rendered(agent.requests[0])
+
+
+def test_a_turn_that_answers_in_prose_is_delivered_not_failed():
+    """The model sometimes answers without calling the submission tool.
+
+    Not hypothetical, and not configuration. On 2026-08-02 the same message, the
+    same model and a byte-identical ChatOpenAI construction produced a completed
+    six-step turn through one harness and two `no_submission` failures through
+    another, at 72s and 97s with zero tool calls. Payloads were within 400
+    characters of each other. What differs run to run is whether the model
+    decides to route its answer through `ConversationReply`.
+
+    Making the candidate's turn a 503 because the model chose prose is a brittle
+    contract: the answer existed and was thrown away. Invariant 7 says HTTP 200 is
+    not an acceptance criterion, and this respects it, because the reply here is
+    the model's own user-facing text, not a fabricated success. What the turn
+    cannot claim is anything that only the submission carries, so no preference
+    update is recorded on this path.
+    """
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.interface import StartThread
+
+    prose = (
+        "Your resume shows a semiconductor operations background moving into "
+        "applied AI. Two role families fit: agentic AI platform engineering, and "
+        "applied AI in manufacturing. Which of those interests you more?"
+    )
+    agent = ScriptedDeepAgent(responses=[final(prose)])
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = _team(db, agent, _RecordingDiscovery([]))
+        receipt = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="What should I target?"),
+            idempotency_key="turn-1",
+        )
+        snapshot = team.snapshot(owner_id, receipt.thread_id)
+
+    assert [message.role for message in snapshot.messages] == ["user", "assistant"]
+    assert snapshot.messages[-1].content == prose
+    # Nothing the submission would have carried is invented on this path.
+    assert snapshot.case_facts.preferences == ()
+
+
+def test_a_turn_that_produces_no_text_at_all_still_fails():
+    """The fallback is the model's own answer, never a manufactured one.
+
+    An empty final message carries nothing to deliver, so the turn is a 503 and
+    the candidate is told the truth rather than shown a blank reply.
+    """
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.errors import ConversationUnavailable
+    from recruitment_team.interface import StartThread
+
+    agent = ScriptedDeepAgent(responses=[final("   ")])
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = _team(db, agent, _RecordingDiscovery([]))
+        with pytest.raises(ConversationUnavailable) as error:
+            team.execute(
+                owner_id,
+                StartThread(resume_version_id=resume_id, message="What should I target?"),
+                idempotency_key="turn-1",
+            )
+
+    assert error.value.failure_type == "no_submission"

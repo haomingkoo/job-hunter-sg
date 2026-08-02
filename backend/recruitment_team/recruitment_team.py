@@ -54,7 +54,12 @@ from .errors import (
     ThreadNotFound,
     TargetAssessmentUnavailable,
 )
-from .conversation_model import ConversationModel, ModelReply, preference_update_error
+from .conversation_model import (
+    ConversationModel,
+    ModelReply,
+    PreferenceUpdate,
+    evidenced_preference_updates,
+)
 from .coordinator.context import ConversationContext, merged_recommendations
 from .open_agent.context import assessment_context
 from .open_agent.streaming import describe_progress
@@ -514,14 +519,12 @@ class RecruitmentTeam:
             )
             if latest_user is None:
                 raise InvalidCommand("conversation turn has no user message")
-            update_error = preference_update_error(
+            evidenced, unevidenced = evidenced_preference_updates(
                 reply.preference_updates,
                 latest_user.content,
             )
-            if update_error:
-                raise InvalidCommand(update_error)
-            if reply.preference_updates:
-                self._merge_preference_updates(thread, reply, latest_user)
+            if evidenced:
+                self._merge_preference_updates(thread, evidenced, latest_user)
             if reply.search_query:
                 self._remember_search_query(thread, reply.search_query)
             # After _remember_search_query on purpose: a query that really ran
@@ -534,7 +537,13 @@ class RecruitmentTeam:
                 "prompt_version",
                 getattr(reply, "prompt_version", "") or CONVERSATION_PROMPT_VERSION,
             )
-            model_span.set_attribute("preference_update_count", len(reply.preference_updates))
+            model_span.set_attribute("preference_update_count", len(evidenced))
+            if unevidenced:
+                # Recorded, not raised. The quote could not be found in what the
+                # candidate just wrote, so the update is dropped and the rest of
+                # the turn stands.
+                model_span.set_attribute("preference_updates_dropped", len(unevidenced))
+                model_span.set_attribute("preference_update_rejections", "; ".join(unevidenced))
             if reply.input_tokens is not None:
                 model_span.set_attribute("input_tokens", reply.input_tokens)
             if reply.output_tokens is not None:
@@ -1875,11 +1884,12 @@ class RecruitmentTeam:
     @staticmethod
     def _merge_preference_updates(
         thread: RecruitmentThread,
-        reply: ModelReply,
+        updates: tuple[PreferenceUpdate, ...],
         source_message: Message,
     ) -> None:
+        """Takes the updates rather than the reply: only evidenced ones get here."""
         current = list(thread.case_facts.get("preferences", []))
-        for update in reply.preference_updates:
+        for update in updates:
             fact = {
                 "field": update.field,
                 "value": update.value,
