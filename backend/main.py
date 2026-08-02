@@ -132,7 +132,12 @@ from schemas import (
 )
 from ai_service import _call_sealion, apply_uk_spelling, coach_resume, get_ai_health, get_ai_status, integrate_keywords, rewrite_bullet
 from config import SEALION_FAST_MODEL
-from ats_terms import build_job_ats_terms, match_resume_against_job_terms, merge_job_terms_with_match
+from ats_terms import (
+    build_job_ats_terms,
+    job_term_labels as _job_term_labels,
+    match_resume_against_job_terms,
+    merge_job_terms_with_match,
+)
 from career_agent import build_application_pack
 from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
 from resume_parser import MAX_FILE_SIZE, parse_resume_isolated
@@ -981,45 +986,6 @@ def _derive_careersgov_skill_cues(
         if len(cues) >= 10:
             break
     return cues, parsed
-
-
-def _title_case_skill(skill: str) -> str:
-    """Title-case a skill label, preserving acronyms and known casing."""
-    if not skill:
-        return skill
-    # Already has mixed case (e.g., "Power BI", "JavaScript") - keep it
-    if skill != skill.lower() and skill != skill.upper():
-        return skill
-    _ACRONYMS = {"ai", "ml", "bi", "hr", "it", "ux", "ui", "qa", "pm", "sql",
-                 "api", "aws", "gcp", "ci", "cd", "iot", "erp", "crm", "sop",
-                 "kpi", "roi", "seo", "cet", "amr", "dna", "wsq"}
-    words = skill.split()
-    result = []
-    for w in words:
-        if w.lower() in _ACRONYMS:
-            result.append(w.upper())
-        elif w.lower() in {"and", "&", "of", "for", "in", "to", "the", "with", "on", "or"}:
-            result.append(w.lower())
-        else:
-            result.append(w.capitalize())
-    if result:
-        result[0] = result[0].capitalize() if result[0] == result[0].lower() else result[0]
-    return " ".join(result)
-
-
-def _job_term_labels(terms: list[dict], limit: int = 8) -> list[str]:
-    labels: list[str] = []
-    seen: set[str] = set()
-    for term in terms or []:
-        raw = re.sub(r"\s+", " ", str(term.get("skill", "")).strip())
-        lower = raw.lower()
-        if not raw or lower in seen:
-            continue
-        seen.add(lower)
-        labels.append(_title_case_skill(raw))
-        if len(labels) >= limit:
-            break
-    return labels
 
 
 def _compute_and_cache_term_preview(

@@ -19,6 +19,45 @@ log = logging.getLogger("jobhunter.ats_terms")
 _taxonomy_loaded = False
 _classify_tier = None
 
+_SKILL_ACRONYMS = {
+    "ai", "ml", "bi", "hr", "it", "ux", "ui", "qa", "pm", "sql",
+    "api", "aws", "gcp", "ci", "cd", "iot", "erp", "crm", "sop",
+    "kpi", "roi", "seo", "cet", "amr", "dna", "wsq", "rpa", "gis",
+}
+_LOWERCASE_CONNECTORS = {"and", "&", "of", "for", "in", "to", "the", "with", "on", "or"}
+
+
+def _title_case_skill(skill: str) -> str:
+    if not skill or (skill != skill.lower() and skill != skill.upper()):
+        return skill
+    words = [
+        word.upper()
+        if word.lower() in _SKILL_ACRONYMS
+        else word.lower()
+        if word.lower() in _LOWERCASE_CONNECTORS
+        else word.capitalize()
+        for word in skill.split()
+    ]
+    if words and words[0] == words[0].lower():
+        words[0] = words[0].capitalize()
+    return " ".join(words)
+
+
+def job_term_labels(terms: list[dict], limit: int = 8) -> list[str]:
+    """Return deduplicated display labels without changing known mixed casing."""
+    labels: list[str] = []
+    seen: set[str] = set()
+    for term in terms or []:
+        raw = re.sub(r"\s+", " ", str(term.get("skill", "")).strip())
+        key = raw.lower()
+        if not raw or key in seen:
+            continue
+        seen.add(key)
+        labels.append(_title_case_skill(raw))
+        if len(labels) >= limit:
+            break
+    return labels
+
 
 def _ensure_taxonomy() -> None:
     global _taxonomy_loaded, _classify_tier
