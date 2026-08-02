@@ -87,6 +87,33 @@ class ConversationModel(Protocol):
     ) -> ModelReply: ...
 
 
+def evidenced_preference_updates(
+    updates: tuple[PreferenceUpdate, ...],
+    latest_user_message: str,
+) -> tuple[tuple[PreferenceUpdate, ...], tuple[str, ...]]:
+    """Split updates into the ones the candidate really said and the rest.
+
+    The rule is unchanged: an update is only recorded when its evidence_quote
+    occurs verbatim in the latest user message. What changed is the consequence.
+    Raising on the first bad quote threw away everything else the turn produced,
+    and live on 2026-08-02 that cost eight gate-passing resume edits because one
+    update quoted a sentence the candidate never wrote. Dropping the update keeps
+    the fabrication out of case_facts, which is the whole point of the rule.
+
+    Returns the updates worth merging and one reason per rejection, so the caller
+    can record what it discarded instead of discarding it silently.
+    """
+    kept: list[PreferenceUpdate] = []
+    rejected: list[str] = []
+    for index, update in enumerate(updates):
+        reason = preference_update_error((update,), latest_user_message)
+        if reason:
+            rejected.append(reason.replace("preference_updates[0]", f"preference_updates[{index}]"))
+            continue
+        kept.append(update)
+    return tuple(kept), tuple(rejected)
+
+
 def preference_update_error(
     updates: tuple[PreferenceUpdate, ...],
     latest_user_message: str,

@@ -604,10 +604,21 @@ def test_a_shortlist_the_model_never_saw_reaches_the_next_conversational_turn():
     assert agent.calls == 3
 
 
-def test_a_preference_quote_absent_from_the_user_message_fails_the_turn():
-    """The evidence-quote rule survives the new path, and a failed turn writes nothing."""
+def test_a_preference_quote_absent_from_the_user_message_is_dropped_not_fatal():
+    """The unevidenced preference is discarded. The turn still lands.
+
+    This reverses revision 3's rule, and the reason is a live run on 2026-08-02.
+    Asked to improve a resume, the coordinator drafted eight edits that passed
+    every validation gate, then attached one preference update quoting a sentence
+    the candidate never wrote. Raising InvalidCommand threw the whole turn away:
+    no reply, no edits, a 422, and eight gate-passing rewrites lost to one bad
+    quote.
+
+    The rule exists to stop a fabricated preference being persisted. Dropping the
+    update does that. Failing the turn does that and destroys the work next to it,
+    which is a harsher trade than the invariant asks for.
+    """
     from backend.tests.test_recruitment_team_module import _session_factory
-    from recruitment_team.errors import InvalidCommand
     from recruitment_team.interface import StartThread
 
     discovery = _RecordingDiscovery([])
@@ -616,7 +627,8 @@ def test_a_preference_quote_absent_from_the_user_message_fails_the_turn():
             submission(
                 "Noted.",
                 preference_updates=[
-                    preference("salary", "$15,000", "I need at least fifteen thousand")
+                    preference("salary", "$15,000", "I need at least fifteen thousand"),
+                    preference("location", "Singapore", "yield engineering role"),
                 ],
             )
         ]
@@ -626,23 +638,26 @@ def test_a_preference_quote_absent_from_the_user_message_fails_the_turn():
     owner_id, resume_id = _owner_with_resume(sessions)
     with sessions() as db:
         team = _team(db, agent, discovery)
-        with pytest.raises(InvalidCommand) as error:
-            team.execute(
-                owner_id,
-                StartThread(
-                    resume_version_id=resume_id,
-                    message="Find me a yield engineering role.",
-                ),
-                idempotency_key="turn-1",
-            )
-
-    assert "evidence_quote" in str(error.value)
+        receipt = team.execute(
+            owner_id,
+            StartThread(
+                resume_version_id=resume_id,
+                message="Find me a yield engineering role.",
+            ),
+            idempotency_key="turn-1",
+        )
+        snapshot = team.snapshot(owner_id, receipt.thread_id)
 
     from models import RecruitmentMessage
 
     with sessions() as db:
         roles = [row.role for row in db.query(RecruitmentMessage).all()]
-    assert roles == ["user"], "a rejected turn must not append an assistant message"
+    assert roles == ["user", "assistant"], "the turn survives one unevidenced update"
+
+    # The quotable one is kept, the fabricated one never reaches case_facts.
+    assert [(fact.field, fact.value) for fact in snapshot.case_facts.preferences] == [
+        ("location", "Singapore")
+    ]
 
 
 def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results():

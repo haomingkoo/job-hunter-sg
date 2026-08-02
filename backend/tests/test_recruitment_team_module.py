@@ -3520,3 +3520,53 @@ def test_autopilot_searches_the_resume_not_the_uis_own_instruction():
         # It fell through to the candidate's own material, which is what makes
         # the search personal rather than identical for everyone.
         assert "agent platform" in used.lower()
+
+
+def test_reading_threads_never_needs_a_live_model(monkeypatch):
+    """A list endpoint that hard-fails without an API key.
+
+    Found in a browser on 2026-08-02. `GET /threads` takes four Depends that each
+    construct a live ChatOpenAI, so with no SEA-LION key configured it raised
+    ResumeAgentConfigurationError out of dependency resolution. That is a 500, not
+    the 503 an unavailable model is supposed to map to, and because the exception
+    escapes before CORS headers are attached the browser reports it as a CORS
+    failure instead of a server error.
+
+    Reading a thread touches no model. The dependencies here are deliberately not
+    overridden: the point is that the real DI path resolves without one.
+    """
+    from fastapi.testclient import TestClient
+
+    import main
+    from main import get_current_user, get_db
+    from recruitment_team.http_routes import get_recruitment_telemetry
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    import resume_agent.agent as agent_module
+    import resume_agent.models as models_module
+
+    def _no_key(*_args, **_kwargs):
+        raise models_module.ResumeAgentConfigurationError("no key configured")
+
+    monkeypatch.setattr(agent_module, "create_agent_model", _no_key)
+    monkeypatch.setattr(models_module, "create_agent_model", _no_key)
+
+    sessions = _session_factory()
+    owner_id, _resume_id = _owner_with_resume(sessions)
+
+    def override_db():
+        with sessions() as db:
+            yield db
+
+    main.app.dependency_overrides[get_db] = override_db
+    main.app.dependency_overrides[get_current_user] = lambda: type(
+        "AuthenticatedUser", (), {"id": owner_id}
+    )()
+    main.app.dependency_overrides[get_recruitment_telemetry] = lambda: RecordedTelemetry()
+    try:
+        listed = TestClient(main.app).get("/api/recruitment-team/threads")
+    finally:
+        main.app.dependency_overrides.clear()
+
+    assert listed.status_code == 200
+    assert listed.json() == []

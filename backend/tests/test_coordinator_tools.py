@@ -905,31 +905,25 @@ def test_a_profile_less_turn_shows_the_agent_the_ids_it_must_cite():
 def test_a_rejected_turn_persists_no_search_it_ran():
     """A turn that fails validation must not leave half of itself behind.
 
-    The drain runs after preference validation for this reason: an invalid
-    evidence quote raises before any search reaches case_facts.
+    The drain runs after the reply is validated, so a turn rejected on the way
+    out leaves `case_facts` untouched even though its tools really executed.
+
+    The trigger used to be an unquotable preference update. That stopped being
+    fatal once one bad quote dropped the update instead of the turn, so the
+    rejection here is an empty reply, which still is.
     """
-    from recruitment_team.conversation_model import ModelReply, PreferenceUpdate
+    from recruitment_team.conversation_model import ModelReply
     from recruitment_team.errors import InvalidCommand
     from recruitment_team.interface import StartThread
     from recruitment_team.open_agent.tools import search_jobs
 
-    class _BadQuoteModel(_ToolCallingConversationModel):
+    class _EmptyReplyModel(_ToolCallingConversationModel):
         def respond(self, messages, resume_text, current_preferences=(), context=None):
             super().respond(messages, resume_text, current_preferences, context)
-            return ModelReply(
-                content="Noted.",
-                model_name="tool-calling-double",
-                preference_updates=(
-                    PreferenceUpdate(
-                        field="salary",
-                        value="$15,000",
-                        evidence_quote="I need at least fifteen thousand",
-                    ),
-                ),
-            )
+            return ModelReply(content="", model_name="tool-calling-double")
 
     discovery = _RecordingDiscovery([_search_result([_job(1201, "Yield Engineer", "Micron")])])
-    model = _BadQuoteModel(
+    model = _EmptyReplyModel(
         [[(search_jobs, {"query": "yield engineer", "exclude_junior": True})]]
     )
 
@@ -944,7 +938,7 @@ def test_a_rejected_turn_persists_no_search_it_ran():
                 idempotency_key="turn-1",
             )
 
-    assert "evidence_quote" in str(error.value)
+    assert "no user-facing reply" in str(error.value)
     assert discovery.search_count == 1, "the tool did run; the turn is what failed"
 
     from models import RecruitmentThread
