@@ -145,13 +145,7 @@ class DeepAgentConversationModel:
         self._telemetry = telemetry or OpenTelemetryRecorder()
 
     def _build_model(self):
-        """The coordinator's model, always constructed explicitly.
-
-        create_deep_agent falls through to a bare create_agent_model() when
-        handed model=None, which silently takes SEALION_HTTP_TIMEOUT (60s) and
-        no retries -- a fifth of what every other recruitment path uses, on the
-        surface that now makes up to a dozen calls per turn.
-        """
+        """Always explicit: model=None inherits a 60s timeout and no retries."""
         if self._model_factory:
             return self._model_factory()
         from resume_agent.models import create_agent_model
@@ -175,13 +169,8 @@ class DeepAgentConversationModel:
         # importing this module does not open a sqlite connection.
         from ..open_agent.runner import _CHECKPOINTER
 
-        # create_agent, not create_deep_agent. The deep-agent base stack binds
-        # edit_file, execute, glob, grep, ls, read_file, write_file and task
-        # whether or not they mean anything here, and its `middleware` argument
-        # only appends -- there is no way to decline them. Measured: ten tools
-        # bound for one real one. Composing up from create_agent gives the two
-        # that earn their place, and drops `execute` outright rather than
-        # trusting it to return an error string.
+        # Not create_deep_agent: its base stack binds eight more tools and its
+        # `middleware` argument only appends, so they cannot be declined.
         return create_agent(
             model=self._build_model(),
             tools=[
@@ -255,11 +244,8 @@ class DeepAgentConversationModel:
             # coordinator this adapter exists to replace.
             raise InvalidCommand("DeepAgentConversationModel requires a ConversationContext")
 
-        # `resume_text` is not forwarded. Resume evidence, with the block IDs
-        # propose_resume_edit needs, reaches the agent through
-        # read_candidate_evidence, the same channel the assessment path uses.
-        # Pasting the raw text into every turn would also put it in front of the
-        # model before any tool ran, which is what read_shortlist exists to stop.
+        # `resume_text` is not forwarded: evidence reaches the agent through
+        # read_candidate_evidence, the channel the assessment path uses.
         agent = self._build_agent()
         run_config, payload, skip_tool_call_ids = self._turn(agent, context, messages, current_preferences)
 

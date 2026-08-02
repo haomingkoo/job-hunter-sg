@@ -60,13 +60,10 @@ SEALION_FAST_MODEL: str = os.getenv(
 # Classic tailoring pipeline model. Defaults to FAST because v4.5 Qwen currently
 # leaks reasoning text into strict JSON/prose prompts on this path.
 SEALION_PIPELINE_MODEL: str = os.getenv("SEALION_PIPELINE_MODEL", SEALION_FAST_MODEL)
-# The coordinator is a tool loop making up to a dozen calls a turn, which is what
-# the 2026-06-26 eval rated v4-32B highest for. v4.5-27B was chosen for
-# single-shot persona reasoning, a different job, and on 2026-08-02 it stopped
-# answering a one-word prompt inside 240s while 32B answered in 1.5s.
+# A tool loop, which the 2026-06-26 eval rated v4-32B highest for. v4.5-27B was
+# chosen for single-shot persona reasoning and was unreachable on 2026-08-02.
 COORDINATOR_MODEL: str = os.getenv("COORDINATOR_MODEL", "").strip() or SEALION_FAST_MODEL
-# A reasoning tier spends tokens thinking before it writes, so with no floor the
-# reply gets whatever thinking did not consume.
+# A reasoning tier thinks before it writes; with no floor the reply gets the rest.
 RECRUITMENT_CONVERSATION_MAX_TOKENS: int = _int_env("RECRUITMENT_CONVERSATION_MAX_TOKENS", 4000)
 # AGENT: Resume Agent v2 orchestration and tool-calling loop.
 SEALION_AGENT_MODEL: str = os.getenv("SEALION_AGENT_MODEL", "aisingapore/Qwen-SEA-LION-v4.5-27B-IT")
@@ -96,16 +93,9 @@ OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS: int = _positive_int_env(
 # process restart and can be resumed from any worker, not just the one that
 # hit the pause.
 OPEN_AGENT_CHECKPOINT_DB_PATH: str = os.getenv("OPEN_AGENT_CHECKPOINT_DB_PATH", "open_agent_checkpoints.db")
-# Deliberately separate from AGENT_MAX_TOOL_ITERATIONS: one env var tuning both a
-# chat turn and a full multi-persona assessment means tuning either one starves
-# the other.
-#
-# This is a LangGraph recursion_limit, which counts super-steps, not tool calls.
-# Measured against the coordinator graph on deepagents 0.6.12: a turn costs 5
-# steps plus 4 per tool call, so 45 buys ten tool calls -- enough to search,
-# judge the results, search again, read the shortlist and still draft several
-# edits under OPEN_AGENT_MAX_PROPOSED_EDITS. A value picked as "about a dozen
-# iterations" would have bought two.
+# Separate from AGENT_MAX_TOOL_ITERATIONS so tuning a chat turn cannot starve an
+# assessment. A LangGraph recursion_limit counts super-steps, not tool calls:
+# measured at 5 steps plus 4 per call, so 45 buys ten tool calls.
 COORDINATOR_MAX_TOOL_ITERATIONS: int = _positive_int_env("COORDINATOR_MAX_TOOL_ITERATIONS", 45)
 AGENT_PERSONA_VALIDATION_ATTEMPTS: int = _positive_int_env(
     "AGENT_PERSONA_VALIDATION_ATTEMPTS",
