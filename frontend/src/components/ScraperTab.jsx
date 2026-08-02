@@ -147,7 +147,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     return ids;
   }, [trackedJobs]);
 
-  // Cover letter state
   const [coverLetterModal, setCoverLetterModal] = useState(null); // { job } or null
   const [coverLetterDirection, setCoverLetterDirection] = useState("");
   const [coverLetterText, setCoverLetterText] = useState("");
@@ -155,7 +154,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [coverLetterError, setCoverLetterError] = useState("");
   const [coverLetterCopied, setCoverLetterCopied] = useState(false);
 
-  // Application agent state
   const [applicationPackModal, setApplicationPackModal] = useState(null); // { job } or null
   const [applicationPackDirection, setApplicationPackDirection] = useState("");
   const [applicationPack, setApplicationPack] = useState(null);
@@ -163,7 +161,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [applicationPackError, setApplicationPackError] = useState("");
   const [applicationPackCopied, setApplicationPackCopied] = useState(false);
 
-  // Load cached jobs on mount (browse mode)
   useEffect(() => {
     loadJobs("");
   }, []);
@@ -600,7 +597,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   /* ── Sidebar filter panel (shared between desktop inline + mobile overlay) ── */
   const sidebarContent = (
     <div className="space-y-5">
-      {/* Search */}
       <div>
         <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-1.5">Search</label>
         <div className="flex gap-2">
@@ -622,7 +618,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </div>
       </div>
 
-      {/* Data Source */}
       {(filterMeta.sources || []).length > 0 && (
         <div>
           <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Data Source</label>
@@ -655,7 +650,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </div>
       )}
 
-      {/* Employer Type */}
       <div>
         <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Employer Type</label>
         <button
@@ -682,7 +676,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </p>
       </div>
 
-      {/* Experience Level */}
       <div>
         <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Seniority</label>
         <div className="space-y-0.5">
@@ -706,7 +699,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </div>
       </div>
 
-      {/* Employment Type */}
       {employmentTypeOptions.length > 0 && (
         <div>
           <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Job Type</label>
@@ -732,7 +724,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </div>
       )}
 
-      {/* Sector / Industry */}
       {(filterMeta.sectors || []).length > 0 && (
         <div>
           <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Industry</label>
@@ -758,7 +749,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </div>
       )}
 
-      {/* Location */}
       {locationOptions.length > 0 && (
         <div>
           <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Location</label>
@@ -785,7 +775,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </div>
       )}
 
-      {/* Experience Years */}
       <div>
         <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Experience</label>
         <div className="space-y-0.5">
@@ -814,7 +803,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         )}
       </div>
 
-      {/* Min Salary */}
       <div>
         <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-1.5">Minimum Salary</label>
         <div className="flex items-center gap-2">
@@ -839,7 +827,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         )}
       </div>
 
-      {/* Sort */}
       <div>
         <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-1.5">Sort By</label>
         <select
@@ -856,7 +843,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </select>
       </div>
 
-      {/* Clear all */}
       {activeFilterCount > 0 && (
         <button
           onClick={clearFilters}
@@ -870,7 +856,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
   return (
     <div className="space-y-4">
-      {/* Header */}
       <div className="rounded-2xl bg-white border border-[#BDDDFC]/25 p-6 shadow-sm">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#384959]">
@@ -886,7 +871,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </div>
       </div>
 
-      {/* Mobile filter toggle */}
       <div className="lg:hidden">
         <button
           onClick={() => setSidebarOpen(true)}
@@ -897,7 +881,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </button>
       </div>
 
-      {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-black/30" onClick={() => setSidebarOpen(false)} />
@@ -921,9 +904,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </div>
       )}
 
-      {/* Two-column layout: sidebar + job list */}
       <div className="flex gap-6 items-start">
-        {/* Desktop sidebar */}
         <aside className={`hidden lg:block flex-shrink-0 sticky top-20 max-h-[calc(100vh-5rem)] overscroll-contain transition-all duration-200 ${sidebarCollapsed ? "w-12 overflow-visible" : "w-[280px] overflow-y-auto pr-1"}`}>
           {sidebarCollapsed ? (
             <div className="bg-[#f0f4f8] border border-[#BDDDFC]/30 rounded-xl p-2 shadow-sm flex flex-col items-center gap-3">
@@ -964,9 +945,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           )}
         </aside>
 
-        {/* Main content */}
         <div className="flex-1 min-w-0 space-y-4">
-          {/* Results summary bar */}
           {totalLabel && (
             <div className="flex items-center justify-between">
               <p className="text-sm text-[#6A89A7]">
@@ -977,10 +956,8 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             </div>
           )}
 
-          {/* Loading */}
           {loading && <JobCardSkeleton count={5} />}
 
-          {/* Error */}
           {!loading && error && (
             <div className="text-center py-8">
               <AlertCircle size={32} className="mx-auto mb-2 text-red-400" />
@@ -988,14 +965,12 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             </div>
           )}
 
-          {/* Track error */}
           {trackError && (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center gap-2">
               <AlertCircle size={14} className="flex-shrink-0" />{trackError}
             </div>
           )}
 
-          {/* No results */}
           {!loading && !error && results.length === 0 && (
             <div className="text-center py-12 text-[#6A89A7]">
               <Search size={32} className="mx-auto mb-2 opacity-40" />
@@ -1003,7 +978,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             </div>
           )}
 
-          {/* Results */}
           {!loading && (
           <motion.div
             initial="hidden"
@@ -1156,7 +1130,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   {job.posted && <span>{job.posted}</span>}
                   {job.type && <span>{job.type}</span>}
                 </div>
-                {/* Interview Prep suggestions */}
                 {user && isExpanded && (
                   <div className="mb-3" onClick={(e) => e.stopPropagation()}>
                     <InterviewPrep jobId={job.id} user={user} onNavigateToStories={() => setActiveTab("stories")} />
@@ -1196,7 +1169,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           </motion.div>
           )}
 
-          {/* Pagination */}
           {totalPages > 1 && (
             <div className="flex justify-center gap-3">
               {page > 1 && (
@@ -1211,7 +1183,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </div>
       </div>
 
-      {/* Cover Letter Modal */}
       <AnimatePresence>
         {coverLetterModal && (
           <motion.div
@@ -1228,7 +1199,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Header */}
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
                 <div>
                   <h3 className="text-lg font-semibold text-[#384959]">Generate Cover Letter</h3>
@@ -1241,7 +1211,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 </button>
               </div>
 
-              {/* Body */}
               <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
                 {!coverLetterText && !coverLetterLoading && (
                   <>
@@ -1289,7 +1258,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 )}
               </div>
 
-              {/* Footer */}
               <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 bg-gray-50">
                 {coverLetterText ? (
                   <>
@@ -1329,7 +1297,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         )}
       </AnimatePresence>
 
-      {/* Application Pack Modal */}
       <AnimatePresence>
         {applicationPackModal && (
           <motion.div

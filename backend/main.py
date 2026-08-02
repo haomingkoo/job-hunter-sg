@@ -2882,7 +2882,6 @@ def search_jobs(
     if user.tier != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    # Log usage (sanitize search query before storing)
     usage = UsageLog(
         user_id=user.id if user else None,
         action="search",
@@ -4817,7 +4816,6 @@ def get_similar_jobs(
     if not title_words:
         return []
 
-    # Build query: match any title keyword, exclude the same job
     conditions = [
         ScrapedJob.title.ilike(_contains_like_pattern(word), escape="\\")
         for word in title_words[:3]
@@ -5000,9 +4998,9 @@ def get_power_match(
 
     recommendations: list[dict] = []
     for job in candidate_jobs:
-        # Use cached job_terms_preview when available (fast path),
-        # fall back to full extraction only when needed
         preview = job.job_terms_preview
+        # Cached job_terms_preview is the fast path; full extraction runs only
+        # when it is missing. This branch is the 3-5x, not a null check.
         if isinstance(preview, list) and preview:
             job_skills = [str(s) for s in preview if s]
         else:
@@ -5868,7 +5866,6 @@ def suggest_stories_for_job(
     if not stories:
         return {"suggestions": [], "detected_tags": [], "message": "No stories yet. Create some first!"}
 
-    # Detect behavioral signals from JD
     jd_text = (job.description or "").lower()
     tag_keywords = {
         "motivation": ["passion", "driven", "motivated", "mission", "purpose", "impact"],
@@ -5886,7 +5883,6 @@ def suggest_stories_for_job(
         if any(kw in jd_text for kw in keywords):
             detected_tags.append(tag)
 
-    # Rank stories by tag overlap
     suggestions = []
     for story in stories:
         story_tags = set(story.tags or [])
@@ -6194,7 +6190,6 @@ def score_resume(
         body.job_id,
         user.id if user else "anon",
     )
-    # Resolve template sections for section-completeness scoring
     template_sections: list[str] | None = None
     if body.template_id:
         from resume_templates import get_template_sections
@@ -6212,7 +6207,6 @@ def score_resume(
     # them directly instead of re-parsing (avoids mismatch).
     result["detected_sections"] = _scorer._extract_sections(resume_text)
 
-    # Enhance with canonical ATS term matching.
     if jd_text.strip():
         parsed_jd = preparse_jd(jd_text, db_session=db)
         job_terms = build_job_ats_terms(
@@ -6427,7 +6421,6 @@ def ai_coach_resume(
             detail="AI service unavailable — rate limit or API error. Try again shortly.",
         )
 
-    # Update memory for logged-in users (increment session count, store resume)
     mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
     if not mem:
         mem = UserMemory(user_id=user.id)
@@ -6457,7 +6450,7 @@ def ai_rewrite_bullet(
     rewrite_focus = sanitize_user_input(body.rewrite_focus) if hasattr(body, "rewrite_focus") else ""
     focused_feedback = sanitize_user_input(body.focused_feedback) if hasattr(body, "focused_feedback") else ""
 
-    # Build structured JD context (parsed skills, not raw blob)
+    # Structured JD context: parsed skills, never the raw blob.
     jd_context = job_description
     if hasattr(body, "job_id") and body.job_id:
         target_job = db.query(ScrapedJob).filter(ScrapedJob.id == body.job_id).first()
@@ -6473,7 +6466,6 @@ def ai_rewrite_bullet(
         elif target_job:
             jd_context = (target_job.description or "")[:500]
 
-    # Generate options, validate each, retry up to 3 times
     from validation_gates import validate_and_fix
     from ai_phrases import clean_ai_phrases
 
@@ -7004,7 +6996,6 @@ def resume_chat_step(
 
     # ── Chat mode: guide user through resume building ─────────────────
 
-    # Find trending skills from job database relevant to what user mentioned
     trending_skills_hint = ""
     user_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "user").lower()
     if user_text and len(user_text) > 20:
@@ -8644,7 +8635,6 @@ def apply_tailoring_changes(
     original_text = state.result.get("original_text", "")
     changes = state.result.get("changes", [])
 
-    # Start from original text and apply only accepted changes.
     tailored_text = original_text.replace("\r\n", "\n")
 
     applied_count = 0

@@ -40,9 +40,6 @@ def _result(tool_name: str, content, team_member: str = "coordinator") -> dict:
     }
 
 
-# ── which tool ran ───────────────────────────────────────────────────────────
-
-
 def test_a_tool_call_keeps_the_summary_shape_the_panel_parses():
     summary, detail = describe_progress(_call("read_shortlist"))
 
@@ -55,9 +52,6 @@ def test_a_persona_is_named_as_the_member_that_ran_the_tool():
     summary, _ = describe_progress(_call("read_target_job", team_member="ats"))
 
     assert summary == "ats called read_target_job."
-
-
-# ── what it looked for ───────────────────────────────────────────────────────
 
 
 def test_a_search_call_carries_the_query_it_ran():
@@ -78,9 +72,6 @@ def test_an_unbounded_query_is_clipped_before_it_reaches_the_panel():
     _, detail = describe_progress(_call("search_jobs", {"query": "yield " * 200}))
 
     assert len(detail["query"]) <= MAX_ACTIVITY_TEXT_CHARS
-
-
-# ── what came back ───────────────────────────────────────────────────────────
 
 
 def test_a_coordinator_search_result_reports_how_many_postings_came_back():
@@ -159,9 +150,6 @@ def test_an_unbounded_rejection_reason_is_clipped():
     assert len(detail["outcome"]) <= MAX_ACTIVITY_TEXT_CHARS
 
 
-# ── what never reaches the panel ─────────────────────────────────────────────
-
-
 def test_a_model_message_produces_no_activity_row():
     """Invariant 9. A plain model message is reasoning, not a conclusion."""
     assert describe_progress(
@@ -194,9 +182,6 @@ def test_no_posting_text_travels_through_a_result_row():
     assert "Micron" not in rendered
     assert "Yield Enhancement Engineer" not in rendered
     assert "wafer" not in rendered
-
-
-# ── the runner really publishes them ─────────────────────────────────────────
 
 
 def test_the_runner_streams_the_query_it_searched_for_and_the_count_that_came_back(monkeypatch):
@@ -245,9 +230,6 @@ def test_the_runner_streams_the_query_it_searched_for_and_the_count_that_came_ba
     assert by_stage["result"].status == "running", (
         "a mid-run tool result must not mark the coordinator row as reported"
     )
-
-
-# ── the conversational turn publishes them ───────────────────────────────────
 
 
 class _ToolStepModel:

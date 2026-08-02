@@ -153,7 +153,6 @@ def _apply_lightweight_migrations() -> None:
         if "role_metadata" not in tracked_columns:
             statements.append("ALTER TABLE tracked_jobs ADD COLUMN role_metadata JSON")
 
-    # user_memories: embedding vector for semantic matching
     if "user_memories" in inspector.get_table_names():
         memory_columns = {col["name"] for col in inspector.get_columns("user_memories")}
         if "resume_embedding" not in memory_columns:

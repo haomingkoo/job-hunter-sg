@@ -71,10 +71,9 @@ def summarize_job_description(
     description: str,
     parsed_jd: dict | None,
 ) -> tuple[str | None, str]:
-    """
-    Generate a short recruiter-style summary for a job description.
+    """Generate a short recruiter-style summary for a job description.
 
-    Returns (summary, model_used). The summary is None if generation failed.
+    Returns (summary, model_used); summary is None when generation failed.
     """
     outline = build_structured_jd_outline(
         job_title=job_title,

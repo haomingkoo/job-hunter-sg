@@ -672,12 +672,10 @@ class JobAggregator:
         limit_per_source: int = 20,
         enrich_skills: bool = True,
     ) -> dict:
-        """
-        Search across all (or selected) sources, deduplicate, and return results.
+        """Search across all (or selected) sources, deduplicate, and return results.
 
-        Returns dict with:
-            keyword, total_raw, total_deduped, duplicates_removed,
-            ssg_recommended_skills, by_source, jobs
+        Returns {keyword, total_raw, total_deduped, duplicates_removed,
+        ssg_recommended_skills, by_source, jobs}.
         """
         if sources is None:
             sources = list(self.SOURCE_MAP.keys())
@@ -705,7 +703,6 @@ class JobAggregator:
                 log.error(f"[{name}] Scraper crashed: {e}")
                 source_counts[name] = 0
 
-        # ── Deduplication ───────────────────────────────────────────────────
         total_raw = len(all_jobs)
         seen_keys: dict[str, Job] = {}
         for job in all_jobs:
@@ -726,7 +723,6 @@ class JobAggregator:
 
         deduped_jobs = list(seen_keys.values())
 
-        # ── Enrich with SSG Skills Framework ────────────────────────────────
         ssg_skills = []
         if enrich_skills:
             log.info("[SSG] Fetching recommended skills from Skills Framework...")

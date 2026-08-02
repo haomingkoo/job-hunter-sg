@@ -207,9 +207,6 @@ def _raw_case_facts(sessions, thread_id: str) -> dict:
         return dict(thread.case_facts)
 
 
-# ── read_shortlist ───────────────────────────────────────────────────────────
-
-
 def test_read_shortlist_returns_the_postings_with_enough_to_reason_about():
     """Naming a job is not the whole bug.
 
@@ -328,9 +325,6 @@ def test_read_shortlist_refuses_an_assessment_context():
     assert "recommendations" not in result
 
 
-# ── the shared tools on a conversation context ───────────────────────────────
-
-
 def test_read_target_job_and_read_candidate_evidence_say_what_is_missing():
     """A conversation turn has neither, so both must explain rather than crash.
 
@@ -358,9 +352,6 @@ def test_read_target_job_and_read_candidate_evidence_say_what_is_missing():
     assert "resume block" in evidence["reason"]
     assert "propose_resume_edit" in evidence["reason"]
     assert evidence["retry"] is False
-
-
-# ── search_jobs ──────────────────────────────────────────────────────────────
 
 
 def test_search_jobs_goes_through_the_port_with_the_args_the_agent_chose():
@@ -462,9 +453,6 @@ def test_search_jobs_outside_a_conversation_never_touches_the_port():
 
     assert result["ok"] is False
     assert result["failure_type"] == "business"
-
-
-# ── the crux: what the tools find has to survive the turn ────────────────────
 
 
 def test_a_search_run_inside_a_turn_reaches_the_thread_and_survives_a_shortlist_click():

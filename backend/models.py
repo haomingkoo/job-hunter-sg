@@ -228,8 +228,8 @@ class EmailVerificationToken(Base):
 
 
 class PowerMatchSnapshot(Base):
-    """
-    Persisted Power Match result for a user resume + job corpus version.
+    """Persisted Power Match result for a user resume + job corpus version.
+
     Keeps repeat visits off the expensive ranking path.
     """
 
@@ -544,7 +544,6 @@ class InterviewStory(Base):
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     project_name: Mapped[str] = mapped_column(String(300), default="")
 
-    # STAR+R fields
     situation: Mapped[str] = mapped_column(Text, default="")
     task: Mapped[str] = mapped_column(Text, default="")
     action: Mapped[str] = mapped_column(Text, default="")
