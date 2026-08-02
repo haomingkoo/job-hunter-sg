@@ -8,9 +8,11 @@ import re
 import threading
 import uuid
 import weakref
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import datetime, timezone
 
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from models import (
@@ -203,6 +205,17 @@ def _thread_lock(thread_id: str) -> threading.Lock:
         return lock
 
 
+def _reserve_event_sequence(db: Session, thread_id: str) -> int:
+    """Atomically reserve one ordered event number across database sessions."""
+    next_value = db.execute(
+        update(RecruitmentThread)
+        .where(RecruitmentThread.id == thread_id)
+        .values(next_event_sequence=RecruitmentThread.next_event_sequence + 1)
+        .returning(RecruitmentThread.next_event_sequence)
+    ).scalar_one()
+    return int(next_value) - 1
+
+
 class RecruitmentTeam:
     """The sole orchestration interface used by transports, canaries, and tests."""
 
@@ -216,6 +229,7 @@ class RecruitmentTeam:
         activity_publisher: ActivityPublisher,
         candidate_profiler_factory: CandidateProfilerFactory | None = None,
         target_assessment_runner: TargetAssessmentRunner | None = None,
+        study_dispatcher: Callable[[int, int, str], None] | None = None,
     ):
         self._db = db
         self._conversation_model = conversation_model
@@ -225,6 +239,7 @@ class RecruitmentTeam:
         self._activity_publisher = activity_publisher
         self._candidate_profiler_factory = candidate_profiler_factory
         self._target_assessment_runner = target_assessment_runner
+        self._study_dispatcher = study_dispatcher
 
     def execute(
         self,
@@ -357,6 +372,9 @@ class RecruitmentTeam:
             with self._telemetry.operation("persist_running"):
                 self._db.commit()
             self._activity_publisher.publish(self._activity(running_event))
+
+            if isinstance(command, StartThread) and self._study_dispatcher is not None:
+                self._study_dispatcher(owner_id, resume.id, thread.id)
 
             try:
                 if isinstance(command, SearchJobs):
@@ -562,16 +580,11 @@ class RecruitmentTeam:
         from resume_document import create_resume_document
 
         facts = thread.case_facts
-        has_profile = (
-            facts.get("candidate_profile_status") == "completed"
-            and bool(facts.get("candidate_profile_artifact_id"))
-        )
+        profile = self._find_completed_candidate_profile(thread, resume)
         return ConversationContext(
             thread_id=thread.id,
             trace_key=correlation_key,
-            candidate_profile=(
-                self._completed_candidate_profile(thread, resume) if has_profile else None
-            ),
+            candidate_profile=profile,
             role_profile=(
                 self._role_profile_from_dict(facts["role_success_profile"])
                 if isinstance(facts.get("role_success_profile"), dict)
@@ -1321,21 +1334,34 @@ class RecruitmentTeam:
         thread: RecruitmentThread,
         resume: ResumeVersion,
     ) -> CandidateEvidenceProfile:
+        profile = self._find_completed_candidate_profile(thread, resume)
+        if profile is not None:
+            return profile
+        raise InvalidCommand("build the candidate evidence profile before selecting a target job")
+
+    def _find_completed_candidate_profile(
+        self,
+        thread: RecruitmentThread,
+        resume: ResumeVersion,
+    ) -> CandidateEvidenceProfile | None:
         artifact_id = thread.case_facts.get("candidate_profile_artifact_id")
-        if not artifact_id or thread.case_facts.get("candidate_profile_status") != "completed":
-            raise InvalidCommand("build the candidate evidence profile before selecting a target job")
         artifact = (
             self._db.query(CandidateProfileArtifact)
             .filter(
-                CandidateProfileArtifact.id == str(artifact_id),
                 CandidateProfileArtifact.user_id == thread.user_id,
                 CandidateProfileArtifact.resume_version_id == resume.id,
                 CandidateProfileArtifact.status == "completed",
             )
+            .order_by(CandidateProfileArtifact.updated_at.desc())
             .first()
         )
         if artifact is None or artifact.profile is None:
-            raise InvalidCommand("completed candidate profile artifact is unavailable")
+            return None
+        if artifact_id != artifact.id or thread.case_facts.get("candidate_profile_status") != "completed":
+            facts = dict(thread.case_facts or {})
+            facts["candidate_profile_artifact_id"] = artifact.id
+            facts["candidate_profile_status"] = "completed"
+            thread.case_facts = facts
         return self._candidate_profile_from_dict(artifact.profile)
 
     def snapshot(self, owner_id: int, thread_id: str) -> ThreadSnapshot:
@@ -1390,20 +1416,18 @@ class RecruitmentTeam:
         thread_id: str,
     ) -> CandidateProfileArtifactSnapshot | None:
         thread = self._owned_thread(owner_id, thread_id)
-        artifact_id = thread.case_facts.get("candidate_profile_artifact_id")
-        if not artifact_id:
-            return None
         artifact = (
             self._db.query(CandidateProfileArtifact)
             .filter(
-                CandidateProfileArtifact.id == str(artifact_id),
                 CandidateProfileArtifact.user_id == owner_id,
                 CandidateProfileArtifact.resume_version_id == thread.resume_version_id,
+                CandidateProfileArtifact.status == "completed",
             )
+            .order_by(CandidateProfileArtifact.updated_at.desc())
             .first()
         )
         if artifact is None:
-            raise InvalidCommand("candidate profile artifact reference is invalid")
+            return None
         return CandidateProfileArtifactSnapshot(
             artifact_id=artifact.id,
             resume_version_id=artifact.resume_version_id,
@@ -1933,8 +1957,7 @@ class RecruitmentTeam:
         detail: dict | None = None,
         team_member: str = "coordinator",
     ) -> RecruitmentActivityEvent:
-        sequence = thread.next_event_sequence
-        thread.next_event_sequence += 1
+        sequence = _reserve_event_sequence(self._db, thread.id)
         event = RecruitmentActivityEvent(
             thread_id=thread.id,
             run_id=run.id,

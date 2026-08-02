@@ -174,6 +174,16 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   }, [threadId]);
 
   useEffect(() => {
+    if (!threadId || snapshot?.case_facts?.candidate_profile_status !== "running") {
+      return undefined;
+    }
+    const interval = setInterval(() => {
+      refreshThread(threadId).catch((loadError) => setError(loadError.message));
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [threadId, snapshot?.case_facts?.candidate_profile_status]);
+
+  useEffect(() => {
     if (threadId || suppressAutoResume) return undefined;
     let cancelled = false;
     (async () => {
