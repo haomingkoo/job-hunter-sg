@@ -16,7 +16,7 @@ from models import (
     RecruitmentThread,
     ResumeVersion,
 )
-from resume_document import create_resume_document
+from resume_document import SCHEMA_VERSION, create_resume_document
 
 from .candidate_profile import CandidateProfilerFactory, candidate_profile_execution_policy
 from .candidate_profile_store import SQLAlchemyCandidateProfileStore
@@ -35,7 +35,7 @@ def _completed_artifact(
     resume_version_id: int,
     profiler_factory: CandidateProfilerFactory,
 ) -> CandidateProfileArtifact | None:
-    return (
+    artifacts = (
         db.query(CandidateProfileArtifact)
         .filter(
             CandidateProfileArtifact.user_id == owner_id,
@@ -46,8 +46,9 @@ def _completed_artifact(
             CandidateProfileArtifact.model_name == profiler_factory.model_name,
         )
         .order_by(CandidateProfileArtifact.updated_at.desc())
-        .first()
+        .all()
     )
+    return artifacts[0] if artifacts else None
 
 
 def study_resume_version(
@@ -59,15 +60,6 @@ def study_resume_version(
     telemetry: RecruitmentTelemetry,
 ) -> CandidateProfileArtifact:
     """Build or reuse the current evidence profile for one immutable resume."""
-    cached = _completed_artifact(
-        db,
-        owner_id=owner_id,
-        resume_version_id=resume_version_id,
-        profiler_factory=profiler_factory,
-    )
-    if cached is not None and cached.execution_policy == candidate_profile_execution_policy():
-        return cached
-
     resume = (
         db.query(ResumeVersion)
         .filter(
@@ -78,8 +70,22 @@ def study_resume_version(
         .one()
     )
     document = resume.resume_structured
-    if not isinstance(document, dict) or document.get("raw_text") != resume.resume_text:
+    if (
+        not isinstance(document, dict)
+        or document.get("schema_version") != SCHEMA_VERSION
+        or document.get("raw_text") != resume.resume_text
+    ):
         document = create_resume_document(resume.resume_text)
+        resume.resume_structured = document
+        db.commit()
+    cached = _completed_artifact(
+        db,
+        owner_id=owner_id,
+        resume_version_id=resume_version_id,
+        profiler_factory=profiler_factory,
+    )
+    if cached is not None and cached.execution_policy == candidate_profile_execution_policy():
+        return cached
     store = SQLAlchemyCandidateProfileStore(
         db,
         owner_id=owner_id,

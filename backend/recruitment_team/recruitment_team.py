@@ -866,12 +866,14 @@ class RecruitmentTeam:
     ) -> tuple[ModelReply, dict]:
         if self._candidate_profiler_factory is None:
             raise InvalidCommand("candidate profile capability is not configured")
-        from resume_document import create_resume_document
+        from resume_document import SCHEMA_VERSION, create_resume_document
 
         document = resume.resume_structured
-        if document is None:
+        if not isinstance(document, dict) or document.get("schema_version") != SCHEMA_VERSION:
             document = create_resume_document(resume.resume_text)
-        elif document.get("schema_version") != 1 or document.get("raw_text") != resume.resume_text:
+            resume.resume_structured = document
+            self._db.commit()
+        elif document.get("raw_text") != resume.resume_text:
             raise CandidateProfilingUnavailable(
                 "saved resume structure does not match its immutable text",
                 failure_type="validation",
@@ -1345,7 +1347,9 @@ class RecruitmentTeam:
         resume: ResumeVersion,
     ) -> CandidateEvidenceProfile | None:
         artifact_id = thread.case_facts.get("candidate_profile_artifact_id")
-        artifact = (
+        from resume_document import SCHEMA_VERSION
+
+        artifacts = (
             self._db.query(CandidateProfileArtifact)
             .filter(
                 CandidateProfileArtifact.user_id == thread.user_id,
@@ -1353,7 +1357,15 @@ class RecruitmentTeam:
                 CandidateProfileArtifact.status == "completed",
             )
             .order_by(CandidateProfileArtifact.updated_at.desc())
-            .first()
+            .all()
+        )
+        artifact = next(
+            (
+                item for item in artifacts
+                if isinstance(item.profile, dict)
+                and (item.execution_policy or {}).get("resume_document_schema_version") == SCHEMA_VERSION
+            ),
+            None,
         )
         if artifact is None or artifact.profile is None:
             return None
@@ -1416,7 +1428,8 @@ class RecruitmentTeam:
         thread_id: str,
     ) -> CandidateProfileArtifactSnapshot | None:
         thread = self._owned_thread(owner_id, thread_id)
-        artifact = (
+        from resume_document import SCHEMA_VERSION
+        artifacts = (
             self._db.query(CandidateProfileArtifact)
             .filter(
                 CandidateProfileArtifact.user_id == owner_id,
@@ -1424,7 +1437,15 @@ class RecruitmentTeam:
                 CandidateProfileArtifact.status == "completed",
             )
             .order_by(CandidateProfileArtifact.updated_at.desc())
-            .first()
+            .all()
+        )
+        artifact = next(
+            (
+                item for item in artifacts
+                if isinstance(item.profile, dict)
+                and (item.execution_policy or {}).get("resume_document_schema_version") == SCHEMA_VERSION
+            ),
+            None,
         )
         if artifact is None:
             return None
@@ -1568,7 +1589,10 @@ class RecruitmentTeam:
         )
         if not edits:
             return []
+        from resume_document import create_resume_document
+
         resume_text = self._owned_resume(owner_id, thread.resume_version_id).resume_text or ""
+        revision = create_resume_document(resume_text)["revision"]
         return [
             {
                 "id": edit.id,
@@ -1578,7 +1602,11 @@ class RecruitmentTeam:
                 "original": edit.original,
                 "rewrite": edit.rewrite,
                 "status": edit.status,
-                "applicable": bool(edit.original) and edit.original in resume_text,
+                "applicable": (
+                    edit.document_revision == revision
+                    and bool(edit.original)
+                    and edit.original in resume_text
+                ),
                 "created_at": edit.created_at.isoformat() if edit.created_at else "",
             }
             for edit in edits
@@ -1611,10 +1639,13 @@ class RecruitmentTeam:
 
         source = self._owned_resume(owner_id, thread.resume_version_id)
         text = source.resume_text or ""
+        from resume_document import create_resume_document
+
+        revision = create_resume_document(text)["revision"]
         applied: list[str] = []
         stale: list[str] = []
         for edit in edits:
-            if edit.original and edit.original in text:
+            if edit.document_revision == revision and edit.original and edit.original in text:
                 text = text.replace(edit.original, edit.rewrite, 1)
                 edit.status = "accepted"
                 applied.append(edit.id)

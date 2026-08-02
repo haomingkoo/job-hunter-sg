@@ -80,6 +80,9 @@ def _thread_with_edits(db, edits):
     )
     run_id = db.query(RecruitmentRun).filter(RecruitmentRun.thread_id == started.thread_id).first().id
 
+    from resume_document import create_resume_document
+
+    revision = create_resume_document(RESUME_TEXT)["revision"]
     for original, rewrite in edits:
         db.add(
             ProposedResumeEdit(
@@ -91,7 +94,7 @@ def _thread_with_edits(db, edits):
                 block_id=f"block-{uuid.uuid4().hex[:8]}",
                 original=original,
                 rewrite=rewrite,
-                document_revision="rev-1",
+                document_revision=revision,
                 status="pending",
             )
         )
@@ -168,6 +171,24 @@ def test_accepting_when_every_edit_is_stale_is_rejected():
     with sessions() as db:
         owner_id, _, thread_id = _thread_with_edits(db, [("Not present at all.", "Anything.")])
 
+        with pytest.raises(InvalidCommand):
+            _team(db).accept_proposed_edits(owner_id, thread_id)
+
+
+def test_an_edit_from_the_previous_document_schema_is_stale_even_if_text_matches():
+    from recruitment_team.errors import InvalidCommand
+
+    sessions = _session_factory()
+    with sessions() as db:
+        owner_id, _, thread_id = _thread_with_edits(
+            db,
+            [("Ran vLLM inference clusters on AMD MI300X.", "Operated vLLM inference clusters.")],
+        )
+        edit = db.query(ProposedResumeEdit).filter_by(thread_id=thread_id).one()
+        edit.document_revision = "r_schema_v1"
+        db.commit()
+
+        assert _team(db).proposed_edits(owner_id, thread_id)[0]["applicable"] is False
         with pytest.raises(InvalidCommand):
             _team(db).accept_proposed_edits(owner_id, thread_id)
 

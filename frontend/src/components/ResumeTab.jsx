@@ -807,7 +807,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setAgentWorkerRuns(Array.isArray(data.worker_runs) ? data.worker_runs : []);
     setAgentToolSpans(Array.isArray(data.tool_spans) ? data.tool_spans : []);
     setAgentPendingDiffs(Array.isArray(data.pending_diffs) ? data.pending_diffs : []);
-    setAgentDocument(data.document?.schema_version === 1 ? data.document : null);
+    setAgentDocument(data.document?.schema_version === 2 ? data.document : null);
     setAgentRunStatus(data.status || "idle");
     setAgentProgress(data.progress || "");
     setAgentLoading(["queued", "running"].includes(data.status));
@@ -922,7 +922,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       const data = await response.json();
       applyResumeText(data.draft, { preserveTailoringContext: true });
       setAgentPendingDiffs(Array.isArray(data.pending_diffs) ? data.pending_diffs : []);
-      setAgentDocument(data.document?.schema_version === 1 ? data.document : null);
+      setAgentDocument(data.document?.schema_version === 2 ? data.document : null);
     } catch (err) {
       setAgentError(err.message || "Could not safely apply this resume edit.");
     } finally {
@@ -1042,7 +1042,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
       const data = await response.json();
       const nextText = data.text || "";
-      setAgentDocument(data.document?.schema_version === 1 ? data.document : null);
+      setAgentDocument(data.document?.schema_version === 2 ? data.document : null);
       setUploadWarnings([
         ...(data.parse_quality?.warnings || []),
         ...(data.content_warnings || []),
@@ -1112,7 +1112,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       const resp = await apiFetch(`/api/resume/versions/${versionId}`);
       if (!resp.ok) return;
       const data = await resp.json();
-      setAgentDocument(data.resume_structured?.schema_version === 1 ? data.resume_structured : null);
+      setAgentDocument(data.resume_structured?.schema_version === 2 ? data.resume_structured : null);
       setSelectedBulletId(null);
       setEditingNodeId(null);
       setCoachResponse(null);
