@@ -1,8 +1,7 @@
 # V4 slice 1: the coordinator gets a loop (#146)
 
-Design for issue #146. Companion to `docs/v4-study-first-recruitment.md` (branch
-`docs/v4-study-first-prd`, not yet merged to main), slice **V1: the coordinator can see
-the thread**.
+Design for issue #146. Companion to the landed study-first design in
+`docs/v4-141-study-first.md`, covering the coordinator's thread-aware tool loop.
 
 This document is the contract the tests in `backend/tests/test_coordinator_loop.py`
 assert against. They were written first as strict xfails, and they pass now.
@@ -807,8 +806,9 @@ Record the before-state for each first, so an inert change cannot pass.
 
 ### The unit tests
 
-`backend/tests/test_coordinator_loop.py` is necessary and not sufficient. 851 tests
-passed while job search returned zero results for every user.
+`backend/tests/test_coordinator_loop.py` is necessary and not sufficient. The pre-fix
+suite passed while job search returned zero results for every user, so live acceptance
+must also exercise the rendered workflow.
 
 | test | what would otherwise pass while broken |
 |---|---|
