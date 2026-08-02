@@ -10,7 +10,7 @@ from typing import Any
 from shared_classification import classify_section_heading
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _BULLET_MARKER = r"(?:[•\-*▪\u2023\u25E6\u2043\u2219]|\d+[.)])"
 
 
@@ -27,7 +27,7 @@ def _hash(prefix: str, value: str) -> str:
 
 
 def _revision(text: str) -> str:
-    return _hash("r", text)
+    return _hash("r", f"{SCHEMA_VERSION}\0{text}")
 
 
 def _candidate_custom_heading(text: str) -> bool:
@@ -44,7 +44,8 @@ def _candidate_custom_heading(text: str) -> bool:
 
 def _flexible_text_pattern(text: str) -> str:
     parts = re.split(r"\s+", text.strip())
-    return r"\s+".join(re.escape(part) for part in parts if part)
+    escaped = [re.escape(part).replace(r"\-", r"-\s*") for part in parts if part]
+    return r"\s+".join(escaped)
 
 
 def _structured_bullet_spans(text: str) -> list[dict[str, Any]]:
@@ -64,10 +65,11 @@ def _structured_bullet_spans(text: str) -> list[dict[str, Any]]:
         if not match:
             continue
         start, end = match.span("content")
+        normalized = re.sub(r"\s+", " ", match.group("content")).strip()
         spans.append({
             "start": start,
             "end": end,
-            "text": re.sub(r"\s+", " ", match.group("content")).strip(),
+            "text": re.sub(r"-\s+", "-", normalized),
             "source_text": match.group("content"),
             "section_key": str(bullet.get("section_key") or ""),
             "entry_id": str(bullet.get("entry_id") or ""),
@@ -97,6 +99,55 @@ def _line_spans(text: str, occupied: list[tuple[int, int]]) -> list[dict[str, An
     return spans
 
 
+def _looks_like_role_header(value: str) -> bool:
+    return bool(
+        re.search(r"\b(?:19|20)\d{2}\s*[-–—].*(?:19|20)\d{2}|\b(?:19|20)\d{2}\s*[-–—]\s*(?:Present|Current)\b", value, re.I)
+    )
+
+
+def _starts_new_paragraph(value: str) -> bool:
+    return bool(
+        classify_section_heading(value)
+        or _candidate_custom_heading(value)
+        or re.match(rf"^\s*{_BULLET_MARKER}\s+", value)
+        or _looks_like_role_header(value)
+        or re.match(r"^[A-Z][^:\n]{1,60}:\s", value)
+    )
+
+
+def _join_wrapped_line_spans(text: str, spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    joined: list[dict[str, Any]] = []
+    seen_section = False
+    for item in spans:
+        item_is_section = classify_section_heading(str(item["text"]).strip()) is not None
+        if not joined:
+            joined.append(item)
+            seen_section = seen_section or item_is_section
+            continue
+        previous = joined[-1]
+        gap = text[previous["end"]:item["start"]]
+        previous_text = str(previous["text"]).rstrip()
+        current_text = str(item["text"]).strip()
+        continues = (
+            bool(re.fullmatch(r"[ \t]*\n[ \t]*", gap))
+            and seen_section
+            and not previous_text.endswith((".", "!", "?", ";"))
+            and classify_section_heading(previous_text) is None
+            and not _candidate_custom_heading(previous_text)
+            and not _looks_like_role_header(previous_text)
+            and not _starts_new_paragraph(current_text)
+        )
+        if not continues:
+            joined.append(item)
+            seen_section = seen_section or item_is_section
+            continue
+        separator = "" if previous_text.endswith("-") else " "
+        previous["text"] = f"{previous_text}{separator}{current_text}"
+        previous["end"] = item["end"]
+        previous["source_text"] = text[previous["start"]:item["end"]]
+    return joined
+
+
 def create_resume_document(
     text: str,
     *,
@@ -108,11 +159,11 @@ def create_resume_document(
     """Return one canonical document for uploaded or pasted resume text."""
     raw_text = str(text or "")
     source_hash = source_sha256 or hashlib.sha256(raw_text.encode()).hexdigest()
-    document_id = f"d_{source_hash[:20]}"
+    document_id = _hash("d", f"{SCHEMA_VERSION}\0{source_hash}")
     bullet_spans = _structured_bullet_spans(raw_text)
     occupied = [(item["start"], item["end"]) for item in bullet_spans]
     source_blocks = sorted(
-        [*bullet_spans, *_line_spans(raw_text, occupied)],
+        [*bullet_spans, *_join_wrapped_line_spans(raw_text, _line_spans(raw_text, occupied))],
         key=lambda item: (item["start"], item["end"]),
     )
 

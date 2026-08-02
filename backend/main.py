@@ -7897,13 +7897,15 @@ def get_usage(
 
 
 def _resume_structure_for_storage(resume_text: str, supplied: object = None) -> dict:
-    from resume_document import create_resume_document
+    from resume_document import SCHEMA_VERSION, create_resume_document
 
     if supplied is None:
         return create_resume_document(resume_text)
     if not isinstance(supplied, dict):
         raise HTTPException(status_code=422, detail="Structured resume must be an object")
-    if supplied.get("schema_version") == 1 and supplied.get("raw_text") != resume_text:
+    if supplied.get("schema_version") != SCHEMA_VERSION:
+        return create_resume_document(resume_text)
+    if supplied.get("raw_text") != resume_text:
         raise HTTPException(status_code=409, detail="Structured resume does not match resume text")
     return supplied
 

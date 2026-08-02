@@ -87,7 +87,7 @@ def test_isolated_parser_returns_normal_pdf_result():
 
     assert result["file_type"] == "pdf"
     assert result["text"]
-    assert result["document"]["schema_version"] == 1
+    assert result["document"]["schema_version"] == 2
     assert result["document"]["raw_text"] == result["text"]
     assert result["document"]["source"]["format"] == "pdf"
 

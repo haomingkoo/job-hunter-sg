@@ -41,6 +41,8 @@ CANDIDATE_PROFILE_DECOMPOSITION_VERSION = "semantic-section-record-v1"
 
 
 def candidate_profile_execution_policy() -> dict[str, str | int]:
+    from resume_document import SCHEMA_VERSION
+
     return {
         "prompt_version": CANDIDATE_PROFILE_PROMPT_VERSION,
         "validation_feedback_version": CANDIDATE_PROFILE_VALIDATION_FEEDBACK_VERSION,
@@ -48,6 +50,7 @@ def candidate_profile_execution_policy() -> dict[str, str | int]:
         "validation_attempts": config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
         "decomposition_version": CANDIDATE_PROFILE_DECOMPOSITION_VERSION,
+        "resume_document_schema_version": SCHEMA_VERSION,
     }
 
 

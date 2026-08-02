@@ -159,6 +159,36 @@ def test_second_thread_resolves_the_resume_scoped_study_without_rerunning_it():
         assert snapshot.artifact_id == artifact.id
 
 
+def test_a_profile_from_the_previous_resume_schema_is_not_reused():
+    sessions = _sessions()
+    owner_id, resume_id, thread_id = _owner_resume_thread(sessions)
+    factory = ScriptedCandidateProfilerFactory([_run()], model_name="study-model")
+
+    with sessions() as db:
+        artifact = study_resume_version(
+            db,
+            owner_id=owner_id,
+            resume_version_id=resume_id,
+            profiler_factory=factory,
+            telemetry=RecordedTelemetry(),
+        )
+        policy = dict(artifact.execution_policy)
+        policy.pop("resume_document_schema_version")
+        artifact.execution_policy = policy
+        db.commit()
+
+        team = RecruitmentTeam(
+            db,
+            None,
+            None,
+            None,
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+
+        assert team.candidate_profile(owner_id, thread_id) is None
+
+
 def test_start_thread_dispatches_the_resume_study_after_the_thread_is_durable():
     sessions = _sessions()
     owner_id, resume_id, _ = _owner_resume_thread(sessions)

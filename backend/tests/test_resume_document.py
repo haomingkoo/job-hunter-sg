@@ -133,3 +133,43 @@ Jan 2023 - Present
         block["text"] == "Operations Lead | Northstar Pte Ltd"
         for block in document["blocks"]
     )
+
+
+def test_wrapped_summary_skills_and_role_description_are_logical_blocks():
+    text = """HUI SHAN ANG
+hui@example.com
+
+PROFESSIONAL SUMMARY
+AI leader delivering production systems across
+regional operations and engineering teams.
+
+CORE SKILLS
+Agentic AI: LangGraph, evaluation, guardrails and
+human-in-the-loop workflows
+
+PROFESSIONAL EXPERIENCE
+AI Engineer | Example Pte Ltd | Jan 2024 - Present
+Selected to build a platform used across three
+regional teams, with evidence-backed reporting.
+"""
+
+    document = create_resume_document(text)
+    texts = [block["text"] for block in document["blocks"]]
+
+    assert "AI leader delivering production systems across regional operations and engineering teams." in texts
+    assert "Agentic AI: LangGraph, evaluation, guardrails and human-in-the-loop workflows" in texts
+    assert "Selected to build a platform used across three regional teams, with evidence-backed reporting." in texts
+    assert "AI Engineer | Example Pte Ltd | Jan 2024 - Present" in texts
+
+
+def test_wrapped_hyphenated_bullet_keeps_one_word_and_one_source_span():
+    text = """EXPERIENCE
+• Scaled AI-
+  based detection across the fab.
+"""
+
+    document = create_resume_document(text)
+    bullet = next(block for block in document["blocks"] if block["kind"] == "bullet")
+
+    assert bullet["text"] == "Scaled AI-based detection across the fab."
+    assert "AI-\n" in bullet["source_text"]

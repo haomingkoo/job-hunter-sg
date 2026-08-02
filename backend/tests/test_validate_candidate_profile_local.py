@@ -104,6 +104,7 @@ def test_candidate_profile_canary_writes_complete_profile_and_compact_summary(
         "validation_attempts": config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
         "decomposition_version": "semantic-section-record-v1",
+        "resume_document_schema_version": 2,
         "checkpoint_enabled": False,
     }
     assert json.loads(summary) == {
