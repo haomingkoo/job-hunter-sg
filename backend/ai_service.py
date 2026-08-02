@@ -219,23 +219,20 @@ _UK_SPELLING_MAP: dict[str, str] = {
     "optimizing": "optimising", "organizing": "organising", "utilizing": "utilising",
     "analyzing": "analysing", "prioritizing": "prioritising", "synchronizing": "synchronising",
     "emphasizing": "emphasising", "finalizing": "finalising", "authorizing": "authorising",
-    "optimization": "optimisation", "organization": "organisation", "recognition": "recognition",
+    "optimization": "optimisation", "organization": "organisation",
     "specialization": "specialisation", "customization": "customisation",
-    "utilization": "utilisation", "analysis": "analysis",  # same
+    "utilization": "utilisation",
     "behavior": "behaviour", "behaviors": "behaviours",
     "fulfillment": "fulfilment", "enrollment": "enrolment",
 }
 
-import re as _re_uk
-
-
 def _replace_preserving_case(text: str, american: str, british: str) -> str:
-    def replacer(m: "_re_uk.Match") -> str:
+    def replacer(m: re.Match) -> str:
         word = m.group(0)
         if word[0].isupper():
             return british[0].upper() + british[1:]
         return british
-    return _re_uk.sub(r"\b" + _re_uk.escape(american) + r"\b", replacer, text, flags=_re_uk.IGNORECASE)
+    return re.sub(r"\b" + re.escape(american) + r"\b", replacer, text, flags=re.IGNORECASE)
 
 
 def apply_uk_spelling(text: str) -> str:
@@ -585,10 +582,9 @@ SECURITY: {UNTRUSTED_DATA_RULE}"""
         return []
 
     # Parse the 3 options from "1. ...\n2. ...\n3. ..."
-    import re as _re
     options = []
     for line in content.strip().split("\n"):
-        cleaned = _re.sub(r"^\d+[\.\)]\s*", "", line.strip())
+        cleaned = re.sub(r"^\d+[\.\)]\s*", "", line.strip())
         if cleaned and len(cleaned) > 10:
             options.append(cleaned)
 

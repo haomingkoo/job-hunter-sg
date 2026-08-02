@@ -85,17 +85,7 @@ class _AssessmentSubmission(BaseModel):
 
 def _submit_assessment(**payload: Any) -> dict:
     """Submit the final reviewer assessment using the required JSON schema."""
-
-    def plain(value: Any) -> Any:
-        if isinstance(value, BaseModel):
-            return value.model_dump()
-        if isinstance(value, list):
-            return [plain(item) for item in value]
-        if isinstance(value, dict):
-            return {key: plain(item) for key, item in value.items()}
-        return value
-
-    return plain(payload)
+    return _AssessmentSubmission(**payload).model_dump()
 
 
 _SUBMIT_ASSESSMENT_TOOL = StructuredTool.from_function(
