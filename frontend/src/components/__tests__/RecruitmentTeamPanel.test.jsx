@@ -62,7 +62,13 @@ describe("RecruitmentTeamPanel", () => {
         return response({
           thread_id: "thread-1",
           workflow_state: "exploring",
-          case_facts: { resume_label: "AI resume" },
+          case_facts: {
+            resume_label: "AI resume",
+            plan: [
+              { step: "Study resume evidence", status: "completed" },
+              { step: "Rank current roles", status: "in_progress" },
+            ],
+          },
           messages: messages.slice(0, messageCount),
         });
       }
@@ -94,6 +100,9 @@ describe("RecruitmentTeamPanel", () => {
 
     expect(container.textContent).toContain("I will focus on evidence-backed matches.");
     expect(container.textContent).toContain("Turn completed.");
+    expect(container.textContent).toContain("Recruitment plan");
+    expect(container.textContent).toContain("Study resume evidence");
+    expect(container.textContent).toContain("in progress");
     expect(localStorage.getItem("jobhunter:recruitment-thread:42")).toBe("thread-1");
 
     await act(async () => {

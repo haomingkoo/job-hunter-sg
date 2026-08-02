@@ -113,6 +113,7 @@ class CaseFacts:
     selected_target: JobSnapshot | None = None
     role_success_profile: RoleSuccessProfile | None = None
     preferences: tuple[PreferenceFact, ...] = ()
+    plan: tuple[dict[str, str], ...] = ()
     candidate_profile_artifact_id: str | None = None
     candidate_profile_status: str = "not_started"
     target_assessment_artifact_id: str | None = None

@@ -44,6 +44,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   );
   const awaitingAnswer = snapshot?.workflow_state === "awaiting_candidate_answer";
   const candidateStudyRunning = snapshot?.case_facts?.candidate_profile_status === "running";
+  const plan = snapshot?.case_facts?.plan || [];
   const recommendations = snapshot?.case_facts?.recommendations || [];
   const shortlistedJobs = snapshot?.case_facts?.shortlisted_jobs || [];
   const displayedJobs = [
@@ -588,6 +589,30 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
                 <p key={`${index}-${queuedMessage}`} className="mt-1">{queuedMessage}</p>
               ))}
             </div>
+          )}
+
+          {plan.length > 0 && (
+            <section aria-labelledby="recruitment-plan-title" className="mt-6 border-t border-[#BDDDFC]/50 pt-5">
+              <h2 id="recruitment-plan-title" className="text-sm font-semibold text-[#384959]">
+                Recruitment plan
+              </h2>
+              <p className="mt-1 text-xs text-[#6A89A7]">
+                The coordinator updates this when your direction or the work changes.
+              </p>
+              <ol className="mt-3 space-y-2">
+                {plan.map((item, index) => (
+                  <li
+                    key={`${index}-${item.step}`}
+                    className="flex items-start justify-between gap-3 rounded-xl border border-[#BDDDFC]/60 px-3 py-2"
+                  >
+                    <span className="text-sm text-[#384959]">{item.step}</span>
+                    <span className="shrink-0 rounded-full bg-[#f0f5fa] px-2 py-1 text-xs capitalize text-[#384959]">
+                      {item.status.replaceAll("_", " ")}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </section>
           )}
 
           {candidateProfile && (
