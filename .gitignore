@@ -20,6 +20,9 @@ venv/
 node_modules/
 frontend/node_modules/
 frontend/dist/
+# The built frontend, copied here so main.py serves it. Its presence mounts the
+# SPA catch-all, which turns method-not-allowed into 404 under pytest.
+backend/static/
 .playwright-mcp/
 tmp/
 

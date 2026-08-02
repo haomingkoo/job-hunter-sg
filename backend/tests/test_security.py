@@ -577,10 +577,14 @@ def test_rag_agent_and_legacy_live_search_require_accounts():
 
     assert client.post("/api/resume/agent/start", json={"message": "Find jobs"}).status_code == 401
     assert client.post("/api/search", params={"q": "engineer"}).status_code == 401
-    assert client.get("/api/search", params={"q": "engineer"}).status_code == 405
-    assert client.get("/api/jobs/power-match").status_code == 405
-    assert client.get("/api/resume/tailor/missing/result").status_code == 405
-    assert client.get("/api/jobs/recommended", params={"resume_text": "private resume"}).status_code == 405
+    # These routes are POST-only, so an unauthenticated GET is 405. Once the built
+    # frontend exists in backend/static, main.py mounts StaticFiles at "/" and the
+    # same GET returns 404 instead. What matters here is that neither serves data.
+    no_data = {404, 405}
+    assert client.get("/api/search", params={"q": "engineer"}).status_code in no_data
+    assert client.get("/api/jobs/power-match").status_code in no_data
+    assert client.get("/api/resume/tailor/missing/result").status_code in no_data
+    assert client.get("/api/jobs/recommended", params={"resume_text": "private resume"}).status_code in no_data
 
 
 def test_unsubscribe_link_requires_confirmation_before_mutating(monkeypatch):
