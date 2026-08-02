@@ -8,6 +8,7 @@ import TrackerTab, { getPipelineStatusMove } from "../TrackerTab.jsx";
 vi.mock("../../lib/api.js", () => ({
   API_BASE: "",
   apiFetch: vi.fn(),
+  downloadBlob: vi.fn(),
 }));
 
 function setField(field, value) {
@@ -424,7 +425,7 @@ describe("TrackerTab workspace creation", () => {
       },
     };
     apiFetch.mockResolvedValueOnce({ json: vi.fn().mockResolvedValue(workspace) });
-    fetch.mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue(uploadedWorkspace) });
+    apiFetch.mockResolvedValueOnce({ json: vi.fn().mockResolvedValue(uploadedWorkspace) });
 
     await act(async () => {
       root.render(
@@ -463,8 +464,8 @@ describe("TrackerTab workspace creation", () => {
       saveButton.click();
     });
 
-    expect(fetch).toHaveBeenCalledTimes(1);
-    const [url, options] = fetch.mock.calls[0];
+    expect(apiFetch).toHaveBeenCalledTimes(2);
+    const [url, options] = apiFetch.mock.calls[1];
     expect(url).toBe("/api/applications/workspaces/123/submitted-resume");
     expect(options.method).toBe("POST");
     expect(options.body.get("file")).toBe(file);

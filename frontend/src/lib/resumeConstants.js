@@ -208,13 +208,6 @@ export const NUS_RESUME_BENCHMARKS = [
 export const RESUME_HEADINGS = new Set(sharedConfig.section_headings);
 export const RESUME_SECTION_KEY_MAP = sharedConfig.section_key_map;
 
-export const RESUME_TEMPLATE_SECTION_ORDER = {
-  classic: ["summary", "education", "experience", "skills", "certifications"],
-  modern: ["summary", "experience", "projects", "skills", "education"],
-  singapore: ["personal", "summary", "education", "experience", "activities", "skills"],
-  compact: ["summary", "experience", "skills", "education", "certifications"],
-};
-
 export const RESUME_ACTION_VERBS = new Set([
   "achieved", "administered", "advanced", "analyzed", "analysed", "architected",
   "assembled", "assessed", "automated", "built", "calculated",

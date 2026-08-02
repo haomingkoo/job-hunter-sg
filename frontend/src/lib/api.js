@@ -73,7 +73,10 @@ async function readApiError(resp) {
 export async function apiFetch(path, options = {}) {
   const { timeoutMs, headers: optionHeaders, ...fetchOptions } = options;
   const token = localStorage.getItem("token");
-  const headers = { "Content-Type": "application/json", ...optionHeaders };
+  const headers = { ...optionHeaders };
+  if (typeof FormData === "undefined" || !(fetchOptions.body instanceof FormData)) {
+    headers["Content-Type"] ||= "application/json";
+  }
   if (token) headers["Authorization"] = `Bearer ${token}`;
   const controller = timeoutMs ? new AbortController() : null;
   const timeoutId = controller
@@ -117,4 +120,15 @@ export async function apiFetch(path, options = {}) {
   }
   if (!resp.ok) throw new Error(await readApiError(resp));
   return resp;
+}
+
+export function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
 }

@@ -11,14 +11,13 @@ import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from 
 import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-import { API_BASE, apiFetch, clearResumeDraftStorage } from "../lib/api.js";
+import { API_BASE, apiFetch, downloadBlob } from "../lib/api.js";
 import { titleCase, extractKeywordLabel, getScoreTheme } from "../lib/helpers.js";
 import { buildJobSkillDisplay, cleanAlignmentTerms } from "../lib/jobSkillHelpers.js";
 import {
   DEFAULT_RESUME_TEMPLATES,
   NUS_RESUME_BENCHMARKS,
   RESUME_BULLET_RE,
-  RESUME_TEMPLATE_SECTION_ORDER,
   RESUME_SECTION_LABELS,
   TAILOR_STAGE_LABELS,
   ADD_SECTION_OPTIONS,
@@ -299,8 +298,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [summaryDirection, setSummaryDirection] = useState("");
   const [showSummaryPrompt, setShowSummaryPrompt] = useState(false);
   const [showSetupPanel, setShowSetupPanel] = useState(() => !resumeText.trim());
-  const [workspaceView, setWorkspaceView] = useState("feedback");
-  const [mobilePanel, setMobilePanel] = useState("edit");
   const [showVersionDropdown, setShowVersionDropdown] = useState(false);
   const [selectedBulletId, setSelectedBulletId] = useState(null);
   const [mobileBulletSheet, setMobileBulletSheet] = useState(null);
@@ -408,7 +405,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
   const openMobileFeedbackPanel = useCallback((targetRef = scorePanelRef) => {
     if (typeof window === "undefined" || window.innerWidth >= 1024) return;
-    setMobilePanel("feedback");
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         targetRef?.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -630,14 +626,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     || DEFAULT_RESUME_TEMPLATES.find((template) => template.id === selectedTemplate)
     || DEFAULT_RESUME_TEMPLATES[1];
   const templateStyles = buildResumeTemplateStyles(templateMeta, selectedTemplate);
-  const templateOrderSource = Array.isArray(templateMeta?.section_order) && templateMeta.section_order.length > 0
-    ? templateMeta.section_order
-    : Array.isArray(templateMeta?.order) && templateMeta.order.length > 0
-      ? templateMeta.order
-      : null;
-  const templateOrder = templateOrderSource
-    ? templateOrderSource
-    : RESUME_TEMPLATE_SECTION_ORDER[selectedTemplate] || [];
+  const templateOrder = templateMeta?.section_order || [];
 
   const resumeKeywords = useMemo(
     () => buildResumeKeywords(selectedJob, scoreData),
@@ -1026,19 +1015,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const token = localStorage.getItem("token");
-      const headers = {};
-      if (token) headers.Authorization = `Bearer ${token}`;
-
-      const response = await fetch(`${API_BASE}/api/resume/upload`, {
+      const response = await apiFetch("/api/resume/upload", {
         method: "POST",
-        headers,
         body: formData,
       });
-
-      if (!response.ok) {
-        throw new Error(`${response.status}: ${await response.text()}`);
-      }
 
       const data = await response.json();
       const nextText = data.text || "";
@@ -1669,13 +1649,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         await handleFinalizeScore();
       }
 
-      const token = localStorage.getItem("token");
-      const headers = { "Content-Type": "application/json" };
-      if (token) headers.Authorization = `Bearer ${token}`;
-
-      const response = await fetch(`${API_BASE}/api/resume/download`, {
+      const response = await apiFetch("/api/resume/download", {
         method: "POST",
-        headers,
         body: JSON.stringify({
           resume_text: resumeText,
           template: selectedTemplate,
@@ -1686,24 +1661,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         }),
       });
 
-      if (response.status === 401) {
-        localStorage.removeItem("token");
-        clearResumeDraftStorage();
-        window.location.reload();
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(`${response.status}: ${await response.text()}`);
-      }
-
       const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = getDownloadFilename(response, "resume.docx");
-      anchor.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, getDownloadFilename(response, "resume.docx"));
       setDownloadReady(true);
     } catch (err) {
       setDownloadError(err.message || "Download failed. Please try again.");
@@ -1716,12 +1675,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     if (!resumeText.trim() || downloadingPdf) return;
     setDownloadingPdf(true);
     try {
-      const token = localStorage.getItem("token");
-      const headers = { "Content-Type": "application/json" };
-      if (token) headers.Authorization = `Bearer ${token}`;
-      const resp = await fetch(`${API_BASE}/api/resume/download-pdf`, {
+      const resp = await apiFetch("/api/resume/download-pdf", {
         method: "POST",
-        headers,
         body: JSON.stringify({
           resume_text: resumeText,
           template: selectedTemplate,
@@ -1730,14 +1685,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
           phone: profile.phone || "",
         }),
       });
-      if (!resp.ok) throw new Error("PDF generation failed");
       const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${(profile.name || "resume").replace(/[^a-zA-Z0-9]/g, "_")}_resume.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(blob, `${(profile.name || "resume").replace(/[^a-zA-Z0-9]/g, "_")}_resume.pdf`);
     } catch (err) {
       setDownloadError(err.message || "PDF download failed");
     }
@@ -2011,7 +1960,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     }).length;
 
     const foundSectionKeys = new Set(parsedSections.filter((s) => s.type === "heading").map((s) => s.sectionKey).filter(Boolean));
-    const expectedSections = RESUME_TEMPLATE_SECTION_ORDER[selectedTemplate] || [];
+    const expectedSections = templateOrder;
     const missingSections = expectedSections.filter((key) => key && !foundSectionKeys.has(key));
 
     const rows = [
@@ -2062,7 +2011,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     }
 
     return rows;
-  }, [bulletSections, parsedSections, wordCount, selectedTemplate]);
+  }, [bulletSections, parsedSections, wordCount, selectedTemplate, templateOrder]);
   const livePresentationOverrides = useMemo(() => {
     const liveBulletCount = bulletSections.length;
     const bulletScore = liveBulletCount >= 15 && liveBulletCount <= 25
@@ -2160,8 +2109,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   }, [bulletSections, resumeText]);
   const issueBulletCount = bulletSections.filter((section) => section.annotation?.tone && section.annotation.tone !== "emerald").length;
   const improvementCount = issueBulletCount + Math.min(scoreData?.top_suggestions?.length || 0, 3) + Math.min(relevantMissingKeywords.length, 6);
-  const isFeedbackView = workspaceView === "feedback";
-  const showFeedbackPanels = isFeedbackView || mobilePanel === "feedback";
   const lowScoreWarning = scoreData && overallScore !== null && overallScore < 50;
   const setupVisible = showSetupPanel || !resumeText.trim() || wizardStep === 1;
   const chatStageMeta = useMemo(
@@ -2198,7 +2145,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setSelectedBulletId(sectionId);
     setSelectedSectionId(sectionId);
     setSelectedInjectKeyword(null);
-    setMobilePanel("feedback");
     if (typeof window !== "undefined") {
       window.requestAnimationFrame(() => {
         document.getElementById(`resume-section-${sectionId}`)?.scrollIntoView({
@@ -3625,7 +3571,6 @@ CERTIFICATIONS
                       onClick={() => {
                         setSelectedInjectKeyword(null);
                         setActiveSuggestionHint(isActive ? null : item);
-                        setMobilePanel("feedback");
                       }}
                       className={`w-full rounded-2xl border px-3 py-3 text-left transition hover:shadow-sm ${isActive ? "border-indigo-300 bg-indigo-50" : "border-slate-200 bg-slate-50 hover:border-indigo-200 hover:bg-indigo-50/50"}`}
                     >
@@ -3687,7 +3632,7 @@ CERTIFICATIONS
             </div>
           </div>
 
-          {showFeedbackPanels && scoreData && Object.keys(scoreData.dimensions || {}).length > 0 && (
+          {scoreData && Object.keys(scoreData.dimensions || {}).length > 0 && (
             <div className="space-y-3">
               {Object.entries(scoreData.dimensions).map(([name, dimension]) => {
                 const displayItems = Object.fromEntries(
@@ -4117,7 +4062,6 @@ CERTIFICATIONS
             )}
           </div>
 
-          {showFeedbackPanels && (
           <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
             <div className="text-sm font-semibold text-[#384959]">Resume Targets</div>
             <div className="mt-1 text-xs text-[#6A89A7]">Recommended ranges for this template and experience level.</div>
@@ -4146,9 +4090,7 @@ CERTIFICATIONS
               ))}
             </div>
           </div>
-          )}
 
-          {showFeedbackPanels && (
           <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
             <div className="text-sm font-semibold text-[#384959]">Job Terms</div>
             {scoreData ? (
@@ -4281,7 +4223,6 @@ CERTIFICATIONS
               <div className="mt-2 text-sm text-[#6A89A7]">Score the resume to see matched and missing keywords.</div>
             )}
           </div>
-          )}
 
           <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
             <div className="text-sm font-semibold text-[#384959]">Action Buttons</div>
@@ -4839,7 +4780,6 @@ CERTIFICATIONS
             </div>
           )}
 
-          {showFeedbackPanels && (
           <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
             <div className="text-sm font-semibold text-[#384959]">Singapore Tips</div>
             <ul className="mt-3 space-y-2">
@@ -4855,7 +4795,6 @@ CERTIFICATIONS
               ))}
             </ul>
           </div>
-          )}
 
           {(coachLoading || coachResponse) && (
             <details open className="overflow-hidden rounded-3xl border border-purple-200 bg-purple-50 shadow-sm">

@@ -22,6 +22,16 @@ describe("apiFetch", () => {
     );
   });
 
+  it("does not send a JSON content type for form data", async () => {
+    global.fetch = vi.fn(() => Promise.resolve({ ok: true, status: 200 }));
+    const body = new FormData();
+    body.append("file", new Blob(["resume"]), "resume.txt");
+
+    await apiFetch("/api/resume/upload", { method: "POST", body });
+
+    expect(global.fetch.mock.calls[0][1].headers["Content-Type"]).toBeUndefined();
+  });
+
   it("clears resume drafts when auth expires", async () => {
     localStorage.setItem("token", "expired-token");
     sessionStorage.setItem("jh_resume_text", "draft");
