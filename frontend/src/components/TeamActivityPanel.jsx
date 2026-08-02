@@ -63,22 +63,44 @@ const TOOL_PHRASES = {
   write_todos: "planning its checks",
   read_candidate_evidence: "reading your evidence profile",
   read_target_job: "reading the job posting",
+  read_shortlist: "reading your shortlist",
+  search_jobs: "searching current postings",
   ask_candidate: "asking you a question",
   propose_resume_edit: "drafting a resume edit",
   submit_target_specialist_assessment: "writing up its assessment",
-  guarded_search_jobs: "searching current postings",
+  ConversationReply: "writing your reply",
 };
 
-function humanize(summary, memberId) {
+/**
+ * The same tool is bound under two names: the assessment runner wraps search as
+ * `guarded_search_jobs`, the coordinator binds `search_jobs`. Keying on the raw
+ * bound name meant the most common tool in a run fell through to generic
+ * wording on whichever path was not spelled here.
+ */
+function normalizeTool(toolName) {
+  return String(toolName || "").replace(/^guarded_/, "");
+}
+
+function capitalize(text) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function humanize(item) {
+  const summary = item.summary;
   if (!summary) return summary;
-  const called = summary.match(/^(\w+) called (\w+)\.?$/);
-  if (called) {
-    const phrase = TOOL_PHRASES[called[2]];
-    if (phrase) return phrase.charAt(0).toUpperCase() + phrase.slice(1);
-  }
+  const detail = item.detail || {};
+
+  // What came back. Counts and named outcomes only: no tool ever returns its
+  // raw payload to this panel.
+  if (detail.stage === "result" && detail.outcome) return capitalize(detail.outcome);
+
+  const tool = normalizeTool(detail.tool_name || summary.match(/^\w+ called (\w+)\.?$/)?.[1]);
+  const phrase = TOOL_PHRASES[tool];
+  // What it looked for, when the tool searched for something.
+  if (phrase) return capitalize(detail.query ? `${phrase} for “${detail.query}”` : phrase);
+
   // The row already names the agent, so drop a leading "ats ..." / "hiring_manager ..." subject.
-  const withoutSubject = summary.replace(new RegExp(`^${memberId}\\s+`), "");
-  return withoutSubject.charAt(0).toUpperCase() + withoutSubject.slice(1);
+  return capitalize(summary.replace(new RegExp(`^${item.team_member}\\s+`), ""));
 }
 
 /** Latest run only: earlier runs are history, not live state. */
@@ -92,7 +114,7 @@ function buildRoster(events) {
     // Keep every step. The old panel showed only the newest, which threw the tool loop away.
     existing.steps.push({
       key: item.sequence,
-      summary: humanize(item.summary, item.team_member),
+      summary: humanize(item),
       status: item.status,
     });
     byMember.set(item.team_member, existing);
@@ -193,6 +215,14 @@ function AgentRow({ agent, defaultOpen }) {
 export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
   const roster = useMemo(() => buildRoster(events), [events]);
   const elapsed = useElapsed(busy);
+  // Only a full assessment runs specialists and a judge. A chat turn now streams
+  // its own tool steps through this panel, and promising it several minutes of
+  // specialists would be a lie on every message.
+  const assessing = useMemo(() => {
+    if (!events.length) return false;
+    const latestRunId = events[events.length - 1].run_id;
+    return events.some((item) => item.run_id === latestRunId && item.event_type === "assessment");
+  }, [events]);
 
   const specialists = roster.filter((a) => a.id !== "coordinator");
   // "Reported" means it has produced a verdict, even if it was re-engaged afterwards.
@@ -221,7 +251,7 @@ export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
         {specialists.length > 0 && ` · ${reported} of ${specialists.length} reported`}
       </p>
 
-      {busy && (
+      {busy && assessing && (
         <p className="mt-2 rounded-xl bg-[#EDF3F9] px-3 py-2 text-[11px] leading-relaxed text-[#33506B]">
           A full assessment runs several specialists and an independent judge. This usually takes a few
           minutes.
