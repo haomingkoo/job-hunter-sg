@@ -19,7 +19,7 @@ from typing import Any, Callable
 
 from ..candidate_profile import CandidateEvidenceProfile
 from ..discovery import DiscoveryPort, JobSearchResult, JobSnapshot
-from ..interface import PreferenceFact
+from ..interface import PreferenceFact, PreferenceUpdate
 from ..role_success import RoleSuccessProfile
 
 
@@ -38,7 +38,9 @@ class ConversationContext:
     recommendations: tuple[JobSnapshot, ...]
     shortlisted_jobs: tuple[JobSnapshot, ...]
     preferences: tuple[PreferenceFact, ...]
+    published_matches: tuple[dict[str, Any], ...]
     discovery: DiscoveryPort
+    latest_user_message: str = ""
     # The LangGraph thread id of a graph this thread left paused on
     # ask_candidate, or "" when nothing is pending. Read from case_facts; the
     # reply reports a new one back the same way.
@@ -47,6 +49,8 @@ class ConversationContext:
     # so the tools stay free of the ORM and the write lands in the same
     # transaction as the assistant message.
     search_results: list[JobSearchResult] = field(default_factory=list, compare=False)
+    drafted_preferences: list[PreferenceUpdate] = field(default_factory=list, compare=False)
+    drafted_matches: list[dict[str, Any]] = field(default_factory=list, compare=False)
     proposed_edits: list[dict[str, Any]] = field(default_factory=list, compare=False)
     # One normalized iter_progress_events dict per event: tool_call, tool_result,
     # message.

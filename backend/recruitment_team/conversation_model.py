@@ -22,10 +22,11 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle guard, annotations are stri
     from .coordinator.context import ConversationContext
 
 
-class _PreferenceUpdatePayload(BaseModel):
+class PreferenceUpdatePayload(BaseModel):
     field: Literal["role", "location", "seniority", "salary", "constraints"]
     value: str = Field(min_length=1)
     evidence_quote: str = Field(min_length=1)
+    operation: Literal["set", "remove"] = "set"
 
 
 class ConversationReply(BaseModel):
@@ -37,14 +38,14 @@ class ConversationReply(BaseModel):
     """
 
     reply: str = Field(min_length=1)
-    preference_updates: list[_PreferenceUpdatePayload] = Field(default_factory=list)
+    preference_updates: list[PreferenceUpdatePayload] = Field(default_factory=list)
     search_query: str = ""
 
 
 @tool(args_schema=ConversationReply)
 def submit_recruitment_conversation(
     reply: str,
-    preference_updates: list[_PreferenceUpdatePayload],
+    preference_updates: list[PreferenceUpdatePayload],
     search_query: str = "",
 ) -> str:
     """Submit one recruitment-team reply, durable preferences, and a search phrase.
@@ -52,6 +53,8 @@ def submit_recruitment_conversation(
     Use after every conversational turn. Each preference update must be explicitly
     stated in the latest user message and include an exact supporting quote. Do not
     use this tool to infer preferences from a resume or an earlier message.
+    Set operation="remove" only when the latest message explicitly withdraws the
+    stored field and value.
 
     search_query is what to look for, phrased only in the positive: the roles the
     candidate wants, in the words a posting would use. Job search matches on
@@ -272,6 +275,7 @@ class LangChainConversationModel:
                             field=item.field,
                             value=item.value.strip(),
                             evidence_quote=item.evidence_quote.strip(),
+                            operation=item.operation,
                         )
                         for item in payload.preference_updates
                     )

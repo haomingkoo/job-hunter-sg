@@ -220,6 +220,7 @@ def _context(discovery, *, recommendations=(), shortlisted=(), events=None, **ov
         "recommendations": tuple(recommendations),
         "shortlisted_jobs": tuple(shortlisted),
         "preferences": (),
+        "published_matches": (),
         "discovery": discovery,
         "on_event": (events.append if events is not None else None),
     }
@@ -1356,7 +1357,9 @@ def test_the_coordinator_binds_only_the_tools_it_needs():
         "read_candidate_evidence",
         "read_shortlist",
         "read_target_job",
+        "record_preferences",
         "search_jobs",
+        "write_shortlist",
     }
     # write_todos is deliberately absent. Live on 2026-08-02 the model wrote the
     # same three-item list eleven times and died on the iteration cap, ignoring an

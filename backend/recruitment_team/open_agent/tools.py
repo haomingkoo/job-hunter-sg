@@ -18,12 +18,16 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from types import SimpleNamespace
+from typing import Literal
 
 from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 
 import config
 from validation_gates import _extract_numbers, run_all_gates
 
+from ..conversation_model import PreferenceUpdatePayload
+from ..interface import PreferenceUpdate
 from . import context
 from .guardrails import has_repeated_call
 
@@ -41,6 +45,34 @@ _NO_CONVERSATION = {
     "failure_type": "business",
     "reason": "No active conversation context.",
 }
+
+
+class _ResumeMatch(BaseModel):
+    statement: str = Field(min_length=1)
+    resume_quote: str = Field(min_length=1)
+
+
+class _RankedMatch(BaseModel):
+    job_id: int
+    matched: list[_ResumeMatch] = Field(min_length=1)
+    stretch: list[_ResumeMatch] = Field(default_factory=list)
+    missing: list[str] = Field(default_factory=list)
+    level_fit: Literal["aligned", "stretch", "below_candidate_level", "unclear"]
+    pay_position: Literal[
+        "above_peer_median",
+        "near_peer_median",
+        "below_peer_median",
+        "salary_not_stated",
+        "insufficient_context",
+    ]
+
+
+class _WriteShortlistPayload(BaseModel):
+    matches: list[_RankedMatch] = Field(min_length=1)
+
+
+class _RecordPreferencesPayload(BaseModel):
+    updates: list[PreferenceUpdatePayload] = Field(min_length=1)
 
 
 def _posting(job) -> dict:
@@ -172,7 +204,141 @@ def read_shortlist() -> dict:
             conversation.target_job.job_id if conversation.target_job else None
         ),
         "candidate_profile_available": conversation.candidate_profile is not None,
+        "published_matches": (
+            list(conversation.drafted_matches)
+            if conversation.drafted_matches
+            else (
+                []
+                if any(result.jobs for result in conversation.search_results)
+                else list(conversation.published_matches)
+            )
+        ),
     }
+
+
+@tool(args_schema=_RecordPreferencesPayload)
+def record_preferences(updates: list[PreferenceUpdatePayload]) -> dict:
+    """Record preferences explicitly stated or withdrawn in the latest message.
+
+    Use one update per independently retractable fact. evidence_quote must be an
+    exact phrase from the candidate's latest message. A removal's value must
+    exactly match the stored preference it withdraws.
+    """
+    from ..coordinator.context import current_conversation
+
+    conversation = current_conversation()
+    if conversation is None:
+        return dict(_NO_CONVERSATION)
+    parsed = [PreferenceUpdatePayload.model_validate(update) for update in updates]
+    invalid_quotes = [
+        update.evidence_quote
+        for update in parsed
+        if update.evidence_quote.strip() not in conversation.latest_user_message
+    ]
+    if invalid_quotes:
+        return {
+            "accepted": False,
+            "reason": "Every preference needs an exact quote from the latest message.",
+            "invalid_quotes": invalid_quotes,
+        }
+    stored = {(fact.field, fact.value) for fact in conversation.preferences}
+    invalid_removals = [
+        {"field": update.field, "value": update.value}
+        for update in parsed
+        if update.operation == "remove" and (update.field, update.value.strip()) not in stored
+    ]
+    if invalid_removals:
+        return {
+            "accepted": False,
+            "reason": "A removal must exactly match a stored preference.",
+            "invalid_removals": invalid_removals,
+        }
+    conversation.drafted_preferences.clear()
+    conversation.drafted_preferences.extend(
+        PreferenceUpdate(
+            field=update.field,
+            value=update.value.strip(),
+            evidence_quote=update.evidence_quote.strip(),
+            operation=update.operation,
+        )
+        for update in parsed
+    )
+    return {"accepted": True, "recorded": len(parsed)}
+
+
+@tool(args_schema=_WriteShortlistPayload)
+def write_shortlist(matches: list[_RankedMatch]) -> dict:
+    """Publish the ordered jobs worth showing, with evidence-backed rationales.
+
+    Use after reading or searching postings. Order the entries best-first and
+    omit roles that violate the candidate's stated constraints. Every matched
+    point needs an exact resume quote. Level and pay are separate judgments;
+    salary context is evidence, never a formula or an imputed offer.
+    """
+    from ..coordinator.context import current_conversation, merged_recommendations
+
+    conversation = current_conversation()
+    if conversation is None:
+        return dict(_NO_CONVERSATION)
+    _, recommendations = merged_recommendations(conversation)
+    known_jobs = {
+        job.job_id: job for job in (*recommendations, *conversation.shortlisted_jobs)
+    }
+    parsed = [_RankedMatch.model_validate(match) for match in matches]
+    job_ids = [match.job_id for match in parsed]
+    if len(job_ids) != len(set(job_ids)):
+        return {
+            "accepted": False,
+            "reason": "Each job may appear only once in the published shortlist.",
+        }
+    unknown = [job_id for job_id in job_ids if job_id not in known_jobs]
+    if unknown:
+        return {
+            "accepted": False,
+            "reason": f"Unknown job IDs: {', '.join(str(job_id) for job_id in unknown)}.",
+            "known_job_ids": list(known_jobs),
+        }
+
+    blocks = (conversation.resume_document or {}).get("blocks") or []
+    resume_text = "\n".join(str(block.get("text") or "") for block in blocks)
+    for match in parsed:
+        for point in (*match.matched, *match.stretch):
+            quote = point.resume_quote.strip()
+            if quote not in resume_text:
+                return {
+                    "accepted": False,
+                    "reason": (
+                        f"Job {match.job_id} cites a phrase that is not verbatim in "
+                        "the resume. Copy an exact quote from read_candidate_evidence."
+                    ),
+                    "job_id": match.job_id,
+                    "invalid_quote": quote,
+                }
+        job = known_jobs[match.job_id]
+        has_salary = bool(job.salary.strip())
+        if match.pay_position == "salary_not_stated" and has_salary:
+            return {
+                "accepted": False,
+                "reason": f"Job {match.job_id} states a salary; do not label it missing.",
+            }
+        if match.pay_position != "salary_not_stated" and not has_salary:
+            return {
+                "accepted": False,
+                "reason": f"Job {match.job_id} states no salary; do not infer one.",
+            }
+        if (
+            match.pay_position
+            in {"above_peer_median", "near_peer_median", "below_peer_median"}
+            and job.salary_context is None
+        ):
+            return {
+                "accepted": False,
+                "reason": f"Job {match.job_id} has no peer salary context.",
+            }
+
+    conversation.drafted_matches.clear()
+    conversation.drafted_matches.extend(match.model_dump() for match in parsed)
+    return {"accepted": True, "published_job_ids": job_ids}
 
 
 @tool

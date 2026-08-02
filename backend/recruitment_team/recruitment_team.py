@@ -543,6 +543,12 @@ class RecruitmentTeam:
             },
         ) as model_span:
             messages = self._messages(thread.id)
+            latest_user = next(
+                (message for message in reversed(messages) if message.role == "user"),
+                None,
+            )
+            if latest_user is None:
+                raise InvalidCommand("conversation turn has no user message")
             preferences = self._preference_facts(thread.case_facts)
             conversation = self._conversation_context(
                 thread,
@@ -550,6 +556,7 @@ class RecruitmentTeam:
                 preferences,
                 correlation_key,
                 self._conversation_activity(thread, run),
+                latest_user.content,
             )
             # The turn is handed to the model twice over: explicitly as the
             # fourth argument, which is what DeepAgentConversationModel requires
@@ -565,14 +572,8 @@ class RecruitmentTeam:
             if not reply.content:
                 raise InvalidCommand("conversation model returned no user-facing reply")
             reply = replace(reply, content=paragraph_reply(reply.content))
-            latest_user = next(
-                (message for message in reversed(messages) if message.role == "user"),
-                None,
-            )
-            if latest_user is None:
-                raise InvalidCommand("conversation turn has no user message")
             evidenced, unevidenced = evidenced_preference_updates(
-                reply.preference_updates,
+                (*reply.preference_updates, *conversation.drafted_preferences),
                 latest_user.content,
             )
             if evidenced:
@@ -582,6 +583,7 @@ class RecruitmentTeam:
             # After _remember_search_query on purpose: a query that really ran
             # outranks one the model merely asked for.
             self._persist_conversation_searches(thread, conversation)
+            self._persist_conversation_matches(thread, conversation)
             self._persist_conversation_edits(thread, resume, run, conversation)
             self._remember_pause_token(thread, reply.pause_token)
             model_span.set_attribute("model", reply.model_name)
@@ -609,6 +611,7 @@ class RecruitmentTeam:
         preferences: tuple[PreferenceFact, ...],
         correlation_key: str,
         on_event,
+        latest_user_message: str,
     ) -> ConversationContext:
         """Everything this turn already knows, assembled once before the model runs."""
         from resume_document import create_resume_document
@@ -638,7 +641,11 @@ class RecruitmentTeam:
                 self._job_from_dict(item) for item in facts.get("shortlisted_jobs", [])
             ),
             preferences=preferences,
+            published_matches=tuple(
+                item for item in facts.get("match_rationales", []) if isinstance(item, dict)
+            ),
             discovery=self._discovery,
+            latest_user_message=latest_user_message,
             pause_token=str(facts.get("coordinator_pause_token") or ""),
             on_event=on_event,
         )
@@ -778,6 +785,28 @@ class RecruitmentTeam:
         facts = dict(thread.case_facts)
         facts["latest_search_query"] = latest_query
         facts["recommendations"] = [asdict(job) for job in recommendations]
+        facts.pop("match_rationales", None)
+        thread.case_facts = facts
+
+    def _persist_conversation_matches(
+        self,
+        thread: RecruitmentThread,
+        conversation: ConversationContext,
+    ) -> None:
+        """Persist the agent's ordered, evidence-gated shortlist artifact."""
+        if not conversation.drafted_matches:
+            return
+        _, recommendations = merged_recommendations(conversation)
+        known_jobs = {
+            job.job_id: job
+            for job in (*recommendations, *conversation.shortlisted_jobs)
+        }
+        job_ids = [int(match["job_id"]) for match in conversation.drafted_matches]
+        if any(job_id not in known_jobs for job_id in job_ids):
+            raise InvalidCommand("published shortlist referenced an unavailable job")
+        facts = dict(thread.case_facts)
+        facts["recommendations"] = [asdict(known_jobs[job_id]) for job_id in job_ids]
+        facts["match_rationales"] = list(conversation.drafted_matches)
         thread.case_facts = facts
 
     def _query_from_candidate(self, thread: RecruitmentThread, resume: ResumeVersion) -> str:
@@ -1448,6 +1477,9 @@ class RecruitmentTeam:
                 resume_sha256=str(facts["resume_sha256"]),
                 latest_search_query=str(facts.get("latest_search_query") or ""),
                 recommendations=tuple(self._job_from_dict(item) for item in facts.get("recommendations", [])),
+                match_rationales=tuple(
+                    item for item in facts.get("match_rationales", []) if isinstance(item, dict)
+                ),
                 shortlisted_jobs=tuple(self._job_from_dict(item) for item in facts.get("shortlisted_jobs", [])),
                 shortlisted_job_ids=tuple(
                     dict.fromkeys(
@@ -2013,6 +2045,16 @@ class RecruitmentTeam:
         """Takes the updates rather than the reply: only evidenced ones get here."""
         current = list(thread.case_facts.get("preferences", []))
         for update in updates:
+            if update.operation == "remove":
+                current = [
+                    item
+                    for item in current
+                    if not (
+                        item.get("field") == update.field
+                        and item.get("value") == update.value
+                    )
+                ]
+                continue
             fact = {
                 "field": update.field,
                 "value": update.value,

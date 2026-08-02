@@ -138,7 +138,7 @@ def describe_progress(event: dict) -> tuple[str, dict] | None:
         return f"{team_member} called {tool_name}.", detail
 
     if event.get("kind") == "tool_result":
-        outcome = _outcome(event.get("content"))
+        outcome = _outcome(tool_name, event.get("content"))
         if outcome is None:
             return None
         detail = {"tool_name": tool_name, "stage": "result", "outcome": _clip(outcome)}
@@ -156,7 +156,7 @@ def describe_progress(event: dict) -> tuple[str, dict] | None:
     return None
 
 
-def _outcome(content: Any) -> str | None:
+def _outcome(tool_name: str, content: Any) -> str | None:
     """One short derived sentence about what a tool returned, or None.
 
     None means the tool said nothing worth a row of its own. Silence beats a
@@ -181,9 +181,18 @@ def _outcome(content: Any) -> str | None:
     if found is not None:
         return f"{found} matching {'posting' if found == 1 else 'postings'}"
 
-    if payload.get("accepted") is True:
+    published_job_ids = payload.get("published_job_ids")
+    if tool_name == "write_shortlist" and isinstance(published_job_ids, list):
+        count = len(published_job_ids)
+        return f"{count} {'role' if count == 1 else 'roles'} ranked with resume evidence"
+
+    recorded = payload.get("recorded")
+    if tool_name == "record_preferences" and isinstance(recorded, int):
+        return f"{recorded} {'preference' if recorded == 1 else 'preferences'} recorded"
+
+    if tool_name == "propose_resume_edit" and payload.get("accepted") is True:
         return "one resume edit drafted, waiting on your approval"
-    if payload.get("accepted") is False:
+    if tool_name == "propose_resume_edit" and payload.get("accepted") is False:
         return f"no edit drafted ({payload.get('reason') or 'rejected'})"
 
     return None
