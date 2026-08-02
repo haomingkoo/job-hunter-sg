@@ -1359,13 +1359,13 @@ def test_the_coordinator_binds_only_the_tools_it_needs():
         "read_target_job",
         "record_preferences",
         "search_jobs",
+        "write_plan",
         "write_shortlist",
     }
-    # write_todos is deliberately absent. Live on 2026-08-02 the model wrote the
+    # Deepagents' write_todos is deliberately absent. Live on 2026-08-02 the model wrote the
     # same three-item list eleven times and died on the iteration cap, ignoring an
-    # actionable refusal, a prompt rule and a hard guard. Removing it took the run
-    # from 23 steps and a crash to 6 steps and an answer. Revisit when a plan has
-    # somewhere to render (#147) and the model gets a signal it landed.
+    # actionable refusal, a prompt rule and a hard guard. The scoped write_plan
+    # tool returns an explicit receipt and has a candidate-visible persistence seam.
     assert "write_todos" not in bound
     for inherited in ("execute", "edit_file", "write_file", "glob", "grep", "ls", "task"):
         assert inherited not in bound

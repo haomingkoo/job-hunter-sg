@@ -40,6 +40,7 @@ class ConversationContext:
     preferences: tuple[PreferenceFact, ...]
     published_matches: tuple[dict[str, Any], ...]
     discovery: DiscoveryPort
+    plan: tuple[dict[str, str], ...] = ()
     latest_user_message: str = ""
     # The LangGraph thread id of a graph this thread left paused on
     # ask_candidate, or "" when nothing is pending. Read from case_facts; the
@@ -51,6 +52,7 @@ class ConversationContext:
     search_results: list[JobSearchResult] = field(default_factory=list, compare=False)
     drafted_preferences: list[PreferenceUpdate] = field(default_factory=list, compare=False)
     drafted_matches: list[dict[str, Any]] = field(default_factory=list, compare=False)
+    drafted_plan: list[dict[str, str]] = field(default_factory=list, compare=False)
     proposed_edits: list[dict[str, Any]] = field(default_factory=list, compare=False)
     # One normalized iter_progress_events dict per event: tool_call, tool_result,
     # message.

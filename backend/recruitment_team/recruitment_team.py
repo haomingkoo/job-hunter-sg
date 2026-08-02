@@ -584,6 +584,7 @@ class RecruitmentTeam:
             # outranks one the model merely asked for.
             self._persist_conversation_searches(thread, conversation)
             self._persist_conversation_matches(thread, conversation)
+            self._persist_conversation_plan(thread, conversation)
             self._persist_conversation_edits(thread, resume, run, conversation)
             self._remember_pause_token(thread, reply.pause_token)
             model_span.set_attribute("model", reply.model_name)
@@ -644,6 +645,7 @@ class RecruitmentTeam:
             published_matches=tuple(
                 item for item in facts.get("match_rationales", []) if isinstance(item, dict)
             ),
+            plan=self._plan_steps(facts),
             discovery=self._discovery,
             latest_user_message=latest_user_message,
             pause_token=str(facts.get("coordinator_pause_token") or ""),
@@ -807,6 +809,17 @@ class RecruitmentTeam:
         facts = dict(thread.case_facts)
         facts["recommendations"] = [asdict(known_jobs[job_id]) for job_id in job_ids]
         facts["match_rationales"] = list(conversation.drafted_matches)
+        thread.case_facts = facts
+
+    @staticmethod
+    def _persist_conversation_plan(
+        thread: RecruitmentThread,
+        conversation: ConversationContext,
+    ) -> None:
+        if not conversation.drafted_plan:
+            return
+        facts = dict(thread.case_facts)
+        facts["plan"] = list(conversation.drafted_plan)
         thread.case_facts = facts
 
     def _query_from_candidate(self, thread: RecruitmentThread, resume: ResumeVersion) -> str:
@@ -1500,6 +1513,7 @@ class RecruitmentTeam:
                     else None
                 ),
                 preferences=self._preference_facts(facts),
+                plan=self._plan_steps(facts),
                 candidate_profile_artifact_id=(
                     str(facts["candidate_profile_artifact_id"]) if facts.get("candidate_profile_artifact_id") else None
                 ),
@@ -2027,6 +2041,14 @@ class RecruitmentTeam:
                 source_message_id=int(item["source_message_id"]),
             )
             for item in facts.get("preferences", [])
+        )
+
+    @staticmethod
+    def _plan_steps(facts: dict) -> tuple[dict[str, str], ...]:
+        return tuple(
+            {"step": str(item["step"]), "status": str(item["status"])}
+            for item in facts.get("plan", [])
+            if isinstance(item, dict) and item.get("step") and item.get("status")
         )
 
     @staticmethod

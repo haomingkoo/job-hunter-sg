@@ -1048,6 +1048,27 @@ def test_independent_preferences_in_the_same_field_do_not_replace_each_other():
     ]
 
 
+def test_conversation_plan_persists_as_a_durable_case_fact():
+    from types import SimpleNamespace
+
+    from recruitment_team import RecruitmentTeam
+
+    thread = SimpleNamespace(case_facts={"resume_version_id": 7})
+    context = SimpleNamespace(
+        drafted_plan=[
+            {"step": "Study resume evidence", "status": "completed"},
+            {"step": "Rank current roles", "status": "in_progress"},
+        ]
+    )
+
+    RecruitmentTeam._persist_conversation_plan(thread, context)
+
+    assert thread.case_facts == {
+        "resume_version_id": 7,
+        "plan": context.drafted_plan,
+    }
+
+
 def test_search_shortlist_and_target_are_source_backed_and_durable():
     from dataclasses import replace
 

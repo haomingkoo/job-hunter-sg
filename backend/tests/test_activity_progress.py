@@ -166,6 +166,14 @@ def test_a_published_shortlist_is_not_misreported_as_a_resume_edit():
     assert detail["outcome"] == "2 roles ranked with resume evidence"
 
 
+def test_a_plan_update_reports_the_visible_artifact_size():
+    _, detail = describe_progress(
+        _result("write_plan", {"accepted": True, "recorded": 3, "changed": True})
+    )
+
+    assert detail["outcome"] == "plan updated with 3 steps"
+
+
 def test_a_rejected_edit_reports_the_gate_that_rejected_it():
     _, detail = describe_progress(
         _result("propose_resume_edit", {"accepted": False, "reason": "Unsupported numeric facts: 40"})

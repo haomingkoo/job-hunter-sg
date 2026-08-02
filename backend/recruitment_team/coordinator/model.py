@@ -60,6 +60,7 @@ from ..open_agent.tools import (
     read_target_job,
     record_preferences,
     search_jobs,
+    write_plan,
     write_shortlist,
 )
 from ..prompts import COORDINATOR_PROMPT_VERSION, COORDINATOR_SYSTEM_PROMPT
@@ -150,6 +151,7 @@ def _thread_state_block(context: ConversationContext, preferences: tuple[Prefere
         "preferences": [
             {"field": fact.field, "value": fact.value} for fact in preferences
         ],
+        "plan": list(context.plan),
     }
     return xml_data_block(
         "thread_state", json.dumps(state, ensure_ascii=False, separators=(",", ":"))
@@ -212,6 +214,7 @@ class DeepAgentConversationModel:
                 read_shortlist,
                 record_preferences,
                 search_jobs,
+                write_plan,
                 write_shortlist,
                 read_target_job,
                 read_candidate_evidence,

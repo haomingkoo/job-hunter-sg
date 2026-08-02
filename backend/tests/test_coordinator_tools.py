@@ -333,6 +333,31 @@ def test_record_preferences_requires_latest_message_evidence_and_exact_removals(
     assert invalid_quote["accepted"] is False
 
 
+def test_write_plan_replaces_changed_steps_and_repeats_as_an_idempotent_noop():
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import write_plan
+
+    context = _context(_RecordingDiscovery([]))
+    steps = [
+        {"step": "Study the resume evidence", "status": "completed"},
+        {"step": "Rank current roles", "status": "in_progress"},
+    ]
+
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        accepted = write_plan.invoke({"steps": steps})
+        repeated = write_plan.invoke({"steps": steps})
+        revised_steps = [
+            {"step": "Study the resume evidence", "status": "completed"},
+            {"step": "Rank current roles", "status": "completed"},
+        ]
+        revised = write_plan.invoke({"steps": revised_steps})
+
+    assert accepted == {"accepted": True, "recorded": 2, "changed": True}
+    assert repeated == {"accepted": True, "recorded": 2, "changed": False}
+    assert revised == {"accepted": True, "recorded": 2, "changed": True}
+    assert context.drafted_plan == revised_steps
+
+
 def test_persisted_shortlist_keeps_requirements_and_salary_context():
     from recruitment_team.recruitment_team import RecruitmentTeam
 

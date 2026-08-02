@@ -75,6 +75,15 @@ class _RecordPreferencesPayload(BaseModel):
     updates: list[PreferenceUpdatePayload] = Field(min_length=1)
 
 
+class _PlanStep(BaseModel):
+    step: str = Field(min_length=1)
+    status: Literal["pending", "in_progress", "completed"]
+
+
+class _WritePlanPayload(BaseModel):
+    steps: list[_PlanStep] = Field(min_length=1)
+
+
 def _posting(job) -> dict:
     """A posting as the coordinator needs to reason about it.
 
@@ -266,6 +275,36 @@ def record_preferences(updates: list[PreferenceUpdatePayload]) -> dict:
         for update in parsed
     )
     return {"accepted": True, "recorded": len(parsed)}
+
+
+@tool(args_schema=_WritePlanPayload)
+def write_plan(steps: list[_PlanStep]) -> dict:
+    """Publish or revise the candidate-visible plan for this recruitment goal.
+
+    Replace the whole plan with the current truthful state. Keep steps concise and
+    outcome-oriented. Call when beginning multi-step work or when progress or
+    candidate feedback materially changes the plan. Repeating the
+    current plan is an accepted no-op; a changed plan replaces it.
+    """
+    from ..coordinator.context import current_conversation
+
+    conversation = current_conversation()
+    if conversation is None:
+        return dict(_NO_CONVERSATION)
+    parsed = [_PlanStep.model_validate(step) for step in steps]
+    normalized = [step.step.strip().casefold() for step in parsed]
+    if len(normalized) != len(set(normalized)):
+        return {
+            "accepted": False,
+            "reason": "Each plan step must be distinct.",
+        }
+    next_plan = [step.model_dump() for step in parsed]
+    current_plan = conversation.drafted_plan or list(conversation.plan)
+    if next_plan == current_plan:
+        return {"accepted": True, "recorded": len(parsed), "changed": False}
+    conversation.drafted_plan.clear()
+    conversation.drafted_plan.extend(next_plan)
+    return {"accepted": True, "recorded": len(parsed), "changed": True}
 
 
 @tool(args_schema=_WriteShortlistPayload)

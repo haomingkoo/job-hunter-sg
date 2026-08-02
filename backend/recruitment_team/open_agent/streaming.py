@@ -189,6 +189,9 @@ def _outcome(tool_name: str, content: Any) -> str | None:
     recorded = payload.get("recorded")
     if tool_name == "record_preferences" and isinstance(recorded, int):
         return f"{recorded} {'preference' if recorded == 1 else 'preferences'} recorded"
+    if tool_name == "write_plan" and isinstance(recorded, int):
+        action = "unchanged" if payload.get("changed") is False else "updated"
+        return f"plan {action} with {recorded} {'step' if recorded == 1 else 'steps'}"
 
     if tool_name == "propose_resume_edit" and payload.get("accepted") is True:
         return "one resume edit drafted, waiting on your approval"
