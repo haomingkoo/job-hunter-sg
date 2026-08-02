@@ -22,14 +22,13 @@ from .discovery import JobSnapshot
 from .persona_packs import load_persona_pack_registry
 from .prompts.target_assessment import (
     TARGET_JUDGE_PROMPT_VERSION,
-    TARGET_SPECIALIST_PROMPT_VERSION,
     TARGET_SYNTHESIS_PROMPT_VERSION,
 )
 from .role_success import RoleSuccessProfile
 from .telemetry import RecruitmentTelemetry
 
 
-TARGET_ASSESSMENT_POLICY_VERSION = "native-target-assessment-v2"
+TARGET_ASSESSMENT_POLICY_VERSION = "open-agent-target-assessment-v3"
 
 
 @dataclass(frozen=True)
@@ -171,12 +170,22 @@ class JudgeSubmission(BaseModel):
     disposition: Literal["pass", "revise", "block"]
 
 
+class SynthesisCorrectionSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    synthesis: str = Field(min_length=1)
+
+
 def _dump_specialist(**payload: Any) -> dict:
     return SpecialistSubmission(**payload).model_dump()
 
 
 def _dump_judge(**payload: Any) -> dict:
     return JudgeSubmission(**payload).model_dump()
+
+
+def _dump_correction(**payload: Any) -> dict:
+    return SynthesisCorrectionSubmission(**payload).model_dump()
 
 
 SPECIALIST_TOOL = StructuredTool.from_function(
@@ -197,6 +206,12 @@ JUDGE_TOOL = StructuredTool.from_function(
     ),
     args_schema=JudgeSubmission,
 )
+SYNTHESIS_CORRECTION_TOOL = StructuredTool.from_function(
+    func=_dump_correction,
+    name="submit_corrected_target_assessment",
+    description="Submit the complete corrected candidate-facing target assessment synthesis.",
+    args_schema=SynthesisCorrectionSubmission,
+)
 
 
 def target_assessment_execution_policy() -> dict:
@@ -212,7 +227,6 @@ def target_assessment_execution_policy() -> dict:
         "maximum_synthesis_corrections": config.RECRUITMENT_MAX_SYNTHESIS_CORRECTIONS,
         "model_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
-        "specialist_prompt_version": TARGET_SPECIALIST_PROMPT_VERSION,
         "synthesis_prompt_version": TARGET_SYNTHESIS_PROMPT_VERSION,
         "judge_prompt_version": TARGET_JUDGE_PROMPT_VERSION,
         "fallback_model": None,
