@@ -16,6 +16,7 @@ from langchain_core.messages import AIMessage
 from recruitment_team.assessment_contracts import TargetAssessmentProgress
 from recruitment_team.open_agent.runner import OpenAgentTargetAssessmentRunner
 from recruitment_team.open_agent.streaming import MAX_ACTIVITY_TEXT_CHARS, describe_progress
+from recruitment_team.recruitment_team import _trace_attributes
 from recruitment_team.telemetry import RecordedTelemetry
 
 from backend.tests.test_open_agent_runner import _ScriptedModel, _judge_call, _request
@@ -37,6 +38,7 @@ def _result(tool_name: str, content, team_member: str = "coordinator") -> dict:
         "team_member": team_member,
         "tool_name": tool_name,
         "content": content,
+        "id": "call-1",
     }
 
 
@@ -74,13 +76,35 @@ def test_an_unbounded_query_is_clipped_before_it_reaches_the_panel():
     assert len(detail["query"]) <= MAX_ACTIVITY_TEXT_CHARS
 
 
+def test_persisted_query_is_exact_when_safe_and_redacted_when_it_contains_contact_data():
+    safe = _trace_attributes(
+        _call("search_jobs", {"query": "yield " * 100, "exclude_junior": True}),
+        {"tool_name": "search_jobs", "stage": "call"},
+    )
+    private = _trace_attributes(
+        _call("search_jobs", {"query": "roles for person@example.com"}),
+        {"tool_name": "search_jobs", "stage": "call"},
+    )
+
+    assert safe["query"] == "yield " * 100
+    assert safe["query_redacted"] is False
+    assert private["query"] == "[redacted: possible contact data]"
+    assert private["query_redacted"] is True
+
+
 def test_a_coordinator_search_result_reports_how_many_postings_came_back():
     summary, detail = describe_progress(
         _result("search_jobs", json.dumps({"ok": True, "jobs": [{"job_id": 1}, {"job_id": 2}]}))
     )
 
     assert summary == "coordinator finished search_jobs."
-    assert detail == {"tool_name": "search_jobs", "stage": "result", "outcome": "2 matching postings"}
+    assert detail == {
+        "tool_name": "search_jobs",
+        "stage": "result",
+        "outcome": "2 matching postings",
+        "tool_call_id": "call-1",
+        "result_count": 2,
+    }
 
 
 def test_the_assessment_search_result_shape_reports_the_same_count():
