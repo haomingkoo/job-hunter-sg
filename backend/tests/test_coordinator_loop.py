@@ -501,7 +501,7 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
     # The load-bearing assertion: the posting reached the model. The title exists
     # nowhere in the transcript, the resume or the system prompt -- only in the
     # tool result. If it is in the request, the coordinator read its own results.
-    assert "Micron" in _rendered(agent.requests[2])
+    assert "Yield Enhancement Engineer" in _rendered(agent.requests[2])
     assert "Yield Enhancement Engineer" in _rendered(agent.requests[2])
 
     # And the candidate sees a reply that names it, rather than being asked to
@@ -591,13 +591,16 @@ def test_a_shortlist_the_model_never_saw_reaches_the_next_conversational_turn():
 
     # requests[1] is turn 2's first decision, taken before read_shortlist returned.
     # It replays turn 1 from the checkpoint plus the compact thread_state block,
-    # and neither contains a posting. If "Micron" leaks in here, thread_state is
+    # and neither contains a posting. "Yield Enhancement Engineer" is the posting
+    # title and appears nowhere in RESUME_TEXT, which says "Yield Engineering
+    # Manager" -- so it isolates the posting from the resume the agent is given
+    # on a thread with no candidate profile. If it leaks in here, thread_state is
     # carrying the shortlist and read_shortlist is decorative.
-    assert "Micron" not in _rendered(agent.requests[1])
+    assert "Yield Enhancement Engineer" not in _rendered(agent.requests[1])
     assert "Yield Enhancement Engineer" not in _rendered(agent.requests[1])
 
     # requests[2] is the decision taken after it read the shortlist.
-    assert "Micron" in _rendered(agent.requests[2])
+    assert "Yield Enhancement Engineer" in _rendered(agent.requests[2])
     assert "GlobalFoundries" in _rendered(agent.requests[2])
 
     assert "Micron" in snapshot.messages[-1].content
@@ -753,7 +756,10 @@ def test_has_repeated_call_rejects_a_materially_identical_repeat_within_a_turn()
     assert len(results) == 3
     assert results[0].get("reason") != "identical_call_no_new_information"
     assert results[1]["ok"] is False
-    assert results[1]["reason"] == "identical_call_no_new_information"
+    # The middleware now guards every tool, not two by name, and the refusal
+    # says what to do instead: a reason a model cannot act on is one it retries.
+    assert results[1]["reason"].startswith("identical_call_no_new_information")
+    assert "Do not repeat it" in results[1]["reason"]
     assert results[2].get("reason") != "identical_call_no_new_information"
 
     # Only the two allowed calls reached the port. The rejected one never did.
@@ -984,7 +990,9 @@ def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(
 
     # The cap was really honoured. Without this bound the test passes whether the
     # limit is 13, 45 or ignored: `repeat_last` never runs out of script.
-    assert looping.calls == 4
+    # 6, not 4: dropping TodoListMiddleware removed a layer from every super-step,
+    # so the same recursion limit buys more real tool calls.
+    assert looping.calls == 6
 
     failed = [event for event in publisher.events if event.status == "failed"]
     assert len(failed) == 1
@@ -1308,8 +1316,13 @@ def test_the_coordinator_binds_only_the_tools_it_needs():
         "read_shortlist",
         "read_target_job",
         "search_jobs",
-        "write_todos",
     }
+    # write_todos is deliberately absent. Live on 2026-08-02 the model wrote the
+    # same three-item list eleven times and died on the iteration cap, ignoring an
+    # actionable refusal, a prompt rule and a hard guard. Removing it took the run
+    # from 23 steps and a crash to 6 steps and an answer. Revisit when a plan has
+    # somewhere to render (#147) and the model gets a signal it landed.
+    assert "write_todos" not in bound
     for inherited in ("execute", "edit_file", "write_file", "glob", "grep", "ls", "task"):
         assert inherited not in bound
 
@@ -1367,3 +1380,33 @@ def test_a_turn_reports_the_prompt_that_actually_ran():
 
     assert reply.prompt_version == COORDINATOR_PROMPT_VERSION
     assert reply.prompt_version != CONVERSATION_PROMPT_VERSION
+
+
+def test_a_thread_with_no_profile_still_shows_the_agent_the_resume():
+    """Every other test seeds a profile. Production's first turn does not.
+
+    Live on 2026-08-02 the coordinator answered "please share your resume" to a
+    thread that already had one, then spun to the iteration cap hunting for
+    context it could never reach. read_candidate_evidence returns nothing until
+    the study has run, so on a fresh thread the resume is the only evidence there is.
+    """
+    discovery = _RecordingDiscovery([_search_result([])])
+    agent = ScriptedDeepAgent(responses=[submission("Noted.")])
+
+    _model(agent).respond(
+        [], RESUME_TEXT, (), _context(discovery, candidate_profile=None)
+    )
+
+    assert "Yield Engineering Manager" in _rendered(agent.requests[0])
+
+
+def test_the_resume_is_withheld_once_a_profile_exists():
+    """Two copies of the same evidence in one prompt, one of them uncited."""
+    discovery = _RecordingDiscovery([_search_result([])])
+    agent = ScriptedDeepAgent(responses=[submission("Noted.")])
+
+    _model(agent).respond(
+        [], RESUME_TEXT, (), _context(discovery, candidate_profile=object())
+    )
+
+    assert "Yield Engineering Manager" not in _rendered(agent.requests[0])

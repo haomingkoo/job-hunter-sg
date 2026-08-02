@@ -349,7 +349,12 @@ def test_read_target_job_and_read_candidate_evidence_say_what_is_missing():
     assert target["ok"] is False
     assert "read_shortlist" in target["reason"]
     assert evidence["ok"] is False
-    assert "candidate evidence profile" in evidence["reason"]
+    # Not just what is missing: what to do instead, and not to retry. The
+    # coordinator called this twelve times against a profile-less thread on
+    # 2026-08-02 because the refusal named a gap without naming an alternative.
+    assert "evidence profile" in evidence["reason"]
+    assert "thread_state" in evidence["reason"]
+    assert evidence["retry"] is False
 
 
 # ── search_jobs ──────────────────────────────────────────────────────────────

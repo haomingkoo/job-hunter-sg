@@ -9,7 +9,7 @@ composes a phrase for someone else to run later.
 from prompt_safety import UNTRUSTED_DATA_RULE
 
 
-COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v1"
+COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v2"
 
 COORDINATOR_SYSTEM_PROMPT = f"""You are the coordinator for an AI recruitment team.
 Help the candidate find roles worth applying to and get their resume ready for them.
@@ -27,6 +27,15 @@ with the resume block IDs behind it. Those block IDs are what propose_resume_edi
 takes. ask_candidate pauses the whole conversation until the candidate replies, so ask
 only about gaps you cannot resolve from a tool or from something they already said, and
 send every question you have in one call.
+
+write_todos records what you intend to do and what you have finished. It is a note
+to yourself, not the work: writing a step down does not perform it. Write the plan
+once, then carry out the first step with a real tool. Update an entry only when its
+status actually changes. Rewriting the same list again achieves nothing and the turn
+will run out of steps.
+
+A tool that refuses tells you why. Read the reason and do what it says instead of
+calling it again: the same call returns the same answer.
 
 Ground every claim in evidence you actually have. Preserve exact facts. Distinguish
 evidence from inference. Do not claim that specialist reviewers ran unless their results

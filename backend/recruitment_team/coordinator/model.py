@@ -61,6 +61,7 @@ from ..open_agent.tools import (
     search_jobs,
 )
 from ..prompts import COORDINATOR_PROMPT_VERSION, COORDINATOR_SYSTEM_PROMPT
+from .repeat_guard import RepeatedCallMiddleware
 from ..telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 from .context import ConversationContext
 
@@ -159,10 +160,7 @@ class DeepAgentConversationModel:
 
     def _build_agent(self):
         from langchain.agents import create_agent
-        from langchain.agents.middleware import (
-            HumanInTheLoopMiddleware,
-            TodoListMiddleware,
-        )
+        from langchain.agents.middleware import HumanInTheLoopMiddleware
 
         # The assessment runner's module-level SqliteSaver, not a second store:
         # one checkpoint file, one durability story. Imported here so that
@@ -182,7 +180,7 @@ class DeepAgentConversationModel:
                 ask_candidate,
             ],
             middleware=[
-                TodoListMiddleware(),
+                RepeatedCallMiddleware(),
                 HumanInTheLoopMiddleware(interrupt_on={"ask_candidate": True}),
             ],
             system_prompt=COORDINATOR_SYSTEM_PROMPT,
@@ -202,6 +200,7 @@ class DeepAgentConversationModel:
         context: ConversationContext,
         messages: list[Message],
         current_preferences: tuple[PreferenceFact, ...],
+        resume_text: str = "",
     ) -> dict:
         """The DB transcript, then the compact thread state, then this message.
 
@@ -227,6 +226,13 @@ class DeepAgentConversationModel:
             )
         )
         turn = _thread_state_block(context, current_preferences)
+        if context.candidate_profile is None and resume_text.strip():
+            # Until the study has run there is no evidence profile, so
+            # read_candidate_evidence returns nothing and the agent has no way to
+            # learn who it is talking to. Live on 2026-08-02 it answered "please
+            # share your resume" to a thread that already had one, then spun to
+            # the iteration cap hunting for context it could never reach.
+            turn = f"{turn}\n\n{xml_data_block('resume', resume_text)}"
         if latest_index is not None:
             turn = f"{turn}\n\n{messages[latest_index].content}"
         request.append(HumanMessage(content=turn))
@@ -244,10 +250,10 @@ class DeepAgentConversationModel:
             # coordinator this adapter exists to replace.
             raise InvalidCommand("DeepAgentConversationModel requires a ConversationContext")
 
-        # `resume_text` is not forwarded: evidence reaches the agent through
-        # read_candidate_evidence, the channel the assessment path uses.
         agent = self._build_agent()
-        run_config, payload, skip_tool_call_ids = self._turn(agent, context, messages, current_preferences)
+        run_config, payload, skip_tool_call_ids = self._turn(
+            agent, context, messages, current_preferences, resume_text
+        )
 
         pending_question = ""
         submitted = False
@@ -338,6 +344,7 @@ class DeepAgentConversationModel:
         context: ConversationContext,
         messages: list[Message],
         current_preferences: tuple[PreferenceFact, ...],
+        resume_text: str,
     ) -> tuple[dict, Any, set[str] | None]:
         """Resume the paused graph if there is one, otherwise start a fresh one."""
         if context.pause_token:
@@ -358,4 +365,8 @@ class DeepAgentConversationModel:
                 )
 
         run_config = self._run_config(f"coordinator-{context.thread_id}-{uuid.uuid4()}")
-        return run_config, self._new_turn_payload(context, messages, current_preferences), None
+        return (
+            run_config,
+            self._new_turn_payload(context, messages, current_preferences, resume_text),
+            None,
+        )

@@ -29,6 +29,13 @@ from .guardrails import has_repeated_call
 
 
 _NO_CONTEXT = {"ok": False, "failure_type": "business", "reason": "No active assessment context."}
+# A tool that answers the same question twice has told the agent nothing new.
+_REPEATED_CALL = {
+    "ok": False,
+    "failure_type": "validation",
+    "reason": "identical_call_no_new_information",
+    "retry": False,
+}
 _NO_CONVERSATION = {
     "ok": False,
     "failure_type": "business",
@@ -86,11 +93,23 @@ def read_candidate_evidence() -> dict:
     request = context.current_request()
     if request is None:
         return dict(_NO_CONTEXT)
+    history = context.tool_call_history()
+    if history is not None and has_repeated_call(history, "read_candidate_evidence", {}):
+        return dict(_REPEATED_CALL)
     if request.candidate_profile is None:
+        # Say what to do instead. Live on 2026-08-02 the coordinator called this
+        # twelve times against a thread with no profile, each time told only what
+        # was missing, until the run hit its iteration cap. A refusal a model
+        # cannot act on is a refusal it will retry.
         return {
             "ok": False,
             "failure_type": "business",
-            "reason": "No candidate evidence profile has been built for this thread yet.",
+            "reason": (
+                "No evidence profile exists for this thread yet, and calling this "
+                "again will not create one. The candidate's resume is in the "
+                "thread_state block of this turn: read it from there instead."
+            ),
+            "retry": False,
         }
     return {
         "ok": True,
