@@ -1,12 +1,5 @@
 """MCP server for Job Hunter SG resume/job tools."""
 
-import os
-from pathlib import Path
-
-BACKEND_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = BACKEND_DIR.parent
-os.environ.setdefault("DATABASE_URL", f"sqlite:///{PROJECT_DIR / 'jobhunter.db'}")
-
 import config
 import mcp_tools as tools
 

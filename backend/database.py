@@ -6,13 +6,15 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from pathlib import Path
 
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 import config as app_config
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./jobhunter.db")
+DEFAULT_DATABASE_PATH = Path(__file__).resolve().with_name("jobhunter.db")
+DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DEFAULT_DATABASE_PATH}")
 
 # Railway gives postgres:// but SQLAlchemy 2.x needs postgresql://
 if DATABASE_URL.startswith("postgres://"):

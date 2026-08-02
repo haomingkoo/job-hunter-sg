@@ -49,8 +49,9 @@ Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 Restart Claude Desktop after editing the file.
 
-By default, the MCP uses the repo-root `jobhunter.db`. Set `DATABASE_URL` in
-the MCP environment only if you want it to use another database.
+By default, the MCP and local API both use `backend/jobhunter.db`, independent
+of the directory they are launched from. Set `DATABASE_URL` explicitly only to
+use another database.
 
 ## Tools
 
