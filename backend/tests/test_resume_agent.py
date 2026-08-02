@@ -377,18 +377,9 @@ def test_score_and_skill_tools_return_structured_results(monkeypatch):
         "resume_text": "EXPERIENCE\n- Led delivery for 10 users\nSKILLS\nPython and SQL",
     })
     skills = agent_tools.extract_skills.invoke({"text": "Python and SQL"})
-    ats = agent_tools.analyze_ats_fit.invoke({
-        "resume_text": "EXPERIENCE\n- Built Python services",
-        "target_job_text": "Python and SQL",
-    })
-
     assert 0 <= score["overall_score"] <= 100
     assert set(score["dimensions"]) == {"impact", "presentation", "competencies"}
     assert skills == ["Python", "SQL"]
-    assert 0 <= ats["overall_score"] <= 100
-    assert ats["resume_skills"] == ["Python", "SQL"]
-    assert ats["target_skills"] == ["Python", "SQL"]
-    assert ats["matched_target_skills"] == ["Python", "SQL"]
 
 
 def test_agent_prompt_marks_job_tool_results_as_untrusted():

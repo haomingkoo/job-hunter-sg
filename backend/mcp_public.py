@@ -5,8 +5,6 @@ Claude API's tool-name validation (`[a-zA-Z0-9_-]`) does not, so a dot-namespace
 name is spec-legal and still broken on the largest client.
 """
 
-import json
-
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 

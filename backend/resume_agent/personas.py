@@ -20,8 +20,6 @@ from .models import create_agent_model
 from .contracts import TARGET_JOB_PERSONAS
 from .prompts import (
     REVIEWER_CONFIGS,
-    REVIEWER_OUTPUT_INSTRUCTIONS,
-    REVIEWER_SCORING_RUBRICS,
     build_reviewer_system_prompt,
 )
 from .tracing import ToolSpanRecorder
@@ -46,8 +44,6 @@ MAX_SOURCE_EXCERPT_CHARS = 500
 
 _PERSONAS = REVIEWER_CONFIGS
 _PERSONA_BY_NAME = {name: (description, prompt) for name, description, prompt in _PERSONAS}
-_SCORING_RUBRICS = REVIEWER_SCORING_RUBRICS
-_OUTPUT_INSTRUCTIONS = REVIEWER_OUTPUT_INSTRUCTIONS
 
 
 class _FindingSubmission(BaseModel):

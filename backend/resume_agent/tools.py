@@ -206,42 +206,6 @@ def extract_skills(text: str) -> list[str]:
     return extract_skill_phrases(text or "")
 
 
-@tool
-def analyze_ats_fit(resume_text: str, target_job_text: str = "") -> dict:
-    """Run one deterministic ATS evidence pass over a resume and target job.
-
-    Use this once before an ATS assessment. It combines the compact resume
-    scorecard with normalized resume/job skill extraction and exact overlap.
-    Missing terms are comparison evidence only, never permission to add an
-    unsupported skill. Returns no LLM judgment and does not emulate a vendor ATS.
-    """
-    from resume_scorer import ResumeScorer
-    from skill_extractor import extract_skill_phrases
-
-    score = ResumeScorer().analyze(resume_text or "")
-    resume_skills = extract_skill_phrases(resume_text or "")
-    target_skills = extract_skill_phrases(target_job_text or "")
-    resume_keys = {skill.casefold() for skill in resume_skills}
-    return {
-        "overall_score": score.get("overall_score", 0),
-        "dimensions": {
-            name: {
-                key: dimension.get(key)
-                for key in ("score", "max", "status")
-            }
-            for name, dimension in score.get("dimensions", {}).items()
-        },
-        "resume_skills": resume_skills,
-        "target_skills": target_skills,
-        "matched_target_skills": [
-            skill for skill in target_skills if skill.casefold() in resume_keys
-        ],
-        "missing_target_skills": [
-            skill for skill in target_skills if skill.casefold() not in resume_keys
-        ],
-    }
-
-
 def _gate_payload(gates: list[Any]) -> list[dict]:
     return [
         {
