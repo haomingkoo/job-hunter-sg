@@ -2062,13 +2062,10 @@ class RecruitmentTeam:
                 "source_run_id": source_message.run_id,
                 "source_message_id": source_message.message_id,
             }
-            if update.field == "constraints":
-                if not any(
-                    item.get("field") == "constraints" and item.get("value") == update.value for item in current
-                ):
-                    current.append(fact)
-            else:
-                current = [item for item in current if item.get("field") != update.field]
+            if not any(
+                item.get("field") == update.field and item.get("value") == update.value
+                for item in current
+            ):
                 current.append(fact)
         facts = dict(thread.case_facts)
         facts["preferences"] = current

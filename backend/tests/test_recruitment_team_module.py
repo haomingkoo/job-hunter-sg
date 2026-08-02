@@ -927,6 +927,12 @@ def test_structured_preferences_are_user_sourced_and_survive_restart():
                 content="I updated the location and constraint.",
                 model_name="scripted",
                 preference_updates=(
+                    PreferenceUpdate(
+                        "location",
+                        "Singapore",
+                        "Make the location remote",
+                        operation="remove",
+                    ),
                     PreferenceUpdate("location", "remote", "remote"),
                     PreferenceUpdate("constraints", "avoid on-call", "avoid on-call"),
                 ),
@@ -1009,6 +1015,37 @@ def test_structured_preferences_are_user_sourced_and_survive_restart():
         assert fact.source_message_id == second_user.message_id
     assert "open to consulting" in third_user.content
     assert third.run_id != second.run_id
+
+
+def test_independent_preferences_in_the_same_field_do_not_replace_each_other():
+    from types import SimpleNamespace
+
+    from recruitment_team import RecruitmentTeam
+    from recruitment_team.interface import PreferenceUpdate
+
+    thread = SimpleNamespace(case_facts={})
+    source = SimpleNamespace(run_id="run-queue", message_id=41)
+
+    RecruitmentTeam._merge_preference_updates(
+        thread,
+        (
+            PreferenceUpdate("seniority", "Not entry level", "Not entry level"),
+            PreferenceUpdate(
+                "seniority",
+                "senior individual contributor",
+                "senior individual contributor",
+            ),
+        ),
+        source,
+    )
+
+    assert [
+        (item["field"], item["value"])
+        for item in thread.case_facts["preferences"]
+    ] == [
+        ("seniority", "Not entry level"),
+        ("seniority", "senior individual contributor"),
+    ]
 
 
 def test_search_shortlist_and_target_are_source_backed_and_durable():

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, ChevronDown, Send, Users } from "lucide-react";
 
 const EVIDENCE_PAGE_SIZE = 25;
@@ -31,6 +31,8 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   const [editResult, setEditResult] = useState(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const queuedMessagesRef = useRef([]);
+  const [queuedMessages, setQueuedMessages] = useState([]);
   const [error, setError] = useState("");
   const [visibleProfileCount, setVisibleProfileCount] = useState(EVIDENCE_PAGE_SIZE);
   const [visibleCriteriaCount, setVisibleCriteriaCount] = useState(EVIDENCE_PAGE_SIZE);
@@ -216,6 +218,8 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
     setCandidateProfile(null);
     setTargetAssessment(null);
     setMessage("");
+    queuedMessagesRef.current = [];
+    setQueuedMessages([]);
     setError("");
     setVisibleProfileCount(EVIDENCE_PAGE_SIZE);
     setVisibleCriteriaCount(EVIDENCE_PAGE_SIZE);
@@ -264,13 +268,20 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   async function submit(event) {
     event.preventDefault();
     const text = message.trim();
-    if (!text || busy) return;
+    if (!text) return;
+    if (busy) {
+      queuedMessagesRef.current = [...queuedMessagesRef.current, text];
+      setQueuedMessages(queuedMessagesRef.current);
+      setMessage("");
+      return;
+    }
     if (!threadId && !resumeVersionId) {
       setError("Save or select a resume before starting the recruitment team.");
       return;
     }
 
     setBusy(true);
+    setMessage("");
     setError("");
     try {
       const idempotencyKey = globalThis.crypto.randomUUID();
@@ -291,9 +302,22 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
         );
       const nextThreadId = receipt.thread_id;
       localStorage.setItem(storedThreadKey(user.id), nextThreadId);
-      setMessage("");
       if (nextThreadId !== threadId) setThreadId(nextThreadId);
       await refreshThread(nextThreadId);
+      while (queuedMessagesRef.current.length) {
+        const [queuedMessage, ...remaining] = queuedMessagesRef.current;
+        const queuedReceipt = await streamRecruitmentCommand(
+          `/api/recruitment-team/threads/${nextThreadId}/messages/stream`,
+          {
+            message: queuedMessage,
+            idempotency_key: globalThis.crypto.randomUUID(),
+          },
+          appendActivity,
+        );
+        queuedMessagesRef.current = remaining;
+        setQueuedMessages(remaining);
+        await refreshThread(queuedReceipt.thread_id);
+      }
     } catch (submitError) {
       setError(submitError.message);
     } finally {
@@ -525,11 +549,11 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
             />
             <button
               type="submit"
-              disabled={busy || !message.trim()}
+              disabled={!message.trim()}
               className="inline-flex h-12 items-center gap-2 rounded-2xl bg-[#384959] px-4 text-sm font-semibold text-white disabled:opacity-40"
             >
               <Send size={15} />
-              {busy ? "Working" : awaitingAnswer ? "Send answer" : "Send"}
+              {busy ? "Queue message" : awaitingAnswer ? "Send answer" : "Send"}
             </button>
             {!awaitingAnswer && threadId && (
               <button
@@ -557,6 +581,14 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
               </button>
             )}
           </form>
+          {queuedMessages.length > 0 && (
+            <div className="mt-2 rounded-xl border border-[#BDDDFC] bg-[#f7fafc] px-3 py-2 text-xs text-[#384959]">
+              <p className="font-medium">Queued for the team</p>
+              {queuedMessages.map((queuedMessage, index) => (
+                <p key={`${index}-${queuedMessage}`} className="mt-1">{queuedMessage}</p>
+              ))}
+            </div>
+          )}
 
           {candidateProfile && (
             <section aria-labelledby="candidate-profile-title" className="mt-6 border-t border-[#BDDDFC]/50 pt-5">
