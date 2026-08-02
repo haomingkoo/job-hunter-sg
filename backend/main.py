@@ -151,7 +151,6 @@ from tailoring_pipeline import (
 from validation_gates import numeric_metric_claims_verifiable
 from jd_analyzer import PROMOTIONAL_THRESHOLD
 from jd_preparser import preparse_job_description as preparse_jd
-from jd_summary import summarize_job_description
 from mcp_public import create_mcp as create_public_mcp
 from security import FixedWindowRateLimiter, RequestBodyLimitMiddleware, SecurityHeadersMiddleware
 import config as app_config
@@ -428,109 +427,6 @@ async def lifespan(application: FastAPI):
     except Exception as e:
         log.warning(f"Admin account creation failed: {e}")
 
-    _idle_filler_stop = threading.Event()
-
-    def _idle_summary_filler() -> None:
-        """Generate JD summaries when LLM is idle. Yields to user requests."""
-        from database import SessionLocal as _SL
-        from ai_service import _limiter, get_ai_health
-        from jd_summary import summarize_job_description
-
-        log.info("[IDLE-FILL] Background summary filler started")
-        while not _idle_filler_stop.is_set():
-            try:
-                if not get_ai_health()["is_healthy"]:
-                    _idle_filler_stop.wait(60)
-                    continue
-                if _limiter.queue_position > 0 or _limiter.wait_seconds > 2:
-                    # Users are active - back off
-                    _idle_filler_stop.wait(10)
-                    continue
-
-                db = _SL()
-                try:
-                    job = (
-                        db.query(ScrapedJob)
-                        .filter(
-                            ScrapedJob.description != "",
-                            ScrapedJob.parsed_jd.isnot(None),
-                            (ScrapedJob.jd_summary.is_(None)) | (ScrapedJob.jd_summary == ""),
-                        )
-                        .filter(
-                            (ScrapedJob.jd_summary_status.is_(None))
-                            | (ScrapedJob.jd_summary_status == "")
-                            | (ScrapedJob.jd_summary_status == "failed")
-                            # "unavailable" means the model was down at the time,
-                            # not that this job can never have a summary. Without
-                            # it here a transient outage writes a job off forever:
-                            # measured 969 stranded rows on a 16,390-row corpus.
-                            | (ScrapedJob.jd_summary_status == "unavailable")
-                            # "generating" is only truthful while a worker is
-                            # alive. A process that died mid-call leaves the row
-                            # claimed by nobody, so reclaim stale ones.
-                            | (
-                                (ScrapedJob.jd_summary_status == "generating")
-                                & (
-                                    (ScrapedJob.jd_summary_generated_at == "")
-                                    | (ScrapedJob.jd_summary_generated_at.is_(None))
-                                    | (
-                                        ScrapedJob.jd_summary_generated_at
-                                        < _stale_generating_cutoff()
-                                    )
-                                )
-                            )
-                        )
-                        .order_by(ScrapedJob.id.desc())
-                        .first()
-                    )
-                    if not job:
-                        _idle_filler_stop.wait(300)
-                        continue
-
-                    # Double-check idle before making the API call
-                    if _limiter.queue_position > 0:
-                        _idle_filler_stop.wait(5)
-                        continue
-
-                    parsed = job.parsed_jd if isinstance(job.parsed_jd, dict) else {}
-                    job.jd_summary_status = "generating"
-                    db.commit()
-
-                    summary, model_used = summarize_job_description(
-                        job_title=job.title or "",
-                        description=job.description or "",
-                        parsed_jd=parsed,
-                    )
-
-                    now_iso = datetime.now(timezone.utc).isoformat()
-                    if summary:
-                        job.jd_summary = summary
-                        job.jd_summary_generated_at = now_iso
-                        job.jd_summary_status = model_used
-                    else:
-                        job.jd_summary_generated_at = now_iso
-                        job.jd_summary_status = "unavailable"
-                    db.commit()
-
-                except Exception as exc:
-                    log.warning(f"[IDLE-FILL] Summary failed: {exc}")
-                    try:
-                        db.rollback()
-                    except Exception:
-                        pass
-                finally:
-                    db.close()
-
-                # Small pause between jobs to stay responsive
-                _idle_filler_stop.wait(2)
-
-            except Exception as exc:
-                log.warning(f"[IDLE-FILL] Loop error: {exc}")
-                _idle_filler_stop.wait(30)
-
-    _filler_thread = threading.Thread(target=_idle_summary_filler, daemon=True)
-    _filler_thread.start()
-
     global jobhunter_mcp
     jobhunter_mcp = create_public_mcp()
     mcp_http_app = jobhunter_mcp.streamable_http_app()
@@ -547,8 +443,6 @@ async def lifespan(application: FastAPI):
     finally:
         _mcp_exact_proxy.target = None
         _mcp_mount_proxy.target = None
-
-    _idle_filler_stop.set()
 
     # ── Shutdown ──
     log.info("Shutting down Job Hunter SG API")
@@ -3054,15 +2948,6 @@ def _precompute_batch(db: Session, filter_clause, batch_size: int) -> tuple[int,
         db.commit()
         db.expunge_all()
     return done, last_id
-
-
-def _stale_generating_cutoff() -> str:
-    """ISO cutoff past which a "generating" row is treated as abandoned.
-
-    jd_summary_generated_at is a string column, so this compares ISO text.
-    """
-    cutoff = datetime.now() - timedelta(seconds=app_config.JD_SUMMARY_STALE_GENERATING_SECONDS)
-    return cutoff.isoformat()
 
 
 def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
