@@ -334,7 +334,17 @@ def _validate_submission(
         ]
         if unsupported_quotes:
             return None, f"literal_quote:unsupported:{unsupported_quotes[0][:80]!r}:{criterion_id}"
-        unsupported_numbers = sorted(_extract_numbers(narrative) - _extract_numbers(grounding))
+        # The score itself is the model's own metadata, not a claim about the
+        # candidate, so it is never in the resume and can never be "supported".
+        # The prompt asks score_reason to explain the score, so writing "score is
+        # 90" was compliance, and rejecting it burned the single retry every time.
+        # Only that one value is exempt: "2 years short of the requirement" is a
+        # claim about the candidate and still has to be grounded.
+        # candidate_profile.py:415 exempts the same value for the same reason.
+        own_score = _extract_numbers(str(judgment["evidence_support_score"]))
+        unsupported_numbers = sorted(
+            _extract_numbers(narrative) - _extract_numbers(grounding) - own_score
+        )
         if unsupported_numbers:
             return None, f"numeric_claim:unsupported:{','.join(unsupported_numbers)}:{criterion_id}"
     return payload, ""
