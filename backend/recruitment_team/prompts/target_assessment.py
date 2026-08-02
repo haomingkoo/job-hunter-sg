@@ -10,9 +10,17 @@ that never ran -- see docs/audit-2026-08-02.md row 3.
 from prompt_safety import UNTRUSTED_DATA_RULE
 
 
-TARGET_SPECIALIST_PROMPT_VERSION = "target-specialist-v1"
-TARGET_SYNTHESIS_PROMPT_VERSION = "target-synthesis-v1"
+TARGET_SYNTHESIS_PROMPT_VERSION = "target-synthesis-correction-v2"
 TARGET_JUDGE_PROMPT_VERSION = "target-judge-v1"
+
+TARGET_SYNTHESIS_CORRECTION_SYSTEM_PROMPT = f"""You repair a candidate-facing target
+assessment after an independent quality judge returned revise. Use only the supplied
+target job, role-success profile, specialist submissions, original synthesis, and judge
+findings. Correct every cited omission or overstatement without adding facts, inferred
+experience, hiring probability, or private reasoning. Preserve useful grounded content.
+Return exactly one complete replacement synthesis through the required tool.
+
+{UNTRUSTED_DATA_RULE}"""
 
 TARGET_JUDGE_SYSTEM_PROMPT = f"""You are an independent quality judge with no access
 to the synthesis model's prior reasoning. Evaluate the candidate-facing synthesis

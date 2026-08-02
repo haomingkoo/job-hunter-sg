@@ -23,6 +23,7 @@ from resume_agent.tools import search_jobs
 from ..assessment_contracts import (
     JUDGE_TOOL,
     SPECIALIST_TOOL,
+    SYNTHESIS_CORRECTION_TOOL,
     TargetAssessmentProgress,
     TargetAssessmentRequest,
     TargetAssessmentResult,
@@ -99,6 +100,7 @@ class OpenAgentTargetAssessmentRunner:
         self,
         model_factory=None,
         judge_model_factory=None,
+        correction_model_factory=None,
         telemetry: RecruitmentTelemetry | None = None,
         persona_registry: PersonaPackRegistry | None = None,
     ):
@@ -111,6 +113,7 @@ class OpenAgentTargetAssessmentRunner:
             )
         self._model_factory = model_factory
         self._judge_model_factory = judge_model_factory or model_factory
+        self._correction_model_factory = correction_model_factory or model_factory
         self._telemetry = telemetry or OpenTelemetryRecorder()
         self._registry = persona_registry or load_persona_pack_registry()
 
@@ -343,6 +346,39 @@ class OpenAgentTargetAssessmentRunner:
 
         judge_model = self._judge_model_factory()
         judge = self._run_judge(judge_model, request, specialist_runs, synthesis)
+        correction = None
+        if (
+            judge["disposition"] == "revise"
+            and config.RECRUITMENT_MAX_SYNTHESIS_CORRECTIONS == 1
+        ):
+            yield TargetAssessmentProgress(
+                team_member="coordinator",
+                status="running",
+                summary="The coordinator is repairing the assessment from the judge's findings.",
+                detail={"stage": "synthesis_correction"},
+            )
+            corrected_synthesis, correction = self._correct_synthesis(
+                self._correction_model_factory(),
+                request,
+                specialist_runs,
+                synthesis,
+                judge,
+            )
+            if corrected_synthesis is not None:
+                synthesis = corrected_synthesis
+                judge = self._run_judge(
+                    self._judge_model_factory(),
+                    request,
+                    specialist_runs,
+                    synthesis,
+                )
+                correction["rejudge_disposition"] = judge["disposition"]
+                yield TargetAssessmentProgress(
+                    team_member="quality_judge",
+                    status="completed",
+                    summary="The independent judge reviewed the corrected assessment.",
+                    detail={"disposition": judge["disposition"]},
+                )
         status = "completed" if judge["disposition"] == "pass" else "quality_blocked"
 
         yield TargetAssessmentResult(
@@ -350,7 +386,7 @@ class OpenAgentTargetAssessmentRunner:
             specialist_runs=tuple(specialist_runs),
             synthesis=synthesis,
             judge=judge,
-            correction=None,
+            correction=correction,
             error=None,
             execution_policy=target_assessment_execution_policy(),
             proposed_edits=tuple(edits),
@@ -397,3 +433,53 @@ class OpenAgentTargetAssessmentRunner:
                 "rubric_scores": {"evidence_grounding": 0, "role_coverage": 0, "decision_usefulness": 0, "fairness_and_boundaries": 0},
             }
         return {**payload, "model_name": model_name, "input_tokens": input_tokens, "output_tokens": output_tokens}
+
+    def _correct_synthesis(
+        self,
+        model,
+        request: TargetAssessmentRequest,
+        specialist_runs: list[dict],
+        synthesis: str,
+        judge: dict,
+    ) -> tuple[str | None, dict]:
+        from ..prompts.target_assessment import TARGET_SYNTHESIS_CORRECTION_SYSTEM_PROMPT
+
+        data = {
+            "target_job": asdict(request.target_job),
+            "role_success_profile": asdict(request.role_profile),
+            "specialist_runs": specialist_runs,
+            "original_synthesis": synthesis,
+            "judge_findings": judge,
+        }
+        last_failure = ""
+        for attempt in range(1, config.RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS + 1):
+            payload, failure, input_tokens, output_tokens, model_name = invoke_structured(
+                model,
+                SYNTHESIS_CORRECTION_TOOL,
+                TARGET_SYNTHESIS_CORRECTION_SYSTEM_PROMPT,
+                "target_assessment_correction_data",
+                data,
+                telemetry=self._telemetry,
+                operation="open_agent_assessment.synthesis_correction_attempt",
+                attempt=attempt,
+                max_attempts=config.RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS,
+                attributes={"trace_key": request.trace_key},
+            )
+            if payload is not None:
+                return str(payload["synthesis"]), {
+                    "attempted": True,
+                    "status": "completed",
+                    "attempt_count": attempt,
+                    "model_name": model_name,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "trigger_disposition": "revise",
+                }
+            last_failure = failure
+        return None, {
+            "attempted": True,
+            "status": "failed",
+            "attempt_count": config.RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS,
+            "failure": last_failure,
+            "trigger_disposition": "revise",
+        }
