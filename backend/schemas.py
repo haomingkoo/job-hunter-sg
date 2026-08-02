@@ -40,13 +40,6 @@ class SignupRequest(BaseModel):
             raise ValueError(f"Signup restricted to {allowed} emails")
         return v
 
-    @field_validator("password")
-    @classmethod
-    def password_min_length(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        return v
-
     @field_validator("accepted_terms")
     @classmethod
     def accepted_terms_required(cls, v: bool) -> bool:
@@ -67,14 +60,6 @@ class ForgotPasswordRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     token: str = Field(..., min_length=20, max_length=300)
     password: str = Field(..., min_length=8, max_length=128)
-
-    @field_validator("password")
-    @classmethod
-    def password_min_length(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
-        return v
-
 
 class VerifyEmailRequest(BaseModel):
     token: str = Field(..., min_length=20, max_length=300)
