@@ -67,6 +67,9 @@ class ModelReply:
     input_tokens: int | None = None
     output_tokens: int | None = None
     preference_updates: tuple[PreferenceUpdate, ...] = ()
+    # Which prompt produced this turn. A trace that always stamps the same
+    # constant cannot tell you which one ran.
+    prompt_version: str = ""
     search_query: str = ""
     # Set only when a turn ended paused on ask_candidate: the LangGraph thread id
     # holding the pending interrupt. RecruitmentTeam persists it so the next

@@ -1350,3 +1350,20 @@ def _bound_tool_names(graph) -> set[str]:
             if found:
                 return set(found)
     raise AssertionError("no tool node found on the compiled graph")
+
+
+def test_a_turn_reports_the_prompt_that_actually_ran():
+    """A trace stamping a constant cannot tell you which prompt produced a turn.
+
+    COORDINATOR_PROMPT_VERSION was defined, exported and read by nothing while
+    every production chat span recorded the retired conversation prompt version.
+    """
+    from recruitment_team.prompts import COORDINATOR_PROMPT_VERSION, CONVERSATION_PROMPT_VERSION
+
+    discovery = _RecordingDiscovery([_search_result([])])
+    agent = ScriptedDeepAgent(responses=[submission("Noted.")])
+
+    reply = _model(agent).respond([], "", (), _context(discovery))
+
+    assert reply.prompt_version == COORDINATOR_PROMPT_VERSION
+    assert reply.prompt_version != CONVERSATION_PROMPT_VERSION

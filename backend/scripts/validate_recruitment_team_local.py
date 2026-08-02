@@ -24,7 +24,7 @@ import config  # noqa: E402
 from models import ResumeVersion, User  # noqa: E402
 from recruitment_team import (  # noqa: E402
     EvidenceAssessedRoleSuccessProfiler,
-    LangChainConversationModel,
+    DeepAgentConversationModel,
     LangChainRoleEvidenceAssessor,
     LangChainRoleDefinitionGenerator,
     RecruitmentTeam,
@@ -274,8 +274,10 @@ def main() -> int:
             max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
         )
 
-    model = LangChainConversationModel(
-        model=live_model(args.conversation_model),
+    # The adapter production actually serves. Validating the retired single-shot
+    # path would report green on code that no longer handles a single chat turn.
+    model = DeepAgentConversationModel(
+        model_factory=lambda: live_model(args.conversation_model),
         telemetry=telemetry,
     )
 

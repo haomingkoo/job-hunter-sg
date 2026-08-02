@@ -530,7 +530,10 @@ class RecruitmentTeam:
             self._persist_conversation_edits(thread, resume, run, conversation)
             self._remember_pause_token(thread, reply.pause_token)
             model_span.set_attribute("model", reply.model_name)
-            model_span.set_attribute("prompt_version", CONVERSATION_PROMPT_VERSION)
+            model_span.set_attribute(
+                "prompt_version",
+                getattr(reply, "prompt_version", "") or CONVERSATION_PROMPT_VERSION,
+            )
             model_span.set_attribute("preference_update_count", len(reply.preference_updates))
             if reply.input_tokens is not None:
                 model_span.set_attribute("input_tokens", reply.input_tokens)

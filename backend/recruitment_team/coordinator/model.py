@@ -60,7 +60,7 @@ from ..open_agent.tools import (
     read_target_job,
     search_jobs,
 )
-from ..prompts import COORDINATOR_SYSTEM_PROMPT
+from ..prompts import COORDINATOR_PROMPT_VERSION, COORDINATOR_SYSTEM_PROMPT
 from ..telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 from .context import ConversationContext
 
@@ -312,6 +312,7 @@ class DeepAgentConversationModel:
             if state.interrupts:
                 span.set_attribute("outcome", "paused")
                 return ModelReply(
+                    prompt_version=COORDINATOR_PROMPT_VERSION,
                     content=pending_question,
                     model_name=_model_name(state),
                     search_query=executed_query,
@@ -328,6 +329,7 @@ class DeepAgentConversationModel:
                 )
             span.set_attribute("outcome", "submitted")
             return ModelReply(
+                prompt_version=COORDINATOR_PROMPT_VERSION,
                 content=reply.reply.strip(),
                 model_name=_model_name(state),
                 preference_updates=tuple(
