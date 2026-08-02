@@ -111,6 +111,27 @@ def _model_name(state) -> str:
     return "coordinator-deep-agent"
 
 
+def _final_reply_text(state) -> str:
+    """The last thing the model actually said to the candidate, or "".
+
+    Only plain text off the final assistant message. `reasoning_content` is never
+    read, because invariant 9 forbids surfacing private reasoning, and a message
+    that carries tool calls is mid-loop rather than an answer.
+    """
+    for message in reversed(state.values.get("messages") or []):
+        if getattr(message, "type", "") != "ai" or getattr(message, "tool_calls", None):
+            continue
+        content = getattr(message, "content", "")
+        if isinstance(content, list):
+            content = "".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        return str(content or "").strip()
+    return ""
+
+
 def _thread_state_block(context: ConversationContext, preferences: tuple[PreferenceFact, ...]) -> str:
     """Counts and preferences, never the postings themselves.
 
@@ -331,6 +352,26 @@ class DeepAgentConversationModel:
 
             reply = state.values.get("structured_response")
             if not submitted or not isinstance(reply, ConversationReply):
+                # The model answered without routing through ConversationReply.
+                # Whether it does is run-to-run variance, not configuration: on
+                # 2026-08-02 the same message, model and byte-identical
+                # ChatOpenAI produced four completed turns through one harness
+                # and two no_submission failures through another. Throwing away
+                # an answer the candidate could have read, because of which
+                # shape the model chose, is a brittle contract.
+                #
+                # This is not a fabricated success. The content is the model's
+                # own user-facing text, and nothing the submission alone carries
+                # is invented: no preference update is recorded here.
+                prose = _final_reply_text(state)
+                if prose:
+                    span.set_attribute("outcome", "unsubmitted_prose")
+                    return ModelReply(
+                        prompt_version=COORDINATOR_PROMPT_VERSION,
+                        content=prose,
+                        model_name=_model_name(state),
+                        search_query=executed_query,
+                    )
                 span.set_attribute("failure_type", "no_submission")
                 raise ConversationUnavailable(
                     "coordinator loop ended without a reply",

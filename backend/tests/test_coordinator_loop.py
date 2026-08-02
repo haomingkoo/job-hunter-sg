@@ -1413,3 +1413,73 @@ def test_the_resume_is_withheld_once_a_profile_exists():
     )
 
     assert "Yield Engineering Manager" not in _rendered(agent.requests[0])
+
+
+def test_a_turn_that_answers_in_prose_is_delivered_not_failed():
+    """The model sometimes answers without calling the submission tool.
+
+    Not hypothetical, and not configuration. On 2026-08-02 the same message, the
+    same model and a byte-identical ChatOpenAI construction produced a completed
+    six-step turn through one harness and two `no_submission` failures through
+    another, at 72s and 97s with zero tool calls. Payloads were within 400
+    characters of each other. What differs run to run is whether the model
+    decides to route its answer through `ConversationReply`.
+
+    Making the candidate's turn a 503 because the model chose prose is a brittle
+    contract: the answer existed and was thrown away. Invariant 7 says HTTP 200 is
+    not an acceptance criterion, and this respects it, because the reply here is
+    the model's own user-facing text, not a fabricated success. What the turn
+    cannot claim is anything that only the submission carries, so no preference
+    update is recorded on this path.
+    """
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.interface import StartThread
+
+    prose = (
+        "Your resume shows a semiconductor operations background moving into "
+        "applied AI. Two role families fit: agentic AI platform engineering, and "
+        "applied AI in manufacturing. Which of those interests you more?"
+    )
+    agent = ScriptedDeepAgent(responses=[final(prose)])
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = _team(db, agent, _RecordingDiscovery([]))
+        receipt = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="What should I target?"),
+            idempotency_key="turn-1",
+        )
+        snapshot = team.snapshot(owner_id, receipt.thread_id)
+
+    assert [message.role for message in snapshot.messages] == ["user", "assistant"]
+    assert snapshot.messages[-1].content == prose
+    # Nothing the submission would have carried is invented on this path.
+    assert snapshot.case_facts.preferences == ()
+
+
+def test_a_turn_that_produces_no_text_at_all_still_fails():
+    """The fallback is the model's own answer, never a manufactured one.
+
+    An empty final message carries nothing to deliver, so the turn is a 503 and
+    the candidate is told the truth rather than shown a blank reply.
+    """
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.errors import ConversationUnavailable
+    from recruitment_team.interface import StartThread
+
+    agent = ScriptedDeepAgent(responses=[final("   ")])
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = _team(db, agent, _RecordingDiscovery([]))
+        with pytest.raises(ConversationUnavailable) as error:
+            team.execute(
+                owner_id,
+                StartThread(resume_version_id=resume_id, message="What should I target?"),
+                idempotency_key="turn-1",
+            )
+
+    assert error.value.failure_type == "no_submission"
