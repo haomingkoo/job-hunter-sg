@@ -137,6 +137,24 @@ def _thread_state_block(context: ConversationContext, preferences: tuple[Prefere
     )
 
 
+def _resume_block(context: ConversationContext, resume_text: str) -> str:
+    """The resume as blocks the agent can cite, not as prose it can only read.
+
+    `propose_resume_edit` takes a canonical block ID, and those are opaque
+    hashes. Handing over raw text gives the agent something to reason about and
+    nothing to quote, so its first edit is always a guess. Emitting `id: text`
+    per line costs about twenty characters a block and removes the guess.
+
+    Falls back to the raw text when the document carries no blocks, because a
+    resume the agent cannot see at all is the worse failure.
+    """
+    blocks = (context.resume_document or {}).get("blocks") or []
+    if not blocks:
+        return xml_data_block("resume", resume_text)
+    lines = "\n".join(f"{block.get('id')}: {block.get('text', '')}" for block in blocks)
+    return xml_data_block("resume", lines)
+
+
 class DeepAgentConversationModel:
     """Conversation adapter that runs a real tool loop for every turn."""
 
@@ -232,7 +250,7 @@ class DeepAgentConversationModel:
             # learn who it is talking to. Live on 2026-08-02 it answered "please
             # share your resume" to a thread that already had one, then spun to
             # the iteration cap hunting for context it could never reach.
-            turn = f"{turn}\n\n{xml_data_block('resume', resume_text)}"
+            turn = f"{turn}\n\n{_resume_block(context, resume_text)}"
         if latest_index is not None:
             turn = f"{turn}\n\n{messages[latest_index].content}"
         request.append(HumanMessage(content=turn))
