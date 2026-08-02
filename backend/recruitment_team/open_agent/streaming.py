@@ -84,6 +84,7 @@ def iter_progress_events(
                         "team_member": team_member,
                         "tool_name": getattr(message, "name", None),
                         "content": message.content,
+                        "id": getattr(message, "tool_call_id", None),
                     }
                 elif message.content:
                     # Without this branch the runner would never see its
@@ -132,15 +133,24 @@ def describe_progress(event: dict) -> tuple[str, dict] | None:
         query = (event.get("args") or {}).get("query")
         if isinstance(query, str) and query.strip():
             detail["query"] = _clip(query)
+        if event.get("id"):
+            detail["tool_call_id"] = event["id"]
         return f"{team_member} called {tool_name}.", detail
 
     if event.get("kind") == "tool_result":
         outcome = _outcome(event.get("content"))
         if outcome is None:
             return None
+        detail = {"tool_name": tool_name, "stage": "result", "outcome": _clip(outcome)}
+        if event.get("id"):
+            detail["tool_call_id"] = event["id"]
+        payload = _payload(event.get("content"))
+        found = _postings_found(payload) if isinstance(payload, dict) else None
+        if found is not None:
+            detail["result_count"] = found
         return (
             f"{team_member} finished {tool_name}.",
-            {"tool_name": tool_name, "stage": "result", "outcome": _clip(outcome)},
+            detail,
         )
 
     return None
@@ -152,12 +162,7 @@ def _outcome(content: Any) -> str | None:
     None means the tool said nothing worth a row of its own. Silence beats a
     row that reads "finished" and tells the candidate nothing.
     """
-    payload = content
-    if isinstance(payload, str):
-        try:
-            payload = json.loads(payload)
-        except json.JSONDecodeError:
-            return None
+    payload = _payload(content)
     if not isinstance(payload, dict):
         return None
 
@@ -182,6 +187,16 @@ def _outcome(content: Any) -> str | None:
         return f"no edit drafted ({payload.get('reason') or 'rejected'})"
 
     return None
+
+
+def _payload(content: Any) -> Any:
+    payload = content
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+    return payload
 
 
 def _postings_found(payload: dict) -> int | None:

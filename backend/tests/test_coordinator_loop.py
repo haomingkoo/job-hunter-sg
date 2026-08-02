@@ -505,6 +505,39 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
     ]
     sequences = [event.sequence for event in publisher.events]
     assert sequences == sorted(sequences) and len(set(sequences)) == len(sequences)
+    search_call = next(
+        event
+        for event in publisher.events
+        if event.attributes.get("tool_name") == "search_jobs"
+        and event.attributes.get("stage") == "call"
+    )
+    search_result = next(
+        event
+        for event in publisher.events
+        if event.attributes.get("tool_name") == "search_jobs"
+        and event.attributes.get("stage") == "result"
+    )
+    assert search_call.attributes == {
+        "tool_name": "search_jobs",
+        "stage": "call",
+        "exclude_junior": True,
+        "query": "semiconductor yield analytics engineer",
+        "query_redacted": False,
+        "span_id": "call-1",
+    }
+    assert search_call.parent_id == receipt.run_id
+    assert search_result.parent_id == search_call.attributes["span_id"] == "call-1"
+    assert search_result.attributes["result_count"] == 1
+    assert search_result.duration_ms is not None
+    assert search_result.duration_ms >= 0
+    completed = next(
+        event
+        for event in reversed(publisher.events)
+        if event.event_type == "run" and event.status == "completed"
+    )
+    assert completed.parent_id == receipt.run_id
+    assert completed.attributes["model"] == "coordinator-deep-agent"
+    assert completed.duration_ms is not None
 
     assert agent.calls == 3
 
@@ -1000,6 +1033,13 @@ def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(
     failed = [event for event in publisher.events if event.status == "failed"]
     assert len(failed) == 1
     assert failed[0].detail["failure_type"] == "tool_iteration_cap"
+    assert failed[0].parent_id == failed[0].run_id
+    assert failed[0].attributes == {
+        "error_type": "ConversationUnavailable",
+        "failure_type": "tool_iteration_cap",
+        "retryable": True,
+    }
+    assert failed[0].duration_ms is not None
 
     with sessions() as db:
         roles = [row.role for row in db.query(RecruitmentMessage).all()]

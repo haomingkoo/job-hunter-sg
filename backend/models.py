@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     JSON,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -405,6 +406,9 @@ class RecruitmentActivityEvent(Base):
     trace_key: Mapped[str] = mapped_column(String(64), nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     detail: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    parent_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    attributes: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
     __table_args__ = (

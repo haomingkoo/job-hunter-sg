@@ -167,6 +167,9 @@ class ActivityEvent:
     trace_key: str
     summary: str
     detail: dict
+    parent_id: str | None
+    duration_ms: float | None
+    attributes: dict
     created_at: datetime
 
 

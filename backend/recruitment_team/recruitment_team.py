@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import threading
+import time
 import uuid
 import weakref
 from collections.abc import Callable
@@ -120,6 +121,64 @@ SEMANTIC_PREFERENCE_FIELDS = frozenset({"role"})
 # A UI-sent opener is an instruction to the team, not something the candidate
 # wants searched, so it must never become the query.
 AUTOPILOT_MARKER = "[autopilot]"
+_EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
+_PHONE = re.compile(r"(?<!\d)(?:\+?65[\s-]?)?[689]\d{3}[\s-]?\d{4}(?!\d)")
+
+
+def _safe_trace_query(query: str) -> tuple[str, bool]:
+    if _EMAIL.search(query) or _PHONE.search(query):
+        return "[redacted: possible contact data]", True
+    return query, False
+
+
+def _trace_attributes(item: dict, detail: dict) -> dict:
+    """Persist operational facts only; never raw messages, resumes, or reasoning."""
+    attributes = {}
+    for key in ("tool_name", "stage"):
+        if isinstance(detail.get(key), str):
+            attributes[key] = detail[key]
+    args = item.get("args") if isinstance(item.get("args"), dict) else {}
+    if isinstance(args.get("exclude_junior"), bool):
+        attributes["exclude_junior"] = args["exclude_junior"]
+    if isinstance(args.get("query"), str):
+        query, redacted = _safe_trace_query(args["query"])
+        attributes["query"] = query
+        attributes["query_redacted"] = redacted
+    if isinstance(detail.get("result_count"), int):
+        attributes["result_count"] = detail["result_count"]
+    if item.get("id"):
+        attributes["span_id"] = str(item["id"])
+    return attributes
+
+
+def _trace_event_fields(
+    *,
+    kind: str,
+    call_id: str,
+    run_id: str,
+    detail: dict,
+    started_calls: dict[str, float],
+    args: dict | None = None,
+) -> tuple[str, float | None, dict]:
+    duration_ms = None
+    if kind == "tool_call" and call_id:
+        started_calls[call_id] = time.perf_counter()
+    elif kind == "tool_result" and call_id:
+        started_at = started_calls.pop(call_id, None)
+        if started_at is not None:
+            duration_ms = (time.perf_counter() - started_at) * 1000
+    item = {"kind": kind, "id": call_id, "args": args or {}}
+    parent_id = call_id if kind == "tool_result" and call_id else run_id
+    return parent_id, duration_ms, _trace_attributes(item, detail)
+
+
+def _run_duration_ms(run: RecruitmentRun) -> float | None:
+    if run.created_at is None:
+        return None
+    started = run.created_at
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return max(0.0, (_utcnow() - started).total_seconds() * 1000)
 
 
 # Enough of a career that an entry-level posting is an insult rather than an option.
@@ -452,6 +511,9 @@ class RecruitmentTeam:
                     status="failed",
                     summary="The coordinator could not complete this turn.",
                     detail=failure_detail,
+                    parent_id=run.id,
+                    duration_ms=_run_duration_ms(run),
+                    attributes=failure_detail,
                 )
                 with self._telemetry.operation("persist_failed"):
                     self._db.commit()
@@ -486,6 +548,13 @@ class RecruitmentTeam:
                 summary=COMPLETION_SUMMARIES[completion_member],
                 detail=completion_detail,
                 team_member=completion_member,
+                parent_id=run.id,
+                duration_ms=_run_duration_ms(run),
+                attributes={
+                    key: value
+                    for key, value in completion_detail.items()
+                    if key in {"model", "input_tokens", "output_tokens"}
+                },
             )
             thread.updated_at = _utcnow()
             with self._telemetry.operation("persist_completed"):
@@ -644,11 +713,22 @@ class RecruitmentTeam:
         candidate saw and the thread never had.
         """
 
+        started_calls: dict[str, float] = {}
+
         def publish(item: dict) -> None:
             described = describe_progress(item)
             if described is None:
                 return
             summary, detail = described
+            call_id = str(item.get("id") or "")
+            parent_id, duration_ms, attributes = _trace_event_fields(
+                kind=str(item.get("kind") or ""),
+                call_id=call_id,
+                run_id=run.id,
+                detail=detail,
+                started_calls=started_calls,
+                args=item.get("args") if isinstance(item.get("args"), dict) else None,
+            )
             event = self._event(
                 thread,
                 run,
@@ -657,6 +737,9 @@ class RecruitmentTeam:
                 summary=summary,
                 detail=detail,
                 team_member=item.get("team_member") or "coordinator",
+                parent_id=parent_id,
+                duration_ms=duration_ms,
+                attributes=attributes,
             )
             self._db.commit()
             self._activity_publisher.publish(self._activity(event))
@@ -1190,6 +1273,7 @@ class RecruitmentTeam:
         last_progress_status: str | None = None
         pending_question = ""
         pause_detail: dict = {}
+        started_calls: dict[str, float] = {}
         try:
             for update in updates:
                 if isinstance(update, TargetAssessmentProgress):
@@ -1197,14 +1281,29 @@ class RecruitmentTeam:
                     if update.status == "paused":
                         pending_question = str((update.detail or {}).get("question") or "")
                         pause_detail = update.detail or {}
+                    detail = update.detail or {}
+                    call_id = str(detail.get("tool_call_id") or "")
+                    kind = "tool_result" if detail.get("stage") == "result" else "tool_call"
+                    args = {"query": detail["query"]} if isinstance(detail.get("query"), str) else None
+                    parent_id, duration_ms, attributes = _trace_event_fields(
+                        kind=kind,
+                        call_id=call_id,
+                        run_id=run.id,
+                        detail=detail,
+                        started_calls=started_calls,
+                        args=args,
+                    )
                     progress_event = self._event(
                         thread,
                         run,
                         event_type="assessment",
                         status=update.status,
                         summary=update.summary,
-                        detail=update.detail,
+                        detail=detail,
                         team_member=update.team_member,
+                        parent_id=parent_id,
+                        duration_ms=duration_ms,
+                        attributes=attributes,
                     )
                     self._db.commit()
                     self._activity_publisher.publish(self._activity(progress_event))
@@ -1989,6 +2088,9 @@ class RecruitmentTeam:
         summary: str,
         detail: dict | None = None,
         team_member: str = "coordinator",
+        parent_id: str | None = None,
+        duration_ms: float | None = None,
+        attributes: dict | None = None,
     ) -> RecruitmentActivityEvent:
         sequence = _reserve_event_sequence(self._db, thread.id)
         event = RecruitmentActivityEvent(
@@ -2002,6 +2104,9 @@ class RecruitmentTeam:
             trace_key=run.trace_key,
             summary=summary,
             detail=detail or {},
+            parent_id=parent_id,
+            duration_ms=duration_ms,
+            attributes=attributes or {},
         )
         self._db.add(event)
         return event
@@ -2018,6 +2123,9 @@ class RecruitmentTeam:
             trace_key=item.trace_key,
             summary=item.summary,
             detail=item.detail,
+            parent_id=item.parent_id,
+            duration_ms=item.duration_ms,
+            attributes=item.attributes or {},
             created_at=item.created_at,
         )
 
