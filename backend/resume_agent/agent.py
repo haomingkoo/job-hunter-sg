@@ -9,18 +9,14 @@ from deepagents.middleware.subagents import SubAgent
 from langgraph.errors import GraphRecursionError
 
 from .models import create_agent_model
-from .personas import create_persona_subagents
 from .prompts import ORCHESTRATOR_SYSTEM_PROMPT
-from .tooling import ORCHESTRATOR_TOOLS
-
-
-DEFAULT_TOOLS = list(ORCHESTRATOR_TOOLS)
 
 
 def create_resume_agent(
+    *,
+    tools: Sequence[Any],
+    subagents: Sequence[SubAgent],
     model: Any | None = None,
-    tools: Sequence[Any] | None = None,
-    subagents: Sequence[SubAgent] | None = None,
     checkpointer: Any | None = None,
     interrupt_on: dict[str, Any] | None = None,
     system_prompt: str | None = None,
@@ -38,8 +34,8 @@ def create_resume_agent(
 
     return create_deep_agent(
         model=model or create_agent_model(),
-        tools=list(tools) if tools is not None else DEFAULT_TOOLS,
-        subagents=list(subagents) if subagents is not None else create_persona_subagents(),
+        tools=list(tools),
+        subagents=list(subagents),
         system_prompt=system_prompt if system_prompt is not None else ORCHESTRATOR_SYSTEM_PROMPT,
         checkpointer=checkpointer,
         interrupt_on=interrupt_on,

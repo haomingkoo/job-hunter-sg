@@ -5916,9 +5916,7 @@ def generate_stories_from_resume(
         if project and not any(c in resume_lower for c in project.split()):
             warnings.append(f"Company/project '{story.get('project_name')}' not found in resume")
 
-        valid_tags = {"motivation", "proactiveness", "ambiguity", "perseverance",
-                      "conflict_resolution", "empathy", "growth", "communication"}
-        story["tags"] = [t for t in (story.get("tags") or []) if t in valid_tags]
+        story["tags"] = [t for t in (story.get("tags") or []) if t in STORY_TAGS]
 
         if story.get("seniority") not in ("junior", "mid", "senior", "staff"):
             story["seniority"] = "mid"
@@ -5931,23 +5929,6 @@ def generate_stories_from_resume(
         "stories": validated_stories,
         "total_generated": len(validated_stories),
         "resume_word_count": len(resume_text.split()),
-    }
-
-
-@app.get("/api/stories/tags")
-def get_story_tags() -> dict:
-    """Return available behavioral tags with descriptions."""
-    return {
-        "tags": [
-            {"id": "motivation", "label": "Motivation", "description": "What drives you, passion for impact"},
-            {"id": "proactiveness", "label": "Proactiveness", "description": "Taking initiative without being told"},
-            {"id": "ambiguity", "label": "Ambiguity", "description": "Owning unstructured problems"},
-            {"id": "perseverance", "label": "Perseverance", "description": "Pushing through blockers and setbacks"},
-            {"id": "conflict_resolution", "label": "Conflict Resolution", "description": "Handling difficult people or situations"},
-            {"id": "empathy", "label": "Empathy", "description": "Understanding others' perspectives"},
-            {"id": "growth", "label": "Growth", "description": "Learning from mistakes, self-awareness"},
-            {"id": "communication", "label": "Communication", "description": "Clarity, cross-functional collaboration"},
-        ]
     }
 
 
