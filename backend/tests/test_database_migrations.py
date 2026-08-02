@@ -1,6 +1,28 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+def test_default_database_path_does_not_depend_on_working_directory(tmp_path):
+    backend_dir = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env.pop("DATABASE_URL", None)
+    env["PYTHONPATH"] = str(backend_dir)
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import database; print(database.DATABASE_URL)"],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.strip() == f"sqlite:///{backend_dir / 'jobhunter.db'}"
 
 
 def test_legacy_users_remain_unverified_when_verification_column_is_added(monkeypatch):

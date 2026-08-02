@@ -219,7 +219,8 @@ shared/resume-classification.json ← single source of truth for both backend + 
 ## Environment Variables
 
 ```bash
-DATABASE_URL=sqlite:///./jobhunter.db
+# Omit DATABASE_URL locally to use backend/jobhunter.db.
+# Set an explicit PostgreSQL URL on hosted deployments.
 JWT_SECRET=your-secret
 AUTH_MODE=password
 ACCOUNT_AI_PER_DAY=500
