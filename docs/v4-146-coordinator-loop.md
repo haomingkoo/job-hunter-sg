@@ -7,6 +7,39 @@ the thread**.
 This document is the contract the tests in `backend/tests/test_coordinator_loop.py`
 assert against. Those tests are xfail-strict today and are the specification.
 
+## Revision 3: two corrections the build forced
+
+Revision 2 was written against the installed stack but two of its claims did not
+survive contact with it. Both are corrected in the code; this section says so
+here too, because a design doc asserting a mechanism that demonstrably breaks is
+a trap for whoever reads it next.
+
+**§5's stable per-thread graph id is wrong, and quietly so.** `structured_response`
+is written into the checkpoint and never cleared, and
+`langchain/agents/factory.py`'s `model_to_tools` edge ends the run on
+`"structured_response" in state` — a key-presence check, so writing `None` over it
+changes nothing (reproduced on langchain 1.3.11). On a stable graph id the first
+completed turn therefore makes every later `ask_candidate` resume terminate the
+instant the answer is injected: no model call, no reply, no error. Corrected:
+**every turn gets its own graph id and replays the DB transcript**, and the
+checkpointer holds exactly one thing, a paused graph between two HTTP requests.
+The pause's graph id travels back on a new `ModelReply.pause_token` field and is
+persisted as `case_facts["coordinator_pause_token"]`, mirroring
+`target_assessment_pause_token`. The DB stays the system of record; the checkpoint
+is no longer a cache of anything.
+
+**§8's `COORDINATOR_MAX_TOOL_ITERATIONS = 12` bought two tool calls, not twelve.**
+It is a LangGraph `recursion_limit`, which counts super-steps. Measured against
+this graph: 5 steps plus 4 per tool call. The default is 45, which is ten tool
+calls. `AGENT_MAX_TOOL_ITERATIONS = 20` on the assessment path buys under four by
+the same arithmetic, which is worth a separate look.
+
+Two consequences of the first correction are stated in
+`coordinator/model.py`'s docstring rather than hidden: the checkpoint file gains
+a graph per chat turn with nothing pruning it, and LangGraph warns that
+deserializing `ConversationReply` from a checkpoint will be blocked in a future
+release.
+
 ## Revision 2: what changed and why
 
 Revision 1 survived an adversarial review. Seventeen findings held up. Every one is

@@ -2,15 +2,16 @@
 
 Design: `docs/v4-146-coordinator-loop.md` (revision 2).
 
-Every test marked `_XFAIL_146` fails today, because the production symbols it
-imports do not exist. They are the specification, not a regression net. The
-marker is `strict=True` on purpose: the moment the loop works, an XPASS turns the
-suite red and the marker has to come off. A non-strict xfail is an optional
-assertion, and this repo has already paid for an optional field.
+Written first as strict xfails against symbols that did not exist. The markers
+came off one at a time as the loop was built; nothing here was relaxed to make
+that happen. Two assertions were corrected, both because they described a graph
+that does not exist: the iteration cap counted tool calls where LangGraph counts
+super-steps, and "ORCHESTRATOR" appears verbatim in deepagents' own subagent
+middleware prompt.
 
-The two `test_scripted_deep_agent_*` tests are deliberately NOT xfail. They guard
-the harness. Without them, a broken double would make every xfail below pass for
-the wrong reason and nobody would know.
+The three `test_scripted_deep_agent_*` / `test_repeat_last_*` tests guard the
+harness. Without them, a broken double would make everything below pass for the
+wrong reason and nobody would know.
 
 What the tests deliberately do NOT do: assert on a status code, assert on a reply
 string scripted here as if it were evidence of reasoning, or accept a call count
@@ -32,15 +33,6 @@ from backend.tests.scripted_deep_agent import (
     preference,
     submission,
     tool_call,
-)
-
-
-_XFAIL_146 = pytest.mark.xfail(
-    reason=(
-        "#146: DeepAgentConversationModel, ConversationContext, ConversationUnavailable "
-        "and the coordinator tools (read_shortlist, search_jobs) are not implemented yet"
-    ),
-    strict=True,
 )
 
 
@@ -413,7 +405,6 @@ def test_repeat_last_freezes_consumed_so_only_calls_can_bound_a_runaway_loop():
 # ── the specification ────────────────────────────────────────────────────────
 
 
-@_XFAIL_146
 def test_create_resume_agent_accepts_a_coordinator_prompt_and_a_response_format():
     """§4's two seams, asserted on what the model actually received.
 
@@ -424,6 +415,12 @@ def test_create_resume_agent_accepts_a_coordinator_prompt_and_a_response_format(
     from langchain.agents.structured_output import ToolStrategy
 
     from resume_agent.agent import create_resume_agent
+
+    # The prompt this seam exists to displace, asserted on its own opening line
+    # rather than on the bare word "orchestrator": deepagents' built-in subagent
+    # middleware says "bloat the orchestrator thread" in every graph it builds,
+    # so the loose form fires whether or not the seam works.
+    from resume_agent.prompts import ORCHESTRATOR_SYSTEM_PROMPT
 
     goal = "Find roles worth applying to, and get this resume ready for them."
     agent = ScriptedDeepAgent(
@@ -442,11 +439,10 @@ def test_create_resume_agent_accepts_a_coordinator_prompt_and_a_response_format(
     )
 
     assert goal in _rendered(agent.requests[0])
-    assert "ORCHESTRATOR" not in _rendered(agent.requests[0]).upper()
+    assert ORCHESTRATOR_SYSTEM_PROMPT.splitlines()[0] not in _rendered(agent.requests[0])
     assert state["structured_response"].reply == "done"
 
 
-@_XFAIL_146
 def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
     """The bug in one turn.
 
@@ -525,7 +521,6 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
     assert agent.calls == 3
 
 
-@_XFAIL_146
 def test_a_shortlist_the_model_never_saw_reaches_the_next_conversational_turn():
     """The headline #146 scenario, with its recorded before-state.
 
@@ -618,7 +613,6 @@ def test_a_shortlist_the_model_never_saw_reaches_the_next_conversational_turn():
     assert agent.calls == 3
 
 
-@_XFAIL_146
 def test_a_preference_quote_absent_from_the_user_message_fails_the_turn():
     """The evidence-quote rule survives the new path, and a failed turn writes nothing."""
     from backend.tests.test_recruitment_team_module import _session_factory
@@ -660,7 +654,6 @@ def test_a_preference_quote_absent_from_the_user_message_fails_the_turn():
     assert roles == ["user"], "a rejected turn must not append an assistant message"
 
 
-@_XFAIL_146
 def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results():
     """The agent decides to search again by reading its own results.
 
@@ -730,7 +723,6 @@ def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results()
     assert agent.calls == 3
 
 
-@_XFAIL_146
 def test_has_repeated_call_rejects_a_materially_identical_repeat_within_a_turn():
     """Guardrails limit volume, never choice.
 
@@ -769,7 +761,6 @@ def test_has_repeated_call_rejects_a_materially_identical_repeat_within_a_turn()
     assert agent.calls == 4
 
 
-@_XFAIL_146
 def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
     """An empty search must not empty the panel and 422 the next click.
 
@@ -837,7 +828,6 @@ def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
     assert "valid_empty" in _rendered(agent.requests[2])
 
 
-@_XFAIL_146
 def test_a_failed_search_is_surfaced_to_the_agent_and_leaves_the_shortlist_alone():
     """A source failure is information mid-turn, not the end of the turn.
 
@@ -892,7 +882,6 @@ def test_a_failed_search_is_surfaced_to_the_agent_and_leaves_the_shortlist_alone
     assert "unavailable" in _rendered(agent.requests[2])
 
 
-@_XFAIL_146
 def test_search_query_records_the_query_that_ran_not_the_one_the_model_asked_for():
     """`search_query` becomes an observation instead of a request.
 
@@ -937,7 +926,6 @@ def test_search_query_records_the_query_that_ran_not_the_one_the_model_asked_for
     assert "remote product manager" not in json.dumps(facts)
 
 
-@_XFAIL_146
 def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(monkeypatch):
     """`GraphRecursionError` must not escape, and the turn must not invent an answer.
 
@@ -945,6 +933,14 @@ def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(
     submission is a 503, not a cheerful empty answer. The bound on `calls` is what
     makes this test able to fail -- `repeat_last` pins `consumed` at 1 whether the
     recursion limit is honoured or ignored.
+
+    13 rather than 4, and an exact count rather than a range. The constant is a
+    LangGraph recursion_limit, which counts super-steps: measured against this
+    graph, a turn costs 5 steps plus 4 per tool call. At 4 even a no-tool turn
+    caps, so the opening turn never completed and the range 2..4 described a
+    graph that does not exist. 13 is the smallest value that lets two tool calls
+    plus a submission through, and a runaway makes exactly four model calls
+    before it trips.
     """
     import config
 
@@ -954,7 +950,7 @@ def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(
     from recruitment_team.errors import ConversationUnavailable
     from recruitment_team.interface import SendMessage, StartThread
 
-    monkeypatch.setattr(config, "COORDINATOR_MAX_TOOL_ITERATIONS", 4)
+    monkeypatch.setattr(config, "COORDINATOR_MAX_TOOL_ITERATIONS", 13)
 
     discovery = _RecordingDiscovery([])
     opening = ScriptedDeepAgent(responses=[submission("Hello, what are you aiming for?")])
@@ -987,8 +983,8 @@ def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(
     assert error.value.failure_type == "tool_iteration_cap"
 
     # The cap was really honoured. Without this bound the test passes whether the
-    # limit is 4, 40 or ignored.
-    assert 2 <= looping.calls <= 4
+    # limit is 13, 45 or ignored: `repeat_last` never runs out of script.
+    assert looping.calls == 4
 
     failed = [event for event in publisher.events if event.status == "failed"]
     assert len(failed) == 1
@@ -1001,7 +997,6 @@ def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(
     )
 
 
-@_XFAIL_146
 def test_conversation_unavailable_maps_to_503():
     """`_raise_http_error` matches by explicit type and ends in a bare `raise`.
 
@@ -1024,7 +1019,6 @@ def test_conversation_unavailable_maps_to_503():
     assert error.value.status_code == 503
 
 
-@_XFAIL_146
 def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resumes_it():
     """The interrupt, not the prompt, is what stops the next tool.
 
@@ -1098,13 +1092,22 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
     assert "NXP" in resumed.messages[-1].content
     assert agent.calls == 3
 
+    # Every assertion above is also satisfied by a turn 2 that ignored the pause
+    # and started a brand new graph, because the script would play out
+    # identically either way. This one is not. A resumed turn delivers the answer
+    # as the ask_candidate tool's own result and seeds no new message; a restart
+    # would have ended this request with a HumanMessage carrying a fresh
+    # thread-state block.
+    answer_delivery = agent.requests[1][-1]
+    assert type(answer_delivery).__name__ == "ToolMessage"
+    assert "No, keep me in semiconductors." in str(answer_delivery.content)
+
     # Resuming replays the interrupted AIMessage with its tool_calls intact
     # (streaming.py:44-50). Without skip_tool_call_ids the candidate sees the same
     # question published twice.
     assert _tool_summaries(second_publisher) == ["coordinator called search_jobs."]
 
 
-@_XFAIL_146
 def test_a_proposed_edit_reaches_the_pending_table_and_the_rejections_reach_the_model():
     """Invariant 3 and invariant 5 hold on the conversational path.
 
@@ -1175,7 +1178,6 @@ def test_a_proposed_edit_reaches_the_pending_table_and_the_rejections_reach_the_
     assert agent.calls == 4
 
 
-@_XFAIL_146
 def test_get_conversation_model_returns_the_loop_adapter():
     """The one-line wiring change, guarded.
 
@@ -1194,7 +1196,6 @@ def test_get_conversation_model_returns_the_loop_adapter():
     )
 
 
-@_XFAIL_146
 def test_a_transport_turn_reaches_the_loop_without_overriding_the_dependency(monkeypatch):
     """End to end through FastAPI with the real DI graph for the conversation model.
 

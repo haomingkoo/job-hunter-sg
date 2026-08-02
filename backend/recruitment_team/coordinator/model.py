@@ -25,6 +25,12 @@ checkpointer is used for exactly what it is good at: holding one paused graph
 between two HTTP requests. The pause's graph id travels back on
 `ModelReply.pause_token` and is persisted on `case_facts`, the same way the
 assessment runner persists its own pause token.
+
+Two costs of that, stated rather than discovered later. The checkpoint file gains
+a graph per chat turn and nothing prunes it, where the assessment runner adds one
+per assessment. And LangGraph warns that deserializing `ConversationReply` from a
+checkpoint will be blocked in a future version, which will need
+`allowed_msgpack_modules` before that release lands.
 """
 
 from __future__ import annotations
@@ -123,11 +129,10 @@ def _thread_state_block(context: ConversationContext, preferences: tuple[Prefere
     Putting the shortlist here would make `read_shortlist` decorative and would
     put every posting into every turn's prompt. The agent asks for them.
     """
-    latest_query, recommendations = context.latest_search_query, context.recommendations
     state = {
-        "recommendation_count": len(recommendations),
+        "recommendation_count": len(context.recommendations),
         "shortlisted_count": len(context.shortlisted_jobs),
-        "latest_search_query": latest_query,
+        "latest_search_query": context.latest_search_query,
         "target_job_selected": context.target_job is not None,
         "selected_target_job_id": context.target_job.job_id if context.target_job else None,
         "candidate_profile_available": context.candidate_profile is not None,
@@ -233,6 +238,11 @@ class DeepAgentConversationModel:
             # coordinator this adapter exists to replace.
             raise InvalidCommand("DeepAgentConversationModel requires a ConversationContext")
 
+        # `resume_text` is not forwarded. Resume evidence, with the block IDs
+        # propose_resume_edit needs, reaches the agent through
+        # read_candidate_evidence, the same channel the assessment path uses.
+        # Pasting the raw text into every turn would also put it in front of the
+        # model before any tool ran, which is what read_shortlist exists to stop.
         agent = self._build_agent()
         run_config, payload, skip_tool_call_ids = self._turn(agent, context, messages, current_preferences)
 
