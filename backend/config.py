@@ -69,7 +69,7 @@ SEALION_AGENT_MODEL: str = os.getenv("SEALION_AGENT_MODEL", "aisingapore/Qwen-SE
 # without moving the assessment path with it.
 COORDINATOR_MODEL: str = os.getenv("COORDINATOR_MODEL", "").strip() or SEALION_AGENT_MODEL
 # A reasoning tier thinks before it writes; with no floor the reply gets the rest.
-RECRUITMENT_CONVERSATION_MAX_TOKENS: int = _int_env("RECRUITMENT_CONVERSATION_MAX_TOKENS", 4000)
+RECRUITMENT_CONVERSATION_MAX_TOKENS: int = _int_env("RECRUITMENT_CONVERSATION_MAX_TOKENS", 8000)
 # SMART: deep-agent persona reviews (single-shot, no tools, latency-tolerant).
 SEALION_SMART_MODEL: str = os.getenv("SEALION_SMART_MODEL", "aisingapore/Qwen-SEA-LION-v4.5-27B-IT")
 # Models that must run in instruct/non-thinking mode for product-facing text and
@@ -80,7 +80,7 @@ SEALION_DISABLE_THINKING_MODELS: tuple[str, ...] = _csv_env(
 )
 # SMART is a reasoning model — under a tight budget it spends all tokens "thinking"
 # and returns empty. Floor its max_tokens at call sites that use it.
-SMART_MIN_MAX_TOKENS: int = _int_env("SMART_MIN_MAX_TOKENS", 3000)
+SMART_MIN_MAX_TOKENS: int = _int_env("SMART_MIN_MAX_TOKENS", 6000)
 
 # ── Resume deep-agent v2 knobs ───────────────────────────────────────────────
 AGENT_MAX_TOOL_ITERATIONS: int = _positive_int_env("AGENT_MAX_TOOL_ITERATIONS", 20)
