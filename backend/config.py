@@ -88,6 +88,17 @@ OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS: int = _positive_int_env(
 # process restart and can be resumed from any worker, not just the one that
 # hit the pause.
 OPEN_AGENT_CHECKPOINT_DB_PATH: str = os.getenv("OPEN_AGENT_CHECKPOINT_DB_PATH", "open_agent_checkpoints.db")
+# Deliberately separate from AGENT_MAX_TOOL_ITERATIONS: one env var tuning both a
+# chat turn and a full multi-persona assessment means tuning either one starves
+# the other.
+#
+# This is a LangGraph recursion_limit, which counts super-steps, not tool calls.
+# Measured against the coordinator graph on deepagents 0.6.12: a turn costs 5
+# steps plus 4 per tool call, so 45 buys ten tool calls -- enough to search,
+# judge the results, search again, read the shortlist and still draft several
+# edits under OPEN_AGENT_MAX_PROPOSED_EDITS. A value picked as "about a dozen
+# iterations" would have bought two.
+COORDINATOR_MAX_TOOL_ITERATIONS: int = _positive_int_env("COORDINATOR_MAX_TOOL_ITERATIONS", 45)
 AGENT_PERSONA_VALIDATION_ATTEMPTS: int = _positive_int_env(
     "AGENT_PERSONA_VALIDATION_ATTEMPTS",
     2,

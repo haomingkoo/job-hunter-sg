@@ -446,7 +446,7 @@ def test_retrying_the_same_idempotency_key_after_a_failure_succeeds():
         def __init__(self):
             self.calls = 0
 
-        def respond(self, messages, resume_text, current_preferences=()):
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
             self.calls += 1
             if self.calls == 1:
                 raise TimeoutError("provider timed out")
@@ -495,7 +495,7 @@ def test_model_failure_is_durable_and_visible():
     from recruitment_team.telemetry import RecordedTelemetry
 
     class FailingModel:
-        def respond(self, messages, resume_text, current_preferences=()):
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
             raise TimeoutError("provider timed out")
 
     sessions = _session_factory()
@@ -566,7 +566,7 @@ def test_running_activity_is_committed_and_published_before_model_completion():
             self.started = Event()
             self.release = Event()
 
-        def respond(self, messages, resume_text, current_preferences=()):
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
             self.started.set()
             assert self.release.wait(TEST_WAIT_SECONDS), "test did not release model"
             return ModelReply(content="Completed after release.", model_name="blocking-model")
@@ -661,13 +661,13 @@ def test_two_concurrent_commands_on_the_same_thread_are_serialized_not_raced():
             self.release = Event()
             self._reply_content = reply_content
 
-        def respond(self, messages, resume_text, current_preferences=()):
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
             self.started.set()
             assert self.release.wait(TEST_WAIT_SECONDS), "test did not release model"
             return ModelReply(content=self._reply_content, model_name="blocking-model")
 
     class InstantModel:
-        def respond(self, messages, resume_text, current_preferences=()):
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
             return ModelReply(content="Started.", model_name="instant")
 
     sessions = _session_factory()
