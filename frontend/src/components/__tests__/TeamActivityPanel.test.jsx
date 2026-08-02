@@ -152,6 +152,18 @@ describe("TeamActivityPanel step content", () => {
     expect(text).toContain("semiconductor yield engineer");
   });
 
+  it("keeps completed steps when a later run starts", () => {
+    const text = renderEvents([
+      activity("search_jobs", { query: "manufacturing manager" }),
+      activity("ConversationReply", {}, { status: "completed" }),
+      activity("search_jobs", { query: "operations manager" }, { run_id: "run-2" }),
+    ]);
+
+    expect(text).toContain("manufacturing manager");
+    expect(text).toContain("Writing your reply");
+    expect(text).toContain("operations manager");
+  });
+
   it("promises specialists and a judge only while an assessment is running", () => {
     const chatting = renderEvents([activity("search_jobs", { query: "yield engineer" })]);
     expect(chatting).not.toContain("independent judge");

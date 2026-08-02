@@ -3546,6 +3546,10 @@ def test_autopilot_searches_without_the_candidate_typing_a_query():
             RecruitmentThread.id == started.thread_id
         ).one()
         assert stored.case_facts["latest_search_query"].startswith("I want data engineering")
+        messages = team.snapshot(owner_id, started.thread_id).messages
+        assert [message.content for message in messages if message.role == "user"] == [
+            "I want data engineering work in Singapore."
+        ]
 
 
 def test_autopilot_searches_the_resume_not_the_uis_own_instruction():

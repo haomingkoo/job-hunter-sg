@@ -377,14 +377,15 @@ class RecruitmentTeam:
                     trace_key=correlation_key,
                 )
                 self._db.add(run)
-            self._db.add(
-                RecruitmentMessage(
-                    thread_id=thread.id,
-                    run_id=run_id,
-                    role="user",
-                    content=message.strip(),
+            if not isinstance(command, SearchJobs):
+                self._db.add(
+                    RecruitmentMessage(
+                        thread_id=thread.id,
+                        run_id=run_id,
+                        role="user",
+                        content=message.strip(),
+                    )
                 )
-            )
             running_event = self._event(
                 thread,
                 run,
