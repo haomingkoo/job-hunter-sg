@@ -24,14 +24,11 @@ from .activity_publisher import IgnoreActivityPublisher
 from .assessed_role_success import EvidenceAssessedRoleSuccessProfiler
 from .activity_stream import stream_command
 from .errors import (
-    CandidateProfilingUnavailable,
-    ConversationUnavailable,
     DiscoveryUnavailable,
     InvalidCommand,
     ResumeVersionNotFound,
-    RoleProfilingUnavailable,
+    ServiceUnavailable,
     ThreadNotFound,
-    TargetAssessmentUnavailable,
 )
 from .interface import (
     AnswerAssessmentQuestion,
@@ -228,16 +225,7 @@ def _raise_http_error(error: Exception) -> None:
         raise HTTPException(status_code=404, detail=str(error)) from None
     if isinstance(error, InvalidCommand):
         raise HTTPException(status_code=422, detail=str(error)) from None
-    if isinstance(
-        error,
-        (
-            CandidateProfilingUnavailable,
-            ConversationUnavailable,
-            DiscoveryUnavailable,
-            RoleProfilingUnavailable,
-            TargetAssessmentUnavailable,
-        ),
-    ):
+    if isinstance(error, (DiscoveryUnavailable, ServiceUnavailable)):
         raise HTTPException(status_code=503, detail=str(error)) from None
     raise error
 
