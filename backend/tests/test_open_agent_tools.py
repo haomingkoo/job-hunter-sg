@@ -153,13 +153,13 @@ def test_propose_resume_edit_stops_at_the_cap(monkeypatch):
 
 def test_several_questions_render_as_one_numbered_message():
     """The pause surfaces one message however many gaps the agent found."""
-    from recruitment_team.open_agent.runner import _format_questions
+    from recruitment_team.open_agent.streaming import format_questions
 
-    assert _format_questions({"questions": ["Only one?"]}) == "Only one?"
-    assert _format_questions({"questions": ["First?", "Second?"]}) == "1. First?\n2. Second?"
-    assert _format_questions({"questions": []}) == ""
+    assert format_questions({"questions": ["Only one?"]}) == "Only one?"
+    assert format_questions({"questions": ["First?", "Second?"]}) == "1. First?\n2. Second?"
+    assert format_questions({"questions": []}) == ""
     # A model that sends a bare string instead of a list must still surface.
-    assert _format_questions({"questions": "Bare string?"}) == "Bare string?"
+    assert format_questions({"questions": "Bare string?"}) == "Bare string?"
 
 
 def test_question_rounds_are_counted_from_the_graph_state():

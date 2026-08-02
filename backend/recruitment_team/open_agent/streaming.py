@@ -197,3 +197,16 @@ def _postings_found(payload: dict) -> int | None:
         if isinstance(payload.get(key), list):
             return len(payload[key])
     return None
+
+
+def format_questions(args: dict) -> str:
+    """One pause can carry several questions, so render them as one message."""
+    questions = args.get("questions")
+    if isinstance(questions, str):
+        questions = [questions]
+    questions = [str(item).strip() for item in (questions or []) if str(item).strip()]
+    if not questions:
+        return ""
+    if len(questions) == 1:
+        return questions[0]
+    return "\n".join(f"{index}. {question}" for index, question in enumerate(questions, 1))

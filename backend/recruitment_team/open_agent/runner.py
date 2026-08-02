@@ -34,22 +34,9 @@ from ..persona_packs import PersonaPackRegistry, load_persona_pack_registry
 from ..telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 from . import context
 from .guardrails import has_repeated_call
-from .streaming import describe_progress, iter_progress_events
+from .streaming import describe_progress, format_questions, iter_progress_events
 from .subagents import create_target_persona_subagents
 from .tools import ask_candidate, propose_resume_edit, read_candidate_evidence, read_target_job
-
-
-def _format_questions(args: dict) -> str:
-    """One pause can carry several questions, so render them as one message."""
-    questions = args.get("questions")
-    if isinstance(questions, str):
-        questions = [questions]
-    questions = [str(q).strip() for q in (questions or []) if str(q).strip()]
-    if not questions:
-        return ""
-    if len(questions) == 1:
-        return questions[0]
-    return "\n".join(f"{i}. {q}" for i, q in enumerate(questions, 1))
 
 
 _QUESTION_LIMIT_REPLY = (
@@ -261,7 +248,7 @@ class OpenAgentTargetAssessmentRunner:
                     agent, payload, run_config, skip_tool_call_ids=skip_tool_call_ids
                 ):
                     if event["kind"] == "tool_call" and event["tool_name"] == ask_candidate.name:
-                        pending_question = _format_questions(event.get("args") or {})
+                        pending_question = format_questions(event.get("args") or {})
                         pending_question_call_id = event.get("id")
 
                     if (

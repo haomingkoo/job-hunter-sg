@@ -40,7 +40,7 @@ import uuid
 from typing import Any
 
 from langchain.agents.structured_output import ToolStrategy
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage, convert_to_messages
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
 
@@ -51,7 +51,7 @@ from ..conversation_model import ConversationReply, ModelReply
 from ..errors import ConversationUnavailable, InvalidCommand
 from ..interface import Message, PreferenceFact, PreferenceUpdate
 from ..open_agent import context as open_agent_context
-from ..open_agent.streaming import iter_progress_events
+from ..open_agent.streaming import format_questions, iter_progress_events
 from ..open_agent.tools import (
     ask_candidate,
     propose_resume_edit,
@@ -71,19 +71,6 @@ _QUESTION_LIMIT_SENTENCE = (
     "[System: you have reached this conversation's question limit. Do not call "
     "ask_candidate again. Answer now with the evidence you already have.]"
 )
-
-
-def _format_questions(args: dict) -> str:
-    """One pause can carry several questions, so render them as one message."""
-    questions = args.get("questions")
-    if isinstance(questions, str):
-        questions = [questions]
-    questions = [str(item).strip() for item in (questions or []) if str(item).strip()]
-    if not questions:
-        return ""
-    if len(questions) == 1:
-        return questions[0]
-    return "\n".join(f"{index}. {question}" for index, question in enumerate(questions, 1))
 
 
 def _latest_user_message(messages: list[Message]) -> str:
@@ -153,11 +140,7 @@ class DeepAgentConversationModel:
     """Conversation adapter that runs a real tool loop for every turn."""
 
     def __init__(self, *, model_factory=None, telemetry: RecruitmentTelemetry | None = None):
-        # `model_factory` is for tests and nothing else. Left None, the model is
-        # built by `create_resume_agent`'s own `model or create_agent_model()`
-        # fallthrough, the way the assessment runner does it -- so there is one
-        # seam to patch, and patching it anywhere else is a no-op that looks
-        # like protection.
+        # `model_factory` is for tests and nothing else.
         self._model_factory = model_factory
         self._telemetry = telemetry or OpenTelemetryRecorder()
 
@@ -245,13 +228,15 @@ class DeepAgentConversationModel:
             ),
             None,
         )
-        for index, message in enumerate(messages):
-            if index == latest_index:
-                continue
-            if message.role == "user":
-                request.append(HumanMessage(content=message.content))
-            else:
-                request.append(AIMessage(content=message.content))
+        request.extend(
+            convert_to_messages(
+                [
+                    {"role": message.role, "content": message.content}
+                    for index, message in enumerate(messages)
+                    if index != latest_index
+                ]
+            )
+        )
         turn = _thread_state_block(context, current_preferences)
         if latest_index is not None:
             turn = f"{turn}\n\n{messages[latest_index].content}"
@@ -306,7 +291,7 @@ class DeepAgentConversationModel:
                             event["kind"] == "tool_call"
                             and event["tool_name"] == ask_candidate.name
                         ):
-                            pending_question = _format_questions(event.get("args") or {})
+                            pending_question = format_questions(event.get("args") or {})
                         if context.on_event is not None:
                             context.on_event(event)
                 except GraphRecursionError as error:
