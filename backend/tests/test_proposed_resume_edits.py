@@ -7,6 +7,7 @@ never be resolved. These tests pin the read path and the accept semantics.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 
 import pytest
@@ -128,9 +129,18 @@ def test_accepting_writes_a_new_version_and_leaves_the_source_untouched():
         created = db.query(ResumeVersion).filter(ResumeVersion.id == result["resume_version_id"]).one()
         source = db.query(ResumeVersion).filter(ResumeVersion.id == resume_id).one()
 
+        from models import RecruitmentThread
+
+        thread = db.query(RecruitmentThread).filter(RecruitmentThread.id == thread_id).one()
+
         assert "Operated vLLM inference clusters on AMD MI300X GPUs." in created.resume_text
         assert created.id != resume_id
         assert source.resume_text == RESUME_TEXT, "accepting overwrote the candidate's master resume"
+        assert thread.resume_version_id == created.id
+        assert thread.case_facts["resume_version_id"] == created.id
+        assert thread.case_facts["resume_sha256"] != hashlib.sha256(source.resume_text.encode()).hexdigest()
+        assert thread.case_facts["candidate_profile_status"] == "not_started"
+        assert thread.case_facts["target_assessment_status"] == "not_started"
 
 
 def test_stale_edits_are_reported_rather_than_silently_dropped():
