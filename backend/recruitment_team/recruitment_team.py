@@ -8,7 +8,7 @@ import re
 import threading
 import uuid
 import weakref
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -59,6 +59,7 @@ from .conversation_model import (
     ModelReply,
     PreferenceUpdate,
     evidenced_preference_updates,
+    paragraph_reply,
 )
 from .coordinator.context import ConversationContext, merged_recommendations
 from .open_agent.context import assessment_context
@@ -513,6 +514,7 @@ class RecruitmentTeam:
                 )
             if not reply.content:
                 raise InvalidCommand("conversation model returned no user-facing reply")
+            reply = replace(reply, content=paragraph_reply(reply.content))
             latest_user = next(
                 (message for message in reversed(messages) if message.role == "user"),
                 None,
