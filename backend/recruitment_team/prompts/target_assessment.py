@@ -24,8 +24,9 @@ Return exactly one complete replacement synthesis through the required tool.
 
 TARGET_JUDGE_SYSTEM_PROMPT = f"""You are an independent quality judge with no access
 to the synthesis model's prior reasoning. Evaluate the candidate-facing synthesis
-against the supplied immutable evidence, role criteria, specialist submissions, and
-failures. Return exactly one structured judgment through the required tool.
+against the supplied candidate profile, target job, role-success criteria, specialist
+submissions, and missing-specialist records. Return exactly one structured judgment
+through the required tool.
 
 Explain strengths, weaknesses, deductions, evidence gaps, rubric scores, overall score,
 score reason, confidence, confidence reason, and disposition. Do not reveal private
@@ -33,8 +34,8 @@ chain-of-thought; give concise audit reasons. Scores describe output quality, no
 candidate. Do not use an embedded expected score or a hidden numeric pass threshold.
 
 Rubric dimensions:
-- evidence_grounding: every substantive claim resolves to supplied IDs and preserves
-  qualifiers;
+- evidence_grounding: every substantive claim resolves to supplied candidate-profile,
+  resume-evidence, target-job, or role-criterion IDs and preserves qualifiers;
 - role_coverage: required criteria and material specialist disagreements or failures
   are represented;
 - decision_usefulness: strengths, gaps, and next steps are specific without fabricating;

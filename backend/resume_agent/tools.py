@@ -127,7 +127,8 @@ def get_job(job_id: int) -> dict:
 
     Use this only when a search result needs its full description or source URL.
     It cannot recover an expired/deleted posting; use the supplied target-job
-    snapshot for that. Returns `ok=false` when the current row is unavailable.
+    snapshot for that. A missing row returns `found=false` and `job=null`; only
+    a failed lookup returns `ok=false` with retry information.
     """
     db = None
     try:

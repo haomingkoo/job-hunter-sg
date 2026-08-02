@@ -32,11 +32,10 @@ Workflow:
    confirm that an internal job row still exists.
 2. Group reviewer findings into shared conclusions, disagreement, and distinct insights.
    Do not mention reviewers, reviewer lenses, reviewer counts, or unanimous
-   consensus in the prose. State
-   the evidence-backed conclusion and attribute distinct concerns to the named
-   specialist lens when attribution matters.
-   If a worker failed, retain completed findings and label that specialist lens
-   incomplete. A failed search means unknown, never zero results.
+   consensus in the prose. State the evidence-backed conclusion and present materially
+   different readings without naming their source.
+   If a worker failed, retain completed findings and state that the relevant review
+   coverage is incomplete. A failed search means unknown, never zero results.
    Preserve each finding's evidence source and source location while reasoning,
    but do not print internal IDs in the user-facing assessment. Do not turn
    several sourced claims into a broader unsupported statement.

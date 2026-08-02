@@ -67,8 +67,10 @@ def _ask_rounds_so_far(agent, run_config: dict) -> int:
 def guarded_search_jobs(query: str, n: int | None = None, detail: bool = False) -> dict:
     """Search the current internal Singapore job corpus by role or responsibility.
 
-    Same contract as the underlying search_jobs tool; rejects a materially
-    identical repeat within this run instead of re-querying.
+    Returns ``ok=true``, the result ``count``, and ``results``; zero results is
+    a valid completed search. A failed lookup returns ``ok=false`` with
+    ``failure_type`` and ``retryable``. A materially identical repeat within
+    this run is rejected instead of being queried again.
     """
     args = {"query": query, "n": n, "detail": detail}
     history = context.tool_call_history()
@@ -406,10 +408,19 @@ class OpenAgentTargetAssessmentRunner:
     def _run_judge(self, model, request: TargetAssessmentRequest, specialist_runs: list[dict], synthesis: str) -> dict:
         from ..prompts.target_assessment import TARGET_JUDGE_SYSTEM_PROMPT
 
+        completed_personas = {
+            str(run.get("persona_id") or "") for run in specialist_runs
+        }
         data = {
             "target_job": asdict(request.target_job),
+            "candidate_profile": asdict(request.candidate_profile),
             "role_success_profile": asdict(request.role_profile),
             "specialist_runs": specialist_runs,
+            "failures": [
+                {"persona_id": pack.persona_id, "failure_type": "no_submission"}
+                for pack in self._registry.personas
+                if pack.persona_id not in completed_personas
+            ],
             "synthesis": synthesis,
         }
         payload, failure, input_tokens, output_tokens, model_name = invoke_structured(
@@ -446,6 +457,7 @@ class OpenAgentTargetAssessmentRunner:
 
         data = {
             "target_job": asdict(request.target_job),
+            "candidate_profile": asdict(request.candidate_profile),
             "role_success_profile": asdict(request.role_profile),
             "specialist_runs": specialist_runs,
             "original_synthesis": synthesis,

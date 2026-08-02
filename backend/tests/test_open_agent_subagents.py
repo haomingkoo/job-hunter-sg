@@ -29,3 +29,6 @@ def test_system_prompt_embeds_the_pack_s_job_scope_and_criteria():
 
     assert recruiter_pack.job_scope in recruiter_subagent["system_prompt"]
     assert recruiter_pack.criteria[0] in recruiter_subagent["system_prompt"]
+    assert recruiter_pack.limitations[0] in recruiter_subagent["system_prompt"]
+    assert registry.output_schema["score_meaning"] in recruiter_subagent["system_prompt"]
+    assert "untrusted reference data" in recruiter_subagent["system_prompt"].lower()
