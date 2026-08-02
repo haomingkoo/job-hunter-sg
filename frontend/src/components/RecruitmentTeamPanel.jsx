@@ -51,6 +51,9 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
     ),
   ];
   const shortlistedJobIds = new Set(snapshot?.case_facts?.shortlisted_job_ids || []);
+  const matchRationales = new Map(
+    (snapshot?.case_facts?.match_rationales || []).map((item) => [item.job_id, item]),
+  );
   const selectedTargetId = snapshot?.case_facts?.selected_target?.job_id;
   const roleProfile = snapshot?.case_facts?.role_success_profile;
   const candidateProfileFields = useMemo(
@@ -634,6 +637,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
                   const shortlisted = shortlistedJobIds.has(job.job_id);
                   const selected = selectedTargetId === job.job_id;
                   const variants = job.posting_variants || [];
+                  const rationale = matchRationales.get(job.job_id);
                   return (
                     <article key={job.job_id} className="rounded-2xl border border-[#BDDDFC]/60 p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -653,6 +657,41 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
                         {job.source.closing_date ? ` · closes ${job.source.closing_date}` : ""}
                         {variants.length > 1 ? ` · ${variants.length} posting variants retained` : ""}
                       </p>
+                      {rationale && (
+                        <div className="mt-3 rounded-xl bg-[#f7fafc] p-3 text-xs text-[#384959]">
+                          <p className="font-medium">
+                            Level: {rationale.level_fit.replaceAll("_", " ")} · Pay: {rationale.pay_position.replaceAll("_", " ")}
+                          </p>
+                          <div className="mt-2">
+                            <p className="font-medium">Matched</p>
+                            {rationale.matched.map((point) => (
+                              <div key={`${job.job_id}-matched-${point.statement}`} className="mt-1">
+                                <p>{point.statement}</p>
+                                <blockquote className="mt-1 border-l-2 border-[#88BDF2] pl-2 text-[#6A89A7]">
+                                  Resume: “{point.resume_quote}”
+                                </blockquote>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="mt-2">
+                            <p className="font-medium">Stretch</p>
+                            {rationale.stretch.length ? rationale.stretch.map((point) => (
+                              <div key={`${job.job_id}-stretch-${point.statement}`} className="mt-1">
+                                <p>{point.statement}</p>
+                                <blockquote className="mt-1 border-l-2 border-[#BDDDFC] pl-2 text-[#6A89A7]">
+                                  Resume: “{point.resume_quote}”
+                                </blockquote>
+                              </div>
+                            )) : <p className="mt-1 text-[#6A89A7]">None identified.</p>}
+                          </div>
+                          <div className="mt-2">
+                            <p className="font-medium">Missing</p>
+                            <p className="mt-1 text-[#6A89A7]">
+                              {rationale.missing.length ? rationale.missing.join(" · ") : "None identified."}
+                            </p>
+                          </div>
+                        </div>
+                      )}
                       <div className="mt-3 flex flex-wrap gap-2">
                         <a
                           href={job.source.url}

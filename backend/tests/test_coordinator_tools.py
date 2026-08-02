@@ -26,7 +26,7 @@ this thread or whether the drain runs.
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 
 import pytest
 
@@ -89,6 +89,20 @@ def _search_result(jobs, query: str = ""):
         truncated=False,
         valid_empty=not jobs,
     )
+
+
+def _ranked_match(job_id: int, *, pay_position: str = "above_peer_median") -> dict:
+    return {
+        "job_id": job_id,
+        "matched": [{
+            "statement": "Builds production agent platforms.",
+            "resume_quote": "Built a production agent platform with traced model and tool calls.",
+        }],
+        "stretch": [],
+        "missing": ["Named cloud platform"],
+        "level_fit": "aligned",
+        "pay_position": pay_position,
+    }
 
 
 def _failed_search(failure_type: str = "unavailable"):
@@ -198,6 +212,7 @@ def _context(discovery, *, recommendations=(), shortlisted=(), **overrides):
         "recommendations": tuple(recommendations),
         "shortlisted_jobs": tuple(shortlisted),
         "preferences": (),
+        "published_matches": (),
         "discovery": discovery,
     }
     kwargs.update(overrides)
@@ -255,6 +270,67 @@ def test_read_shortlist_returns_the_postings_with_enough_to_reason_about():
     assert [job["company"] for job in result["shortlisted_jobs"]] == ["GlobalFoundries"]
     assert result["selected_target_job_id"] is None
     assert result["candidate_profile_available"] is False
+
+
+def test_read_shortlist_hides_old_rationales_after_a_new_search():
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import read_shortlist, search_jobs, write_shortlist
+
+    old_match = _ranked_match(101)
+    new_match = _ranked_match(202)
+    context = _context(
+        _RecordingDiscovery([_search_result([_job(202, "Staff Yield Engineer", "NXP")])]),
+        recommendations=[_job(101, "Yield Enhancement Engineer", "Micron")],
+        published_matches=[old_match],
+        resume_document={"blocks": [{"text": new_match["matched"][0]["resume_quote"]}]},
+    )
+
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        assert read_shortlist.invoke({})["published_matches"] == [old_match]
+        search_jobs.invoke({"query": "staff yield engineer"})
+        assert read_shortlist.invoke({})["published_matches"] == []
+        assert write_shortlist.invoke({"matches": [new_match]})["accepted"] is True
+        assert read_shortlist.invoke({})["published_matches"] == [new_match]
+
+
+def test_record_preferences_requires_latest_message_evidence_and_exact_removals():
+    from recruitment_team.interface import PreferenceFact
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import record_preferences
+
+    stored = PreferenceFact(
+        field="constraints",
+        value="not computer vision",
+        evidence_quote="not computer vision",
+        source_run_id="run-1",
+        source_message_id=1,
+    )
+    context = _context(
+        _RecordingDiscovery([]),
+        preferences=(stored,),
+        latest_user_message="I am actually open to computer vision now.",
+    )
+
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        accepted = record_preferences.invoke({
+            "updates": [{
+                "field": "constraints",
+                "value": "not computer vision",
+                "evidence_quote": "open to computer vision",
+                "operation": "remove",
+            }]
+        })
+        invalid_quote = record_preferences.invoke({
+            "updates": [{
+                "field": "constraints",
+                "value": "not entry level",
+                "evidence_quote": "I never said this",
+            }]
+        })
+
+    assert accepted == {"accepted": True, "recorded": 1}
+    assert context.drafted_preferences[0].operation == "remove"
+    assert invalid_quote["accepted"] is False
 
 
 def test_persisted_shortlist_keeps_requirements_and_salary_context():
@@ -406,6 +482,60 @@ def test_search_jobs_exposes_no_hidden_level_filter():
     assert set(search_jobs.args_schema.model_json_schema()["properties"]) == {"query"}
 
 
+def test_write_shortlist_accepts_only_known_jobs_with_verbatim_resume_quotes():
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import write_shortlist
+
+    context = _context(
+        _RecordingDiscovery([]),
+        recommendations=[_job(201, "Staff AI Engineer", "NXP")],
+        resume_document={"blocks": [{"text": "Built reliable Python agent platforms."}]},
+    )
+    match = _ranked_match(201)
+    match["matched"][0]["resume_quote"] = "Built reliable Python agent platforms."
+
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        accepted = write_shortlist.invoke({"matches": [match]})
+        rejected = write_shortlist.invoke({
+            "matches": [{
+                **match,
+                "matched": [{
+                    "statement": "Invented evidence.",
+                    "resume_quote": "This sentence is not in the resume.",
+                }],
+            }],
+        })
+
+    assert accepted == {"accepted": True, "published_job_ids": [201]}
+    assert context.drafted_matches == [match]
+    assert rejected["accepted"] is False
+    assert rejected["invalid_quote"] == "This sentence is not in the resume."
+
+
+def test_write_shortlist_does_not_infer_pay_for_a_job_without_salary():
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import write_shortlist
+
+    job = replace(_job(202, "AI Engineer", "Example"), salary="", salary_context=None)
+    context = _context(
+        _RecordingDiscovery([]),
+        recommendations=[job],
+        resume_document={"blocks": [{"text": "Built reliable Python agent platforms."}]},
+    )
+    match = _ranked_match(202)
+    match["matched"][0]["resume_quote"] = "Built reliable Python agent platforms."
+    match["missing"] = []
+
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        result = write_shortlist.invoke({"matches": [match]})
+
+    assert result == {
+        "accepted": False,
+        "reason": "Job 202 states no salary; do not infer one.",
+    }
+    assert context.drafted_matches == []
+
+
 def test_an_identical_repeat_never_reaches_the_port_and_a_different_query_does():
     """Guardrails limit volume, never choice."""
     from recruitment_team.open_agent.context import assessment_context
@@ -525,6 +655,88 @@ def test_a_search_run_inside_a_turn_reaches_the_thread_and_survives_a_shortlist_
         team = _team(db, model, discovery)
         after = team.snapshot(owner_id, receipt.thread_id)
     assert [job.job_id for job in after.case_facts.shortlisted_jobs] == [501]
+
+
+def test_agent_publishes_an_ordered_explained_subset_of_search_results():
+    from recruitment_team.interface import StartThread
+    from recruitment_team.open_agent.tools import search_jobs, write_shortlist
+
+    jobs = [
+        _job(501, "AI Engineer I", "Junior Employer"),
+        _job(502, "Principal AI Engineer", "Best Employer"),
+        _job(503, "Senior AI Engineer", "Second Employer"),
+    ]
+    discovery = _RecordingDiscovery([_search_result(jobs)])
+    matches = [
+        _ranked_match(502),
+        _ranked_match(503, pay_position="near_peer_median"),
+    ]
+    model = _ToolCallingConversationModel([[
+        (search_jobs, {"query": "AI platform engineer"}),
+        (write_shortlist, {"matches": matches}),
+    ]])
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        receipt = _team(db, model, discovery).execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="No entry-level roles."),
+            idempotency_key="ranked-shortlist",
+        )
+        snapshot = _team(db, model, discovery).snapshot(owner_id, receipt.thread_id)
+
+    assert [job.job_id for job in snapshot.case_facts.recommendations] == [502, 503]
+    assert [match["job_id"] for match in snapshot.case_facts.match_rationales] == [502, 503]
+    assert snapshot.case_facts.match_rationales[0]["matched"][0]["resume_quote"] == (
+        "Built a production agent platform with traced model and tool calls."
+    )
+
+    with sessions() as db:
+        restored = _team(db, model, discovery).snapshot(owner_id, receipt.thread_id)
+    assert [match["job_id"] for match in restored.case_facts.match_rationales] == [502, 503]
+
+
+def test_agent_recorded_preferences_survive_even_when_the_final_reply_has_none():
+    from recruitment_team.interface import StartThread
+    from recruitment_team.open_agent.tools import record_preferences
+
+    model = _ToolCallingConversationModel([[
+        (record_preferences, {
+            "updates": [
+                {
+                    "field": "constraints",
+                    "value": "not computer vision",
+                    "evidence_quote": "Not computer vision",
+                },
+                {
+                    "field": "seniority",
+                    "value": "not entry level",
+                    "evidence_quote": "not entry level",
+                },
+            ]
+        }),
+    ]])
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+
+    with sessions() as db:
+        receipt = _team(db, model, _RecordingDiscovery([])).execute(
+            owner_id,
+            StartThread(
+                resume_version_id=resume_id,
+                message="Not computer vision and not entry level.",
+            ),
+            idempotency_key="tool-preferences",
+        )
+        snapshot = _team(db, model, _RecordingDiscovery([])).snapshot(
+            owner_id, receipt.thread_id
+        )
+
+    assert [(fact.field, fact.value) for fact in snapshot.case_facts.preferences] == [
+        ("constraints", "not computer vision"),
+        ("seniority", "not entry level"),
+    ]
 
 
 def test_a_shortlist_the_model_never_saw_is_readable_on_the_next_turn():

@@ -76,6 +76,7 @@ class PreferenceUpdate:
     field: PreferenceField
     value: str
     evidence_quote: str
+    operation: Literal["set", "remove"] = "set"
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,7 @@ class CaseFacts:
     resume_sha256: str
     latest_search_query: str = ""
     recommendations: tuple[JobSnapshot, ...] = ()
+    match_rationales: tuple[dict, ...] = ()
     shortlisted_jobs: tuple[JobSnapshot, ...] = ()
     shortlisted_job_ids: tuple[int, ...] = ()
     selected_target: JobSnapshot | None = None

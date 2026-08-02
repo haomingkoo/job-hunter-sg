@@ -931,6 +931,18 @@ def test_structured_preferences_are_user_sourced_and_survive_restart():
                     PreferenceUpdate("constraints", "avoid on-call", "avoid on-call"),
                 ),
             ),
+            ModelReply(
+                content="I removed the consulting exclusion.",
+                model_name="scripted",
+                preference_updates=(
+                    PreferenceUpdate(
+                        "constraints",
+                        "no consulting",
+                        "open to consulting",
+                        operation="remove",
+                    ),
+                ),
+            ),
         ]
     )
     first_message = "I want a Senior AI Engineer role in Singapore as a senior IC, at $12k monthly, with no consulting."
@@ -957,6 +969,14 @@ def test_structured_preferences_are_user_sourced_and_survive_restart():
             ),
             "preference-second",
         )
+        third = team.execute(
+            owner_id,
+            SendMessage(
+                thread_id=started.thread_id,
+                message="I am actually open to consulting now.",
+            ),
+            "preference-third",
+        )
 
     with sessions() as db:
         restored = RecruitmentTeam(
@@ -973,19 +993,22 @@ def test_structured_preferences_are_user_sourced_and_survive_restart():
         ("role", "Senior AI Engineer"),
         ("seniority", "senior IC"),
         ("salary", "$12k monthly"),
-        ("constraints", "no consulting"),
         ("location", "remote"),
         ("constraints", "avoid on-call"),
     ]
-    first_user, second_user = [message for message in restored.messages if message.role == "user"]
-    for fact in facts[:4]:
+    first_user, second_user, third_user = [
+        message for message in restored.messages if message.role == "user"
+    ]
+    for fact in facts[:3]:
         assert fact.evidence_quote in first_user.content
         assert fact.source_run_id == started.run_id
         assert fact.source_message_id == first_user.message_id
-    for fact in facts[4:]:
+    for fact in facts[3:]:
         assert fact.evidence_quote in second_user.content
         assert fact.source_run_id == second.run_id
         assert fact.source_message_id == second_user.message_id
+    assert "open to consulting" in third_user.content
+    assert third.run_id != second.run_id
 
 
 def test_search_shortlist_and_target_are_source_backed_and_durable():

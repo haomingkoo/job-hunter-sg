@@ -58,7 +58,9 @@ from ..open_agent.tools import (
     read_candidate_evidence,
     read_shortlist,
     read_target_job,
+    record_preferences,
     search_jobs,
+    write_shortlist,
 )
 from ..prompts import COORDINATOR_PROMPT_VERSION, COORDINATOR_SYSTEM_PROMPT
 from .repeat_guard import RepeatedCallMiddleware
@@ -208,7 +210,9 @@ class DeepAgentConversationModel:
             model=self._build_model(),
             tools=[
                 read_shortlist,
+                record_preferences,
                 search_jobs,
+                write_shortlist,
                 read_target_job,
                 read_candidate_evidence,
                 propose_resume_edit,
@@ -384,6 +388,7 @@ class DeepAgentConversationModel:
                         field=item.field,
                         value=item.value.strip(),
                         evidence_quote=item.evidence_quote.strip(),
+                        operation=item.operation,
                     )
                     for item in reply.preference_updates
                 ),

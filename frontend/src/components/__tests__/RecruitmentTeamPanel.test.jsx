@@ -420,6 +420,17 @@ describe("RecruitmentTeamPanel", () => {
           case_facts: {
             resume_label: "AI resume",
             recommendations: [job],
+            match_rationales: [{
+              job_id: 101,
+              matched: [{
+                statement: "Production agent reliability is directly relevant.",
+                resume_quote: "Built reliable Python agent platforms",
+              }],
+              stretch: [],
+              missing: ["Named cloud platform"],
+              level_fit: "aligned",
+              pay_position: "above_peer_median",
+            }],
             shortlisted_job_ids: selected ? [101] : [],
             selected_target: selected ? job : null,
             role_success_profile: selected ? roleProfile : null,
@@ -444,6 +455,11 @@ describe("RecruitmentTeamPanel", () => {
 
     expect(container.textContent).toContain("Applied AI Solution Architect");
     expect(container.textContent).toContain("MyCareersFuture");
+    expect(container.textContent).toContain("Level: aligned · Pay: above peer median");
+    expect(container.textContent).toContain("Production agent reliability is directly relevant.");
+    expect(container.textContent).toContain("Built reliable Python agent platforms");
+    expect(container.textContent).toContain("Named cloud platform");
+    expect(container.textContent).toContain("StretchNone identified.");
     expect(container.querySelector('a[href="https://example.test/jobs/101"]')).not.toBeNull();
 
     const textarea = container.querySelector("textarea");

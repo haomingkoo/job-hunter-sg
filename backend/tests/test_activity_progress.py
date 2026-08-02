@@ -158,6 +158,14 @@ def test_an_accepted_edit_says_it_is_still_pending():
     assert detail["outcome"] == "one resume edit drafted, waiting on your approval"
 
 
+def test_a_published_shortlist_is_not_misreported_as_a_resume_edit():
+    _, detail = describe_progress(
+        _result("write_shortlist", {"accepted": True, "published_job_ids": [12, 34]})
+    )
+
+    assert detail["outcome"] == "2 roles ranked with resume evidence"
+
+
 def test_a_rejected_edit_reports_the_gate_that_rejected_it():
     _, detail = describe_progress(
         _result("propose_resume_edit", {"accepted": False, "reason": "Unsupported numeric facts: 40"})
