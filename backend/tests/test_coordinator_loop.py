@@ -191,9 +191,9 @@ class _RecordingDiscovery:
         self._inner = ScriptedDiscovery(list(results))
         self.calls: list[dict] = []
 
-    def search_jobs(self, query: str, exclude_junior: bool = False):
-        self.calls.append({"query": query, "exclude_junior": exclude_junior})
-        return self._inner.search_jobs(query, exclude_junior=exclude_junior)
+    def search_jobs(self, query: str):
+        self.calls.append({"query": query})
+        return self._inner.search_jobs(query)
 
     def get_job(self, job_id: int):
         return self._inner.get_job(job_id)
@@ -220,7 +220,6 @@ def _context(discovery, *, recommendations=(), shortlisted=(), events=None, **ov
         "recommendations": tuple(recommendations),
         "shortlisted_jobs": tuple(shortlisted),
         "preferences": (),
-        "wants_experienced_roles": True,
         "discovery": discovery,
         "on_event": (events.append if events is not None else None),
     }
@@ -449,7 +448,7 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
         responses=[
             tool_call(
                 "search_jobs",
-                {"query": "semiconductor yield analytics engineer", "exclude_junior": True},
+                {"query": "semiconductor yield analytics engineer"},
                 "call-1",
             ),
             tool_call("read_shortlist", {}, "call-2"),
@@ -477,7 +476,7 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
 
     # The search really ran, through the port, with the parameter the agent chose.
     assert discovery.calls == [
-        {"query": "semiconductor yield analytics engineer", "exclude_junior": True}
+        {"query": "semiconductor yield analytics engineer"}
     ]
 
     # The results landed in the thread, in the shape _known_job resolves against.
@@ -520,7 +519,6 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
     assert search_call.attributes == {
         "tool_name": "search_jobs",
         "stage": "call",
-        "exclude_junior": True,
         "query": "semiconductor yield analytics engineer",
         "query_redacted": False,
         "span_id": "call-1",
@@ -723,10 +721,10 @@ def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results()
     )
     agent = ScriptedDeepAgent(
         responses=[
-            tool_call("search_jobs", {"query": "data engineer", "exclude_junior": False}, "call-1"),
+            tool_call("search_jobs", {"query": "data engineer"}, "call-1"),
             tool_call(
                 "search_jobs",
-                {"query": "staff semiconductor yield engineer", "exclude_junior": True},
+                {"query": "staff semiconductor yield engineer"},
                 "call-2",
             ),
             submission(
@@ -768,8 +766,8 @@ def test_has_repeated_call_rejects_a_materially_identical_repeat_within_a_turn()
     An identical repeat never reaches the discovery port. A materially different
     query does, so the guardrail is not quietly blocking a second search.
     """
-    same = {"query": "semiconductor yield engineer", "exclude_junior": True}
-    other = {"query": "process integration engineer", "exclude_junior": True}
+    same = {"query": "semiconductor yield engineer"}
+    other = {"query": "process integration engineer"}
     discovery = _RecordingDiscovery(
         [
             _search_result([_job(301, "Yield Engineer", "Micron")]),
@@ -829,7 +827,7 @@ def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
             submission("Tell me more about the fabs you have run."),
             tool_call(
                 "search_jobs",
-                {"query": "quantum photonics architect", "exclude_junior": True},
+                {"query": "quantum photonics architect"},
                 "call-empty",
             ),
             submission("Nothing current matched that; the earlier matches still stand."),
@@ -890,7 +888,7 @@ def test_a_failed_search_is_surfaced_to_the_agent_and_leaves_the_shortlist_alone
             submission("Hello, tell me what you are aiming for."),
             tool_call(
                 "search_jobs",
-                {"query": "staff yield engineer", "exclude_junior": True},
+                {"query": "staff yield engineer"},
                 "call-fail",
             ),
             submission("The job source did not answer just now; your earlier matches stand."),
@@ -943,7 +941,7 @@ def test_search_query_records_the_query_that_ran_not_the_one_the_model_asked_for
     discovery = _RecordingDiscovery([_search_result([_job(701, "Staff Yield Engineer", "NXP")])])
     agent = ScriptedDeepAgent(
         responses=[
-            tool_call("search_jobs", {"query": executed, "exclude_junior": True}, "call-1"),
+            tool_call("search_jobs", {"query": executed}, "call-1"),
             submission(
                 "Staff Yield Engineer at NXP is the strongest current match.",
                 search_query="remote product manager",
@@ -1092,7 +1090,7 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
             # Scripted next, and must NOT run during turn 1.
             tool_call(
                 "search_jobs",
-                {"query": "staff yield engineer semiconductor", "exclude_junior": True},
+                {"query": "staff yield engineer semiconductor"},
                 "call-search",
             ),
             submission("Staff Yield Engineer at NXP keeps you in semiconductors, as you asked."),
@@ -1275,7 +1273,7 @@ def test_a_transport_turn_reaches_the_loop_without_overriding_the_dependency(mon
         responses=[
             tool_call(
                 "search_jobs",
-                {"query": "semiconductor yield analytics", "exclude_junior": True},
+                {"query": "semiconductor yield analytics"},
                 "call-1",
             ),
             submission("Yield Enhancement Engineer at Micron is your closest current match."),

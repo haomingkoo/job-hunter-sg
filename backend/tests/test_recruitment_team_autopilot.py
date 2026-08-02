@@ -87,44 +87,6 @@ def test_exclusions_never_reach_the_query_when_the_model_offers_none():
     assert query == "AI engineer"
 
 
-def test_a_long_career_excludes_junior_postings_without_being_asked():
-    """Nobody with a decade behind them should have to rule out internships."""
-    thread = _thread({})
-    resume = SimpleNamespace(resume_text="Tax Senior 2011 - 2016. Manager 2019 - 2023.")
-
-    assert RecruitmentTeam._wants_experienced_roles(thread, resume) is True
-
-
-def test_a_short_career_still_sees_junior_postings():
-    thread = _thread({})
-    resume = SimpleNamespace(resume_text="Bachelor of Computing, 2025. Internship 2024.")
-
-    assert RecruitmentTeam._wants_experienced_roles(thread, resume) is False
-
-
-def test_a_stated_level_overrides_the_resume():
-    """Stepping down deliberately is the candidate's call."""
-    thread = _thread({"preferences": [{"field": "seniority", "value": "Junior Executive"}]})
-    resume = SimpleNamespace(resume_text="Tax Senior 2011 - 2016.")
-
-    assert RecruitmentTeam._wants_experienced_roles(thread, resume) is False
-
-
-def test_education_years_do_not_count_as_career_length():
-    """A graduate must keep access to the entry-level roles they need."""
-    resume = SimpleNamespace(resume_text=(
-        "GCE O Level, 2018\nBachelor of Computing, 2025\nIntern, ACME 2024 - 2025"
-    ))
-
-    assert RecruitmentTeam._wants_experienced_roles(_thread({}), resume) is False
-
-
-def test_an_old_degree_does_not_inflate_a_short_career():
-    resume = SimpleNamespace(resume_text="Bachelor of Arts, 1998\nAnalyst, Bank 2015 - 2020")
-
-    assert RecruitmentTeam._wants_experienced_roles(_thread({}), resume) is True
-
-
 def test_salary_overrules_a_mislabelled_junior_posting():
     """Employers self-report seniority; the corpus holds $18,000 "Non-executive" roles."""
     from job_visibility import is_junior_posting

@@ -9,9 +9,9 @@ ContextVars, so a tool that needs a field the other shape does not carry says
 so rather than dereferencing `None`.
 
 `search_jobs` here is not the assessment runner's `guarded_search_jobs`
-(runner.py), which wraps `resume_agent.tools.search_jobs` with `detail=False`
-and no `exclude_junior`. This one goes through the typed DiscoveryPort on the
-conversation context, the same port the SearchJobs command uses.
+(runner.py), which wraps `resume_agent.tools.search_jobs` with `detail=False`.
+This one goes through the typed DiscoveryPort on the conversation context, the
+same port the SearchJobs command uses.
 """
 
 from __future__ import annotations
@@ -62,6 +62,11 @@ def _posting(job) -> dict:
         "employment_type": job.employment_type,
         "skills": list(job.skills),
         "description": job.description,
+        "sector": job.sector,
+        "parsed_requirements": job.parsed_jd or {},
+        "ats_terms": list(job.job_terms_preview),
+        "salary_context": job.salary_context,
+        "fact_context_status": job.fact_context_status,
     }
 
 
@@ -171,7 +176,7 @@ def read_shortlist() -> dict:
 
 
 @tool
-def search_jobs(query: str, exclude_junior: bool) -> dict:
+def search_jobs(query: str) -> dict:
     """Search the current internal Singapore job corpus by role or responsibility.
 
     Write `query` positively, in the words a posting would use: the search
@@ -180,9 +185,8 @@ def search_jobs(query: str, exclude_junior: bool) -> dict:
     better phrase if they are wrong. Results land on the candidate's shortlist,
     so they see what you found.
 
-    `exclude_junior` drops trainee, intern and entry-level postings. Nothing
-    else filters seniority, so decide it from what the candidate has told you
-    and from `wants_experienced_roles` in the thread state.
+    Seniority labels and salary context are facts in each result. Judge them
+    together; do not assume an employer's self-reported level is reliable.
     """
     from ..coordinator.context import current_conversation
 
@@ -190,7 +194,7 @@ def search_jobs(query: str, exclude_junior: bool) -> dict:
     if conversation is None:
         return dict(_NO_CONVERSATION)
 
-    args = {"query": query, "exclude_junior": exclude_junior}
+    args = {"query": query}
     history = context.tool_call_history()
     if history is not None and has_repeated_call(history, "search_jobs", args):
         return {
@@ -199,7 +203,7 @@ def search_jobs(query: str, exclude_junior: bool) -> dict:
             "reason": "identical_call_no_new_information",
         }
 
-    result = conversation.discovery.search_jobs(query, exclude_junior=exclude_junior)
+    result = conversation.discovery.search_jobs(query)
     if history is not None:
         history.append(SimpleNamespace(tool_calls=[{"name": "search_jobs", "args": args}]))
     # Every result is recorded, failures included, so the turn's search history

@@ -145,10 +145,6 @@ def _thread_state_block(context: ConversationContext, preferences: tuple[Prefere
         "target_job_selected": context.target_job is not None,
         "selected_target_job_id": context.target_job.job_id if context.target_job else None,
         "candidate_profile_available": context.candidate_profile is not None,
-        # The heuristic's answer, surfaced as evidence rather than applied as a
-        # filter the agent cannot see. search_jobs takes exclude_junior as a
-        # required argument and the agent decides it.
-        "wants_experienced_roles": context.wants_experienced_roles,
         "preferences": [
             {"field": fact.field, "value": fact.value} for fact in preferences
         ],

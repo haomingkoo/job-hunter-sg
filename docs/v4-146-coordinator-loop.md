@@ -185,7 +185,6 @@ class ConversationContext:
     recommendations: tuple[JobSnapshot, ...]
     shortlisted_jobs: tuple[JobSnapshot, ...]
     preferences: tuple[PreferenceFact, ...]
-    wants_experienced_roles: bool
     discovery: DiscoveryPort
     # Mutable sinks. The loop appends; RecruitmentTeam drains after respond() returns.
     search_results: list[JobSearchResult] = field(default_factory=list, compare=False)
@@ -250,7 +249,7 @@ Six tools bound to the coordinator loop.
 | tool | source | signature |
 |---|---|---|
 | `read_shortlist` | **new**, `coordinator/tools.py` | `() -> dict` |
-| `search_jobs` | **new**, `coordinator/tools.py` | `(query: str, exclude_junior: bool) -> dict` |
+| `search_jobs` | **new**, `coordinator/tools.py` | `(query: str) -> dict` |
 | `read_target_job` | existing, `open_agent/tools.py:50` | `() -> dict`, gains a `None` guard |
 | `read_candidate_evidence` | existing, `open_agent/tools.py:34` | `() -> dict`, gains a `None` guard |
 | `propose_resume_edit` | existing, `open_agent/tools.py:63` | `(block_id, rewrite) -> dict`, **unchanged** |
@@ -268,7 +267,10 @@ same reason they hold on the assessment path: it is the same function.
  "latest_search_query": "…",
  "recommendations": [{"job_id": 101, "title": "…", "company": "…", "location": "…",
                       "salary": "…", "seniority": "…", "employment_type": "…",
-                      "skills": ["…"], "description": "…"}],
+                      "skills": ["…"], "description": "…",
+                      "parsed_requirements": {"…": "…"}, "ats_terms": ["…"],
+                      "salary_context": {"sample_count": 42, "median_salary_floor": 7000,
+                                         "posting_floor_percentile": 12.0}}],
  "shortlisted_jobs": [ … same shape … ],
  "selected_target_job_id": 101,
  "candidate_profile_available": true}
@@ -280,20 +282,19 @@ This is the tool that closes the bug. Everything else is upside. It reads
 `SearchJobs` button in an earlier turn is visible to a later conversational turn. That
 is the exact scenario in §10.
 
-### `search_jobs`, and why `exclude_junior` is a required parameter
+### `search_jobs`, with facts instead of a hidden level filter
 
 ```python
 @tool
-def search_jobs(query: str, exclude_junior: bool) -> dict:
+def search_jobs(query: str) -> dict:
     """Search the current internal Singapore job corpus…"""
 ```
 
-It calls `ctx.discovery.search_jobs(query, exclude_junior=exclude_junior)`, which is
-`LangChainJobDiscovery` in production and passes `detail=True`
-(`discovery.py:114-118`). It does **not** reuse `open_agent/runner.py:79`'s
-`guarded_search_jobs`, which has no `exclude_junior` parameter and defaults
-`detail=False`. Binding that one would silently drop the junior filter and hand the
-model descriptionless payloads that `JobSnapshot.from_payload` stores as empty strings.
+It calls `ctx.discovery.search_jobs(query)`, which is `LangChainJobDiscovery` in
+production and requests detailed results. The discovery boundary enriches those results
+with stored parsed requirements, ATS terms, sector, self-reported seniority, and observed
+salary context from current visible postings in the same sector and level. Missing salary
+stays missing; the market median is context, never an imputed employer offer.
 
 **`ctx.discovery` is the only source of the port.** Revision 1 also took `discovery` in
 `DeepAgentConversationModel.__init__`, which nothing could ever read, because
@@ -309,18 +310,10 @@ could be called without limit while the design claimed otherwise. `RepeatedCallM
 materially identical repeat once, with a reason. It still never restricts which tool the
 agent picks. Volume, never choice.
 
-`exclude_junior` is **required**, not derived. The command path computes it from
-`_wants_experienced_roles` (`recruitment_team.py:610-613`) and applies it without
-asking. Deriving it here would be an exclusion predicate this design is not allowed to
-add, so the heuristic's answer is surfaced as an observable fact in the seeded thread
-state and the agent decides. Two consequences, both stated rather than hidden:
-
-- The parameter is required so the model cannot decline to fill it. An optional
-  `exclude_junior=False` is the `search_query` trap again.
-- The agent can now choose `False` where the command path would have chosen `True`.
-  That is the point of the principle, and it is a real behaviour change from
-  `_search_jobs`. If junior spam returns, the fix is better evidence in the seeded
-  state, never a filter the agent cannot see.
+The earlier required `exclude_junior` argument and `_wants_experienced_roles` heuristic
+were removed under #148. They discarded postings before the coordinator could inspect a
+mislabelled senior role's salary and responsibilities. The coordinator now sees the facts
+and explains its judgment; action gates remain unchanged.
 
 ### Failures and empty results are returned, not raised
 
@@ -517,9 +510,9 @@ Each turn seeds only what is new:
   **The DB is the system of record. The checkpoint is a cache and is never the only copy
   of anything.**
 
-`thread_state` is compact on purpose: counts, the selected target's id and title, the
-preference facts, `wants_experienced_roles`, and whether a candidate profile exists. The
-agent calls `read_shortlist` when it wants the postings.
+`thread_state` is compact on purpose: counts, the selected target's id and title,
+preference facts, and whether a candidate profile exists. The agent calls
+`read_shortlist` when it wants the postings.
 
 **It must not carry the postings themselves**, and there is a test that fails if it
 does. The headline scenario in §10 asserts that no company or job title appears in the
@@ -846,16 +839,16 @@ Stated so the absence is a decision and not an oversight.
   model call to every message. The conversational path's durable outputs are still
   gated: `propose_resume_edit` runs `run_all_gates`, edits stay pending until accepted,
   and preference updates still fail `preference_update_error` without an exact quote.
-- **No persona subagents.** `subagents=[]`. Study-first personas are slice V4.
-- **No structured diff, no multi-axis ranking, no match rationale.** Slices V5 and V6.
-- **No exclusion predicate, junior heuristic or ranking formula in the tool layer.**
-  `exclude_junior` is an agent decision (§3). The agent ranks by reading its own results.
+- **No persona subagents.** `subagents=[]`. Automatic study uses the evidence profiler;
+  target assessment owns its specialist roles.
+- **No structured diff or match-rationale artifact yet.** This remains #142/#147 work.
+- **No exclusion predicate, junior heuristic or ranking formula in the recruitment path.**
+  The agent ranks by reading requirements, salary context, and candidate evidence.
 - **`LangChainConversationModel` is not deleted and not modified**, beyond the
   `_ConversationPayload` to `ConversationReply` rename its `args_schema` points at. It
   stays as the single-shot adapter and as the thing the loop is measured against.
-- **`SearchJobs`, `ShortlistJob` and `SelectTargetJob` commands are unchanged.**
-  `SearchJobs` becomes a goal hint rather than the only way results reach the thread, and
-  the deterministic path still works for the UI buttons.
+- **`ShortlistJob` and `SelectTargetJob` commands are unchanged.** `SearchJobs` remains
+  the deterministic UI-button path but no longer applies the removed junior heuristic.
 - **`search_query` is not made required in `_ConversationPayload`.** Slice V2 / #147.
 - **No queued messages.** The per-thread lock still serialises turns. Slice V7.
 - ~~**No live-model validation script.**~~ Built:
