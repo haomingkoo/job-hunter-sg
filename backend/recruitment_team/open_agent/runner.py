@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from typing import Iterator
 
 from langchain_core.tools import tool
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.errors import GraphRecursionError
 from langgraph.types import Command
@@ -31,6 +32,7 @@ from ..assessment_contracts import (
     invoke_structured,
     target_assessment_execution_policy,
 )
+from ..conversation_model import ConversationReply, PreferenceUpdatePayload
 from ..persona_packs import PersonaPackRegistry, load_persona_pack_registry
 from ..telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 from . import context
@@ -91,7 +93,12 @@ def guarded_search_jobs(query: str, n: int | None = None, detail: bool = False) 
 # pause -- LangGraph's own persistence, not a hand-rolled process-local
 # cache. SqliteSaver manages its own internal lock for concurrent access.
 _checkpointer_conn = sqlite3.connect(config.OPEN_AGENT_CHECKPOINT_DB_PATH, check_same_thread=False)
-_CHECKPOINTER = SqliteSaver(_checkpointer_conn)
+_CHECKPOINTER = SqliteSaver(
+    _checkpointer_conn,
+    serde=JsonPlusSerializer(
+        allowed_msgpack_modules=(ConversationReply, PreferenceUpdatePayload),
+    ),
+)
 _CHECKPOINTER.setup()
 
 
