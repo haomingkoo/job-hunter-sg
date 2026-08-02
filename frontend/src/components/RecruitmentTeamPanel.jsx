@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Bot, ChevronDown, Send, Users } from "lucide-react";
 
 const EVIDENCE_PAGE_SIZE = 25;
+const STUDY_POLL_INTERVAL_MS = 1500;
 
 import TeamActivityPanel from "./TeamActivityPanel.jsx";
 import SpecialistReport from "./SpecialistReport.jsx";
@@ -40,6 +41,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
     [resumeVersionId, resumeVersions],
   );
   const awaitingAnswer = snapshot?.workflow_state === "awaiting_candidate_answer";
+  const candidateStudyRunning = snapshot?.case_facts?.candidate_profile_status === "running";
   const recommendations = snapshot?.case_facts?.recommendations || [];
   const shortlistedJobs = snapshot?.case_facts?.shortlisted_jobs || [];
   const displayedJobs = [
@@ -179,7 +181,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
     }
     const interval = setInterval(() => {
       refreshThread(threadId).catch((loadError) => setError(loadError.message));
-    }, 1500);
+    }, STUDY_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [threadId, snapshot?.case_facts?.candidate_profile_status]);
 
@@ -460,9 +462,8 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
                       Working from {selectedResume.label}
                     </p>
                     <p className="mt-1 max-w-md text-xs leading-relaxed text-[#4A6785]">
-                      Five specialists read your resume against real Singapore postings: a
-                      recruiter, a hiring manager, an ATS reader, an evidence skeptic and a
-                      market analyst.
+                      The candidate profiler studies your resume evidence automatically while
+                      the coordinator searches current Singapore roles and explains its work.
                     </p>
                     {/* Two doors, because a candidate who knows what they want should not
                         have to answer questions first, and one who does not should not face
@@ -542,10 +543,14 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
               <button
                 type="button"
                 onClick={studyResume}
-                disabled={busy || candidateProfile?.status === "completed"}
+                disabled={busy || candidateStudyRunning || candidateProfile?.status === "completed"}
                 className="h-12 rounded-2xl border border-[#384959] px-4 text-sm font-semibold text-[#384959] disabled:opacity-40"
               >
-                {candidateProfile?.status === "failed" ? "Resume profile" : "Study resume"}
+                {candidateStudyRunning
+                  ? "Studying resume"
+                  : candidateProfile?.status === "failed"
+                    ? "Resume profile"
+                    : "Study resume"}
               </button>
             )}
           </form>

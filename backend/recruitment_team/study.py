@@ -23,6 +23,7 @@ from .candidate_profile_store import SQLAlchemyCandidateProfileStore
 from .prompts import CANDIDATE_PROFILE_PROMPT_VERSION
 from .candidate_profile import CANDIDATE_PROFILE_DECOMPOSITION_VERSION
 from .telemetry import RecruitmentTelemetry
+from .activity_publisher import ActivityPublisher
 
 
 log = logging.getLogger("jobhunter.recruitment_team.study")
@@ -104,8 +105,9 @@ def _record_event(
     status: str,
     summary: str,
     detail: dict | None = None,
+    activity_publisher: ActivityPublisher | None = None,
 ) -> None:
-    from .recruitment_team import _reserve_event_sequence, _thread_lock
+    from .recruitment_team import RecruitmentTeam, _reserve_event_sequence, _thread_lock
 
     with _thread_lock(thread.id):
         sequence = _reserve_event_sequence(db, thread.id)
@@ -123,6 +125,8 @@ def _record_event(
         )
         db.add(event)
         db.commit()
+        if activity_publisher is not None:
+            activity_publisher.publish(RecruitmentTeam._activity(event))
 
 
 def dispatch_resume_study(
@@ -133,6 +137,7 @@ def dispatch_resume_study(
     thread_id: str,
     profiler_factory_provider,
     telemetry: RecruitmentTelemetry,
+    activity_publisher: ActivityPublisher | None = None,
 ) -> Thread:
     """Start a daemon study whose model work never holds the thread lock."""
 
@@ -148,6 +153,7 @@ def dispatch_resume_study(
                     thread_id=thread_id,
                     profiler_factory=profiler_factory,
                     telemetry=telemetry,
+                    activity_publisher=activity_publisher,
                 )
         except Exception:
             log.exception("automatic candidate study could not start for resume %s", resume_version_id)
@@ -165,6 +171,7 @@ def _run_dispatched_study(
     thread_id: str,
     profiler_factory: CandidateProfilerFactory,
     telemetry: RecruitmentTelemetry,
+    activity_publisher: ActivityPublisher | None = None,
 ) -> None:
     thread = db.query(RecruitmentThread).filter_by(id=thread_id, user_id=owner_id).one()
     key = f"study:{resume_version_id}:{profiler_factory.model_name}"
@@ -195,6 +202,7 @@ def _run_dispatched_study(
         run=run,
         status="running",
         summary="The candidate profiler is studying this resume.",
+        activity_publisher=activity_publisher,
     )
     try:
         artifact = study_resume_version(
@@ -220,6 +228,7 @@ def _run_dispatched_study(
             status="completed",
             summary="The candidate profiler completed the resume study.",
             detail={"candidate_profile_artifact_id": artifact.id},
+            activity_publisher=activity_publisher,
         )
     except Exception as error:
         log.exception("automatic candidate study failed for resume %s", resume_version_id)
@@ -237,4 +246,5 @@ def _run_dispatched_study(
             run=run,
             status="failed",
             summary="The candidate profiler could not complete the resume study.",
+            activity_publisher=activity_publisher,
         )

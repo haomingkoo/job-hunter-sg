@@ -285,6 +285,31 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).toContain("it does not prove use");
   });
 
+  it("does not offer a second study while the automatic study is running", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-studying");
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-studying") {
+        return response({
+          thread_id: "thread-studying",
+          workflow_state: "exploring",
+          case_facts: { candidate_profile_status: "running" },
+          messages: [],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-studying/events") return response([]);
+      if (path.includes("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+
+    const studyButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Studying resume");
+    expect(studyButton).toBeDefined();
+    expect(studyButton.disabled).toBe(true);
+  });
+
   it("paginates a large candidate profile, strongest evidence first", async () => {
     localStorage.setItem("jobhunter:recruitment-thread:42", "thread-paged");
     const fields = Array.from({ length: 30 }, (_, index) => ({
