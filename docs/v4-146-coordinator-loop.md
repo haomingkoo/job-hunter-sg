@@ -5,7 +5,24 @@ Design for issue #146. Companion to `docs/v4-study-first-recruitment.md` (branch
 the thread**.
 
 This document is the contract the tests in `backend/tests/test_coordinator_loop.py`
-assert against. Those tests are xfail-strict today and are the specification.
+assert against. They were written first as strict xfails, and they pass now.
+
+## Revision 4: what running it changed
+
+Four defects only a live run could show are fixed in commit `8d6ce18` and stated where
+they belong below: the repeat guard became middleware over every tool (§3), `write_todos`
+is no longer bound at all (§5), `read_candidate_evidence` refuses with an alternative
+rather than a bare failure, and a thread with no candidate profile still sees the resume.
+
+`write_todos` is the one worth reading twice. The model rewrote the same three-item list
+eleven times, through an actionable refusal, a prompt rule and a hard guard. It plans
+fine. It could not move from writing a plan to executing one, plausibly because nothing
+renders the plan. Removing the tool took the turn from 23 steps and a crash to 6 steps
+and an answer. Making the plan a real artifact is issue #147.
+
+`COORDINATOR_MODEL` also defaulted to the FAST tier while v4.5-27B was unreachable on
+2026-08-02, which is the model the passing trace ran on. It now defaults to the AGENT
+tier again.
 
 ## Revision 3: two corrections the build forced
 
@@ -285,10 +302,12 @@ collaborator with no precedence rule is a bug waiting for its first divergent te
 `RecruitmentTeam` already holds the port at `self._discovery`, so `_model_reply` puts it
 on the context and `get_conversation_model` needs no `Depends(get_job_discovery)`.
 
-`has_repeated_call(history, "search_jobs", args)` runs first and returns
-`{"ok": false, "reason": "identical_call_no_new_information"}` on a materially identical
-repeat, then the accepted call is appended to `_tool_call_history`. Volume, never
-choice.
+**Corrected in revision 4.** This section said each tool calls
+`has_repeated_call(history, name, args)` itself. Only two tools did, so every other tool
+could be called without limit while the design claimed otherwise. `RepeatedCallMiddleware`
+(`coordinator/repeat_guard.py`) now wraps every tool the loop binds and refuses a
+materially identical repeat once, with a reason. It still never restricts which tool the
+agent picks. Volume, never choice.
 
 `exclude_junior` is **required**, not derived. The command path computes it from
 `_wants_experienced_roles` (`recruitment_team.py:610-613`) and applies it without
@@ -692,12 +711,16 @@ of the `search_query` scar this design keeps citing. Two tests close it:
 New config constant, `backend/config.py`:
 
 ```python
-COORDINATOR_MAX_TOOL_ITERATIONS: int = _positive_int_env("COORDINATOR_MAX_TOOL_ITERATIONS", 12)
+COORDINATOR_MAX_TOOL_ITERATIONS: int = _positive_int_env("COORDINATOR_MAX_TOOL_ITERATIONS", 45)
 ```
 
 Separate from `AGENT_MAX_TOOL_ITERATIONS` (default 20), which the resume agent and the
 assessment runner share. One env var tuning a chat turn and a full assessment means
 tuning either one starves the other.
+
+The default is 45, not the 12 revision 1 specified. This is a LangGraph
+`recursion_limit` counting super-steps, and against this graph 12 bought two tool calls.
+See revision 3 above for the arithmetic.
 
 `_model_reply` is the only changed call site. It builds the context, passes it, drains
 `search_results` and `proposed_edits`, and leaves preference validation, merge and
@@ -826,5 +849,7 @@ Stated so the absence is a decision and not an oversight.
   the deterministic path still works for the UI buttons.
 - **`search_query` is not made required in `_ConversationPayload`.** Slice V2 / #147.
 - **No queued messages.** The per-thread lock still serialises turns. Slice V7.
-- **No live-model validation script.** Add one under `backend/scripts/` when the loop
-  runs against SEA-LION.
+- ~~**No live-model validation script.**~~ Built:
+  `backend/scripts/trace_coordinator_turn.py` runs one live turn and writes a full trace
+  to `backend/evals/live-runs/`. It is what found the four defects in revision 3, none of
+  which the unit suite could see.

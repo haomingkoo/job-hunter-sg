@@ -151,7 +151,7 @@ from the versioned persona packs.
 
 - `runner.py` — drives the graph, streams `TargetAssessmentUpdate`s, then runs a **mandatory independent judge**. The judge is the single non-optional step whatever reasoning path the orchestrator took; there is no separate synthesis-submission or per-specialist cross-check (those belonged to the retired bounded runner).
 - `tools.py` — `ask_candidate` (HITL), `read_candidate_evidence`, `read_target_job`, `propose_resume_edit`.
-- `guardrails.py` — `has_repeated_call`. **Guardrails limit volume, never choice**: they reject a materially identical repeat call, they never restrict which tool or persona the orchestrator may pick.
+- `guardrails.py` — `has_repeated_call`, called by name inside two tools on this path. **Guardrails limit volume, never choice**: they reject a materially identical repeat call, they never restrict which tool or persona the orchestrator may pick.
 - `streaming.py` / `context.py` — SSE progress events and per-run contextvars.
 - `persona_packs/v1/personas.json` — versioned, cited persona definitions loaded outside orchestration code (`RECRUITMENT_PERSONA_PACK_VERSION`).
 
@@ -163,6 +163,23 @@ survives a process restart and can resume on any worker.
 
 **Handoff to v2:** `POST /api/recruitment-team/threads/{thread_id}/resume-agent-handoff` passes
 target-assessment findings to the Resume Deep Agent for edit drafting.
+
+**Coordinator loop (V4 slice 1, #146)** — `recruitment_team/coordinator/`. Ordinary chat turns used to be
+one blind `model.invoke()` that could not see the jobs the thread had just found. `DeepAgentConversationModel`
+replaces it with a real tool loop over `read_shortlist`, `search_jobs`, `read_target_job`,
+`read_candidate_evidence`, `propose_resume_edit` and `ask_candidate`. It is the wired `ConversationModel`;
+`LangChainConversationModel` stays as the single-shot adapter it is measured against.
+Design and acceptance: `docs/v4-146-coordinator-loop.md`.
+
+- Termination is `ToolStrategy(ConversationReply)`, not a hand-scan. `search_query` is now overwritten with
+  the query that actually ran, so the field records an observation.
+- `RepeatedCallMiddleware` (`coordinator/repeat_guard.py`) applies the volume guard to **every** bound tool,
+  unlike the by-name calls on the assessment path above.
+- `write_todos` is deliberately not bound. The model rewrote the same list until the turn died; see #147.
+- Every turn gets its own graph id and replays the DB transcript. The checkpoint holds one thing, a paused
+  graph between two HTTP requests, and the DB stays the system of record.
+- `backend/scripts/trace_coordinator_turn.py` runs one live turn and writes a trace. The unit suite cannot
+  see a model that will not stop; a scripted agent terminates by construction.
 
 ## MCP surfaces
 
