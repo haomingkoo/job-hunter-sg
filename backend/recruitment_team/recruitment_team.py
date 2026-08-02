@@ -1617,6 +1617,19 @@ class RecruitmentTeam:
             word_count=len(text.split()),
         )
         self._db.add(version)
+        self._db.flush()
+        thread.resume_version_id = version.id
+        facts = dict(thread.case_facts or {})
+        facts.update({
+            "resume_version_id": version.id,
+            "resume_label": version.label,
+            "resume_sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "candidate_profile_status": "not_started",
+            "target_assessment_status": "not_started",
+        })
+        facts.pop("candidate_profile_artifact_id", None)
+        facts.pop("target_assessment_artifact_id", None)
+        thread.case_facts = facts
         self._db.commit()
         return {
             "resume_version_id": version.id,
