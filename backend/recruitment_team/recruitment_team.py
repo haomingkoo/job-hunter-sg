@@ -79,8 +79,6 @@ from .candidate_profile_store import (
     CandidateProfileCheckpointMismatch,
     SQLAlchemyCandidateProfileStore,
 )
-from job_visibility import JUNIOR_SENIORITY_LABELS
-
 from .discovery import DiscoveryPort, JobPostingVariant, JobSnapshot, JobSource
 from .role_success import (
     CandidateEvidenceMatch,
@@ -138,8 +136,6 @@ def _trace_attributes(item: dict, detail: dict) -> dict:
         if isinstance(detail.get(key), str):
             attributes[key] = detail[key]
     args = item.get("args") if isinstance(item.get("args"), dict) else {}
-    if isinstance(args.get("exclude_junior"), bool):
-        attributes["exclude_junior"] = args["exclude_junior"]
     if isinstance(args.get("query"), str):
         query, redacted = _safe_trace_query(args["query"])
         attributes["query"] = query
@@ -179,39 +175,6 @@ def _run_duration_ms(run: RecruitmentRun) -> float | None:
     if started.tzinfo is None:
         started = started.replace(tzinfo=timezone.utc)
     return max(0.0, (_utcnow() - started).total_seconds() * 1000)
-
-
-# Enough of a career that an entry-level posting is an insult rather than an option.
-EXPERIENCED_CANDIDATE_YEARS = 5
-_YEAR = re.compile(r"\b(19[89]\d|20[0-4]\d)\b")
-# Education dates are not career length.
-_EDUCATION_LINE = re.compile(
-    r"\b(o[-\s]?level|a[-\s]?level|bachelor|master|diploma|degree|university"
-    r"|college|polytechnic|school|graduated|gce|gpa|honours|honors)\b",
-    re.IGNORECASE,
-)
-
-
-def _career_years(resume_text: str) -> int:
-    """Years since the candidate started working.
-
-    Every year in the document except the ones sitting on an education line.
-    Counting the whole document turns school into career: a resume listing
-    A-Levels in 2004 reported 22 years for someone who started work in 2011,
-    and a graduate listing O-Levels would be handed a career they have not
-    had, then filtered away from the entry-level roles they need.
-
-    Line-wise on purpose. Reading the parsed section tree instead returns
-    nothing at all for a LinkedIn PDF export, whose two columns interleave.
-    """
-    years: list[int] = []
-    for line in resume_text.splitlines():
-        if _EDUCATION_LINE.search(line):
-            continue
-        years.extend(int(match) for match in _YEAR.findall(line))
-    if not years:
-        return 0
-    return max(0, _utcnow().year - min(years))
 
 
 def _trim_to_word(text: str, limit: int) -> str:
@@ -438,7 +401,7 @@ class RecruitmentTeam:
 
             try:
                 if isinstance(command, SearchJobs):
-                    reply, completion_detail = self._search_jobs(thread, command, message, resume)
+                    reply, completion_detail = self._search_jobs(thread, command, message)
                     completion_member = "coordinator"
                 elif isinstance(command, BuildCandidateProfile):
                     reply, completion_detail = self._build_candidate_profile(
@@ -675,7 +638,6 @@ class RecruitmentTeam:
                 self._job_from_dict(item) for item in facts.get("shortlisted_jobs", [])
             ),
             preferences=preferences,
-            wants_experienced_roles=self._wants_experienced_roles(thread, resume),
             discovery=self._discovery,
             pause_token=str(facts.get("coordinator_pause_token") or ""),
             on_event=on_event,
@@ -901,7 +863,6 @@ class RecruitmentTeam:
         thread: RecruitmentThread,
         command: SearchJobs,
         resolved_query: str,
-        resume: ResumeVersion,
     ) -> tuple[ModelReply, dict]:
         with self._telemetry.operation(
             "job.search",
@@ -910,10 +871,7 @@ class RecruitmentTeam:
             },
         ) as search_span:
             search_span.set_attribute("query_derived", not command.query.strip())
-            result = self._discovery.search_jobs(
-                resolved_query,
-                exclude_junior=self._wants_experienced_roles(thread, resume),
-            )
+            result = self._discovery.search_jobs(resolved_query)
             search_span.set_attribute("valid_empty", result.valid_empty)
             search_span.set_attribute("result_count", len(result.jobs))
             search_span.set_attribute("truncated", result.truncated)
@@ -1893,6 +1851,19 @@ class RecruitmentTeam:
                 )
                 for variant in item.get("posting_variants") or []
             ),
+            sector=str(item.get("sector") or ""),
+            parsed_jd=(
+                item.get("parsed_jd") if isinstance(item.get("parsed_jd"), dict) else None
+            ),
+            job_terms_preview=tuple(
+                str(term) for term in item.get("job_terms_preview") or []
+            ),
+            salary_context=(
+                item.get("salary_context")
+                if isinstance(item.get("salary_context"), dict)
+                else None
+            ),
+            fact_context_status=str(item.get("fact_context_status") or "unavailable"),
         )
 
     @staticmethod
@@ -2025,23 +1996,6 @@ class RecruitmentTeam:
             )
             for item in facts.get("preferences", [])
         )
-
-    @staticmethod
-    def _wants_experienced_roles(thread: RecruitmentThread, resume: ResumeVersion) -> bool:
-        """True when the candidate is past the junior tier.
-
-        Similarity cannot tell a traineeship from senior work in the same field,
-        so this has to be enforced as a filter. A stated level wins, because a
-        candidate stepping down deliberately is entitled to. Otherwise the resume
-        decides: nobody with a decade behind them should be offered an
-        internship because they had not thought to rule one out.
-        """
-        for fact in (thread.case_facts or {}).get("preferences") or []:
-            if isinstance(fact, dict) and fact.get("field") == "seniority":
-                value = str(fact.get("value") or "").strip().lower()
-                if value:
-                    return value not in JUNIOR_SENIORITY_LABELS
-        return _career_years(resume.resume_text or "") >= EXPERIENCED_CANDIDATE_YEARS
 
     @staticmethod
     def _remember_search_query(thread: RecruitmentThread, query: str) -> None:

@@ -4,8 +4,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+from bisect import bisect_right
 from dataclasses import dataclass
+from statistics import median
 from typing import Protocol
+
+from sqlalchemy import and_, or_
+
+
+JOB_REASONING_REQUIREMENT_FIELDS = (
+    "required_skills",
+    "preferred_skills",
+    "experience_years",
+    "education_level",
+    "key_responsibilities",
+    "archetype",
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +55,11 @@ class JobSnapshot:
     similarity_score: float | None
     source: JobSource
     posting_variants: tuple[JobPostingVariant, ...] = ()
+    sector: str = ""
+    parsed_jd: dict | None = None
+    job_terms_preview: tuple[str, ...] = ()
+    salary_context: dict | None = None
+    fact_context_status: str = "unavailable"
 
     @classmethod
     def from_payload(cls, payload: dict) -> "JobSnapshot":
@@ -87,6 +106,21 @@ class JobSnapshot:
             similarity_score=float(score) if isinstance(score, (int, float)) else None,
             source=source_from(payload),
             posting_variants=variants,
+            sector=str(payload.get("sector") or ""),
+            parsed_jd=(
+                payload.get("parsed_jd")
+                if isinstance(payload.get("parsed_jd"), dict)
+                else None
+            ),
+            job_terms_preview=tuple(
+                str(term) for term in payload.get("job_terms_preview") or []
+            ),
+            salary_context=(
+                payload.get("salary_context")
+                if isinstance(payload.get("salary_context"), dict)
+                else None
+            ),
+            fact_context_status=str(payload.get("fact_context_status") or "unavailable"),
         )
 
 
@@ -103,19 +137,108 @@ class JobSearchResult:
 
 
 class DiscoveryPort(Protocol):
-    def search_jobs(self, query: str, exclude_junior: bool = False) -> JobSearchResult: ...
+    def search_jobs(self, query: str) -> JobSearchResult: ...
 
     def get_job(self, job_id: int) -> JobSnapshot | None: ...
+
+
+def _enrich_job_facts(payloads: list[dict]) -> list[dict]:
+    """Attach stored requirements and observed pay context to search results.
+
+    Salary context is descriptive. A missing posting salary is never imputed.
+    """
+    from database import SessionLocal
+    from job_visibility import apply_public_job_visibility
+    from models import ScrapedJob
+
+    job_ids = [int(item["id"]) for item in payloads if item.get("id") is not None]
+    if not job_ids:
+        return [dict(item) for item in payloads]
+
+    with SessionLocal() as db:
+        jobs = (
+            apply_public_job_visibility(db.query(ScrapedJob))
+            .filter(ScrapedJob.id.in_(job_ids))
+            .all()
+        )
+        jobs_by_id = {job.id: job for job in jobs}
+        pairs = {
+            ((job.sector or "").strip(), (job.seniority or "").strip())
+            for job in jobs
+            if (job.sector or "").strip() and (job.seniority or "").strip()
+        }
+        salary_groups: dict[tuple[str, str], list[int]] = {pair: [] for pair in pairs}
+        if pairs:
+            conditions = [
+                and_(ScrapedJob.sector == sector, ScrapedJob.seniority == seniority)
+                for sector, seniority in pairs
+            ]
+            salary_rows = (
+                apply_public_job_visibility(
+                    db.query(
+                        ScrapedJob.sector,
+                        ScrapedJob.seniority,
+                        ScrapedJob.salary_floor,
+                    )
+                )
+                .filter(ScrapedJob.salary_floor > 0, or_(*conditions))
+                .all()
+            )
+            for sector, seniority, salary_floor in salary_rows:
+                salary_groups[(sector, seniority)].append(int(salary_floor))
+
+    enriched = []
+    for payload in payloads:
+        item = dict(payload)
+        job = jobs_by_id.get(int(item["id"]))
+        if job is None:
+            item["fact_context_status"] = "source_row_unavailable"
+            enriched.append(item)
+            continue
+        parsed_jd = job.parsed_jd if isinstance(job.parsed_jd, dict) else {}
+        item.update({
+            "fact_context_status": "available",
+            "sector": job.sector or "",
+            "parsed_jd": {
+                field: parsed_jd[field]
+                for field in JOB_REASONING_REQUIREMENT_FIELDS
+                if field in parsed_jd
+            },
+            "job_terms_preview": (
+                [str(term) for term in job.job_terms_preview]
+                if isinstance(job.job_terms_preview, list)
+                else []
+            ),
+        })
+        pair = ((job.sector or "").strip(), (job.seniority or "").strip())
+        group = sorted(salary_groups.get(pair, []))
+        if group:
+            salary_floor = int(job.salary_floor or 0)
+            item["salary_context"] = {
+                "basis": "current visible postings with stated salary",
+                "sector": pair[0],
+                "self_reported_seniority": pair[1],
+                "sample_count": len(group),
+                "median_salary_floor": median(group),
+                "posting_salary_floor": salary_floor or None,
+                "posting_floor_percentile": (
+                    round(100 * bisect_right(group, salary_floor) / len(group), 1)
+                    if salary_floor
+                    else None
+                ),
+            }
+        enriched.append(item)
+    return enriched
 
 
 class LangChainJobDiscovery:
     """Production adapter that reuses the existing constrained LangChain tools."""
 
-    def search_jobs(self, query: str, exclude_junior: bool = False) -> JobSearchResult:
+    def search_jobs(self, query: str) -> JobSearchResult:
         from resume_agent.tools import search_jobs
 
         result = search_jobs.invoke(
-            {"query": query, "detail": True, "exclude_junior": exclude_junior}
+            {"query": query, "detail": True}
         )
         if not result.get("ok"):
             return JobSearchResult(
@@ -128,7 +251,10 @@ class LangChainJobDiscovery:
                 failure_type=str(result.get("failure_type") or "unavailable"),
                 retryable=bool(result.get("retryable")),
             )
-        jobs = tuple(JobSnapshot.from_payload(item) for item in result["results"])
+        jobs = tuple(
+            JobSnapshot.from_payload(item)
+            for item in _enrich_job_facts(result["results"])
+        )
         return JobSearchResult(
             query=query,
             jobs=jobs,
@@ -146,6 +272,8 @@ class LangChainJobDiscovery:
             failure_type = str(result.get("failure_type") or "unavailable")
             raise RuntimeError(f"job source failure: {failure_type}")
         payload = result.get("job")
+        if isinstance(payload, dict):
+            payload = _enrich_job_facts([payload])[0]
         return JobSnapshot.from_payload(payload) if isinstance(payload, dict) else None
 
 
@@ -161,7 +289,7 @@ class ScriptedDiscovery:
         self._jobs_by_id = dict(jobs_by_id or {})
         self.search_count = 0
 
-    def search_jobs(self, query: str, exclude_junior: bool = False) -> JobSearchResult:
+    def search_jobs(self, query: str) -> JobSearchResult:
         self.search_count += 1
         result = next(self._searches)
         return JobSearchResult(query=query, **{key: value for key, value in result.__dict__.items() if key != "query"})

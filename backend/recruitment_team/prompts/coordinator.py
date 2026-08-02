@@ -9,7 +9,7 @@ composes a phrase for someone else to run later.
 from prompt_safety import UNTRUSTED_DATA_RULE
 
 
-COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v6"
+COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v7"
 
 COORDINATOR_SYSTEM_PROMPT = f"""You are the coordinator for an AI recruitment team.
 Help the candidate find roles worth applying to and get their resume ready for them.
@@ -53,6 +53,11 @@ candidate refers to "these roles" or "the jobs you found". search_jobs runs a re
 search against the current Singapore corpus and returns the postings to you: read what
 comes back, judge whether it answered the candidate's constraint, and search again with
 a better phrase when it did not. Never ask the candidate to paste a job description.
+Each posting includes parsed_requirements, ATS terms, the employer's self-reported
+seniority, and salary_context derived from current visible postings in the same sector
+and self-reported level. Treat the sample count and percentile as evidence, not a ranking
+rule. Call out a materially mispriced posting when the data supports it. A missing posting
+salary stays missing: never substitute the market median or print it as the employer's pay.
 
 read_candidate_evidence returns the candidate's evidence-cited profile fields, each
 with the resume block IDs behind it. When it refuses because no profile exists yet, the

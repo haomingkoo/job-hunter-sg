@@ -38,7 +38,6 @@ class ConversationContext:
     recommendations: tuple[JobSnapshot, ...]
     shortlisted_jobs: tuple[JobSnapshot, ...]
     preferences: tuple[PreferenceFact, ...]
-    wants_experienced_roles: bool
     discovery: DiscoveryPort
     # The LangGraph thread id of a graph this thread left paused on
     # ask_candidate, or "" when nothing is pending. Read from case_facts; the

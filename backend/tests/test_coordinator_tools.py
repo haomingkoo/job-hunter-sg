@@ -26,6 +26,8 @@ this thread or whether the drain runs.
 
 from __future__ import annotations
 
+from dataclasses import asdict
+
 import pytest
 
 from backend.tests.test_recruitment_team_module import (
@@ -52,6 +54,17 @@ def _job(job_id: int, title: str, company: str, seniority: str = "Professional")
         description=f"{title} at {company}. Owns defect density and yield ramp.",
         skills=("Python", "Semiconductor"),
         similarity_score=0.9,
+        sector="Engineering",
+        parsed_jd={"required_skills": ["Python"], "experience_years": "5"},
+        job_terms_preview=("Python", "Semiconductor"),
+        salary_context={
+            "basis": "current visible postings with stated salary",
+            "sample_count": 12,
+            "median_salary_floor": 9000,
+            "posting_salary_floor": 10000,
+            "posting_floor_percentile": 75.0,
+        },
+        fact_context_status="available",
         source=JobSource(
             source="MyCareersFuture",
             url=f"https://example.test/jobs/{job_id}",
@@ -104,10 +117,10 @@ class _RecordingDiscovery:
         self._results = list(results)
         self.calls: list[dict] = []
 
-    def search_jobs(self, query: str, exclude_junior: bool = False):
+    def search_jobs(self, query: str):
         from recruitment_team.discovery import JobSearchResult
 
-        self.calls.append({"query": query, "exclude_junior": exclude_junior})
+        self.calls.append({"query": query})
         assert self._results, "the loop searched more times than the test scripted"
         result = self._results.pop(0)
         return JobSearchResult(
@@ -185,7 +198,6 @@ def _context(discovery, *, recommendations=(), shortlisted=(), **overrides):
         "recommendations": tuple(recommendations),
         "shortlisted_jobs": tuple(shortlisted),
         "preferences": (),
-        "wants_experienced_roles": True,
         "discovery": discovery,
     }
     kwargs.update(overrides)
@@ -236,9 +248,26 @@ def test_read_shortlist_returns_the_postings_with_enough_to_reason_about():
     assert result["recommendations"][0]["seniority"] == "Professional"
     assert "defect density" in result["recommendations"][0]["description"]
     assert result["recommendations"][0]["skills"] == ["Python", "Semiconductor"]
+    assert result["recommendations"][0]["parsed_requirements"]["experience_years"] == "5"
+    assert result["recommendations"][0]["ats_terms"] == ["Python", "Semiconductor"]
+    assert result["recommendations"][0]["salary_context"]["sample_count"] == 12
+    assert result["recommendations"][0]["fact_context_status"] == "available"
     assert [job["company"] for job in result["shortlisted_jobs"]] == ["GlobalFoundries"]
     assert result["selected_target_job_id"] is None
     assert result["candidate_profile_available"] is False
+
+
+def test_persisted_shortlist_keeps_requirements_and_salary_context():
+    from recruitment_team.recruitment_team import RecruitmentTeam
+
+    restored = RecruitmentTeam._job_from_dict(
+        asdict(_job(103, "AI Platform Engineer", "Example"))
+    )
+
+    assert restored.parsed_jd["required_skills"] == ["Python"]
+    assert restored.job_terms_preview == ("Python", "Semiconductor")
+    assert restored.salary_context["posting_floor_percentile"] == 75.0
+    assert restored.fact_context_status == "available"
 
 
 def test_read_shortlist_shows_a_search_run_earlier_in_the_same_turn():
@@ -260,7 +289,7 @@ def test_read_shortlist_shows_a_search_run_earlier_in_the_same_turn():
 
     with assessment_context(context, initial_edits=context.proposed_edits):
         before = read_shortlist.invoke({})
-        search_jobs.invoke({"query": "staff yield engineer", "exclude_junior": True})
+        search_jobs.invoke({"query": "staff yield engineer"})
         after = read_shortlist.invoke({})
 
     assert [job["job_id"] for job in before["recommendations"]] == [201]
@@ -354,7 +383,7 @@ def test_read_target_job_and_read_candidate_evidence_say_what_is_missing():
     assert evidence["retry"] is False
 
 
-def test_search_jobs_goes_through_the_port_with_the_args_the_agent_chose():
+def test_search_jobs_goes_through_the_port_without_a_hidden_level_filter():
     from recruitment_team.open_agent.context import assessment_context
     from recruitment_team.open_agent.tools import search_jobs
 
@@ -362,25 +391,19 @@ def test_search_jobs_goes_through_the_port_with_the_args_the_agent_chose():
     context = _context(discovery)
 
     with assessment_context(context, initial_edits=context.proposed_edits):
-        result = search_jobs.invoke({"query": "staff yield engineer", "exclude_junior": False})
+        result = search_jobs.invoke({"query": "staff yield engineer"})
 
-    # exclude_junior is the agent's call, not a heuristic applied behind it.
-    assert discovery.calls == [{"query": "staff yield engineer", "exclude_junior": False}]
+    assert discovery.calls == [{"query": "staff yield engineer"}]
     assert result["ok"] is True
     assert result["valid_empty"] is False
     assert [job["company"] for job in result["jobs"]] == ["NXP"]
     assert len(context.search_results) == 1
 
 
-def test_search_jobs_requires_exclude_junior_so_the_model_cannot_decline_to_choose():
-    """An optional field is a request. `search_query` was optional, merged,
-    deployed and never once populated."""
+def test_search_jobs_exposes_no_hidden_level_filter():
     from recruitment_team.open_agent.tools import search_jobs
 
-    assert set(search_jobs.args_schema.model_json_schema()["required"]) == {
-        "query",
-        "exclude_junior",
-    }
+    assert set(search_jobs.args_schema.model_json_schema()["properties"]) == {"query"}
 
 
 def test_an_identical_repeat_never_reaches_the_port_and_a_different_query_does():
@@ -388,8 +411,8 @@ def test_an_identical_repeat_never_reaches_the_port_and_a_different_query_does()
     from recruitment_team.open_agent.context import assessment_context
     from recruitment_team.open_agent.tools import search_jobs
 
-    same = {"query": "semiconductor yield engineer", "exclude_junior": True}
-    other = {"query": "process integration engineer", "exclude_junior": True}
+    same = {"query": "semiconductor yield engineer"}
+    other = {"query": "process integration engineer"}
     discovery = _RecordingDiscovery(
         [
             _search_result([_job(301, "Yield Engineer", "Micron")]),
@@ -424,7 +447,7 @@ def test_a_source_failure_is_returned_to_the_agent_rather_than_raised():
     context = _context(_RecordingDiscovery([_failed_search("unavailable")]))
 
     with assessment_context(context, initial_edits=context.proposed_edits):
-        result = search_jobs.invoke({"query": "staff yield engineer", "exclude_junior": True})
+        result = search_jobs.invoke({"query": "staff yield engineer"})
 
     assert result["ok"] is False
     assert result["failure_type"] == "unavailable"
@@ -439,7 +462,7 @@ def test_a_valid_empty_search_is_reported_as_nothing_matched_not_as_a_failure():
     context = _context(_RecordingDiscovery([_search_result([])]))
 
     with assessment_context(context, initial_edits=context.proposed_edits):
-        result = search_jobs.invoke({"query": "quantum photonics architect", "exclude_junior": True})
+        result = search_jobs.invoke({"query": "quantum photonics architect"})
 
     assert result["ok"] is True
     assert result["valid_empty"] is True
@@ -449,7 +472,7 @@ def test_a_valid_empty_search_is_reported_as_nothing_matched_not_as_a_failure():
 def test_search_jobs_outside_a_conversation_never_touches_the_port():
     from recruitment_team.open_agent.tools import search_jobs
 
-    result = search_jobs.invoke({"query": "anything", "exclude_junior": True})
+    result = search_jobs.invoke({"query": "anything"})
 
     assert result["ok"] is False
     assert result["failure_type"] == "business"
@@ -470,7 +493,7 @@ def test_a_search_run_inside_a_turn_reaches_the_thread_and_survives_a_shortlist_
         [_search_result([_job(501, "Yield Enhancement Engineer", "Micron")])]
     )
     model = _ToolCallingConversationModel(
-        [[(search_jobs, {"query": "semiconductor yield analytics", "exclude_junior": True})]],
+        [[(search_jobs, {"query": "semiconductor yield analytics"})]],
         reply="Yield Enhancement Engineer at Micron is your closest current match.",
     )
 
@@ -491,7 +514,7 @@ def test_a_search_run_inside_a_turn_reaches_the_thread_and_survives_a_shortlist_
         )
 
     assert discovery.calls == [
-        {"query": "semiconductor yield analytics", "exclude_junior": True}
+        {"query": "semiconductor yield analytics"}
     ]
     assert [job.job_id for job in snapshot.case_facts.recommendations] == [501]
     assert snapshot.case_facts.recommendations[0].company == "Micron"
@@ -581,10 +604,10 @@ def test_two_searches_in_one_turn_merge_newest_first_and_dedupe_by_job_id():
     model = _ToolCallingConversationModel(
         [
             [
-                (search_jobs, {"query": "data engineer", "exclude_junior": False}),
+                (search_jobs, {"query": "data engineer"}),
                 (
                     search_jobs,
-                    {"query": "staff semiconductor yield engineer", "exclude_junior": True},
+                    {"query": "staff semiconductor yield engineer"},
                 ),
             ]
         ]
@@ -627,7 +650,7 @@ def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
         ]
     )
     model = _ToolCallingConversationModel(
-        [[], [(search_jobs, {"query": "quantum photonics architect", "exclude_junior": True})]]
+        [[], [(search_jobs, {"query": "quantum photonics architect"})]]
     )
 
     sessions = _session_factory()
@@ -676,7 +699,7 @@ def test_a_failed_search_leaves_the_existing_shortlist_alone():
         ]
     )
     model = _ToolCallingConversationModel(
-        [[], [(search_jobs, {"query": "staff yield engineer", "exclude_junior": True})]]
+        [[], [(search_jobs, {"query": "staff yield engineer"})]]
     )
 
     sessions = _session_factory()
@@ -718,7 +741,7 @@ def test_search_query_records_the_query_that_ran_not_the_one_the_model_asked_for
     executed = "staff semiconductor yield engineer"
     discovery = _RecordingDiscovery([_search_result([_job(1001, "Staff Yield Engineer", "NXP")])])
     model = _ToolCallingConversationModel(
-        [[(search_jobs, {"query": executed, "exclude_junior": True})]],
+        [[(search_jobs, {"query": executed})]],
         search_query="remote product manager",
     )
 
@@ -924,7 +947,7 @@ def test_a_rejected_turn_persists_no_search_it_ran():
 
     discovery = _RecordingDiscovery([_search_result([_job(1201, "Yield Engineer", "Micron")])])
     model = _EmptyReplyModel(
-        [[(search_jobs, {"query": "yield engineer", "exclude_junior": True})]]
+        [[(search_jobs, {"query": "yield engineer"})]]
     )
 
     sessions = _session_factory()
