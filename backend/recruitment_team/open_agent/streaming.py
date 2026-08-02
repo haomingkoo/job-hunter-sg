@@ -20,6 +20,7 @@ tool_call/tool_result/message events are attributed independently."""
 
 from __future__ import annotations
 
+import json
 from typing import Any, Iterator
 
 
@@ -93,3 +94,119 @@ def iter_progress_events(
                         "team_member": team_member,
                         "content": message.content,
                     }
+
+
+# Text long enough to fill the activity panel is text the candidate cannot read
+# anyway. Gate messages and discovery failure reasons have no length bound.
+MAX_ACTIVITY_TEXT_CHARS = 120
+
+
+def _clip(text: str) -> str:
+    text = text.strip()
+    return text if len(text) <= MAX_ACTIVITY_TEXT_CHARS else text[: MAX_ACTIVITY_TEXT_CHARS - 1] + "…"
+
+
+def describe_progress(event: dict) -> tuple[str, dict] | None:
+    """Map one event from `iter_progress_events` onto the `(summary, detail)` an
+    activity row is built from, or None when it carries nothing to show.
+
+    Both agent loops -- the target-assessment runner and the conversational
+    coordinator -- publish through this, so a candidate reads the same wording
+    for the same tool wherever it ran.
+
+    A candidate gets three things: which tool ran, what it looked for, and what
+    came back. What they never get is a tool's raw return value or a model's
+    plain message. Job text is scraped and untrusted, and a model message is
+    reasoning (invariant 9), so only a query the model wrote and counts derived
+    here travel outward.
+    """
+    tool_name = event.get("tool_name")
+    if not tool_name:
+        return None
+    team_member = event.get("team_member") or "coordinator"
+
+    if event.get("kind") == "tool_call":
+        # `{member} called {tool}.` is the shape TeamActivityPanel's humanize()
+        # parses, and the shape the #146 activity assertions pin.
+        detail = {"tool_name": tool_name, "stage": "call"}
+        query = (event.get("args") or {}).get("query")
+        if isinstance(query, str) and query.strip():
+            detail["query"] = _clip(query)
+        return f"{team_member} called {tool_name}.", detail
+
+    if event.get("kind") == "tool_result":
+        outcome = _outcome(event.get("content"))
+        if outcome is None:
+            return None
+        return (
+            f"{team_member} finished {tool_name}.",
+            {"tool_name": tool_name, "stage": "result", "outcome": _clip(outcome)},
+        )
+
+    return None
+
+
+def _outcome(content: Any) -> str | None:
+    """One short derived sentence about what a tool returned, or None.
+
+    None means the tool said nothing worth a row of its own. Silence beats a
+    row that reads "finished" and tells the candidate nothing.
+    """
+    payload = content
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(payload, dict):
+        return None
+
+    if payload.get("ok") is False:
+        reason = payload.get("reason") or payload.get("failure_type") or "unavailable"
+        return f"nothing returned ({str(reason).replace('_', ' ')})"
+
+    # read_shortlist is the only tool that reports both lists, and reporting one
+    # of them would be a half-truth.
+    recommended = payload.get("recommendations")
+    shortlisted = payload.get("shortlisted_jobs")
+    if isinstance(recommended, list) and isinstance(shortlisted, list):
+        return f"{len(recommended)} found earlier, {len(shortlisted)} shortlisted"
+
+    found = _postings_found(payload)
+    if found is not None:
+        return f"{found} matching {'posting' if found == 1 else 'postings'}"
+
+    if payload.get("accepted") is True:
+        return "one resume edit drafted, waiting on your approval"
+    if payload.get("accepted") is False:
+        return f"no edit drafted ({payload.get('reason') or 'rejected'})"
+
+    return None
+
+
+def _postings_found(payload: dict) -> int | None:
+    """How many postings a search returned, across both search tools' shapes.
+
+    `agent_tool_contract.search_jobs_result` reports a count and `results`; the
+    coordinator's own search tool reports `jobs`.
+    """
+    for key in ("result_count", "count"):
+        if isinstance(payload.get(key), int):
+            return payload[key]
+    for key in ("jobs", "results"):
+        if isinstance(payload.get(key), list):
+            return len(payload[key])
+    return None
+
+
+def format_questions(args: dict) -> str:
+    """One pause can carry several questions, so render them as one message."""
+    questions = args.get("questions")
+    if isinstance(questions, str):
+        questions = [questions]
+    questions = [str(item).strip() for item in (questions or []) if str(item).strip()]
+    if not questions:
+        return ""
+    if len(questions) == 1:
+        return questions[0]
+    return "\n".join(f"{index}. {question}" for index, question in enumerate(questions, 1))

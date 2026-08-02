@@ -23,17 +23,27 @@ def create_resume_agent(
     subagents: Sequence[SubAgent] | None = None,
     checkpointer: Any | None = None,
     interrupt_on: dict[str, Any] | None = None,
+    system_prompt: str | None = None,
+    response_format: Any | None = None,
 ):
-    """Create the Resume Deep Agent graph."""
+    """Create a deep-agent graph.
+
+    `system_prompt` and `response_format` are pass-throughs with defaults, so
+    the Resume Deep Agent v2 and the target-assessment runner are unaffected.
+    They exist because a second orchestrator (the conversational coordinator)
+    has a different goal statement and terminates on a structured submission
+    rather than on a plain final message.
+    """
     from deepagents import create_deep_agent
 
     return create_deep_agent(
         model=model or create_agent_model(),
         tools=list(tools) if tools is not None else DEFAULT_TOOLS,
         subagents=list(subagents) if subagents is not None else create_persona_subagents(),
-        system_prompt=ORCHESTRATOR_SYSTEM_PROMPT,
+        system_prompt=system_prompt if system_prompt is not None else ORCHESTRATOR_SYSTEM_PROMPT,
         checkpointer=checkpointer,
         interrupt_on=interrupt_on,
+        response_format=response_format,
     )
 
 

@@ -5,6 +5,7 @@ from .candidate_profile import (
     candidate_profile_validation_feedback,
 )
 from .conversation import CONVERSATION_PROMPT_VERSION, CONVERSATION_SYSTEM_PROMPT
+from .coordinator import COORDINATOR_PROMPT_VERSION, COORDINATOR_SYSTEM_PROMPT
 from .role_success import ROLE_SUCCESS_PROMPT_VERSION, ROLE_SUCCESS_SYSTEM_PROMPT
 
 __all__ = [
@@ -14,6 +15,8 @@ __all__ = [
     "candidate_profile_validation_feedback",
     "CONVERSATION_SYSTEM_PROMPT",
     "CONVERSATION_PROMPT_VERSION",
+    "COORDINATOR_PROMPT_VERSION",
+    "COORDINATOR_SYSTEM_PROMPT",
     "ROLE_SUCCESS_PROMPT_VERSION",
     "ROLE_SUCCESS_SYSTEM_PROMPT",
 ]

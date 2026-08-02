@@ -34,22 +34,9 @@ from ..persona_packs import PersonaPackRegistry, load_persona_pack_registry
 from ..telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 from . import context
 from .guardrails import has_repeated_call
-from .streaming import iter_progress_events
+from .streaming import describe_progress, format_questions, iter_progress_events
 from .subagents import create_target_persona_subagents
 from .tools import ask_candidate, propose_resume_edit, read_candidate_evidence, read_target_job
-
-
-def _format_questions(args: dict) -> str:
-    """One pause can carry several questions, so render them as one message."""
-    questions = args.get("questions")
-    if isinstance(questions, str):
-        questions = [questions]
-    questions = [str(q).strip() for q in (questions or []) if str(q).strip()]
-    if not questions:
-        return ""
-    if len(questions) == 1:
-        return questions[0]
-    return "\n".join(f"{i}. {q}" for i, q in enumerate(questions, 1))
 
 
 _QUESTION_LIMIT_REPLY = (
@@ -260,17 +247,11 @@ class OpenAgentTargetAssessmentRunner:
                 for event in iter_progress_events(
                     agent, payload, run_config, skip_tool_call_ids=skip_tool_call_ids
                 ):
-                    if event["kind"] == "tool_call":
-                        if event["tool_name"] == ask_candidate.name:
-                            pending_question = _format_questions(event.get("args") or {})
-                            pending_question_call_id = event.get("id")
-                        yield TargetAssessmentProgress(
-                            team_member=event["team_member"],
-                            status="running",
-                            summary=f"{event['team_member']} called {event['tool_name']}.",
-                            detail={"tool_name": event["tool_name"]},
-                        )
-                    elif (
+                    if event["kind"] == "tool_call" and event["tool_name"] == ask_candidate.name:
+                        pending_question = format_questions(event.get("args") or {})
+                        pending_question_call_id = event.get("id")
+
+                    if (
                         event["kind"] == "tool_result"
                         and event["team_member"] != "coordinator"
                         and event["tool_name"] == SPECIALIST_TOOL.name
@@ -286,8 +267,22 @@ class OpenAgentTargetAssessmentRunner:
                                 summary=f"{event['team_member']} submitted its assessment.",
                                 detail={},
                             )
-                    elif event["kind"] == "message" and event["team_member"] == "coordinator":
+                        continue
+
+                    if event["kind"] == "message" and event["team_member"] == "coordinator":
                         synthesis = str(event["content"])
+                        continue
+
+                    # Every other call and result, phrased once for both loops.
+                    described = describe_progress(event)
+                    if described is not None:
+                        summary, detail = described
+                        yield TargetAssessmentProgress(
+                            team_member=event["team_member"],
+                            status="running",
+                            summary=summary,
+                            detail=detail,
+                        )
             except GraphRecursionError:
                 # The orchestrator hit its recursion_limit before reaching a
                 # natural stopping point. Whatever specialist_runs/synthesis

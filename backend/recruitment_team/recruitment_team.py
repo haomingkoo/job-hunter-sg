@@ -55,6 +55,9 @@ from .errors import (
     TargetAssessmentUnavailable,
 )
 from .conversation_model import ConversationModel, ModelReply, preference_update_error
+from .coordinator.context import ConversationContext, merged_recommendations
+from .open_agent.context import assessment_context
+from .open_agent.streaming import describe_progress
 from .candidate_profile import (
     CandidateEvidenceProfile,
     CandidateProfileTransportError,
@@ -403,6 +406,7 @@ class RecruitmentTeam:
                     reply = self._model_reply(
                         thread,
                         resume,
+                        run,
                         correlation_key,
                         command_type,
                     )
@@ -469,6 +473,7 @@ class RecruitmentTeam:
         self,
         thread: RecruitmentThread,
         resume: ResumeVersion,
+        run: RecruitmentRun,
         correlation_key: str,
         command_type: str,
     ) -> ModelReply:
@@ -483,11 +488,24 @@ class RecruitmentTeam:
         ) as model_span:
             messages = self._messages(thread.id)
             preferences = self._preference_facts(thread.case_facts)
-            reply = self._conversation_model.respond(
-                messages,
-                resume.resume_text,
+            conversation = self._conversation_context(
+                thread,
+                resume,
                 preferences,
+                correlation_key,
+                self._conversation_activity(thread, run),
             )
+            # The turn is handed to the model twice over: explicitly as the
+            # fourth argument, which is what DeepAgentConversationModel requires
+            # and refuses to run without, and through the ContextVars the
+            # coordinator's tools read once the loop binds them.
+            with assessment_context(conversation, initial_edits=conversation.proposed_edits):
+                reply = self._conversation_model.respond(
+                    messages,
+                    resume.resume_text,
+                    preferences,
+                    conversation,
+                )
             if not reply.content:
                 raise InvalidCommand("conversation model returned no user-facing reply")
             latest_user = next(
@@ -506,14 +524,192 @@ class RecruitmentTeam:
                 self._merge_preference_updates(thread, reply, latest_user)
             if reply.search_query:
                 self._remember_search_query(thread, reply.search_query)
+            # After _remember_search_query on purpose: a query that really ran
+            # outranks one the model merely asked for.
+            self._persist_conversation_searches(thread, conversation)
+            self._persist_conversation_edits(thread, resume, run, conversation)
+            self._remember_pause_token(thread, reply.pause_token)
             model_span.set_attribute("model", reply.model_name)
-            model_span.set_attribute("prompt_version", CONVERSATION_PROMPT_VERSION)
+            model_span.set_attribute(
+                "prompt_version",
+                getattr(reply, "prompt_version", "") or CONVERSATION_PROMPT_VERSION,
+            )
             model_span.set_attribute("preference_update_count", len(reply.preference_updates))
             if reply.input_tokens is not None:
                 model_span.set_attribute("input_tokens", reply.input_tokens)
             if reply.output_tokens is not None:
                 model_span.set_attribute("output_tokens", reply.output_tokens)
             return reply
+
+    def _conversation_context(
+        self,
+        thread: RecruitmentThread,
+        resume: ResumeVersion,
+        preferences: tuple[PreferenceFact, ...],
+        correlation_key: str,
+        on_event,
+    ) -> ConversationContext:
+        """Everything this turn already knows, assembled once before the model runs."""
+        from resume_document import create_resume_document
+
+        facts = thread.case_facts
+        has_profile = (
+            facts.get("candidate_profile_status") == "completed"
+            and bool(facts.get("candidate_profile_artifact_id"))
+        )
+        return ConversationContext(
+            thread_id=thread.id,
+            trace_key=correlation_key,
+            candidate_profile=(
+                self._completed_candidate_profile(thread, resume) if has_profile else None
+            ),
+            role_profile=(
+                self._role_profile_from_dict(facts["role_success_profile"])
+                if isinstance(facts.get("role_success_profile"), dict)
+                else None
+            ),
+            target_job=(
+                self._job_from_dict(facts["selected_target"])
+                if isinstance(facts.get("selected_target"), dict)
+                else None
+            ),
+            resume_document=create_resume_document(resume.resume_text),
+            latest_search_query=str(facts.get("latest_search_query") or ""),
+            recommendations=tuple(
+                self._job_from_dict(item) for item in facts.get("recommendations", [])
+            ),
+            shortlisted_jobs=tuple(
+                self._job_from_dict(item) for item in facts.get("shortlisted_jobs", [])
+            ),
+            preferences=preferences,
+            wants_experienced_roles=self._wants_experienced_roles(thread, resume),
+            discovery=self._discovery,
+            pause_token=str(facts.get("coordinator_pause_token") or ""),
+            on_event=on_event,
+        )
+
+    @staticmethod
+    def _remember_pause_token(thread: RecruitmentThread, pause_token: str) -> None:
+        """Carry an ask_candidate pause to the next message, or clear a resolved one.
+
+        `workflow_state` is deliberately untouched: setting
+        `awaiting_candidate_answer` would route the next message to
+        `AnswerAssessmentQuestion`, which belongs to the assessment runner. The
+        pause is invisible to the transport and the next ordinary SendMessage
+        resumes it.
+        """
+        facts = dict(thread.case_facts)
+        if pause_token:
+            facts["coordinator_pause_token"] = pause_token
+        elif "coordinator_pause_token" not in facts:
+            return
+        else:
+            facts.pop("coordinator_pause_token")
+        thread.case_facts = facts
+
+    def _conversation_activity(self, thread: RecruitmentThread, run: RecruitmentRun):
+        """Publish each coordinator tool step as it happens.
+
+        A turn used to emit two events, "running" and "completed", so a loop that
+        searched twice and read the shortlist looked identical to one that did
+        nothing. `describe_progress` is the same phrasing the assessment runner
+        uses, so a candidate reads one wording per tool wherever it ran.
+
+        Commit before publish, the order `_consume_target_assessment_updates`
+        uses: an event published from an uncommitted transaction is an event the
+        candidate saw and the thread never had.
+        """
+
+        def publish(item: dict) -> None:
+            described = describe_progress(item)
+            if described is None:
+                return
+            summary, detail = described
+            event = self._event(
+                thread,
+                run,
+                event_type="conversation",
+                status="running",
+                summary=summary,
+                detail=detail,
+                team_member=item.get("team_member") or "coordinator",
+            )
+            self._db.commit()
+            self._activity_publisher.publish(self._activity(event))
+
+        return publish
+
+    def _persist_conversation_edits(
+        self,
+        thread: RecruitmentThread,
+        resume: ResumeVersion,
+        run: RecruitmentRun,
+        conversation: ConversationContext,
+    ) -> None:
+        """Send a rewrite the coordinator drafted to the pending table.
+
+        `propose_resume_edit` answers the model with
+        `application_status: pending_user_review`. Without this drain that is a
+        lie: the tool appends to a list nobody reads, the candidate is never
+        offered the rewrite, and the model has been told a durable artifact
+        exists when none does.
+
+        Same field mapping as `_assess_target`, so a conversational edit reaches
+        the same accept and reject endpoints, and stays pending either way.
+        """
+        for edit in conversation.proposed_edits:
+            self._db.add(
+                ProposedResumeEdit(
+                    id=str(uuid.uuid4()),
+                    user_id=thread.user_id,
+                    thread_id=thread.id,
+                    run_id=run.id,
+                    resume_version_id=resume.id,
+                    block_id=edit["block_id"],
+                    section_key=edit.get("section_key", ""),
+                    entry_id=edit.get("entry_id", ""),
+                    original=edit["original"],
+                    rewrite=edit["rewrite"],
+                    document_revision=edit["document_revision"],
+                    status="pending",
+                )
+            )
+
+    def _persist_conversation_searches(
+        self,
+        thread: RecruitmentThread,
+        conversation: ConversationContext,
+    ) -> None:
+        """Land a search the coordinator ran itself where the Search button lands one.
+
+        Without this the loop can search, read and answer while the thread still
+        knows nothing about the postings. That is worse than a stale panel:
+        `_known_job` resolves a job_id only against recommendations and the
+        shortlist, so the candidate's next Shortlist click on a job the agent
+        found is a 422.
+
+        A search that returned nothing, or failed, leaves the existing shortlist
+        alone. The command path cannot destroy a shortlist because it raises
+        before it touches case_facts; the tool has no such protection by
+        accident, and one fruitless query must not empty a good list.
+
+        The merge itself is `merged_recommendations`, the same function
+        `read_shortlist` reads through, so the panel cannot disagree with what
+        the agent was shown.
+        """
+        results = conversation.search_results
+        if not results:
+            return
+        # What ran, whatever it returned. _query_from_candidate reads this key on
+        # the next SearchJobs command.
+        self._remember_search_query(thread, results[-1].query)
+        if not any(result.jobs for result in results):
+            return
+        latest_query, recommendations = merged_recommendations(conversation)
+        facts = dict(thread.case_facts)
+        facts["latest_search_query"] = latest_query
+        facts["recommendations"] = [asdict(job) for job in recommendations]
+        thread.case_facts = facts
 
     def _query_from_candidate(self, thread: RecruitmentThread, resume: ResumeVersion) -> str:
         """Build a search query from what the candidate wants.

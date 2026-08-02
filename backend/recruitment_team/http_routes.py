@@ -13,7 +13,8 @@ from auth import get_current_user
 from database import get_db
 from models import User
 
-from .conversation_model import ConversationModel, LangChainConversationModel
+from .conversation_model import ConversationModel
+from .coordinator.model import DeepAgentConversationModel
 from .candidate_profile import (
     CandidateProfilerFactory,
     LangChainCandidateProfilerFactory,
@@ -24,6 +25,7 @@ from .assessed_role_success import EvidenceAssessedRoleSuccessProfiler
 from .activity_stream import stream_command
 from .errors import (
     CandidateProfilingUnavailable,
+    ConversationUnavailable,
     DiscoveryUnavailable,
     InvalidCommand,
     ResumeVersionNotFound,
@@ -93,7 +95,9 @@ def get_recruitment_telemetry() -> RecruitmentTelemetry:
 def get_conversation_model(
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
 ) -> ConversationModel:
-    return LangChainConversationModel(telemetry=telemetry)
+    # The discovery port arrives on the ConversationContext RecruitmentTeam
+    # builds per turn, so this needs no Depends(get_job_discovery).
+    return DeepAgentConversationModel(telemetry=telemetry)
 
 
 def get_job_discovery() -> DiscoveryPort:
@@ -173,6 +177,7 @@ def _raise_http_error(error: Exception) -> None:
         error,
         (
             CandidateProfilingUnavailable,
+            ConversationUnavailable,
             DiscoveryUnavailable,
             RoleProfilingUnavailable,
             TargetAssessmentUnavailable,

@@ -6,11 +6,16 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
 from ..assessment_contracts import TargetAssessmentRequest
 
-_current_request: ContextVar[TargetAssessmentRequest | None] = ContextVar(
+if TYPE_CHECKING:
+    from ..coordinator.context import ConversationContext
+
+# Two shapes ride this one var: a TargetAssessmentRequest for an assessment run,
+# a ConversationContext for a chat turn. Tools state which they need.
+_current_request: ContextVar["TargetAssessmentRequest | ConversationContext | None"] = ContextVar(
     "open_agent_current_request", default=None
 )
 _current_document: ContextVar[dict[str, Any] | None] = ContextVar(
@@ -26,7 +31,7 @@ _tool_call_history: ContextVar[list[Any] | None] = ContextVar(
 
 @contextmanager
 def assessment_context(
-    request: TargetAssessmentRequest,
+    request: "TargetAssessmentRequest | ConversationContext",
     *,
     initial_edits: list[dict[str, Any]] | None = None,
 ) -> Iterator[None]:
@@ -49,7 +54,7 @@ def assessment_context(
         _tool_call_history.reset(history_token)
 
 
-def current_request() -> TargetAssessmentRequest | None:
+def current_request() -> "TargetAssessmentRequest | ConversationContext | None":
     return _current_request.get()
 
 

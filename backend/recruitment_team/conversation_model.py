@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
@@ -17,6 +17,9 @@ from .interface import Message, PreferenceFact, PreferenceUpdate
 from .prompts import CONVERSATION_SYSTEM_PROMPT
 from .telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 
+if TYPE_CHECKING:  # pragma: no cover - import cycle guard, annotations are strings
+    from .coordinator.context import ConversationContext
+
 
 class _PreferenceUpdatePayload(BaseModel):
     field: Literal["role", "location", "seniority", "salary", "constraints"]
@@ -24,13 +27,20 @@ class _PreferenceUpdatePayload(BaseModel):
     evidence_quote: str = Field(min_length=1)
 
 
-class _ConversationPayload(BaseModel):
+class ConversationReply(BaseModel):
+    """Submit one recruitment-team reply and any durable preference updates.
+
+    The class name is load-bearing: the coordinator loop terminates on
+    `ToolStrategy(ConversationReply)`, and ToolStrategy derives the tool name
+    the model sees from `__name__`.
+    """
+
     reply: str = Field(min_length=1)
     preference_updates: list[_PreferenceUpdatePayload] = Field(default_factory=list)
     search_query: str = ""
 
 
-@tool(args_schema=_ConversationPayload)
+@tool(args_schema=ConversationReply)
 def submit_recruitment_conversation(
     reply: str,
     preference_updates: list[_PreferenceUpdatePayload],
@@ -57,7 +67,14 @@ class ModelReply:
     input_tokens: int | None = None
     output_tokens: int | None = None
     preference_updates: tuple[PreferenceUpdate, ...] = ()
+    # Which prompt produced this turn. A trace that always stamps the same
+    # constant cannot tell you which one ran.
+    prompt_version: str = ""
     search_query: str = ""
+    # Set only when a turn ended paused on ask_candidate: the LangGraph thread id
+    # holding the pending interrupt. RecruitmentTeam persists it so the next
+    # message resumes that graph instead of starting a new one.
+    pause_token: str = ""
 
 
 class ConversationModel(Protocol):
@@ -66,6 +83,7 @@ class ConversationModel(Protocol):
         messages: list[Message],
         resume_text: str,
         current_preferences: tuple[PreferenceFact, ...] = (),
+        context: "ConversationContext | None" = None,
     ) -> ModelReply: ...
 
 
@@ -84,7 +102,7 @@ def preference_update_error(
     return ""
 
 
-def _submission(response: AIMessage) -> tuple[_ConversationPayload | None, dict, str]:
+def _submission(response: AIMessage) -> tuple[ConversationReply | None, dict, str]:
     calls = [call for call in response.tool_calls if call.get("name") == submit_recruitment_conversation.name]
     failed = {
         "content": response.content,
@@ -93,7 +111,7 @@ def _submission(response: AIMessage) -> tuple[_ConversationPayload | None, dict,
     if len(response.tool_calls) != 1 or len(calls) != 1:
         return None, failed, "exactly one submit_recruitment_conversation tool call is required"
     try:
-        return _ConversationPayload.model_validate(calls[0].get("args") or {}), failed, ""
+        return ConversationReply.model_validate(calls[0].get("args") or {}), failed, ""
     except ValidationError as error:
         return None, failed, str(error)
 
@@ -122,7 +140,11 @@ class LangChainConversationModel:
         messages: list[Message],
         resume_text: str,
         current_preferences: tuple[PreferenceFact, ...] = (),
+        context: "ConversationContext | None" = None,
     ) -> ModelReply:
+        # `context` is ignored here on purpose: this adapter is the single-shot
+        # baseline the loop is measured against, and it has no tools to read it
+        # with.
         request = [
             SystemMessage(content=CONVERSATION_SYSTEM_PROMPT),
             HumanMessage(content=xml_data_block("resume_data", resume_text)),
@@ -243,6 +265,7 @@ class ScriptedConversationModel:
         messages: list[Message],
         resume_text: str,
         current_preferences: tuple[PreferenceFact, ...] = (),
+        context: "ConversationContext | None" = None,
     ) -> ModelReply:
         self.call_count += 1
         reply = next(self._replies)

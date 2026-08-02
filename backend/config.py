@@ -62,6 +62,14 @@ SEALION_FAST_MODEL: str = os.getenv(
 SEALION_PIPELINE_MODEL: str = os.getenv("SEALION_PIPELINE_MODEL", SEALION_FAST_MODEL)
 # AGENT: Resume Agent v2 orchestration and tool-calling loop.
 SEALION_AGENT_MODEL: str = os.getenv("SEALION_AGENT_MODEL", "aisingapore/Qwen-SEA-LION-v4.5-27B-IT")
+# The conversational tool loop runs on the AGENT tier, so the recruitment-team
+# path stays on one model. It fell back to FAST on 2026-08-02, when v4.5-27B was
+# unreachable; the endpoint serves it again. The 2026-06-26 eval rated v4-32B
+# higher for tool loops, so COORDINATOR_MODEL exists to move this one back
+# without moving the assessment path with it.
+COORDINATOR_MODEL: str = os.getenv("COORDINATOR_MODEL", "").strip() or SEALION_AGENT_MODEL
+# A reasoning tier thinks before it writes; with no floor the reply gets the rest.
+RECRUITMENT_CONVERSATION_MAX_TOKENS: int = _int_env("RECRUITMENT_CONVERSATION_MAX_TOKENS", 4000)
 # SMART: deep-agent persona reviews (single-shot, no tools, latency-tolerant).
 SEALION_SMART_MODEL: str = os.getenv("SEALION_SMART_MODEL", "aisingapore/Qwen-SEA-LION-v4.5-27B-IT")
 # Models that must run in instruct/non-thinking mode for product-facing text and
@@ -88,6 +96,10 @@ OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS: int = _positive_int_env(
 # process restart and can be resumed from any worker, not just the one that
 # hit the pause.
 OPEN_AGENT_CHECKPOINT_DB_PATH: str = os.getenv("OPEN_AGENT_CHECKPOINT_DB_PATH", "open_agent_checkpoints.db")
+# Separate from AGENT_MAX_TOOL_ITERATIONS so tuning a chat turn cannot starve an
+# assessment. A LangGraph recursion_limit counts super-steps, not tool calls:
+# measured at 5 steps plus 4 per call, so 45 buys ten tool calls.
+COORDINATOR_MAX_TOOL_ITERATIONS: int = _positive_int_env("COORDINATOR_MAX_TOOL_ITERATIONS", 45)
 AGENT_PERSONA_VALIDATION_ATTEMPTS: int = _positive_int_env(
     "AGENT_PERSONA_VALIDATION_ATTEMPTS",
     2,
