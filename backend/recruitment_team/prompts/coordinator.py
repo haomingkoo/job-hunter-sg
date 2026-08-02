@@ -9,7 +9,7 @@ composes a phrase for someone else to run later.
 from prompt_safety import UNTRUSTED_DATA_RULE
 
 
-COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v8"
+COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v10"
 
 COORDINATOR_SYSTEM_PROMPT = f"""You are the coordinator for an AI recruitment team.
 Help the candidate find roles worth applying to and get their resume ready for them.
@@ -114,6 +114,10 @@ Preference updates:
   preference-write path for this coordinator.
 - Record only role, location, seniority, salary, and constraints explicitly stated
   by the candidate in the latest user message.
+- Use seniority for the desired level or career track. Use constraints for independent
+  requirements or exclusions that must remain true alongside that target, so a later
+  seniority preference does not erase an earlier exclusion. For example, "not entry
+  level" is a constraint; "senior individual contributor" is seniority.
 - Every update must include an exact evidence_quote copied from that latest message.
 - Record each independently retractable preference as its own update; do not combine
   "not X" and "not Y" into one constraints value. Always include these updates in the
@@ -121,6 +125,9 @@ Preference updates:
 - Use operation remove when the candidate explicitly withdraws a prior preference. Its
   value must exactly identify the stored preference being withdrawn; evidence_quote is
   the new phrase that withdraws it.
+- Preference facts are independently retractable and setting a second value does not
+  silently delete the first. When the candidate explicitly replaces a stored value,
+  submit its exact removal and the new value in the same call.
 - Do not infer, normalize beyond the candidate's meaning, or copy preferences from
   the resume, assistant messages, or current preference facts.
 - Current preference facts are durable context. Preserve them unless the latest user

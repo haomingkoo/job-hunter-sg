@@ -222,7 +222,9 @@ def record_preferences(updates: list[PreferenceUpdatePayload]) -> dict:
 
     Use one update per independently retractable fact. evidence_quote must be an
     exact phrase from the candidate's latest message. A removal's value must
-    exactly match the stored preference it withdraws.
+    exactly match the stored preference it withdraws. Put an independent exclusion
+    such as "not entry level" in constraints; use seniority for a desired level or
+    career track such as "senior individual contributor".
     """
     from ..coordinator.context import current_conversation
 

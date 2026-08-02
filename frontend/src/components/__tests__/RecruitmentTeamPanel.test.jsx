@@ -111,6 +111,70 @@ describe("RecruitmentTeamPanel", () => {
     );
   });
 
+  it("keeps the composer open and sends messages queued during a running turn", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-queue");
+    let releaseFirst;
+    const firstTurn = new Promise((resolve) => { releaseFirst = resolve; });
+    const sent = [];
+    streamRecruitmentCommand.mockImplementation(async (_path, body) => {
+      sent.push(body.message);
+      if (sent.length === 1) await firstTurn;
+      return { thread_id: "thread-queue", status: "completed" };
+    });
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-queue") {
+        return response({
+          thread_id: "thread-queue",
+          workflow_state: "exploring",
+          case_facts: {},
+          messages: sent.flatMap((content) => [
+            { role: "user", content },
+            { role: "assistant", content: `Answered: ${content}` },
+          ]),
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-queue/events") return response([]);
+      if (path.includes("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+    const textarea = container.querySelector("textarea");
+    const form = textarea.closest("form");
+    const enter = async (value) => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")
+          .set.call(textarea, value);
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      });
+    };
+
+    await enter("First question");
+    expect(container.textContent).toContain("Queue message");
+    await enter("Not entry level");
+    await enter("Keep it in Singapore");
+    await enter("Prefer senior individual contributor roles");
+
+    expect(container.textContent).toContain("Queued for the team");
+    expect(container.textContent).toContain("Not entry level");
+    expect(container.textContent).toContain("Keep it in Singapore");
+    expect(container.textContent).toContain("Prefer senior individual contributor roles");
+    expect(container.querySelector("textarea").disabled).toBe(false);
+
+    await act(async () => releaseFirst());
+
+    expect(sent).toEqual([
+      "First question",
+      "Not entry level",
+      "Keep it in Singapore",
+      "Prefer senior individual contributor roles",
+    ]);
+    expect(container.textContent).not.toContain("Queued for the team");
+    expect(container.textContent).toContain("Answered: Keep it in Singapore");
+  });
+
   it("starts a new conversation without resurrecting the old thread on the next render", async () => {
     let threadsFetchCount = 0;
     streamRecruitmentCommand.mockImplementation(async () => (
