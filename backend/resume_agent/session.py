@@ -28,7 +28,6 @@ from .prompts import (
     assessment_presentation_violations,
     synthesis_score_context,
 )
-from .tooling import SYNTHESIS_TOOLS
 from .tracing import ToolSpanRecorder
 from .telemetry import trace_key, traced_events
 from .tools import bullet_context
@@ -695,7 +694,7 @@ def _stream_chat_events(
             }
 
         active_agent = agent or create_resume_agent(
-            tools=SYNTHESIS_TOOLS,
+            tools=[],
             subagents=[],
             checkpointer=_get_checkpointer(),
         )

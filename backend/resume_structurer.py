@@ -15,7 +15,6 @@ from typing import Any
 from resume_scorer import (
     ACTION_VERBS,
     AVOIDED_PHRASES,
-    STANDARD_SECTIONS,
     _METRIC_RE,
     _NORMALIZED_SECTION_KEYS,
     _clean_line,
@@ -24,7 +23,7 @@ from resume_scorer import (
     _starts_with_action_verb,
 )
 from resume_parser import _join_broken_lines, extract_phone_number
-from shared_classification import SHARED_HEADINGS, SHARED_KEY_MAP, SHARED_TITLE_PATTERNS, classify_section_heading
+from shared_classification import SHARED_KEY_MAP, SHARED_TITLE_PATTERNS, classify_section_heading
 
 log = logging.getLogger("jobhunter.structurer")
 
@@ -123,8 +122,6 @@ def _extract_contact(lines: list[str]) -> dict[str, str]:
     location = ""
     linkedin = ""
 
-    section_headers_lower = {s.lower() for s in STANDARD_SECTIONS} | SHARED_HEADINGS
-
     for line in header_lines:
         cleaned = _clean_line(line)
         if not cleaned:
@@ -145,8 +142,6 @@ def _extract_contact(lines: list[str]) -> dict[str, str]:
         if not cleaned or len(cleaned) < 2:
             continue
         lower = cleaned.lower().rstrip(":")
-        if lower in section_headers_lower:
-            continue
         if lower in SHARED_KEY_MAP:
             continue
         if "@" in cleaned or "http" in cleaned.lower():
