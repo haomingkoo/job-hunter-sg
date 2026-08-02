@@ -81,7 +81,6 @@ from models import (
     UsageLog,
     User,
     UserMemory,
-    ResumeVersion,
 )
 from sanitizer import sanitize_html, sanitize_job, sanitize_resume_text, sanitize_user_input
 from recruitment_team.conversation_model import ConversationModel
@@ -705,19 +704,6 @@ def _is_power_skill_noise(skill: str) -> bool:
     return False
 
 
-def _clean_power_skills(skills: list[str]) -> list[str]:
-    cleaned: list[str] = []
-    seen: set[str] = set()
-    for skill in skills:
-        normalized = re.sub(r"\s+", " ", (skill or "").strip())
-        lower = normalized.lower()
-        if not normalized or lower in seen or _is_power_skill_noise(normalized):
-            continue
-        seen.add(lower)
-        cleaned.append(normalized)
-    return cleaned
-
-
 def _is_power_surface_noise(skill: str) -> bool:
     lower = re.sub(r"\s+", " ", (skill or "").strip().lower())
     if not lower:
@@ -746,52 +732,46 @@ def _is_power_gap_noise(skill: str) -> bool:
     return False
 
 
-def _surface_power_skills(skills: list[str], limit: int = 24) -> list[str]:
+def _filter_power_skills(
+    skills: list[str],
+    is_noise: Callable[[str], bool],
+    limit: int | None = None,
+) -> list[str]:
     surfaced: list[str] = []
     seen: set[str] = set()
-    ranked = sorted(
-        skills,
-        key=lambda skill: (
-            0 if skill.lower() in SEMICONDUCTOR_HARD_TERMS else 1,
-            0 if len(skill.split()) >= 2 else 1,
-            -len(skill.split()),
-            skill.lower(),
-        ),
-    )
+    ranked = skills
+    if limit is not None:
+        ranked = sorted(
+            skills,
+            key=lambda skill: (
+                0 if skill.lower() in SEMICONDUCTOR_HARD_TERMS else 1,
+                0 if len(skill.split()) >= 2 else 1,
+                -len(skill.split()),
+                skill.lower(),
+            ),
+        )
     for skill in ranked:
         normalized = re.sub(r"\s+", " ", (skill or "").strip())
         lower = normalized.lower()
-        if not normalized or lower in seen or _is_power_surface_noise(normalized):
+        if not normalized or lower in seen or is_noise(normalized):
             continue
         seen.add(lower)
         surfaced.append(normalized)
-        if len(surfaced) >= limit:
+        if limit is not None and len(surfaced) >= limit:
             break
     return surfaced
+
+
+def _clean_power_skills(skills: list[str]) -> list[str]:
+    return _filter_power_skills(skills, _is_power_skill_noise)
+
+
+def _surface_power_skills(skills: list[str], limit: int = 24) -> list[str]:
+    return _filter_power_skills(skills, _is_power_surface_noise, limit)
 
 
 def _surface_power_gaps(skills: list[str], limit: int = 6) -> list[str]:
-    surfaced: list[str] = []
-    seen: set[str] = set()
-    ranked = sorted(
-        skills,
-        key=lambda skill: (
-            0 if skill.lower() in SEMICONDUCTOR_HARD_TERMS else 1,
-            0 if len(skill.split()) >= 2 else 1,
-            -len(skill.split()),
-            skill.lower(),
-        ),
-    )
-    for skill in ranked:
-        normalized = re.sub(r"\s+", " ", (skill or "").strip())
-        lower = normalized.lower()
-        if not normalized or lower in seen or _is_power_gap_noise(normalized):
-            continue
-        seen.add(lower)
-        surfaced.append(normalized)
-        if len(surfaced) >= limit:
-            break
-    return surfaced
+    return _filter_power_skills(skills, _is_power_gap_noise, limit)
 
 
 def _build_canonical_job_terms(job: ScrapedJob, db: Session | None = None) -> list[dict]:
@@ -4055,38 +4035,6 @@ def analytics_skills(
         for option in _analytics_agency_subset_options()
     ]
 
-    cache_payload = None
-    if not has_filter:
-        cache_payload = {
-            "_corpus_marker": corpus_marker,
-            "_all_skills": all_skills,
-            "_skill_counts": skill_count_numbers,
-            "total_jobs_with_terms": total_jobs,
-            "skill_signal_count": len(all_skills),
-            "company_count": len(company_counts),
-            "title_count": len(title_counts),
-            "sector_count": len(sector_counts),
-            "sources": sources_list,
-            "top_titles": top_titles,
-            "sectors": sectors,
-            "top_companies": top_companies,
-            "hard_skills": hard_skills,
-            "overindexed_skills": overindexed_skills,
-            "market_movers": market_movers,
-            "company_movers": company_movers,
-            "salary_insights": salary_insights,
-            "freshness": freshness,
-            "sampled_jobs": scanned_rows,
-            "sampled_job_limit": _ANALYTICS_MAX_ROWS,
-            "partial": partial,
-            "seniority_mix": seniority_mix,
-            "ssic_coverage": ssic_coverage,
-            "sector_source_mix": sector_source_mix,
-            "agency_subsets": agency_subsets,
-            "agency_subset": agency_subset_key,
-            "direct_employers_only": direct_employers_only,
-        }
-
     filtered_skills = all_skills
     if q:
         q_lower = q.lower()
@@ -4121,6 +4069,15 @@ def analytics_skills(
         "agency_subset": agency_subset_key,
         "direct_employers_only": direct_employers_only,
     }
+    cache_payload = None
+    if not has_filter:
+        cache_payload = dict(result)
+        cache_payload.pop("top_skills")
+        cache_payload.update({
+            "_corpus_marker": corpus_marker,
+            "_all_skills": all_skills,
+            "_skill_counts": skill_count_numbers,
+        })
     if cache_payload is not None:
         with _ANALYTICS_CACHE_LOCK:
             if cache_generation == _analytics_cache_generation:
