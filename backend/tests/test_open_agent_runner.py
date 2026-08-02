@@ -537,3 +537,28 @@ def test_runner_pauses_and_yields_no_result_when_ask_candidate_interrupts(monkey
     assert len(paused) == 1, "exactly one paused progress event must be yielded"
     assert paused[0].team_member == "coordinator"
     assert paused[0].detail["question"] == "How large was the team you led?"
+
+
+def test_checkpoint_serializer_explicitly_allows_conversation_reply():
+    import warnings
+
+    from recruitment_team.conversation_model import ConversationReply, PreferenceUpdatePayload
+    from recruitment_team.open_agent.runner import _CHECKPOINTER
+
+    reply = ConversationReply(
+        reply="Platform roles only.",
+        preference_updates=[
+            PreferenceUpdatePayload(
+                field="role",
+                value="AI platform engineer",
+                evidence_quote="Platform roles only.",
+            )
+        ],
+    )
+
+    encoded = _CHECKPOINTER.serde.dumps_typed(reply)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        restored = _CHECKPOINTER.serde.loads_typed(encoded)
+
+    assert restored == reply
