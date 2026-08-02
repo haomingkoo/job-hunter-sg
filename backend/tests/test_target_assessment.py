@@ -65,7 +65,20 @@ def _judge_call(disposition: str) -> AIMessage:
     )
 
 
-def test_open_agent_runner_blocks_completion_when_the_fresh_judge_does_not_pass(monkeypatch):
+def _correction_call() -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "submit_corrected_target_assessment",
+            "args": {
+                "synthesis": "Corrected synthesis that reports the evidence gap without overstating it."
+            },
+            "id": "correction-call-1",
+        }],
+    )
+
+
+def test_open_agent_runner_corrects_and_rejudges_a_repairable_synthesis(monkeypatch):
     """NativeTargetAssessmentRunner guaranteed a fixed set of five specialists
     run under threaded concurrency; that guarantee is architecture-specific
     and does not carry over -- the open-agent orchestrator decides which
@@ -81,20 +94,59 @@ def test_open_agent_runner_blocks_completion_when_the_fresh_judge_does_not_pass(
 
     final_reply = AIMessage(content="Synthesis produced without further specialist consultation.")
     orchestrator_model = _ScriptedModel(responses=[final_reply])
-    judge_model = _ScriptedModel(responses=[_judge_call("revise")])
+    judge_models = iter([
+        _ScriptedModel(responses=[_judge_call("revise")]),
+        _ScriptedModel(responses=[_judge_call("pass")]),
+    ])
+    correction_model = _ScriptedModel(responses=[_correction_call()])
 
     runner = OpenAgentTargetAssessmentRunner(
         model_factory=lambda: orchestrator_model,
-        judge_model_factory=lambda: judge_model,
+        judge_model_factory=lambda: next(judge_models),
+        correction_model_factory=lambda: correction_model,
         telemetry=RecordedTelemetry(),
     )
 
     updates = list(runner.run(_request()))
     result = next(item for item in updates if isinstance(item, TargetAssessmentResult))
 
-    assert result.status == "quality_blocked"
-    assert result.judge["disposition"] == "revise"
+    assert result.status == "completed"
+    assert result.judge["disposition"] == "pass"
     assert result.judge["score"] == 55
+    assert result.synthesis.startswith("Corrected synthesis")
+    assert result.correction["attempted"] is True
+    assert result.correction["status"] == "completed"
+    assert result.correction["rejudge_disposition"] == "pass"
+
+
+def test_failed_correction_stays_quality_blocked_without_a_second_judge(monkeypatch):
+    import config
+    import resume_agent.models as agent_models
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+    monkeypatch.setattr(config, "RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS", 2)
+
+    orchestrator_model = _ScriptedModel(responses=[AIMessage(content="Original synthesis.")])
+    judge_model = _ScriptedModel(responses=[_judge_call("revise")])
+    correction_model = _ScriptedModel(
+        responses=[AIMessage(content="not a tool call"), AIMessage(content="still not a tool call")]
+    )
+    runner = OpenAgentTargetAssessmentRunner(
+        model_factory=lambda: orchestrator_model,
+        judge_model_factory=lambda: judge_model,
+        correction_model_factory=lambda: correction_model,
+        telemetry=RecordedTelemetry(),
+    )
+
+    result = next(
+        item for item in runner.run(_request()) if isinstance(item, TargetAssessmentResult)
+    )
+
+    assert result.status == "quality_blocked"
+    assert result.synthesis == "Original synthesis."
+    assert result.judge["disposition"] == "revise"
+    assert result.correction["status"] == "failed"
+    assert result.correction["attempt_count"] == 2
 
 
 def test_execution_policy_exposes_every_behavior_control():
