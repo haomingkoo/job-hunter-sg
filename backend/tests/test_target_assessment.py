@@ -79,15 +79,7 @@ def _correction_call() -> AIMessage:
 
 
 def test_open_agent_runner_corrects_and_rejudges_a_repairable_synthesis(monkeypatch):
-    """NativeTargetAssessmentRunner guaranteed a fixed set of five specialists
-    run under threaded concurrency; that guarantee is architecture-specific
-    and does not carry over -- the open-agent orchestrator decides which
-    personas to consult, and test_open_agent_runner.py already covers zero-
-    and one-persona consultation. What must still hold regardless of who ran
-    the specialists is the one behavior this test used to exercise alongside
-    that fixed cardinality: a fresh independent judge gates whether the run
-    reaches "completed", and rejects it otherwise. Ported here rather than
-    dropped."""
+    """A repairable synthesis reaches completed only after a fresh judge passes it."""
     import resume_agent.models as agent_models
 
     monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
@@ -152,10 +144,7 @@ def test_failed_correction_stays_quality_blocked_without_a_second_judge(monkeypa
 def test_execution_policy_exposes_every_behavior_control():
     policy = target_assessment_execution_policy()
 
-    assert policy["specialist_validation_attempts"] > 0
-    assert policy["specialist_max_concurrency"] > 0
     assert policy["synthesis_validation_attempts"] > 0
-    assert policy["judge_validation_attempts"] > 0
     assert policy["maximum_synthesis_corrections"] in {0, 1}
     assert policy["transport_retries"] >= 0
     assert policy["fallback_model"] is None

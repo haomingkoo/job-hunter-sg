@@ -265,8 +265,6 @@ class TailoredResume(Base):
 
     changes: Mapped[list | None] = mapped_column(JSON, default=list)
 
-    match_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    match_after: Mapped[int | None] = mapped_column(Integer, nullable=True)
     score_before: Mapped[int | None] = mapped_column(Integer, nullable=True)
     score_after: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
