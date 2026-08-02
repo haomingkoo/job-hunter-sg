@@ -7,7 +7,7 @@ from dataclasses import asdict
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from auth import get_current_user
 from database import get_db
@@ -49,6 +49,7 @@ from .role_evidence_assessor import LangChainRoleEvidenceAssessor
 from .telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 from .assessment_contracts import TargetAssessmentRunner
 from .open_agent.runner import OpenAgentTargetAssessmentRunner
+from .study import dispatch_resume_study
 
 
 router = APIRouter(prefix="/api/recruitment-team", tags=["recruitment-team"])
@@ -119,6 +120,28 @@ def get_candidate_profiler_factory(
     return LangChainCandidateProfilerFactory(telemetry=telemetry)
 
 
+def get_study_profiler_provider(
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    """Delay model construction until the background study has started."""
+    return lambda: get_candidate_profiler_factory(telemetry)
+
+
+def _automatic_study_dispatcher(db: Session, telemetry, profiler_provider):
+    bind = db.get_bind()
+    if bind.dialect.name == "sqlite" and not bind.url.database:
+        return None
+    study_sessions = sessionmaker(bind=bind, expire_on_commit=False)
+    return lambda owner_id, resume_id, thread_id: dispatch_resume_study(
+        study_sessions,
+        owner_id=owner_id,
+        resume_version_id=resume_id,
+        thread_id=thread_id,
+        profiler_factory_provider=profiler_provider,
+        telemetry=telemetry,
+    )
+
+
 def get_target_assessment_runner() -> TargetAssessmentRunner:
     return OpenAgentTargetAssessmentRunner()
 
@@ -131,6 +154,7 @@ def _team(
     telemetry: RecruitmentTelemetry,
     candidate_profiler_factory: CandidateProfilerFactory | None = None,
     target_assessment_runner: TargetAssessmentRunner | None = None,
+    study_dispatcher=None,
 ) -> RecruitmentTeam:
     return RecruitmentTeam(
         db,
@@ -141,6 +165,7 @@ def _team(
         IgnoreActivityPublisher(),
         candidate_profiler_factory,
         target_assessment_runner,
+        study_dispatcher,
     )
 
 
@@ -167,6 +192,7 @@ def _streaming_team_factory(
     telemetry: RecruitmentTelemetry,
     candidate_profiler_factory: CandidateProfilerFactory | None = None,
     target_assessment_runner: TargetAssessmentRunner | None = None,
+    study_dispatcher=None,
 ):
     def create(activity_publisher):
         return RecruitmentTeam(
@@ -178,6 +204,7 @@ def _streaming_team_factory(
             activity_publisher,
             candidate_profiler_factory,
             target_assessment_runner,
+            study_dispatcher,
         )
 
     return create
@@ -211,10 +238,19 @@ def start_thread(
     discovery: DiscoveryPort = Depends(get_job_discovery),
     role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+    study_profiler_provider=Depends(get_study_profiler_provider),
 ):
+    study_dispatcher = _automatic_study_dispatcher(db, telemetry, study_profiler_provider)
     try:
         return asdict(
-            _team(db, conversation_model, discovery, role_profiler, telemetry).execute(
+            _team(
+                db,
+                conversation_model,
+                discovery,
+                role_profiler,
+                telemetry,
+                study_dispatcher=study_dispatcher,
+            ).execute(
                 user.id,
                 StartThread(
                     resume_version_id=body.resume_version_id,
@@ -236,14 +272,23 @@ def stream_start_thread(
     discovery: DiscoveryPort = Depends(get_job_discovery),
     role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+    study_profiler_provider=Depends(get_study_profiler_provider),
 ):
+    study_dispatcher = _automatic_study_dispatcher(db, telemetry, study_profiler_provider)
     command = StartThread(
         resume_version_id=body.resume_version_id,
         message=body.message,
     )
     return StreamingResponse(
         stream_command(
-            _streaming_team_factory(db, conversation_model, discovery, role_profiler, telemetry),
+            _streaming_team_factory(
+                db,
+                conversation_model,
+                discovery,
+                role_profiler,
+                telemetry,
+                study_dispatcher=study_dispatcher,
+            ),
             user.id,
             command,
             body.idempotency_key,
