@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+from prompt_safety import UNTRUSTED_DATA_RULE
+
 
 JUDGE_WEAKNESS_CATEGORIES = {
     "evidence_fidelity",
@@ -87,5 +89,6 @@ def build_judge_system_prompt(allowed_sources: set[str]) -> str:
         f"<output_contract>\n{JUDGE_OUTPUT_CONTRACT}\n</output_contract>\n\n"
         f"<allowed_sources>\n{json.dumps(sorted(allowed_sources))}\n</allowed_sources>\n\n"
         "Before returning, verify the arithmetic, citations, both assessment strengths "
-        "and weaknesses, and explicit treatment of unavailable evidence."
+        "and weaknesses, and explicit treatment of unavailable evidence.\n\n"
+        f"{UNTRUSTED_DATA_RULE}"
     )

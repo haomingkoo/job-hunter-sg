@@ -161,3 +161,31 @@ def test_execution_policy_exposes_every_behavior_control():
     assert policy["fallback_model"] is None
     assert policy["content_truncation"] is False
     json.dumps(policy)
+
+
+def test_judge_and_correction_receive_the_evidence_their_prompts_claim(monkeypatch):
+    import recruitment_team.open_agent.runner as runner_module
+
+    captured = []
+
+    def capture(_model, _tool, _prompt, data_name, data, **_kwargs):
+        captured.append((data_name, data))
+        if data_name == "open_agent_judge_data":
+            return _judge_call("revise").tool_calls[0]["args"], "", 0, 0, "test"
+        return {"synthesis": "Corrected synthesis."}, "", 0, 0, "test"
+
+    monkeypatch.setattr(runner_module, "invoke_structured", capture)
+    runner = OpenAgentTargetAssessmentRunner(model_factory=lambda: object())
+    request = _request()
+
+    judge = runner._run_judge(object(), request, [], "Original synthesis.")
+    runner._correct_synthesis(object(), request, [], "Original synthesis.", judge)
+
+    judge_data = captured[0][1]
+    correction_data = captured[1][1]
+    assert judge_data["candidate_profile"]["fields"]
+    assert judge_data["failures"] == [
+        {"persona_id": pack.persona_id, "failure_type": "no_submission"}
+        for pack in runner._registry.personas
+    ]
+    assert correction_data["candidate_profile"] == judge_data["candidate_profile"]
