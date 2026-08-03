@@ -1224,6 +1224,7 @@ def test_a_proposed_edit_reaches_the_pending_table_and_the_rejections_reach_the_
             idempotency_key="turn-1",
         )
         pending = team.proposed_edits(owner_id, receipt.thread_id)
+        snapshot = team.snapshot(owner_id, receipt.thread_id)
 
     # Exactly one edit survived, it is retrievable, and it is pending. No agent
     # path writes a resume.
@@ -1232,6 +1233,9 @@ def test_a_proposed_edit_reaches_the_pending_table_and_the_rejections_reach_the_
     assert pending[0]["applicable"] is True
     assert pending[0]["original"] == LEADERSHIP_BULLET
     assert pending[0]["rewrite"] == accepted_rewrite
+    assert snapshot.messages[-1].content == (
+        "1 evidence-supported resume edit is pending below for your approval."
+    )
 
     # Both rejections came back to the model with a reason it could act on.
     assert "40" in _rendered(agent.requests[1])
@@ -1269,6 +1273,41 @@ def test_reply_cannot_claim_resume_edits_that_do_not_match_tool_results():
         )
 
     assert error.value.failure_code == "structured_output_invalid"
+
+
+def test_edit_turn_renders_actual_results_and_labels_uncertainty():
+    block_id = _leadership_block_id()
+    agent = ScriptedDeepAgent(
+        responses=[
+            tool_call(
+                "propose_resume_edit",
+                {
+                    "block_id": block_id,
+                    "rewrite": "Led a team of 40 engineers building semiconductor yield analytics.",
+                },
+                "call-edit",
+            ),
+            submission(
+                "Three edits are pending.",
+                assumptions=["The role may include formal people management"],
+                missing_information=["Direct-report count"],
+                follow_up_question="How many direct reports did you manage?",
+            ),
+        ]
+    )
+
+    reply = _model(agent).respond(
+        [],
+        RESUME_TEXT,
+        (),
+        _context(_RecordingDiscovery([])),
+    )
+
+    assert "No resume edit became pending." in reply.content
+    assert "Three edits" not in reply.content
+    assert "Assumptions, not resume claims" in reply.content
+    assert "Missing or unverified: Direct-report count." in reply.content
+    assert reply.content.endswith("How many direct reports did you manage?")
 
 
 def test_get_conversation_model_returns_the_loop_adapter():

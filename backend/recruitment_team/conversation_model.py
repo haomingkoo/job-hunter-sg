@@ -54,6 +54,18 @@ class ConversationReply(BaseModel):
             "Leave empty when no edit became pending."
         ),
     )
+    assumptions: list[str] = Field(
+        default_factory=list,
+        description="Interpretations that must stay outside resume edits.",
+    )
+    missing_information: list[str] = Field(
+        default_factory=list,
+        description="Material candidate facts that remain unknown or unverified.",
+    )
+    follow_up_question: str = Field(
+        default="",
+        description="One optional question whose answer would materially improve the work.",
+    )
 
     @field_validator("reply")
     @classmethod

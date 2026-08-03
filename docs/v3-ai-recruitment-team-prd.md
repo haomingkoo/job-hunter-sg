@@ -577,6 +577,9 @@ rather than converted into false precision. Exact evidence is recorded in the pa
 - Resume length safety is relative to the original block rather than a global word cap.
   After any edit attempt, the structured reply must identify exactly the accepted pending
   block IDs; a rejected or prior attempt cannot be described as a current draft.
+- Candidate-facing edit status is rendered from the accepted tool results rather than
+  free-form narration. The agent may still state interpretations as assumptions, identify
+  missing or unverified facts, and ask one useful question outside the resume draft.
 - Add a real opt-in local model E2E that fails non-zero unless output, activity events, reviewer coverage, structured judge submissions, and final quality status pass.
 - The local E2E must write its complete report on both success and failure, including
   structured failure type, retryability, root validation code, activity, and spans.

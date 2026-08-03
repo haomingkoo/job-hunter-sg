@@ -99,6 +99,27 @@ def _final_reply_text(state) -> str:
     return ""
 
 
+def _resume_edit_reply(edits: list[dict], reply: ConversationReply) -> str:
+    count = len(edits)
+    if count:
+        noun = "edit is" if count == 1 else "edits are"
+        paragraphs = [f"{count} evidence-supported resume {noun} pending below for your approval."]
+    else:
+        paragraphs = [
+            "No resume edit became pending. The attempted rewrites did not stay within your confirmed evidence."
+        ]
+    assumptions = [item.strip() for item in reply.assumptions if item.strip()]
+    missing = [item.strip() for item in reply.missing_information if item.strip()]
+    if assumptions:
+        paragraphs.append(f"Assumptions, not resume claims: {'; '.join(assumptions)}.")
+    if missing:
+        paragraphs.append(f"Missing or unverified: {'; '.join(missing)}.")
+    question = reply.follow_up_question.strip()
+    if question:
+        paragraphs.append(question)
+    return "\n\n".join(paragraphs)
+
+
 def _thread_state_block(context: ConversationContext, preferences: tuple[PreferenceFact, ...]) -> str:
     """Serialize thread state without duplicating posting content."""
     state = {
@@ -362,10 +383,15 @@ class DeepAgentConversationModel:
                     "coordinator reported resume edits that do not match the accepted tool results",
                     decision=classify_failure("structured_output_invalid"),
                 )
+            content = (
+                _resume_edit_reply(context.proposed_edits, reply)
+                if edit_attempted
+                else reply.reply.strip()
+            )
             span.set_attribute("outcome", "submitted")
             return ModelReply(
                 prompt_version=COORDINATOR_PROMPT_VERSION,
-                content=reply.reply.strip(),
+                content=content,
                 model_name=_model_name(state),
                 preference_updates=tuple(
                     PreferenceUpdate(

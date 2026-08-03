@@ -84,7 +84,7 @@ JSON with an empty-object default.
 | #97 | Complete restart, disconnect, duplicate-delivery, partial-artifact, and idempotent recovery. |
 | #98 | Prove the complete journey on narrow screens, keyboard, live regions, and reduced motion. |
 | #99 | Prove two-model portability and the authenticated semantic journey in isolated Railway staging. |
-| #106 | PRs #209-#214 and both private canaries pass. Production rebuilds the 64-field profile, persists the 18-criterion target, and now rejects semantically unsupported edits. The same turn then exposed a stale absolute 40-word gate and a reply/tool-result mismatch: zero edits were pending while prose claimed three. Deploy the truthful-result contract and relative-length rule, then pass safe pending draft -> reload acceptance. |
+| #106 | PRs #209-#215 and both private canaries pass. Production rebuilds the 64-field profile, persists the 18-criterion target, rejects unsupported edits, and removed the stale absolute word cap. A retest still rendered old free-form prose claiming three pending edits while the structured field and UI correctly had zero. Render edit outcomes from accepted tool results, then pass safe pending draft -> reload -> approval -> new version -> download acceptance. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
 
 ## Verification boundary
