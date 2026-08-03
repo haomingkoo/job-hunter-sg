@@ -217,8 +217,6 @@ def _targeted_correction_data(
         "prompt_version": ROLE_EVIDENCE_ASSESSOR_PROMPT_VERSION,
         "validation_code": failure,
         "criterion": asdict(criterion),
-        "candidate_profile_fields": [asdict(field) for field in request.candidate_profile_fields],
-        "resume_blocks": [asdict(block) for block in request.resume_blocks],
         "failed_judgment": failed_judgment,
     }
     orphaned_ids = _orphaned_evidence_ids(failure)
@@ -231,7 +229,7 @@ def _targeted_correction_data(
         # resubmitting the identical rejected judgment unchanged rather than
         # attempting a fix. Handing over the exact valid field IDs removes
         # that search entirely.
-        data["orphaned_evidence_valid_field_ids"] = {
+        valid_field_ids = {
             evidence_id: sorted(
                 field.field_id
                 for field in request.candidate_profile_fields
@@ -239,6 +237,25 @@ def _targeted_correction_data(
             )
             for evidence_id in orphaned_ids
         }
+        relevant_field_ids = {
+            *failed_judgment["candidate_profile_field_ids"],
+            *(field_id for field_ids in valid_field_ids.values() for field_id in field_ids),
+        }
+        cited_evidence_ids = set(failed_judgment["resume_evidence_ids"])
+        data["candidate_profile_fields"] = [
+            asdict(field)
+            for field in request.candidate_profile_fields
+            if field.field_id in relevant_field_ids
+        ]
+        data["resume_blocks"] = [
+            asdict(block)
+            for block in request.resume_blocks
+            if block.evidence_id in cited_evidence_ids
+        ]
+        data["orphaned_evidence_valid_field_ids"] = valid_field_ids
+    else:
+        data["candidate_profile_fields"] = [asdict(field) for field in request.candidate_profile_fields]
+        data["resume_blocks"] = [asdict(block) for block in request.resume_blocks]
     unsupported_numbers = _unsupported_numbers(failure)
     if unsupported_numbers:
         # A numeric_claim failure often means the narrative states a computed
