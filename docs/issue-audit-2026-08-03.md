@@ -84,13 +84,14 @@ JSON with an empty-object default.
 | #97 | Complete restart, disconnect, duplicate-delivery, partial-artifact, and idempotent recovery. |
 | #98 | Prove the complete journey on narrow screens, keyboard, live regions, and reduced motion. |
 | #99 | Prove two-model portability and the authenticated semantic journey in isolated Railway staging. |
-| #106 | Local entity-scoped extraction, semantic consolidation, correction, and independent evaluation pass both private canaries with exact provenance; merge, deployment, and signed-in browser acceptance remain. |
+| #106 | PR #209 and both private canaries pass. Production proved agent-owned search, planning, recommendations, assumptions, and persisted shortlist, then exposed a stale automatic-study receipt that blocks target selection after a profile-policy change. Merge/deploy its focused correction and pass target -> pending draft -> reload acceptance. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
 
 ## Verification boundary
 
-The current #106 branch passes 994 backend and repository-level tests with four explicit
-skips, 94 frontend tests, and the frontend production build. Compile, Ruff, ty, project
+PR #209 passed 994 backend and repository-level tests with four explicit skips and 94
+frontend tests. Its focused production follow-up passes 996 tests with four explicit skips,
+95 frontend tests, and the frontend production build. Compile, Ruff, ty, project
 `pip-audit`, `npm audit`, `pip check`, and Gitleaks pass. The installed-environment audit
 is intentionally not used as project
 evidence because it includes unrelated development packages; the same requirements-file

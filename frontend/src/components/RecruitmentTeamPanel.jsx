@@ -65,6 +65,7 @@ export default function RecruitmentTeamPanel({
   const archived = snapshot?.status === "archived";
   const awaitingAnswer = snapshot?.workflow_state === "awaiting_candidate_answer";
   const candidateStudyRunning = snapshot?.case_facts?.candidate_profile_status === "running";
+  const candidateProfileReady = snapshot?.case_facts?.candidate_profile_status === "completed";
   const persistedRunActive = !busy && events.at(-1)?.status === "running";
   const plan = snapshot?.case_facts?.plan || [];
   const recommendations = snapshot?.case_facts?.recommendations || [];
@@ -1167,10 +1168,10 @@ export default function RecruitmentTeamPanel({
                           <button
                             type="button"
                             onClick={() => updateJob(`/api/recruitment-team/threads/${threadId}/jobs/${job.job_id}/select`)}
-                            disabled={busy || archived}
+                            disabled={busy || archived || !candidateProfileReady}
                             className="rounded-xl bg-[#384959] px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
                           >
-                            Select target
+                            {candidateProfileReady ? "Select target" : "Preparing resume profile"}
                           </button>
                         )}
                         {!shortlisted && !selected && (

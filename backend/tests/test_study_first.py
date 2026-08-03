@@ -5,7 +5,14 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from database import Base
-from models import CandidateProfileArtifact, RecruitmentActivityEvent, RecruitmentThread, ResumeVersion, User
+from models import (
+    CandidateProfileArtifact,
+    RecruitmentActivityEvent,
+    RecruitmentRun,
+    RecruitmentThread,
+    ResumeVersion,
+    User,
+)
 from recruitment_team.candidate_profile import (
     CandidateEvidenceProfile,
     CandidateProfileRun,
@@ -149,6 +156,71 @@ def test_dispatched_study_is_visible_and_links_the_completed_artifact():
         assert thread.case_facts["candidate_profile_status"] == "completed"
         assert thread.case_facts["candidate_profile_artifact_id"]
         assert [event.status for event in publisher.events] == [event.status for event in events]
+
+
+def test_stale_completed_dispatch_receipt_does_not_block_current_profile():
+    sessions = _sessions()
+    owner_id, resume_id, thread_id = _owner_resume_thread(sessions)
+    factory = ScriptedCandidateProfilerFactory([_run()], model_name="study-model")
+
+    with sessions() as db:
+        db.add(
+            RecruitmentRun(
+                id="legacy-study-run",
+                user_id=owner_id,
+                thread_id=thread_id,
+                idempotency_key=f"study:{resume_id}:{factory.model_name}",
+                command_type="study_resume_version",
+                status="completed",
+                trace_key="legacy-study-trace",
+            )
+        )
+        db.commit()
+
+        _run_dispatched_study(
+            db,
+            owner_id=owner_id,
+            resume_version_id=resume_id,
+            thread_id=thread_id,
+            profiler_factory=factory,
+            telemetry=RecordedTelemetry(),
+        )
+
+        thread = db.query(RecruitmentThread).filter_by(id=thread_id).one()
+        runs = db.query(RecruitmentRun).order_by(RecruitmentRun.id).all()
+        assert len(runs) == 2
+        assert thread.case_facts["candidate_profile_status"] == "completed"
+        assert thread.case_facts["candidate_profile_artifact_id"]
+
+
+def test_current_profile_is_linked_to_each_new_conversation_without_rerunning():
+    sessions = _sessions()
+    owner_id, resume_id, thread_id = _owner_resume_thread(sessions)
+    first_factory = ScriptedCandidateProfilerFactory([_run()], model_name="study-model")
+
+    with sessions() as db:
+        artifact = study_resume_version(
+            db,
+            owner_id=owner_id,
+            resume_version_id=resume_id,
+            profiler_factory=first_factory,
+            telemetry=RecordedTelemetry(),
+        )
+        second_factory = ScriptedCandidateProfilerFactory([], model_name="study-model")
+
+        _run_dispatched_study(
+            db,
+            owner_id=owner_id,
+            resume_version_id=resume_id,
+            thread_id=thread_id,
+            profiler_factory=second_factory,
+            telemetry=RecordedTelemetry(),
+        )
+
+        thread = db.query(RecruitmentThread).filter_by(id=thread_id).one()
+        assert thread.case_facts["candidate_profile_status"] == "completed"
+        assert thread.case_facts["candidate_profile_artifact_id"] == artifact.id
+        assert db.query(RecruitmentRun).count() == 0
 
 
 def test_second_thread_reuses_the_profile_after_an_operational_budget_change():
