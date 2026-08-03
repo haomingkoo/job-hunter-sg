@@ -74,11 +74,11 @@ def test_keyword_missing():
     assert not result.passed
 
 
-def test_length_too_long():
-    original = "Led a team"
-    tailored = " ".join(["word"] * 45)
+def test_long_block_can_be_rewritten_without_an_absolute_word_cap():
+    original = " ".join(["original"] * 45)
+    tailored = " ".join(["rewrite"] * 45)
     result = gate_length_sanity(original, tailored)
-    assert not result.passed
+    assert result.passed
 
 
 def test_length_bloated():

@@ -47,6 +47,13 @@ class ConversationReply(BaseModel):
     reply: str = Field(min_length=1)
     preference_updates: list[PreferenceUpdatePayload] = Field(default_factory=list)
     search_query: str = ""
+    pending_edit_block_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Block IDs whose propose_resume_edit call returned accepted=true in this turn. "
+            "Leave empty when no edit became pending."
+        ),
+    )
 
     @field_validator("reply")
     @classmethod

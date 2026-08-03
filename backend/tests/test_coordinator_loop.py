@@ -1204,7 +1204,10 @@ def test_a_proposed_edit_reaches_the_pending_table_and_the_rejections_reach_the_
                 {"block_id": block_id, "rewrite": accepted_rewrite},
                 "call-3",
             ),
-            submission("Drafted one evidence-safe rewrite of your leadership bullet."),
+            submission(
+                "Drafted one evidence-safe rewrite of your leadership bullet.",
+                pending_edit_block_ids=[block_id],
+            ),
         ]
     )
 
@@ -1234,6 +1237,38 @@ def test_a_proposed_edit_reaches_the_pending_table_and_the_rejections_reach_the_
     assert "40" in _rendered(agent.requests[1])
     assert "Missing facts from original: 12" in _rendered(agent.requests[2])
     assert agent.calls == 4
+
+
+def test_reply_cannot_claim_resume_edits_that_do_not_match_tool_results():
+    from recruitment_team.errors import ConversationUnavailable
+
+    block_id = _leadership_block_id()
+    agent = ScriptedDeepAgent(
+        responses=[
+            tool_call(
+                "propose_resume_edit",
+                {
+                    "block_id": block_id,
+                    "rewrite": "Led a team of 40 engineers building semiconductor yield analytics.",
+                },
+                "call-edit",
+            ),
+            submission(
+                "Drafted one pending edit.",
+                pending_edit_block_ids=[block_id],
+            ),
+        ]
+    )
+
+    with pytest.raises(ConversationUnavailable) as error:
+        _model(agent).respond(
+            [],
+            RESUME_TEXT,
+            (),
+            _context(_RecordingDiscovery([])),
+        )
+
+    assert error.value.failure_code == "structured_output_invalid"
 
 
 def test_get_conversation_model_returns_the_loop_adapter():

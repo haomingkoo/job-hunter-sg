@@ -251,6 +251,7 @@ class DeepAgentConversationModel:
 
         pending_question = ""
         submitted = False
+        edit_attempted = False
         with self._telemetry.operation(
             "conversation.loop",
             {
@@ -273,6 +274,11 @@ class DeepAgentConversationModel:
                             # called ConversationReply" in the activity stream.
                             submitted = submitted or event["kind"] == "tool_call"
                             continue
+                        if (
+                            event["kind"] == "tool_call"
+                            and event["tool_name"] == propose_resume_edit.name
+                        ):
+                            edit_attempted = True
                         if (
                             event["kind"] == "tool_call"
                             and event["tool_name"] == ask_candidate.name
@@ -320,6 +326,13 @@ class DeepAgentConversationModel:
                 # is invented: no preference update is recorded here.
                 prose = _final_reply_text(state)
                 if prose:
+                    if edit_attempted:
+                        span.set_attribute("failure_type", "validation")
+                        span.set_attribute("failure_code", "structured_output_invalid")
+                        raise ConversationUnavailable(
+                            "coordinator did not report its resume edit results structurally",
+                            decision=classify_failure("structured_output_invalid"),
+                        )
                     if not reply_is_complete(prose):
                         span.set_attribute("failure_type", "validation")
                         span.set_attribute("failure_code", "structured_output_invalid")
@@ -338,6 +351,15 @@ class DeepAgentConversationModel:
                 span.set_attribute("failure_code", "structured_output_invalid")
                 raise ConversationUnavailable(
                     "coordinator loop ended without a reply",
+                    decision=classify_failure("structured_output_invalid"),
+                )
+            actual_edit_ids = sorted(edit["block_id"] for edit in context.proposed_edits)
+            declared_edit_ids = sorted(reply.pending_edit_block_ids)
+            if edit_attempted and declared_edit_ids != actual_edit_ids:
+                span.set_attribute("failure_type", "validation")
+                span.set_attribute("failure_code", "structured_output_invalid")
+                raise ConversationUnavailable(
+                    "coordinator reported resume edits that do not match the accepted tool results",
                     decision=classify_failure("structured_output_invalid"),
                 )
             span.set_attribute("outcome", "submitted")
