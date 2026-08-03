@@ -22,10 +22,12 @@ from .candidate_profile import (
     CandidateProfileProgress,
     CandidateProfileProgressPublisher,
     CandidateProfilerFactory,
-    candidate_profile_execution_policy,
     candidate_profile_progress_event,
 )
-from .candidate_profile_store import SQLAlchemyCandidateProfileStore
+from .candidate_profile_store import (
+    SQLAlchemyCandidateProfileStore,
+    candidate_profile_artifact_is_current,
+)
 from .prompts import CANDIDATE_PROFILE_PROMPT_VERSION
 from .candidate_profile import CANDIDATE_PROFILE_DECOMPOSITION_VERSION
 from .telemetry import RecruitmentTelemetry
@@ -93,7 +95,7 @@ def study_resume_version(
         resume_version_id=resume_version_id,
         profiler_factory=profiler_factory,
     )
-    if cached is not None and cached.execution_policy == candidate_profile_execution_policy():
+    if cached is not None and candidate_profile_artifact_is_current(cached):
         return cached
     store = SQLAlchemyCandidateProfileStore(
         db,
@@ -108,7 +110,7 @@ def study_resume_version(
         "stage": "candidate_profile",
         "terminal_status": "completed",
     })
-    return store.complete(run.checkpoint_id, run.profile)
+    return store.complete(run.checkpoint_id, run.profile, run.evaluation)
 
 
 def _record_event(

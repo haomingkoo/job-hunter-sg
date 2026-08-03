@@ -112,6 +112,7 @@ def test_legacy_users_remain_unverified_when_verification_column_is_added(monkey
         "ALTER TABLE candidate_profile_artifacts ADD COLUMN execution_metrics JSON NOT NULL DEFAULT '{}'"
         in statements
     )
+    assert "ALTER TABLE candidate_profile_artifacts ADD COLUMN evaluation JSON" in statements
     assert (
         "ALTER TABLE target_assessment_artifacts ADD COLUMN execution_metrics JSON NOT NULL DEFAULT '{}'"
         in statements

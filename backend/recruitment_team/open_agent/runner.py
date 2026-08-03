@@ -93,31 +93,33 @@ def _target_execution_metrics(
 ) -> dict:
     attempts = list(model_attempts)
     for judge in judges:
-        attempts.append({
-            "stage": "target_assessment_judge",
-            "team_member": "quality_judge",
-            "model": str(judge.get("model_name") or ""),
-            "input_tokens": int(judge.get("input_tokens") or 0),
-            "output_tokens": int(judge.get("output_tokens") or 0),
-            "attempt_limit": config.AGENT_JUDGE_VALIDATION_ATTEMPTS,
-            "status": "success" if judge.get("disposition") else "validation_failed",
-            "validation_code": str(judge.get("score_reason") or "") if not judge.get("disposition") else "",
-        })
+        attempts.append(
+            {
+                "stage": "target_assessment_judge",
+                "team_member": "quality_judge",
+                "model": str(judge.get("model_name") or ""),
+                "input_tokens": int(judge.get("input_tokens") or 0),
+                "output_tokens": int(judge.get("output_tokens") or 0),
+                "attempt_limit": config.AGENT_JUDGE_VALIDATION_ATTEMPTS,
+                "status": "success" if judge.get("disposition") else "validation_failed",
+                "validation_code": str(judge.get("score_reason") or "") if not judge.get("disposition") else "",
+            }
+        )
     if correction and correction.get("attempted"):
-        attempts.append({
-            "stage": "target_assessment_correction",
-            "team_member": "coordinator",
-            "model": str(correction.get("model_name") or ""),
-            "input_tokens": int(correction.get("input_tokens") or 0),
-            "output_tokens": int(correction.get("output_tokens") or 0),
-            "attempt_count": int(correction.get("attempt_count") or 0),
-            "attempt_limit": config.RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS,
-            "status": str(correction.get("status") or ""),
-            "validation_code": str(correction.get("failure") or ""),
-        })
-    models = list(dict.fromkeys(
-        str(item.get("model") or "") for item in attempts if item.get("model")
-    ))
+        attempts.append(
+            {
+                "stage": "target_assessment_correction",
+                "team_member": "coordinator",
+                "model": str(correction.get("model_name") or ""),
+                "input_tokens": int(correction.get("input_tokens") or 0),
+                "output_tokens": int(correction.get("output_tokens") or 0),
+                "attempt_count": int(correction.get("attempt_count") or 0),
+                "attempt_limit": config.RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS,
+                "status": str(correction.get("status") or ""),
+                "validation_code": str(correction.get("failure") or ""),
+            }
+        )
+    models = list(dict.fromkeys(str(item.get("model") or "") for item in attempts if item.get("model")))
     return {
         "logical_run_id": request.trace_key,
         "trace_key": request.trace_key,
@@ -127,9 +129,7 @@ def _target_execution_metrics(
         "input_tokens": sum(int(item.get("input_tokens") or 0) for item in attempts),
         "output_tokens": sum(int(item.get("output_tokens") or 0) for item in attempts),
         "latency_ms": round(latency_ms, 3),
-        "validation_codes": [
-            str(item["validation_code"]) for item in attempts if item.get("validation_code")
-        ],
+        "validation_codes": [str(item["validation_code"]) for item in attempts if item.get("validation_code")],
         "models": models,
         "attempts": attempts,
         "terminal_status": terminal_status,
@@ -177,25 +177,30 @@ class OpenAgentTargetAssessmentRunner:
         )
 
         agent = self._build_agent(self._model_factory())
-        payload = {"messages": [{
-            "role": "user",
-            "content": (
-                "Assess this candidate against the target job. Consult whichever "
-                "personas you judge useful, however many times you judge useful. "
-                "Ask the candidate directly if you hit a real evidence gap.\n\n"
-                "Drafting resume edits is part of this job, not an optional extra. "
-                "Once the personas have reported, call propose_resume_edit for every "
-                "gap where the candidate's own evidence already supports stronger "
-                "wording, whether that evidence is in their resume or in an answer "
-                "they gave you. Many gaps are vocabulary rather than experience: the "
-                "candidate did the work but did not phrase it the way this posting "
-                "does, and those are the edits worth drafting.\n\n"
-                "Never invent experience. Where the gap is genuinely missing "
-                "experience rather than weak wording, say so in your assessment and "
-                "do not draft an edit for it. The candidate has to defend every line "
-                "of their resume in an interview."
-            ),
-        }]}
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Assess this candidate against the target job. Consult whichever "
+                        "personas you judge useful, however many times you judge useful. "
+                        "Ask the candidate directly if you hit a real evidence gap.\n\n"
+                        "Drafting resume edits is part of this job, not an optional extra. "
+                        "Plan the work yourself and call propose_resume_edit for every "
+                        "gap where the candidate's own evidence already supports stronger "
+                        "wording, whether that evidence is in their resume or in an answer "
+                        "they gave you. You may draft before or after delegation whenever the "
+                        "evidence is sufficient. Many gaps are vocabulary rather than experience: the "
+                        "candidate did the work but did not phrase it the way this posting "
+                        "does, and those are the edits worth drafting.\n\n"
+                        "Never invent experience. Where the gap is genuinely missing "
+                        "experience rather than weak wording, say so in your assessment and "
+                        "do not draft an edit for it. The candidate has to defend every line "
+                        "of their resume in an interview."
+                    ),
+                }
+            ]
+        }
         run_config = {
             "recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS,
             "configurable": {"thread_id": str(uuid.uuid4())},
@@ -282,24 +287,24 @@ class OpenAgentTargetAssessmentRunner:
         drive_started = time.perf_counter()
         with context.assessment_context(request, initial_edits=initial_edits):
             try:
-                for event in iter_progress_events(
-                    agent, payload, run_config, skip_tool_call_ids=skip_tool_call_ids
-                ):
+                for event in iter_progress_events(agent, payload, run_config, skip_tool_call_ids=skip_tool_call_ids):
                     if event["kind"] == "model_attempt":
                         event_id = str(event.get("id") or "")
                         if event_id and event_id in seen_model_event_ids:
                             continue
                         if event_id:
                             seen_model_event_ids.add(event_id)
-                        model_attempts.append({
-                            "stage": "target_assessment",
-                            "team_member": event.get("team_member") or "coordinator",
-                            "model": event.get("model") or "",
-                            "input_tokens": int(event.get("input_tokens") or 0),
-                            "output_tokens": int(event.get("output_tokens") or 0),
-                            "attempt_limit": config.AGENT_MAX_TOOL_ITERATIONS,
-                            "status": "success",
-                        })
+                        model_attempts.append(
+                            {
+                                "stage": "target_assessment",
+                                "team_member": event.get("team_member") or "coordinator",
+                                "model": event.get("model") or "",
+                                "input_tokens": int(event.get("input_tokens") or 0),
+                                "output_tokens": int(event.get("output_tokens") or 0),
+                                "attempt_limit": config.AGENT_MAX_TOOL_ITERATIONS,
+                                "status": "success",
+                            }
+                        )
                         continue
                     if event["kind"] == "tool_call" and event["tool_name"] == ask_candidate.name:
                         pending_question = format_questions(event.get("args") or {})
@@ -362,9 +367,10 @@ class OpenAgentTargetAssessmentRunner:
             # nicely, and duplicate-call rejection does not reject a reworded
             # question, so nothing actually stopped a run
             # pausing forever. Refusing to yield the pause is what bounds it.
-            if agent.get_state(run_config).interrupts and _ask_rounds_so_far(
-                agent, run_config
-            ) > config.OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS:
+            if (
+                agent.get_state(run_config).interrupts
+                and _ask_rounds_so_far(agent, run_config) > config.OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS
+            ):
                 yield TargetAssessmentProgress(
                     team_member="coordinator",
                     status="running",
@@ -407,10 +413,7 @@ class OpenAgentTargetAssessmentRunner:
         judge = self._run_judge(judge_model, request, specialist_runs, synthesis)
         judge_attempts = [judge]
         correction = None
-        if (
-            judge["disposition"] == "revise"
-            and config.RECRUITMENT_MAX_SYNTHESIS_CORRECTIONS == 1
-        ):
+        if judge["disposition"] == "revise" and config.RECRUITMENT_MAX_SYNTHESIS_CORRECTIONS == 1:
             yield TargetAssessmentProgress(
                 team_member="coordinator",
                 status="running",
@@ -475,9 +478,7 @@ class OpenAgentTargetAssessmentRunner:
     def _run_judge(self, model, request: TargetAssessmentRequest, specialist_runs: list[dict], synthesis: str) -> dict:
         from ..prompts.target_assessment import TARGET_JUDGE_SYSTEM_PROMPT
 
-        completed_personas = {
-            str(run.get("persona_id") or "") for run in specialist_runs
-        }
+        completed_personas = {str(run.get("persona_id") or "") for run in specialist_runs}
         data = {
             "target_job": asdict(request.target_job),
             "candidate_profile": asdict(request.candidate_profile),
@@ -513,10 +514,20 @@ class OpenAgentTargetAssessmentRunner:
         if payload is None:
             return {
                 "disposition": "block",
-                "strengths": [], "weaknesses": [f"Judge call failed: {failure}"],
-                "deductions": [], "evidence_gaps": [], "score": 0, "score_reason": failure,
-                "confidence": 0, "confidence_reason": failure,
-                "rubric_scores": {"evidence_grounding": 0, "role_coverage": 0, "decision_usefulness": 0, "fairness_and_boundaries": 0},
+                "strengths": [],
+                "weaknesses": [f"Judge call failed: {failure}"],
+                "deductions": [],
+                "evidence_gaps": [],
+                "score": 0,
+                "score_reason": failure,
+                "confidence": 0,
+                "confidence_reason": failure,
+                "rubric_scores": {
+                    "evidence_grounding": 0,
+                    "role_coverage": 0,
+                    "decision_usefulness": 0,
+                    "fairness_and_boundaries": 0,
+                },
             }
         return {**payload, "model_name": model_name, "input_tokens": input_tokens, "output_tokens": output_tokens}
 

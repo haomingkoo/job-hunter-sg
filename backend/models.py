@@ -474,6 +474,7 @@ class CandidateProfileArtifact(Base):
     scopes: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     execution_metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    evaluation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

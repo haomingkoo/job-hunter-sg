@@ -6,7 +6,7 @@ import json
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from html import unescape
 from typing import Any, Literal, Protocol
@@ -21,6 +21,7 @@ from validation_gates import _extract_numbers
 
 from .prompts import (
     CANDIDATE_PROFILE_PROMPT_VERSION,
+    CANDIDATE_PROFILE_REVIEW_VERSION,
     CANDIDATE_PROFILE_SYSTEM_PROMPT,
     CANDIDATE_PROFILE_VALIDATION_FEEDBACK_VERSION,
     candidate_profile_validation_feedback,
@@ -40,7 +41,7 @@ ProfileCategory = Literal[
     "ambiguity",
 ]
 EvidenceKind = Literal["direct", "transferable_hypothesis"]
-CANDIDATE_PROFILE_DECOMPOSITION_VERSION = "semantic-section-record-v1"
+CANDIDATE_PROFILE_DECOMPOSITION_VERSION = "semantic-entity-v3"
 
 
 def candidate_profile_execution_policy() -> dict[str, str | int]:
@@ -49,6 +50,8 @@ def candidate_profile_execution_policy() -> dict[str, str | int]:
     return {
         "prompt_version": CANDIDATE_PROFILE_PROMPT_VERSION,
         "validation_feedback_version": CANDIDATE_PROFILE_VALIDATION_FEEDBACK_VERSION,
+        "review_version": CANDIDATE_PROFILE_REVIEW_VERSION,
+        "review_attempts": config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS,
         "model_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
         "validation_attempts": config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
@@ -132,6 +135,7 @@ class CandidateProfileRun:
     model_call_count: int = 0
     checkpoint_hit_count: int = 0
     checkpoint_id: str = ""
+    evaluation: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -353,21 +357,22 @@ def _profile_scopes(blocks: list[dict[str, Any]]) -> tuple[_ProfileScope, ...]:
     grouped: list[tuple[str, list[dict[str, Any]]]] = []
     current: list[dict[str, Any]] = []
     current_section = ""
-    previous_kind = ""
     for block in blocks:
         section_key = str(block.get("section_key") or "")
         kind = str(block.get("kind") or "")
         starts_scope = bool(current) and (
             section_key != current_section
             or kind == "section_heading"
-            or (kind == "paragraph" and previous_kind == "bullet")
+            or (
+                kind == "entry_heading"
+                and any(item.get("kind") != "section_heading" for item in current)
+            )
         )
         if starts_scope:
             grouped.append((current_section, current))
             current = []
         current.append(block)
         current_section = section_key
-        previous_kind = kind
     if current:
         grouped.append((current_section, current))
 
@@ -397,6 +402,7 @@ def _profile_checkpoint_id(
             "resume_revision": resume_document["revision"],
             "prompt_version": CANDIDATE_PROFILE_PROMPT_VERSION,
             "validation_feedback_version": CANDIDATE_PROFILE_VALIDATION_FEEDBACK_VERSION,
+            "review_version": CANDIDATE_PROFILE_REVIEW_VERSION,
             "decomposition_version": CANDIDATE_PROFILE_DECOMPOSITION_VERSION,
             "model": configured_model_name,
         },
@@ -406,13 +412,17 @@ def _profile_checkpoint_id(
     return sha256(identity.encode()).hexdigest()
 
 
-def _response_payload(response: AIMessage) -> tuple[dict | None, dict, str]:
+def _response_payload(
+    response: AIMessage,
+    tool: StructuredTool = _SUBMIT_PROFILE_TOOL,
+    schema: type[BaseModel] = _ProfileSubmission,
+) -> tuple[dict | None, dict, str]:
     failed = {"content": response.content, "tool_calls": response.tool_calls}
-    calls = [call for call in response.tool_calls if call.get("name") == _SUBMIT_PROFILE_TOOL.name]
+    calls = [call for call in response.tool_calls if call.get("name") == tool.name]
     if len(response.tool_calls) != 1 or len(calls) != 1:
         return None, failed, "tool_call:required_exactly_one"
     try:
-        return _ProfileSubmission(**(calls[0].get("args") or {})).model_dump(), failed, ""
+        return schema(**(calls[0].get("args") or {})).model_dump(), failed, ""
     except ValidationError:
         return None, failed, "schema_validation"
 
@@ -471,6 +481,49 @@ def _validate_submission(
             validation_codes.append(f"field:{field_id}:unsupported_numbers({','.join(unsupported)})")
 
     return (None, "|".join(validation_codes)) if validation_codes else (payload, "")
+
+
+def _build_profile(
+    resume_document: dict[str, Any],
+    accepted_fields: list[dict[str, Any]],
+) -> CandidateEvidenceProfile:
+    blocks = {
+        str(block["id"]): block
+        for block in resume_document.get("blocks", [])
+        if isinstance(block, dict) and block.get("id")
+    }
+    fields = tuple(
+        CandidateProfileField(
+            field_id=str(item["field_id"]).strip(),
+            category=item["category"],
+            statement=unescape(str(item["statement"])).strip(),
+            resume_evidence_ids=tuple(str(value) for value in item["resume_evidence_ids"]),
+            evidence_quotes=tuple(unescape(str(value)) for value in item["evidence_quotes"]),
+            evidence_kind=item["evidence_kind"],
+            evidence_support_score=int(item["evidence_support_score"]),
+            score_reason=unescape(str(item["score_reason"])).strip(),
+        )
+        for item in _canonicalize_profile_fields(accepted_fields)
+    )
+    cited_ids = {evidence_id for field in fields for evidence_id in field.resume_evidence_ids}
+    cited = tuple(
+        CandidateProfileEvidence(
+            evidence_id=block_id,
+            kind=str(blocks[block_id].get("kind") or ""),
+            text=str(blocks[block_id].get("text") or ""),
+            source_locator=str((blocks[block_id].get("source") or {}).get("locator") or ""),
+            section_key=str(blocks[block_id].get("section_key") or ""),
+        )
+        for block_id in blocks
+        if block_id in cited_ids
+    )
+    return CandidateEvidenceProfile(
+        profile_version=CANDIDATE_PROFILE_PROMPT_VERSION,
+        resume_document_id=str(resume_document["document_id"]),
+        resume_revision=str(resume_document["revision"]),
+        fields=fields,
+        cited_resume_evidence=cited,
+    )
 
 
 def _correction_evidence_boundary(
@@ -974,42 +1027,10 @@ class LangChainCandidateProfiler:
                 checkpoint_id=checkpoint_id,
                 completed_scope_ids=tuple(completed_scope_ids),
             )
-        accepted_fields = _canonicalize_profile_fields(accepted_fields)
-
-        fields = tuple(
-            CandidateProfileField(
-                field_id=str(item["field_id"]).strip(),
-                category=item["category"],
-                statement=unescape(str(item["statement"])).strip(),
-                resume_evidence_ids=tuple(str(value) for value in item["resume_evidence_ids"]),
-                evidence_quotes=tuple(unescape(str(value)) for value in item["evidence_quotes"]),
-                evidence_kind=item["evidence_kind"],
-                evidence_support_score=int(item["evidence_support_score"]),
-                score_reason=unescape(str(item["score_reason"])).strip(),
-            )
-            for item in accepted_fields
-        )
-        cited_ids = {evidence_id for field in fields for evidence_id in field.resume_evidence_ids}
-        cited = tuple(
-            CandidateProfileEvidence(
-                evidence_id=block_id,
-                kind=str(blocks[block_id].get("kind") or ""),
-                text=str(blocks[block_id].get("text") or ""),
-                source_locator=str((blocks[block_id].get("source") or {}).get("locator") or ""),
-                section_key=str(blocks[block_id].get("section_key") or ""),
-            )
-            for block_id in blocks
-            if block_id in cited_ids
-        )
+        profile = _build_profile(resume_document, accepted_fields)
         cumulative = self._execution_metrics(checkpoint_id)
         return CandidateProfileRun(
-            profile=CandidateEvidenceProfile(
-                profile_version=CANDIDATE_PROFILE_PROMPT_VERSION,
-                resume_document_id=str(resume_document["document_id"]),
-                resume_revision=str(resume_document["revision"]),
-                fields=fields,
-                cited_resume_evidence=cited,
-            ),
+            profile=profile,
             model_name=str((cumulative.get("models") or [model_name])[-1]),
             attempt_count=int(cumulative.get("model_call_count") or model_call_count),
             input_tokens=int(cumulative.get("input_tokens") or input_tokens) or None,
@@ -1047,10 +1068,30 @@ class LangChainCandidateProfilerFactory:
         checkpoint_store: CandidateProfileCheckpointStore,
         progress_publisher: CandidateProfileProgressPublisher | None = None,
     ) -> CandidateProfiler:
-        return LangChainCandidateProfiler(
+        from .candidate_profile_review import (
+            REVIEW_STAGE_COUNT,
+            GloballyReviewedCandidateProfiler,
+        )
+
+        reviewed_progress_publisher = None
+        if progress_publisher is not None:
+            def reviewed_progress_publisher(progress: CandidateProfileProgress) -> None:
+                progress_publisher(replace(
+                    progress,
+                    scope_count=progress.scope_count + REVIEW_STAGE_COUNT,
+                ))
+
+        extractor = LangChainCandidateProfiler(
             self._model,
             telemetry=self._telemetry,
             checkpoint_store=checkpoint_store,
+            progress_publisher=reviewed_progress_publisher,
+        )
+        return GloballyReviewedCandidateProfiler(
+            extractor,
+            self._model,
+            checkpoint_store=checkpoint_store,
+            telemetry=self._telemetry,
             progress_publisher=progress_publisher,
         )
 

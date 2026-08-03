@@ -103,6 +103,7 @@ from .candidate_profile_store import (
     RETRY_FEEDBACK_SCOPE_KEY,
     CandidateProfileCheckpointMismatch,
     SQLAlchemyCandidateProfileStore,
+    candidate_profile_artifact_is_current,
 )
 from .discovery import DiscoveryPort, JobPostingVariant, JobSnapshot, JobSource
 from .role_success import (
@@ -225,6 +226,19 @@ def _trim_to_word(text: str, limit: int) -> str:
     head = text[:limit]
     cut = head.rfind(" ")
     return (head[:cut] if cut > 0 else head).strip()
+
+
+def _current_candidate_profile_artifact(
+    artifacts: list[CandidateProfileArtifact],
+) -> CandidateProfileArtifact | None:
+    return next(
+        (
+            item
+            for item in artifacts
+            if candidate_profile_artifact_is_current(item)
+        ),
+        None,
+    )
 
 
 RESUME_TITLE_MAX_CHARS = 60
@@ -1320,7 +1334,7 @@ class RecruitmentTeam:
             store.execution_metrics(run.checkpoint_id),
             semantic_limit=config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
         )
-        artifact = store.complete(run.checkpoint_id, run.profile)
+        artifact = store.complete(run.checkpoint_id, run.profile, run.evaluation)
         facts = dict(thread.case_facts)
         facts["candidate_profile_artifact_id"] = artifact.id
         facts["candidate_profile_status"] = artifact.status
@@ -1994,8 +2008,6 @@ class RecruitmentTeam:
         resume: ResumeVersion,
     ) -> CandidateEvidenceProfile | None:
         artifact_id = thread.case_facts.get("candidate_profile_artifact_id")
-        from resume_document import SCHEMA_VERSION
-
         artifacts = (
             self._db.query(CandidateProfileArtifact)
             .filter(
@@ -2006,14 +2018,7 @@ class RecruitmentTeam:
             .order_by(CandidateProfileArtifact.updated_at.desc())
             .all()
         )
-        artifact = next(
-            (
-                item for item in artifacts
-                if isinstance(item.profile, dict)
-                and (item.execution_policy or {}).get("resume_document_schema_version") == SCHEMA_VERSION
-            ),
-            None,
-        )
+        artifact = _current_candidate_profile_artifact(artifacts)
         if artifact is None or artifact.profile is None:
             return None
         if artifact_id != artifact.id or thread.case_facts.get("candidate_profile_status") != "completed":
@@ -2093,7 +2098,6 @@ class RecruitmentTeam:
         thread_id: str,
     ) -> CandidateProfileArtifactSnapshot | None:
         thread = self._owned_thread(owner_id, thread_id)
-        from resume_document import SCHEMA_VERSION
         artifacts = (
             self._db.query(CandidateProfileArtifact)
             .filter(
@@ -2104,14 +2108,7 @@ class RecruitmentTeam:
             .order_by(CandidateProfileArtifact.updated_at.desc())
             .all()
         )
-        artifact = next(
-            (
-                item for item in artifacts
-                if isinstance(item.profile, dict)
-                and (item.execution_policy or {}).get("resume_document_schema_version") == SCHEMA_VERSION
-            ),
-            None,
-        )
+        artifact = _current_candidate_profile_artifact(artifacts)
         if artifact is None:
             return None
         return CandidateProfileArtifactSnapshot(
@@ -2123,9 +2120,14 @@ class RecruitmentTeam:
             model_name=artifact.model_name,
             execution_policy=artifact.execution_policy,
             status=artifact.status,
-            completed_scope_ids=tuple(scope_id for scope_id in artifact.scopes if scope_id != RETRY_FEEDBACK_SCOPE_KEY),
+            completed_scope_ids=tuple(
+                scope_id
+                for scope_id in artifact.scopes
+                if scope_id != RETRY_FEEDBACK_SCOPE_KEY and not scope_id.startswith("__")
+            ),
             execution_metrics=artifact.execution_metrics or {},
             profile=artifact.profile,
+            evaluation=artifact.evaluation,
             error=artifact.error,
             updated_at=artifact.updated_at,
         )

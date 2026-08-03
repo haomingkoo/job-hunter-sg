@@ -19,7 +19,7 @@ from recruitment_team.candidate_profile import (  # noqa: E402
     CandidateProfileCheckpointStore,
     CandidateProfileTransportError,
     CandidateProfileValidationError,
-    LangChainCandidateProfiler,
+    LangChainCandidateProfilerFactory,
     candidate_profile_execution_policy,
 )
 from recruitment_team.execution_metrics import merge_execution_event  # noqa: E402
@@ -37,12 +37,15 @@ def _output_path(resume_path: Path, requested: str) -> Path:
 class JsonCandidateProfileCheckpointStore(CandidateProfileCheckpointStore):
     """Local, explicit checkpoint file for resumable real-resume canaries."""
 
-    def __init__(self, path: Path, execution_policy: dict):
+    def __init__(self, path: Path | None, execution_policy: dict):
         self.path = path
         self.execution_policy = execution_policy
+        self._memory: dict | None = None
 
     def _read(self, checkpoint_id: str) -> dict:
-        if not self.path.exists():
+        if self.path is None and self._memory is not None:
+            payload = self._memory
+        elif self.path is None or not self.path.exists():
             return {
                 "checkpoint_id": checkpoint_id,
                 "execution_policy": self.execution_policy,
@@ -50,7 +53,8 @@ class JsonCandidateProfileCheckpointStore(CandidateProfileCheckpointStore):
                 "retry_feedback": {},
                 "execution_metrics": {},
             }
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        else:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
         stored_id = payload.get("checkpoint_id")
         if stored_id != checkpoint_id:
             raise ValueError(
@@ -68,6 +72,9 @@ class JsonCandidateProfileCheckpointStore(CandidateProfileCheckpointStore):
         return payload
 
     def _write(self, document: dict) -> None:
+        if self.path is None:
+            self._memory = document
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         temporary.write_text(
@@ -140,17 +147,16 @@ def main(argv: list[str] | None = None) -> int:
     if checkpoint_path == output_path:
         parser.error("--checkpoint and --output must be different paths")
     execution_policy = candidate_profile_execution_policy()
-    checkpoint_store = (
-        JsonCandidateProfileCheckpointStore(checkpoint_path, execution_policy) if checkpoint_path is not None else None
-    )
+    checkpoint_store = JsonCandidateProfileCheckpointStore(checkpoint_path, execution_policy)
     telemetry = RecordedTelemetry()
     report = {
         "status": "failed",
         "resume_pdf": str(resume_path),
         "parse_report": None,
-        "execution_policy": {**execution_policy, "checkpoint_enabled": checkpoint_store is not None},
+        "execution_policy": {**execution_policy, "checkpoint_enabled": checkpoint_path is not None},
         "run": None,
         "profile": None,
+        "evaluation": None,
         "error": None,
         "spans": [],
         "checkpoint": {
@@ -183,9 +189,8 @@ def main(argv: list[str] | None = None) -> int:
             "content_warnings": parsed["content_warnings"],
             "document_block_count": len(document["blocks"]),
         }
-        run = LangChainCandidateProfiler(
-            telemetry=telemetry,
-            checkpoint_store=checkpoint_store,
+        run = LangChainCandidateProfilerFactory(telemetry=telemetry).create(
+            checkpoint_store
         ).profile(document)
         report["status"] = "completed"
         report["run"] = {
@@ -200,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
             "checkpoint_id": run.checkpoint_id,
         }
         report["profile"] = asdict(run.profile)
+        report["evaluation"] = run.evaluation
     except CandidateProfileValidationError as error:
         failure_code = "information_absent" if error.validation_code == "profile:empty" else "semantic_fixable"
         report["error"] = {
