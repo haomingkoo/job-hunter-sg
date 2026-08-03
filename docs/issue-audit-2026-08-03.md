@@ -8,12 +8,18 @@ acceptance contract was implemented.
 
 ## Closed as completed
 
-Issues #86, #90, #91, #101, #104, #110, #111, #112, and #186 were closed only after their current
+Issues #42, #44, #86, #90, #91, #93, #101, #104, #110, #111, #112, #113,
+and #186 were closed only after their current
 implementation and focused regression coverage were verified. Issue #184 was
 closed after production browser acceptance of streamed Shortlist and Select
 Target behavior. Issue #90 was merged in PR #191 and deployed on Railway at exact
 commit `e425b50aa6690a4d2c69e12e20a9add9042b6868`. Issue #186 was merged in PR #192,
 deployed at exact commit `7a44e740482f85afa761f1bd4e2e635ec8c77244`, and production-browser verified.
+Issues #42, #44, and #93 were merged in PR #194. Production acceptance found two
+evidence defects, so #93 was reopened, corrected in PR #195, and closed only after
+Railway deployment `f47cd26b-47ec-48c4-8f20-53571a9075b2` ran exact commit
+`b3f49bc9ded4b3acf51819997af53583a7e7449d` and the corrected browser journey passed.
+Issue #113 was delivered by PR #189.
 
 ## Closed as obsolete or duplicate
 
@@ -31,7 +37,6 @@ deployed at exact commit `7a44e740482f85afa761f1bd4e2e635ec8c77244`, and product
 
 | Issue | Observed remaining outcome |
 |---|---|
-| #93 | Implemented locally with separate posting/MOM/user observations and fail-closed model-backed rehearsal; merge, deploy, and production acceptance remain. |
 | #96 | Connect traces, semantic evaluation, field-level calibration, and regression decisions. |
 | #97 | Complete restart, disconnect, duplicate-delivery, partial-artifact, and idempotent recovery. |
 | #98 | Prove the complete journey on narrow screens, keyboard, live regions, and reduced motion. |
@@ -40,21 +45,30 @@ deployed at exact commit `7a44e740482f85afa761f1bd4e2e635ec8c77244`, and product
 | #103 | Add SSE heartbeats plus per-user/global concurrency enforcement and disconnect cleanup. |
 | #106 | Globally merge and independently calibrate candidate evidence without losing exact provenance. |
 | #108 | Replace scattered retry flags with one persisted deterministic attempt ledger. |
-| #113 | Close the remaining open-agent repeated-call and total-budget guardrail gaps. |
-| #42 | Implemented locally on the existing tracked record with current corpus/MOM source states; merge, deploy, and production acceptance remain. |
-| #44 | Implemented locally with compact source/evidence disclosures and missing-evidence states; merge, deploy, and production acceptance remain. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
 
 ## Verification boundary
 
 The focused candidate-profile, open-agent, role-evidence, and recruitment-module
 suite passed 124 tests during classification. After guard consolidation, the
-broader affected suite passed 208 tests and the current full repository run passed 942
+broader affected suite passed 208 tests and the current full repository run passed 944
 backend and repository-level tests with four explicit skips, 91 frontend tests,
 and the frontend production build. Compile, Ruff, ty, `pip check`, and
 `pip-audit` also passed. Production acceptance is documented in the V4 slice
 passdown. These facts support completed-item closure; they do not waive the open
 outcomes above.
+
+The #42/#44/#93 production journey tracked a current MyCareersFuture job, built its
+research pack, exercised a real SEA-LION negotiation turn, and verified persistence
+after a true document reload. The first deployment exposed that the Jobs UI tracking
+path retained salary on the selected corpus record rather than in pipeline metadata,
+and that a generic shared `engineer` token could produce a false MOM occupation match.
+The follow-up uses the selected record as the primary posting observation and returns
+valid-empty when no defensible MOM occupation exists. Production then showed the exact
+`$7,000 - $9,000` employer range first, withheld the former `Lift engineer` match,
+retained self-reported evidence and private priorities, and produced cited questions,
+trade-offs, and concessions. The explicitly labelled UAT application was deleted after
+verification.
 
 ## Dependency check
 
