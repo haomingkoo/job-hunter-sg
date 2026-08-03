@@ -514,8 +514,9 @@ and exposes recruiter guides only as attributable leads when compatible numeric 
 is unavailable. Interview scaffolds cite exact resume lines or say evidence is missing.
 Negotiation remains interactive through the configured SEA-LION model, but the model can
 order only user-supplied priorities; unsupported figures or terms fail before persistence,
-and no canned fallback is substituted. Local browser and full-suite verification is
-recorded in the passdown; delivery is not complete until merge and production acceptance.
+and no canned fallback is substituted. PRs #194 and #195 are deployed and production
+accepted; the browser run also proved that unsupported MOM title similarity is withheld
+rather than converted into false precision. Exact evidence is recorded in the passdown.
 
 ## Testing Decisions
 
@@ -565,18 +566,18 @@ recorded in the passdown; delivery is not complete until merge and production ac
 2. [#90 Manage conversation lifecycle and privacy](https://github.com/haomingkoo/job-hunter-sg/issues/90); delivered by PR #191 after #89.
 3. [#91 Search, define role success, explain, and shortlist jobs conversationally](https://github.com/haomingkoo/job-hunter-sg/issues/91); delivered and closed.
 4. [#92 Assess one selected job with source-backed recruiting personas and the bounded recruitment team](https://github.com/haomingkoo/job-hunter-sg/issues/92); delivered and closed.
-5. [#93 Research compensation and rehearse negotiation for a selected job](https://github.com/haomingkoo/job-hunter-sg/issues/93); implemented locally with #42/#44, awaiting merge and production acceptance.
+5. [#93 Research compensation and rehearse negotiation for a selected job](https://github.com/haomingkoo/job-hunter-sg/issues/93); delivered with #42/#44 by PRs #194 and #195 and production accepted.
 6. [#94 Turn an evidence gap into a user-approved resume edit](https://github.com/haomingkoo/job-hunter-sg/issues/94); delivered and closed.
 7. [#186 Connect ranked matches to one durable application pipeline](https://github.com/haomingkoo/job-hunter-sg/issues/186); includes the former #95 handoff contract and was delivered by PR #192.
-8. [#42 Add a source-backed role and company research brief](https://github.com/haomingkoo/job-hunter-sg/issues/42); implemented locally after #186, awaiting merge and production acceptance.
-9. [#44 Save a source-backed interview preparation pack](https://github.com/haomingkoo/job-hunter-sg/issues/44); implemented locally with #42, awaiting merge and production acceptance.
+8. [#42 Add a source-backed role and company research brief](https://github.com/haomingkoo/job-hunter-sg/issues/42); delivered with #44/#93 by PRs #194 and #195 and production accepted.
+9. [#44 Save a source-backed interview preparation pack](https://github.com/haomingkoo/job-hunter-sg/issues/44); delivered with #42/#93 by PRs #194 and #195 and production accepted.
 10. [#96 Close the trace-to-evaluation tuning loop](https://github.com/haomingkoo/job-hunter-sg/issues/96); ready after delivered #92 through #94.
 11. [#97 Recover safely from failed, interrupted, and duplicate runs](https://github.com/haomingkoo/job-hunter-sg/issues/97); blocked by #90, #186, and #96.
 12. [#98 Complete the journey on mobile and with reduced motion](https://github.com/haomingkoo/job-hunter-sg/issues/98); blocked by the complete core journey.
 13. [#99 Validate model portability and Railway staging deployment](https://github.com/haomingkoo/job-hunter-sg/issues/99); includes the former #107 semantic E2E contract and is blocked by #186 and #96 through #98.
 14. [#102 Preserve cumulative model-call evidence across resumable runs](https://github.com/haomingkoo/job-hunter-sg/issues/102).
 15. [#108 Centralize retry classification and persist one attempt ledger](https://github.com/haomingkoo/job-hunter-sg/issues/108); blocked by #102 and completed fail-closed output validation in #104.
-16. [#113 Enforce the remaining open-agent safety guardrails](https://github.com/haomingkoo/job-hunter-sg/issues/113).
+16. [#113 Enforce the remaining open-agent safety guardrails](https://github.com/haomingkoo/job-hunter-sg/issues/113); delivered by PR #189 and closed.
 
 The dynamic-specialist factory formerly proposed in #100 is deliberately not in
 the delivery map. Fixed, versioned personas remain the default; a narrow new issue
