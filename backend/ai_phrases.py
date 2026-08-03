@@ -11,7 +11,6 @@ import re
 
 # Keys are lowercase for case-insensitive matching.
 AI_PHRASE_REPLACEMENTS: dict[str, str] = {
-    # ── Truly AI-generated / cringeworthy verbs ─────────────────────────
     "spearheaded": "led",
     "synergized": "collaborated",
     "catalyzed": "started",
@@ -23,7 +22,6 @@ AI_PHRASE_REPLACEMENTS: dict[str, str] = {
     "galvanised": "motivated",
     "ideated": "brainstormed",
 
-    # ── Corporate buzzwords ──────────────────────────────────────────────
     "synergy": "collaboration",
     "paradigm shift": "change",
     "cutting-edge": "modern",
@@ -48,7 +46,6 @@ AI_PHRASE_REPLACEMENTS: dict[str, str] = {
     "low-hanging fruit": "quick win",
     "deep dive": "analysis",
 
-    # ── AI resume filler ─────────────────────────────────────────────────
     "seasoned professional": "experienced",
     "passionate about": "interested in",
     "driven individual": "motivated",
@@ -73,7 +70,6 @@ AI_PHRASE_REPLACEMENTS: dict[str, str] = {
     "extensive experience": "experience",
     "demonstrated expertise": "expertise",
 
-    # ── Wordy phrases -> simpler ─────────────────────────────────────────
     "in order to": "to",
     "utilize": "use",
     "utilization": "use",

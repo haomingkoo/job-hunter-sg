@@ -17,7 +17,7 @@ The business policy excludes candidate location from scoring.
 
 ## Independent reference panel
 
-Three isolated Codex reviewers evaluated the same evidence without seeing each
+Three isolated reviewers evaluated the same evidence without seeing each
 other's work. Each scored the candidate 78/100 and identified the same three
 material gaps:
 
@@ -28,8 +28,8 @@ material gaps:
 One reviewer also mentioned missing Singapore location. That finding was rejected
 because the product's explicit fairness policy prohibits location scoring.
 
-The comparator is an independent Codex panel. The runtime did not expose a model
-selector, so this is not represented as a verified GPT-5.6 comparison.
+The comparator is an independent review panel. The runtime did not expose a model
+selector, so the run is not represented as a verified model-to-model comparison.
 
 ## Product results
 

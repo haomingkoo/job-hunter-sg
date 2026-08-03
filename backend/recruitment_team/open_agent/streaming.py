@@ -1,22 +1,4 @@
-"""Real-time progress extraction from agent.stream(..., stream_mode="updates",
-subgraphs=True).
-
-Verified directly against the installed deepagents/langgraph/langchain
-versions: a plain top-level stream (subgraphs=True omitted) only shows the
-orchestrator's own node updates -- a delegated subagent's internal execution
-is as invisible there as it is via .invoke(). Passing subgraphs=True
-additionally yields items under a non-empty namespace tuple per active
-subagent invocation (e.g. ("tools:<uuid>",)), carrying that subagent's own
-model/tools node updates in real time -- including the AIMessage.name field
-identifying which persona it is, and the real structured ToolMessage content
-when that persona calls its own submission tool (not a paraphrase). This
-module is the one place that knows this shape; nothing downstream should
-re-derive it.
-
-Confirmed 2026-07-20 with two sequential persona delegations (recruiter then
-ats) in one run: each subagent invocation gets its own namespace tuple, so
-`active_persona_by_namespace` never collides between them and each persona's
-tool_call/tool_result/message events are attributed independently."""
+"""Normalize top-level and delegated agent progress events."""
 
 from __future__ import annotations
 
@@ -31,24 +13,7 @@ def iter_progress_events(
     *,
     skip_tool_call_ids: set[str] | None = None,
 ) -> Iterator[dict]:
-    """Yield one normalized event per meaningful message anywhere in the run,
-    at the top level (team_member="coordinator") or inside a delegated
-    persona subagent (team_member=<persona_id>, learned from that subagent's
-    own AIMessage.name the first time it's seen in that subgraph's
-    namespace). Three event kinds: "tool_call" (a model decided to call a
-    tool), "tool_result" (a tool's return value, structured JSON when the
-    tool is a schema-enforced submission), "message" (a plain final reply
-    with no tool call -- how a turn, the orchestrator's or a persona
-    subagent's own, naturally ends; the last coordinator-level one of these
-    is the run's synthesis text).
-
-    `skip_tool_call_ids` filters out tool_call events whose id is in the
-    set, consumed on first match. Needed because resuming past an
-    interrupted `ask_candidate` call replays that same AIMessage (LangChain's
-    HumanInTheLoopMiddleware.after_model returns the original AIMessage,
-    tool_calls intact, when the decision is "respond") as a fresh node
-    update on resume -- without this, every resume double-counts the
-    already-answered call as a brand new one in the activity log."""
+    """Yield normalized tool and message events, skipping replayed calls."""
     active_persona_by_namespace: dict[tuple, str] = {}
     pending_skip_ids = set(skip_tool_call_ids or ())
 
@@ -108,19 +73,7 @@ def _clip(text: str) -> str:
 
 
 def describe_progress(event: dict) -> tuple[str, dict] | None:
-    """Map one event from `iter_progress_events` onto the `(summary, detail)` an
-    activity row is built from, or None when it carries nothing to show.
-
-    Both agent loops -- the target-assessment runner and the conversational
-    coordinator -- publish through this, so a candidate reads the same wording
-    for the same tool wherever it ran.
-
-    A candidate gets three things: which tool ran, what it looked for, and what
-    came back. What they never get is a tool's raw return value or a model's
-    plain message. Job text is scraped and untrusted, and a model message is
-    reasoning (invariant 9), so only a query the model wrote and counts derived
-    here travel outward.
-    """
+    """Build safe candidate-facing progress from one normalized event."""
     tool_name = event.get("tool_name")
     if not tool_name:
         return None
@@ -157,11 +110,7 @@ def describe_progress(event: dict) -> tuple[str, dict] | None:
 
 
 def _outcome(tool_name: str, content: Any) -> str | None:
-    """One short derived sentence about what a tool returned, or None.
-
-    None means the tool said nothing worth a row of its own. Silence beats a
-    row that reads "finished" and tells the candidate nothing.
-    """
+    """Summarize a useful tool result without exposing raw content."""
     payload = _payload(content)
     if not isinstance(payload, dict):
         return None

@@ -733,14 +733,7 @@ class RecruitmentTeam:
 
     @staticmethod
     def _remember_pause_token(thread: RecruitmentThread, pause_token: str) -> None:
-        """Carry an ask_candidate pause to the next message, or clear a resolved one.
-
-        `workflow_state` is deliberately untouched: setting
-        `awaiting_candidate_answer` would route the next message to
-        `AnswerAssessmentQuestion`, which belongs to the assessment runner. The
-        pause is invisible to the transport and the next ordinary SendMessage
-        resumes it.
-        """
+        """Persist or clear the conversational pause token."""
         facts = dict(thread.case_facts)
         if pause_token:
             facts["coordinator_pause_token"] = pause_token
@@ -751,17 +744,7 @@ class RecruitmentTeam:
         thread.case_facts = facts
 
     def _conversation_activity(self, thread: RecruitmentThread, run: RecruitmentRun):
-        """Publish each coordinator tool step as it happens.
-
-        A turn used to emit two events, "running" and "completed", so a loop that
-        searched twice and read the shortlist looked identical to one that did
-        nothing. `describe_progress` is the same phrasing the assessment runner
-        uses, so a candidate reads one wording per tool wherever it ran.
-
-        Commit before publish, the order `_consume_target_assessment_updates`
-        uses: an event published from an uncommitted transaction is an event the
-        candidate saw and the thread never had.
-        """
+        """Persist and publish each coordinator tool event."""
 
         started_calls: dict[str, float] = {}
 
@@ -803,17 +786,7 @@ class RecruitmentTeam:
         run: RecruitmentRun,
         conversation: ConversationContext,
     ) -> None:
-        """Send a rewrite the coordinator drafted to the pending table.
-
-        `propose_resume_edit` answers the model with
-        `application_status: pending_user_review`. Without this drain that is a
-        lie: the tool appends to a list nobody reads, the candidate is never
-        offered the rewrite, and the model has been told a durable artifact
-        exists when none does.
-
-        Same field mapping as `_assess_target`, so a conversational edit reaches
-        the same accept and reject endpoints, and stays pending either way.
-        """
+        """Persist coordinator edits for candidate review."""
         for edit in conversation.proposed_edits:
             self._db.add(
                 ProposedResumeEdit(
@@ -838,23 +811,7 @@ class RecruitmentTeam:
         thread: RecruitmentThread,
         conversation: ConversationContext,
     ) -> None:
-        """Land a search the coordinator ran itself where the Search button lands one.
-
-        Without this the loop can search, read and answer while the thread still
-        knows nothing about the postings. That is worse than a stale panel:
-        `_known_job` resolves a job_id only against recommendations and the
-        shortlist, so the candidate's next Shortlist click on a job the agent
-        found is a 422.
-
-        A search that returned nothing, or failed, leaves the existing shortlist
-        alone. The command path cannot destroy a shortlist because it raises
-        before it touches case_facts; the tool has no such protection by
-        accident, and one fruitless query must not empty a good list.
-
-        The merge itself is `merged_recommendations`, the same function
-        `read_shortlist` reads through, so the panel cannot disagree with what
-        the agent was shown.
-        """
+        """Persist successful coordinator searches without erasing prior results."""
         results = conversation.search_results
         if not results:
             return
@@ -913,20 +870,7 @@ class RecruitmentTeam:
         thread.case_facts = facts
 
     def _query_from_candidate(self, thread: RecruitmentThread, resume: ResumeVersion) -> str:
-        """Build a search query from what the candidate wants.
-
-        Preference order matters. The team's own extracted preferences are the
-        sharpest signal because they are what the model concluded the candidate
-        wants. A typed message is next. The resume itself is last, and is the one
-        that has to work: a candidate who clicks straight through to a search has
-        said nothing at all, and searching their resume beats searching whatever
-        instruction the UI happened to send on their behalf.
-
-        The model that just read the thread composes the phrase itself, so it can
-        turn "not computer vision, senior, finance" into terms a posting would
-        actually use. SEMANTIC_PREFERENCE_FIELDS is the fallback for turns where
-        it offered none.
-        """
+        """Build a search query from model output, preferences, message, or resume."""
         facts = thread.case_facts or {}
         composed = str(facts.get("search_query") or "").strip()
         if composed:
@@ -954,12 +898,7 @@ class RecruitmentTeam:
 
     @staticmethod
     def _query_from_resume(resume: ResumeVersion) -> str:
-        """Role titles plus extracted skills, as a search phrase.
-
-        Whole sentences pull the search toward what the candidate has already
-        done; a career changer searching their own prose gets more of their old
-        job. Titles and skills keep it on the roles themselves.
-        """
+        """Build a search phrase from resume role titles and skills."""
         from resume_agent.tools import extract_skills
 
         text = resume.resume_text or ""

@@ -10,7 +10,6 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
-# ── Auth ─────────────────────────────────────────────────────────────────────
 
 # Allowed email domains for signup (set via ALLOWED_EMAIL_DOMAINS env var)
 # Default: * (open signup). Set to "aisg.sg" to restrict, or comma-separated for multiple.
@@ -126,7 +125,6 @@ class AuthResponse(BaseModel):
     user: UserOut
 
 
-# ── Jobs ─────────────────────────────────────────────────────────────────────
 
 class JobOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -164,7 +162,6 @@ class SearchResponse(BaseModel):
     jobs: list[JobOut]
 
 
-# ── Tracker ──────────────────────────────────────────────────────────────────
 
 _STATUS = Literal[
     "saved",
@@ -295,7 +292,6 @@ class NegotiationRehearsalRequest(BaseModel):
         return cleaned
 
 
-# ── Job Alerts ───────────────────────────────────────────────────────────────
 
 _ALERT_FREQUENCY = Literal["daily", "weekly"]
 
@@ -333,7 +329,6 @@ class JobAlertPreferenceUpdate(BaseModel):
         return " ".join(value.split()).strip()
 
 
-# ── Utility ──────────────────────────────────────────────────────────────────
 
 class ContactRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)

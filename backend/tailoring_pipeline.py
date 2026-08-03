@@ -1,15 +1,4 @@
-"""
-Resume tailoring pipeline -- multi-pass AI + local processing.
-
-Orchestrates 7 stages to transform a raw resume into a JD-tailored version:
-  Stage 0: Local  -- structure resume + load parsed JD + baseline score
-  Stage 1: 70B    -- strategic analysis (priorities, keyword placement)
-  Stage 2: Local  -- AI phrase cleanup + simple local fixes
-  Stage 3: 32B    -- per-bullet rewrites (batched)
-  Stage 4: Local  -- section coherence (verb dedup, keyword verify, tense)
-  Stage 5: 70B    -- executive summary + full-resume polish
-  Stage 6: Local  -- validation gates + final metrics
-"""
+"""Run the staged resume-tailoring pipeline."""
 
 from __future__ import annotations
 
@@ -195,7 +184,6 @@ def _cleanup_expired_pipelines() -> None:
             log.info(f"[PIPELINE] Cleaned up {len(expired)} expired sessions")
 
 
-# ── Verb synonym map for section-level dedup ────────────────────────────────
 
 _VERB_SYNONYMS: dict[str, list[str]] = {
     "led": ["directed", "guided", "headed", "managed"],

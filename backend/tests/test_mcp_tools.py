@@ -468,8 +468,7 @@ def test_fastapi_mcp_exact_path_initializes_without_redirect(monkeypatch):
     assert "location" not in response.headers
     assert "Job Hunter SG Jobs" in response.text
     assert tools_response.status_code == 200
-    # Underscores, not dots: the Claude API's tool-name charset rejects a dot, so a
-    # dot-namespaced name is spec-legal and still unusable on the largest client.
+    # Some production MCP clients reject otherwise valid dotted tool names.
     assert "jobhunter_latest_jobs" in tools_response.text
     assert "jobhunter." not in tools_response.text
 
@@ -492,7 +491,7 @@ def test_fastapi_public_mcp_discovery_endpoints():
 
 
 def test_public_surface_uses_all_four_primitives_and_no_dotted_names():
-    """Dots are spec-legal but rejected by the Claude API's tool-name charset."""
+    """Public tool names remain compatible with clients that reject dots."""
     import asyncio
 
     import mcp_public

@@ -7,7 +7,6 @@ import {
 } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 
-/* ─── Animation variants ──────────────────────────────────────────────────── */
 const fadeUp = {
   hidden: { opacity: 0, y: 40 },
   visible: (i = 0) => ({
@@ -39,7 +38,6 @@ const slideFromLeft = {
   visible: { opacity: 1, x: 0, transition: { duration: 0.8, ease: [0.23, 1, 0.32, 1] } },
 };
 
-/* ─── Counter ─────────────────────────────────────────────────────────────── */
 function Counter({ target, suffix = "" }) {
   const ref = useRef(null);
   const [value, setValue] = useState(0);
@@ -91,15 +89,12 @@ export default function HomePage({ onNavigate }) {
   return (
     <div className="relative font-body w-full overflow-x-hidden bg-[#f0f4f8]">
 
-      {/* ═══════ HERO ══════════════════════════════════════════════════════ */}
       <section ref={heroRef} className="relative min-h-[92vh] flex flex-col justify-center overflow-hidden px-6">
-        {/* Ambient gradient orbs */}
         <div className="absolute top-[-15%] right-[-8%] w-[600px] h-[600px] rounded-full bg-[#88BDF2] opacity-[0.07] blur-[100px]" />
         <div className="absolute bottom-[-10%] left-[-5%] w-[500px] h-[500px] rounded-full bg-[#6A89A7] opacity-[0.05] blur-[80px]" />
 
         <motion.div style={{ opacity: heroOpacity, y: heroY }} className="relative mx-auto w-full max-w-6xl">
           <div className="grid items-center gap-8 lg:grid-cols-[1fr_1fr]">
-            {/* Left: copy */}
             <motion.div initial="hidden" animate="visible" variants={staggerContainer}>
               <motion.p variants={fadeUp} custom={0} className="text-[13px] font-medium tracking-wide text-[#6A89A7]">
                 AI-powered job search and resume tailoring for Singapore
@@ -158,7 +153,6 @@ export default function HomePage({ onNavigate }) {
               </motion.div>
             </motion.div>
 
-            {/* Right: floating resume templates */}
             <motion.div
               initial={{ opacity: 0, x: 80, rotateY: -15 }}
               animate={{ opacity: 1, x: 0, rotateY: 0 }}
@@ -166,7 +160,6 @@ export default function HomePage({ onNavigate }) {
               className="relative hidden lg:block"
               style={{ perspective: "1200px" }}
             >
-              {/* Resume 1 - front */}
               <motion.div
                 animate={{ y: [0, -10, 0] }}
                 transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
@@ -197,7 +190,6 @@ export default function HomePage({ onNavigate }) {
                 </div>
               </motion.div>
 
-              {/* Resume 2 - behind */}
               <motion.div
                 animate={{ y: [0, -8, 0] }}
                 transition={{ duration: 6, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
@@ -216,7 +208,6 @@ export default function HomePage({ onNavigate }) {
                 </div>
               </motion.div>
 
-              {/* Resume 3 - far back */}
               <motion.div
                 animate={{ y: [0, -6, 0] }}
                 transition={{ duration: 7, repeat: Infinity, ease: "easeInOut", delay: 1 }}
@@ -230,7 +221,6 @@ export default function HomePage({ onNavigate }) {
                 </div>
               </motion.div>
 
-              {/* ATS Match badge */}
               <motion.div
                 animate={{ y: [0, -8, 0] }}
                 transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
@@ -245,7 +235,6 @@ export default function HomePage({ onNavigate }) {
           </div>
         </motion.div>
 
-        {/* Scroll indicator - bouncing at bottom of hero */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -265,7 +254,6 @@ export default function HomePage({ onNavigate }) {
         </motion.div>
       </section>
 
-      {/* ═══════ THREE PILLARS ═════════════════════════════════════════════ */}
       <section id="homepage-pillars" className="relative overflow-hidden py-20 sm:py-28 bg-[#384959]">
         <div className="mx-auto max-w-5xl px-6">
           <motion.div
@@ -316,7 +304,6 @@ export default function HomePage({ onNavigate }) {
         </div>
       </section>
 
-      {/* ═══════ HOW IT WORKS ══════════════════════════════════════════════ */}
       <section className="py-20 sm:py-28 px-6">
         <div className="mx-auto max-w-5xl">
           <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-80px" }} variants={staggerContainer}>
@@ -324,7 +311,6 @@ export default function HomePage({ onNavigate }) {
             <motion.h2 variants={fadeUp} custom={1} className="font-display mt-3 text-[2rem] text-[#384959] sm:text-[2.5rem]">From searching to hired</motion.h2>
           </motion.div>
 
-          {/* Step 1 */}
           <div className="mt-16 grid items-center gap-10 lg:grid-cols-2">
             <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-60px" }} variants={slideFromLeft}>
               <div className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[#BDDDFC]/30 text-[13px] font-bold text-[#384959]">1</div>
@@ -372,7 +358,6 @@ export default function HomePage({ onNavigate }) {
             </motion.div>
           </div>
 
-          {/* Step 2 */}
           <div className="mt-24 grid items-center gap-10 lg:grid-cols-2">
             <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-60px" }} variants={slideFromLeft} className="order-2 lg:order-1">
               <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-6 shadow-sm">
@@ -418,7 +403,6 @@ export default function HomePage({ onNavigate }) {
             </motion.div>
           </div>
 
-          {/* Step 3 */}
           <div className="mt-24 grid items-center gap-10 lg:grid-cols-2">
             <motion.div initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-60px" }} variants={slideFromLeft}>
               <div className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-emerald-100 text-[13px] font-bold text-emerald-700">3</div>
@@ -458,7 +442,6 @@ export default function HomePage({ onNavigate }) {
         </div>
       </section>
 
-      {/* ═══════ PERSONAS ═══════════════════════════════════════════════════ */}
       <section className="py-20 px-6 bg-white">
         <div className="mx-auto max-w-5xl">
           <motion.h2
@@ -496,7 +479,6 @@ export default function HomePage({ onNavigate }) {
         </div>
       </section>
 
-      {/* ═══════ STATS ═══════════════════════════════════════════════════════ */}
       <section className="border-y border-[#BDDDFC]/20 bg-[#f0f4f8] py-16 px-6">
         <div className="mx-auto max-w-4xl">
           <motion.div
@@ -519,7 +501,6 @@ export default function HomePage({ onNavigate }) {
         </div>
       </section>
 
-      {/* ═══════ TRUST ═══════════════════════════════════════════════════════ */}
       <motion.section
         initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-40px" }}
         variants={staggerContainer}
@@ -544,7 +525,6 @@ export default function HomePage({ onNavigate }) {
         </div>
       </motion.section>
 
-      {/* ═══════ CTA ═══════════════════════════════════════════════════════ */}
       <section className="relative overflow-hidden py-24 px-6 bg-[#384959]">
         <motion.div
           initial="hidden" whileInView="visible" viewport={{ once: true, margin: "-40px" }}

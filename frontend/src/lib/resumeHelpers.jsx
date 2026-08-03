@@ -437,7 +437,6 @@ export function computeKeywordInsertSuggestions(keyword, bulletSections, allKeyw
     .map((item) => item.bullet);
 }
 
-// ─── Education Entry Grouping (ported from backend resume_structurer.py) ─────
 const EDUCATION_GPA_RE = /(?:gpa|cgpa|cap)\s*[:.]?\s*\d+\.?\d*\s*[/]?\s*\d*\.?\d*/i;
 const EDUCATION_HONORS_RE = /\b(?:first class|second class|distinction|honou?rs?|magna|summa|cum laude|dean.?s list|merit|with distinction|valedictorian)\b/i;
 

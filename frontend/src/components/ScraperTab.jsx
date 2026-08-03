@@ -587,7 +587,6 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     { value: "Director", label: "Director+" },
   ];
 
-  /* ── Sidebar filter panel (shared between desktop inline + mobile overlay) ── */
   const sidebarContent = (
     <div className="space-y-5">
       <div>

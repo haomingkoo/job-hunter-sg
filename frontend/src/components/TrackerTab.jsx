@@ -1064,7 +1064,6 @@ export default function TrackerTab({
 
       {viewMode === "table" && (
         <>
-          {/* Desktop table */}
           <div className="bg-white border border-[#BDDDFC]/30 rounded-xl overflow-hidden hidden sm:block">
             <table className="w-full text-sm">
               <thead className="bg-[#f0f4f8] text-[#6A89A7] text-xs uppercase">
@@ -1101,7 +1100,6 @@ export default function TrackerTab({
             </table>
           </div>
 
-          {/* Mobile card layout */}
           <div className="sm:hidden space-y-3">
             {filtered.length === 0 && (
               <div className="text-center py-8 text-[#6A89A7] text-sm">No applications tracked yet. Browse jobs and click Track to get started!</div>

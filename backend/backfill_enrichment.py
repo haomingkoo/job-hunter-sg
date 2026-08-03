@@ -1,20 +1,4 @@
-"""
-One-time backfill script: populate parsed_jd, job_terms_preview, and jd_summary
-for all existing jobs.
-
-Usage:
-    # Phase 1 only (local computation, no LLM):
-    python backfill_enrichment.py --preview-only
-
-    # Full backfill (preview + summaries, needs SEA-LION keys):
-    python backfill_enrichment.py
-
-    # Limit to N summaries (useful for testing or batching):
-    python backfill_enrichment.py --summary-limit 500
-
-    # Resume from where you left off (skips already-done jobs):
-    python backfill_enrichment.py  # always safe to re-run
-"""
+"""Backfill parsed job data, term previews, and summaries."""
 
 from __future__ import annotations
 
@@ -64,10 +48,7 @@ def backfill_previews(
     refresh_preview: bool = False,
     reparse: bool = False,
 ) -> int:
-    """Backfill parsed_jd + job_terms_preview for all jobs. No LLM needed.
-    If refresh_preview=True, recompute all previews.
-    If reparse=True, re-run the JD parser on all jobs (after improving extraction).
-    """
+    """Backfill local parsed job data and term previews."""
     db = SessionLocal()
     total_done = 0
     start_time = time.time()

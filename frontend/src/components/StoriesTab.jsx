@@ -58,7 +58,6 @@ function EmptyState({ onStart, onGenerate, generating, generationStatus }) {
         Generate from your resume or start with the Big Three.
       </p>
 
-      {/* Generate from resume */}
       <button
         onClick={onGenerate}
         disabled={generating}
@@ -190,7 +189,6 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
       </button>
 
       <div className="space-y-5">
-        {/* Title + Project */}
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wide text-[#6A89A7] mb-1">Story Title *</label>
@@ -212,7 +210,6 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
           </div>
         </div>
 
-        {/* STAR+R Fields */}
         {STAR_FIELDS.map((field) => (
           <div key={field.key}>
             <label className="block text-xs font-semibold uppercase tracking-wide text-[#6A89A7] mb-1">
@@ -229,7 +226,6 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
           </div>
         ))}
 
-        {/* Tags */}
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wide text-[#6A89A7] mb-2">Behavioral Tags</label>
           <div className="flex flex-wrap gap-2">
@@ -252,7 +248,6 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
           </div>
         </div>
 
-        {/* Seniority */}
         <div>
           <label className="block text-xs font-semibold uppercase tracking-wide text-[#6A89A7] mb-2">Seniority Level</label>
           <div className="flex gap-2">
@@ -273,7 +268,6 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
           </div>
         </div>
 
-        {/* Actions */}
         <div className="flex items-center gap-3 pt-2">
           <button
             onClick={() => onSave(form)}
@@ -567,7 +561,6 @@ export default function StoriesTab() {
             exit={{ opacity: 0, x: 20 }}
             transition={{ duration: 0.2 }}
           >
-            {/* Header */}
             <div className="flex items-center justify-between mb-5">
               <div>
                 <h2 className="text-lg font-bold text-[#384959]">Interview Story Bank</h2>
@@ -594,7 +587,6 @@ export default function StoriesTab() {
               <StoryGenerationProgress status={STORY_GENERATION_STEPS[generationStep]} />
             )}
 
-            {/* Tag filters */}
             <div className="flex flex-wrap gap-1.5 mb-5">
               <button
                 onClick={() => setFilterTag("all")}
@@ -617,7 +609,6 @@ export default function StoriesTab() {
               ))}
             </div>
 
-            {/* Story grid */}
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {filtered.map((story) => (
                 <StoryCard

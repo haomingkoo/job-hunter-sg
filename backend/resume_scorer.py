@@ -13,7 +13,6 @@ from collections import Counter
 
 from shared_classification import SHARED_KEY_MAP, classify_section_heading
 
-# ── Constants ────────────────────────────────────────────────────────────────
 
 ACTION_VERBS = {
     "achieved", "administered", "advanced", "analyzed", "analysed", "architected",
@@ -192,7 +191,6 @@ _NOISE_LINE_PATTERNS = [
 ]
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _status(score: int, max_score: int) -> str:
     """Return status label based on score ratio."""
@@ -302,7 +300,6 @@ def _starts_with_action_verb(text: str) -> bool:
 class ResumeScorer:
     """Analyses resume text and returns a structured score report."""
 
-    # ── Text extraction helpers ──────────────────────────────────────────
 
     @staticmethod
     def _extract_bullets(text: str) -> list[str]:
@@ -433,7 +430,6 @@ class ResumeScorer:
         """Check whether the first word of a bullet is an action verb."""
         return _starts_with_action_verb(bullet)
 
-    # ── Dimension scorers ────────────────────────────────────────────────
 
     def _score_impact(
         self,
@@ -845,7 +841,6 @@ class ResumeScorer:
             "items": items,
         }
 
-    # ── Keyword matching ─────────────────────────────────────────────────
 
     @staticmethod
     def _keyword_match(text: str, job_description: str) -> dict:
@@ -868,7 +863,6 @@ class ResumeScorer:
         except Exception:
             return {"matched": [], "missing": [], "score_percent": 0}
 
-    # ── Suggestions builder ──────────────────────────────────────────────
 
     @staticmethod
     def _build_suggestions(dimensions: dict) -> list[dict]:
@@ -889,7 +883,6 @@ class ResumeScorer:
         suggestions.sort(key=lambda s: -s["points"])
         return suggestions[:5]
 
-    # ── Evaluation blocks ────────────────────────────────────────────────
 
     @staticmethod
     def _build_evaluation_blocks(
@@ -905,7 +898,6 @@ class ResumeScorer:
         """
         blocks: list[dict] = []
 
-        # ── a) Role Fit Assessment ──────────────────────────────────────
         role_fit_items: list[dict] = []
         impact_score = dimensions.get("impact", {}).get("score", 0)
         impact_max = dimensions.get("impact", {}).get("max", 40)
@@ -978,7 +970,6 @@ class ResumeScorer:
                 "items": role_fit_items,
             })
 
-        # ── b) Skill Gap Analysis ───────────────────────────────────────
         if ats_match and ats_match.get("missing_terms"):
             matched_set = {
                 t.lower() for t in ats_match.get("matched_terms", [])
@@ -1096,7 +1087,6 @@ class ResumeScorer:
                     "items": skill_gap_items,
                 })
 
-        # ── c) Interview Prep Angles ────────────────────────────────────
         if parsed_jd:
             interview_items: list[dict] = []
             comp_signals = parsed_jd.get("competency_signals", {})
@@ -1138,7 +1128,6 @@ class ResumeScorer:
 
         return blocks
 
-    # ── ATS keyword match against parsed JD ─────────────────────────────
 
     @staticmethod
     def _ats_match_from_parsed_jd(
@@ -1192,7 +1181,6 @@ class ResumeScorer:
             "match_pct": round(match_pct, 1),
         }
 
-    # ── Main entry point ─────────────────────────────────────────────────
 
     def analyze(
         self,

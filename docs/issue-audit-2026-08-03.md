@@ -31,6 +31,12 @@ production study emitted real scope, correction, checkpoint, and completion even
 Candidate profiler and Coordinator both ended `Reported`, and the panel ended
 `Run complete · 1 of 1 reported`. The isolated UAT conversations were deleted.
 
+Issue #111 was corrected in PR #200 and deployed at exact commit
+`fa4edba979927bc337178e0c06def22fa6da9b7e`. Production accepted an exact
+candidate-confirmed number that the prior gate rejected, displayed its quote on the
+pending edit, created a separate resume version on acceptance, and exported both DOCX
+and PDF. The original resume remained available.
+
 ## Closed as obsolete or duplicate
 
 | Issues | Disposition |
@@ -54,6 +60,7 @@ Candidate profiler and Coordinator both ended `Reported`, and the panel ended
 | #102 | Preserve cumulative call, token, latency, validation, checkpoint, model, and trace evidence across replay. |
 | #106 | Globally merge and independently calibrate candidate evidence without losing exact provenance. |
 | #108 | Replace scattered retry flags with one persisted deterministic attempt ledger. |
+| #201 | Make the post-export action use the refined resume instead of opening the unfiltered chronological job feed. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
 
 ## Verification boundary

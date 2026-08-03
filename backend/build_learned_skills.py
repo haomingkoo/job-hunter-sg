@@ -1,17 +1,4 @@
-"""
-Frequency-based skill learning (Tier 2).
-
-Scans all job_terms_preview data in scraped_jobs to discover terms that appear
-in 50+ distinct job descriptions. These are "learned skills" -- real terms the
-market uses, even if they are not in any static taxonomy.
-
-Usage:
-    python build_learned_skills.py                # build + save JSON
-    python build_learned_skills.py --threshold 30 # custom frequency threshold
-
-Also importable:
-    from build_learned_skills import build_learned_skills, load_learned_skills
-"""
+"""Build the frequency-based Tier 2 skills taxonomy."""
 
 from __future__ import annotations
 
@@ -46,10 +33,7 @@ def build_learned_skills(
     db_session: Session,
     threshold: int = TIER2_THRESHOLD,
 ) -> dict:
-    """
-    Scan all ScrapedJob rows with job_terms_preview and count term frequency
-    across distinct jobs. Returns the full result dict (same shape as the JSON).
-    """
+    """Count distinct-job term frequency and return the learned taxonomy."""
     term_counter: Counter[str] = Counter()
     total_jobs = 0
 

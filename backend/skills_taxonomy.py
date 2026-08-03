@@ -1,19 +1,4 @@
-"""
-Three-tier skills taxonomy for ATS term validation.
-
-Tier 1: Known skills from O*NET + Singapore SkillsFuture + curated tech/business
-Tier 2: JD-learned skills (appear in 50+ job descriptions in our database)
-Tier 3: Everything else (low confidence)
-
-Sources:
-- O*NET 29.1 (US Dept of Labor): 35 skills, 33 knowledge areas,
-  170 hot technologies, 135 software commodity titles
-- O*NET 29.1 Technology Skills: widely-used tools (5+ occupations)
-- SkillsFuture Singapore: 16 CCS, 38 sectors, 336 SG-specific terms
-- Curated: business, healthcare, engineering, finance terms
-
-Last updated: 2026-03-25
-"""
+"""Classify ATS terms from O*NET, SkillsFuture, and learned job data."""
 
 from __future__ import annotations
 
@@ -21,7 +6,6 @@ import logging
 
 log = logging.getLogger("jobhunter.taxonomy")
 
-# ── O*NET Skills (35 broad categories) ──────────────────────────────────────
 ONET_SKILLS: set[str] = {
     "active learning", "active listening", "complex problem solving",
     "coordination", "critical thinking", "equipment maintenance",
@@ -37,7 +21,6 @@ ONET_SKILLS: set[str] = {
     "technology design", "time management", "troubleshooting", "writing",
 }
 
-# ── O*NET Knowledge (33 areas) ──────────────────────────────────────────────
 # Source: O*NET 29.1 Knowledge.xlsx, Element Name column (all 33 unique values)
 ONET_KNOWLEDGE: set[str] = {
     "administration and management", "administrative",
@@ -55,7 +38,6 @@ ONET_KNOWLEDGE: set[str] = {
     "therapy and counseling", "transportation",
 }
 
-# ── O*NET Hot Technologies (170 from Technology Skills.xlsx) ───────────────
 # These are flagged by O*NET as "Hot Technology" -- in high employer demand.
 # Stored as lowercased short names for matching (original full names in data/).
 ONET_HOT_TECHNOLOGIES: set[str] = {
@@ -126,7 +108,6 @@ ONET_HOT_TECHNOLOGIES: set[str] = {
     "eclinicalworks", "jquery",
 }
 
-# ── O*NET Software Category Titles (135 commodity titles) ──────────────────
 # Source: Technology Skills.xlsx, Commodity Title column (unique values)
 ONET_SOFTWARE_CATEGORIES: set[str] = {
     "access software", "accounting software", "administration software",
@@ -208,7 +189,6 @@ ONET_SOFTWARE_CATEGORIES: set[str] = {
     "wireless software", "word processing software",
 }
 
-# ── Technology Skills (curated, 900+) ──────────────────────────────────────
 # Programming languages, frameworks, tools, platforms, methodologies.
 # Includes O*NET widely-used technologies (5+ occupations) plus modern tools.
 TECH_SKILLS: set[str] = {
@@ -509,7 +489,6 @@ TECH_SKILLS: set[str] = {
     "vmware", "norton", "mcafee", "solarwinds",
 }
 
-# ── Combined Tier 1 set ─────────────────────────────────────────────────────
 
 def _build_tier1() -> set[str]:
     """Build the combined Tier 1 known-skills set."""
@@ -533,7 +512,6 @@ def _build_tier1() -> set[str]:
 TIER1_SKILLS: set[str] = _build_tier1()
 
 
-# ── Tier 2: JD-learned skills ───────────────────────────────────────────────
 
 _tier2_cache: set[str] | None = None
 
@@ -553,7 +531,6 @@ def load_tier2_skills() -> set[str]:
     return _tier2_cache
 
 
-# ── Classification ──────────────────────────────────────────────────────────
 
 def classify_skill_tier(term: str, jd_frequency: int = 0) -> int:
     """Classify a skill term into tiers 1, 2, or 3.

@@ -1,16 +1,4 @@
-"""What a conversational turn knows about its own thread.
-
-`TargetAssessmentRequest` (assessment_contracts.py:36-41) requires `target_job`
-and `role_profile`, and a chat turn has neither, so this is a separate type
-rather than a loosened version of that one. Field names are deliberately
-identical where the shared open-agent tools touch them, so
-`read_candidate_evidence`, `read_target_job` and `propose_resume_edit` read one
-attribute name whichever context is active.
-
-It rides the same `open_agent.context` ContextVars: `assessment_context` reads
-exactly one attribute off its argument (`resume_document`) and accepts a
-caller-owned edits list, so there is no second context manager.
-"""
+"""Thread-scoped state shared by the conversational coordinator tools."""
 
 from __future__ import annotations
 
@@ -77,17 +65,7 @@ def current_conversation() -> ConversationContext | None:
 def merged_recommendations(
     context: ConversationContext,
 ) -> tuple[str, tuple[JobSnapshot, ...]]:
-    """The shortlist as it stands mid-turn: query and jobs.
-
-    One function with two callers on purpose. `read_shortlist` shows the agent
-    what its own searches found, and `RecruitmentTeam` writes the same list to
-    `case_facts["recommendations"]`. Deriving them separately is how a panel
-    ends up disagreeing with the tool the agent read.
-
-    A search that returned nothing, or failed, changes neither. The command path
-    raises before it touches `case_facts` and so can never destroy a shortlist;
-    a tool has no such protection unless it is given one here.
-    """
+    """Merge successful searches without erasing the existing shortlist."""
     useful = [result for result in context.search_results if result.jobs]
     if not useful:
         return context.latest_search_query, context.recommendations

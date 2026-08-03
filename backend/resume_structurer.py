@@ -28,7 +28,6 @@ from shared_classification import SHARED_KEY_MAP, SHARED_TITLE_PATTERNS, classif
 
 log = logging.getLogger("jobhunter.structurer")
 
-# ── Regex patterns ───────────────────────────────────────────────────────────
 
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _LINKEDIN_RE = re.compile(
@@ -170,7 +169,6 @@ def _extract_contact(lines: list[str]) -> dict[str, str]:
     return contact
 
 
-# ── Section splitting ────────────────────────────────────────────────────────
 
 def _is_section_heading(line: str) -> str | None:
     """Return the normalised section key if line is a heading, else None."""
@@ -225,7 +223,6 @@ def _split_into_sections(
     return sections
 
 
-# ── Entry detection ──────────────────────────────────────────────────────────
 
 def _strip_bullet_prefix(line: str) -> str:
     """Remove leading bullet character from a line."""
@@ -448,7 +445,6 @@ def _parse_entry_heading(
     }
 
 
-# ── Education-specific entry builder ────────────────────────────────────────
 
 def _is_education_entry_start(line: str) -> bool:
     """Check if a line starts a new education entry (degree or institution)."""
@@ -948,7 +944,6 @@ def _assign_canonical_bullet_sources(structured: dict[str, Any], raw_text: str) 
                 cursor = end
 
 
-# ── Main entry point ─────────────────────────────────────────────────────────
 
 def structure_resume(resume_text: str) -> dict[str, Any]:
     """Parse raw resume text into a structured section/entry/bullet hierarchy.
@@ -1059,7 +1054,6 @@ def structure_resume(resume_text: str) -> dict[str, Any]:
     return result
 
 
-# ── Utilities ────────────────────────────────────────────────────────────────
 
 def flatten_to_text(structured: dict[str, Any]) -> str:
     """Convert a structured resume back to plain text.

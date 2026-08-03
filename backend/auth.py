@@ -123,7 +123,6 @@ def get_account_limits(user: User | None) -> dict:
     return ACCESS_LIMITS["user"]
 
 
-# ── Password helpers ─────────────────────────────────────────────────────────
 
 def hash_password(plain: str) -> str:
     return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
@@ -159,7 +158,6 @@ def validate_password(password: str) -> None:
         )
 
 
-# ── JWT helpers ──────────────────────────────────────────────────────────────
 
 def create_token(user_id: int, token_version: int = 0) -> str:
     payload = {
@@ -185,7 +183,6 @@ def decode_token(token: str) -> dict:
         )
 
 
-# ── FastAPI dependencies ─────────────────────────────────────────────────────
 
 def _extract_token(authorization: Optional[str]) -> Optional[str]:
     """Pull the bare JWT out of an Authorization header."""
@@ -482,7 +479,6 @@ def get_optional_user(
         return None
 
 
-# ── Rate-limit check ────────────────────────────────────────────────────────
 
 def check_rate_limit(user: Optional[User], action: str, db: Session) -> None:
     """

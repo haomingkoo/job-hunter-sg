@@ -1,19 +1,5 @@
 #!/usr/bin/env python3
-"""
-SG Job Scraper — Singapore Job Aggregator
-==========================================
-Scrapes / queries multiple Singapore job portals:
-  1. MyCareersFuture  (MCF public API)
-  2. Careers@Gov      (via OpenGovSG pre-parsed JSON dump)
-  3. SSG-WSG Skills Framework API (job roles + skills data)
-  4. Adzuna           (official API)
-  5. Jooble           (official API)
-
-Careers@Gov data courtesy of Alwyn Tan @ Open Government Products:
-  https://github.com/opengovsg/careersgovsg-jobs-data
-
-Queries each source's API and deduplicates across all of them.
-"""
+"""Fetch and deduplicate jobs from supported Singapore sources."""
 
 import hashlib
 import logging
@@ -134,9 +120,6 @@ class Job:
         return hashlib.md5(raw.encode()).hexdigest()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SOURCE 1: MyCareersFuture (MCF) — Public API
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class MyCareersFutureScraper:
     """
@@ -243,9 +226,6 @@ class MyCareersFutureScraper:
         return jobs
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SOURCE 2: Careers@Gov (via OpenGovSG pre-parsed JSON)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class CareersGovScraper:
     """
@@ -394,9 +374,6 @@ class CareersGovScraper:
         return [self._to_job(item) for item in data]
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SOURCE 3: SSG-WSG Skills Framework API
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class SSGSkillsFrameworkAPI:
     """
@@ -530,9 +507,6 @@ class SSGSkillsFrameworkAPI:
         return all_skills
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SOURCE 4: Adzuna API (Official — free tier at developer.adzuna.com)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class AdzunaScraper:
     """Adzuna official API — free tier, SG supported."""
@@ -600,9 +574,6 @@ class AdzunaScraper:
         return jobs
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SOURCE 5: Jooble API (Official — free at jooble.org/api/about)
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class JoobleScraper:
     """Jooble official API — free, 67+ countries including SG."""
@@ -648,9 +619,6 @@ class JoobleScraper:
         return jobs
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# AGGREGATOR — Combines all sources with deduplication
-# ═══════════════════════════════════════════════════════════════════════════════
 
 class JobAggregator:
     """Aggregates jobs from all sources and deduplicates."""
