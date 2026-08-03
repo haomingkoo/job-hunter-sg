@@ -91,6 +91,75 @@ describe("ResumeTab Agent v2", () => {
     });
   });
 
+  it("searches again with the exact refined resume version after export", async () => {
+    sessionStorage.setItem("jh_wizard_step", "4");
+    const onSearchMatchingJobs = vi.fn();
+    const onInitialResumeVersionLoaded = vi.fn();
+    global.URL.createObjectURL = vi.fn(() => "blob:resume");
+    global.URL.revokeObjectURL = vi.fn();
+    global.fetch = vi.fn((url, options = {}) => {
+      const target = String(url);
+      if (target.endsWith("/api/resume/versions/19")) {
+        return responseJson({
+          id: 19,
+          label: "Recruitment team edits",
+          resume_text: "Jane Doe\njane@example.com\n\nEXPERIENCE\n- Led semiconductor transformation across four regions",
+          resume_structured: null,
+        });
+      }
+      if (target.endsWith("/api/resume/versions")) {
+        return responseJson([{ id: 19, label: "Recruitment team edits", is_master: false }]);
+      }
+      if (target.includes("/api/resume/download")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: { get: () => "attachment; filename=resume.docx" },
+          blob: () => Promise.resolve(new Blob(["resume"])),
+        });
+      }
+      if (target.includes("/api/resume/ingest-text")) {
+        const { resume_text: rawText } = JSON.parse(options.body);
+        return responseJson({ raw_text: rawText, blocks: [], sections: [], warnings: [] });
+      }
+      if (target.includes("/api/resume/score")) return responseJson({ overall_score: 78, checks: {} });
+      if (target.includes("/api/ai/status")) return responseJson({ healthy: true });
+      return responseJson([]);
+    });
+
+    await act(async () => {
+      root.render(
+        <ResumeTab
+          selectedJob={null}
+          user={{ id: 1 }}
+          setActiveTab={() => {}}
+          initialResumeVersionId={19}
+          onInitialResumeVersionLoaded={onInitialResumeVersionLoaded}
+          onSearchMatchingJobs={onSearchMatchingJobs}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const downloadButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Download DOCX"));
+    await act(async () => {
+      downloadButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const searchButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Search Matching Jobs"));
+    await act(async () => searchButton.click());
+
+    expect(onInitialResumeVersionLoaded).toHaveBeenCalledWith(19);
+    expect(onSearchMatchingJobs).toHaveBeenCalledWith(19);
+    expect(global.fetch.mock.calls.filter(([url, request]) => (
+      String(url).endsWith("/api/resume/versions") && request?.method === "POST"
+    ))).toHaveLength(0);
+  });
+
   it("v2 toggle renders and does not affect the classic editor", async () => {
     await act(async () => {
       root.render(<ResumeTab selectedJob={null} user={null} setActiveTab={() => {}} />);

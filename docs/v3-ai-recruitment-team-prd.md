@@ -13,9 +13,10 @@ production evidence and remaining issue disposition live in
 superseded July runtime failures as current status.
 
 The deployed journey now passes clarification, cited drafting, acceptance into a
-reversible version, and DOCX/PDF export. Issue #201 remains the observed north-star
-blocker: the post-export matching action currently opens the unfiltered job feed instead
-of recommendations grounded in the refined resume.
+reversible version, and DOCX/PDF export. The issue #201 implementation carries the exact
+exported version back into Recruitment Team and preserves a matching conversation; it
+remains the observed north-star blocker until that change is merged, deployed, and
+accepted in the signed-in browser.
 
 The whole application is not complete until the north-star loop below passes as one
 signed-in deployed journey. Existing isolated capabilities, HTTP success, or a green

@@ -19,7 +19,14 @@ function storedThreadKey(userId) {
 }
 
 
-export default function RecruitmentTeamPanel({ user, setActiveTab, onOpenApplication, onTailorJob }) {
+export default function RecruitmentTeamPanel({
+  user,
+  setActiveTab,
+  onOpenApplication,
+  onTailorJob,
+  initialRequest = null,
+  onInitialRequestHandled,
+}) {
   const [resumeVersions, setResumeVersions] = useState([]);
   const [resumeVersionId, setResumeVersionId] = useState("");
   const [threadId, setThreadId] = useState(
@@ -49,6 +56,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab, onOpenApplica
   const [deletionTarget, setDeletionTarget] = useState(null);
   const [retention, setRetention] = useState(null);
   const [lifecycleNotice, setLifecycleNotice] = useState("");
+  const handledInitialRequestRef = useRef("");
 
   const selectedResume = useMemo(
     () => resumeVersions.find((resume) => String(resume.id) === String(resumeVersionId)),
@@ -218,7 +226,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab, onOpenApplica
   }, [threadId, candidateStudyRunning, persistedRunActive]);
 
   useEffect(() => {
-    if (threadId || suppressAutoResume) return undefined;
+    if (threadId || suppressAutoResume || initialRequest) return undefined;
     let cancelled = false;
     loadThreads().then((threads) => {
       if (cancelled) return;
@@ -230,7 +238,60 @@ export default function RecruitmentTeamPanel({ user, setActiveTab, onOpenApplica
       if (!cancelled) setError(loadError.message);
     });
     return () => { cancelled = true; };
-  }, [threadId, suppressAutoResume, user.id]);
+  }, [initialRequest, threadId, suppressAutoResume, user.id]);
+
+  useEffect(() => {
+    if (
+      !initialRequest
+      || !resumeVersions.length
+      || handledInitialRequestRef.current === initialRequest.id
+      || (threadId && !snapshot)
+    ) return undefined;
+
+    const requestedVersionId = Number(initialRequest.resumeVersionId);
+    if (!resumeVersions.some((resume) => Number(resume.id) === requestedVersionId)) return undefined;
+
+    handledInitialRequestRef.current = initialRequest.id;
+    (async () => {
+      setBusy(true);
+      setError("");
+      try {
+        setResumeVersionId(String(requestedVersionId));
+        const currentVersionId = Number(snapshot?.case_facts?.resume_version_id);
+        const receipt = threadId
+          && snapshot?.status !== "archived"
+          && currentVersionId === requestedVersionId
+          ? await streamRecruitmentCommand(
+            `/api/recruitment-team/threads/${threadId}/messages/stream`,
+            {
+              message: initialRequest.message,
+              idempotency_key: globalThis.crypto.randomUUID(),
+            },
+            appendActivity,
+          )
+          : await streamRecruitmentCommand(
+            "/api/recruitment-team/threads/stream",
+            {
+              resume_version_id: requestedVersionId,
+              message: initialRequest.message,
+              idempotency_key: globalThis.crypto.randomUUID(),
+            },
+            appendActivity,
+          );
+        const nextThreadId = receipt.thread_id;
+        localStorage.setItem(storedThreadKey(user.id), nextThreadId);
+        await refreshThread(nextThreadId);
+        await loadThreads();
+        if (nextThreadId !== threadId) setThreadId(nextThreadId);
+      } catch (requestError) {
+        setError(requestError.message || "Could not search with this resume.");
+      } finally {
+        setBusy(false);
+        onInitialRequestHandled?.(initialRequest.id);
+      }
+    })();
+    return undefined;
+  }, [initialRequest, onInitialRequestHandled, resumeVersions, snapshot, threadId, user.id]);
 
   function clearConversation() {
     localStorage.removeItem(storedThreadKey(user.id));
@@ -1171,7 +1232,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab, onOpenApplica
               <p className="mt-1 text-sm text-[#6A89A7]">{selectedTarget.title} at {selectedTarget.company} is saved as one durable application.</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <a href="#role-success-title" className="rounded-xl border border-[#BDDDFC] px-3 py-2 text-xs font-medium text-[#384959]">Review evidence</a>
-                <button type="button" onClick={() => onTailorJob?.(selectedTarget)} className="rounded-xl border border-[#BDDDFC] px-3 py-2 text-xs font-medium text-[#384959]">Tailor resume</button>
+                <button type="button" onClick={() => onTailorJob?.(selectedTarget, snapshot.case_facts.resume_version_id)} className="rounded-xl border border-[#BDDDFC] px-3 py-2 text-xs font-medium text-[#384959]">Tailor resume</button>
                 <button type="button" onClick={() => onOpenApplication?.(selectedTrackedJobId)} className="rounded-xl bg-[#384959] px-3 py-2 text-xs font-medium text-white">Open application workspace</button>
               </div>
             </section>

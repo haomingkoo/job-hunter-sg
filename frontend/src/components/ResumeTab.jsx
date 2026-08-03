@@ -228,7 +228,14 @@ const SortableBulletItem = memo(function SortableBulletItem({ id, children }) {
   );
 });
 
-export default function ResumeTab({ selectedJob, user, setActiveTab }) {
+export default function ResumeTab({
+  selectedJob,
+  user,
+  setActiveTab,
+  initialResumeVersionId = null,
+  onInitialResumeVersionLoaded,
+  onSearchMatchingJobs,
+}) {
   const [profile, setProfile] = useState(() => {
     try {
       const saved = sessionStorage.getItem("jh_resume_profile");
@@ -268,6 +275,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [dragOver, setDragOver] = useState(false);
   const [pastedText, setPastedText] = useState("");
   const [resumeVersions, setResumeVersions] = useState([]);
+  const [matchResumeVersionId, setMatchResumeVersionId] = useState(null);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [saveVersionLabel, setSaveVersionLabel] = useState("");
   const [savingVersion, setSavingVersion] = useState(false);
@@ -295,6 +303,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState("");
   const [downloadReady, setDownloadReady] = useState(false);
+  const [startingJobSearch, setStartingJobSearch] = useState(false);
   const [regeneratingSummary, setRegeneratingSummary] = useState(false);
   const [summaryDirection, setSummaryDirection] = useState("");
   const [showSummaryPrompt, setShowSummaryPrompt] = useState(false);
@@ -805,6 +814,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       redoStackRef.current = [];
     }
     setResumeText(nextText);
+    setMatchResumeVersionId(null);
     setScoreChange(null);
     setDownloadReady(false);
     setReviewAllSuggestions([]);
@@ -1147,31 +1157,68 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       setShowSetupPanel(false);
       if (wizardStep === 1) setWizardStep(2);
       applyResumeText(data.resume_text, { rescore: true, clearRewrites: true });
+      setMatchResumeVersionId(data.id);
+      return data;
     } catch { /* ignore */ }
+    return null;
+  };
+
+  useEffect(() => {
+    if (!user || !initialResumeVersionId) return;
+    let cancelled = false;
+    loadVersion(initialResumeVersionId).then((version) => {
+      if (!cancelled && version) onInitialResumeVersionLoaded?.(version.id);
+    });
+    return () => { cancelled = true; };
+  }, [initialResumeVersionId, user]);
+
+  const createResumeVersion = async (label, source) => {
+    const resp = await apiFetch("/api/resume/versions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        label,
+        resume_text: resumeText,
+        resume_structured: agentDocument?.raw_text === resumeText ? agentDocument : undefined,
+        source,
+        job_id: selectedJob?.id || null,
+        score: scoreData?.total_score || null,
+      }),
+    });
+    const version = await resp.json();
+    setMatchResumeVersionId(version.id);
+    await fetchVersions();
+    return version;
   };
 
   const saveCurrentVersion = async () => {
     if (!user || !resumeText.trim() || !saveVersionLabel.trim()) return;
     setSavingVersion(true);
     try {
-      const resp = await apiFetch("/api/resume/versions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          label: saveVersionLabel.trim(),
-          resume_text: resumeText,
-          resume_structured: agentDocument?.raw_text === resumeText ? agentDocument : undefined,
-          source: "manual",
-          job_id: selectedJob?.id || null,
-          score: scoreData?.total_score || null,
-        }),
-      });
-      if (resp.ok) {
-        setSaveVersionLabel("");
-        fetchVersions();
-      }
+      await createResumeVersion(saveVersionLabel.trim(), "manual");
+      setSaveVersionLabel("");
     } catch { /* ignore */ }
     setSavingVersion(false);
+  };
+
+  const handleSearchMatchingJobs = async () => {
+    if (!resumeText.trim() || startingJobSearch) return;
+    if (!user) {
+      setActiveTab("team");
+      return;
+    }
+    setStartingJobSearch(true);
+    setDownloadError("");
+    try {
+      const versionId = matchResumeVersionId || (
+        await createResumeVersion("Resume used for job search", "job_search")
+      ).id;
+      onSearchMatchingJobs?.(versionId);
+    } catch (searchError) {
+      setDownloadError(searchError.message || "Could not save this resume for job matching.");
+    } finally {
+      setStartingJobSearch(false);
+    }
   };
 
   const renameVersion = async (versionId, newLabel) => {
@@ -1720,6 +1767,8 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const handlePrintPdf = async () => {
     if (!resumeText.trim() || downloadingPdf) return;
     setDownloadingPdf(true);
+    setDownloadError("");
+    setDownloadReady(false);
     try {
       const resp = await apiFetch("/api/resume/download-pdf", {
         method: "POST",
@@ -1733,6 +1782,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       });
       const blob = await resp.blob();
       downloadBlob(blob, `${(profile.name || "resume").replace(/[^a-zA-Z0-9]/g, "_")}_resume.pdf`);
+      setDownloadReady(true);
     } catch (err) {
       setDownloadError(err.message || "PDF download failed");
     }
@@ -5641,11 +5691,14 @@ CERTIFICATIONS
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
                   type="button"
-                  onClick={() => setActiveTab("jobs")}
+                  onClick={handleSearchMatchingJobs}
+                  disabled={startingJobSearch}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#2d3a47]"
                 >
-                  <Search size={14} />
-                  Search Matching Jobs
+                  {startingJobSearch ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
+                  {startingJobSearch
+                    ? "Saving resume..."
+                    : user ? "Search Matching Jobs" : "Sign in to match jobs"}
                 </button>
                 <button
                   type="button"

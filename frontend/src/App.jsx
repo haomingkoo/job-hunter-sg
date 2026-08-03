@@ -74,6 +74,8 @@ export default function JobHunterSG() {
   const [trackedJobsError, setTrackedJobsError] = useState("");
   const [selectedJob, setSelectedJob] = useState(null);
   const [openTrackedJobId, setOpenTrackedJobId] = useState(null);
+  const [resumeVersionToOpen, setResumeVersionToOpen] = useState(null);
+  const [recruitmentRequest, setRecruitmentRequest] = useState(null);
 
   // Scroll state for glassmorphism header
   const [scrolled, setScrolled] = useState(false);
@@ -464,18 +466,25 @@ export default function JobHunterSG() {
                   <RecruitmentTeamPanel
                     user={user}
                     setActiveTab={navigateTo}
+                    initialRequest={recruitmentRequest}
+                    onInitialRequestHandled={(requestId) => {
+                      setRecruitmentRequest((current) => (
+                        current?.id === requestId ? null : current
+                      ));
+                    }}
                     onOpenApplication={async (trackedJobId) => {
                       await refreshJobs();
                       setOpenTrackedJobId(trackedJobId);
                       navigateTo("tracker");
                     }}
-                    onTailorJob={(job) => {
+                    onTailorJob={(job, resumeVersionId) => {
                       setSelectedJob({
                         ...job,
                         id: job.job_id,
                         url: job.source?.url || "",
                         source: job.source?.source || "",
                       });
+                      setResumeVersionToOpen(resumeVersionId);
                       navigateTo("resume");
                     }}
                   />
@@ -512,7 +521,27 @@ export default function JobHunterSG() {
                   <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Follow-up Reminders" />
                 )
               )}
-              {activeTab === "resume" && <ResumeTab selectedJob={selectedJob} user={user} setActiveTab={navigateTo} />}
+              {activeTab === "resume" && (
+                <ResumeTab
+                  selectedJob={selectedJob}
+                  user={user}
+                  setActiveTab={navigateTo}
+                  initialResumeVersionId={resumeVersionToOpen}
+                  onInitialResumeVersionLoaded={(versionId) => {
+                    setResumeVersionToOpen((current) => (
+                      String(current) === String(versionId) ? null : current
+                    ));
+                  }}
+                  onSearchMatchingJobs={(resumeVersionId) => {
+                    setRecruitmentRequest({
+                      id: globalThis.crypto.randomUUID(),
+                      resumeVersionId,
+                      message: "Find more roles that match this refined resume.",
+                    });
+                    navigateTo("team");
+                  }}
+                />
+              )}
               {activeTab === "stories" && (
                 user ? (
                   <StoriesTab user={user} />

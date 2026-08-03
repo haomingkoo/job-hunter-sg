@@ -64,6 +64,7 @@ describe("RecruitmentTeamPanel", () => {
           thread_id: "thread-1",
           workflow_state: "exploring",
           case_facts: {
+            resume_version_id: 7,
             resume_label: "AI resume",
             plan: [
               { step: "Study resume evidence", status: "completed" },
@@ -209,6 +210,55 @@ describe("RecruitmentTeamPanel", () => {
     );
     expect(container.textContent).not.toContain("[autopilot]");
     expect(container.textContent).toContain("I ranked the strongest current roles.");
+  });
+
+  it("continues the existing conversation when post-export search uses its refined resume", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-refined");
+    const onInitialRequestHandled = vi.fn();
+    streamRecruitmentCommand.mockResolvedValue({
+      thread_id: "thread-refined", run_id: "run-next", status: "completed",
+    });
+    apiFetch.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/resume/versions") {
+        return response([{ id: 19, label: "Recruitment team edits", is_master: false }]);
+      }
+      if (path === "/api/recruitment-team/threads" && !options.method) return response([]);
+      if (path === "/api/recruitment-team/threads/thread-refined") {
+        return response({
+          thread_id: "thread-refined",
+          workflow_state: "exploring",
+          case_facts: { resume_version_id: 19, resume_label: "Recruitment team edits" },
+          messages: [],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-refined/events") return response([]);
+      if (path.includes("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => {
+      root.render(
+        <RecruitmentTeamPanel
+          user={{ id: 42 }}
+          initialRequest={{
+            id: "next-jobs-1",
+            resumeVersionId: 19,
+            message: "Find more roles that match this refined resume.",
+          }}
+          onInitialRequestHandled={onInitialRequestHandled}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(streamRecruitmentCommand).toHaveBeenCalledTimes(1);
+    expect(streamRecruitmentCommand).toHaveBeenCalledWith(
+      "/api/recruitment-team/threads/thread-refined/messages/stream",
+      expect.objectContaining({ message: "Find more roles that match this refined resume." }),
+      expect.any(Function),
+    );
+    expect(onInitialRequestHandled).toHaveBeenCalledWith("next-jobs-1");
   });
 
   it("keeps the composer open and sends messages queued during a running turn", async () => {
@@ -589,6 +639,7 @@ describe("RecruitmentTeamPanel", () => {
           thread_id: "thread-jobs",
           workflow_state: selected ? "target_selected" : "exploring",
           case_facts: {
+            resume_version_id: 7,
             resume_label: "AI resume",
             recommendations: [job],
             match_rationales: [{
@@ -688,7 +739,7 @@ describe("RecruitmentTeamPanel", () => {
       tailorButton.click();
       workspaceButton.click();
     });
-    expect(onTailorJob).toHaveBeenCalledWith(job);
+    expect(onTailorJob).toHaveBeenCalledWith(job, 7);
     expect(onOpenApplication).toHaveBeenCalledWith(7001);
   });
 
