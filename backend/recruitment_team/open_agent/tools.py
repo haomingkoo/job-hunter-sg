@@ -565,9 +565,14 @@ def propose_resume_edit(
     )
     if not evidence_result.supported:
         claims = "; ".join(evidence_result.unsupported_claims)
+        gap = evidence_result.reason.strip()
+        detail = ". ".join(part for part in (claims, gap) if part)
         return {
             "accepted": False,
-            "reason": claims or evidence_result.reason,
+            "reason": (
+                f"{detail}. Remove the unsupported claims or cite candidate evidence "
+                "that directly establishes them."
+            ),
             "failure_code": evidence_result.failure_code or "unsupported_claims",
             "block_id": block_id,
         }

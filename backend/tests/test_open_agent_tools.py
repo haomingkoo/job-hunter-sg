@@ -152,6 +152,7 @@ def test_propose_resume_edit_rejects_semantically_unsupported_scope():
     assert result["accepted"] is False
     assert result["failure_code"] == "unsupported_claims"
     assert "performance management" in result["reason"]
+    assert "Remove the unsupported claims" in result["reason"]
 
 
 def test_propose_resume_edit_resolves_profile_field_evidence_ids():

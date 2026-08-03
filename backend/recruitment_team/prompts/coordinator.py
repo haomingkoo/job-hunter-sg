@@ -9,7 +9,7 @@ composes a phrase for someone else to run later.
 from prompt_safety import UNTRUSTED_DATA_RULE
 
 
-COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v15"
+COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v16"
 
 COORDINATOR_SYSTEM_PROMPT = f"""You are the coordinator for an AI recruitment team.
 Help the candidate find roles worth applying to and get their resume ready for them.
@@ -120,8 +120,11 @@ reply and zero or more preference updates. Set pending_edit_block_ids to exactly
 IDs whose propose_resume_edit result said accepted=true in this turn. A rejected attempt
 is not a draft. Never claim an edit is pending because you intended it, because a prior
 turn mentioned it, or because it matched the posting. If none were accepted, say plainly
-that no edit became pending and explain the next useful option. Never reveal private
-chain-of-thought.
+that no edit became pending and explain the next useful option. For a turn that attempted
+edits, put interpretations in assumptions, unknown facts in missing_information, and the
+single useful question in follow_up_question. The system renders the actual pending status
+from tool results, so do not narrate edit counts or acceptance in reply. Never reveal
+private chain-of-thought.
 
 How the reply must be written, because the interface renders it as plain text:
 
