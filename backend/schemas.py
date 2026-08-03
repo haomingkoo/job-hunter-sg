@@ -321,6 +321,17 @@ class ResumeScoreRequest(BaseModel):
     template_id: str | None = Field(None, description="Template ID to check expected sections")
 
 
+class ResumeIngestTextRequest(BaseModel):
+    resume_text: str = Field(..., min_length=1, max_length=30000)
+
+
+class ResumeHeadingDecisionRequest(BaseModel):
+    document: dict[str, Any]
+    block_id: str = Field(..., min_length=1, max_length=100)
+    expected_revision: str = Field(..., min_length=1, max_length=100)
+    section_key: str | None = Field(None, max_length=100)
+
+
 class ResumeAIRequest(ResumeScoreRequest):
     resume_text: str = Field(..., min_length=50, max_length=10000)
 

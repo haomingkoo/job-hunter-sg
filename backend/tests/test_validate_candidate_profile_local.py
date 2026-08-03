@@ -40,6 +40,7 @@ def test_candidate_profile_canary_writes_complete_profile_and_compact_summary(
     capsys,
 ):
     import config
+    from resume_document import SCHEMA_VERSION
     from scripts import validate_candidate_profile_local as script
 
     parsed = _parsed_resume()
@@ -104,7 +105,7 @@ def test_candidate_profile_canary_writes_complete_profile_and_compact_summary(
         "validation_attempts": config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
         "decomposition_version": "semantic-section-record-v1",
-        "resume_document_schema_version": 2,
+        "resume_document_schema_version": SCHEMA_VERSION,
         "checkpoint_enabled": False,
     }
     assert json.loads(summary) == {

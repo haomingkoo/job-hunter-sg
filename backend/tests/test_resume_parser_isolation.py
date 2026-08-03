@@ -80,6 +80,7 @@ def _two_column_pdf() -> bytes:
 
 
 def test_isolated_parser_returns_normal_pdf_result():
+    from resume_document import is_resume_document
     from resume_parser import parse_resume_isolated
 
     path = Path(__file__).parents[1] / "templates/nus/NUS Guidelines.pdf"
@@ -87,9 +88,29 @@ def test_isolated_parser_returns_normal_pdf_result():
 
     assert result["file_type"] == "pdf"
     assert result["text"]
-    assert result["document"]["schema_version"] == 2
+    assert is_resume_document(result["document"])
     assert result["document"]["raw_text"] == result["text"]
     assert result["document"]["source"]["format"] == "pdf"
+
+
+def test_pdf_and_docx_adapters_produce_the_same_semantic_display_signature() -> None:
+    from resume_parser import parse_resume
+
+    pdf = parse_resume("resume.pdf", PDF_TYPE, _sample_pdf())["document"]
+    docx = parse_resume("resume.docx", DOCX_TYPE, _sample_docx())["document"]
+
+    def signature(document: dict) -> list[tuple[str, str, str]]:
+        return [
+            (block["kind"], block["section_key"], block["text"])
+            for block in document["blocks"]
+        ]
+
+    assert signature(pdf) == signature(docx)
+    assert [section["key"] for section in pdf["sections"]] == [
+        section["key"] for section in docx["sections"]
+    ]
+    assert all(block["page"] == 1 for block in pdf["blocks"])
+    assert any(block["style_name"] == "Normal" for block in docx["blocks"])
 
 
 def test_isolated_parser_returns_normal_docx_result():
@@ -202,6 +223,38 @@ def test_two_column_pdf_reports_layout_risk_instead_of_false_good() -> None:
     assert parsed["parse_quality"]["label"] != "good"
     assert parsed["parse_quality"]["signals"]["possible_multi_column_layout"] is True
     assert any("columns" in warning for warning in parsed["parse_quality"]["warnings"])
+
+
+def test_pasted_text_and_heading_confirmation_use_canonical_interface() -> None:
+    from main import app
+    from resume_document import is_resume_document
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/resume/ingest-text",
+        json={
+            "resume_text": "EXPERIENCE\n- Built a reporting platform.\n\nSELECTED TALKS\nSpoke at PyCon Singapore."
+        },
+    )
+    assert response.status_code == 200
+    document = response.json()
+    assert is_resume_document(document)
+    assert document["source"]["format"] == "text"
+    candidate = document["heading_candidates"][0]
+
+    confirmed = client.post(
+        "/api/resume/confirm-heading",
+        json={
+            "document": document,
+            "block_id": candidate["block_id"],
+            "expected_revision": document["revision"],
+            "section_key": None,
+        },
+    )
+    assert confirmed.status_code == 200
+    updated = confirmed.json()
+    assert updated["raw_text"] == document["raw_text"]
+    assert updated["sections"][-1]["label"] == "SELECTED TALKS"
 
 
 @pytest.mark.parametrize(

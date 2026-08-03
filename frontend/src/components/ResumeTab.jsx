@@ -40,7 +40,8 @@ import {
   getDisplaySubheadingText,
   looksLikeDateOnlyText,
   analyzeBulletFeedback,
-  parseResumeToSections,
+  isCanonicalResumeDocument,
+  projectResumeDocument,
   extractResumeHeaderMeta,
   renderHighlightedText,
   updateResumeLine,
@@ -386,12 +387,55 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const [agentToolSpans, setAgentToolSpans] = useState([]);
   const [agentPendingDiffs, setAgentPendingDiffs] = useState([]);
   const [agentDocument, setAgentDocument] = useState(null);
+  const [resumeDocumentError, setResumeDocumentError] = useState("");
+  const [headingConfirmingId, setHeadingConfirmingId] = useState("");
   const [agentApplyingDiffId, setAgentApplyingDiffId] = useState("");
   const lastAgentResponseRef = useRef("");
+  const resumeDocumentRequestRef = useRef(0);
   const agentEvidenceById = useMemo(
     () => new Map((agentDocument?.blocks || []).map((block) => [block.id, block])),
     [agentDocument],
   );
+
+  useEffect(() => {
+    if (!resumeText.trim()) {
+      setAgentDocument(null);
+      setResumeDocumentError("");
+      return undefined;
+    }
+    if (isCanonicalResumeDocument(agentDocument) && agentDocument.raw_text === resumeText) {
+      setResumeDocumentError("");
+      return undefined;
+    }
+
+    const requestId = resumeDocumentRequestRef.current + 1;
+    resumeDocumentRequestRef.current = requestId;
+    const controller = new AbortController();
+    const syncDocument = async () => {
+      try {
+        const response = await apiFetch("/api/resume/ingest-text", {
+          method: "POST",
+          body: JSON.stringify({ resume_text: resumeText }),
+          signal: controller.signal,
+        });
+        const document = await response.json();
+        if (resumeDocumentRequestRef.current !== requestId) return;
+        if (!isCanonicalResumeDocument(document) || document.raw_text !== resumeText) {
+          throw new Error("The resume parser returned an incompatible document.");
+        }
+        setAgentDocument(document);
+        setResumeDocumentError("");
+      } catch (syncError) {
+        if (controller.signal.aborted || resumeDocumentRequestRef.current !== requestId) return;
+        setResumeDocumentError(syncError.message || "The resume preview could not be reconstructed.");
+      }
+    };
+    syncDocument();
+
+    return () => {
+      controller.abort();
+    };
+  }, [agentDocument, resumeText]);
 
   useEffect(() => {
     if (!agentLoading) return undefined;
@@ -634,8 +678,12 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   );
 
   const parsedSections = useMemo(
-    () => parseResumeToSections(resumeText, resumeKeywords, templateOrder),
-    [resumeText, resumeKeywords, templateOrder],
+    () => (
+      agentDocument?.raw_text === resumeText
+        ? projectResumeDocument(agentDocument, resumeKeywords, templateOrder)
+        : []
+    ),
+    [agentDocument, resumeText, resumeKeywords, templateOrder],
   );
 
   const bulletSections = useMemo(
@@ -796,7 +844,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     setAgentWorkerRuns(Array.isArray(data.worker_runs) ? data.worker_runs : []);
     setAgentToolSpans(Array.isArray(data.tool_spans) ? data.tool_spans : []);
     setAgentPendingDiffs(Array.isArray(data.pending_diffs) ? data.pending_diffs : []);
-    setAgentDocument(data.document?.schema_version === 2 ? data.document : null);
+    setAgentDocument(isCanonicalResumeDocument(data.document) ? data.document : null);
     setAgentRunStatus(data.status || "idle");
     setAgentProgress(data.progress || "");
     setAgentLoading(["queued", "running"].includes(data.status));
@@ -911,7 +959,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       const data = await response.json();
       applyResumeText(data.draft, { preserveTailoringContext: true });
       setAgentPendingDiffs(Array.isArray(data.pending_diffs) ? data.pending_diffs : []);
-      setAgentDocument(data.document?.schema_version === 2 ? data.document : null);
+      setAgentDocument(isCanonicalResumeDocument(data.document) ? data.document : null);
     } catch (err) {
       setAgentError(err.message || "Could not safely apply this resume edit.");
     } finally {
@@ -1022,7 +1070,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
       const data = await response.json();
       const nextText = data.text || "";
-      setAgentDocument(data.document?.schema_version === 2 ? data.document : null);
+      setAgentDocument(isCanonicalResumeDocument(data.document) ? data.document : null);
       setUploadWarnings([
         ...(data.parse_quality?.warnings || []),
         ...(data.content_warnings || []),
@@ -1092,7 +1140,7 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       const resp = await apiFetch(`/api/resume/versions/${versionId}`);
       if (!resp.ok) return;
       const data = await resp.json();
-      setAgentDocument(data.resume_structured?.schema_version === 2 ? data.resume_structured : null);
+      setAgentDocument(isCanonicalResumeDocument(data.resume_structured) ? data.resume_structured : null);
       setSelectedBulletId(null);
       setEditingNodeId(null);
       setCoachResponse(null);
@@ -1520,14 +1568,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
   const insertSectionNearTop = useCallback((heading, starter) => {
     const lines = resumeText.replace(/\r\n?/g, "\n").split("\n");
-    const headerLineIndices = extractResumeHeaderMeta(resumeText).lineIndices;
+    const headerLineIndices = extractResumeHeaderMeta(resumeText, agentDocument).lineIndices;
     const insertAt = headerLineIndices.length
       ? headerLineIndices[headerLineIndices.length - 1] + 1
       : 0;
     lines.splice(insertAt, 0, "", heading, starter, "");
     applyResumeText(lines.join("\n").replace(/\n{3,}/g, "\n\n").trim());
     setShowAddSectionMenu(false);
-  }, [applyResumeText, resumeText]);
+  }, [agentDocument, applyResumeText, resumeText]);
 
   const handleAddSection = useCallback((option) => {
     if (!option) return;
@@ -1711,6 +1759,36 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
   const jumpToScorePanel = () => {
     openMobileFeedbackPanel();
   };
+
+  const handleConfirmHeading = useCallback(async (section) => {
+    if (
+      !section?.headingCandidate
+      || !isCanonicalResumeDocument(agentDocument)
+      || agentDocument.raw_text !== resumeText
+    ) return;
+    setHeadingConfirmingId(section.id);
+    setResumeDocumentError("");
+    try {
+      const response = await apiFetch("/api/resume/confirm-heading", {
+        method: "POST",
+        body: JSON.stringify({
+          document: agentDocument,
+          block_id: section.id,
+          expected_revision: agentDocument.revision,
+          section_key: section.headingCandidate.suggested_key || null,
+        }),
+      });
+      const document = await response.json();
+      if (!isCanonicalResumeDocument(document) || document.raw_text !== resumeText) {
+        throw new Error("The heading decision returned an incompatible document.");
+      }
+      setAgentDocument(document);
+    } catch (confirmError) {
+      setResumeDocumentError(confirmError.message || "The heading decision could not be saved.");
+    } finally {
+      setHeadingConfirmingId("");
+    }
+  }, [agentDocument, resumeText]);
 
   const openEditorForSection = (section) => {
     if (!section) return;
@@ -1912,7 +1990,10 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
       pillClass: hasHighSeverityIssue ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800",
     };
   }, [selectedBullet, selectedBulletIssueTabs]);
-  const headerMeta = useMemo(() => extractResumeHeaderMeta(resumeText), [resumeText]);
+  const headerMeta = useMemo(
+    () => extractResumeHeaderMeta(resumeText, agentDocument),
+    [agentDocument, resumeText],
+  );
   const fallbackHeaderLines = [profile.name, [profile.email, profile.phone, profile.location].filter(Boolean).join(" | ")].filter(Boolean);
   const displayHeaderLines = headerMeta.lines.length > 0 ? headerMeta.lines : fallbackHeaderLines;
   const displayDetailLines = displayHeaderLines.slice(1);
@@ -3024,9 +3105,9 @@ CERTIFICATIONS
         </div>
       )}
 
-      {wizardStep <= 3 && (uploadError || scoreError || coachError || formatError || downloadError || error) && (
+      {wizardStep <= 3 && (uploadError || resumeDocumentError || scoreError || coachError || formatError || downloadError || error) && (
         <div className="space-y-2">
-          {[uploadError, scoreError, coachError, formatError, downloadError, error].filter(Boolean).map((message, index) => (
+          {[uploadError, resumeDocumentError, scoreError, coachError, formatError, downloadError, error].filter(Boolean).map((message, index) => (
             <div key={`${message}-${index}`} className="flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               <AlertCircle size={14} className="flex-shrink-0" />
               <span>{message}</span>
@@ -4954,6 +5035,14 @@ CERTIFICATIONS
                               {renderHighlightedText(section.text, section.keywordMatches || [])}
                             </h3>
                           )}
+                          {section.type === "candidate_heading" && (
+                            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-950">
+                              {renderHighlightedText(section.text, section.keywordMatches || [])}
+                              <div className="mt-1 text-[11px] font-normal leading-relaxed text-amber-800">
+                                This may be a section heading. It remains inside the current section until you confirm it.
+                              </div>
+                            </div>
+                          )}
                           {section.type === "heading_paragraph" && (
                             <div style={{ breakInside: "avoid", columnSpan: "all" }}>
                               <h3 className={templateStyles.headingClass} style={templateStyles.headingStyle}>
@@ -5208,6 +5297,22 @@ CERTIFICATIONS
                         <>
                           <div id={`resume-section-${section.id}`} className={`group/section rounded-xl px-3 py-0.5 transition ${wrapperClasses}`}>
                             {lineContent}
+                            {section.type === "candidate_heading" && (
+                              <div className="mt-1 flex justify-end">
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    handleConfirmHeading(section);
+                                  }}
+                                  disabled={headingConfirmingId === section.id}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-2 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-50 disabled:opacity-50"
+                                >
+                                  {headingConfirmingId === section.id ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} />}
+                                  Confirm as section
+                                </button>
+                              </div>
+                            )}
                             {actionButtons}
                             {sectionMoveButtons}
                             {section.type === "heading" && section.sectionKey === "summary" && !isEditing && (

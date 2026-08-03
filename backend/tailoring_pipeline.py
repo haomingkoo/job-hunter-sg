@@ -254,11 +254,19 @@ def _stage_0_analyze(
     """Stage 0: Local -- structure resume + baseline score + skill gap."""
     state.update_progress(0, 3, "Parsing resume structure...")
 
+    from resume_document import create_resume_document
+
+    document = create_resume_document(resume_text)
     structured = structure_resume(resume_text)
     state.update_progress(1, 3, "Scoring resume...")
 
     scorer = ResumeScorer()
-    score_result = scorer.analyze(resume_text, jd_text, parsed_jd=parsed_jd)
+    score_result = scorer.analyze(
+        resume_text,
+        jd_text,
+        parsed_jd=parsed_jd,
+        resume_document=document,
+    )
     state.update_progress(2, 3, "Analyzing skill gaps...")
 
     all_jd_skills = (
@@ -285,6 +293,7 @@ def _stage_0_analyze(
 
     return {
         "structured": structured,
+        "document": document,
         "score_result": score_result,
         "matched_skills": matched_skills,
         "missing_skills": missing_skills,

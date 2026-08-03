@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r backend/requirements.txt pip-audit pytest ruff==0.15.20 ty==0.0.56
+          python -m pip install -r backend/requirements.txt -r backend/requirements-test.txt pip-audit pytest ruff==0.15.20 ty==0.0.56
 
       - name: Audit Python dependencies
         run: pip-audit -r backend/requirements.txt

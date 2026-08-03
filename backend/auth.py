@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import UsageLog, User
 
-SECRET_KEY = os.environ.get("JWT_SECRET", "")
 ALGORITHM = "HS256"
 TOKEN_EXPIRY_DAYS = 7
 CLOUDFLARE_PASSWORD_SENTINEL = "cloudflare-access"  # pragma: allowlist secret
@@ -60,22 +59,30 @@ def is_production_environment() -> bool:
     return db_url.startswith(("postgres://", "postgresql://", "postgresql+"))
 
 
-_is_production = is_production_environment()
-if _is_production and not _jwt_secret_is_strong(SECRET_KEY):
-    raise RuntimeError(
-        "JWT_SECRET must be a non-placeholder value of at least 32 bytes in production. "
-        'Generate one: python -c "import secrets; print(secrets.token_hex(32))"'
-    )
-if not SECRET_KEY:
+def _load_jwt_secret() -> str:
+    secret = os.environ.get("JWT_SECRET", "")
+    if is_production_environment() and not _jwt_secret_is_strong(secret):
+        raise RuntimeError(
+            "JWT_SECRET must be a non-placeholder value of at least 32 bytes in production. "
+            'Generate one: python -c "import secrets; print(secrets.token_hex(32))"'
+        )
+    if secret:
+        return secret
+
     # Local dev: generate a random key per process. Auth still works,
     # but tokens don't survive restarts. This is intentional.
-    import secrets as _secrets
     import logging as _logging
-    SECRET_KEY = _secrets.token_hex(32)
+    import secrets as _secrets
+
+    generated = _secrets.token_hex(32)
     _logging.getLogger("jobhunter.auth").warning(
         "JWT_SECRET not set. Generated ephemeral key for this process. "
         "Tokens will not survive restarts. Set JWT_SECRET in .env for persistence."
     )
+    return generated
+
+
+SECRET_KEY = _load_jwt_secret()
 
 AUTH_MODE = os.environ.get(
     "AUTH_MODE",

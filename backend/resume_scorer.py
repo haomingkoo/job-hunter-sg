@@ -435,7 +435,12 @@ class ResumeScorer:
 
     # ── Dimension scorers ────────────────────────────────────────────────
 
-    def _score_impact(self, text: str, bullets: list[str]) -> dict:
+    def _score_impact(
+        self,
+        text: str,
+        bullets: list[str],
+        sections: list[str] | None = None,
+    ) -> dict:
         """Score the Impact dimension (40 pts)."""
         items: dict[str, dict] = {}
 
@@ -559,7 +564,9 @@ class ResumeScorer:
         }
 
         # extracurricular (5)
-        extra_found = "activities" in self._extract_sections(text)
+        extra_found = "activities" in (
+            sections if sections is not None else self._extract_sections(text)
+        )
         extra_score = 5 if extra_found else 3
         extra_suggestions: list[str] = []
         if not extra_found:
@@ -1193,6 +1200,7 @@ class ResumeScorer:
         job_description: str = "",
         parsed_jd: dict | None = None,
         template_sections: list[str] | None = None,
+        resume_document: dict | None = None,
     ) -> dict:
         """Score a resume and return a structured report.
 
@@ -1201,10 +1209,23 @@ class ResumeScorer:
         reflects quality only (backward-compatible).
         """
         text = resume_text.strip()
-        bullets = self._extract_bullets(text)
-        sections = self._extract_sections(text)
+        if resume_document is None:
+            from resume_document import create_resume_document
 
-        impact = self._score_impact(text, bullets)
+            resume_document = create_resume_document(text)
+        canonical_bullets = [
+            block
+            for block in resume_document.get("blocks", [])
+            if block.get("kind") == "bullet"
+        ]
+        bullets = [str(block.get("text") or "") for block in canonical_bullets]
+        sections = [
+            str(section.get("key"))
+            for section in resume_document.get("sections", [])
+            if section.get("key")
+        ]
+
+        impact = self._score_impact(text, bullets, sections)
         presentation = self._score_presentation(
             text, bullets, sections, template_sections,
         )
@@ -1249,6 +1270,18 @@ class ResumeScorer:
             "keyword_match": keyword_match,
             "top_suggestions": top_suggestions,
             "sg_tips": sg_tips,
+            "detected_sections": list(dict.fromkeys(sections)),
+            "resume_evidence": {
+                "document_revision": resume_document.get("revision"),
+                "sections": list(dict.fromkeys(sections)),
+                "bullets": [
+                    {
+                        "id": block.get("id"),
+                        "section_key": block.get("section_key") or "",
+                    }
+                    for block in canonical_bullets
+                ],
+            },
         }
         if ats_match is not None:
             result["ats_match"] = ats_match

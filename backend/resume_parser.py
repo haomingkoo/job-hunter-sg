@@ -121,11 +121,50 @@ def _extract_docx_paragraph_text(paragraph) -> str:
     return cleaned
 
 
-def _append_text_lines(target: list[str], value: str) -> None:
-    for line in str(value or "").splitlines():
-        cleaned = line.strip()
-        if cleaned:
-            target.append(cleaned)
+def _list_marker(value: str) -> str | None:
+    match = _BULLET_PREFIX_RE.match(value or "")
+    return match.group("marker") if match else None
+
+
+def _docx_paragraph_record(paragraph, *, source_kind: str) -> dict | None:
+    text = _extract_docx_paragraph_text(paragraph)
+    if not text:
+        return None
+    paragraph_format = paragraph.paragraph_format
+    left_indent = getattr(paragraph_format, "left_indent", None)
+    first_line_indent = getattr(paragraph_format, "first_line_indent", None)
+    indentation = left_indent or first_line_indent
+    runs = [run for run in paragraph.runs if (run.text or "").strip()]
+    font_sizes = [float(run.font.size.pt) for run in runs if run.font.size is not None]
+    style_name = (getattr(getattr(paragraph, "style", None), "name", "") or "").strip()
+    heading_match = re.match(r"heading\s+(\d+)$", style_name, re.I)
+    return {
+        "text": text,
+        "page": None,
+        "list_marker": _list_marker(text),
+        "indentation": float(indentation.pt) if indentation is not None else None,
+        "x_position": None,
+        "heading_emphasis": bool(heading_match or any(run.bold is True for run in runs)),
+        "font_size": max(font_sizes, default=None),
+        "heading_level": int(heading_match.group(1)) if heading_match else None,
+        "style_name": style_name or None,
+        "source_kind": source_kind,
+    }
+
+
+def _merge_docx_row_records(records: list[dict]) -> dict:
+    return {
+        "text": " | ".join(record["text"] for record in records),
+        "page": None,
+        "list_marker": next((record["list_marker"] for record in records if record["list_marker"]), None),
+        "indentation": next((record["indentation"] for record in records if record["indentation"] is not None), None),
+        "x_position": None,
+        "heading_emphasis": any(record["heading_emphasis"] for record in records),
+        "font_size": max((record["font_size"] for record in records if record["font_size"] is not None), default=None),
+        "heading_level": next((record["heading_level"] for record in records if record["heading_level"] is not None), None),
+        "style_name": next((record["style_name"] for record in records if record["style_name"]), None),
+        "source_kind": "table_row",
+    }
 
 
 def extract_phone_number(text: str) -> str | None:
@@ -143,38 +182,58 @@ def extract_phone_number(text: str) -> str | None:
     return None
 
 
-def _extract_docx_container(container) -> list[str]:
+def _extract_docx_container(container, *, source_kind: str = "body") -> list[dict]:
     from docx.table import Table
     from docx.text.paragraph import Paragraph
 
-    text_parts: list[str] = []
+    records: list[dict] = []
     for block in container.iter_inner_content():
         if isinstance(block, Paragraph):
-            paragraph_text = _extract_docx_paragraph_text(block)
-            if paragraph_text:
-                _append_text_lines(text_parts, paragraph_text)
+            record = _docx_paragraph_record(block, source_kind=source_kind)
+            if record:
+                records.append(record)
             continue
         if isinstance(block, Table):
             for row in block.rows:
-                row_cells: list[list[str]] = []
+                row_cells: list[list[dict]] = []
                 seen_cells: set[int] = set()
                 for cell in row.cells:
                     cell_id = id(cell._tc)
                     if cell_id in seen_cells:
                         continue
                     seen_cells.add(cell_id)
-                    cell_lines = _extract_docx_container(cell)
-                    if cell_lines:
-                        row_cells.append(cell_lines)
-                for line_index in range(max((len(lines) for lines in row_cells), default=0)):
-                    row_text = " | ".join(
-                        lines[line_index]
-                        for lines in row_cells
-                        if line_index < len(lines)
-                    )
-                    if row_text:
-                        text_parts.append(row_text)
-    return text_parts
+                    cell_records = _extract_docx_container(cell, source_kind="table_cell")
+                    if cell_records:
+                        row_cells.append(cell_records)
+                for line_index in range(max((len(items) for items in row_cells), default=0)):
+                    line_records = [
+                        items[line_index]
+                        for items in row_cells
+                        if line_index < len(items)
+                    ]
+                    if line_records:
+                        records.append(_merge_docx_row_records(line_records))
+    return records
+
+
+def _materialize_layout_records(records: list[dict]) -> tuple[str, list[dict]]:
+    parts: list[str] = []
+    layout: list[dict] = []
+    cursor = 0
+    previous_page = None
+    for record in records:
+        page = record.get("page")
+        separator = "\n\n" if parts and page is not None and page != previous_page else ("\n" if parts else "")
+        if separator:
+            parts.append(separator)
+            cursor += len(separator)
+        value = str(record.get("text") or "")
+        start = cursor
+        parts.append(value)
+        cursor += len(value)
+        layout.append({**record, "raw_span": [start, cursor]})
+        previous_page = page
+    return "".join(parts), layout
 
 
 def _has_missing_spaces(text: str) -> bool:
@@ -316,14 +375,35 @@ def _page_has_multiple_columns(page) -> bool:
     return wide_gap_rows >= 6 and wide_gap_rows >= len(rows) * 0.2
 
 
-def _extract_pdf(file_bytes: bytes) -> tuple[str, bool, int]:
+def _pdf_line_record(line: dict, page_number: int) -> dict:
+    chars = line.get("chars") or []
+    font_sizes = [float(char["size"]) for char in chars if char.get("size") is not None]
+    font_names = {str(char.get("fontname") or "") for char in chars}
+    return {
+        "text": str(line.get("text") or "").strip(),
+        "page": page_number,
+        "list_marker": _list_marker(str(line.get("text") or "")),
+        "indentation": float(line.get("x0")) if line.get("x0") is not None else None,
+        "x_position": float(line.get("x0")) if line.get("x0") is not None else None,
+        "heading_emphasis": any(
+            re.search(r"bold|black|heavy|semibold", name, re.I)
+            for name in font_names
+        ),
+        "font_size": max(font_sizes, default=None),
+        "heading_level": None,
+        "style_name": None,
+        "source_kind": "pdf_line",
+    }
+
+
+def _extract_pdf(file_bytes: bytes) -> tuple[str, bool, int, list[dict]]:
     """Extract full text from a PDF file. No truncation.
 
     Uses pdfplumber's proportional spacing tolerance for tightly-set PDFs.
     """
     import pdfplumber
 
-    text_parts = []
+    records: list[dict] = []
     possible_multi_column_layout = False
     page_count = 0
     try:
@@ -331,14 +411,16 @@ def _extract_pdf(file_bytes: bytes) -> tuple[str, bool, int]:
             page_count = len(pdf.pages)
             if len(pdf.pages) > MAX_PDF_PAGES:
                 raise ValueError(f"PDF has too many pages. Maximum is {MAX_PDF_PAGES}.")
-            for page in pdf.pages:
+            for page_number, page in enumerate(pdf.pages, start=1):
                 possible_multi_column_layout = possible_multi_column_layout or _page_has_multiple_columns(page)
-                page_text = page.extract_text(
+                page_lines = page.extract_text_lines(
                     x_tolerance_ratio=PDF_X_TOLERANCE_RATIO,
                 )
-                if page_text:
-                    text_parts.append(page_text)
-                    if sum(len(part) for part in text_parts) > MAX_EXTRACTED_CHARS:
+                for line in page_lines:
+                    record = _pdf_line_record(line, page_number)
+                    if record["text"]:
+                        records.append(record)
+                    if sum(len(item["text"]) for item in records) > MAX_EXTRACTED_CHARS:
                         raise ValueError("PDF contains too much text.")
     except ValueError:
         raise
@@ -346,12 +428,11 @@ def _extract_pdf(file_bytes: bytes) -> tuple[str, bool, int]:
         log.warning(f"PDF extraction failed: {e}")
         raise ValueError("Could not read this PDF. Make sure it's not a scanned image — we need text-based PDFs.")
 
-    full_text = "\n\n".join(text_parts)
+    full_text, layout = _materialize_layout_records(records)
     if not full_text.strip():
         raise ValueError("No text found in PDF. If your resume is a scanned image, please upload a DOCX or text-based PDF instead.")
 
-    full_text = _join_broken_lines(full_text)
-    return full_text, possible_multi_column_layout, page_count
+    return full_text, possible_multi_column_layout, page_count, layout
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -359,8 +440,7 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     return _extract_pdf(file_bytes)[0]
 
 
-def extract_text_from_docx(file_bytes: bytes) -> str:
-    """Extract full text from a DOCX file. No truncation."""
+def _extract_docx(file_bytes: bytes) -> tuple[str, list[dict]]:
     from docx import Document
 
     try:
@@ -389,25 +469,30 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
         log.warning(f"DOCX extraction failed: {e}")
         raise ValueError("Could not read this DOCX file. It may be corrupted.")
 
-    text_parts: list[str] = []
+    records: list[dict] = []
     seen_parts: set[int] = set()
     for section in doc.sections:
         if id(section.header.part) not in seen_parts:
-            text_parts.extend(_extract_docx_container(section.header))
+            records.extend(_extract_docx_container(section.header, source_kind="header"))
             seen_parts.add(id(section.header.part))
-    text_parts.extend(_extract_docx_container(doc))
+    records.extend(_extract_docx_container(doc))
     for section in doc.sections:
         if id(section.footer.part) not in seen_parts:
-            text_parts.extend(_extract_docx_container(section.footer))
+            records.extend(_extract_docx_container(section.footer, source_kind="footer"))
             seen_parts.add(id(section.footer.part))
 
-    full_text = "\n".join(text_parts)
+    full_text, layout = _materialize_layout_records(records)
     if not full_text.strip():
         raise ValueError("No text found in DOCX file.")
 
     if len(full_text) > MAX_EXTRACTED_CHARS:
         raise ValueError("DOCX contains too much text.")
-    return _join_broken_lines(full_text)
+    return full_text, layout
+
+
+def extract_text_from_docx(file_bytes: bytes) -> str:
+    """Extract full text from a DOCX file. No truncation."""
+    return _extract_docx(file_bytes)[0]
 
 
 def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
@@ -420,9 +505,9 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
     possible_multi_column_layout = False
     page_count = 0
     if file_type in ("pdf",):
-        text, possible_multi_column_layout, page_count = _extract_pdf(file_bytes)
+        text, possible_multi_column_layout, page_count, layout_blocks = _extract_pdf(file_bytes)
     elif file_type == "docx":
-        text = extract_text_from_docx(file_bytes)
+        text, layout_blocks = _extract_docx(file_bytes)
     else:
         raise ValueError(f"Unsupported file type: {file_type}")
 
@@ -485,6 +570,7 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
         filename=filename,
         source_sha256=hashlib.sha256(file_bytes).hexdigest(),
         warnings=document_warnings,
+        layout_blocks=layout_blocks,
     )
 
     return {

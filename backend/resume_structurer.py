@@ -23,6 +23,7 @@ from resume_scorer import (
     _starts_with_action_verb,
 )
 from resume_parser import _join_broken_lines, extract_phone_number
+from resume_identity import block_id
 from shared_classification import SHARED_KEY_MAP, SHARED_TITLE_PATTERNS, classify_section_heading
 
 log = logging.getLogger("jobhunter.structurer")
@@ -62,6 +63,7 @@ _ALL_CAPS_HEADER_RE = re.compile(r"^[A-Z][A-Z &/\-]{2,}$")
 _BULLET_CHAR_RE = re.compile(
     r"^[\s]*(?:[-*\u2022\u2023\u25E6\u2043\u2219]|o\s|\d+[.)]\s)",
 )
+_SOURCE_BULLET_MARKER = r"(?:[-*\u2022\u2023\u25E6\u2043\u2219]|o\s|\d+[.)])"
 _TITLE_LINE_RE = re.compile(
     r"\b(?:"
     + "|".join(re.escape(pattern) for pattern in SHARED_TITLE_PATTERNS)
@@ -286,7 +288,7 @@ def _merge_date_parts(parts: list[str]) -> str:
     return unique_parts[0]
 
 
-def _is_entry_heading(line: str) -> bool:
+def is_entry_heading(line: str) -> bool:
     """Heuristic: is this line an entry heading (company/role/date)?"""
     stripped = _clean_line(line)
     if not stripped:
@@ -745,7 +747,22 @@ def _build_entries(
                 current_bullets.append(bullet_text)
             continue
 
-        is_heading = _is_entry_heading(line)
+        next_line = next(
+            (
+                _clean_line(candidate)
+                for candidate in section_lines[line_index + 1:]
+                if _clean_line(candidate)
+            ),
+            "",
+        )
+        is_heading = is_entry_heading(line) or (
+            _looks_like_title_line(stripped)
+            and not stripped.endswith((".", "!", "?", ";"))
+            and (
+                _is_date_only_line(next_line)
+                or bool(_BULLET_CHAR_RE.match(next_line))
+            )
+        )
 
         # When we're inside a bullet list, only break for a new entry
         # if the line has a clear date or is ALL-CAPS (not just a pipe)
@@ -754,15 +771,16 @@ def _build_entries(
                 _SINGLE_DATE_RE.search(stripped)
             )
             is_caps = bool(_ALL_CAPS_HEADER_RE.match(stripped))
-            next_line = next(
-                (
-                    _clean_line(candidate)
-                    for candidate in section_lines[line_index + 1:]
-                    if _clean_line(candidate)
-                ),
-                "",
+            starts_undated_entry = (
+                _looks_like_title_line(stripped)
+                and bool(_BULLET_CHAR_RE.match(next_line))
             )
-            if not has_date and not is_caps and not _is_date_only_line(next_line):
+            if (
+                not has_date
+                and not is_caps
+                and not _is_date_only_line(next_line)
+                and not starts_undated_entry
+            ):
                 current_bullets[-1] += " " + stripped
                 continue
 
@@ -888,6 +906,39 @@ def _classify_section(key: str) -> str:
     return "text"
 
 
+def _flexible_source_pattern(text: str) -> str:
+    parts = re.split(r"\s+", text.strip())
+    escaped = [re.escape(part).replace(r"\-", r"-\s*") for part in parts if part]
+    return r"\s+".join(escaped)
+
+
+def _assign_canonical_bullet_sources(structured: dict[str, Any], raw_text: str) -> None:
+    """Attach the canonical source span and ID to every structured bullet."""
+    cursor = 0
+    for section in structured.get("sections", []):
+        for entry in section.get("entries", []):
+            for bullet in entry.get("bullets", []):
+                content_pattern = _flexible_source_pattern(str(bullet.get("text") or ""))
+                if not content_pattern:
+                    continue
+                marked = re.compile(
+                    rf"(?m)^[\t ]*{_SOURCE_BULLET_MARKER}[\t ]*(?P<content>{content_pattern})"
+                ).search(raw_text, cursor)
+                match = marked or re.compile(
+                    rf"(?m)^[\t ]*(?P<content>{content_pattern})[\t ]*$"
+                ).search(raw_text, cursor)
+                if match is None:
+                    bullet["source_resolved"] = False
+                    continue
+                start, end = match.span("content")
+                source_text = match.group("content")
+                bullet["id"] = block_id(raw_text, start, end, source_text)
+                bullet["source_span"] = [start, end]
+                bullet["source_text"] = source_text
+                bullet["source_resolved"] = True
+                cursor = end
+
+
 # ── Main entry point ─────────────────────────────────────────────────────────
 
 def structure_resume(resume_text: str) -> dict[str, Any]:
@@ -991,6 +1042,7 @@ def structure_resume(resume_text: str) -> dict[str, Any]:
             "section_count": len(sections),
         },
     }
+    _assign_canonical_bullet_sources(result, resume_text)
     log.debug(
         f"Structured resume: {len(sections)} sections, "
         f"{total_bullets} bullets, {word_count} words"

@@ -11,7 +11,6 @@ python-multipart==0.0.32
 pydantic[email]==2.13.4
 pdfplumber==0.11.9
 python-docx==1.2.0
-reportlab==4.4.10
 psycopg2-binary==2.9.9
 weasyprint==69.0
 sentence-transformers==5.6.0

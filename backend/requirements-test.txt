@@ -1,0 +1,2 @@
+# Test-fixture generation only; never installed in the production image.
+reportlab==4.4.10
