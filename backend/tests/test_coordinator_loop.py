@@ -1529,6 +1529,21 @@ def test_conversation_reply_schema_requires_a_complete_sentence():
     assert ConversationReply(reply='Target the manufacturing manager role.').reply.endswith(".")
 
 
+def test_structured_output_repairs_an_incomplete_reply_before_completion():
+    """Exercise ToolStrategy's retry, not only direct schema construction."""
+    agent = ScriptedDeepAgent(
+        responses=[
+            submission("The strongest fit is operations leadership because"),
+            submission("The strongest fit is operations leadership."),
+        ]
+    )
+
+    reply = _model(agent).respond([], RESUME_TEXT, (), _context(_RecordingDiscovery([])))
+
+    assert reply.content == "The strongest fit is operations leadership."
+    assert agent.calls == 2
+
+
 def test_paragraphing_preserves_model_supplied_markdown():
     from recruitment_team.conversation_model import paragraph_reply
 
