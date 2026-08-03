@@ -8,7 +8,7 @@ acceptance contract was implemented.
 
 ## Closed as completed
 
-Issues #91, #101, #104, #110, #111, and #112 were closed only after their current
+Issues #86, #91, #101, #104, #110, #111, and #112 were closed only after their current
 implementation and focused regression coverage were verified. Issue #184 was
 closed after production browser acceptance of streamed Shortlist and Select
 Target behavior.
@@ -29,7 +29,6 @@ Target behavior.
 
 | Issue | Observed remaining outcome |
 |---|---|
-| #86 | Preserve PDF/DOCX layout evidence in one canonical model and remove frontend raw-text re-parsing. |
 | #90 | Add owner-only rename, archive, restore, and deletion with truthful retention behavior. |
 | #93 | Add attributable Singapore compensation evidence and private negotiation rehearsal. |
 | #96 | Connect traces, semantic evaluation, field-level calibration, and regression decisions. |
@@ -50,9 +49,9 @@ Target behavior.
 
 The focused candidate-profile, open-agent, role-evidence, and recruitment-module
 suite passed 124 tests during classification. After guard consolidation, the
-broader affected suite passed 208 tests and the full repository run passed 887
-backend tests with four explicit skips, 45 repository-level tests, 193 frontend
-tests, and the frontend production build. Compile, Ruff, ty, `pip check`, and
+broader affected suite passed 208 tests and the full repository run passed 933
+backend and repository-level tests with four explicit skips, 87 frontend tests,
+and the frontend production build. Compile, Ruff, ty, `pip check`, and
 `pip-audit` also passed. Production acceptance is documented in the V4 slice
 passdown. These facts support completed-item closure; they do not waive the open
 outcomes above.
@@ -74,6 +73,9 @@ as a peer dependency, even though application source does not import it.
 - Removed the completed 1,899-line open-agent build plan, whose instructions
   would have recreated the deleted wrappers. Current design and acceptance live
   in the PRD, issue ledger, and focused design record.
+- Replaced duplicate backend/browser resume semantics with one canonical document
+  interface, removed the obsolete V2 plan and duplicate parser test runner, and
+  moved PDF fixture generation out of production dependencies.
 - Kept `react-is` after peer-dependency evidence refuted its apparent redundancy.
 
 This cleanup removes 1,920 net lines and one direct dependency from the working

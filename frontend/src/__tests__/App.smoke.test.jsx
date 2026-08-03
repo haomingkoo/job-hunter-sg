@@ -70,13 +70,31 @@ describe("JobHunterSG app shell", () => {
 
   it("opens the tab named by a direct hash URL", async () => {
     window.history.replaceState({}, "", "/#resume");
-    global.fetch = vi.fn(async (url) => {
+    global.fetch = vi.fn(async (url, options = {}) => {
       const path = String(url);
       if (path.endsWith("/api/auth/config")) return jsonResponse({ mode: "password" });
       if (path.endsWith("/api/auth/me")) return jsonResponse({ detail: "Not authenticated" }, 401);
       if (path.endsWith("/api/resume/templates")) return jsonResponse({ templates: [] });
       if (path.endsWith("/api/resume/versions")) return jsonResponse({ versions: [] });
       if (path.endsWith("/api/ai/status")) return jsonResponse({ status: "available" });
+      if (path.endsWith("/api/resume/ingest-text")) {
+        const { resume_text: rawText } = JSON.parse(options.body);
+        return jsonResponse({
+          raw_text: rawText,
+          warnings: [],
+          sections: [],
+          blocks: [{
+            id: "b_draft",
+            order: 0,
+            kind: "paragraph",
+            text: rawText,
+            source_text: rawText,
+            raw_span: [0, rawText.length],
+            section_id: null,
+            section_key: "",
+          }],
+        });
+      }
       return jsonResponse({});
     });
 
@@ -92,13 +110,31 @@ describe("JobHunterSG app shell", () => {
   it("opens sign-in without leaving the resume when an anonymous AI action is gated", async () => {
     window.history.replaceState({}, "", "/#resume");
     sessionStorage.setItem("jh_resume_text", "anonymous draft");
-    global.fetch = vi.fn(async (url) => {
+    global.fetch = vi.fn(async (url, options = {}) => {
       const path = String(url);
       if (path.endsWith("/api/auth/config")) return jsonResponse({ mode: "password" });
       if (path.endsWith("/api/auth/me")) return jsonResponse({ detail: "Not authenticated" }, 401);
       if (path.endsWith("/api/resume/templates")) return jsonResponse({ templates: [] });
       if (path.endsWith("/api/resume/versions")) return jsonResponse({ versions: [] });
       if (path.endsWith("/api/ai/status")) return jsonResponse({ status: "available" });
+      if (path.endsWith("/api/resume/ingest-text")) {
+        const { resume_text: rawText } = JSON.parse(options.body);
+        return jsonResponse({
+          raw_text: rawText,
+          warnings: [],
+          sections: [],
+          blocks: [{
+            id: "b_draft",
+            order: 0,
+            kind: "paragraph",
+            text: rawText,
+            source_text: rawText,
+            raw_span: [0, rawText.length],
+            section_id: null,
+            section_key: "",
+          }],
+        });
+      }
       return jsonResponse({});
     });
 

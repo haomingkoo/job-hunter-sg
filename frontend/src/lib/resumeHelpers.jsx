@@ -5,7 +5,6 @@ import { CheckCircle, AlertCircle, X } from "lucide-react";
 import { escapeRegExp, extractKeywordLabel, collectKeywordMatches } from "./helpers.js";
 import {
   RESUME_TEMPLATE_STYLES,
-  RESUME_HEADINGS,
   RESUME_ACTION_VERBS,
   RESUME_AVOIDED_PHRASES,
   RESUME_WEAK_STARTS,
@@ -24,7 +23,6 @@ import {
   RESUME_DISPLAY_ACRONYMS,
   RESUME_SMALL_TITLE_WORDS,
   RESUME_SECTION_LABELS,
-  RESUME_SECTION_KEY_MAP,
   BULLET_ACTION_SUGGESTIONS,
   KEYWORD_INSERT_PREFERRED_SECTIONS,
 } from "./resumeConstants.js";
@@ -101,82 +99,6 @@ export function stripResumeMarkdown(line) {
     .replace(/__(.*?)__/g, "$1")
     .replace(/\*(.*?)\*/g, "$1")
     .trim();
-}
-
-export function normalizeHeadingLabel(value) {
-  return stripResumeMarkdown(value)
-    .toLowerCase()
-    .replace(/[:*]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-export function splitInlineHeadingContent(value) {
-  const cleaned = stripResumeMarkdown(value);
-  if (!cleaned) return null;
-
-  const headingCandidates = [...RESUME_HEADINGS].sort((a, b) => b.length - a.length);
-  for (const heading of headingCandidates) {
-    const pattern = new RegExp(
-      `^(${escapeRegExp(heading)})(?:\\s*[:|]\\s*|\\s+[–—-]\\s+)(.+)$`,
-      "i",
-    );
-    const match = cleaned.match(pattern);
-    if (!match) continue;
-    const bodyText = match[2].trim();
-    if (!bodyText) continue;
-    if (normalizeHeadingLabel(bodyText) === heading) continue;
-    return {
-      headingText: match[1].trim().replace(/:$/, ""),
-      bodyText,
-      sectionKey: getResumeSectionKey(match[1]),
-    };
-  }
-
-  return null;
-}
-
-export function getResumeSectionKey(value) {
-  const normalized = normalizeHeadingLabel(value);
-  if (!normalized) return "";
-
-  // Check the shared config map first (single source of truth)
-  if (RESUME_SECTION_KEY_MAP[normalized]) return RESUME_SECTION_KEY_MAP[normalized];
-
-  // Fallback: fuzzy heuristic matching for headings not in the map
-  if (normalized.includes("academic qualification") || normalized.includes("academic qualifications")) return "education";
-  if (
-    normalized.includes("summary")
-    || normalized.includes("profile")
-    || normalized.includes("qualification")
-  ) return "summary";
-  if (normalized.includes("education")) return "education";
-  if (normalized.includes("academic background")) return "education";
-  if (normalized.includes("experience")) {
-    if (normalized.includes("co-curricular") || normalized.includes("extra-curricular") || normalized.includes("volunteer") || normalized.includes("activities")) {
-      return "activities";
-    }
-    if (normalized.includes("project")) return "projects";
-    return "experience";
-  }
-  if (
-    normalized.includes("employment history")
-    || normalized.includes("career history")
-    || normalized.includes("professional background")
-  ) return "experience";
-  if (/\bskills?\b|competenc|proficienc|expertise/.test(normalized)) return "skills";
-  if (normalized.includes("project")) return "projects";
-  if (
-    normalized.includes("certification")
-    || normalized.includes("license")
-    || normalized.includes("upskilling")
-  ) return "certifications";
-  if (normalized.includes("activity") || normalized.includes("leadership") || normalized.includes("volunteer") || normalized.includes("club")) return "activities";
-  if (normalized.includes("additional information")) return "personal";
-  if (normalized.includes("language")) return "personal";
-  if (normalized === "personal" || normalized.includes("personal information")) return "personal";
-  if (normalized.includes("award") || normalized.includes("honor") || normalized.includes("publication")) return "awards";
-  return "";
 }
 
 export function hasDateHint(value) {
@@ -403,41 +325,6 @@ export function reorderParsedSections(sections, templateOrder = []) {
   return result;
 }
 
-export function pruneEmptySectionGroups(sections) {
-  const pruned = [];
-
-  for (let index = 0; index < sections.length; index += 1) {
-    const current = sections[index];
-
-    if (current?.type !== "heading") {
-      pruned.push(current);
-      continue;
-    }
-
-    const groupItems = [current];
-    let nextIndex = index + 1;
-    let hasRenderableContent = false;
-
-    while (nextIndex < sections.length) {
-      const next = sections[nextIndex];
-      if (next?.type === "heading" || next?.type === "heading_paragraph") break;
-      groupItems.push(next);
-      if (next?.type && next.type !== "spacer") {
-        hasRenderableContent = true;
-      }
-      nextIndex += 1;
-    }
-
-    if (hasRenderableContent) {
-      pruned.push(...groupItems);
-    }
-
-    index = nextIndex - 1;
-  }
-
-  return pruned;
-}
-
 export function normalizeScoreData(data) {
   const keywordMatch = data?.keyword_match || {};
   const matched = Array.isArray(keywordMatch.matched)
@@ -548,88 +435,6 @@ export function computeKeywordInsertSuggestions(keyword, bulletSections, allKeyw
     .sort((a, b) => b.score - a.score)
     .slice(0, 3)
     .map((item) => item.bullet);
-}
-
-export function isHeadingLine(line) {
-  const trimmed = stripResumeMarkdown(line);
-  const normalized = normalizeHeadingLabel(trimmed);
-  if (!normalized) return false;
-  if (RESUME_HEADINGS.has(normalized)) return true;
-  if (
-    trimmed.length > 100
-    || normalized.split(/\s+/).length > 10
-    || /\d|@|https?:\/\/|\|/i.test(trimmed)
-    || /^[•\-*▪]/.test(trimmed)
-    || /[.!?;]$/.test(trimmed)
-  ) return false;
-
-  const words = trimmed.match(/[A-Za-z][A-Za-z'-]*|[&/]/g) || [];
-  const connectors = new Set(["and", "of", "the", "for", "in", "to", "&", "/"]);
-  const isUpper = /[A-Za-z]/.test(trimmed) && trimmed === trimmed.toUpperCase();
-  const isTitle = words.length > 0 && words.every(
-    (word) => connectors.has(word.toLowerCase()) || word[0] === word[0].toUpperCase(),
-  );
-  return (isUpper || isTitle) && Boolean(getResumeSectionKey(trimmed));
-}
-
-export function buildEducationPair(lines, lineIndex, currentSectionKey, keywords) {
-  if (currentSectionKey !== "education") return null;
-
-  const current = stripResumeMarkdown(lines[lineIndex]);
-  const nextRaw = lines[lineIndex + 1];
-  const thirdRaw = lines[lineIndex + 2];
-  let next = stripResumeMarkdown(nextRaw);
-  const third = stripResumeMarkdown(thirdRaw);
-
-  if (!current || !next || isHeadingLine(next) || RESUME_BULLET_RE.test(nextRaw || "")) return null;
-
-  let consumed = 1;
-  const canExtendEducationMeta = third
-    && !isHeadingLine(third)
-    && !RESUME_BULLET_RE.test(thirdRaw || "")
-    && !startsNewEducationEntry(third)
-    && looksLikeEducationText(next)
-    && !hasDateHint(next)
-    && (hasDateHint(third) || /singapore|canada|usa|uk|australia|japan|taiwan|university|college|school|institute/i.test(third));
-
-  if (canExtendEducationMeta && next.length + (third?.length || 0) < 80) {
-    next = `${next} ${third}`.replace(/\s+/g, " ").trim();
-    consumed = 2;
-  }
-
-  const currentIsEducationMain = looksLikeEducationMain(current);
-  const nextIsEducationMain = looksLikeEducationMain(next);
-  if (hasDateHint(current) && hasDateHint(next)) return null;
-  if (currentIsEducationMain && nextIsEducationMain) {
-    return {
-      type: "subheading",
-      left: current,
-      right: next,
-      variant: "education_main",
-      text: `${current} | ${next}`,
-      keywordMatches: collectKeywordMatches(`${current} ${next}`, keywords),
-      lineIndices: Array.from({ length: consumed + 1 }, (_, offset) => lineIndex + offset),
-      consumed,
-    };
-  }
-
-  const currentIsEducationDetail = looksLikeEducationDetail(current);
-  const nextIsEducationDetail = looksLikeEducationDetail(next);
-  // Don't pair if next line is actually a degree line (it should start its own entry)
-  if (currentIsEducationDetail && nextIsEducationDetail && !DEGREE_START_RE.test(next)) {
-    return {
-      type: "subheading",
-      left: current,
-      right: next,
-      variant: "education_detail",
-      text: `${current} | ${next}`,
-      keywordMatches: collectKeywordMatches(`${current} ${next}`, keywords),
-      lineIndices: Array.from({ length: consumed + 1 }, (_, offset) => lineIndex + offset),
-      consumed,
-    };
-  }
-
-  return null;
 }
 
 // ─── Education Entry Grouping (ported from backend resume_structurer.py) ─────
@@ -916,71 +721,6 @@ export function groupEducationSections(sections) {
   return result;
 }
 
-/**
- * When a heading_paragraph (inline heading + body on same line) is followed by
- * a separate paragraph in the same section, the body text shows twice.
- * Demote the heading_paragraph to a plain heading so the standalone paragraph
- * is the single source of truth.
- */
-export function dedupeHeadingParagraphs(sections) {
-  return sections.map((section, index) => {
-    if (section.type !== "heading_paragraph") return section;
-
-    // Look ahead past spacers for a paragraph in the same section
-    let nextIndex = index + 1;
-    while (nextIndex < sections.length && sections[nextIndex].type === "spacer") nextIndex += 1;
-    const next = sections[nextIndex];
-    if (next && next.type === "paragraph" && next.sectionKey === section.sectionKey) {
-      // Convert to plain heading -- the following paragraph carries the content
-      return {
-        ...section,
-        type: "heading",
-        text: section.headingText,
-        keywordMatches: [],
-      };
-    }
-    return section;
-  });
-}
-
-export function mergeParsedParagraphRuns(sections) {
-  const merged = [];
-
-  sections.forEach((section) => {
-    const previous = merged[merged.length - 1];
-    const previousContext = merged.length >= 2 ? merged[merged.length - 2] : null;
-    const previousLooksLikeLostBullet = previous?.type === "paragraph"
-      ? inferWordBulletLines(previous.text, previous.sectionKey, previousContext)?.length > 0
-      : false;
-    const currentLooksLikeLostBullet = section?.type === "paragraph"
-      ? inferWordBulletLines(section.text, section.sectionKey, previous)?.length > 0
-      : false;
-    const canMergeParagraph = previous
-      && previous.type === "paragraph"
-      && section.type === "paragraph"
-      && previous.sectionKey === section.sectionKey
-      && previous.sectionKey !== "certifications"
-      && previous.lineIndices?.length
-      && section.lineIndices?.length
-      && previous.lineIndices[previous.lineIndices.length - 1] + 1 === section.lineIndices[0]
-      && !previousLooksLikeLostBullet
-      && !currentLooksLikeLostBullet
-      && !/^[A-Z][^:\n]{1,50}:\s+\S/.test(stripResumeMarkdown(section.text));
-
-    if (canMergeParagraph) {
-      previous.text = `${previous.text} ${section.text}`.trim();
-      previous.raw = `${previous.raw}\n${section.raw}`;
-      previous.keywordMatches = [...new Set([...(previous.keywordMatches || []), ...(section.keywordMatches || [])])];
-      previous.lineIndices = [...previous.lineIndices, ...section.lineIndices];
-      return;
-    }
-
-    merged.push(section);
-  });
-
-  return merged;
-}
-
 export function isLikelySummaryLeadParagraph(value) {
   const trimmed = stripResumeMarkdown(value);
   if (!trimmed) return false;
@@ -1116,38 +856,6 @@ export function getDisplaySubheadingText(value, sectionKey = "", variant = "") {
     return displayValue.replace(/\s*([–—-])\s*/g, "\u00A0$1\u00A0");
   }
   return displayValue;
-}
-
-export function mergeSummaryLeadParagraphs(sections) {
-  const merged = [];
-
-  for (let index = 0; index < sections.length; index += 1) {
-    const current = sections[index];
-    if (!(current?.type === "paragraph" && current.sectionKey === "summary" && isLikelySummaryLeadParagraph(current.text))) {
-      merged.push(current);
-      continue;
-    }
-
-    let nextIndex = index + 1;
-    while (sections[nextIndex]?.type === "spacer") nextIndex += 1;
-    const next = sections[nextIndex];
-
-    if (next?.type === "paragraph" && next.sectionKey === "summary") {
-      merged.push({
-        ...current,
-        text: `${current.text} ${next.text}`.replace(/\s+/g, " ").trim(),
-        raw: `${current.raw}\n${next.raw}`,
-        keywordMatches: [...new Set([...(current.keywordMatches || []), ...(next.keywordMatches || [])])],
-        lineIndices: [...(current.lineIndices || []), ...(next.lineIndices || [])],
-      });
-      index = nextIndex;
-      continue;
-    }
-
-    merged.push(current);
-  }
-
-  return merged;
 }
 
 export function parseSubheadingParts(line, sectionKey = "") {
@@ -1310,60 +1018,6 @@ export function parseSubheadingParts(line, sectionKey = "") {
   return null;
 }
 
-export function splitActionSentenceBullets(text) {
-  const parts = stripResumeMarkdown(text).split(/(?<=[.;])\s+(?=[A-Z])/).map((part) => part.trim()).filter(Boolean);
-  if (parts.length <= 1) return [stripResumeMarkdown(text)];
-  if (!parts.every((part) => startsLineWithResumeActionVerb(part))) return [stripResumeMarkdown(text)];
-  return parts.map((part) => part.replace(/[.;]+$/, "").trim()).filter(Boolean);
-}
-
-export function looksLikeWordBulletLead(text) {
-  const cleaned = stripResumeMarkdown(text);
-  if (!cleaned) return false;
-  return startsLineWithResumeActionVerb(cleaned)
-    || /^(?:co-|re-)?[A-Za-z]+(?:ed|ing)\b/.test(cleaned)
-    || /^(?:Built|Led|Drove|Created|Managed|Supported|Partnered|Worked|Chaired|Completed|Currently|Directed|Engineered|Developed|Standardized|Implemented|Optimized|Scaled|Reduced|Improved|Delivered)\b/i.test(cleaned);
-}
-
-export function inferWordBulletLines(text, currentSectionKey, previousSection) {
-  const cleaned = stripResumeMarkdown(text);
-  if (!cleaned) return null;
-
-  const bulletFriendlySection = ["experience", "projects", "activities", "certifications", "awards"].includes(currentSectionKey);
-  if (!bulletFriendlySection) return null;
-
-  if (cleaned.includes("|")) return null;
-  if (parseSubheadingParts(cleaned, currentSectionKey)) return null;
-
-  const startsWithAction = looksLikeWordBulletLead(cleaned);
-  const hasMetric = RESUME_METRIC_RE.test(cleaned);
-  const hasResultCue = /(?:improv|reduc|increas|deliver|achiev|saving|revenue|cost|efficien|quality|yield|launched|deployed|implemented)/i.test(cleaned);
-  const wordCount = cleaned.split(/\s+/).filter(Boolean).length;
-  const previousWasBullet = previousSection?.type === "bullet";
-  const looksLikeAchievementSentence = wordCount >= 5
-    && (
-      startsWithAction
-      || (hasMetric && wordCount >= 6)
-      || (hasResultCue && wordCount >= 7)
-      || (previousWasBullet && wordCount >= 6)
-    );
-  const previousCreatesBulletContext = previousSection
-    && (
-      previousSection.type === "subheading"
-      || previousSection.type === "heading"
-      || previousSection.type === "heading_paragraph"
-      || previousWasBullet
-      || (previousSection.type === "paragraph" && hasDateHint(previousSection.text))
-    );
-
-  if (!looksLikeAchievementSentence) return null;
-  if (!previousCreatesBulletContext && !(startsWithAction && (hasMetric || hasResultCue))) return null;
-
-  const inferredBullets = splitActionSentenceBullets(cleaned);
-  if (!inferredBullets.length) return null;
-  return inferredBullets;
-}
-
 export function analyzeBulletFeedback(text, resumeText = "", sectionKey = "") {
   const trimmed = text.trim();
   const lowered = trimmed.toLowerCase();
@@ -1467,30 +1121,6 @@ export function annotateBullet(text, keywords, resumeText = "", sectionKey = "")
   };
 }
 
-function shouldMergeContinuationLine(line, currentSectionKey, previousItem) {
-  const trimmed = stripResumeMarkdown(line);
-  if (!trimmed || !previousItem || previousItem.sectionKey !== currentSectionKey) return false;
-  if (!["bullet", "paragraph"].includes(previousItem.type)) return false;
-  if (RESUME_BULLET_RE.test(line) || isHeadingLine(trimmed) || splitInlineHeadingContent(trimmed)) return false;
-  if (previousItem.type === "paragraph" && /^[A-Z][^:\n]{1,50}:\s+\S/.test(trimmed)) return false;
-
-  const previousText = stripResumeMarkdown(previousItem.text || "");
-  const previousEndsSentence = /[.!?]$/.test(previousText);
-  const startsLowercase = /^[a-z(]/.test(trimmed);
-  const definiteNewEntry = looksLikeDateOnlyText(trimmed)
-    || looksLikeResumeTitleLine(trimmed)
-    || (trimmed.includes("|") && hasDateHint(trimmed))
-    || (currentSectionKey === "education" && (startsNewEducationEntry(trimmed) || RESUME_DEGREE_RE.test(trimmed)));
-
-  if (previousItem.type === "bullet") {
-    if (!previousEndsSentence && !definiteNewEntry) return true;
-    return startsLowercase && !definiteNewEntry;
-  }
-
-  if (startsLowercase && !definiteNewEntry) return true;
-  return !previousEndsSentence && !definiteNewEntry && trimmed.length <= 90 && !hasDateHint(trimmed);
-}
-
 function tryMergeSubheadingWithPrevious(parsed, section) {
   if (!ENTRY_SUBHEADING_SECTIONS.has(section.sectionKey)) return false;
 
@@ -1539,187 +1169,102 @@ function tryMergeSubheadingWithPrevious(parsed, section) {
   return false;
 }
 
-export function parseResumeToSections(text, keywords, templateOrder = []) {
-  const parsed = [];
-  let currentSectionKey = "";
-
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
-
-  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
-    const line = lines[lineIndex];
-    const normalizedLine = stripResumeMarkdown(line);
-    const base = {
-      id: `line-${lineIndex}`,
-      lineIndex,
-      lineIndices: [lineIndex],
-      raw: line,
-      text: normalizedLine,
-    };
-
-    if (!normalizedLine) {
-      parsed.push({ ...base, type: "spacer", sectionKey: currentSectionKey });
-      continue;
-    }
-
-    const inlineHeading = splitInlineHeadingContent(normalizedLine);
-    if (inlineHeading) {
-      currentSectionKey = inlineHeading.sectionKey || currentSectionKey;
-      parsed.push({
-        ...base,
-        type: "heading_paragraph",
-        headingText: inlineHeading.headingText,
-        bodyText: inlineHeading.bodyText,
-        sectionKey: inlineHeading.sectionKey,
-        keywordMatches: collectKeywordMatches(inlineHeading.bodyText, keywords),
-      });
-      continue;
-    }
-
-    if (isHeadingLine(normalizedLine)) {
-      currentSectionKey = getResumeSectionKey(normalizedLine) || currentSectionKey;
-      parsed.push({
-        ...base,
-        type: "heading",
-        text: normalizedLine.replace(/:$/, ""),
-        sectionKey: currentSectionKey,
-        keywordMatches: [],
-      });
-      continue;
-    }
-
-    const previousMeaningfulSection = [...parsed].reverse().find((section) => section.type !== "spacer");
-
-    if (shouldMergeContinuationLine(line, currentSectionKey, previousMeaningfulSection)) {
-      const mergedText = `${previousMeaningfulSection.text || ""} ${normalizedLine}`.replace(/\s+/g, " ").trim();
-      previousMeaningfulSection.text = mergedText;
-      previousMeaningfulSection.raw = [previousMeaningfulSection.raw, line].filter(Boolean).join("\n");
-      previousMeaningfulSection.lineIndices = [
-        ...new Set([...(previousMeaningfulSection.lineIndices || [previousMeaningfulSection.lineIndex]), lineIndex]),
-      ];
-      previousMeaningfulSection.keywordMatches = collectKeywordMatches(mergedText, keywords);
-      if (previousMeaningfulSection.type === "bullet") {
-        previousMeaningfulSection.annotation = annotateBullet(mergedText, keywords, text, currentSectionKey);
-      }
-      continue;
-    }
-
-    const bulletMatch = line.match(RESUME_BULLET_RE);
-    // Auto-promote bullets whose content looks like an entry heading (e.g., "• Senior Engineer (2019-2020)")
-    let subheadingParts;
-    if (bulletMatch) {
-      const canPromoteBulletHeading = ENTRY_SUBHEADING_SECTIONS.has(currentSectionKey) || currentSectionKey === "education";
-      const bulletText = stripResumeMarkdown(bulletMatch[2]);
-      const promoted = canPromoteBulletHeading ? parseSubheadingParts(bulletText, currentSectionKey) : null;
-      subheadingParts = promoted && (
-        (promoted.variant.startsWith("education") && startsNewEducationEntry(bulletText))
-        || (currentSectionKey !== "education" && promoted.variant === "dated")
-      ) ? promoted : null;
-    } else {
-      subheadingParts = parseSubheadingParts(normalizedLine, currentSectionKey);
-    }
-    if (subheadingParts) {
-      const displayText = bulletMatch ? stripResumeMarkdown(bulletMatch[2]) : normalizedLine;
-      const subheadingSection = {
-        ...base,
-        type: "subheading",
-        ...subheadingParts,
-        text: displayText,
-        sectionKey: currentSectionKey,
-        keywordMatches: collectKeywordMatches(displayText, keywords),
-      };
-      if (tryMergeSubheadingWithPrevious(parsed, subheadingSection)) continue;
-      parsed.push(subheadingSection);
-      continue;
-    }
-
-    const educationPair = bulletMatch ? null : buildEducationPair(lines, lineIndex, currentSectionKey, keywords);
-    if (educationPair) {
-      parsed.push({
-        ...base,
-        ...educationPair,
-        id: `line-${lineIndex}-education-pair`,
-        sectionKey: currentSectionKey,
-      });
-      lineIndex += educationPair.consumed;
-      continue;
-    }
-
-    if (bulletMatch) {
-      const textValue = stripResumeMarkdown(bulletMatch[2]);
-      parsed.push({
-        ...base,
-        type: "bullet",
-        marker: bulletMatch[1].trim(),
-        text: textValue,
-        sectionKey: currentSectionKey,
-        annotation: annotateBullet(textValue, keywords, text, currentSectionKey),
-      });
-      continue;
-    }
-
-    const previousParsedSection = [...parsed].reverse().find((section) => section.type !== "spacer");
-    let explicitBulletAhead = false;
-    for (let futureIndex = lineIndex + 1; futureIndex < lines.length; futureIndex += 1) {
-      const futureRaw = lines[futureIndex];
-      const futureText = stripResumeMarkdown(futureRaw);
-      if (!futureText) continue;
-      if (RESUME_BULLET_RE.test(futureRaw)) {
-        explicitBulletAhead = true;
-        break;
-      }
-      if (isHeadingLine(futureText) || parseSubheadingParts(futureText, currentSectionKey)) break;
-    }
-    const isRoleIntroParagraph = previousParsedSection?.type === "subheading"
-      && /^(?:selected\s+(?:into|for|as|to|via|through)\b|currently\b|joined\b|appointed\b)/i.test(normalizedLine);
-    const inferredBullets = explicitBulletAhead && isRoleIntroParagraph
-      ? null
-      : inferWordBulletLines(normalizedLine, currentSectionKey, previousParsedSection);
-    if (inferredBullets) {
-      inferredBullets.forEach((bulletText, inferredIndex) => {
-        parsed.push({
-          ...base,
-          id: inferredBullets.length > 1 ? `${base.id}-inferred-${inferredIndex}` : base.id,
-          type: "bullet",
-          marker: "",
-          text: bulletText,
-          sectionKey: currentSectionKey,
-          annotation: annotateBullet(bulletText, keywords, text, currentSectionKey),
-        });
-      });
-      continue;
-    }
-
-    parsed.push({
-      ...base,
-      type: "paragraph",
-      sectionKey: currentSectionKey,
-      keywordMatches: collectKeywordMatches(normalizedLine, keywords),
-    });
-  }
-
-  return pruneEmptySectionGroups(
-    reorderParsedSections(mergeSummaryLeadParagraphs(mergeParsedParagraphRuns(dedupeHeadingParagraphs(parsed))), templateOrder),
+export function isCanonicalResumeDocument(value) {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && typeof value.raw_text === "string"
+    && Array.isArray(value.blocks)
+    && Array.isArray(value.sections)
+    && Array.isArray(value.warnings),
   );
 }
 
-export function extractResumeHeaderMeta(text) {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const headerLines = [];
-  const lineIndices = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const trimmed = stripResumeMarkdown(lines[index]);
-    if (!trimmed) {
-      if (headerLines.length > 0) break;
-      continue;
-    }
-    if (isHeadingLine(trimmed)) break;
-    if (splitInlineHeadingContent(trimmed)) break;
-    if (RESUME_BULLET_RE.test(lines[index])) break;
-    headerLines.push(trimmed);
-    lineIndices.push(index);
-    if (headerLines.length >= 4) break;
+function canonicalLineLocation(rawText, rawSpan) {
+  const start = Array.isArray(rawSpan) && Number.isInteger(rawSpan[0]) ? rawSpan[0] : 0;
+  const end = Array.isArray(rawSpan) && Number.isInteger(rawSpan[1]) ? rawSpan[1] : start;
+  const lineIndex = (rawText.slice(0, start).match(/\n/g) || []).length;
+  const endLineIndex = lineIndex + (rawText.slice(start, end).match(/\n/g) || []).length;
+  return {
+    lineIndex,
+    lineIndices: Array.from(
+      { length: endLineIndex - lineIndex + 1 },
+      (_, offset) => lineIndex + offset,
+    ),
+  };
+}
+
+export function projectResumeDocument(document, keywords = [], templateOrder = []) {
+  if (!isCanonicalResumeDocument(document)) return [];
+  const parsed = [];
+  const candidateByBlock = new Map(
+    (document.heading_candidates || []).map((candidate) => [candidate.block_id, candidate]),
+  );
+
+  [...document.blocks]
+    .sort((left, right) => left.order - right.order)
+    .forEach((block) => {
+      const location = canonicalLineLocation(document.raw_text, block.raw_span);
+      const base = {
+        id: block.id,
+        ...location,
+        raw: block.source_text,
+        text: block.text,
+        sectionKey: block.section_key || "",
+        keywordMatches: collectKeywordMatches(block.text, keywords),
+        canonicalBlock: block,
+      };
+
+      if (block.kind === "section_heading") {
+        parsed.push({ ...base, type: "heading" });
+        return;
+      }
+      if (block.kind === "candidate_heading") {
+        parsed.push({
+          ...base,
+          type: "candidate_heading",
+          headingCandidate: candidateByBlock.get(block.id) || null,
+        });
+        return;
+      }
+      if (block.kind === "bullet") {
+        parsed.push({
+          ...base,
+          type: "bullet",
+          annotation: annotateBullet(block.text, keywords, document.raw_text, block.section_key || ""),
+        });
+        return;
+      }
+      if (block.kind === "entry_heading") {
+        const subheading = parseSubheadingParts(block.text, block.section_key || "") || {
+          left: block.text,
+          right: "",
+          variant: "company",
+        };
+        const section = { ...base, ...subheading, type: "subheading" };
+        if (!tryMergeSubheadingWithPrevious(parsed, section)) parsed.push(section);
+        return;
+      }
+      parsed.push({ ...base, type: "paragraph" });
+    });
+
+  return reorderParsedSections(parsed, templateOrder);
+}
+
+export function extractResumeHeaderMeta(text, document = null) {
+  if (isCanonicalResumeDocument(document) && document.raw_text === text) {
+    const headerBlocks = [...document.blocks]
+      .sort((left, right) => left.order - right.order)
+      .filter((block) => !block.section_id && block.kind === "paragraph")
+      .slice(0, 4);
+    return {
+      lines: headerBlocks.map((block) => block.text),
+      lineIndices: headerBlocks.flatMap(
+        (block) => canonicalLineLocation(document.raw_text, block.raw_span).lineIndices,
+      ),
+    };
   }
-  return { lines: headerLines, lineIndices };
+  return { lines: [], lineIndices: [] };
 }
 
 export function renderHighlightedText(text, keywords) {

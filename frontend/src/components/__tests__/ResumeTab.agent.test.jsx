@@ -32,8 +32,12 @@ describe("ResumeTab Agent v2", () => {
       "Jane Doe\njane@example.com\n\nEXPERIENCE\n- Built data pipeline processing 10M events daily",
     );
     sessionStorage.setItem("jh_wizard_step", "3");
-    global.fetch = vi.fn((url) => {
+    global.fetch = vi.fn((url, options = {}) => {
       const target = String(url);
+      if (target.includes("/api/resume/ingest-text")) {
+        const { resume_text: rawText } = JSON.parse(options.body);
+        return responseJson({ raw_text: rawText, blocks: [], sections: [], warnings: [] });
+      }
       if (target.includes("/api/resume/score")) {
         return responseJson({ overall_score: 78, checks: {} });
       }
@@ -121,8 +125,12 @@ describe("ResumeTab Agent v2", () => {
 
   it("scores a first upload once", async () => {
     sessionStorage.clear();
-    global.fetch = vi.fn((url) => {
+    global.fetch = vi.fn((url, options = {}) => {
       const target = String(url);
+      if (target.includes("/api/resume/ingest-text")) {
+        const { resume_text: rawText } = JSON.parse(options.body);
+        return responseJson({ raw_text: rawText, blocks: [], sections: [], warnings: [] });
+      }
       if (target.includes("/api/resume/upload")) {
         return responseJson({
           text: "Jane Doe\nPROFESSIONAL EXPERIENCE\n• Built a reporting pipeline used by 50 finance users every month.",
@@ -156,9 +164,81 @@ describe("ResumeTab Agent v2", () => {
     expect(global.fetch.mock.calls.filter(([url]) => String(url).includes("/api/resume/score"))).toHaveLength(1);
   });
 
-  it("starts a detached review and reconnects through session state", async () => {
+  it("confirms a candidate heading through the canonical document endpoint", async () => {
+    const rawText = "Jane Doe\n\nEXPERIENCE\n- Built a reporting platform.\n\nSELECTED TALKS\nSpoke at PyCon Singapore.";
+    sessionStorage.setItem("jh_resume_text", rawText);
+    const candidate = {
+      schema_version: 3,
+      document_id: "d_resume",
+      revision: "r_before",
+      raw_text: rawText,
+      warnings: [],
+      decisions: [],
+      heading_candidates: [{ block_id: "b_talks", label: "SELECTED TALKS", suggested_key: null }],
+      sections: [{ id: "s_experience", key: "experience", label: "EXPERIENCE" }],
+      blocks: [
+        { id: "b_name", order: 0, kind: "paragraph", text: "Jane Doe", source_text: "Jane Doe", raw_span: [0, 8], section_id: null, section_key: "" },
+        { id: "b_experience", order: 1, kind: "section_heading", text: "EXPERIENCE", source_text: "EXPERIENCE", raw_span: [10, 20], section_id: "s_experience", section_key: "experience" },
+        { id: "b_bullet", order: 2, kind: "bullet", text: "Built a reporting platform.", source_text: "Built a reporting platform.", raw_span: [23, 50], section_id: "s_experience", section_key: "experience" },
+        { id: "b_talks", order: 3, kind: "candidate_heading", classification: "candidate_heading", text: "SELECTED TALKS", source_text: "SELECTED TALKS", raw_span: [52, 66], section_id: "s_experience", section_key: "experience" },
+        { id: "b_talk", order: 4, kind: "paragraph", text: "Spoke at PyCon Singapore.", source_text: "Spoke at PyCon Singapore.", raw_span: [67, rawText.length], section_id: "s_experience", section_key: "experience" },
+      ],
+    };
+    const confirmed = {
+      ...candidate,
+      revision: "r_after",
+      decisions: [{ type: "confirm_heading", block_id: "b_talks", section_key: null }],
+      heading_candidates: [],
+      sections: [
+        ...candidate.sections,
+        { id: "s_talks", key: null, label: "SELECTED TALKS" },
+      ],
+      blocks: candidate.blocks.map((block) => block.id === "b_talks"
+        ? { ...block, kind: "section_heading", classification: "custom_section", section_id: "s_talks", section_key: "" }
+        : block),
+    };
     global.fetch = vi.fn((url) => {
       const target = String(url);
+      if (target.includes("/api/resume/ingest-text")) return responseJson(candidate);
+      if (target.includes("/api/resume/confirm-heading")) return responseJson(confirmed);
+      if (target.includes("/api/resume/score")) return responseJson({ overall_score: 78, checks: {} });
+      if (target.includes("/api/ai/status")) return responseJson({ healthy: true });
+      return responseJson([]);
+    });
+
+    await act(async () => {
+      root.render(<ResumeTab selectedJob={null} user={null} setActiveTab={() => {}} />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const confirmButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent.includes("Confirm as section"));
+    expect(confirmButton).toBeTruthy();
+
+    await act(async () => {
+      confirmButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const request = global.fetch.mock.calls.find(([url]) => String(url).includes("/api/resume/confirm-heading"));
+    expect(JSON.parse(request[1].body)).toMatchObject({
+      block_id: "b_talks",
+      expected_revision: "r_before",
+      section_key: null,
+    });
+    expect(container.textContent).not.toContain("This may be a section heading");
+    expect(container.textContent).not.toContain("Confirm as section");
+    expect(container.textContent).toContain("SELECTED TALKS");
+  });
+
+  it("starts a detached review and reconnects through session state", async () => {
+    global.fetch = vi.fn((url, options = {}) => {
+      const target = String(url);
+      if (target.includes("/api/resume/ingest-text")) {
+        const { resume_text: rawText } = JSON.parse(options.body);
+        return responseJson({ raw_text: rawText, blocks: [], sections: [], warnings: [] });
+      }
       if (target.includes("/api/resume/agent/start")) {
         return responseJson({ session_id: "detached-1", status: "queued" });
       }
@@ -187,10 +267,17 @@ describe("ResumeTab Agent v2", () => {
           }],
           pending_diffs: [],
           document: {
+            raw_text: "Jane Doe\njane@example.com\n\nEXPERIENCE\n- Built data pipeline processing 10M events daily",
+            sections: [],
+            warnings: [],
             blocks: [{
               id: "b_pipeline",
               kind: "bullet",
               text: "Built data pipeline processing 10M events daily",
+              source_text: "Built data pipeline processing 10M events daily",
+              raw_span: [39, 87],
+              order: 0,
+              section_key: "experience",
             }],
           },
         });

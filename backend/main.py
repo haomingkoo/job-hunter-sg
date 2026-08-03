@@ -113,6 +113,8 @@ from schemas import (
     JobAlertPreferenceOut,
     JobAlertPreferenceUpdate,
     ResumeChatRequest,
+    ResumeHeadingDecisionRequest,
+    ResumeIngestTextRequest,
     JobOut,
     LoginRequest,
     RegenerateSummaryRequest,
@@ -5992,10 +5994,6 @@ def score_resume(
     )
     analyze_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
 
-    # Expose the backend's detected sections so the frontend can use
-    # them directly instead of re-parsing (avoids mismatch).
-    result["detected_sections"] = _scorer._extract_sections(resume_text)
-
     if jd_text.strip():
         parsed_jd = preparse_jd(jd_text, db_session=db)
         job_terms = build_job_ats_terms(
@@ -6969,6 +6967,39 @@ async def upload_resume(
     db.commit()
 
     return result
+
+
+@app.post("/api/resume/ingest-text")
+def ingest_resume_text(body: ResumeIngestTextRequest) -> dict:
+    """Run pasted or edited text through the same canonical classifier as uploads."""
+    from resume_document import create_resume_document
+
+    return create_resume_document(body.resume_text, source_format="text")
+
+
+@app.post("/api/resume/confirm-heading")
+def confirm_resume_heading_decision(body: ResumeHeadingDecisionRequest) -> dict:
+    """Persist one document-scoped heading decision without rewriting source text."""
+    from resume_document import (
+        ResumePatchError,
+        StaleResumeRevision,
+        confirm_resume_heading,
+    )
+
+    encoded_size = len(json.dumps(body.document, separators=(",", ":")).encode())
+    if encoded_size > _MAX_RESUME_STRUCTURED_BYTES:
+        raise HTTPException(status_code=413, detail="Structured resume is too large")
+    try:
+        return confirm_resume_heading(
+            body.document,
+            block_id_value=body.block_id,
+            expected_revision=body.expected_revision,
+            section_key=body.section_key,
+        )
+    except StaleResumeRevision as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    except ResumePatchError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 @app.post("/api/ai/review-all")

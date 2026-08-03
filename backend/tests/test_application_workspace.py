@@ -68,7 +68,9 @@ def test_application_workspace_stores_job_context_and_append_only_history():
         f"/api/resume/versions/{version.json()['id']}",
         headers=headers,
     ).json()
-    assert stored_version["resume_structured"]["schema_version"] == 2
+    from resume_document import is_resume_document
+
+    assert is_resume_document(stored_version["resume_structured"])
     assert stored_version["resume_structured"]["raw_text"] == stored_version["resume_text"]
 
     created = client.post("/api/applications/workspaces", json={

@@ -6,7 +6,9 @@ from resume_document import (
     ResumePatchError,
     StaleResumeRevision,
     apply_resume_patch,
+    confirm_resume_heading,
     create_resume_document,
+    is_resume_document,
 )
 
 
@@ -36,18 +38,80 @@ def test_document_assigns_distinct_stable_ids_to_duplicate_bullets():
     assert all(block["text"] == "Built the reporting platform" for block in first_bullets)
 
 
-def test_document_preserves_custom_heading_as_candidate_section():
+def test_text_adapter_preserves_unknown_heading_as_confirmation_candidate():
     document = create_resume_document(SAMPLE, source_format="text")
 
-    custom = next(
-        section
-        for section in document["sections"]
-        if section["label"] == "SELECTED TALKS AND COMMUNITY"
+    candidate = next(
+        item
+        for item in document["heading_candidates"]
+        if item["label"] == "SELECTED TALKS AND COMMUNITY"
     )
 
-    assert custom["key"] is None
-    assert custom["status"] == "candidate"
+    block = next(item for item in document["blocks"] if item["id"] == candidate["block_id"])
+    assert block["classification"] == "candidate_heading"
+    assert all(section["label"] != candidate["label"] for section in document["sections"])
     assert "Speaker at PyCon Singapore" in document["raw_text"]
+
+
+def test_layout_evidence_distinguishes_custom_and_nested_headings():
+    text = """EXPERIENCE
+Micron Technology
+Additional Projects
+Built a local dashboard.
+PATENTS & INVENTIONS
+Filed a process-control patent.
+"""
+    lines = text.splitlines()
+    layout = []
+    cursor = 0
+    for index, line in enumerate(lines):
+        start = text.index(line, cursor)
+        end = start + len(line)
+        cursor = end
+        layout.append({
+            "text": line,
+            "raw_span": [start, end],
+            "page": 1,
+            "indentation": 24 if line == "Additional Projects" else 0,
+            "x_position": 24 if line == "Additional Projects" else 0,
+            "heading_emphasis": line in {"EXPERIENCE", "Additional Projects", "PATENTS & INVENTIONS"},
+            "font_size": 11 if line == "Additional Projects" else 14 if line in {"EXPERIENCE", "PATENTS & INVENTIONS"} else 10,
+            "heading_level": None,
+            "style_name": None,
+        })
+
+    document = create_resume_document(text, layout_blocks=layout)
+
+    assert [section["label"] for section in document["sections"]] == [
+        "EXPERIENCE",
+        "PATENTS & INVENTIONS",
+    ]
+    assert document["sections"][1]["classification"] == "custom_section"
+    nested = next(item for item in document["blocks"] if item["text"] == "Additional Projects")
+    assert nested["classification"] == "candidate_heading"
+    assert nested["section_key"] == "experience"
+
+
+def test_confirming_candidate_updates_boundaries_without_changing_raw_text():
+    document = create_resume_document(SAMPLE)
+    candidate = document["heading_candidates"][0]
+
+    updated = confirm_resume_heading(
+        document,
+        block_id_value=candidate["block_id"],
+        expected_revision=document["revision"],
+    )
+
+    assert updated["raw_text"] == document["raw_text"]
+    assert updated["revision"] != document["revision"]
+    assert updated["sections"][-1]["label"] == "SELECTED TALKS AND COMMUNITY"
+    assert updated["sections"][-1]["classification"] == "custom_section"
+    assert updated["decisions"] == [{
+        "type": "confirm_heading",
+        "block_id": candidate["block_id"],
+        "section_key": None,
+    }]
+    assert is_resume_document(updated)
 
 
 def test_document_does_not_promote_uppercase_contact_name_to_section():
@@ -173,3 +237,29 @@ def test_wrapped_hyphenated_bullet_keeps_one_word_and_one_source_span():
 
     assert bullet["text"] == "Scaled AI-based detection across the fab."
     assert "AI-\n" in bullet["source_text"]
+
+
+def test_preview_scorer_tailoring_and_agent_share_section_keys_and_bullet_ids():
+    from resume_agent.session import _resume_bullet_maps
+    from resume_scorer import ResumeScorer
+    from resume_structurer import get_all_bullets, structure_resume
+
+    text = """EXPERIENCE
+Engineering Manager | Example | 2022 - Present
+- Built a reporting platform used across eight markets.
+PROJECTS
+- Created an evidence review dashboard.
+"""
+    document = create_resume_document(text)
+    preview_bullets = [block for block in document["blocks"] if block["kind"] == "bullet"]
+    structured_bullets = get_all_bullets(structure_resume(text))
+    scorer = ResumeScorer().analyze(text, resume_document=document)
+    agent_text_by_id, _ = _resume_bullet_maps(text, document)
+
+    expected = [(block["id"], block["section_key"]) for block in preview_bullets]
+    assert [(bullet["id"], bullet["section_key"]) for bullet in structured_bullets] == expected
+    assert [
+        (bullet["id"], bullet["section_key"])
+        for bullet in scorer["resume_evidence"]["bullets"]
+    ] == expected
+    assert list(agent_text_by_id) == [block["id"] for block in preview_bullets]

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import importlib
 import inspect
 import os
 import sys
@@ -680,10 +679,10 @@ def test_auth_generates_ephemeral_secret_without_hardcoded_fallback(monkeypatch)
 
     import auth
 
-    reloaded = importlib.reload(auth)
-    assert reloaded.SECRET_KEY
-    assert len(reloaded.SECRET_KEY) >= 32
-    assert "changeme" not in reloaded.SECRET_KEY.lower()
+    secret = auth._load_jwt_secret()
+    assert secret
+    assert len(secret) >= 32
+    assert "changeme" not in secret.lower()
 
 
 def test_main_uses_lifespan_not_startup_handlers():

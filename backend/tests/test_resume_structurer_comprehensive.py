@@ -161,6 +161,33 @@ def test_dyson_groups_company_title_and_date_into_one_entry() -> None:
     assert manager_entry.get("date_range") == "2022 – 2025"
 
 
+def test_wrapped_bullets_do_not_swallow_following_role_or_project_headings() -> None:
+    result = structure_resume(_load_fixture("Haoming_Koo_Dyson_Resume.txt"))
+    experience = next(section for section in result["sections"] if section["key"] == "experience")
+    projects = next(section for section in result["sections"] if section["key"] == "projects")
+
+    assert [entry["heading"] for entry in experience["entries"]] == [
+        "Manager, Central Engineering",
+        "Senior Engineer, RegE Process & Equipment Engineer",
+        "Senior Engineer, Wet Process & Equipment",
+        "Engineer, Wet Process & Equipment",
+    ]
+    assert [entry["heading"] for entry in projects["entries"]] == [
+        "IoT + Machine Learning Project (NUS & MPA)",
+        "Bio-Lasing R&D (Dr. Derrick Yong)",
+        "Hydrogen Catalyst Research (Prof. Jason Yeo)",
+    ]
+    bullet_text = " ".join(
+        bullet["text"]
+        for section in (experience, projects)
+        for entry in section["entries"]
+        for bullet in entry["bullets"]
+    )
+    assert "Senior Engineer" not in bullet_text
+    assert "Bio-Lasing R&D" not in bullet_text
+    assert "Hydrogen Catalyst Research" not in bullet_text
+
+
 def test_kla_keeps_company_location_with_first_experience_entry() -> None:
     result = structure_resume(_load_fixture("Haoming_Koo_KLA_TPM_Resume.txt"))
     experience = next(section for section in result["sections"] if section["key"] == "experience")
