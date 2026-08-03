@@ -717,6 +717,68 @@ def test_corpus_and_mom_provider_keeps_sources_and_wage_definitions_separate():
     assert all(lead["retrieved_at"] for lead in pack.compensation_brief["recruiter_guide_leads"])
 
 
+def test_research_provider_uses_the_selected_corpus_posting_salary_without_pipeline_metadata():
+    from application_research import CorpusAndMomResearchProvider
+    from database import SessionLocal, init_db
+    from models import ScrapedJob, TrackedJob
+
+    init_db()
+    unique = secrets.token_hex(6)
+    with SessionLocal() as db:
+        target = ScrapedJob(
+            title="Manufacturing Manager",
+            company=f"Selected Posting Company {unique}",
+            salary="$8,000 - $10,000",
+            source="MyCareersFuture",
+            url=f"https://example.com/{unique}/selected",
+            posted_date="2026-08-03",
+            posted_at_sort="2026-08-03T00:00:00+00:00",
+            scraped_at="2026-08-03T00:00:00+00:00",
+            description="Lead manufacturing operations and continuous improvement.",
+            dedup_key=f"selected-posting-pay-{unique}",
+            hidden=0,
+        )
+        db.add(target)
+        db.flush()
+        tracked = TrackedJob(
+            user_id=1,
+            company=target.company,
+            role=target.title,
+            status="applied",
+            source=target.source,
+            source_url=target.url,
+            scraped_job_id=target.id,
+            role_metadata={},
+        )
+
+        class Response:
+            content = _mom_workbook()
+
+            @staticmethod
+            def raise_for_status():
+                return None
+
+        pack = CorpusAndMomResearchProvider(db, http_get=lambda *_args, **_kwargs: Response()).build(tracked, "")
+
+    posting = pack.compensation_brief["observations"][0]
+    assert posting == {
+        "kind": "employer_posting",
+        "value": "$8,000 - $10,000",
+        "currency": "SGD",
+        "period": "as stated by employer",
+        "definition": "Employer-stated posting range; package components were not inferred.",
+        "source_url": target.url,
+        "source_type": "job_posting",
+        "data_date": "2026-08-03",
+    }
+
+
+def test_mom_role_mapping_rejects_a_shared_generic_engineer_title():
+    from application_research import _mom_observation
+
+    assert _mom_observation("System Engineer", _mom_workbook("Lift engineer")) is None
+
+
 def test_research_provider_distinguishes_stale_and_sparse_niche_evidence():
     from application_research import CorpusAndMomResearchProvider
     from database import SessionLocal, init_db
