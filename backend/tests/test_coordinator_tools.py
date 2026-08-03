@@ -1051,10 +1051,146 @@ def test_a_rewrite_drafted_in_a_turn_reaches_the_pending_table_and_stays_pending
 
     # The resume itself is untouched: no agent path writes one.
     with sessions() as db:
-        from models import ResumeVersion
+        from models import ProposedResumeEdit, ResumeVersion
 
         stored = db.query(ResumeVersion).filter(ResumeVersion.id == resume_id).one()
+        edit_row = db.query(ProposedResumeEdit).filter(
+            ProposedResumeEdit.thread_id == receipt.thread_id
+        ).one()
         assert stored.resume_text == resume_text
+
+
+def test_candidate_confirmed_number_becomes_cited_pending_edit_and_survives_restart():
+    """A focused candidate answer is evidence, not a search preference.
+
+    Production asked for the number hidden behind `[N]`, then rejected the exact
+    answer as an invented metric and told the candidate to edit manually. This
+    drives the public module path and proves the quote, source message, pending
+    diff, and unchanged source resume all survive a new session.
+    """
+    from recruitment_team.interface import StartThread
+    from recruitment_team.open_agent.tools import (
+        propose_resume_edit,
+        record_candidate_evidence,
+    )
+
+    from resume_document import create_resume_document
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    source = "EXPERIENCE\nGuided [N] junior engineers through code reviews."
+    with sessions() as db:
+        from models import ResumeVersion
+
+        resume = db.query(ResumeVersion).filter(ResumeVersion.id == resume_id).one()
+        resume.resume_text = source
+        db.commit()
+
+    class ConfirmedEvidenceModel:
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
+            from recruitment_team.conversation_model import ModelReply
+
+            recorded = record_candidate_evidence.invoke({
+                "evidence_quotes": ["mentored 3 junior engineers at DBS"],
+            })
+            block = create_resume_document(resume_text)["blocks"][-1]
+            drafted = propose_resume_edit.invoke({
+                "block_id": block["id"],
+                "rewrite": "Guided 3 junior engineers through code reviews.",
+                "candidate_evidence_ids": recorded["evidence_ids"],
+            })
+            assert drafted["accepted"] is True
+            return ModelReply(content="Drafted one confirmed edit.", model_name="test-model")
+
+    with sessions() as db:
+        team = _team(db, ConfirmedEvidenceModel(), _RecordingDiscovery([]))
+        receipt = team.execute(
+            owner_id,
+            StartThread(
+                resume_version_id=resume_id,
+                message="Sarah confirms she mentored 3 junior engineers at DBS.",
+            ),
+            idempotency_key="confirmed-evidence-turn",
+        )
+
+    with sessions() as db:
+        team = _team(db, ConfirmedEvidenceModel(), _RecordingDiscovery([]))
+        snapshot = team.snapshot(owner_id, receipt.thread_id)
+        pending = team.proposed_edits(owner_id, receipt.thread_id)
+        from models import ProposedResumeEdit, ResumeVersion
+
+        stored = db.query(ResumeVersion).filter(ResumeVersion.id == resume_id).one()
+        edit_row = (
+            db.query(ProposedResumeEdit)
+            .filter(ProposedResumeEdit.thread_id == receipt.thread_id)
+            .one()
+        )
+
+    assert snapshot.case_facts.preferences == ()
+    assert len(snapshot.case_facts.confirmed_evidence) == 1
+    fact = snapshot.case_facts.confirmed_evidence[0]
+    assert fact.evidence_quote == "mentored 3 junior engineers at DBS"
+    assert fact.source_message_id == snapshot.messages[0].message_id
+    assert pending[0]["rewrite"] == "Guided 3 junior engineers through code reviews."
+    assert edit_row.evidence_ids == [fact.evidence_id]
+    assert pending[0]["evidence_refs"] == [{
+        "evidence_id": fact.evidence_id,
+        "evidence_quote": fact.evidence_quote,
+    }]
+    assert stored.resume_text == source
+
+
+def test_candidate_evidence_quote_and_id_must_be_exact_before_editing():
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import (
+        propose_resume_edit,
+        record_candidate_evidence,
+    )
+
+    document = {
+        "revision": "rev-1",
+        "blocks": [{
+            "id": "b1",
+            "text": "Guided [N] junior engineers through code reviews.",
+            "section_key": "experience",
+            "entry_id": "e1",
+        }],
+    }
+    context = _context(
+        _RecordingDiscovery([]),
+        resume_document=document,
+        latest_user_message="I mentored 3 junior engineers.",
+        latest_user_message_id=17,
+        latest_user_run_id="run-17",
+    )
+
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        invalid_quote = record_candidate_evidence.invoke({
+            "evidence_quotes": ["I mentored 4 junior engineers."],
+        })
+        unsupported = propose_resume_edit.invoke({
+            "block_id": "b1",
+            "rewrite": "Guided 3 junior engineers through code reviews.",
+        })
+        recorded = record_candidate_evidence.invoke({
+            "evidence_quotes": ["mentored 3 junior engineers"],
+        })
+        unknown_id = propose_resume_edit.invoke({
+            "block_id": "b1",
+            "rewrite": "Guided 3 junior engineers through code reviews.",
+            "candidate_evidence_ids": ["candidate_missing"],
+        })
+        accepted = propose_resume_edit.invoke({
+            "block_id": "b1",
+            "rewrite": "Guided 3 junior engineers through code reviews.",
+            "candidate_evidence_ids": recorded["evidence_ids"],
+        })
+
+    assert invalid_quote["accepted"] is False
+    assert "Unsupported numeric facts: 3" in unsupported["reason"]
+    assert unknown_id["accepted"] is False
+    assert accepted["accepted"] is True
+    assert accepted["application_status"] == "pending_user_review"
 
 
 def test_an_unknown_block_refusal_names_the_blocks_the_agent_may_edit():

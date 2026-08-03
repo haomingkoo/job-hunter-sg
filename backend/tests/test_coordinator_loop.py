@@ -1357,6 +1357,7 @@ def test_the_coordinator_binds_only_the_tools_it_needs():
         "read_candidate_evidence",
         "read_shortlist",
         "read_target_job",
+        "record_candidate_evidence",
         "record_preferences",
         "search_jobs",
         "write_plan",

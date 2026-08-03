@@ -212,6 +212,11 @@ def _apply_lightweight_migrations() -> None:
                 "ALTER TABLE recruitment_activity_events ADD COLUMN attributes JSON NOT NULL DEFAULT '{}'"
             )
 
+    if "proposed_resume_edits" in inspector.get_table_names():
+        edit_columns = {col["name"] for col in inspector.get_columns("proposed_resume_edits")}
+        if "evidence_ids" not in edit_columns:
+            statements.append("ALTER TABLE proposed_resume_edits ADD COLUMN evidence_ids JSON")
+
     # Widen jd_summary_status if it was created as VARCHAR(30) (too short for
     # model names). SQLite's ALTER TABLE has no "change column type"
     # operation -- this only runs against Postgres, which does.

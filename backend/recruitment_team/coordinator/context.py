@@ -19,7 +19,7 @@ from typing import Any, Callable
 
 from ..candidate_profile import CandidateEvidenceProfile
 from ..discovery import DiscoveryPort, JobSearchResult, JobSnapshot
-from ..interface import PreferenceFact, PreferenceUpdate
+from ..interface import ConfirmedEvidenceFact, PreferenceFact, PreferenceUpdate
 from ..role_success import RoleSuccessProfile
 
 
@@ -42,6 +42,13 @@ class ConversationContext:
     discovery: DiscoveryPort
     plan: tuple[dict[str, str], ...] = ()
     latest_user_message: str = ""
+    latest_user_message_id: int = 0
+    latest_user_run_id: str = ""
+    confirmed_evidence: tuple[ConfirmedEvidenceFact, ...] = ()
+    drafted_confirmed_evidence: list[ConfirmedEvidenceFact] = field(
+        default_factory=list,
+        compare=False,
+    )
     # The LangGraph thread id of a graph this thread left paused on
     # ask_candidate, or "" when nothing is pending. Read from case_facts; the
     # reply reports a new one back the same way.

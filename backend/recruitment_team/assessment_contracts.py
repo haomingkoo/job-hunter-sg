@@ -18,6 +18,7 @@ import config
 from prompt_safety import xml_data_block
 
 from .candidate_profile import CandidateEvidenceProfile
+from .interface import ConfirmedEvidenceFact
 from .discovery import JobSnapshot
 from .persona_packs import load_persona_pack_registry
 from .prompts.target_assessment import (
@@ -38,6 +39,7 @@ class TargetAssessmentRequest:
     target_job: JobSnapshot
     trace_key: str
     resume_document: dict[str, Any] | None = None
+    confirmed_evidence: tuple[ConfirmedEvidenceFact, ...] = ()
 
 
 @dataclass(frozen=True)

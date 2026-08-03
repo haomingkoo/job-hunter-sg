@@ -43,6 +43,7 @@ from .interface import (
     CandidateProfileArtifactSnapshot,
     CaseFacts,
     Command,
+    ConfirmedEvidenceFact,
     HideJob,
     Message,
     PreferenceFact,
@@ -55,6 +56,7 @@ from .interface import (
     ThreadSnapshot,
     ThreadSummary,
     TargetAssessmentArtifactSnapshot,
+    confirmed_evidence_fact,
 )
 from .errors import (
     CandidateProfilingUnavailable,
@@ -628,7 +630,7 @@ class RecruitmentTeam:
                 preferences,
                 correlation_key,
                 self._conversation_activity(thread, run),
-                latest_user.content,
+                latest_user,
             )
             # The turn is handed to the model twice over: explicitly as the
             # fourth argument, which is what DeepAgentConversationModel requires
@@ -650,6 +652,8 @@ class RecruitmentTeam:
             )
             if evidenced:
                 self._merge_preference_updates(thread, evidenced, latest_user)
+            if conversation.drafted_confirmed_evidence:
+                self._merge_confirmed_evidence(thread, conversation.drafted_confirmed_evidence)
             if reply.search_query:
                 self._remember_search_query(thread, reply.search_query)
             # After _remember_search_query on purpose: a query that really ran
@@ -684,7 +688,7 @@ class RecruitmentTeam:
         preferences: tuple[PreferenceFact, ...],
         correlation_key: str,
         on_event,
-        latest_user_message: str,
+        latest_user: Message,
     ) -> ConversationContext:
         """Everything this turn already knows, assembled once before the model runs."""
         from resume_document import create_resume_document
@@ -719,7 +723,10 @@ class RecruitmentTeam:
             ),
             plan=self._plan_steps(facts),
             discovery=self._discovery,
-            latest_user_message=latest_user_message,
+            latest_user_message=latest_user.content,
+            latest_user_message_id=latest_user.message_id,
+            latest_user_run_id=latest_user.run_id,
+            confirmed_evidence=self._confirmed_evidence_facts(facts),
             pause_token=str(facts.get("coordinator_pause_token") or ""),
             on_event=on_event,
         )
@@ -820,6 +827,7 @@ class RecruitmentTeam:
                     entry_id=edit.get("entry_id", ""),
                     original=edit["original"],
                     rewrite=edit["rewrite"],
+                    evidence_ids=edit.get("evidence_ids") or None,
                     document_revision=edit["document_revision"],
                     status="pending",
                 )
@@ -1390,6 +1398,7 @@ class RecruitmentTeam:
             target_job=self._job_from_dict(facts["selected_target"]),
             trace_key=trace_key_value,
             resume_document=create_resume_document(resume.resume_text),
+            confirmed_evidence=self._confirmed_evidence_facts(facts),
         )
 
     def _assess_target(
@@ -1466,13 +1475,29 @@ class RecruitmentTeam:
         if artifact is None:
             raise ThreadNotFound(f"assessment artifact {artifact_id} not found")
 
+        latest_user = next(
+            (message for message in reversed(self._messages(thread.id)) if message.role == "user"),
+            None,
+        )
+        if latest_user is None:
+            raise InvalidCommand("assessment answer has no user message")
+        confirmed = confirmed_evidence_fact(
+            answer,
+            source_run_id=latest_user.run_id,
+            source_message_id=latest_user.message_id,
+        )
+        self._merge_confirmed_evidence(thread, [confirmed])
         request = self._target_assessment_request(thread, resume, run.trace_key)
         thread.workflow_state = "assessing"
         self._db.commit()
 
         updates = self._target_assessment_runner.resume(
             str(pause_token),
-            answer,
+            (
+                f"{answer}\n\n[System: this candidate-confirmed answer is stored as "
+                f"evidence ID {confirmed.evidence_id}. Cite that ID in "
+                "propose_resume_edit if the answer supports a rewrite.]"
+            ),
             request,
             list(artifact.pending_specialist_runs or []),
             artifact.pending_synthesis or "",
@@ -1636,6 +1661,7 @@ class RecruitmentTeam:
                     entry_id=edit.get("entry_id", ""),
                     original=edit["original"],
                     rewrite=edit["rewrite"],
+                    evidence_ids=edit.get("evidence_ids") or None,
                     document_revision=edit["document_revision"],
                     status="pending",
                 )
@@ -1742,6 +1768,7 @@ class RecruitmentTeam:
                     else None
                 ),
                 preferences=self._preference_facts(facts),
+                confirmed_evidence=self._confirmed_evidence_facts(facts),
                 plan=self._plan_steps(facts),
                 candidate_profile_artifact_id=(
                     str(facts["candidate_profile_artifact_id"]) if facts.get("candidate_profile_artifact_id") else None
@@ -2049,6 +2076,10 @@ class RecruitmentTeam:
 
         resume_text = self._owned_resume(owner_id, thread.resume_version_id).resume_text or ""
         revision = create_resume_document(resume_text)["revision"]
+        evidence_by_id = {
+            fact.evidence_id: fact
+            for fact in self._confirmed_evidence_facts(thread.case_facts)
+        }
         return [
             {
                 "id": edit.id,
@@ -2057,6 +2088,14 @@ class RecruitmentTeam:
                 "entry_id": edit.entry_id,
                 "original": edit.original,
                 "rewrite": edit.rewrite,
+                "evidence_refs": [
+                    {
+                        "evidence_id": evidence_id,
+                        "evidence_quote": evidence_by_id[evidence_id].evidence_quote,
+                    }
+                    for evidence_id in (edit.evidence_ids or [])
+                    if evidence_id in evidence_by_id
+                ],
                 "status": edit.status,
                 "applicable": (
                     edit.document_revision == revision
@@ -2401,6 +2440,21 @@ class RecruitmentTeam:
         )
 
     @staticmethod
+    def _confirmed_evidence_facts(facts: dict) -> tuple[ConfirmedEvidenceFact, ...]:
+        return tuple(
+            ConfirmedEvidenceFact(
+                evidence_id=str(item["evidence_id"]),
+                evidence_quote=str(item["evidence_quote"]),
+                source_run_id=str(item["source_run_id"]),
+                source_message_id=int(item["source_message_id"]),
+            )
+            for item in facts.get("confirmed_evidence", [])
+            if isinstance(item, dict)
+            and item.get("evidence_id")
+            and item.get("evidence_quote")
+        )
+
+    @staticmethod
     def _plan_steps(facts: dict) -> tuple[dict[str, str], ...]:
         return tuple(
             {"step": str(item["step"]), "status": str(item["status"])}
@@ -2448,6 +2502,24 @@ class RecruitmentTeam:
                 current.append(fact)
         facts = dict(thread.case_facts)
         facts["preferences"] = current
+        thread.case_facts = facts
+
+    @staticmethod
+    def _merge_confirmed_evidence(
+        thread: RecruitmentThread,
+        updates: list[ConfirmedEvidenceFact],
+    ) -> None:
+        current = list(thread.case_facts.get("confirmed_evidence", []))
+        known_ids = {
+            str(item.get("evidence_id"))
+            for item in current
+            if isinstance(item, dict) and item.get("evidence_id")
+        }
+        current.extend(
+            asdict(fact) for fact in updates if fact.evidence_id not in known_ids
+        )
+        facts = dict(thread.case_facts)
+        facts["confirmed_evidence"] = current
         thread.case_facts = facts
 
     def _event(

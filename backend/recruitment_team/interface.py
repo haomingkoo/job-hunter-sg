@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -98,6 +99,29 @@ class PreferenceFact:
 
 
 @dataclass(frozen=True)
+class ConfirmedEvidenceFact:
+    evidence_id: str
+    evidence_quote: str
+    source_run_id: str
+    source_message_id: int
+
+
+def confirmed_evidence_fact(
+    evidence_quote: str,
+    *,
+    source_run_id: str,
+    source_message_id: int,
+) -> ConfirmedEvidenceFact:
+    quote = evidence_quote.strip()
+    return ConfirmedEvidenceFact(
+        evidence_id=f"candidate_{uuid.uuid5(uuid.NAMESPACE_URL, f'{source_run_id}:{source_message_id}:{quote}')}",
+        evidence_quote=quote,
+        source_run_id=source_run_id,
+        source_message_id=source_message_id,
+    )
+
+
+@dataclass(frozen=True)
 class RunReceipt:
     run_id: str
     thread_id: str
@@ -124,6 +148,7 @@ class CaseFacts:
     job_feedback: tuple[dict, ...] = ()
     role_success_profile: RoleSuccessProfile | None = None
     preferences: tuple[PreferenceFact, ...] = ()
+    confirmed_evidence: tuple[ConfirmedEvidenceFact, ...] = ()
     plan: tuple[dict[str, str], ...] = ()
     candidate_profile_artifact_id: str | None = None
     candidate_profile_status: str = "not_started"

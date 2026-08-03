@@ -2001,8 +2001,11 @@ def test_answering_the_assessment_question_resumes_and_completes_it():
         snapshot = team.snapshot(owner_id, started.thread_id)
         row = db.query(TargetAssessmentArtifact).filter(TargetAssessmentArtifact.id == artifact.artifact_id).one()
 
-    assert runner.resume_calls == [("pause-token-abc", "Led a team of 12 engineers.")]
+    assert runner.resume_calls[0][0] == "pause-token-abc"
+    assert runner.resume_calls[0][1].startswith("Led a team of 12 engineers.\n\n[System:")
+    assert "evidence ID candidate_" in runner.resume_calls[0][1]
     assert snapshot.workflow_state == "assessment_ready"
+    assert snapshot.case_facts.confirmed_evidence[0].evidence_quote == "Led a team of 12 engineers."
     assert snapshot.case_facts.target_assessment_status == "completed"
     assert artifact.status == "completed"
     assert artifact.synthesis == "Consulted the recruiter; candidate confirmed the team size."
@@ -3231,7 +3234,9 @@ def test_public_http_answer_endpoint_resumes_a_paused_assessment_to_completion()
         assert artifact_after.json()["status"] == "completed"
         assert artifact_after.json()["synthesis"] == "Answered and completed via HTTP."
         assert snapshot.json()["workflow_state"] == "assessment_ready"
-        assert runner.resume_calls == [("http-pause-token", "Led a team of 12 engineers.")]
+        assert runner.resume_calls[0][0] == "http-pause-token"
+        assert runner.resume_calls[0][1].startswith("Led a team of 12 engineers.\n\n[System:")
+        assert "evidence ID candidate_" in runner.resume_calls[0][1]
         assert runner.resume_call_args[0]["ask_candidate_call_id"] == "http-call-1"
     finally:
         cleanup()
@@ -3257,7 +3262,9 @@ def test_public_http_answer_stream_endpoint_resumes_a_paused_assessment_to_compl
 
         artifact = client.get(f"/api/recruitment-team/threads/{thread_id}/assessment")
         assert artifact.json()["status"] == "completed"
-        assert runner.resume_calls == [("http-pause-token", "Led a team of 12 engineers.")]
+        assert runner.resume_calls[0][0] == "http-pause-token"
+        assert runner.resume_calls[0][1].startswith("Led a team of 12 engineers.\n\n[System:")
+        assert "evidence ID candidate_" in runner.resume_calls[0][1]
     finally:
         cleanup()
 

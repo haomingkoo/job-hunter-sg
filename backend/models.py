@@ -559,6 +559,7 @@ class ProposedResumeEdit(Base):
     entry_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     original: Mapped[str] = mapped_column(Text, nullable=False)
     rewrite: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     document_revision: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)

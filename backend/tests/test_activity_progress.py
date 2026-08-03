@@ -174,6 +174,22 @@ def test_a_plan_update_reports_the_visible_artifact_size():
     assert detail["outcome"] == "plan updated with 3 steps"
 
 
+def test_confirmed_candidate_evidence_reports_only_a_safe_count():
+    _, detail = describe_progress(
+        _result(
+            "record_candidate_evidence",
+            {
+                "accepted": True,
+                "recorded": 1,
+                "evidence_ids": ["candidate_17_secret-quote-hash"],
+            },
+        )
+    )
+
+    assert detail["outcome"] == "1 candidate fact confirmed"
+    assert "secret" not in detail["outcome"]
+
+
 def test_a_rejected_edit_reports_the_gate_that_rejected_it():
     _, detail = describe_progress(
         _result("propose_resume_edit", {"accepted": False, "reason": "Unsupported numeric facts: 40"})

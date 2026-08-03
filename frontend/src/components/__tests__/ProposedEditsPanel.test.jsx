@@ -10,6 +10,12 @@ const APPLICABLE = {
   original: "Ran vLLM inference clusters on AMD MI300X.",
   rewrite: "Operated vLLM inference clusters on AMD MI300X GPUs.",
   applicable: true,
+  evidence_refs: [
+    {
+      evidence_id: "candidate-1",
+      evidence_quote: "I operated the MI300X clusters in production.",
+    },
+  ],
 };
 
 const STALE = {
@@ -61,6 +67,9 @@ describe("ProposedEditsPanel", () => {
     expect(buttonLabelled("Accept all 1")).toBeTruthy();
     expect(container.textContent).not.toContain("Never applied.");
     expect(container.textContent).toContain("drafted against wording your resume no longer contains");
+    expect(container.textContent).toContain(
+      "Candidate confirmed: “I operated the MI300X clusters in production.”",
+    );
   });
 
   it("accepts everything with no argument and one edit by id", () => {

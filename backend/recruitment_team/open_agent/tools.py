@@ -3,8 +3,8 @@
 Two audiences share this module. The target-assessment runner binds
 `ask_candidate`, `read_candidate_evidence`, `read_target_job` and
 `propose_resume_edit` around a `TargetAssessmentRequest`. The conversational
-coordinator binds those four plus `read_shortlist` and `search_jobs` around a
-`ConversationContext`. Both shapes arrive through the same `context`
+coordinator also binds its shortlist, search, plan, preference, confirmed-evidence,
+and publishing tools around a `ConversationContext`. Both shapes arrive through the same `context`
 ContextVars, so a tool that needs a field the other shape does not carry says
 so rather than dereferencing `None`.
 
@@ -25,7 +25,7 @@ import config
 from validation_gates import _extract_numbers, run_all_gates
 
 from ..conversation_model import PreferenceUpdatePayload
-from ..interface import PreferenceUpdate
+from ..interface import ConfirmedEvidenceFact, PreferenceUpdate, confirmed_evidence_fact
 from . import context
 
 
@@ -63,6 +63,10 @@ class _WriteShortlistPayload(BaseModel):
 
 class _RecordPreferencesPayload(BaseModel):
     updates: list[PreferenceUpdatePayload] = Field(min_length=1)
+
+
+class _RecordCandidateEvidencePayload(BaseModel):
+    evidence_quotes: list[str] = Field(min_length=1)
 
 
 class _PlanStep(BaseModel):
@@ -149,6 +153,13 @@ def read_candidate_evidence() -> dict:
     return {
         "ok": True,
         "fields": [asdict(field) for field in request.candidate_profile.fields],
+        "candidate_confirmed": [
+            asdict(fact)
+            for fact in (
+                *getattr(request, "confirmed_evidence", ()),
+                *getattr(request, "drafted_confirmed_evidence", ()),
+            )
+        ],
     }
 
 
@@ -262,6 +273,50 @@ def record_preferences(updates: list[PreferenceUpdatePayload]) -> dict:
         for update in parsed
     )
     return {"accepted": True, "recorded": len(parsed)}
+
+
+@tool(args_schema=_RecordCandidateEvidencePayload)
+def record_candidate_evidence(evidence_quotes: list[str]) -> dict:
+    """Store factual evidence explicitly stated in the candidate's latest message.
+
+    Each quote must occur exactly in the latest message. Candidate evidence is not a
+    role, salary, location, seniority, or constraint preference. The returned IDs can
+    be cited by propose_resume_edit in this turn or a later turn.
+    """
+    from ..coordinator.context import current_conversation
+
+    conversation = current_conversation()
+    if conversation is None:
+        return dict(_NO_CONVERSATION)
+    quotes = [quote.strip() for quote in evidence_quotes if quote.strip()]
+    invalid = [quote for quote in quotes if quote not in conversation.latest_user_message]
+    if not quotes or invalid:
+        return {
+            "accepted": False,
+            "reason": "Every candidate-evidence quote must occur exactly in the latest message.",
+            "invalid_quotes": invalid,
+        }
+    known = {
+        fact.evidence_id
+        for fact in (*conversation.confirmed_evidence, *conversation.drafted_confirmed_evidence)
+    }
+    recorded: list[ConfirmedEvidenceFact] = []
+    for quote in quotes:
+        fact = confirmed_evidence_fact(
+            quote,
+            source_run_id=conversation.latest_user_run_id,
+            source_message_id=conversation.latest_user_message_id,
+        )
+        if fact.evidence_id in known:
+            continue
+        conversation.drafted_confirmed_evidence.append(fact)
+        recorded.append(fact)
+        known.add(fact.evidence_id)
+    return {
+        "accepted": True,
+        "recorded": len(recorded),
+        "evidence_ids": [fact.evidence_id for fact in recorded],
+    }
 
 
 @tool(args_schema=_WritePlanPayload)
@@ -413,14 +468,19 @@ def search_jobs(query: str) -> dict:
 
 
 @tool
-def propose_resume_edit(block_id: str, rewrite: str) -> dict:
+def propose_resume_edit(
+    block_id: str,
+    rewrite: str,
+    candidate_evidence_ids: list[str] | None = None,
+) -> dict:
     """Draft an in-place, evidence-safe rewrite of one existing resume block.
 
     `block_id` must be a canonical block ID visible in the active resume
     document. `rewrite` must replace that block's text without introducing
-    new numeric facts and must stay within one block (no line breaks) -- this
-    tool cannot insert or delete a block. A valid proposal remains pending
-    until the candidate explicitly accepts it.
+    new numeric facts unless candidate_evidence_ids cites exact candidate-confirmed
+    evidence. It must stay within one block (no line breaks) -- this tool cannot
+    insert or delete a block. A valid proposal remains pending until the candidate
+    explicitly accepts it.
     """
     document = context.current_document()
     edits = context.proposed_edits()
@@ -454,7 +514,30 @@ def propose_resume_edit(block_id: str, rewrite: str) -> dict:
         return {"accepted": False, "reason": "A replacement must stay within one resume block.", "block_id": block_id}
 
     original_text = str(block.get("text") or "")
-    new_numbers = _extract_numbers(clean_rewrite) - _extract_numbers(original_text)
+    requested_ids = list(dict.fromkeys(candidate_evidence_ids or []))
+    request = context.current_request()
+    available_evidence = {
+        fact.evidence_id: fact
+        for fact in (
+            *getattr(request, "confirmed_evidence", ()),
+            *getattr(request, "drafted_confirmed_evidence", ()),
+        )
+    }
+    unknown_evidence_ids = [
+        evidence_id for evidence_id in requested_ids if evidence_id not in available_evidence
+    ]
+    if unknown_evidence_ids:
+        return {
+            "accepted": False,
+            "reason": f"Unknown candidate evidence IDs: {', '.join(unknown_evidence_ids)}",
+            "block_id": block_id,
+        }
+    cited_evidence = [available_evidence[evidence_id] for evidence_id in requested_ids]
+    supporting_evidence = "\n".join(fact.evidence_quote for fact in cited_evidence)
+    supported_source = "\n".join(
+        part for part in (original_text, supporting_evidence) if part
+    )
+    new_numbers = _extract_numbers(clean_rewrite) - _extract_numbers(supported_source)
     if new_numbers:
         return {
             "accepted": False,
@@ -462,7 +545,15 @@ def propose_resume_edit(block_id: str, rewrite: str) -> dict:
             "block_id": block_id,
         }
 
-    failed = [gate for gate in run_all_gates(original_text, clean_rewrite) if not gate.passed]
+    failed = [
+        gate
+        for gate in run_all_gates(
+            original_text,
+            clean_rewrite,
+            supporting_evidence=supporting_evidence,
+        )
+        if not gate.passed
+    ]
     if failed:
         return {"accepted": False, "reason": "; ".join(gate.message for gate in failed), "block_id": block_id}
 
@@ -473,6 +564,7 @@ def propose_resume_edit(block_id: str, rewrite: str) -> dict:
         "original": original_text,
         "rewrite": clean_rewrite,
         "document_revision": document.get("revision"),
+        "evidence_ids": [fact.evidence_id for fact in cited_evidence],
         "status": "pending",
     })
     return {"accepted": True, "application_status": "pending_user_review", "block_id": block_id, "rewrite": clean_rewrite}

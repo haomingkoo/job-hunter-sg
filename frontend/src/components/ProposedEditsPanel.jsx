@@ -59,6 +59,14 @@ export default function ProposedEditsPanel({ edits, onAccept, onReject, busy, re
               {edit.original}
             </p>
             <p className="mt-1.5 text-sm leading-relaxed text-[#33506B]">{edit.rewrite}</p>
+            {(edit.evidence_refs || []).map((evidence) => (
+              <blockquote
+                key={evidence.evidence_id}
+                className="mt-2 border-l-2 border-emerald-300 pl-2 text-xs leading-relaxed text-emerald-800"
+              >
+                Candidate confirmed: “{evidence.evidence_quote}”
+              </blockquote>
+            ))}
             <div className="mt-2 flex gap-2">
               <button
                 type="button"
