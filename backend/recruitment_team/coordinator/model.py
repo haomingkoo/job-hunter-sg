@@ -47,7 +47,7 @@ from langgraph.types import Command
 import config
 from prompt_safety import xml_data_block
 
-from ..conversation_model import ConversationReply, ModelReply
+from ..conversation_model import ConversationReply, ModelReply, reply_is_complete
 from ..errors import ConversationUnavailable, InvalidCommand
 from ..interface import Message, PreferenceFact, PreferenceUpdate
 from ..open_agent import context as open_agent_context
@@ -368,6 +368,13 @@ class DeepAgentConversationModel:
                 # is invented: no preference update is recorded here.
                 prose = _final_reply_text(state)
                 if prose:
+                    if not reply_is_complete(prose):
+                        span.set_attribute("failure_type", "incomplete_reply")
+                        raise ConversationUnavailable(
+                            "coordinator returned an incomplete reply",
+                            failure_type="incomplete_reply",
+                            retryable=True,
+                        )
                     span.set_attribute("outcome", "unsubmitted_prose")
                     return ModelReply(
                         prompt_version=COORDINATOR_PROMPT_VERSION,
