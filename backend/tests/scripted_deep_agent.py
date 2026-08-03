@@ -96,6 +96,7 @@ def submission(
     *,
     preference_updates: list[dict] | None = None,
     search_query: str = "",
+    pending_edit_block_ids: list[str] | None = None,
     call_id: str = "submit-1",
 ) -> AIMessage:
     """The structured-output call the coordinator loop terminates on.
@@ -112,6 +113,7 @@ def submission(
             "reply": reply,
             "preference_updates": list(preference_updates or []),
             "search_query": search_query,
+            "pending_edit_block_ids": list(pending_edit_block_ids or []),
         },
         call_id,
     )

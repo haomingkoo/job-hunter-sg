@@ -336,13 +336,6 @@ def gate_length_sanity(original: str, tailored: str) -> GateResult:
     orig_words = len(original.split())
     tail_words = len(tailored.split())
 
-    if tail_words > 40:
-        return GateResult(
-            passed=False,
-            gate_name="length_sanity",
-            message=f"Rewrite is {tail_words} words (max 40).",
-        )
-
     if tail_words < 8:
         return GateResult(
             passed=True,  # warning, not failure

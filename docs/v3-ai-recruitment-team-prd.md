@@ -574,6 +574,9 @@ rather than converted into false precision. Exact evidence is recorded in the pa
   block and explicitly cited candidate evidence before it can become pending. Job-posting
   language, assumptions, and common industry practice are never candidate evidence; an
   unavailable or invalid verdict fails closed without a hidden fallback.
+- Resume length safety is relative to the original block rather than a global word cap.
+  After any edit attempt, the structured reply must identify exactly the accepted pending
+  block IDs; a rejected or prior attempt cannot be described as a current draft.
 - Add a real opt-in local model E2E that fails non-zero unless output, activity events, reviewer coverage, structured judge submissions, and final quality status pass.
 - The local E2E must write its complete report on both success and failure, including
   structured failure type, retryability, root validation code, activity, and spans.
