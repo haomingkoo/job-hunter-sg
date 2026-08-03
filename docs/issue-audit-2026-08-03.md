@@ -8,7 +8,7 @@ acceptance contract was implemented.
 
 ## Closed as completed
 
-Issues #42, #44, #86, #90, #91, #93, #101, #104, #110, #111, #112, #113,
+Issues #42, #44, #86, #90, #91, #93, #101, #103, #104, #110, #111, #112, #113,
 and #186 were closed only after their current
 implementation and focused regression coverage were verified. Issue #184 was
 closed after production browser acceptance of streamed Shortlist and Select
@@ -20,6 +20,16 @@ evidence defects, so #93 was reopened, corrected in PR #195, and closed only aft
 Railway deployment `f47cd26b-47ec-48c4-8f20-53571a9075b2` ran exact commit
 `b3f49bc9ded4b3acf51819997af53583a7e7449d` and the corrected browser journey passed.
 Issue #113 was delivered by PR #189.
+
+Issue #103 was delivered by PR #197 at commit
+`2375d7991b20af669055761eaff04adb73de8f1c`. Signed-in production acceptance kept a
+real multi-minute candidate study visibly alive and exposed a team-member identity
+defect missed by the suite, so #103 was reopened. PR #198 corrected that seam and
+merged as `efcc87c7f5371d5818f9fe7cb62c8f73c97cb1fc`. Railway deployment
+`9fd23aef-a598-4456-938f-0bda12102e60` ran that exact commit successfully. A second
+production study emitted real scope, correction, checkpoint, and completion events;
+Candidate profiler and Coordinator both ended `Reported`, and the panel ended
+`Run complete · 1 of 1 reported`. The isolated UAT conversations were deleted.
 
 ## Closed as obsolete or duplicate
 
@@ -42,7 +52,6 @@ Issue #113 was delivered by PR #189.
 | #98 | Prove the complete journey on narrow screens, keyboard, live regions, and reduced motion. |
 | #99 | Prove two-model portability and the authenticated semantic journey in isolated Railway staging. |
 | #102 | Preserve cumulative call, token, latency, validation, checkpoint, model, and trace evidence across replay. |
-| #103 | Add SSE heartbeats plus per-user/global concurrency enforcement and disconnect cleanup. |
 | #106 | Globally merge and independently calibrate candidate evidence without losing exact provenance. |
 | #108 | Replace scattered retry flags with one persisted deterministic attempt ledger. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
@@ -51,8 +60,8 @@ Issue #113 was delivered by PR #189.
 
 The focused candidate-profile, open-agent, role-evidence, and recruitment-module
 suite passed 124 tests during classification. After guard consolidation, the
-broader affected suite passed 208 tests and the current full repository run passed 944
-backend and repository-level tests with four explicit skips, 91 frontend tests,
+broader affected suite passed 208 tests and the current full repository run passed 951
+backend and repository-level tests with four explicit skips, 92 frontend tests,
 and the frontend production build. Compile, Ruff, ty, `pip check`, and
 `pip-audit` also passed. Production acceptance is documented in the V4 slice
 passdown. These facts support completed-item closure; they do not waive the open
@@ -96,6 +105,11 @@ as a peer dependency, even though application source does not import it.
 - Reused the existing `TrackedJob`, corpus search, ATS extraction, telemetry, and
   SEA-LION request paths for #42/#44/#93. The research builder is passed as one callable;
   no provider registry, second job store, general tool loader, or hidden coaching
+  fallback was added.
+- Reused one standard-library run gate for Resume Agent and V3, one existing SSE
+  transport, and the existing candidate-profile transition callbacks for #103. The
+  Ponytail gate removed the only attributable dead compatibility alias; no new
+  dependency, event-bus abstraction, provider registry, duplicate run path, or hidden
   fallback was added.
 
 This cleanup removes 1,920 net lines and one direct dependency from the working

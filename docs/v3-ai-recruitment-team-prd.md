@@ -1,32 +1,20 @@
 # Job Hunter SG V3 — AI Recruitment Team PRD
 
-Status: ready-for-agent
+Status: active whole-app delivery; the north-star journey is not yet production-accepted end to end
 
-## Implementation status — 2026-07-19
+## Implementation status — 2026-08-03
 
-Implemented and locally verified: persistent V3 threads, canonical resume parsing,
-resumable Candidate Evidence Profile artifacts, source-backed role profiles, five
-versioned/cited recruiting persona packs, native isolated specialist calls,
-evidence-preserving synthesis, fresh independent judge, at most one configured
-correction and re-judge, durable target-assessment artifacts, streamed activity,
-literal output rendering, and metadata-only OpenTelemetry spans. The target-assessment
-execution artifact exposes timeout, transport retries, semantic validation attempts,
-specialist concurrency, correction limit, prompt/pack versions, no fallback model,
-no raw-resume duplication, and no content truncation.
+Persistent threads, canonical resume versions, resumable Candidate Evidence Profiles,
+current source-backed search, evidence-ranked matches, target selection, bounded
+specialist assessment, user-approved edits, durable application handoff, streamed real
+activity, configured heartbeats, and bounded run concurrency are implemented. Current
+production evidence and remaining issue disposition live in
+`PASSDOWN-2026-08-02.md` and `issue-audit-2026-08-03.md`; this PRD does not preserve
+superseded July runtime failures as current status.
 
-Live whole-flow status: not complete. Both real PDFs parse at 100/100 quality and
-checkpoint accepted scopes, but the configured SEA-LION agent model has unstable
-tool-call latency. Hui Shan stopped at `experience_04` after a 120.79-second timeout;
-Haoming stopped at a three-block `experience_02` scope after 120.01 seconds. The
-second trace disproves a simple scope-size explanation. Completed work is preserved
-and no transport retry, fallback, or truncation occurs.
-
-Still required before deployment: complete both real-resume canaries, compare model
-candidates on identical failed scopes, run literal-output reference benchmarks,
-implement clarification/HITL and user-approved edits, generate durable resume and
-battle-plan artifacts, validate OTLP collection in staging, and pass a deployed
-semantic canary. HTTP 200 alone is not an acceptance criterion.
-Date: 2026-07-19
+The whole application is not complete until the north-star loop below passes as one
+signed-in deployed journey. Existing isolated capabilities, HTTP success, or a green
+suite do not satisfy that claim.
 Working product name: AI Recruitment Team
 Tracker: [GitHub issue #88](https://github.com/haomingkoo/job-hunter-sg/issues/88)
 
@@ -66,22 +54,30 @@ handoff happens next. It shows concise evidence-backed rationale, confidence bas
 disagreement, and quality-judge feedback. It never exposes hidden chain-of-thought,
 private prompts, secrets, or fabricated internal dialogue.
 
-The primary end-to-end journey is:
+The primary end-to-end journey is a continuous loop:
 
 ```text
 saved or uploaded resume
-→ persistent career conversation
-→ job search and exploration
-→ evidence-backed shortlist
+→ persistent candidate memory and career conversation
+→ ask naturally for suitable jobs
+→ current source-backed recommendations, not a raw result dump
 → selected target job
-→ independent recruitment-team assessment
-→ quality judge and bounded correction
-→ candidate clarification for missing evidence
-→ explicit editing workflow
-→ accept or reject validated edits
-→ saved tailored resume and application workspace
-→ tracked application outcome
+→ focused clarification only where evidence is materially missing
+→ truthful target-specific draft
+→ review and accept validated edits into a new reversible resume version
+→ download the refined resume as DOCX or PDF
+→ preserve its application and decision history
+→ recommend the next suitable jobs from the refined evidence
+→ repeat without re-entering stable candidate facts
 ```
+
+Candidate memory spans conversations and resume revisions: stable facts, preferences,
+evidence, prior clarifications, targets, applications, accepted edits, and downloads
+remain attributable and reusable. A new conversation does not create a new person. An
+explicit request to help another person creates or selects a separate candidate context;
+their resume, evidence, preferences, history, and applications must never be silently
+merged with the current candidate. An ordinary role or industry pivot is not an identity
+switch.
 
 V3 reuses the existing job corpus, search tools, resume versions, application
 workspace, tracker, multi-reviewer assessment, validation gates, and OpenTelemetry
