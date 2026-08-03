@@ -419,6 +419,39 @@ class RecruitmentActivityEvent(Base):
     )
 
 
+class RecruitmentThreadDeletionRequest(Base):
+    """Durable, content-free cleanup request that survives thread deletion."""
+
+    __tablename__ = "recruitment_thread_deletion_requests"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    thread_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    targets: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    result: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "idempotency_key",
+            name="uq_recruitment_thread_deletion_owner_idempotency",
+        ),
+        Index(
+            "ix_recruitment_thread_deletion_owner_thread",
+            "user_id",
+            "thread_id",
+            "created_at",
+        ),
+    )
+
+
 class CandidateProfileArtifact(Base):
     """Reusable role-neutral profile and validated scope checkpoints for one resume."""
 

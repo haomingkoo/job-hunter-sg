@@ -179,6 +179,7 @@ class ActivityEvent:
 @dataclass(frozen=True)
 class ThreadSnapshot:
     thread_id: str
+    title: str
     status: str
     workflow_state: str
     case_facts: CaseFacts
@@ -189,6 +190,7 @@ class ThreadSnapshot:
 @dataclass(frozen=True)
 class ThreadSummary:
     thread_id: str
+    title: str
     status: str
     workflow_state: str
     resume_version_id: int

@@ -282,11 +282,11 @@ def test_two_turn_thread_persists_through_the_module_interface():
 
 def test_thread_and_events_are_owner_isolated():
     from recruitment_team import RecruitmentTeam, ScriptedConversationModel
-    from recruitment_team.interface import StartThread
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.activity_stream import stream_command
+    from recruitment_team.interface import SendMessage, StartThread
     from recruitment_team.errors import ThreadNotFound
     from recruitment_team.telemetry import RecordedTelemetry
-    from recruitment_team.activity_publisher import IgnoreActivityPublisher
-
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
     with sessions() as db:
@@ -316,6 +316,16 @@ def test_thread_and_events_are_owner_isolated():
         for operation in (
             lambda: team.snapshot(other_id, started.thread_id),
             lambda: team.events(other_id, started.thread_id, after_sequence=0),
+            lambda: team.candidate_profile(other_id, started.thread_id),
+            lambda: team.target_assessment(other_id, started.thread_id),
+            lambda: team.proposed_edits(other_id, started.thread_id),
+            lambda: team.accept_proposed_edits(other_id, started.thread_id, None),
+            lambda: team.reject_proposed_edits(other_id, started.thread_id, []),
+            lambda: team.execute(
+                other_id,
+                SendMessage(thread_id=started.thread_id, message="Read another owner's thread."),
+                idempotency_key="cross-owner-command",
+            ),
         ):
             try:
                 operation()
@@ -323,6 +333,24 @@ def test_thread_and_events_are_owner_isolated():
                 pass
             else:
                 raise AssertionError("another owner accessed the recruitment thread")
+
+        assert team.threads(other_id) == []
+        streamed = "".join(stream_command(
+            lambda publisher: RecruitmentTeam(
+                db,
+                ScriptedConversationModel(["Must not be called."]),
+                _discovery(),
+                _role_profiler(),
+                RecordedTelemetry(),
+                publisher,
+            ),
+            other_id,
+            SendMessage(thread_id=started.thread_id, message="Stream another owner's thread."),
+            "cross-owner-stream",
+        ))
+        assert "event: error" in streamed
+        assert "event: activity" not in streamed
+        assert "recruitment thread not found" in streamed
 
 
 def test_public_http_adapter_uses_the_same_module_journey():
@@ -338,7 +366,6 @@ def test_public_http_adapter_uses_the_same_module_journey():
     from recruitment_team.http_routes import get_recruitment_telemetry
     from recruitment_team.http_routes import get_role_success_profiler
     from recruitment_team.telemetry import RecordedTelemetry
-    from recruitment_team.activity_publisher import IgnoreActivityPublisher
 
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
@@ -3668,3 +3695,289 @@ def test_reading_threads_never_needs_a_live_model(monkeypatch):
 
     assert listed.status_code == 200
     assert listed.json() == []
+
+
+def test_thread_lifecycle_is_owner_only_idempotent_and_blocks_archived_work():
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.errors import InvalidCommand, ThreadNotFound
+    from recruitment_team.interface import SendMessage, StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+    from models import RecruitmentMessage, RecruitmentRun
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        other = User(
+            email="lifecycle-other@example.com",
+            password_hash="test-only",  # pragma: allowlist secret
+            name="Other",
+        )
+        db.add(other)
+        db.commit()
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["First reply.", "Restored reply."]),
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Start this conversation."),
+            idempotency_key="lifecycle-start",
+        )
+        thread_id = started.thread_id
+
+        assert team.rename_thread(owner_id, thread_id, "  Semiconductor   operations  ") == {
+            "thread_id": thread_id,
+            "title": "Semiconductor operations",
+            "status": "active",
+        }
+        assert team.rename_thread(owner_id, thread_id, "Semiconductor operations")["title"] == (
+            "Semiconductor operations"
+        )
+        assert team.archive_thread(owner_id, thread_id)["status"] == "archived"
+        assert team.archive_thread(owner_id, thread_id)["status"] == "archived"
+
+        message_count = db.query(RecruitmentMessage).filter_by(thread_id=thread_id).count()
+        run_count = db.query(RecruitmentRun).filter_by(thread_id=thread_id).count()
+        with pytest.raises(InvalidCommand, match="restore this archived conversation"):
+            team.execute(
+                owner_id,
+                SendMessage(thread_id=thread_id, message="This must not run."),
+                idempotency_key="archived-command",
+            )
+        assert db.query(RecruitmentMessage).filter_by(thread_id=thread_id).count() == message_count
+        assert db.query(RecruitmentRun).filter_by(thread_id=thread_id).count() == run_count
+
+        for operation in (
+            lambda: team.rename_thread(other.id, thread_id, "Not yours"),
+            lambda: team.archive_thread(other.id, thread_id),
+            lambda: team.restore_thread(other.id, thread_id),
+            lambda: team.delete_thread(other.id, thread_id, "other-delete"),
+        ):
+            with pytest.raises(ThreadNotFound):
+                operation()
+
+        assert team.restore_thread(owner_id, thread_id)["status"] == "active"
+        assert team.restore_thread(owner_id, thread_id)["status"] == "active"
+        resumed = team.execute(
+            owner_id,
+            SendMessage(thread_id=thread_id, message="Continue now."),
+            idempotency_key="restored-command",
+        )
+        assert resumed.status == "completed"
+        assert team.snapshot(owner_id, thread_id).title == "Semiconductor operations"
+
+
+def test_thread_delete_cascades_live_records_preserves_request_and_replays():
+    import uuid
+
+    from models import (
+        CandidateProfileArtifact,
+        ProposedResumeEdit,
+        RecruitmentActivityEvent,
+        RecruitmentMessage,
+        RecruitmentRun,
+        RecruitmentThread,
+        RecruitmentThreadDeletionRequest,
+        TargetAssessmentArtifact,
+    )
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.interface import StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    telemetry = RecordedTelemetry()
+    deleted_checkpoints = []
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["First reply."]),
+            _discovery(),
+            _role_profiler(),
+            telemetry,
+            IgnoreActivityPublisher(),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Delete this later."),
+            idempotency_key="delete-start",
+        )
+        thread = db.query(RecruitmentThread).filter_by(id=started.thread_id).one()
+        facts = dict(thread.case_facts)
+        facts.update({
+            "coordinator_pause_token": "checkpoint-coordinator",
+            "target_assessment_pause_token": "checkpoint-assessment",
+        })
+        thread.case_facts = facts
+
+        profile_id = str(uuid.uuid4())
+        db.add(CandidateProfileArtifact(
+            id=profile_id,
+            user_id=owner_id,
+            resume_version_id=resume_id,
+            checkpoint_id="profile-checkpoint",
+            prompt_version="prompt-v1",
+            decomposition_version="decomposition-v1",
+            model_name="scripted",
+            execution_policy={},
+            status="completed",
+            scopes={},
+        ))
+        assessment_id = str(uuid.uuid4())
+        db.add(TargetAssessmentArtifact(
+            id=assessment_id,
+            user_id=owner_id,
+            thread_id=started.thread_id,
+            run_id=started.run_id,
+            resume_version_id=resume_id,
+            candidate_profile_artifact_id=profile_id,
+            target_job_id=101,
+            target_snapshot_sha256="a" * 64,
+            status="completed",
+            specialist_runs=[],
+            synthesis="Private assessment text",
+            execution_policy={},
+        ))
+        edit_id = str(uuid.uuid4())
+        db.add(ProposedResumeEdit(
+            id=edit_id,
+            user_id=owner_id,
+            thread_id=started.thread_id,
+            run_id=started.run_id,
+            resume_version_id=resume_id,
+            block_id="block-1",
+            original="Private original text",
+            rewrite="Private rewritten text",
+            document_revision="revision-1",
+        ))
+        db.commit()
+
+        result = team.delete_thread(
+            owner_id,
+            started.thread_id,
+            "delete-request",
+            delete_checkpoints=deleted_checkpoints.append,
+        )
+        replayed = team.delete_thread(
+            owner_id,
+            started.thread_id,
+            "delete-request",
+            delete_checkpoints=deleted_checkpoints.append,
+        )
+
+        assert result == replayed
+        assert result["status"] == "deleted"
+        assert result["trace_deletion_requests"] == 1
+        assert result["evaluation_deletion_requests"] == 1
+        assert set(deleted_checkpoints) == {"checkpoint-coordinator", "checkpoint-assessment"}
+        for model in (
+            RecruitmentThread,
+            RecruitmentMessage,
+            RecruitmentRun,
+            RecruitmentActivityEvent,
+            TargetAssessmentArtifact,
+            ProposedResumeEdit,
+        ):
+            assert db.query(model).count() == 0
+        assert db.query(CandidateProfileArtifact).count() == 1
+        request = db.query(RecruitmentThreadDeletionRequest).one()
+        assert request.status == "requested"
+        assert request.result == result
+        assert len(telemetry.spans) > 0
+        deletion_span = telemetry.spans[-1]
+        assert deletion_span.name == "delete_thread"
+        assert deletion_span.attributes == {
+            "owner_type": "user",
+            "trace_request_count": 1,
+            "evaluation_request_count": 1,
+        }
+        assert "Private" not in str(deletion_span.attributes)
+
+
+def test_thread_lifecycle_http_contract_needs_no_model(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import main
+    from auth import get_current_user
+    from database import get_db
+    from recruitment_team.http_routes import get_recruitment_telemetry
+    from recruitment_team.telemetry import RecordedTelemetry
+    from models import RecruitmentThread
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        thread = RecruitmentThread(
+            id="lifecycle-http-thread",
+            user_id=owner_id,
+            resume_version_id=resume_id,
+            case_facts={
+                "resume_version_id": resume_id,
+                "resume_label": "AI engineering resume",
+                "resume_sha256": "a" * 64,
+            },
+        )
+        db.add(thread)
+        db.commit()
+
+    def override_db():
+        with sessions() as db:
+            yield db
+
+    main.app.dependency_overrides[get_db] = override_db
+    main.app.dependency_overrides[get_current_user] = lambda: type(
+        "AuthenticatedUser", (), {"id": owner_id}
+    )()
+    main.app.dependency_overrides[get_recruitment_telemetry] = lambda: RecordedTelemetry()
+    monkeypatch.setattr(
+        "recruitment_team.http_routes.delete_checkpoint",
+        lambda _thread_id: None,
+    )
+    try:
+        client = TestClient(main.app)
+        patch_preflight = client.options(
+            "/api/recruitment-team/threads/lifecycle-http-thread",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "PATCH",
+            },
+        )
+        retention = client.get("/api/recruitment-team/retention")
+        renamed = client.patch(
+            "/api/recruitment-team/threads/lifecycle-http-thread",
+            json={"title": "Operations leadership"},
+        )
+        archived = client.post(
+            "/api/recruitment-team/threads/lifecycle-http-thread/archive",
+        )
+        restored = client.post(
+            "/api/recruitment-team/threads/lifecycle-http-thread/restore",
+        )
+        deleted = client.request(
+            "DELETE",
+            "/api/recruitment-team/threads/lifecycle-http-thread",
+            json={"idempotency_key": "http-delete"},
+        )
+        replayed = client.request(
+            "DELETE",
+            "/api/recruitment-team/threads/lifecycle-http-thread",
+            json={"idempotency_key": "http-delete"},
+        )
+    finally:
+        main.app.dependency_overrides.clear()
+
+    assert patch_preflight.status_code == 200
+    assert "PATCH" in patch_preflight.headers["access-control-allow-methods"]
+    assert retention.status_code == 200
+    assert set(retention.json()) == {"live_data", "backups", "telemetry"}
+    assert renamed.json()["title"] == "Operations leadership"
+    assert archived.json()["status"] == "archived"
+    assert restored.json()["status"] == "active"
+    assert deleted.status_code == replayed.status_code == 200
+    assert deleted.json() == replayed.json()

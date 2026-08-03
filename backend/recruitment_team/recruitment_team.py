@@ -23,9 +23,11 @@ from models import (
     RecruitmentMessage,
     RecruitmentRun,
     RecruitmentThread,
+    RecruitmentThreadDeletionRequest,
     ResumeVersion,
     TargetAssessmentArtifact,
 )
+import config
 from resume_agent.telemetry import trace_key
 
 from .interface import (
@@ -110,6 +112,9 @@ def _utcnow() -> datetime:
 
 
 FIRST_ATTEMPT = 1
+ACTIVE_THREAD_STATUS = "active"
+ARCHIVED_THREAD_STATUS = "archived"
+THREAD_TITLE_MAX_CHARS = 120
 # A derived query stands in for a typed one, so keep it to a search-sized phrase.
 MAX_DERIVED_QUERY_CHARS = 200
 # Fallback for turns where the model composed no phrase. Only what the candidate
@@ -346,6 +351,9 @@ class RecruitmentTeam:
                 message = command.answer
             else:
                 raise InvalidCommand("unsupported recruitment-team command")
+
+            if thread.status != ACTIVE_THREAD_STATUS:
+                raise InvalidCommand("restore this archived conversation before continuing its workflow")
 
             if not message.strip():
                 raise InvalidCommand("message is required")
@@ -1483,6 +1491,7 @@ class RecruitmentTeam:
         facts = thread.case_facts
         return ThreadSnapshot(
             thread_id=thread.id,
+            title=self._thread_title(thread),
             status=thread.status,
             workflow_state=thread.workflow_state,
             case_facts=CaseFacts(
@@ -1646,6 +1655,7 @@ class RecruitmentTeam:
             summaries.append(
                 ThreadSummary(
                     thread_id=thread.id,
+                    title=self._thread_title(thread),
                     status=thread.status,
                     workflow_state=thread.workflow_state,
                     resume_version_id=thread.resume_version_id,
@@ -1655,6 +1665,127 @@ class RecruitmentTeam:
                 )
             )
         return summaries
+
+    @staticmethod
+    def retention_contract() -> dict[str, str]:
+        return dict(config.RECRUITMENT_RETENTION_NOTICE)
+
+    @staticmethod
+    def _thread_title(thread: RecruitmentThread) -> str:
+        facts = thread.case_facts or {}
+        return str(facts.get("title") or facts.get("resume_label") or "Recruitment conversation")
+
+    def rename_thread(self, owner_id: int, thread_id: str, title: str) -> dict:
+        thread = self._owned_thread(owner_id, thread_id)
+        normalized = " ".join(title.split()).strip()
+        if not normalized:
+            raise InvalidCommand("conversation title is required")
+        if len(normalized) > THREAD_TITLE_MAX_CHARS:
+            raise InvalidCommand(f"conversation title cannot exceed {THREAD_TITLE_MAX_CHARS} characters")
+        facts = dict(thread.case_facts or {})
+        if facts.get("title") != normalized:
+            facts["title"] = normalized
+            thread.case_facts = facts
+            self._db.commit()
+        return {"thread_id": thread.id, "title": normalized, "status": thread.status}
+
+    def archive_thread(self, owner_id: int, thread_id: str) -> dict:
+        thread = self._owned_thread(owner_id, thread_id)
+        if thread.status != ARCHIVED_THREAD_STATUS:
+            thread.status = ARCHIVED_THREAD_STATUS
+            self._db.commit()
+        return {"thread_id": thread.id, "title": self._thread_title(thread), "status": thread.status}
+
+    def restore_thread(self, owner_id: int, thread_id: str) -> dict:
+        thread = self._owned_thread(owner_id, thread_id)
+        if thread.status != ACTIVE_THREAD_STATUS:
+            thread.status = ACTIVE_THREAD_STATUS
+            self._db.commit()
+        return {"thread_id": thread.id, "title": self._thread_title(thread), "status": thread.status}
+
+    def delete_thread(
+        self,
+        owner_id: int,
+        thread_id: str,
+        idempotency_key: str,
+        *,
+        delete_checkpoints: Callable[[str], None] | None = None,
+    ) -> dict:
+        key = idempotency_key.strip()
+        if not key:
+            raise InvalidCommand("idempotency_key is required")
+        previous = (
+            self._db.query(RecruitmentThreadDeletionRequest)
+            .filter(
+                RecruitmentThreadDeletionRequest.user_id == owner_id,
+                RecruitmentThreadDeletionRequest.idempotency_key == key,
+            )
+            .first()
+        )
+        if previous is not None:
+            return dict(previous.result)
+
+        thread = self._owned_thread(owner_id, thread_id)
+        trace_keys = [
+            str(value)
+            for (value,) in self._db.query(RecruitmentRun.trace_key)
+            .filter(RecruitmentRun.thread_id == thread.id)
+            .all()
+            if value
+        ]
+        assessment_ids = [
+            str(value)
+            for (value,) in self._db.query(TargetAssessmentArtifact.id)
+            .filter(TargetAssessmentArtifact.thread_id == thread.id)
+            .all()
+        ]
+        facts = thread.case_facts or {}
+        checkpoint_tokens = [
+            str(value)
+            for value in {
+                facts.get("coordinator_pause_token"),
+                facts.get("target_assessment_pause_token"),
+            }
+            if value
+        ]
+        if delete_checkpoints is not None:
+            for token in checkpoint_tokens:
+                delete_checkpoints(token)
+
+        result = {
+            "thread_id": thread.id,
+            "status": "deleted",
+            "deletion_request_status": "requested",
+            "trace_deletion_requests": len(trace_keys),
+            "evaluation_deletion_requests": len(assessment_ids),
+            "retention": self.retention_contract(),
+        }
+        self._db.add(
+            RecruitmentThreadDeletionRequest(
+                id=str(uuid.uuid4()),
+                user_id=owner_id,
+                thread_id=thread.id,
+                idempotency_key=key,
+                status="requested",
+                targets={
+                    "trace_keys": trace_keys,
+                    "assessment_artifact_ids": assessment_ids,
+                    "checkpoint_tokens": checkpoint_tokens,
+                },
+                result=result,
+            )
+        )
+        self._db.delete(thread)
+        with self._telemetry.operation(
+            "delete_thread",
+            {
+                "owner_type": "user",
+                "trace_request_count": len(trace_keys),
+                "evaluation_request_count": len(assessment_ids),
+            },
+        ):
+            self._db.commit()
+        return result
 
     def _start_thread(
         self,
@@ -1731,7 +1862,7 @@ class RecruitmentTeam:
         are marked stale rather than applied, so an accept-all can never silently
         drop a change without saying so.
         """
-        thread = self._owned_thread(owner_id, thread_id)
+        thread = self._active_thread(owner_id, thread_id)
         query = self._db.query(ProposedResumeEdit).filter(
             ProposedResumeEdit.user_id == owner_id,
             ProposedResumeEdit.thread_id == thread.id,
@@ -1805,7 +1936,7 @@ class RecruitmentTeam:
         thread_id: str,
         edit_ids: list[str],
     ) -> dict:
-        thread = self._owned_thread(owner_id, thread_id)
+        thread = self._active_thread(owner_id, thread_id)
         edits = (
             self._db.query(ProposedResumeEdit)
             .filter(
@@ -1834,6 +1965,12 @@ class RecruitmentTeam:
         )
         if thread is None:
             raise ThreadNotFound("recruitment thread not found")
+        return thread
+
+    def _active_thread(self, owner_id: int, thread_id: str) -> RecruitmentThread:
+        thread = self._owned_thread(owner_id, thread_id)
+        if thread.status != ACTIVE_THREAD_STATUS:
+            raise InvalidCommand("restore this archived conversation before continuing its workflow")
         return thread
 
     def _owned_resume(self, owner_id: int, resume_id: int) -> ResumeVersion:

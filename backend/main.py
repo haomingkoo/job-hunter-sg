@@ -26,7 +26,7 @@ from typing import Callable, Optional
 
 from pathlib import Path
 
-from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -95,6 +95,7 @@ from recruitment_team.http_routes import (
     router as recruitment_team_router,
 )
 from recruitment_team.interface import CaseFacts, TargetAssessmentArtifactSnapshot
+from recruitment_team.recruitment_team import ACTIVE_THREAD_STATUS
 from recruitment_team.role_success import RoleSuccessProfiler
 from recruitment_team.telemetry import RecruitmentTelemetry
 from schemas import (
@@ -132,7 +133,7 @@ from schemas import (
     TrackedJobUpdate,
     UserOut,
 )
-from ai_service import _call_sealion, apply_uk_spelling, coach_resume, get_ai_health, get_ai_status, integrate_keywords, rewrite_bullet
+from ai_service import _call_sealion, apply_uk_spelling, coach_resume, get_ai_status, integrate_keywords, rewrite_bullet
 from config import SEALION_FAST_MODEL
 from ats_terms import (
     build_job_ats_terms,
@@ -490,7 +491,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=[
         "Authorization",
         "Content-Type",
@@ -1578,8 +1579,6 @@ def admin_jd_analysis(
     flag_type: "all", "injection", "red_flag", "low_quality", "duplicates"
     """
     _require_admin(authorization)
-
-    from jd_analyzer import compute_content_hash
 
     db = SessionLocal()
     try:
@@ -7141,7 +7140,7 @@ def download_resume(
             phone=phone,
             location=location,
         )
-    except Exception as e:
+    except Exception:
         log.exception(
             "DOCX generation failed hash=%s template=%s sections=%s",
             export_hash,
@@ -8069,6 +8068,12 @@ def handoff_target_assessment_to_resume_agent(
     except Exception as error:
         _raise_recruitment_team_http_error(error)
         raise
+
+    if snapshot.status != ACTIVE_THREAD_STATUS:
+        raise HTTPException(
+            status_code=409,
+            detail="Restore this archived conversation before drafting resume edits",
+        )
 
     if assessment is None or assessment.status != "completed":
         raise HTTPException(

@@ -335,6 +335,8 @@ describe("RecruitmentTeamPanel", () => {
       if (path === "/api/recruitment-team/threads") {
         return response([{
           thread_id: "persisted-thread",
+          title: "Saved conversation",
+          status: "active",
           resume_label: "Saved resume",
           last_message: "Welcome back.",
         }]);
@@ -923,5 +925,97 @@ describe("RecruitmentTeamPanel", () => {
     expect(sessionStorage.getItem("jh_resume_agent_session")).toBe("resume-agent-session-9");
     expect(sessionStorage.getItem("jh_resume_agent_autoopen")).toBe("1");
     expect(setActiveTab).toHaveBeenCalledWith("resume");
+  });
+
+  it("manages conversation lifecycle and shows retention before permanent deletion", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-1");
+    const lifecycle = { title: "Operations search", status: "active", deleted: false };
+    let deleteCalls = 0;
+    const retention = {
+      live_data: "Deleted immediately from the live application database.",
+      backups: "Infrastructure backups may expire later.",
+      telemetry: "Trace deletion is requested and may not be immediate.",
+    };
+    apiFetch.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads") {
+        return response(lifecycle.deleted ? [] : [{
+          thread_id: "thread-1",
+          title: lifecycle.title,
+          status: lifecycle.status,
+          workflow_state: "exploring",
+          resume_label: "Manufacturing resume",
+          last_message: "Current answer",
+        }]);
+      }
+      if (path === "/api/recruitment-team/retention") return response(retention);
+      if (path === "/api/recruitment-team/threads/thread-1" && options.method === "PATCH") {
+        lifecycle.title = JSON.parse(options.body).title;
+        return response({ thread_id: "thread-1", title: lifecycle.title, status: lifecycle.status });
+      }
+      if (path === "/api/recruitment-team/threads/thread-1/archive") {
+        lifecycle.status = "archived";
+        return response({ thread_id: "thread-1", title: lifecycle.title, status: lifecycle.status });
+      }
+      if (path === "/api/recruitment-team/threads/thread-1/restore") {
+        lifecycle.status = "active";
+        return response({ thread_id: "thread-1", title: lifecycle.title, status: lifecycle.status });
+      }
+      if (path === "/api/recruitment-team/threads/thread-1" && options.method === "DELETE") {
+        deleteCalls += 1;
+        lifecycle.deleted = true;
+        return response({ thread_id: "thread-1", status: "deleted", retention });
+      }
+      if (path === "/api/recruitment-team/threads/thread-1") {
+        return response({
+          thread_id: "thread-1",
+          title: lifecycle.title,
+          status: lifecycle.status,
+          workflow_state: "exploring",
+          case_facts: { resume_label: "Manufacturing resume" },
+          messages: [{ role: "assistant", content: "Current answer" }],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-1/events") return response([]);
+      if (path.endsWith("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+    const buttonNamed = (name) => container.querySelector(`button[aria-label="${name}"]`);
+    const conversations = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Conversations"));
+    await act(async () => conversations.click());
+
+    await act(async () => buttonNamed("Rename Operations search").click());
+    const titleInput = container.querySelector('input[maxlength="120"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")
+        .set.call(titleInput, "Semiconductor transformation");
+      titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+      titleInput.closest("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(container.textContent).toContain("Semiconductor transformation");
+
+    await act(async () => buttonNamed("Archive Semiconductor transformation").click());
+    expect(container.textContent).toContain("archived. Restore it before continuing");
+    expect(container.querySelector("textarea").disabled).toBe(true);
+
+    const restore = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Restore conversation");
+    await act(async () => restore.click());
+    expect(container.querySelector("textarea").disabled).toBe(false);
+
+    await act(async () => buttonNamed("Delete Semiconductor transformation").click());
+    expect(container.textContent).toContain(retention.live_data);
+    expect(container.textContent).toContain(retention.backups);
+    expect(deleteCalls).toBe(0);
+
+    const confirmDelete = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Delete permanently");
+    await act(async () => confirmDelete.click());
+    expect(deleteCalls).toBe(1);
+    expect(localStorage.getItem("jobhunter:recruitment-thread:42")).toBeNull();
+    expect(container.textContent).toContain("No saved conversations yet.");
   });
 });

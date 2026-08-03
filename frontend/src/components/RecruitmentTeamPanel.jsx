@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bot, ChevronDown, Send, Users } from "lucide-react";
+import { Archive, Bot, ChevronDown, MessageSquare, Pencil, RotateCcw, Send, Trash2, Users, X } from "lucide-react";
 
 const EVIDENCE_PAGE_SIZE = 25;
 const THREAD_REFRESH_POLL_INTERVAL_MS = 1500;
+const THREAD_TITLE_MAX_CHARS = 120;
 
 import TeamActivityPanel from "./TeamActivityPanel.jsx";
 import SpecialistReport from "./SpecialistReport.jsx";
@@ -37,11 +38,19 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   const [visibleProfileCount, setVisibleProfileCount] = useState(EVIDENCE_PAGE_SIZE);
   const [visibleCriteriaCount, setVisibleCriteriaCount] = useState(EVIDENCE_PAGE_SIZE);
   const [suppressAutoResume, setSuppressAutoResume] = useState(false);
+  const [threadSummaries, setThreadSummaries] = useState(null);
+  const [showConversations, setShowConversations] = useState(false);
+  const [renamingThreadId, setRenamingThreadId] = useState("");
+  const [renameTitle, setRenameTitle] = useState("");
+  const [deletionTarget, setDeletionTarget] = useState(null);
+  const [retention, setRetention] = useState(null);
+  const [lifecycleNotice, setLifecycleNotice] = useState("");
 
   const selectedResume = useMemo(
     () => resumeVersions.find((resume) => String(resume.id) === String(resumeVersionId)),
     [resumeVersionId, resumeVersions],
   );
+  const archived = snapshot?.status === "archived";
   const awaitingAnswer = snapshot?.workflow_state === "awaiting_candidate_answer";
   const candidateStudyRunning = snapshot?.case_facts?.candidate_profile_status === "running";
   const persistedRunActive = !busy && events.at(-1)?.status === "running";
@@ -84,6 +93,13 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
         ? current
         : [...current, activityEvent]
     ));
+  }
+
+  async function loadThreads() {
+    const response = await apiFetch("/api/recruitment-team/threads");
+    const threads = await response.json();
+    setThreadSummaries(threads);
+    return threads;
   }
 
   async function refreshThread(id) {
@@ -196,23 +212,19 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   useEffect(() => {
     if (threadId || suppressAutoResume) return undefined;
     let cancelled = false;
-    (async () => {
-      try {
-        const response = await apiFetch("/api/recruitment-team/threads");
-        const threads = await response.json();
-        if (cancelled || !threads.length) return;
-        const nextThreadId = threads[0].thread_id;
-        localStorage.setItem(storedThreadKey(user.id), nextThreadId);
-        setThreadId(nextThreadId);
-      } catch (loadError) {
-        if (!cancelled) setError(loadError.message);
-      }
-    })();
+    loadThreads().then((threads) => {
+      if (cancelled) return;
+      const nextThread = threads.find((thread) => thread.status === "active");
+      if (!nextThread) return;
+      localStorage.setItem(storedThreadKey(user.id), nextThread.thread_id);
+      setThreadId(nextThread.thread_id);
+    }).catch((loadError) => {
+      if (!cancelled) setError(loadError.message);
+    });
     return () => { cancelled = true; };
   }, [threadId, suppressAutoResume, user.id]);
 
-  function startNewConversation() {
-    if (busy) return;
+  function clearConversation() {
     localStorage.removeItem(storedThreadKey(user.id));
     setSuppressAutoResume(true);
     setThreadId("");
@@ -226,6 +238,119 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
     setError("");
     setVisibleProfileCount(EVIDENCE_PAGE_SIZE);
     setVisibleCriteriaCount(EVIDENCE_PAGE_SIZE);
+  }
+
+  function startNewConversation() {
+    if (busy) return;
+    clearConversation();
+  }
+
+  function selectConversation(id) {
+    if (busy) return;
+    localStorage.setItem(storedThreadKey(user.id), id);
+    setSuppressAutoResume(false);
+    setSnapshot(null);
+    setThreadId(id);
+    setShowConversations(false);
+    setLifecycleNotice("");
+  }
+
+  async function toggleConversationManager() {
+    const nextVisible = !showConversations;
+    setShowConversations(nextVisible);
+    if (!nextVisible) return;
+    setError("");
+    try {
+      await loadThreads();
+    } catch (loadError) {
+      setError(loadError.message);
+    }
+  }
+
+  async function renameConversation(event) {
+    event.preventDefault();
+    const title = renameTitle.trim();
+    if (!renamingThreadId || !title || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await apiFetch(`/api/recruitment-team/threads/${renamingThreadId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      });
+      await loadThreads();
+      if (renamingThreadId === threadId) await refreshThread(threadId);
+      setRenamingThreadId("");
+      setRenameTitle("");
+      setLifecycleNotice("Conversation renamed.");
+    } catch (renameError) {
+      setError(renameError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setConversationArchived(summary, shouldArchive) {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const action = shouldArchive ? "archive" : "restore";
+      await apiFetch(`/api/recruitment-team/threads/${summary.thread_id}/${action}`, {
+        method: "POST",
+      });
+      await loadThreads();
+      if (summary.thread_id === threadId) await refreshThread(threadId);
+      setLifecycleNotice(shouldArchive ? "Conversation archived." : "Conversation restored.");
+    } catch (archiveError) {
+      setError(archiveError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function beginDeleteConversation(summary) {
+    if (busy) return;
+    setError("");
+    try {
+      const response = await apiFetch("/api/recruitment-team/retention");
+      setRetention(await response.json());
+      setDeletionTarget(summary);
+    } catch (retentionError) {
+      setError(retentionError.message);
+    }
+  }
+
+  async function deleteConversation() {
+    if (!deletionTarget || busy) return;
+    const deletedId = deletionTarget.thread_id;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await apiFetch(`/api/recruitment-team/threads/${deletedId}`, {
+        method: "DELETE",
+        body: JSON.stringify({ idempotency_key: globalThis.crypto.randomUUID() }),
+      });
+      const result = await response.json();
+      const remaining = await loadThreads();
+      if (deletedId === threadId) {
+        const nextThread = remaining.find((thread) => thread.status === "active");
+        if (nextThread) {
+          localStorage.setItem(storedThreadKey(user.id), nextThread.thread_id);
+          setSnapshot(null);
+          setThreadId(nextThread.thread_id);
+        } else {
+          clearConversation();
+        }
+      }
+      setDeletionTarget(null);
+      setRetention(null);
+      setLifecycleNotice(`${result.retention.live_data} ${result.retention.backups}`);
+    } catch (deleteError) {
+      setError(deleteError.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function startAutopilot() {
@@ -246,6 +371,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
       setThreadId(nextThreadId);
       localStorage.setItem(storedThreadKey(user.id), nextThreadId);
       await refreshThread(nextThreadId);
+      await loadThreads();
     } catch (autopilotError) {
       setError(autopilotError.message || "Could not read your resume.");
     } finally {
@@ -256,7 +382,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   async function submit(event) {
     event.preventDefault();
     const text = message.trim();
-    if (!text) return;
+    if (!text || archived) return;
     if (busy) {
       queuedMessagesRef.current = [...queuedMessagesRef.current, text];
       setQueuedMessages(queuedMessagesRef.current);
@@ -290,8 +416,10 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
         );
       const nextThreadId = receipt.thread_id;
       localStorage.setItem(storedThreadKey(user.id), nextThreadId);
-      if (nextThreadId !== threadId) setThreadId(nextThreadId);
+      const createdThread = nextThreadId !== threadId;
+      if (createdThread) setThreadId(nextThreadId);
       await refreshThread(nextThreadId);
+      if (createdThread) await loadThreads();
       while (queuedMessagesRef.current.length) {
         const [queuedMessage, ...remaining] = queuedMessagesRef.current;
         const queuedReceipt = await streamRecruitmentCommand(
@@ -315,7 +443,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
 
   function searchCurrentJobs() {
     const query = message.trim();
-    if (!threadId || busy) return undefined;
+    if (!threadId || busy || archived) return undefined;
     return runTurn(
       () => streamRecruitmentCommand(
         `/api/recruitment-team/threads/${threadId}/jobs/search/stream`,
@@ -327,7 +455,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   }
 
   function studyResume() {
-    if (!threadId || busy) return undefined;
+    if (!threadId || busy || archived) return undefined;
     return runTurn(
       () => streamRecruitmentCommand(
         `/api/recruitment-team/threads/${threadId}/candidate-profile/stream`,
@@ -339,7 +467,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   }
 
   function assessTarget() {
-    if (!threadId || busy) return undefined;
+    if (!threadId || busy || archived) return undefined;
     return runTurn(
       () => streamRecruitmentCommand(
         `/api/recruitment-team/threads/${threadId}/assessment/stream`,
@@ -353,7 +481,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   function answerAssessmentQuestion(event) {
     event.preventDefault();
     const answer = message.trim();
-    if (!threadId || !answer || busy) return undefined;
+    if (!threadId || !answer || busy || archived) return undefined;
     return runTurn(
       () => streamRecruitmentCommand(
         `/api/recruitment-team/threads/${threadId}/assessment/answer/stream`,
@@ -365,7 +493,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   }
 
   async function handoffToResumeAgent() {
-    if (!threadId || busy) return;
+    if (!threadId || busy || archived) return;
     setBusy(true);
     setError("");
     try {
@@ -385,7 +513,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   }
 
   function updateJob(path) {
-    if (busy) return undefined;
+    if (busy || archived) return undefined;
     return runTurn(() => streamRecruitmentCommand(
       `${path}/stream`,
       { idempotency_key: globalThis.crypto.randomUUID() },
@@ -416,19 +544,33 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
                 id="recruitment-team-title"
                 className={threadId ? "text-base font-semibold" : "text-2xl font-semibold"}
               >
-                AI Recruitment Team
+                {threadId ? snapshot?.title || "Recruitment conversation" : "AI Recruitment Team"}
               </h1>
+              {archived && <p className="text-xs text-[#BDDDFC]">Archived · read only</p>}
             </div>
           </div>
-          {threadId && (
-            <button
-              type="button"
-              onClick={startNewConversation}
-              disabled={busy}
-              className="rounded-xl border border-white/30 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
-            >
-              Start new conversation
-            </button>
+          {(threadId || threadSummaries?.length > 0) && (
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={toggleConversationManager}
+                className="inline-flex items-center gap-2 rounded-xl border border-white/30 px-3 py-2 text-xs font-semibold text-white"
+                aria-expanded={showConversations}
+              >
+                <MessageSquare size={14} />
+                Conversations
+              </button>
+              {threadId && (
+                <button
+                  type="button"
+                  onClick={startNewConversation}
+                  disabled={busy}
+                  className="rounded-xl border border-white/30 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
+                >
+                  Start new conversation
+                </button>
+              )}
+            </div>
           )}
         </div>
         {!threadId && (
@@ -437,6 +579,159 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
           </p>
         )}
       </header>
+
+      {showConversations && (
+        <section
+          aria-labelledby="conversation-manager-title"
+          className="rounded-3xl border border-[#BDDDFC]/60 bg-white p-5 shadow-sm"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 id="conversation-manager-title" className="font-semibold text-[#384959]">
+                Conversations
+              </h2>
+              <p className="mt-1 text-xs text-[#6A89A7]">
+                Switch, rename, archive, restore, or permanently delete your conversations.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowConversations(false)}
+              aria-label="Close conversation manager"
+              className="rounded-lg p-2 text-[#4A6785] hover:bg-[#f0f5fa]"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          {lifecycleNotice && (
+            <p role="status" className="mt-3 rounded-xl bg-[#f0f5fa] px-3 py-2 text-xs text-[#384959]">
+              {lifecycleNotice}
+            </p>
+          )}
+
+          <div className="mt-4 space-y-2">
+            {threadSummaries?.map((summary) => (
+              <article
+                key={summary.thread_id}
+                className={`rounded-2xl border p-3 ${
+                  summary.thread_id === threadId ? "border-[#88BDF2] bg-[#f7fafc]" : "border-[#DCE7F2]"
+                }`}
+              >
+                {renamingThreadId === summary.thread_id ? (
+                  <form onSubmit={renameConversation} className="flex flex-wrap gap-2">
+                    <label className="min-w-48 flex-1 text-xs font-medium text-[#384959]">
+                      Conversation title
+                      <input
+                        autoFocus
+                        value={renameTitle}
+                        onChange={(event) => setRenameTitle(event.target.value)}
+                        maxLength={THREAD_TITLE_MAX_CHARS}
+                        className="mt-1 w-full rounded-xl border border-[#BDDDFC] px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <button
+                      type="submit"
+                      disabled={!renameTitle.trim() || busy}
+                      className="self-end rounded-xl bg-[#384959] px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
+                    >
+                      Save name
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setRenamingThreadId("")}
+                      className="self-end rounded-xl border border-[#BDDDFC] px-3 py-2 text-xs text-[#384959]"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                ) : (
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={() => selectConversation(summary.thread_id)}
+                      disabled={busy}
+                      className="min-w-0 flex-1 text-left disabled:opacity-40"
+                    >
+                      <span className="block truncate text-sm font-semibold text-[#384959]">{summary.title}</span>
+                      <span className="mt-1 block truncate text-xs text-[#6A89A7]">
+                        {summary.last_message || summary.resume_label}
+                      </span>
+                    </button>
+                    <span className="rounded-full bg-[#f0f5fa] px-2 py-1 text-xs capitalize text-[#384959]">
+                      {summary.status}
+                    </span>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRenamingThreadId(summary.thread_id);
+                          setRenameTitle(summary.title);
+                        }}
+                        aria-label={`Rename ${summary.title}`}
+                        className="rounded-lg p-2 text-[#4A6785] hover:bg-[#f0f5fa]"
+                      >
+                        <Pencil size={15} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConversationArchived(summary, summary.status === "active")}
+                        aria-label={`${summary.status === "active" ? "Archive" : "Restore"} ${summary.title}`}
+                        className="rounded-lg p-2 text-[#4A6785] hover:bg-[#f0f5fa]"
+                      >
+                        {summary.status === "active" ? <Archive size={15} /> : <RotateCcw size={15} />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => beginDeleteConversation(summary)}
+                        aria-label={`Delete ${summary.title}`}
+                        className="rounded-lg p-2 text-red-700 hover:bg-red-50"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </article>
+            ))}
+            {threadSummaries?.length === 0 && (
+              <p className="py-6 text-center text-sm text-[#6A89A7]">No saved conversations yet.</p>
+            )}
+          </div>
+
+          {deletionTarget && retention && (
+            <div role="dialog" aria-modal="true" aria-labelledby="delete-conversation-title" className="mt-4 rounded-2xl border border-red-200 bg-red-50 p-4">
+              <h3 id="delete-conversation-title" className="font-semibold text-red-900">
+                Permanently delete “{deletionTarget.title}”?
+              </h3>
+              <p className="mt-2 text-sm text-red-900">{retention.live_data}</p>
+              <p className="mt-1 text-xs text-red-800">Backups: {retention.backups}</p>
+              <p className="mt-1 text-xs text-red-800">Telemetry: {retention.telemetry}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={deleteConversation}
+                  disabled={busy}
+                  className="rounded-xl bg-red-700 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
+                >
+                  Delete permanently
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeletionTarget(null);
+                    setRetention(null);
+                  }}
+                  disabled={busy}
+                  className="rounded-xl border border-red-300 px-3 py-2 text-xs font-semibold text-red-900 disabled:opacity-40"
+                >
+                  Keep conversation
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="rounded-3xl border border-[#BDDDFC]/40 bg-white p-5 shadow-sm">
@@ -524,10 +819,31 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
               The assessment paused on a question above -- answer it below to continue.
             </p>
           )}
+          {archived && (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#BDDDFC] bg-[#f7fafc] px-3 py-2 text-sm text-[#384959]">
+              <span>This conversation is archived. Restore it before continuing the workflow.</span>
+              <button
+                type="button"
+                onClick={() => setConversationArchived(
+                  threadSummaries?.find((thread) => thread.thread_id === threadId) || {
+                    thread_id: threadId,
+                    title: snapshot?.title || "Recruitment conversation",
+                    status: "archived",
+                  },
+                  false,
+                )}
+                disabled={busy}
+                className="rounded-xl border border-[#384959] px-3 py-2 text-xs font-semibold disabled:opacity-40"
+              >
+                Restore conversation
+              </button>
+            </div>
+          )}
           <form onSubmit={awaitingAnswer ? answerAssessmentQuestion : submit} className="mt-4 flex items-end gap-2">
             <textarea
               value={message}
               onChange={(event) => setMessage(event.target.value)}
+              disabled={archived}
               rows={2}
               placeholder={
                 awaitingAnswer
@@ -538,7 +854,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
             />
             <button
               type="submit"
-              disabled={!message.trim()}
+              disabled={!message.trim() || archived}
               className="inline-flex h-12 items-center gap-2 rounded-2xl bg-[#384959] px-4 text-sm font-semibold text-white disabled:opacity-40"
             >
               <Send size={15} />
@@ -548,7 +864,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
               <button
                 type="button"
                 onClick={searchCurrentJobs}
-                disabled={busy}
+                disabled={busy || archived}
                 title="Search using what you have already told the team, or type to narrow it"
                 className="h-12 rounded-2xl border border-[#384959] px-4 text-sm font-semibold text-[#384959] disabled:opacity-40"
               >
@@ -559,7 +875,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
               <button
                 type="button"
                 onClick={studyResume}
-                disabled={busy || candidateStudyRunning || candidateProfile?.status === "completed"}
+                disabled={busy || archived || candidateStudyRunning || candidateProfile?.status === "completed"}
                 className="h-12 rounded-2xl border border-[#384959] px-4 text-sm font-semibold text-[#384959] disabled:opacity-40"
               >
                 {candidateStudyRunning
@@ -750,7 +1066,8 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
                           <button
                             type="button"
                             onClick={() => updateJob(`/api/recruitment-team/threads/${threadId}/jobs/${job.job_id}/shortlist`)}
-                            className="rounded-xl border border-[#BDDDFC] px-3 py-2 text-xs font-medium text-[#384959]"
+                            disabled={busy || archived}
+                            className="rounded-xl border border-[#BDDDFC] px-3 py-2 text-xs font-medium text-[#384959] disabled:opacity-40"
                           >
                             Shortlist
                           </button>
@@ -759,7 +1076,8 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
                           <button
                             type="button"
                             onClick={() => updateJob(`/api/recruitment-team/threads/${threadId}/jobs/${job.job_id}/select`)}
-                            className="rounded-xl bg-[#384959] px-3 py-2 text-xs font-medium text-white"
+                            disabled={busy || archived}
+                            className="rounded-xl bg-[#384959] px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
                           >
                             Select target
                           </button>
@@ -900,7 +1218,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
                     <button
                       type="button"
                       onClick={handoffToResumeAgent}
-                      disabled={busy}
+                      disabled={busy || archived}
                       className="rounded-xl border border-[#384959] px-3 py-2 text-xs font-medium text-[#384959] disabled:opacity-40"
                     >
                       Draft resume edits for this job
@@ -909,7 +1227,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
                   <button
                     type="button"
                     onClick={assessTarget}
-                    disabled={busy || targetAssessment?.status === "completed"}
+                    disabled={busy || archived || targetAssessment?.status === "completed"}
                     className="rounded-xl bg-[#384959] px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
                   >
                     {targetAssessment?.status === "completed" ? "Assessment complete" : targetAssessment ? "Run assessment again" : "Run assessment"}
@@ -991,7 +1309,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
             edits={proposedEdits}
             onAccept={acceptEdits}
             onReject={rejectEdits}
-            busy={busy}
+            busy={busy || archived}
             result={editResult}
           />
         </div>
