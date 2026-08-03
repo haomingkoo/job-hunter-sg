@@ -11,6 +11,27 @@ import { STATUS_CONFIG, SG_JOB_PORTALS } from "../lib/constants.js";
 import { todayStr, daysBetween } from "../lib/helpers.js";
 import StatusBadge from "./StatusBadge.jsx";
 
+const RESEARCH_SOURCE_DISPLAY_LIMIT = 5;
+const NEGOTIATION_ROUND_DISPLAY_LIMIT = 3;
+const SGD_FORMATTER = new Intl.NumberFormat("en-SG", {
+  maximumFractionDigits: 0,
+});
+const RESEARCH_DATE_FORMATTER = new Intl.DateTimeFormat("en-SG", {
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+
+function formatResearchDate(value) {
+  if (!value) return "retrieval date unavailable";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : RESEARCH_DATE_FORMATTER.format(date);
+}
+
+function formatSgd(value) {
+  return typeof value === "number" ? `S$${SGD_FORMATTER.format(value)}` : "?";
+}
+
 export function getPipelineStatusMove(active, over) {
   if (!over) return null;
   const jobId = active?.data?.current?.jobId;
@@ -94,6 +115,21 @@ function PipelineColumn({ status, jobs, movingId, openWorkspace, handleEdit, han
   );
 }
 
+function compensationObservationLabel(observation) {
+  if (observation.kind === "employer_posting") return observation.value;
+  if (observation.kind === "mom_occupational_wages") {
+    const basic = observation.basic_wage || {};
+    const gross = observation.gross_wage || {};
+    return `Monthly basic ${formatSgd(basic.p25)} / ${formatSgd(basic.median)} / ${formatSgd(basic.p75)}; monthly gross ${formatSgd(gross.p25)} / ${formatSgd(gross.median)} / ${formatSgd(gross.p75)} (P25 / median / P75)`;
+  }
+  return observation.value || observation.label || "Source observation";
+}
+
+function negotiationAnchorLabel(anchor) {
+  if (anchor.kind === "mom_occupational_wages") return compensationObservationLabel(anchor);
+  return anchor.value || "Value unavailable";
+}
+
 export default function TrackerTab({
   jobs,
   loadError = "",
@@ -115,6 +151,18 @@ export default function TrackerTab({
   const [workspaceError, setWorkspaceError] = useState("");
   const [workspaceAgentLoading, setWorkspaceAgentLoading] = useState(false);
   const [workspaceAgentError, setWorkspaceAgentError] = useState("");
+  const [researchLoading, setResearchLoading] = useState(false);
+  const [researchError, setResearchError] = useState("");
+  const [negotiationPriorities, setNegotiationPriorities] = useState("");
+  const [walkAwayPoint, setWalkAwayPoint] = useState("");
+  const [negotiationScenario, setNegotiationScenario] = useState("");
+  const [authorizedEvidenceLabel, setAuthorizedEvidenceLabel] = useState("");
+  const [authorizedEvidenceValue, setAuthorizedEvidenceValue] = useState("");
+  const [authorizedEvidenceDefinition, setAuthorizedEvidenceDefinition] = useState("");
+  const [authorizedEvidenceSourceUrl, setAuthorizedEvidenceSourceUrl] = useState("");
+  const [authorizedEvidenceDataDate, setAuthorizedEvidenceDataDate] = useState("");
+  const [negotiationLoading, setNegotiationLoading] = useState(false);
+  const [negotiationError, setNegotiationError] = useState("");
   const [submittedFile, setSubmittedFile] = useState(null);
   const [submittedDate, setSubmittedDate] = useState(todayStr());
   const [submittedNotes, setSubmittedNotes] = useState("");
@@ -222,6 +270,8 @@ export default function TrackerTab({
     setWorkspace(null);
     setWorkspaceError("");
     setWorkspaceAgentError("");
+    setResearchError("");
+    setNegotiationError("");
     setSubmittedFile(null);
     setSubmittedDate(todayStr());
     setSubmittedNotes("");
@@ -229,7 +279,11 @@ export default function TrackerTab({
     setWorkspaceLoading(true);
     try {
       const response = await apiFetch(`/api/applications/workspaces/${id}`);
-      setWorkspace(await response.json());
+      const loadedWorkspace = await response.json();
+      setWorkspace(loadedWorkspace);
+      const savedNegotiation = loadedWorkspace.role_metadata?.negotiation;
+      setNegotiationPriorities((savedNegotiation?.priorities || []).join("\n"));
+      setWalkAwayPoint(savedNegotiation?.walk_away_point || "");
     } catch (err) {
       setWorkspaceError(err.message || "Failed to load workspace.");
     } finally {
@@ -271,6 +325,62 @@ export default function TrackerTab({
       setWorkspaceAgentError(err.message || "Deep Agent review failed.");
     } finally {
       setWorkspaceAgentLoading(false);
+    }
+  };
+
+  const buildResearchPack = async () => {
+    if (!workspace || researchLoading) return;
+    setResearchLoading(true);
+    setResearchError("");
+    try {
+      const response = await apiFetch(`/api/applications/workspaces/${workspace.id}/research-pack`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      setWorkspace(await response.json());
+    } catch (err) {
+      setResearchError(err.message || "Research sources could not be checked.");
+    } finally {
+      setResearchLoading(false);
+    }
+  };
+
+  const rehearseNegotiation = async (event) => {
+    event.preventDefault();
+    if (!workspace || negotiationLoading || !negotiationScenario.trim()) return;
+    setNegotiationLoading(true);
+    setNegotiationError("");
+    try {
+      const response = await apiFetch(`/api/applications/workspaces/${workspace.id}/negotiation/rehearse`, {
+        method: "POST",
+        body: JSON.stringify({
+          priorities: negotiationPriorities.split("\n").map((item) => item.trim()).filter(Boolean),
+          walk_away_point: walkAwayPoint.trim(),
+          scenario: negotiationScenario.trim(),
+          authorized_evidence: (
+            authorizedEvidenceLabel.trim()
+            && authorizedEvidenceValue.trim()
+            && authorizedEvidenceDefinition.trim()
+          ) ? [{
+            label: authorizedEvidenceLabel.trim(),
+            value: authorizedEvidenceValue.trim(),
+            definition: authorizedEvidenceDefinition.trim(),
+            source_url: authorizedEvidenceSourceUrl.trim(),
+            data_date: authorizedEvidenceDataDate,
+          }] : [],
+        }),
+      });
+      setWorkspace(await response.json());
+      setNegotiationScenario("");
+      setAuthorizedEvidenceLabel("");
+      setAuthorizedEvidenceValue("");
+      setAuthorizedEvidenceDefinition("");
+      setAuthorizedEvidenceSourceUrl("");
+      setAuthorizedEvidenceDataDate("");
+    } catch (err) {
+      setNegotiationError(err.message || "Negotiation rehearsal could not be saved.");
+    } finally {
+      setNegotiationLoading(false);
     }
   };
 
@@ -324,6 +434,11 @@ export default function TrackerTab({
 
   const agentReview = workspace?.role_metadata?.agent_review;
   const recruitmentPipeline = workspace?.role_metadata?.recruitment_pipeline;
+  const applicationResearch = workspace?.role_metadata?.application_research;
+  const roleCompanyBrief = applicationResearch?.role_company_brief;
+  const interviewPack = applicationResearch?.interview_pack;
+  const compensationBrief = applicationResearch?.compensation_brief;
+  const negotiation = workspace?.role_metadata?.negotiation;
   const workspaceContacts = Array.isArray(workspace?.role_metadata?.contacts)
     ? workspace.role_metadata.contacts
     : [];
@@ -624,6 +739,192 @@ export default function TrackerTab({
                   </div>
                 </div>
               )}
+              <section aria-labelledby="application-research-title" className="rounded-xl border border-[#88BDF2]/60 bg-[#f7fafc] p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <h4 id="application-research-title" className="font-semibold text-[#384959]">Role research, interview prep, and compensation</h4>
+                    <p className="mt-1 text-xs text-[#6A89A7]">
+                      Current public postings and official MOM wage definitions stay attributable and separate.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={buildResearchPack}
+                    disabled={researchLoading}
+                    className="flex items-center justify-center gap-2 rounded-lg bg-[#384959] px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
+                  >
+                    {researchLoading ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
+                    {researchLoading ? "Checking sources..." : applicationResearch ? "Refresh research" : "Build research pack"}
+                  </button>
+                </div>
+                {researchError && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{researchError}</div>}
+                {applicationResearch && (
+                  <div className="mt-4 space-y-4 text-sm">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="rounded-full bg-white px-2 py-1 font-medium text-[#384959]">Status: {applicationResearch.status.replaceAll("_", " ")}</span>
+                      <span className="rounded-full border border-[#BDDDFC]/60 px-2 py-1 text-[#6A89A7]">
+                        Evidence: {roleCompanyBrief?.freshness || "unknown"}
+                      </span>
+                      {(applicationResearch.source_statuses || []).map((source) => (
+                        <span key={source.source} className="rounded-full border border-[#BDDDFC]/60 px-2 py-1 text-[#6A89A7]">
+                          {source.source.replaceAll("_", " ")}: {source.status.replaceAll("_", " ")}
+                        </span>
+                      ))}
+                    </div>
+                    {(applicationResearch.source_statuses || []).some((source) => source.detail) && (
+                      <ul className="space-y-1 text-xs text-[#6A89A7]">
+                        {applicationResearch.source_statuses.filter((source) => source.detail).map((source) => (
+                          <li key={`${source.source}-detail`}>{source.source.replaceAll("_", " ")}: {source.detail}</li>
+                        ))}
+                      </ul>
+                    )}
+                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                      <div className="rounded-lg border border-[#BDDDFC]/30 bg-white p-3">
+                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Role and company brief</div>
+                        <p className="mt-2 text-[#384959]">
+                          {roleCompanyBrief?.company?.current_posting_count || 0} current company posting(s); {(roleCompanyBrief?.role?.comparable_titles || []).length} comparable title(s).
+                        </p>
+                        {(roleCompanyBrief?.company?.observed_industries || []).length > 0 && (
+                          <p className="mt-1 text-xs text-[#6A89A7]">Observed context: {roleCompanyBrief.company.observed_industries.join(" · ")}</p>
+                        )}
+                        {(roleCompanyBrief?.role?.comparable_titles || []).length > 0 && (
+                          <ul className="mt-3 space-y-1 text-xs text-[#384959]">
+                            {roleCompanyBrief.role.comparable_titles.map((item) => (
+                              <li key={`${item.company}-${item.title}`}>Comparable: {item.title} at {item.company}</li>
+                            ))}
+                          </ul>
+                        )}
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {(roleCompanyBrief?.role?.ats_terms || []).map((term) => (
+                            <span key={term.term} className="rounded-full bg-[#f0f4f8] px-2 py-1 text-xs text-[#384959]" title={`${term.confidence} confidence, ${term.observed_in_postings} posting(s)`}>
+                              {term.term}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="mt-3 space-y-1 text-xs">
+                          {(roleCompanyBrief?.sources || []).filter((source) => source.url).slice(0, RESEARCH_SOURCE_DISPLAY_LIMIT).map((source, index) => (
+                            <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer" className="block break-all text-[#2f6f9f] hover:underline">
+                              {source.publisher || source.source_type} · {source.confidence} · {source.freshness}
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="rounded-lg border border-[#BDDDFC]/30 bg-white p-3">
+                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Compensation observations</div>
+                        <p className="mt-2 text-xs text-[#6A89A7]">{compensationBrief?.comparison_rule}</p>
+                        <p className="mt-1 text-xs font-medium text-[#6A89A7]">
+                          Coverage: {(compensationBrief?.comparison_state || "valid_empty").replaceAll("_", " ")}
+                        </p>
+                        <div className="mt-3 space-y-3">
+                          {(compensationBrief?.observations || []).map((observation, index) => (
+                            <div key={`${observation.kind}-${index}`} className="text-[#384959]">
+                              <div className="font-medium">{observation.kind.replaceAll("_", " ")}</div>
+                              <div className="mt-1 text-xs">{compensationObservationLabel(observation)}</div>
+                              <div className="mt-1 text-xs text-[#6A89A7]">
+                                {observation.occupation || observation.definition || ""}{observation.data_date ? ` · ${observation.data_date}` : ""}
+                              </div>
+                              {observation.source_url && (
+                                <a href={observation.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[#2f6f9f] hover:underline">View source</a>
+                              )}
+                            </div>
+                          ))}
+                          {!(compensationBrief?.observations || []).length && <p className="text-xs text-[#6A89A7]">No compatible compensation observation was available.</p>}
+                        </div>
+                        {(compensationBrief?.recruiter_guide_leads || []).length > 0 && (
+                          <div className="mt-4 border-t border-[#BDDDFC]/30 pt-3 text-xs">
+                            <div className="font-medium text-[#384959]">Public recruiter-guide leads</div>
+                            {(compensationBrief.recruiter_guide_leads || []).map((source) => (
+                              <a key={source.source_url} href={source.source_url} target="_blank" rel="noreferrer" className="mt-2 block text-[#2f6f9f] hover:underline">
+                                {source.publisher} · {source.publication_date} · {source.status.replaceAll("_", " ")}
+                                <span className="block text-[#6A89A7] no-underline">{source.evidence_note}</span>
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-lg border border-[#BDDDFC]/30 bg-white p-3">
+                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Interview preparation</div>
+                      <p className="mt-2 text-xs text-[#6A89A7]">
+                        {interviewPack?.confidence_note} Source state: {(interviewPack?.source_state || "valid_empty").replaceAll("_", " ")}.
+                        Answer formats: {(interviewPack?.answer_formats || []).join(" / ") || "none"}.
+                      </p>
+                      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                        {(interviewPack?.questions || []).map((item, index) => (
+                          <details key={`${item.cluster}-${index}`} className="group rounded-lg bg-[#f7fafc] p-3">
+                            <summary className="cursor-pointer list-none text-[#384959]">
+                              <span className="block text-xs font-medium uppercase text-[#6A89A7]">{item.cluster.replaceAll("_", " ")} · {item.confidence}</span>
+                              <span className="mt-1 block pr-5">{item.question}</span>
+                              <span className="mt-1 block text-xs text-[#2f6f9f] group-open:hidden">Show evidence and answer scaffold</span>
+                            </summary>
+                            <p className="mt-3 text-xs text-[#6A89A7]">
+                              {item.answer_scaffold?.evidence_quote || (item.answer_scaffold?.status === "missing_evidence" ? "Missing evidence: confirm a real example first." : "Candidate input required.")}
+                            </p>
+                            {(item.answer_scaffold?.steps || []).length > 0 && (
+                              <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs text-[#6A89A7]">
+                                {item.answer_scaffold.steps.map((step) => <li key={step}>{step}</li>)}
+                              </ol>
+                            )}
+                            {(item.sources || []).filter((source) => source.url).map((source) => (
+                              <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="mt-2 block text-xs text-[#2f6f9f] hover:underline">
+                                {source.source_type.replaceAll("_", " ")} · retrieved {formatResearchDate(source.retrieved_at)} · {source.evidence_note}
+                              </a>
+                            ))}
+                          </details>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <form onSubmit={rehearseNegotiation} className="mt-4 rounded-lg border border-[#BDDDFC]/30 bg-white p-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Private negotiation rehearsal</div>
+                  <p className="mt-2 text-xs text-[#6A89A7]">Your scenario and authorised evidence are sent to the configured AI coach and saved on this application, but are not copied into metadata telemetry. Your walk-away point is not sent to the coach. One priority per line.</p>
+                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <textarea value={negotiationPriorities} onChange={(event) => setNegotiationPriorities(event.target.value)} placeholder="Priorities\nRole scope\nBase salary" rows={3} className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
+                    <input value={walkAwayPoint} onChange={(event) => setWalkAwayPoint(event.target.value)} placeholder="Private walk-away point (optional)" className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
+                  </div>
+                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <input value={authorizedEvidenceLabel} onChange={(event) => setAuthorizedEvidenceLabel(event.target.value)} placeholder="Authorized evidence label" className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
+                    <input value={authorizedEvidenceValue} onChange={(event) => setAuthorizedEvidenceValue(event.target.value)} placeholder="Observed value" className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
+                    <input value={authorizedEvidenceDefinition} onChange={(event) => setAuthorizedEvidenceDefinition(event.target.value)} placeholder="Definition / package basis" className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
+                    <input type="url" value={authorizedEvidenceSourceUrl} onChange={(event) => setAuthorizedEvidenceSourceUrl(event.target.value)} placeholder="Authorized source URL (optional)" className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
+                    <label className="flex items-center gap-2 rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#6A89A7]">
+                      Evidence date
+                      <input type="date" value={authorizedEvidenceDataDate} onInput={(event) => setAuthorizedEvidenceDataDate(event.currentTarget.value)} className="min-w-0 flex-1 text-[#384959]" />
+                    </label>
+                  </div>
+                  <textarea value={negotiationScenario} onChange={(event) => setNegotiationScenario(event.target.value)} placeholder="What did the recruiter or hiring manager say?" rows={3} className="mt-2 w-full rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
+                  {negotiationError && <div className="mt-2 text-xs text-red-600">{negotiationError}</div>}
+                  <button type="submit" disabled={negotiationLoading || !negotiationScenario.trim() || !negotiationPriorities.trim()} className="mt-2 flex items-center gap-2 rounded-lg border border-[#BDDDFC] px-3 py-2 text-xs font-medium text-[#384959] disabled:opacity-40">
+                    {negotiationLoading && <Loader2 size={12} className="animate-spin" />}
+                    Save and rehearse
+                  </button>
+                  {(negotiation?.rounds || []).length > 0 && (
+                    <div className="mt-4 space-y-3">
+                      {negotiation.rounds.slice(-NEGOTIATION_ROUND_DISPLAY_LIMIT).map((round, index) => (
+                        <div key={`${round.created_at}-${index}`} className="rounded-lg bg-[#f7fafc] p-3 text-xs">
+                          <div className="font-medium text-[#384959]">Scenario: {round.scenario}</div>
+                          <p className="mt-2 text-[#6A89A7]">{round.coach_response.opening}</p>
+                          <p className="mt-2 text-[#6A89A7]">{round.coach_response.walk_away_guidance}</p>
+                          {(round.coach_response.anchor_options || []).map((anchor, anchorIndex) => (
+                            <div key={`${anchor.kind}-${anchorIndex}`} className="mt-2 rounded border border-[#BDDDFC]/30 p-2 text-[#6A89A7]">
+                              <span className="font-medium text-[#384959]">{anchor.label}: </span>
+                              {negotiationAnchorLabel(anchor)} · {anchor.definition || "definition unavailable"}
+                              <span className="block">{anchor.source_type || "source unknown"} · {anchor.data_date || "data date unavailable"}</span>
+                              {anchor.source_url && <a href={anchor.source_url} target="_blank" rel="noreferrer" className="mt-1 block text-[#2f6f9f] hover:underline">View anchor source</a>}
+                            </div>
+                          ))}
+                          <ul className="mt-2 list-disc space-y-1 pl-4 text-[#6A89A7]">
+                            {(round.coach_response.questions || []).map((question) => <li key={question}>{question}</li>)}
+                            {(round.coach_response.trade_offs || []).map((tradeOff) => <li key={tradeOff}>{tradeOff}</li>)}
+                            {(round.coach_response.concessions || []).map((concession) => <li key={concession}>{concession}</li>)}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </form>
+              </section>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
                 <div className="rounded-lg border border-[#BDDDFC]/30 p-3">
                   <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Contacts</div>

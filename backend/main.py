@@ -98,6 +98,8 @@ from recruitment_team.interface import CaseFacts, TargetAssessmentArtifactSnapsh
 from recruitment_team.recruitment_team import ACTIVE_THREAD_STATUS
 from recruitment_team.role_success import RoleSuccessProfiler
 from recruitment_team.telemetry import RecruitmentTelemetry
+from application_research import CorpusAndMomResearchProvider
+from negotiation_coach import NegotiationCoachUnavailable, coach_negotiation
 from schemas import (
     ApplicationWorkspaceCreate,
     ApplicationWorkspaceOut,
@@ -118,6 +120,7 @@ from schemas import (
     ResumeIngestTextRequest,
     JobOut,
     LoginRequest,
+    NegotiationRehearsalRequest,
     RegenerateSummaryRequest,
     ResendVerificationRequest,
     ResetPasswordRequest,
@@ -5379,6 +5382,65 @@ def get_application_workspace(
     db: Session = Depends(get_db),
 ) -> dict:
     return workspace_module.get_application_workspace(db, user.id, workspace_id)
+
+
+@app.post(
+    "/api/applications/workspaces/{workspace_id}/research-pack",
+    response_model=ApplicationWorkspaceOut,
+)
+def build_application_research_pack(
+    workspace_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+) -> dict:
+    with telemetry.operation(
+        "application.research",
+        {"workspace_id": workspace_id, "provider": "public_job_corpus_and_mom"},
+    ) as span:
+        result = workspace_module.build_research_pack(
+            db,
+            user,
+            workspace_id,
+            CorpusAndMomResearchProvider(db).build,
+        )
+        research = result.get("role_metadata", {}).get("application_research", {})
+        span.set_attribute("status", research.get("status", "unknown"))
+        span.set_attribute(
+            "source_count",
+            len(research.get("role_company_brief", {}).get("sources", [])),
+        )
+        return result
+
+
+@app.post(
+    "/api/applications/workspaces/{workspace_id}/negotiation/rehearse",
+    response_model=ApplicationWorkspaceOut,
+)
+def rehearse_application_negotiation(
+    workspace_id: int,
+    body: NegotiationRehearsalRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+) -> dict:
+    with telemetry.operation(
+        "application.negotiation_rehearsal",
+        {"workspace_id": workspace_id},
+    ) as span:
+        try:
+            result = workspace_module.rehearse_negotiation(
+                db,
+                user,
+                workspace_id,
+                body,
+                coach_negotiation,
+            )
+        except NegotiationCoachUnavailable as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        negotiation = result.get("role_metadata", {}).get("negotiation", {})
+        span.set_attribute("round_count", len(negotiation.get("rounds", [])))
+        return result
 
 
 @app.post("/api/applications/workspaces/{workspace_id}/agent-review", response_model=ApplicationWorkspaceOut)

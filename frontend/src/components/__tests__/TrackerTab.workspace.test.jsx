@@ -239,6 +239,202 @@ describe("TrackerTab workspace creation", () => {
     expect(container.textContent).toContain("selected");
   });
 
+  it("builds and reloads source-backed research, interview prep, compensation, and negotiation", async () => {
+    const workspace = {
+      id: 808,
+      company: "Example Semiconductor",
+      title: "Manufacturing Manager",
+      role: "Manufacturing Manager",
+      job_description: "Lead semiconductor manufacturing transformation with SPC.",
+      source_url: "https://example.test/jobs/808",
+      source: "MyCareersFuture",
+      status: "saved",
+      resume_version_id: 7,
+      role_metadata: {},
+      stage_history: [],
+    };
+    const researched = {
+      ...workspace,
+      role_metadata: {
+        application_research: {
+          status: "partial",
+          source_statuses: [
+            { source: "public_job_corpus", status: "complete" },
+            { source: "mom_occupational_wages_2025", status: "complete" },
+            { source: "community_and_employer_reviews", status: "valid_empty" },
+          ],
+          role_company_brief: {
+            freshness: "stale",
+            company: { current_posting_count: 2 },
+            role: {
+              comparable_titles: [{ title: "Fab Operations Manager" }],
+              ats_terms: [{ term: "spc", confidence: "high", observed_in_postings: 2 }],
+            },
+            sources: [{
+              url: "https://example.test/jobs/808",
+              publisher: "MyCareersFuture",
+              source_type: "job_posting",
+              confidence: "high",
+              freshness: "stale",
+              retrieved_at: "2026-06-01T00:00:00Z",
+              evidence_note: "Exact selected posting snapshot.",
+            }],
+          },
+          interview_pack: {
+            confidence_note: "Preparation clusters, not guaranteed questions.",
+            source_state: "stale",
+            answer_formats: ["STAR", "XYZ"],
+            questions: [{
+              cluster: "technical",
+              confidence: "high",
+              question: "Tell me about a time you applied SPC.",
+              sources: [{
+                url: "https://example.test/jobs/808",
+                source_type: "job_posting",
+                retrieved_at: "2026-06-01T00:00:00Z",
+                evidence_note: "Exact selected posting snapshot.",
+              }],
+              answer_scaffold: {
+                evidence_quote: "Used SPC to stabilize manufacturing processes.",
+                steps: ["Situation and task", "Action", "Result and reflection"],
+              },
+            }],
+          },
+          compensation_brief: {
+            comparison_rule: "Definitions remain separate and are never silently averaged.",
+            comparison_state: "multiple_incompatible_observations",
+            observations: [
+              { kind: "employer_posting", value: "$8,000 - $10,000", data_date: "2026-08-01" },
+              {
+                kind: "mom_occupational_wages",
+                occupation: "Manufacturing manager",
+                data_date: "June 2025",
+                basic_wage: { p25: 7000, median: 9000, p75: 11000 },
+                gross_wage: { p25: 7200, median: 9300, p75: 11500 },
+              },
+            ],
+            recruiter_guide_leads: [{
+              publisher: "Hays Singapore",
+              publication_date: "2026",
+              source_url: "https://example.test/hays-guide",
+              status: "source_lead",
+              evidence_note: "Public guide landing page; figures were not copied.",
+            }],
+          },
+        },
+      },
+    };
+    const rehearsed = {
+      ...researched,
+      role_metadata: {
+        ...researched.role_metadata,
+        negotiation: {
+          rounds: [{
+            scenario: "The recruiter says base is fixed.",
+            created_at: "2026-08-03T00:00:00Z",
+            coach_response: {
+              opening: "Confirm which package definition is being discussed.",
+              walk_away_guidance: "No walk-away point was supplied, so none was invented.",
+              anchor_options: [{
+                kind: "user_authorized",
+                label: "Written offer",
+                value: "$9,000 monthly base",
+                definition: "Monthly base excluding bonus",
+                source_type: "user_supplied",
+                data_date: "2026-08-02",
+              }],
+              questions: ["Which package definition applies?"],
+              trade_offs: ["Protect role scope before conceding elsewhere."],
+              concessions: ["Trade one lower-priority term only for a confirmed return."],
+            },
+          }],
+        },
+      },
+    };
+    apiFetch
+      .mockResolvedValueOnce({ json: vi.fn().mockResolvedValue(workspace) })
+      .mockResolvedValueOnce({ json: vi.fn().mockResolvedValue(researched) })
+      .mockResolvedValueOnce({ json: vi.fn().mockResolvedValue(rehearsed) });
+
+    await act(async () => {
+      root.render(
+        <TrackerTab
+          jobs={[{ id: 808, company: workspace.company, role: workspace.role, status: "saved", source: workspace.source }]}
+          refreshJobs={refreshJobs}
+          setActiveTab={() => {}}
+        />,
+      );
+    });
+    await act(async () => {
+      container.querySelector("button[aria-label='Open workspace for Example Semiconductor Manufacturing Manager']").click();
+    });
+
+    const researchButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent.includes("Build research pack"));
+    await act(async () => {
+      researchButton.click();
+    });
+
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      "/api/applications/workspaces/808/research-pack",
+      { method: "POST", body: "{}" },
+    );
+    expect(container.textContent).toContain("public job corpus: complete");
+    expect(container.textContent).toContain("community and employer reviews: valid empty");
+    expect(container.textContent).toContain("Evidence: stale");
+    expect(container.textContent).toContain("spc");
+    expect(container.textContent).toContain("Used SPC to stabilize manufacturing processes.");
+    expect(container.textContent).toContain("Answer formats: STAR / XYZ");
+    expect(container.textContent).toContain("Exact selected posting snapshot.");
+    expect(container.textContent).toContain("$8,000 - $10,000");
+    expect(container.textContent).toContain("Monthly basic S$7,000 / S$9,000 / S$11,000");
+    expect(container.textContent).toContain("multiple incompatible observations");
+    expect(container.textContent).toContain("Hays Singapore · 2026 · source lead");
+
+    const evidenceDateInput = Array.from(container.querySelectorAll("label"))
+      .find((label) => label.textContent.includes("Evidence date"))
+      .querySelector("input");
+    await act(async () => {
+      setField(container.querySelector("textarea[placeholder^='Priorities']"), "Role scope\nBase salary");
+      setField(container.querySelector("input[placeholder='Authorized evidence label']"), "Written offer");
+      setField(container.querySelector("input[placeholder='Observed value']"), "$9,000 monthly base");
+      setField(container.querySelector("input[placeholder='Definition / package basis']"), "Monthly base excluding bonus");
+      setField(container.querySelector("input[placeholder='Authorized source URL (optional)']"), "https://example.test/offer");
+      setField(evidenceDateInput, "2026-08-02");
+      setField(
+        container.querySelector("textarea[placeholder='What did the recruiter or hiring manager say?']"),
+        "The recruiter says base is fixed.",
+      );
+    });
+    const rehearseButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent.includes("Save and rehearse"));
+    await act(async () => {
+      rehearseButton.click();
+    });
+
+    const request = JSON.parse(apiFetch.mock.calls.at(-1)[1].body);
+    expect(apiFetch.mock.calls.at(-1)[0]).toBe(
+      "/api/applications/workspaces/808/negotiation/rehearse",
+    );
+    expect(request).toMatchObject({
+      priorities: ["Role scope", "Base salary"],
+      scenario: "The recruiter says base is fixed.",
+      walk_away_point: "",
+      authorized_evidence: [{
+        label: "Written offer",
+        value: "$9,000 monthly base",
+        definition: "Monthly base excluding bonus",
+        source_url: "https://example.test/offer",
+        data_date: "2026-08-02",
+      }],
+    });
+    expect(container.textContent).toContain("No walk-away point was supplied, so none was invented.");
+    expect(container.textContent).toContain("Written offer");
+    expect(container.textContent).toContain("Which package definition applies?");
+    expect(container.textContent).toContain("Protect role scope before conceding elsewhere.");
+    expect(container.textContent).toContain("Trade one lower-priority term only for a confirmed return.");
+  });
+
   it("runs a linked resume through Deep Agent with a clear loading state", async () => {
     const workspace = {
       id: 123,
