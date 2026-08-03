@@ -1,7 +1,7 @@
-# V2 Quality Gates
+# Quality Gates
 
-Every V2 Deep Career Agent slice must leave one runnable check tied to its
-acceptance criteria. Keep the check close to the changed behavior.
+Every product slice must leave one runnable check tied to its acceptance
+criteria. Keep the check close to the changed behavior.
 
 ## Required per PR
 
@@ -20,7 +20,7 @@ acceptance criteria. Keep the check close to the changed behavior.
 - Live MCP checks are opt-in with `RUN_LIVE_MCP=1`.
 - Missing live credentials must fail or skip clearly; never return fake success.
 - Agent-facing tools should return capped, minimal, structured results with
-  explicit empty states. Add `--full`-style detail expansion only when needed.
+  explicit empty states. Add detail expansion only when needed.
 
 ## Research Outputs
 
@@ -32,21 +32,21 @@ Research artifacts must save:
 - `confidence`
 - short evidence note
 
-Public Glassdoor, Reddit, company, job-board, and generic web signals must be
-labeled by source type. Do not bypass login walls, paywalls, robots restrictions,
-CAPTCHAs, or private communities.
+Public job-board, company, forum, and generic web signals must be labelled by
+source type. Do not bypass login walls, paywalls, robots restrictions, CAPTCHAs,
+or private communities.
 
 ## Resume And Interview Outputs
 
-Resume and interview artifacts must distinguish candidate evidence from market research.
-Unsupported candidate claims must be flagged for user confirmation instead of
-being written as facts.
+Resume and interview artifacts must distinguish candidate evidence from market
+research. Unsupported candidate claims must be flagged for user confirmation
+instead of being written as facts.
 
 ## UI Smoke
 
-Critical workspace flows need a minimal UI smoke path. Vitest component coverage
-is acceptable for stable flows; use Playwright when browser layout, navigation,
-or file interaction is the behavior under test.
+Critical workspace flows need a minimal UI smoke path. Component coverage is
+acceptable for stable flows; use a real browser when layout, navigation, reload,
+streaming, or file interaction is the behavior under test.
 
 ## Staging Resume-Agent E2E
 

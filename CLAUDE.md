@@ -49,7 +49,7 @@ RUN_LIVE_SEALION=1 PYTHONPATH=backend python -m pytest backend/tests/test_resume
 
 Live-model tests are opt-in and skipped otherwise (`RUN_LIVE_SEALION=1`, plus `SEALION_API`/`sealion_api`
 in env or `backend/.env`). Default tests must never call SEA-LION, MCP, or any external research source —
-see `docs/v2-quality-gates.md`.
+see `docs/quality-gates.md`.
 
 ### Lint / types / hooks
 
