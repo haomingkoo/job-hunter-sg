@@ -754,10 +754,10 @@ def test_deletion_rejects_wrong_password_and_active_sessions_then_rolls_back(
     )
     assert wrong_password.status_code == 400
 
-    from resume_agent import session as agent_session
+    import run_concurrency
 
     owner_key = f"user:{user_id}"
-    agent_session._active_runs[owner_key] = 1
+    run_concurrency.active_runs[owner_key] = 1
     try:
         active = client.request(
             "DELETE",
@@ -766,7 +766,7 @@ def test_deletion_rejects_wrong_password_and_active_sessions_then_rolls_back(
             json={"confirm_email": email, "current_password": password},
         )
     finally:
-        agent_session._active_runs.pop(owner_key, None)
+        run_concurrency.active_runs.pop(owner_key, None)
     assert active.status_code == 409
 
     from tailoring_pipeline import PipelineState, _active_pipelines

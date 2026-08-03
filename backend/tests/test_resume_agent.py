@@ -2202,12 +2202,13 @@ def test_owner_run_can_be_reserved_before_streaming(monkeypatch):
     from langchain_core.messages import AIMessage
 
     import resume_agent.session as agent_session
+    import run_concurrency
 
     class InstantAgent:
         def invoke(self, _payload, config=None):
             return {"messages": [AIMessage(content="done")]}
 
-    monkeypatch.setattr(agent_session, "_active_runs", {})
+    monkeypatch.setattr(run_concurrency, "active_runs", {})
 
     assert agent_session.reserve_owner_run("user:1") is True
     assert agent_session.reserve_owner_run("user:1") is False
@@ -2229,8 +2230,9 @@ def test_owner_run_can_be_reserved_before_streaming(monkeypatch):
 def test_owner_run_reservation_can_be_released_without_streaming(monkeypatch):
     import config as app_config
     import resume_agent.session as agent_session
+    import run_concurrency
 
-    monkeypatch.setattr(agent_session, "_active_runs", {})
+    monkeypatch.setattr(run_concurrency, "active_runs", {})
 
     assert agent_session.reserve_owner_run("user:1") is True
     agent_session.release_owner_run("user:1")
@@ -2254,8 +2256,9 @@ def test_owner_run_reservation_can_be_released_without_streaming(monkeypatch):
 def test_owner_run_reservation_has_a_global_cap(monkeypatch):
     import config
     import resume_agent.session as agent_session
+    import run_concurrency
 
-    monkeypatch.setattr(agent_session, "_active_runs", {})
+    monkeypatch.setattr(run_concurrency, "active_runs", {})
     monkeypatch.setattr(config, "AGENT_MAX_ACTIVE_RUNS", 2)
 
     assert agent_session.reserve_owner_run("user:1") is True

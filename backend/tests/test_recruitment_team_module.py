@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
@@ -430,6 +432,14 @@ def test_public_http_adapter_uses_the_same_module_journey():
             "event: activity",
             "event: receipt",
         ]
+        profile_activity = [
+            json.loads(block.split("data: ", 1)[1])
+            for block in profiled.text.strip().split("\n\n")
+            if block.startswith("event: activity")
+        ]
+        assert {event["team_member"] for event in profile_activity} == {
+            "candidate_profiler"
+        }
 
         snapshot = client.get(f"/api/recruitment-team/threads/{thread_id}")
         candidate_profile = client.get(f"/api/recruitment-team/threads/{thread_id}/candidate-profile")

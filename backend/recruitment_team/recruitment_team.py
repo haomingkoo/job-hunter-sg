@@ -445,12 +445,20 @@ class RecruitmentTeam:
                         content=message.strip(),
                     )
                 )
+            candidate_profile_command = isinstance(command, BuildCandidateProfile)
             running_event = self._event(
                 thread,
                 run,
                 event_type="run",
                 status="running",
-                summary="The recruitment-team coordinator is reviewing your request.",
+                summary=(
+                    "The candidate profiler is studying this resume."
+                    if candidate_profile_command
+                    else "The recruitment-team coordinator is reviewing your request."
+                ),
+                team_member=(
+                    "candidate_profiler" if candidate_profile_command else "coordinator"
+                ),
             )
             with self._telemetry.operation("persist_running"):
                 self._db.commit()

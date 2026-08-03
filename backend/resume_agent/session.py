@@ -19,7 +19,6 @@ from prompt_safety import xml_data_block
 from resume_document import apply_resume_patch, create_resume_document
 from resume_structurer import get_all_bullets, structure_resume
 from run_concurrency import (
-    active_runs as _active_runs,
     owner_has_active_run,
     release_owner_run,
     reserve_owner_run,
