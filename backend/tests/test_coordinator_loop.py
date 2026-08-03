@@ -204,6 +204,7 @@ class _RecordingDiscovery:
 
 
 def _context(discovery, *, recommendations=(), shortlisted=(), events=None, **overrides):
+    from backend.tests.fakes import AllowingEditEvidenceValidator
     from recruitment_team import ConversationContext
 
     kwargs = {
@@ -222,6 +223,7 @@ def _context(discovery, *, recommendations=(), shortlisted=(), events=None, **ov
         "preferences": (),
         "published_matches": (),
         "discovery": discovery,
+        "edit_evidence_validator": AllowingEditEvidenceValidator(),
         "on_event": (events.append if events is not None else None),
     }
     kwargs.update(overrides)
@@ -241,6 +243,7 @@ def _model(agent):
 
 
 def _team(db, agent, discovery, publisher=None, telemetry=None):
+    from backend.tests.fakes import AllowingEditEvidenceValidator
     from backend.tests.test_recruitment_team_module import _role_profiler
     from recruitment_team import RecruitmentTeam
     from recruitment_team.activity_publisher import RecordedActivityPublisher
@@ -253,6 +256,7 @@ def _team(db, agent, discovery, publisher=None, telemetry=None):
         _role_profiler(),
         telemetry or RecordedTelemetry(),
         publisher or RecordedActivityPublisher(),
+        edit_evidence_validator=AllowingEditEvidenceValidator(),
     )
 
 

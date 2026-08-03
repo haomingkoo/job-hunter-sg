@@ -26,6 +26,7 @@ from .prompts.target_assessment import (
     TARGET_SYNTHESIS_PROMPT_VERSION,
 )
 from .role_success import RoleSuccessProfile
+from .resume_edit_evidence import ResumeEditEvidenceValidator
 from .telemetry import RecruitmentTelemetry
 
 
@@ -38,6 +39,7 @@ class TargetAssessmentRequest:
     role_profile: RoleSuccessProfile
     target_job: JobSnapshot
     trace_key: str
+    edit_evidence_validator: ResumeEditEvidenceValidator
     resume_document: dict[str, Any] | None = None
     confirmed_evidence: tuple[ConfirmedEvidenceFact, ...] = ()
 

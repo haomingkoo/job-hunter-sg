@@ -9,6 +9,7 @@ from ..candidate_profile import CandidateEvidenceProfile
 from ..discovery import DiscoveryPort, JobSearchResult, JobSnapshot
 from ..interface import ConfirmedEvidenceFact, PreferenceFact, PreferenceUpdate
 from ..role_success import RoleSuccessProfile
+from ..resume_edit_evidence import ResumeEditEvidenceValidator
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class ConversationContext:
     preferences: tuple[PreferenceFact, ...]
     published_matches: tuple[dict[str, Any], ...]
     discovery: DiscoveryPort
+    edit_evidence_validator: ResumeEditEvidenceValidator
     plan: tuple[dict[str, str], ...] = ()
     latest_user_message: str = ""
     latest_user_message_id: int = 0

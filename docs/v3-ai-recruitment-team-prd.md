@@ -570,6 +570,10 @@ rather than converted into false precision. Exact evidence is recorded in the pa
   the output and that the system withholds unsupported precision.
 - Add labelled assessment fixtures comparing V3 output with independent reference agents. Assert literal output, cited gaps, judge verdict, presentation contract, model-call graph, and token budget.
 - Add edit tests for fabricated metrics, leadership-to-ownership inflation, unsupported technology, stale resume revisions, acceptance, rejection, and artifact persistence.
+- Every proposed edit must pass independent semantic entailment against its original
+  block and explicitly cited candidate evidence before it can become pending. Job-posting
+  language, assumptions, and common industry practice are never candidate evidence; an
+  unavailable or invalid verdict fails closed without a hidden fallback.
 - Add a real opt-in local model E2E that fails non-zero unless output, activity events, reviewer coverage, structured judge submissions, and final quality status pass.
 - The local E2E must write its complete report on both success and failure, including
   structured failure type, retryability, root validation code, activity, and spans.

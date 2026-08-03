@@ -184,6 +184,7 @@ class _ToolCallingConversationModel:
 
 
 def _team(db, model, discovery):
+    from backend.tests.fakes import AllowingEditEvidenceValidator
     from recruitment_team import RecruitmentTeam
     from recruitment_team.activity_publisher import RecordedActivityPublisher
     from recruitment_team.telemetry import RecordedTelemetry
@@ -195,10 +196,12 @@ def _team(db, model, discovery):
         _role_profiler(),
         RecordedTelemetry(),
         RecordedActivityPublisher(),
+        edit_evidence_validator=AllowingEditEvidenceValidator(),
     )
 
 
 def _context(discovery, *, recommendations=(), shortlisted=(), **overrides):
+    from backend.tests.fakes import AllowingEditEvidenceValidator
     from recruitment_team import ConversationContext
 
     kwargs = {
@@ -214,6 +217,7 @@ def _context(discovery, *, recommendations=(), shortlisted=(), **overrides):
         "preferences": (),
         "published_matches": (),
         "discovery": discovery,
+        "edit_evidence_validator": AllowingEditEvidenceValidator(),
     }
     kwargs.update(overrides)
     return ConversationContext(**kwargs)
@@ -432,6 +436,7 @@ def test_read_shortlist_outside_a_conversation_is_loud_rather_than_empty():
 
 
 def test_read_shortlist_refuses_an_assessment_context():
+    from backend.tests.fakes import AllowingEditEvidenceValidator
     """The two shapes share one ContextVar, so the wrong one must not read as empty."""
     from backend.tests.test_recruitment_team_module import (
         _candidate_profile_run,
@@ -446,6 +451,7 @@ def test_read_shortlist_refuses_an_assessment_context():
         role_profile=_role_profile_run().profile,
         target_job=_job(404, "Staff Yield Engineer", "NXP"),
         trace_key="assessment",
+        edit_evidence_validator=AllowingEditEvidenceValidator(),
     )
 
     with assessment_context(request):
