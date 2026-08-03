@@ -2695,11 +2695,24 @@ def test_public_http_streams_and_persists_the_bounded_target_assessment():
             f"/api/recruitment-team/threads/{thread_id}/jobs/search/stream",
             json={"query": "agent systems", "idempotency_key": "http-assessment-search"},
         )
+        shortlisted = client.post(
+            f"/api/recruitment-team/threads/{thread_id}/jobs/{job.job_id}/shortlist/stream",
+            json={"idempotency_key": "http-assessment-shortlist"},
+        )
         selected = client.post(
-            f"/api/recruitment-team/threads/{thread_id}/jobs/{job.job_id}/select",
+            f"/api/recruitment-team/threads/{thread_id}/jobs/{job.job_id}/select/stream",
             json={"idempotency_key": "http-assessment-select"},
         )
-        assert [profiled.status_code, searched.status_code, selected.status_code] == [200, 200, 200]
+        assert [profiled.status_code, searched.status_code, shortlisted.status_code, selected.status_code] == [
+            200,
+            200,
+            200,
+            200,
+        ]
+        assert shortlisted.headers["content-type"].startswith("text/event-stream")
+        assert selected.headers["content-type"].startswith("text/event-stream")
+        assert "event: activity" in shortlisted.text and "event: receipt" in shortlisted.text
+        assert "event: activity" in selected.text and "event: receipt" in selected.text
 
         streamed = client.post(
             f"/api/recruitment-team/threads/{thread_id}/assessment/stream",
