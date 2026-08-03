@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from threading import Thread
 import uuid
@@ -19,6 +20,7 @@ from models import (
 from resume_document import SCHEMA_VERSION, create_resume_document
 
 from .candidate_profile import (
+    candidate_profile_execution_policy,
     CandidateProfileProgress,
     CandidateProfileProgressPublisher,
     CandidateProfilerFactory,
@@ -58,6 +60,31 @@ def _completed_artifact(
         .all()
     )
     return artifacts[0] if artifacts else None
+
+
+def _study_idempotency_key(resume_version_id: int, model_name: str) -> str:
+    identity = json.dumps(
+        {
+            "model": model_name,
+            "execution_policy": candidate_profile_execution_policy(),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"study:{resume_version_id}:{hashlib.sha256(identity.encode()).hexdigest()}"
+
+
+def _link_completed_profile(
+    thread: RecruitmentThread,
+    resume_version_id: int,
+    artifact: CandidateProfileArtifact,
+) -> None:
+    if thread.resume_version_id != resume_version_id:
+        return
+    facts = dict(thread.case_facts or {})
+    facts["candidate_profile_artifact_id"] = artifact.id
+    facts["candidate_profile_status"] = "completed"
+    thread.case_facts = facts
 
 
 def study_resume_version(
@@ -190,7 +217,18 @@ def _run_dispatched_study(
     activity_publisher: ActivityPublisher | None = None,
 ) -> None:
     thread = db.query(RecruitmentThread).filter_by(id=thread_id, user_id=owner_id).one()
-    key = f"study:{resume_version_id}:{profiler_factory.model_name}"
+    cached = _completed_artifact(
+        db,
+        owner_id=owner_id,
+        resume_version_id=resume_version_id,
+        profiler_factory=profiler_factory,
+    )
+    if cached is not None and candidate_profile_artifact_is_current(cached):
+        _link_completed_profile(thread, resume_version_id, cached)
+        db.commit()
+        return
+
+    key = _study_idempotency_key(resume_version_id, profiler_factory.model_name)
     run = db.query(RecruitmentRun).filter_by(user_id=owner_id, idempotency_key=key).first()
     if run is None:
         run_id = str(uuid.uuid4())
@@ -243,11 +281,7 @@ def _run_dispatched_study(
             trace_key=run.trace_key,
         )
         db.refresh(thread)
-        if thread.resume_version_id == resume_version_id:
-            facts = dict(thread.case_facts or {})
-            facts["candidate_profile_artifact_id"] = artifact.id
-            facts["candidate_profile_status"] = "completed"
-            thread.case_facts = facts
+        _link_completed_profile(thread, resume_version_id, artifact)
         run.status = "completed"
         run.result = {"candidate_profile_artifact_id": artifact.id}
         db.commit()

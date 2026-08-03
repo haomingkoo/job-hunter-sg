@@ -571,6 +571,40 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).toContain("Field number 4.");
   });
 
+  it("shows why target selection is unavailable while the resume profile is running", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-profile-running");
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-profile-running") {
+        return response({
+          thread_id: "thread-profile-running",
+          workflow_state: "exploring",
+          case_facts: {
+            candidate_profile_status: "running",
+            recommendations: [{
+              job_id: 101,
+              title: "Manufacturing Manager",
+              company: "Example Employer",
+              location: "Singapore",
+              source: { source: "MyCareersFuture", url: "https://example.test/jobs/101" },
+            }],
+          },
+          messages: [],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-profile-running/events") return response([]);
+      if (path.includes("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+
+    const selectButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Preparing resume profile");
+    expect(selectButton.disabled).toBe(true);
+    expect(streamRecruitmentCommand).not.toHaveBeenCalled();
+  });
+
   it("searches current jobs and renders source-backed target actions", async () => {
     localStorage.setItem("jobhunter:recruitment-thread:42", "thread-jobs");
     let shortlisted = false;
@@ -641,6 +675,7 @@ describe("RecruitmentTeamPanel", () => {
           case_facts: {
             resume_version_id: 7,
             resume_label: "AI resume",
+            candidate_profile_status: "completed",
             recommendations: [job],
             match_rationales: [{
               job_id: 101,
