@@ -271,6 +271,17 @@ def _validate_submission(
         return None, "criterion_coverage:duplicate_ids"
     if set(submitted_ids) != set(expected_ids) or len(submitted_ids) != len(expected_ids):
         return None, "criterion_coverage:mismatch"
+    payload = {
+        **payload,
+        "judgments": [
+            {
+                **item,
+                "resume_evidence_ids": list(dict.fromkeys(item["resume_evidence_ids"])),
+                "candidate_profile_field_ids": list(dict.fromkeys(item["candidate_profile_field_ids"])),
+            }
+            for item in payload["judgments"]
+        ],
+    }
 
     blocks = {block.evidence_id: block.text for block in request.resume_blocks}
     profile_fields = {field.field_id: field for field in request.candidate_profile_fields}
@@ -279,13 +290,9 @@ def _validate_submission(
         criterion_id = str(judgment["criterion_id"]).strip()
         cited_ids = judgment["resume_evidence_ids"]
         profile_field_ids = judgment["candidate_profile_field_ids"]
-        if len(profile_field_ids) != len(set(profile_field_ids)):
-            return None, f"candidate_profile_field_ids:duplicate:{criterion_id}"
         unknown_field_ids = sorted(field_id for field_id in profile_field_ids if field_id not in profile_fields)
         if unknown_field_ids:
             return None, f"candidate_profile_field_ids:unknown:{','.join(unknown_field_ids)}:{criterion_id}"
-        if len(cited_ids) != len(set(cited_ids)):
-            return None, f"resume_evidence_ids:duplicate:{criterion_id}"
         unknown_evidence_ids = sorted(evidence_id for evidence_id in cited_ids if evidence_id not in blocks)
         if unknown_evidence_ids:
             return None, f"resume_evidence_ids:unknown:{','.join(unknown_evidence_ids)}:{criterion_id}"

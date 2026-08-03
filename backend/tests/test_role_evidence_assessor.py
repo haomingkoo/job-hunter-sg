@@ -191,7 +191,7 @@ def test_assessor_returns_one_validated_judgment_and_uses_xml_tool_contract():
     run = LangChainRoleEvidenceAssessor(model).assess(_request())
 
     assert run.attempt_count == 1
-    assert run.prompt_version == "role-evidence-assessor-v8"
+    assert run.prompt_version == "role-evidence-assessor-v9"
     assert run.judgments[0].alignment == "partial"
     assert run.judgments[0].evidence_support_score == 55
     data_message = model.requests[0][1].content
@@ -230,7 +230,7 @@ def test_assessor_retries_once_with_original_evidence_failed_output_and_exact_er
     assert attempts[0].attributes == {
         "attempt": 1,
         "max_attempts": role_evidence_attempt_limit(len(_request().criteria)),
-        "prompt_version": "role-evidence-assessor-v8",
+        "prompt_version": "role-evidence-assessor-v9",
         "configured_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
         "correction_scope": "full",
@@ -331,6 +331,8 @@ def test_assessor_corrects_distinct_invalid_criteria_sequentially():
     unsupported_number = _stable_judgment()
     unsupported_number["score_reason"] = "The evidence covers 30 of 35 required activities."
     corrected_number = _stable_judgment()
+    corrected_number["resume_evidence_ids"] *= 2
+    corrected_number["candidate_profile_field_ids"] *= 2
     model = _Model(
         [
             {"judgments": [wrong_field, unsupported_number]},
@@ -361,6 +363,9 @@ def test_assessor_corrects_distinct_invalid_criteria_sequentially():
         next(item for item in run.judgments if item.criterion_id == "monthly_forecast").score_reason
         == (corrected_number["score_reason"])
     )
+    monthly = next(item for item in run.judgments if item.criterion_id == "monthly_forecast")
+    assert monthly.resume_evidence_ids == ("block-2",)
+    assert monthly.candidate_profile_field_ids == ("profile-monthly-forecast",)
 
 
 @pytest.mark.parametrize(
