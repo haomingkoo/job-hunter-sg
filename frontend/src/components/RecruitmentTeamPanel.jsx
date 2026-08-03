@@ -57,6 +57,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   const matchRationales = new Map(
     (snapshot?.case_facts?.match_rationales || []).map((item) => [item.job_id, item]),
   );
+  const allDisplayedJobsRanked = displayedJobs.every((job) => matchRationales.has(job.job_id));
   const selectedTargetId = snapshot?.case_facts?.selected_target?.job_id;
   const roleProfile = snapshot?.case_facts?.role_success_profile;
   const candidateProfileFields = useMemo(
@@ -226,13 +227,6 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
     setVisibleCriteriaCount(EVIDENCE_PAGE_SIZE);
   }
 
-  // Prefixed so the backend can tell this apart from something the candidate
-  // typed. Without the marker it became the search query itself, which meant
-  // every "personalised" autopilot search ran this identical sentence.
-  const AUTOPILOT_OPENER =
-    "[autopilot] Read my resume and tell me what roles I should be targeting. "
-    + "Ask me something only if my resume genuinely does not answer it.";
-
   async function startAutopilot() {
     if (busy || !resumeVersionId) return;
     setBusy(true);
@@ -242,7 +236,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
         "/api/recruitment-team/threads/stream",
         {
           resume_version_id: Number(resumeVersionId),
-          message: AUTOPILOT_OPENER,
+          message: "Find roles for me.",
           idempotency_key: globalThis.crypto.randomUUID(),
         },
         appendActivity,
@@ -250,14 +244,6 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
       const nextThreadId = receipt.thread_id;
       setThreadId(nextThreadId);
       localStorage.setItem(storedThreadKey(user.id), nextThreadId);
-      await refreshThread(nextThreadId);
-      // Search straight away with no query: the API derives one from what the
-      // candidate just said, so autopilot ends on roles rather than a question.
-      await streamRecruitmentCommand(
-        `/api/recruitment-team/threads/${nextThreadId}/jobs/search/stream`,
-        { query: "", idempotency_key: globalThis.crypto.randomUUID() },
-        appendActivity,
-      );
       await refreshThread(nextThreadId);
     } catch (autopilotError) {
       setError(autopilotError.message || "Could not read your resume.");
@@ -687,7 +673,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
           {displayedJobs.length > 0 && (
             <section aria-labelledby="recommended-jobs-title" className="mt-6 border-t border-[#BDDDFC]/50 pt-5">
               <h2 id="recommended-jobs-title" className="text-sm font-semibold text-[#384959]">
-                Current source-backed matches
+                {allDisplayedJobsRanked ? "Current source-backed matches" : "Current search results"}
               </h2>
               <div className="mt-3 space-y-3">
                 {displayedJobs.map((job) => {

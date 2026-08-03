@@ -103,13 +103,11 @@ function humanize(item) {
   return capitalize(summary.replace(new RegExp(`^${item.team_member}\\s+`), ""));
 }
 
-/** Latest run only: earlier runs are history, not live state. */
+/** Preserve the thread's completed work as later runs add new steps. */
 function buildRoster(events) {
   if (!events.length) return [];
-  const latestRunId = events[events.length - 1].run_id;
   const byMember = new Map();
   for (const item of events) {
-    if (item.run_id !== latestRunId) continue;
     const existing = byMember.get(item.team_member) || { id: item.team_member, steps: [] };
     // Keep every step. The old panel showed only the newest, which threw the tool loop away.
     existing.steps.push({

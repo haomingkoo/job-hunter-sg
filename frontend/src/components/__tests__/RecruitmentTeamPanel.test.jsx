@@ -120,6 +120,46 @@ describe("RecruitmentTeamPanel", () => {
     );
   });
 
+  it("runs autopilot once with the same request shown on its button", async () => {
+    streamRecruitmentCommand.mockResolvedValue({
+      thread_id: "thread-auto", run_id: "run-auto", status: "completed",
+    });
+    apiFetch.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/resume/versions") {
+        return response([{ id: 7, label: "Manufacturing resume", is_master: true }]);
+      }
+      if (path === "/api/recruitment-team/threads" && !options.method) return response([]);
+      if (path === "/api/recruitment-team/threads/thread-auto") {
+        return response({
+          thread_id: "thread-auto",
+          workflow_state: "exploring",
+          case_facts: {},
+          messages: [
+            { role: "user", content: "Find roles for me." },
+            { role: "assistant", content: "I ranked the strongest current roles." },
+          ],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-auto/events") return response([]);
+      if (path.includes("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+    const autopilot = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Find roles for me");
+    await act(async () => autopilot.click());
+
+    expect(streamRecruitmentCommand).toHaveBeenCalledTimes(1);
+    expect(streamRecruitmentCommand).toHaveBeenCalledWith(
+      "/api/recruitment-team/threads/stream",
+      expect.objectContaining({ message: "Find roles for me." }),
+      expect.any(Function),
+    );
+    expect(container.textContent).not.toContain("[autopilot]");
+    expect(container.textContent).toContain("I ranked the strongest current roles.");
+  });
+
   it("keeps the composer open and sends messages queued during a running turn", async () => {
     localStorage.setItem("jobhunter:recruitment-thread:42", "thread-queue");
     let releaseFirst;
@@ -558,6 +598,39 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).toContain("Build and evaluate reliable agent systems.");
     expect(container.textContent).toContain("raw evidence confidence 93%");
     expect(container.textContent).toContain("Which production reliability outcomes matter most?");
+  });
+
+  it("labels unranked retrieval as search results rather than matches", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-raw-search");
+    const job = {
+      job_id: 202,
+      title: "Production Operator",
+      company: "Example Employer",
+      location: "Singapore",
+      salary: "$1,800 - $2,300",
+      seniority: "Junior Executive",
+      source: { source: "MyCareersFuture", url: "https://example.test/jobs/202", availability: "current" },
+      posting_variants: [],
+    };
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-raw-search") {
+        return response({
+          thread_id: "thread-raw-search",
+          workflow_state: "exploring",
+          case_facts: { recommendations: [job], match_rationales: [] },
+          messages: [],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-raw-search/events") return response([]);
+      if (path.includes("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+
+    expect(container.textContent).toContain("Current search results");
+    expect(container.textContent).not.toContain("Current source-backed matches");
   });
 
   it("runs and renders the judged multi-agent target assessment", async () => {
