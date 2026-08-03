@@ -353,10 +353,12 @@ exploring
 -> application_linked
 ```
 
-Thread lifecycle (`active`, `archived`, `deleting`, `deleted`) and run lifecycle
+Thread lifecycle (`active`, `archived`) and run lifecycle
 (`queued`, `running`, `waiting_for_user`, `completed`, `partial`, `failed`,
 `cancelled`) are separate from workflow state. Commands are owner-bound and
-idempotent. Every event has a thread ID, run ID, monotonically increasing sequence,
+idempotent. Deletion is an immediate, idempotent privacy action with a durable
+provider-cleanup request, not another visible thread state. Every event has a
+thread ID, run ID, monotonically increasing sequence,
 event type, status, attempt, timestamp, trace key, artifact reference, and
 user-safe summary. Reconnect resumes after the last acknowledged sequence without
 replaying side effects.
@@ -541,7 +543,7 @@ silently average incompatible figures.
 ## Dependency-Ordered Delivery Map
 
 1. [#89 Persist and resume a two-turn recruitment conversation](https://github.com/haomingkoo/job-hunter-sg/issues/89).
-2. [#90 Manage conversation lifecycle and privacy](https://github.com/haomingkoo/job-hunter-sg/issues/90); blocked by #89.
+2. [#90 Manage conversation lifecycle and privacy](https://github.com/haomingkoo/job-hunter-sg/issues/90); delivered by PR #191 after #89.
 3. [#91 Search, define role success, explain, and shortlist jobs conversationally](https://github.com/haomingkoo/job-hunter-sg/issues/91); blocked by #89.
 4. [#92 Assess one selected job with source-backed recruiting personas and the bounded recruitment team](https://github.com/haomingkoo/job-hunter-sg/issues/92); blocked by #91.
 5. [#93 Research compensation and rehearse negotiation for a selected job](https://github.com/haomingkoo/job-hunter-sg/issues/93); blocked by #91.
