@@ -147,6 +147,8 @@ def _candidate_profile_run_from_report(path: str, resume_document: dict) -> Cand
     report = json.loads(report_path.read_text(encoding="utf-8"))
     if report.get("status") != "completed" or not isinstance(report.get("profile"), dict):
         raise ValueError("Candidate profile report must contain one completed profile")
+    if not isinstance(report.get("evaluation"), dict):
+        raise ValueError("Candidate profile report must contain its independent evaluation")
     observed_policy = dict(report.get("execution_policy") or {})
     observed_policy.pop("checkpoint_enabled", None)
     if observed_policy != candidate_profile_execution_policy():
@@ -170,6 +172,7 @@ def _candidate_profile_run_from_report(path: str, resume_document: dict) -> Cand
         model_call_count=int(run.get("model_call_count") or 0),
         checkpoint_hit_count=int(run.get("checkpoint_hit_count") or 0),
         checkpoint_id=str(run["checkpoint_id"]),
+        evaluation=dict(report["evaluation"]),
     )
 
 

@@ -20,8 +20,7 @@ from recruitment_team.candidate_profile import (
 def _document():
     return create_resume_document(
         "EXPERIENCE\nOperations Analyst | 2020 - 2024\n"
-        "- Reduced close from 8 days to 5 days while preserving audit controls.\n"
-        "- Supported clinic workflow redesign; ownership was shared."
+        "- Reduced close from 8 days to 5 days while preserving audit controls."
     )
 
 
@@ -490,6 +489,22 @@ def test_candidate_profile_scopes_follow_structure_without_size_limits():
         "education_01",
     ]
     assert "Role B" in scopes[1].blocks[0]["text"]
+
+
+def test_candidate_profile_scopes_keep_complete_role_entries_together():
+    document = create_resume_document(
+        "EXPERIENCE\nRole A | 2020 - 2022\n"
+        "- Delivered the first complete result.\n"
+        "- Delivered the second complete result."
+    )
+
+    scopes = _profile_scopes(document["blocks"])
+
+    assert [scope.scope_id for scope in scopes] == ["experience_01"]
+    assert [block["text"] for block in scopes[0].blocks[-2:]] == [
+        "Delivered the first complete result.",
+        "Delivered the second complete result.",
+    ]
 
 
 def test_candidate_profile_reuses_only_revalidated_scope_checkpoints():

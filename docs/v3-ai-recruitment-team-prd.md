@@ -87,6 +87,23 @@ their resume, evidence, preferences, history, and applications must never be sil
 merged with the current candidate. An ordinary role or industry pivot is not an identity
 switch.
 
+The default interaction is **propose first, then refine**. For an open-ended request,
+the coordinator gives the strongest useful answer, recommendation, or pending draft the
+available evidence supports before asking questions. It then separates direct resume
+evidence and candidate-confirmed facts from assumptions, transferable hypotheses, and
+genuinely missing information. Follow-up questions target only gaps whose answers can
+materially improve accuracy or impact, explain what they would improve, and update the
+durable candidate context when answered. They do not block unrelated progress, repeat
+known information, force the user through a funnel, or convert an assumption into a
+resume claim. A pivot or unrelated question remains a valid conversational turn; the
+coordinator adapts instead of forcing the current workflow to close.
+
+The coordinator owns the task plan. It chooses which tools and specialists to use, their
+order, whether to revisit prior work, and when enough evidence exists to propose a draft.
+The application does not impose a conversational stage sequence. Deterministic code
+enforces evidence provenance, user approval, privacy, idempotency, and durable state only
+at the boundaries where those guarantees are required.
+
 V3 reuses the existing job corpus, search tools, resume versions, application
 workspace, tracker, multi-reviewer assessment, validation gates, and OpenTelemetry
 instrumentation. It does not create a parallel job database, resume system, or
@@ -258,6 +275,12 @@ magic scores.
 - Candidate profile extraction must remain role-neutral. Suggested role families are
   separately derived hypotheses and must not rewrite or suppress profile evidence.
   Missing salary, location, or target-title preferences never block resume study.
+- Candidate profile decomposition follows complete semantic entities such as a role and
+  its bullets, never character slices or half-sentences. A global semantic pass merges
+  repeated claims with the union of exact citations; a separate correction pass applies
+  deterministic evidence boundaries; and an independent evaluation records one result
+  for every final field plus a profile disposition. Counts are observations, not quality
+  targets or promotion thresholds.
 - Build a versioned Role Success Profile before recommendation scoring or target
   assessment. The selected job description is primary evidence. Comparable live
   jobs, Singapore Skills Framework role descriptions, and public occupation
@@ -535,6 +558,10 @@ rather than converted into false precision. Exact evidence is recorded in the pa
 - Reuse existing job-search tests for source visibility, valid empty results, access failures, deduplication, and constrained result payloads.
 - Reuse existing resume-version and application-workspace tests for ownership, artifact linkage, accepted edits, and append-only stage history.
 - Add persistence tests proving a conversation survives process restart, remains owner-isolated, and can be deleted with its artifacts according to retention policy.
+- Add conversation and signed-in browser acceptance proving an open-ended request gets
+  a useful proposal before clarification; confirmed evidence, assumptions, and missing
+  information are distinguishable; a focused answer refines the pending draft and
+  durable candidate context; and an unrelated pivot is answered without forced closure.
 - Add streaming contract tests proving events are ordered, resumable, deduplicated, and do not expose private prompts or resume content in telemetry.
 - Add activity-view component tests for live, completed, failed, retrying, partial, and reduced-motion states.
 - Add labelled recommendation fixtures with known relevant and irrelevant jobs. Measure precision by role family and evidence segment rather than aggregate ranking alone.

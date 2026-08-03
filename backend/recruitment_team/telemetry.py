@@ -6,7 +6,7 @@ import uuid
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Iterator, Protocol
+from typing import ContextManager, Iterator, Protocol
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
@@ -21,7 +21,7 @@ class RecruitmentTelemetry(Protocol):
         self,
         name: str,
         attributes: dict[str, str | int | float | bool] | None = None,
-    ) -> Iterator[TelemetryOperation]: ...
+    ) -> ContextManager[TelemetryOperation]: ...
 
 
 class OpenTelemetryOperation:

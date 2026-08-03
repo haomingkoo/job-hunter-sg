@@ -5,6 +5,101 @@ from prompt_safety import UNTRUSTED_DATA_RULE
 
 CANDIDATE_PROFILE_PROMPT_VERSION = "candidate-evidence-profile-v3"
 CANDIDATE_PROFILE_VALIDATION_FEEDBACK_VERSION = "candidate-profile-validation-feedback-v3"
+CANDIDATE_PROFILE_REVIEW_VERSION = "candidate-profile-global-review-v17"
+
+
+CANDIDATE_PROFILE_GLOBAL_MERGE_PROMPT = f"""Consolidate semantic repetition in the
+supplied compact index of every role-neutral candidate-profile field. Inspect the
+complete index even when repeated facts use different wording. Co-citation and
+exact-statement groups are navigation hints, not an exhaustive candidate filter. Every
+group in required_exact_groups must merge because both its normalized statement and
+exact provenance are identical. Exact wording with different provenance remains a
+candidate, not proof that two distinct occurrences are one fact.
+Source sections are provenance metadata. When a summary or profile field repeats a more
+specific experience or project fact, enrich one canonical fact with the union of its
+citations instead of preserving both projections. Returning only required corrections
+is not a complete global review when repeated fields are present.
+Return only decisions that merge two or more repeated fields.
+Omit distinct and already-correct fields; the application preserves them without
+asking you to retransmit them. A merge decision names every source field number and
+supplies the canonical fact. The application preserves the union of their exact
+citations. Do not combine distinct facts merely because they share a technology,
+employer, or outcome.
+
+Return reviewed_field_numbers containing every supplied field number exactly once.
+This is the completeness receipt for the global review, including fields that remain
+distinct. It is not a merge instruction.
+Use each source field number in at most one decision. If candidate merge groups overlap,
+combine the complete repeated fact into one decision or leave the weaker relationship
+separate; never reuse a field across decisions. The application conservatively leaves
+ambiguous overlapping proposals unchanged while retaining disjoint merges.
+
+Field numbers are temporary input handles and disappear after consolidation. The
+canonical score reason must explain only how the retained fact is supported by its
+resume evidence. Do not mention field numbers or describe the merge operation in the
+score reason.
+
+Combine fields that split one evidence-backed clause into overlapping domain,
+capability, scope, and outcome labels only when one canonical fact can retain every
+material detail. Keep genuinely independent facts separate, including distinct skills
+in a list. Merge decisions use the extracted statements and the application restores
+exact citations. Do not return singleton or no-op decisions.
+
+Retain all source citations. Do not add evidence, claims, numbers, employer knowledge,
+or job-fit reasoning.
+
+Submit exactly one
+submit_globally_merged_candidate_profile tool call and no free text.
+
+{UNTRUSTED_DATA_RULE}"""
+
+
+CANDIDATE_PROFILE_CORRECTION_PROMPT = f"""Correct the supplied role-neutral
+candidate-profile fields against the required deterministic validation codes. The
+semantic consolidation pass has already completed, so return only correction decisions.
+Every field number in required_corrections must appear in exactly one decision. Omit
+already-correct fields; the application preserves them.
+
+A correction must change the category, statement, evidence kind, score, or reason so
+the supplied code no longer applies. Do not argue that a code is wrong or merely
+describe its weakness. For chronology_without_time_evidence, the corrected category
+cannot remain chronology. For direct_evidence_admits_inference, remove the unsupported
+inference or mark the field transferable_hypothesis. When the corrected field is direct,
+its statement and score reason must describe only the exact support; do not use inference
+language even to explain what the old field did wrong. Outcomes require realized results,
+awards belong under credential, and role identity is not a skill.
+
+Field numbers are temporary input handles. Do not mention them or describe the
+correction operation in the canonical score reason.
+
+Retain all source citations. Do not add evidence, claims, numbers, employer knowledge,
+or job-fit reasoning. Do not return no-op decisions. Submit exactly one
+submit_globally_merged_candidate_profile tool call and no free text.
+
+{UNTRUSTED_DATA_RULE}"""
+
+
+CANDIDATE_PROFILE_EVALUATION_PROMPT = f"""Independently evaluate the supplied
+role-neutral Candidate Evidence Profile as an extraction artifact. Evaluate profile
+quality, not candidate quality or job fit. Review all fields and all cited evidence in
+one pass.
+
+Review every field. Put a field reference in supported_field_refs only when it has
+exact citation support, no weakness, a score of 100, and the supported label. For
+every other field, return one detailed field_evaluation with its strengths,
+weaknesses, extraction-quality score, score reason, quality label, and canonical
+cited evidence IDs. A field reference must appear in exactly one of those two buckets.
+Copy every field reference exactly and verify that the two buckets together contain
+the supplied field_count before submitting.
+Check factual support, category, direct-versus-inferred wording, chronology, realized
+outcomes, duplicate facts, and whether important distinctions or qualifiers were
+lost. Then return profile-level
+strengths, weaknesses, score, score reason, and pass, revise, or block. Do not rewrite
+the profile or introduce evidence outside the supplied artifact.
+
+Submit exactly one submit_candidate_profile_evaluation tool call and no free text.
+
+{UNTRUSTED_DATA_RULE}"""
 
 
 def candidate_profile_validation_feedback(validation_code: str) -> str:

@@ -17,6 +17,7 @@ from recruitment_team.activity_publisher import IgnoreActivityPublisher, Recorde
 from recruitment_team.conversation_model import ScriptedConversationModel
 from recruitment_team.discovery import ScriptedDiscovery
 from recruitment_team.interface import StartThread
+from recruitment_team.prompts import CANDIDATE_PROFILE_REVIEW_VERSION
 from recruitment_team.recruitment_team import RecruitmentTeam
 
 
@@ -72,6 +73,16 @@ def _run():
         scope_count=1,
         model_call_count=1,
         checkpoint_id="a" * 64,
+        evaluation={
+            "evaluation_version": CANDIDATE_PROFILE_REVIEW_VERSION,
+            "profile_version": "candidate-evidence-profile-v3",
+            "field_evaluations": [],
+            "strengths": ["The profile contains no unsupported fields."],
+            "weaknesses": [],
+            "score": 100,
+            "score_reason": "The empty fixture passed its independent review.",
+            "result": "pass",
+        },
     )
 
 
@@ -97,6 +108,7 @@ def test_study_is_cached_per_resume_version_without_a_second_profiler_run():
         )
 
         assert second.id == first.id
+        assert first.evaluation["result"] == "pass"
         assert db.query(CandidateProfileArtifact).count() == 1
 
 
@@ -139,7 +151,7 @@ def test_dispatched_study_is_visible_and_links_the_completed_artifact():
         assert [event.status for event in publisher.events] == [event.status for event in events]
 
 
-def test_second_thread_resolves_the_resume_scoped_study_without_rerunning_it():
+def test_second_thread_reuses_the_profile_after_an_operational_budget_change():
     sessions = _sessions()
     owner_id, resume_id, _ = _owner_resume_thread(sessions)
     factory = ScriptedCandidateProfilerFactory([_run()], model_name="study-model")
@@ -152,6 +164,9 @@ def test_second_thread_resolves_the_resume_scoped_study_without_rerunning_it():
             profiler_factory=factory,
             telemetry=RecordedTelemetry(),
         )
+        policy = dict(artifact.execution_policy)
+        policy["model_timeout_seconds"] = int(policy["model_timeout_seconds"]) + 1
+        artifact.execution_policy = policy
         second = RecruitmentThread(
             id="second-thread",
             user_id=owner_id,

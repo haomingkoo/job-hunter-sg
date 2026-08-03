@@ -11,6 +11,15 @@ def _report(path, *, model, status="completed", duration=10.0):
                 "parse_report": {"document_block_count": 4, "parse_quality": {"label": "good"}},
                 "execution_policy": {"transport_retries": 0},
                 "run": {"model_name": model, "model_call_count": 1, "input_tokens": 10, "output_tokens": 5},
+                "profile": {
+                    "fields": [{"field_id": "field-1", "resume_evidence_ids": ["evidence-1"]}],
+                    "cited_resume_evidence": [{"evidence_id": "evidence-1"}],
+                },
+                "evaluation": {
+                    "field_evaluations": [{"field_id": "field-1", "label": "supported"}],
+                    "score": 92,
+                    "result": "pass",
+                },
                 "error": None,
                 "checkpoint": {"completed_scope_ids": ["summary_01"]},
                 "spans": [
@@ -32,11 +41,16 @@ def test_comparison_records_model_latency_tokens_and_completion(tmp_path, capsys
     _report(first, model="model-a", duration=11.0)
     _report(second, model="model-b", duration=22.0)
 
-    result = main([
-        "--report", f"agent={first}",
-        "--report", f"instruct={second}",
-        "--output", str(output),
-    ])
+    result = main(
+        [
+            "--report",
+            f"agent={first}",
+            "--report",
+            f"instruct={second}",
+            "--output",
+            str(output),
+        ]
+    )
 
     comparison = json.loads(output.read_text(encoding="utf-8"))
     assert result == 0
@@ -44,4 +58,10 @@ def test_comparison_records_model_latency_tokens_and_completion(tmp_path, capsys
     assert comparison["same_execution_policy"] is True
     assert [item["model_name"] for item in comparison["candidates"]] == ["model-a", "model-b"]
     assert comparison["candidates"][1]["model_attempt_duration_ms"] == [22.0]
+    assert comparison["candidates"][1]["profile_field_count"] == 1
+    assert comparison["candidates"][1]["profile_evidence_count"] == 1
+    assert comparison["candidates"][1]["field_citation_count"] == 1
+    assert comparison["candidates"][1]["citation_coverage_complete"] is True
+    assert comparison["candidates"][1]["evaluation_score"] == 92
+    assert comparison["candidates"][1]["evaluation_labels"] == {"supported": 1}
     assert "all_completed" in capsys.readouterr().out

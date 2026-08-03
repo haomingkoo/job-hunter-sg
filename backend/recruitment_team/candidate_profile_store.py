@@ -19,12 +19,42 @@ from .candidate_profile import (
     candidate_profile_execution_policy,
 )
 from .execution_metrics import merge_execution_event, merge_execution_metrics
-from .prompts import CANDIDATE_PROFILE_PROMPT_VERSION
+from .prompts import CANDIDATE_PROFILE_PROMPT_VERSION, CANDIDATE_PROFILE_REVIEW_VERSION
 
 log = logging.getLogger("jobhunter.recruitment_team")
 
 
 RETRY_FEEDBACK_SCOPE_KEY = "__retry_feedback__"
+
+
+def candidate_profile_artifact_is_current(record: CandidateProfileArtifact) -> bool:
+    from resume_document import SCHEMA_VERSION
+
+    policy = record.execution_policy or {}
+    evaluation = record.evaluation
+    profile = record.profile
+    profile_fields = profile.get("fields") if isinstance(profile, dict) else None
+    evaluated_fields = (
+        evaluation.get("field_evaluations") if isinstance(evaluation, dict) else None
+    )
+    return (
+        isinstance(profile_fields, list)
+        and isinstance(evaluation, dict)
+        and isinstance(evaluated_fields, list)
+        and all(isinstance(item, dict) for item in profile_fields)
+        and all(isinstance(item, dict) for item in evaluated_fields)
+        and all(item.get("field_id") for item in profile_fields)
+        and all(item.get("field_id") for item in evaluated_fields)
+        and len(evaluated_fields) == len(profile_fields)
+        and {item.get("field_id") for item in evaluated_fields if isinstance(item, dict)}
+        == {item.get("field_id") for item in profile_fields if isinstance(item, dict)}
+        and evaluation.get("result") in {"pass", "revise", "block"}
+        and record.prompt_version == CANDIDATE_PROFILE_PROMPT_VERSION
+        and record.decomposition_version == CANDIDATE_PROFILE_DECOMPOSITION_VERSION
+        and policy.get("review_version") == CANDIDATE_PROFILE_REVIEW_VERSION
+        and policy.get("resume_document_schema_version") == SCHEMA_VERSION
+        and evaluation.get("evaluation_version") == CANDIDATE_PROFILE_REVIEW_VERSION
+    )
 
 
 def _utcnow() -> datetime:
@@ -218,6 +248,7 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         self,
         checkpoint_id: str,
         profile: CandidateEvidenceProfile,
+        evaluation: dict | None = None,
     ) -> CandidateProfileArtifact:
         record = self._validated_record(checkpoint_id)
         if record is None:
@@ -227,6 +258,7 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         record.scopes = scopes
         record.status = "completed"
         record.profile = asdict(profile)
+        record.evaluation = evaluation
         record.error = None
         record.updated_at = _utcnow()
         self._db.commit()

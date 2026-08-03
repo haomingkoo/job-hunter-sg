@@ -120,6 +120,29 @@ def _role_profiler(runs=None):
     return ScriptedRoleSuccessProfiler(list(runs or []))
 
 
+def _candidate_profile_evaluation():
+    from recruitment_team.prompts import CANDIDATE_PROFILE_REVIEW_VERSION
+
+    return {
+        "evaluation_version": CANDIDATE_PROFILE_REVIEW_VERSION,
+        "profile_version": "candidate-evidence-profile-v3",
+        "field_evaluations": [{
+            "field_id": "demonstrated_agent_platform",
+            "strengths": ["The field is directly supported."],
+            "weaknesses": [],
+            "score": 100,
+            "score_reason": "The cited resume block supports the field.",
+            "label": "supported",
+            "cited_evidence_ids": ["b_test"],
+        }],
+        "strengths": ["The scripted field is source-backed."],
+        "weaknesses": [],
+        "score": 100,
+        "score_reason": "The fixture represents a completed independent review.",
+        "result": "pass",
+    }
+
+
 def _candidate_profile_run():
     from recruitment_team.candidate_profile import (
         CandidateEvidenceProfile,
@@ -151,6 +174,7 @@ def _candidate_profile_run():
         scope_count=1,
         model_call_count=1,
         checkpoint_id="d" * 64,
+        evaluation=_candidate_profile_evaluation(),
     )
 
 
@@ -2739,6 +2763,7 @@ def test_candidate_profile_command_persists_reusable_artifact_across_restart():
                         scope_count=1,
                         model_call_count=1,
                         checkpoint_id=checkpoint_id,
+                        evaluation=_candidate_profile_evaluation(),
                     )
 
             return Profiler()

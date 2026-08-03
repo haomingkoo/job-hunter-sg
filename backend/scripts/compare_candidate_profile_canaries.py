@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import Counter
 from pathlib import Path
 
 
@@ -25,6 +26,17 @@ def _candidate(label: str, path: Path) -> dict:
     completed_scope_ids = list((payload.get("checkpoint") or {}).get("completed_scope_ids") or [])
     run = payload.get("run") or {}
     error = payload.get("error") or {}
+    profile = payload.get("profile") or {}
+    profile_evidence_ids = {
+        str(item.get("evidence_id")) for item in profile.get("cited_resume_evidence") or [] if item.get("evidence_id")
+    }
+    field_citation_ids = {
+        str(evidence_id)
+        for field in profile.get("fields") or []
+        for evidence_id in field.get("resume_evidence_ids") or []
+    }
+    evaluation = payload.get("evaluation") or {}
+    field_evaluations = evaluation.get("field_evaluations") or []
     return {
         "label": label,
         "report_path": str(path),
@@ -33,6 +45,14 @@ def _candidate(label: str, path: Path) -> dict:
         "execution_policy": payload.get("execution_policy"),
         "parse_quality": (payload.get("parse_report") or {}).get("parse_quality"),
         "document_block_count": (payload.get("parse_report") or {}).get("document_block_count"),
+        "profile_field_count": len(profile.get("fields") or []),
+        "profile_evidence_count": len(profile_evidence_ids),
+        "field_citation_count": len(field_citation_ids),
+        "citation_coverage_complete": profile_evidence_ids == field_citation_ids,
+        "evaluation_result": evaluation.get("result"),
+        "evaluation_score": evaluation.get("score"),
+        "evaluation_field_count": len(field_evaluations),
+        "evaluation_labels": dict(Counter(row.get("label") for row in field_evaluations if row.get("label"))),
         "completed_scope_count": len(completed_scope_ids),
         "completed_scope_ids": completed_scope_ids,
         "model_call_count": run.get("model_call_count") or error.get("model_call_count") or len(model_attempts),

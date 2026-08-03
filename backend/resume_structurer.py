@@ -288,7 +288,8 @@ def _merge_date_parts(parts: list[str]) -> str:
 def is_entry_heading_content(line: str) -> bool:
     """Return whether a canonical content block is entry metadata."""
     return (
-        _is_date_only_line(line)
+        _is_entry_heading(line)
+        or _is_date_only_line(line)
         or _looks_like_title_line(line)
         or _looks_like_company_line(line)
     )

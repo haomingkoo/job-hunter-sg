@@ -171,6 +171,7 @@ class CandidateProfileArtifactSnapshot:
     completed_scope_ids: tuple[str, ...]
     execution_metrics: dict
     profile: dict | None
+    evaluation: dict | None
     error: dict | None
     updated_at: datetime
 

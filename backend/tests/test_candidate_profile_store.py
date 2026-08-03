@@ -75,10 +75,12 @@ def test_candidate_profile_store_persists_scopes_failure_and_completion():
             fields=(),
             cited_resume_evidence=(),
         )
-        completed = store.complete(checkpoint_id, profile)
+        evaluation = {"evaluation_version": "review-v1", "result": "pass"}
+        completed = store.complete(checkpoint_id, profile, evaluation)
 
         assert completed.status == "completed"
         assert completed.profile["resume_revision"] == "revision-id"
+        assert completed.evaluation == evaluation
         assert completed.error is None
         assert store.completed(checkpoint_id).id == completed.id
 

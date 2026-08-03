@@ -13,6 +13,21 @@ from recruitment_team.candidate_profile import (
     CandidateProfileTransportError,
     CandidateProfileValidationError,
 )
+from recruitment_team.prompts import CANDIDATE_PROFILE_REVIEW_VERSION
+
+
+def _factory(profiler_type):
+    class Factory:
+        def __init__(self, *, telemetry):
+            self.telemetry = telemetry
+
+        def create(self, checkpoint_store):
+            return profiler_type(
+                telemetry=self.telemetry,
+                checkpoint_store=checkpoint_store,
+            )
+
+    return Factory
 
 
 def _parsed_resume():
@@ -50,7 +65,7 @@ def test_candidate_profile_canary_writes_complete_profile_and_compact_summary(
     class FakeProfiler:
         def __init__(self, *, telemetry, checkpoint_store):
             assert telemetry.spans == []
-            assert checkpoint_store is None
+            assert checkpoint_store.path is None
 
         def profile(self, document):
             assert document["raw_text"] == parsed["text"]
@@ -80,7 +95,7 @@ def test_candidate_profile_canary_writes_complete_profile_and_compact_summary(
             )
 
     monkeypatch.setattr(script, "parse_resume_isolated", lambda *_args: parsed)
-    monkeypatch.setattr(script, "LangChainCandidateProfiler", FakeProfiler)
+    monkeypatch.setattr(script, "LangChainCandidateProfilerFactory", _factory(FakeProfiler))
     resume_path = tmp_path / "resume.pdf"
     output_path = tmp_path / "report.json"
     resume_path.write_bytes(b"%PDF-test")
@@ -101,10 +116,12 @@ def test_candidate_profile_canary_writes_complete_profile_and_compact_summary(
     assert report["execution_policy"] == {
         "prompt_version": "candidate-evidence-profile-v3",
         "validation_feedback_version": "candidate-profile-validation-feedback-v3",
+        "review_version": CANDIDATE_PROFILE_REVIEW_VERSION,
+        "review_attempts": config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS,
         "model_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
         "validation_attempts": config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
-        "decomposition_version": "semantic-section-record-v1",
+        "decomposition_version": "semantic-entity-v3",
         "resume_document_schema_version": SCHEMA_VERSION,
         "checkpoint_enabled": False,
     }
@@ -143,7 +160,7 @@ def test_candidate_profile_canary_preserves_complete_validation_error(
             )
 
     monkeypatch.setattr(script, "parse_resume_isolated", lambda *_args: parsed)
-    monkeypatch.setattr(script, "LangChainCandidateProfiler", FailingProfiler)
+    monkeypatch.setattr(script, "LangChainCandidateProfilerFactory", _factory(FailingProfiler))
     resume_path = tmp_path / "resume.pdf"
     output_path = tmp_path / "failure.json"
     resume_path.write_bytes(b"%PDF-test")
@@ -208,7 +225,7 @@ def test_candidate_profile_canary_reports_structured_resumable_transport_failure
             )
 
     monkeypatch.setattr(script, "parse_resume_isolated", lambda *_args: parsed)
-    monkeypatch.setattr(script, "LangChainCandidateProfiler", FailingProfiler)
+    monkeypatch.setattr(script, "LangChainCandidateProfilerFactory", _factory(FailingProfiler))
     resume_path = tmp_path / "resume.pdf"
     output_path = tmp_path / "failure.json"
     resume_path.write_bytes(b"%PDF-test")
@@ -274,6 +291,24 @@ def test_recruitment_canary_imports_only_matching_completed_profile_report(tmp_p
                     "scope_count": 1,
                 },
                 "profile": asdict(profile),
+                "evaluation": {
+                    "evaluation_version": CANDIDATE_PROFILE_REVIEW_VERSION,
+                    "profile_version": "candidate-evidence-profile-v3",
+                    "field_evaluations": [{
+                        "field_id": "capability_id",
+                        "strengths": ["The field is directly supported."],
+                        "weaknesses": [],
+                        "score": 100,
+                        "score_reason": "The cited block supports the field.",
+                        "label": "supported",
+                        "cited_evidence_ids": [block["id"]],
+                    }],
+                    "strengths": [],
+                    "weaknesses": [],
+                    "score": 100,
+                    "score_reason": "Fixture evaluation.",
+                    "result": "pass",
+                },
             }
         )
     )
@@ -283,6 +318,7 @@ def test_recruitment_canary_imports_only_matching_completed_profile_report(tmp_p
     assert imported.profile == profile
     assert imported.model_name == "model-a"
     assert imported.checkpoint_id == "checkpoint-a"
+    assert imported.evaluation["result"] == "pass"
 
     with pytest.raises(ValueError, match="does not belong"):
         _candidate_profile_run_from_report(

@@ -84,19 +84,19 @@ JSON with an empty-object default.
 | #97 | Complete restart, disconnect, duplicate-delivery, partial-artifact, and idempotent recovery. |
 | #98 | Prove the complete journey on narrow screens, keyboard, live regions, and reduced motion. |
 | #99 | Prove two-model portability and the authenticated semantic journey in isolated Railway staging. |
-| #106 | Globally merge and independently calibrate candidate evidence without losing exact provenance. |
+| #106 | Local entity-scoped extraction, semantic consolidation, correction, and independent evaluation pass both private canaries with exact provenance; merge, deployment, and signed-in browser acceptance remain. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
 
 ## Verification boundary
 
-The focused candidate-profile, open-agent, role-evidence, and recruitment-module
-suite passed 124 tests during classification. After guard consolidation, the
-broader affected suite passed 208 tests and the current full repository run passed 972
-backend and repository-level tests with four explicit skips, 94 frontend tests,
-and the frontend production build. Compile, Ruff, ty, `pip check`, and
-`pip-audit` also passed. Production acceptance is documented in the V4 slice
-passdown. These facts support completed-item closure; they do not waive the open
-outcomes above.
+The current #106 branch passes 994 backend and repository-level tests with four explicit
+skips, 94 frontend tests, and the frontend production build. Compile, Ruff, ty, project
+`pip-audit`, `npm audit`, `pip check`, and Gitleaks pass. The installed-environment audit
+is intentionally not used as project
+evidence because it includes unrelated development packages; the same requirements-file
+audit CI runs reports no known vulnerabilities. Production acceptance for completed
+items is documented in the passdown. These facts do not waive the open deployment and
+browser outcomes above.
 
 The #42/#44/#93 production journey tracked a current MyCareersFuture job, built its
 research pack, exercised a real SEA-LION negotiation turn, and verified persistence
