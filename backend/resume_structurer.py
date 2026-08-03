@@ -288,7 +288,16 @@ def _merge_date_parts(parts: list[str]) -> str:
     return unique_parts[0]
 
 
-def is_entry_heading(line: str) -> bool:
+def is_entry_heading_content(line: str) -> bool:
+    """Return whether a canonical content block is entry metadata."""
+    return (
+        _is_date_only_line(line)
+        or _looks_like_title_line(line)
+        or _looks_like_company_line(line)
+    )
+
+
+def _is_entry_heading(line: str) -> bool:
     """Heuristic: is this line an entry heading (company/role/date)?"""
     stripped = _clean_line(line)
     if not stripped:
@@ -755,7 +764,7 @@ def _build_entries(
             ),
             "",
         )
-        is_heading = is_entry_heading(line) or (
+        is_heading = _is_entry_heading(line) or (
             _looks_like_title_line(stripped)
             and not stripped.endswith((".", "!", "?", ";"))
             and (

@@ -178,9 +178,9 @@ def _structured_bullet_spans(text: str) -> list[dict[str, Any]]:
 def _content_kind(value: str, section_key: str) -> str:
     if section_key not in {"experience", "projects", "activities", "career_break", "education"}:
         return "paragraph"
-    from resume_structurer import is_entry_heading
+    from resume_structurer import is_entry_heading_content
 
-    return "entry_heading" if is_entry_heading(value) else "paragraph"
+    return "entry_heading" if is_entry_heading_content(value) else "paragraph"
 
 
 def _line_spans(text: str, occupied: list[tuple[int, int]]) -> list[dict[str, Any]]:
