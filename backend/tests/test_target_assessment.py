@@ -181,7 +181,11 @@ def test_judge_and_correction_receive_the_evidence_their_prompts_claim(monkeypat
     correction_data = captured[1][1]
     assert judge_data["candidate_profile"]["fields"]
     assert judge_data["failures"] == [
-        {"persona_id": pack.persona_id, "failure_type": "no_submission"}
+        {
+            "persona_id": pack.persona_id,
+            "failure_type": "validation",
+            "failure_code": "structured_output_invalid",
+        }
         for pack in runner._registry.personas
     ]
     assert correction_data["candidate_profile"] == judge_data["candidate_profile"]

@@ -32,6 +32,7 @@ from ..open_agent.tools import (
     write_shortlist,
 )
 from ..prompts import COORDINATOR_PROMPT_VERSION, COORDINATOR_SYSTEM_PROMPT
+from ..recovery import classify_failure
 from ..telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 from ..tool_call_guard import ToolCallGuardMiddleware
 from .context import ConversationContext
@@ -280,11 +281,11 @@ class DeepAgentConversationModel:
                         if context.on_event is not None:
                             context.on_event(event)
                 except GraphRecursionError as error:
-                    span.set_attribute("failure_type", "tool_iteration_cap")
+                    span.set_attribute("failure_type", "business")
+                    span.set_attribute("failure_code", "attempt_budget_exhausted")
                     raise ConversationUnavailable(
                         "coordinator loop hit its tool iteration cap",
-                        failure_type="tool_iteration_cap",
-                        retryable=True,
+                        decision=classify_failure("attempt_budget_exhausted"),
                     ) from error
 
             state = agent.get_state(run_config)
@@ -320,11 +321,11 @@ class DeepAgentConversationModel:
                 prose = _final_reply_text(state)
                 if prose:
                     if not reply_is_complete(prose):
-                        span.set_attribute("failure_type", "incomplete_reply")
+                        span.set_attribute("failure_type", "validation")
+                        span.set_attribute("failure_code", "structured_output_invalid")
                         raise ConversationUnavailable(
                             "coordinator returned an incomplete reply",
-                            failure_type="incomplete_reply",
-                            retryable=True,
+                            decision=classify_failure("structured_output_invalid"),
                         )
                     span.set_attribute("outcome", "unsubmitted_prose")
                     return ModelReply(
@@ -333,11 +334,11 @@ class DeepAgentConversationModel:
                         model_name=_model_name(state),
                         search_query=executed_query,
                     )
-                span.set_attribute("failure_type", "no_submission")
+                span.set_attribute("failure_type", "validation")
+                span.set_attribute("failure_code", "structured_output_invalid")
                 raise ConversationUnavailable(
                     "coordinator loop ended without a reply",
-                    failure_type="no_submission",
-                    retryable=True,
+                    decision=classify_failure("structured_output_invalid"),
                 )
             span.set_attribute("outcome", "submitted")
             return ModelReply(

@@ -1,5 +1,7 @@
 """Stable recruitment-team module errors."""
 
+from .recovery import RecoveryDecision, classify_failure
+
 
 class RecruitmentTeamError(RuntimeError):
     pass
@@ -17,24 +19,31 @@ class InvalidCommand(RecruitmentTeamError):
     pass
 
 
-class RunConcurrencyExceeded(RecruitmentTeamError):
+class ServiceUnavailable(RecruitmentTeamError):
+    """A recruitment dependency failed with one deterministic recovery decision."""
+
+    def __init__(self, message: str, *, decision: RecoveryDecision):
+        super().__init__(message)
+        self.failure_type = decision.failure_type
+        self.failure_code = decision.failure_code
+        self.retryable = decision.retryable
+        self.recovery_action = decision.recovery_action
+        self.retry_after_seconds = decision.retry_after_seconds
+        self.decision = decision
+
+
+class RunConcurrencyExceeded(ServiceUnavailable):
     """A user or process already occupies the configured model-run capacity."""
 
-    failure_type = "concurrency"
-    retryable = True
+    def __init__(self, message: str):
+        super().__init__(
+            message,
+            decision=classify_failure("capacity_exceeded", attempts_remaining=True),
+        )
 
 
-class DiscoveryUnavailable(RecruitmentTeamError):
+class DiscoveryUnavailable(ServiceUnavailable):
     pass
-
-
-class ServiceUnavailable(RecruitmentTeamError):
-    """A configured recruitment dependency could not complete the request."""
-
-    def __init__(self, message: str, *, failure_type: str, retryable: bool):
-        super().__init__(message)
-        self.failure_type = failure_type
-        self.retryable = retryable
 
 
 class CandidateProfilingUnavailable(ServiceUnavailable):

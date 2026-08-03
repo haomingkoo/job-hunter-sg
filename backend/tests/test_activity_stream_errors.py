@@ -33,18 +33,21 @@ def _error_payload(error) -> dict:
 
 
 def test_a_module_error_reaches_the_candidate_verbatim():
+    from recruitment_team.recovery import classify_failure
+
     payload = _error_payload(
         CandidateProfilingUnavailable(
             "saved resume structure does not match its immutable text",
-            failure_type="validation",
-            retryable=False,
+            decision=classify_failure("checkpoint_mismatch"),
         )
     )
 
     assert payload["message"] == "saved resume structure does not match its immutable text"
     assert payload["error_type"] == "CandidateProfilingUnavailable"
     assert payload["retryable"] is False
-    assert payload["failure_type"] == "validation"
+    assert payload["failure_type"] == "business"
+    assert payload["failure_code"] == "checkpoint_mismatch"
+    assert payload["recovery_action"] == "start_new_logical_run"
 
 
 def test_a_simple_module_error_still_carries_its_reason():

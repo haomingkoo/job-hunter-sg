@@ -576,7 +576,10 @@ def test_candidate_profile_preserves_validation_feedback_across_transport_resume
         ).profile(document)
 
     assert caught.value.attempt == 2
-    assert store.retry_feedback["experience_01"] == {
+    feedback = store.retry_feedback["experience_01"]
+    assert feedback["original_input"]["scope_id"] == "experience_01"
+    assert feedback["original_input"]["resume_blocks"]
+    assert {key: value for key, value in feedback.items() if key != "original_input"} == {
         "failed_output": {
             "content": "",
             "tool_calls": [
@@ -590,6 +593,7 @@ def test_candidate_profile_preserves_validation_feedback_across_transport_resume
         },
         "rejected_payload": rejected,
         "validation_code": "field:outcome_close_cycle:quote_not_found",
+        "fixability": "fixable",
         "next_attempt": 2,
         "exhausted": False,
     }

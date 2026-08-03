@@ -206,6 +206,13 @@ def _apply_lightweight_migrations() -> None:
                 "ALTER TABLE candidate_profile_artifacts ADD COLUMN execution_metrics JSON NOT NULL DEFAULT '{}'"
             )
 
+    if "recruitment_runs" in inspector.get_table_names():
+        run_columns = {col["name"] for col in inspector.get_columns("recruitment_runs")}
+        if "attempt_ledger" not in run_columns:
+            statements.append(
+                "ALTER TABLE recruitment_runs ADD COLUMN attempt_ledger JSON NOT NULL DEFAULT '{}'"
+            )
+
     if "recruitment_activity_events" in inspector.get_table_names():
         activity_columns = {
             col["name"] for col in inspector.get_columns("recruitment_activity_events")

@@ -99,6 +99,7 @@ def _target_execution_metrics(
             "model": str(judge.get("model_name") or ""),
             "input_tokens": int(judge.get("input_tokens") or 0),
             "output_tokens": int(judge.get("output_tokens") or 0),
+            "attempt_limit": config.AGENT_JUDGE_VALIDATION_ATTEMPTS,
             "status": "success" if judge.get("disposition") else "validation_failed",
             "validation_code": str(judge.get("score_reason") or "") if not judge.get("disposition") else "",
         })
@@ -110,6 +111,7 @@ def _target_execution_metrics(
             "input_tokens": int(correction.get("input_tokens") or 0),
             "output_tokens": int(correction.get("output_tokens") or 0),
             "attempt_count": int(correction.get("attempt_count") or 0),
+            "attempt_limit": config.RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS,
             "status": str(correction.get("status") or ""),
             "validation_code": str(correction.get("failure") or ""),
         })
@@ -224,9 +226,11 @@ class OpenAgentTargetAssessmentRunner:
                 judge=None,
                 correction=None,
                 error={
-                    "failure_type": "workflow",
+                    "failure_type": "business",
+                    "failure_code": "pause_token_not_found",
                     "error_type": "PauseTokenNotFound",
                     "retryable": False,
+                    "recovery_action": "start_new_logical_run",
                 },
                 execution_policy=target_assessment_execution_policy(),
             )
@@ -293,6 +297,7 @@ class OpenAgentTargetAssessmentRunner:
                             "model": event.get("model") or "",
                             "input_tokens": int(event.get("input_tokens") or 0),
                             "output_tokens": int(event.get("output_tokens") or 0),
+                            "attempt_limit": config.AGENT_MAX_TOOL_ITERATIONS,
                             "status": "success",
                         })
                         continue
@@ -479,7 +484,11 @@ class OpenAgentTargetAssessmentRunner:
             "role_success_profile": asdict(request.role_profile),
             "specialist_runs": specialist_runs,
             "failures": [
-                {"persona_id": pack.persona_id, "failure_type": "no_submission"}
+                {
+                    "persona_id": pack.persona_id,
+                    "failure_type": "validation",
+                    "failure_code": "structured_output_invalid",
+                }
                 for pack in self._registry.personas
                 if pack.persona_id not in completed_personas
             ],

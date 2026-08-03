@@ -68,6 +68,7 @@ from .errors import (
     RunConcurrencyExceeded,
     ThreadNotFound,
     TargetAssessmentUnavailable,
+    ServiceUnavailable,
 )
 from .conversation_model import (
     ConversationModel,
@@ -79,6 +80,16 @@ from .conversation_model import (
 from .coordinator.context import ConversationContext, merged_recommendations
 from .open_agent.context import assessment_context
 from .open_agent.streaming import describe_progress
+from .recovery import (
+    AttemptLayer,
+    RecoveryDecision,
+    attempts_remaining,
+    classify_exception,
+    classify_failure,
+    merge_execution_attempts,
+    normalize_failure_code,
+    record_attempt,
+)
 from .candidate_profile import (
     CandidateEvidenceProfile,
     CandidateProfileProgress,
@@ -238,6 +249,21 @@ COMPLETION_SUMMARIES = {
     "candidate_profiler": "The candidate profiler completed this turn.",
     "quality_judge": "The independent quality judge completed this turn.",
 }
+TRANSPORT_ATTEMPT_LIMIT = FIRST_ATTEMPT + config.RECRUITMENT_MODEL_TRANSPORT_RETRIES
+SEMANTIC_ATTEMPT_LIMITS = {
+    "start_thread": config.RECRUITMENT_CONVERSATION_VALIDATION_ATTEMPTS,
+    "send_message": config.RECRUITMENT_CONVERSATION_VALIDATION_ATTEMPTS,
+    "build_candidate_profile": config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
+    "search_jobs": FIRST_ATTEMPT,
+    "shortlist_job": FIRST_ATTEMPT,
+    "select_target_job": max(
+        config.ROLE_DEFINITION_VALIDATION_ATTEMPTS,
+        config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS,
+    ),
+    "assess_target_job": config.AGENT_JUDGE_VALIDATION_ATTEMPTS,
+    "answer_assessment_question": config.AGENT_JUDGE_VALIDATION_ATTEMPTS,
+    "hide_job": FIRST_ATTEMPT,
+}
 
 # One lock per thread_id, serializing every command against that thread so two
 # concurrent requests (e.g. a double-click answering a paused assessment, or
@@ -294,6 +320,107 @@ class RecruitmentTeam:
         self._target_assessment_runner = target_assessment_runner
         self._study_dispatcher = study_dispatcher
 
+    def _record_run_attempt(
+        self,
+        run: RecruitmentRun,
+        *,
+        stage: str,
+        layer: AttemptLayer,
+        limit: int,
+        status: str,
+        decision: RecoveryDecision | None = None,
+        model: str = "",
+        validation_code: str = "",
+        error_type: str = "",
+    ) -> None:
+        stage_ledger = ((run.attempt_ledger or {}).get("stages") or {}).get(stage) or {}
+        used = int((stage_ledger.get(layer) or {}).get("used") or 0)
+        run.attempt_ledger = record_attempt(
+            run.attempt_ledger,
+            logical_run_id=run.id,
+            stage=stage,
+            layer=layer,
+            limit=limit,
+            status=status,
+            attempt_id=f"{stage}:{layer}:{used + 1}",
+            decision=decision,
+            model=model,
+            validation_code=validation_code,
+            error_type=error_type,
+        )
+
+    def _merge_run_metrics(
+        self,
+        run: RecruitmentRun,
+        metrics: dict | None,
+        *,
+        semantic_limit: int,
+    ) -> None:
+        run.attempt_ledger = merge_execution_attempts(
+            run.attempt_ledger,
+            logical_run_id=run.id,
+            metrics=metrics,
+            transport_limit=TRANSPORT_ATTEMPT_LIMIT,
+            semantic_limit=semantic_limit,
+        )
+
+    def _persist_recovery_decision(
+        self,
+        thread: RecruitmentThread,
+        command_type: str,
+        detail: dict,
+    ) -> None:
+        facts = thread.case_facts or {}
+        if command_type == "build_candidate_profile":
+            artifact_id = facts.get("candidate_profile_artifact_id")
+            artifact = self._db.get(CandidateProfileArtifact, artifact_id) if artifact_id else None
+        elif command_type in {"assess_target_job", "answer_assessment_question"}:
+            artifact_id = facts.get("target_assessment_artifact_id")
+            artifact = self._db.get(TargetAssessmentArtifact, artifact_id) if artifact_id else None
+        else:
+            artifact = None
+        if artifact is not None:
+            existing = artifact.error or {}
+            cause_type = existing.get("error_type")
+            merged = {**existing, **detail}
+            if cause_type:
+                merged["error_type"] = cause_type
+            artifact.error = merged
+
+    def _prepare_workflow_resume(self, run: RecruitmentRun) -> None:
+        stage = run.command_type
+        remaining = attempts_remaining(
+            run.attempt_ledger,
+            stage,
+            "workflow_resume",
+            config.RECRUITMENT_WORKFLOW_RESUME_LIMIT,
+        )
+        last = (run.attempt_ledger or {}).get("last_decision") or {}
+        failure_code = str(last.get("failure_code") or "unclassified_failure")
+        if last.get("retryable") is not True:
+            raise ServiceUnavailable(
+                "the failed command cannot be resumed safely",
+                decision=classify_failure(failure_code),
+            )
+        decision = classify_failure(
+            failure_code,
+            attempts_remaining=remaining,
+        )
+        if not decision.retryable:
+            raise ServiceUnavailable(
+                "the failed command cannot be resumed safely",
+                decision=decision,
+            )
+        self._record_run_attempt(
+            run,
+            stage=stage,
+            layer="workflow_resume",
+            limit=config.RECRUITMENT_WORKFLOW_RESUME_LIMIT,
+            status="resumed",
+            decision=decision,
+        )
+        self._db.commit()
+
     def execute(
         self,
         owner_id: int,
@@ -313,6 +440,8 @@ class RecruitmentTeam:
         )
         if previous is not None and previous.status != "failed":
             return self._receipt(previous)
+        if previous is not None:
+            self._prepare_workflow_resume(previous)
 
         owner_key = f"user:{owner_id}"
         capacity_limited = isinstance(
@@ -357,7 +486,11 @@ class RecruitmentTeam:
             },
         ) as command_span:
             if isinstance(command, StartThread):
-                thread, resume = self._start_thread(owner_id, command)
+                if previous is None:
+                    thread, resume = self._start_thread(owner_id, command)
+                else:
+                    thread = self._owned_thread(owner_id, previous.thread_id)
+                    resume = self._owned_resume(owner_id, thread.resume_version_id)
                 command_type = "start_thread"
                 message = command.message
             elif isinstance(command, SendMessage):
@@ -439,7 +572,7 @@ class RecruitmentTeam:
                     trace_key=correlation_key,
                 )
                 self._db.add(run)
-            if not isinstance(command, SearchJobs):
+            if previous is None and not isinstance(command, SearchJobs):
                 self._db.add(
                     RecruitmentMessage(
                         thread_id=thread.id,
@@ -543,11 +676,55 @@ class RecruitmentTeam:
                 run.status = "failed"
                 run.error_type = type(error).__name__
                 run.completed_at = _utcnow()
-                failure_detail = {"error_type": type(error).__name__}
-                if hasattr(error, "failure_type"):
-                    failure_detail["failure_type"] = str(error.failure_type)
-                if hasattr(error, "retryable"):
-                    failure_detail["retryable"] = bool(error.retryable)
+                initial_decision = (
+                    error.decision
+                    if isinstance(error, ServiceUnavailable)
+                    else classify_exception(error)
+                )
+                layer: AttemptLayer = (
+                    "transport" if initial_decision.failure_type == "transient" else "semantic"
+                )
+                limit = (
+                    TRANSPORT_ATTEMPT_LIMIT
+                    if layer == "transport"
+                    else SEMANTIC_ATTEMPT_LIMITS[command_type]
+                )
+                remaining = attempts_remaining(
+                    run.attempt_ledger,
+                    command_type,
+                    layer,
+                    limit - FIRST_ATTEMPT,
+                )
+                decision = (
+                    classify_failure(
+                        initial_decision.failure_code,
+                        attempts_remaining=remaining,
+                        retry_after_seconds=initial_decision.retry_after_seconds,
+                    )
+                    if initial_decision.failure_type == "transient"
+                    else initial_decision
+                )
+                self._record_run_attempt(
+                    run,
+                    stage=command_type,
+                    layer=layer,
+                    limit=limit,
+                    status="error",
+                    decision=decision,
+                    error_type=type(error).__name__,
+                )
+                failure_detail = {
+                    "error_type": type(error).__name__,
+                    "failure_type": decision.failure_type,
+                    "failure_code": decision.failure_code,
+                    "retryable": decision.retryable,
+                    "recovery_action": decision.recovery_action,
+                }
+                if decision.retry_after_seconds is not None:
+                    failure_detail["retry_after_seconds"] = decision.retry_after_seconds
+                self._persist_recovery_decision(thread, command_type, failure_detail)
+                for attribute, value in failure_detail.items():
+                    command_span.set_attribute(attribute, value)
                 failed_event = self._event(
                     thread,
                     run,
@@ -563,6 +740,33 @@ class RecruitmentTeam:
                     self._db.commit()
                 self._activity_publisher.publish(self._activity(failed_event))
                 raise
+
+            if command_type in {"start_thread", "send_message"}:
+                self._record_run_attempt(
+                    run,
+                    stage=command_type,
+                    layer="transport",
+                    limit=TRANSPORT_ATTEMPT_LIMIT,
+                    status="success",
+                    model=reply.model_name,
+                )
+                self._record_run_attempt(
+                    run,
+                    stage=command_type,
+                    layer="semantic",
+                    limit=SEMANTIC_ATTEMPT_LIMITS[command_type],
+                    status="success",
+                    model=reply.model_name,
+                )
+            elif command_type == "search_jobs":
+                self._record_run_attempt(
+                    run,
+                    stage=command_type,
+                    layer="transport",
+                    limit=TRANSPORT_ATTEMPT_LIMIT,
+                    status="success",
+                    model=reply.model_name,
+                )
 
             self._db.add(
                 RecruitmentMessage(
@@ -955,8 +1159,16 @@ class RecruitmentTeam:
             search_span.set_attribute("truncated", result.truncated)
             if result.failure_type:
                 search_span.set_attribute("failure_type", result.failure_type)
-                search_span.set_attribute("retryable", result.retryable)
-                raise DiscoveryUnavailable(f"job search unavailable: {result.failure_type}")
+                decision = classify_failure(
+                    result.failure_code or "unclassified_failure",
+                    attempts_remaining=False,
+                )
+                search_span.set_attribute("failure_code", decision.failure_code)
+                search_span.set_attribute("retryable", decision.retryable)
+                raise DiscoveryUnavailable(
+                    f"job search unavailable: {decision.failure_code}",
+                    decision=decision,
+                )
 
         facts = dict(thread.case_facts)
         visible_jobs = tuple(
@@ -1001,8 +1213,7 @@ class RecruitmentTeam:
         elif document.get("raw_text") != resume.resume_text:
             raise CandidateProfilingUnavailable(
                 "saved resume structure does not match its immutable text",
-                failure_type="validation",
-                retryable=False,
+                decision=classify_failure("checkpoint_mismatch"),
             )
 
         store = SQLAlchemyCandidateProfileStore(
@@ -1032,7 +1243,8 @@ class RecruitmentTeam:
             artifact = store.fail(
                 error.checkpoint_id,
                 {
-                    "failure_type": "transport",
+                    "failure_type": "transient",
+                    "failure_code": error.failure_code,
                     "cause_type": error.cause_type,
                     "failed_scope_id": error.scope_id,
                     "attempt": error.attempt,
@@ -1044,16 +1256,26 @@ class RecruitmentTeam:
             facts["candidate_profile_artifact_id"] = artifact.id
             facts["candidate_profile_status"] = artifact.status
             thread.case_facts = facts
+            self._merge_run_metrics(
+                command_run,
+                store.execution_metrics(error.checkpoint_id),
+                semantic_limit=config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
+            )
             raise CandidateProfilingUnavailable(
                 "candidate profile model transport failed",
-                failure_type="transport",
-                retryable=True,
+                decision=classify_failure(error.failure_code),
             ) from error
         except CandidateProfileValidationError as error:
+            failure_code = (
+                "information_absent"
+                if error.validation_code == "profile:empty"
+                else "semantic_fixable"
+            )
             artifact = store.fail(
                 error.checkpoint_id,
                 {
                     "failure_type": "validation",
+                    "failure_code": failure_code,
                     "validation_code": error.validation_code,
                     "completed_scope_ids": list(error.completed_scope_ids),
                     "recovery": "Correct the failed structured scope before resuming.",
@@ -1063,17 +1285,20 @@ class RecruitmentTeam:
             facts["candidate_profile_artifact_id"] = artifact.id
             facts["candidate_profile_status"] = artifact.status
             thread.case_facts = facts
+            self._merge_run_metrics(
+                command_run,
+                store.execution_metrics(error.checkpoint_id),
+                semantic_limit=config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
+            )
             raise CandidateProfilingUnavailable(
                 "candidate profile failed semantic validation",
-                failure_type="validation",
-                retryable=False,
+                decision=classify_failure(failure_code),
             ) from error
         except CandidateProfileCheckpointMismatch as error:
             raise CandidateProfilingUnavailable(
                 "candidate profile checkpoint no longer matches the configured "
                 "prompt, model, decomposition, or execution policy version",
-                failure_type="business",
-                retryable=False,
+                decision=classify_failure("checkpoint_mismatch"),
             ) from error
 
         current_metrics = store.execution_metrics(run.checkpoint_id)
@@ -1090,6 +1315,11 @@ class RecruitmentTeam:
             "attempts": [],
             "terminal_status": "completed",
         })
+        self._merge_run_metrics(
+            command_run,
+            store.execution_metrics(run.checkpoint_id),
+            semantic_limit=config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
+        )
         artifact = store.complete(run.checkpoint_id, run.profile)
         facts = dict(thread.case_facts)
         facts["candidate_profile_artifact_id"] = artifact.id
@@ -1193,14 +1423,12 @@ class RecruitmentTeam:
         except (RoleProfileValidationError, RoleEvidenceAssessmentError) as error:
             raise RoleProfilingUnavailable(
                 "role success profile failed semantic validation",
-                failure_type="validation",
-                retryable=False,
+                decision=classify_failure("semantic_fixable"),
             ) from error
         except Exception as error:
             raise RoleProfilingUnavailable(
                 f"role success profiling unavailable: {type(error).__name__}",
-                failure_type="transient",
-                retryable=True,
+                decision=classify_exception(error),
             ) from error
         facts = dict(thread.case_facts)
         shortlist = list(facts.get("shortlisted_jobs", []))
@@ -1210,6 +1438,34 @@ class RecruitmentTeam:
         facts.pop("shortlisted_job_ids", None)
         facts["selected_target"] = asdict(job)
         facts["role_success_profile"] = asdict(run.profile)
+        role_attempts = []
+        if run.generator_attempt_count:
+            role_attempts.append({
+                "stage": "role_definition",
+                "team_member": "role_profiler",
+                "model": run.generator_model_name or run.model_name,
+                "attempt_count": run.generator_attempt_count,
+                "attempt_limit": config.ROLE_DEFINITION_VALIDATION_ATTEMPTS,
+                "status": "success",
+            })
+        if run.assessor_attempt_count:
+            role_attempts.append({
+                "stage": "role_evidence",
+                "team_member": "role_evidence_assessor",
+                "model": run.assessor_model_name or run.model_name,
+                "attempt_count": run.assessor_attempt_count,
+                "attempt_limit": config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS,
+                "status": "success",
+            })
+        if not role_attempts:
+            role_attempts.append({
+                "stage": "role_success_profile",
+                "team_member": "role_profiler",
+                "model": run.model_name,
+                "attempt_count": run.attempt_count,
+                "attempt_limit": SEMANTIC_ATTEMPT_LIMITS["select_target_job"],
+                "status": "success",
+            })
         facts["role_success_metrics"] = {
             "logical_run_id": run_record.id,
             "trace_key": run_record.trace_key,
@@ -1225,12 +1481,14 @@ class RecruitmentTeam:
                 run.assessor_model_name,
                 run.model_name,
             )))),
-            "attempts": {
-                "generator": run.generator_attempt_count,
-                "assessor": run.assessor_attempt_count,
-            },
+            "attempts": role_attempts,
             "terminal_status": "completed",
         }
+        self._merge_run_metrics(
+            run_record,
+            facts["role_success_metrics"],
+            semantic_limit=SEMANTIC_ATTEMPT_LIMITS["select_target_job"],
+        )
         tracked = self._ensure_application(owner_id, thread, resume, job, selected=True)
         tracked_job_ids = dict(facts.get("tracked_job_ids") or {})
         tracked_job_ids[str(job.job_id)] = tracked.id
@@ -1551,11 +1809,14 @@ class RecruitmentTeam:
                 else:
                     raise TypeError("target assessment runner returned an unsupported update")
         except Exception as error:
+            decision = classify_exception(error)
             artifact.status = "failed"
             artifact.error = {
-                "failure_type": "workflow",
+                "failure_type": decision.failure_type,
+                "failure_code": decision.failure_code,
                 "error_type": type(error).__name__,
-                "retryable": True,
+                "retryable": decision.retryable,
+                "recovery_action": decision.recovery_action,
             }
             facts = dict(thread.case_facts)
             facts["target_assessment_status"] = artifact.status
@@ -1564,8 +1825,7 @@ class RecruitmentTeam:
             self._db.commit()
             raise TargetAssessmentUnavailable(
                 f"target assessment unavailable: {type(error).__name__}",
-                failure_type="transient",
-                retryable=True,
+                decision=decision,
             ) from error
 
         if result is None:
@@ -1578,6 +1838,11 @@ class RecruitmentTeam:
                         "logical_run_id": run.id,
                         "trace_key": run.trace_key,
                     },
+                )
+                self._merge_run_metrics(
+                    run,
+                    artifact.execution_metrics,
+                    semantic_limit=config.AGENT_JUDGE_VALIDATION_ATTEMPTS,
                 )
                 artifact.pending_specialist_runs = pause_detail.get("specialist_runs") or []
                 artifact.pending_synthesis = str(pause_detail.get("synthesis") or "")
@@ -1596,9 +1861,11 @@ class RecruitmentTeam:
                 ), {}
             artifact.status = "failed"
             artifact.error = {
-                "failure_type": "workflow",
+                "failure_type": "business",
+                "failure_code": "missing_terminal_result",
                 "error_type": "MissingTerminalResult",
-                "retryable": True,
+                "retryable": False,
+                "recovery_action": "operator_review",
             }
             facts = dict(thread.case_facts)
             facts["target_assessment_status"] = artifact.status
@@ -1607,8 +1874,7 @@ class RecruitmentTeam:
             self._db.commit()
             raise TargetAssessmentUnavailable(
                 "target assessment runner returned no terminal result",
-                failure_type="workflow",
-                retryable=True,
+                decision=classify_failure("missing_terminal_result"),
             )
         effective_status = result.status
         effective_error = result.error
@@ -1616,8 +1882,31 @@ class RecruitmentTeam:
             effective_status = "failed"
             effective_error = {
                 "failure_type": "validation",
+                "failure_code": "structured_output_invalid",
                 "error_type": "EmptySynthesis",
                 "retryable": False,
+                "recovery_action": "attempt_budget_exhausted",
+            }
+        terminal_decision = None
+        if effective_status != "completed":
+            failure_code = (
+                "quality_gate_blocked"
+                if effective_status == "quality_blocked"
+                else normalize_failure_code(
+                    str(
+                        (effective_error or {}).get("failure_code")
+                        or (effective_error or {}).get("failure_type")
+                        or ""
+                    )
+                )
+            )
+            terminal_decision = classify_failure(failure_code)
+            effective_error = {
+                **(effective_error or {}),
+                "failure_type": terminal_decision.failure_type,
+                "failure_code": terminal_decision.failure_code,
+                "retryable": terminal_decision.retryable,
+                "recovery_action": terminal_decision.recovery_action,
             }
         artifact.status = effective_status
         artifact.specialist_runs = list(result.specialist_runs) if effective_status == "completed" else []
@@ -1637,6 +1926,11 @@ class RecruitmentTeam:
                 "trace_key": run.trace_key,
             },
         )
+        self._merge_run_metrics(
+            run,
+            artifact.execution_metrics,
+            semantic_limit=config.AGENT_JUDGE_VALIDATION_ATTEMPTS,
+        )
         artifact.updated_at = _utcnow()
         facts = dict(thread.case_facts)
         facts["target_assessment_status"] = effective_status
@@ -1649,11 +1943,9 @@ class RecruitmentTeam:
             if effective_status == "quality_blocked":
                 thread.workflow_state = "quality_blocked"
                 self._db.commit()
-            failure_type = "quality" if effective_status == "quality_blocked" else "workflow"
             raise TargetAssessmentUnavailable(
                 "target assessment did not pass its independent quality gate",
-                failure_type=failure_type,
-                retryable=bool((effective_error or {}).get("retryable")),
+                decision=terminal_decision or classify_failure("unclassified_failure"),
             )
         for edit in result.proposed_edits:
             self._db.add(
@@ -2607,4 +2899,5 @@ class RecruitmentTeam:
             status="completed",
             trace_key=run.trace_key,
             workflow_state=workflow_state or "",
+            attempt_ledger=run.attempt_ledger or {},
         )

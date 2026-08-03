@@ -199,6 +199,7 @@ def test_candidate_profile_canary_reports_structured_resumable_transport_failure
                 scope_id="experience_02",
                 attempt=1,
                 cause_type="APITimeoutError",
+                failure_code="transport_timeout",
                 completed_scope_ids=("summary_01", "experience_01"),
                 checkpoint_id="checkpoint-id",
                 model_call_count=3,
@@ -219,7 +220,9 @@ def test_candidate_profile_canary_reports_structured_resumable_transport_failure
     assert error == {
         "type": "CandidateProfileTransportError",
         "message": ("candidate profile transport failed in scope experience_02: APITimeoutError"),
-        "failure_type": "transport",
+        "failure_type": "transient",
+        "failure_code": "transport_timeout",
+        "retryable": False,
         "cause_type": "APITimeoutError",
         "failed_scope_id": "experience_02",
         "attempt": 1,
