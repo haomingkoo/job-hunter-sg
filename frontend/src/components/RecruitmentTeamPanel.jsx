@@ -385,10 +385,11 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
 
   function updateJob(path) {
     if (busy) return undefined;
-    return runTurn(() => apiFetch(path, {
-      method: "POST",
-      body: JSON.stringify({ idempotency_key: globalThis.crypto.randomUUID() }),
-    }));
+    return runTurn(() => streamRecruitmentCommand(
+      `${path}/stream`,
+      { idempotency_key: globalThis.crypto.randomUUID() },
+      appendActivity,
+    ), { refreshOnError: true });
   }
 
   return (

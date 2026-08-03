@@ -126,13 +126,13 @@ magic scores.
 12. As a candidate, I want to refine a search over multiple turns, so that I can explore adjacent titles and change constraints naturally.
 13. As a candidate, I want search results to show company, title, location, source, publication context, and current availability, so that I can assess each opportunity.
 14. As a candidate, I want to open a job without leaving the conversation, so that exploration remains continuous.
-15. As a candidate, I want to save and remove jobs from a shortlist, so that the team remembers opportunities I care about.
+15. As a candidate, I want to save and remove jobs from a shortlist with an immediate persisted state change, so that the team remembers opportunities I care about and the control never appears dead.
 16. As a candidate, I want duplicate or expired jobs labelled clearly, so that the team does not present stale results as active opportunities.
 17. As a candidate, I want every recommendation to explain why the job fits my resume, so that ranking is understandable.
 18. As a candidate, I want recommendations to distinguish direct evidence, partial alignment, and missing evidence, so that similarity is not presented as proof.
 19. As a candidate, I want recommendation confidence accompanied by its evidence basis, so that a number alone does not create false certainty.
 20. As a candidate, I want conflicting job information preserved with source and date context, so that the system does not silently choose one value.
-21. As a candidate, I want to select one shortlisted job as the target, so that the recruitment team can evaluate it deeply.
+21. As a candidate, I want to select one shortlisted job as the target with truthful streamed progress while its role profile is built, so that the recruitment team can evaluate it deeply without making the interface appear frozen.
 22. As a candidate, I want a Scout to summarize the target role and relevant market language, so that I understand the opportunity before tailoring.
 23. As a candidate, I want a Recruiter reviewer to assess first-screen clarity, so that I know whether the resume communicates fit quickly.
 24. As a candidate, I want a Hiring Manager reviewer to assess ownership and delivery scope, so that weak leadership claims are identified.
@@ -196,6 +196,11 @@ magic scores.
 - Keep assessment and editing as separate capabilities. Assessment receives no edit tool. Editing is entered only after an explicit user action and exposes the validated edit tool.
 - Introduce a durable activity-event contract shared by streaming, persistence, observability, and UI. Events include team member, operation, phase, status, attempt, timestamps, trace key, input type metadata, output artifact reference, source count, and a concise user-safe summary.
 - Present “what the team is doing” and “why this conclusion was reached,” not private reasoning. Never display raw prompts, hidden chain-of-thought, secrets, or invented agent dialogue.
+- Every job-card action that starts a recruitment run uses the same durable activity
+  stream as conversation turns. Shortlisting must acknowledge persisted state promptly;
+  target selection must stream role-profile progress and finish with either a selected
+  target or a visible structured failure. A deployment-interrupted run must not leave a
+  card looking idle while a candidate-authored action remains in the transcript.
 - Reuse the current internal job corpus and constrained job tools. A supplied target-job snapshot is durable context and must not trigger a redundant search or re-fetch.
 - Use progressive disclosure for job tools: compact search results first, explicit detail expansion, source provenance, valid empty results, and structured access failures.
 - Reuse existing resume versions and uploaded resume artifacts. Do not introduce a separate V3 resume store.

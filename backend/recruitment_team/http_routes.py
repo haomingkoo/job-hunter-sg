@@ -630,6 +630,30 @@ def shortlist_thread_job(
         _raise_http_error(error)
 
 
+@router.post("/threads/{thread_id}/jobs/{job_id}/shortlist/stream")
+def stream_shortlist_thread_job(
+    thread_id: str,
+    job_id: int,
+    body: JobActionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    conversation_model: ConversationModel = Depends(get_conversation_model),
+    discovery: DiscoveryPort = Depends(get_job_discovery),
+    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    return StreamingResponse(
+        stream_command(
+            _streaming_team_factory(db, conversation_model, discovery, role_profiler, telemetry),
+            user.id,
+            ShortlistJob(thread_id=thread_id, job_id=job_id),
+            body.idempotency_key,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @router.post("/threads/{thread_id}/jobs/{job_id}/select")
 def select_thread_target(
     thread_id: str,
@@ -652,6 +676,30 @@ def select_thread_target(
         )
     except Exception as error:
         _raise_http_error(error)
+
+
+@router.post("/threads/{thread_id}/jobs/{job_id}/select/stream")
+def stream_select_thread_target(
+    thread_id: str,
+    job_id: int,
+    body: JobActionRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    conversation_model: ConversationModel = Depends(get_conversation_model),
+    discovery: DiscoveryPort = Depends(get_job_discovery),
+    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    return StreamingResponse(
+        stream_command(
+            _streaming_team_factory(db, conversation_model, discovery, role_profiler, telemetry),
+            user.id,
+            SelectTargetJob(thread_id=thread_id, job_id=job_id),
+            body.idempotency_key,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @router.get("/threads")

@@ -470,6 +470,7 @@ describe("RecruitmentTeamPanel", () => {
 
   it("searches current jobs and renders source-backed target actions", async () => {
     localStorage.setItem("jobhunter:recruitment-thread:42", "thread-jobs");
+    let shortlisted = false;
     let selected = false;
     const job = {
       job_id: 101,
@@ -515,13 +516,15 @@ describe("RecruitmentTeamPanel", () => {
       source_coverage: { taxonomy_match_quality: "unmatched" },
       clarification_question: "Which production reliability outcomes matter most?",
     };
-    streamRecruitmentCommand.mockImplementation(async (_path, _body, onActivity) => {
+    streamRecruitmentCommand.mockImplementation(async (path, _body, onActivity) => {
       onActivity({
         sequence: 3,
         team_member: "job_researcher",
         status: "running",
         summary: "Searching current jobs.",
       });
+      if (path.endsWith("/jobs/101/shortlist/stream")) shortlisted = true;
+      if (path.endsWith("/jobs/101/select/stream")) selected = true;
       return { thread_id: "thread-jobs", status: "completed" };
     });
     apiFetch.mockImplementation(async (path, options = {}) => {
@@ -544,7 +547,7 @@ describe("RecruitmentTeamPanel", () => {
               level_fit: "aligned",
               pay_position: "above_peer_median",
             }],
-            shortlisted_job_ids: selected ? [101] : [],
+            shortlisted_job_ids: shortlisted || selected ? [101] : [],
             selected_target: selected ? job : null,
             role_success_profile: selected ? roleProfile : null,
           },
@@ -553,10 +556,6 @@ describe("RecruitmentTeamPanel", () => {
       }
       if (path === "/api/recruitment-team/threads/thread-jobs/events") {
         return response([]);
-      }
-      if (path.endsWith("/jobs/101/select") && options.method === "POST") {
-        selected = true;
-        return response({ status: "completed" });
       }
       if (path.includes("/proposed-edits")) return response([]);
       throw new Error(`Unexpected request: ${path}`);
@@ -590,9 +589,27 @@ describe("RecruitmentTeamPanel", () => {
       expect.any(Function),
     );
 
+    const shortlistButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Shortlist"));
+    await act(async () => shortlistButton.click());
+    expect(streamRecruitmentCommand).toHaveBeenCalledWith(
+      "/api/recruitment-team/threads/thread-jobs/jobs/101/shortlist/stream",
+      expect.objectContaining({ idempotency_key: expect.any(String) }),
+      expect.any(Function),
+    );
+    expect(container.textContent).toContain("Shortlisted");
+
     const selectButton = [...container.querySelectorAll("button")]
       .find((button) => button.textContent.includes("Select target"));
-    await act(async () => selectButton.click());
+    await act(async () => {
+      selectButton.click();
+      await Promise.resolve();
+    });
+    expect(streamRecruitmentCommand).toHaveBeenCalledWith(
+      "/api/recruitment-team/threads/thread-jobs/jobs/101/select/stream",
+      expect.objectContaining({ idempotency_key: expect.any(String) }),
+      expect.any(Function),
+    );
     expect(container.textContent).toContain("Selected target");
     expect(container.textContent).toContain("Role Success Profile");
     expect(container.textContent).toContain("Build and evaluate reliable agent systems.");
