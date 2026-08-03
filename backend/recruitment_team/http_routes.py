@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -33,6 +34,7 @@ from .errors import (
 from .interface import (
     AnswerAssessmentQuestion,
     BuildCandidateProfile,
+    HideJob,
     AssessTargetJob,
     SearchJobs,
     SelectTargetJob,
@@ -54,6 +56,7 @@ router = APIRouter(prefix="/api/recruitment-team", tags=["recruitment-team"])
 IDEMPOTENCY_KEY_MAX_CHARS = 200
 SEARCH_QUERY_MAX_CHARS = 500
 PROPOSED_EDIT_ACTION_MAX_ITEMS = 100
+JOB_FEEDBACK_REASON_MAX_CHARS = 500
 
 
 class StartThreadRequest(BaseModel):
@@ -75,6 +78,12 @@ class SearchJobsRequest(BaseModel):
 
 
 class JobActionRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=IDEMPOTENCY_KEY_MAX_CHARS)
+
+
+class JobFeedbackRequest(BaseModel):
+    scope: Literal["role", "company"]
+    reason: str = Field(default="", max_length=JOB_FEEDBACK_REASON_MAX_CHARS)
     idempotency_key: str = Field(min_length=1, max_length=IDEMPOTENCY_KEY_MAX_CHARS)
 
 
@@ -192,6 +201,17 @@ def _read_team(db: Session, telemetry: RecruitmentTelemetry) -> RecruitmentTeam:
     than silently working in dev and failing in production.
     """
     return RecruitmentTeam(db, None, None, None, telemetry, IgnoreActivityPublisher())
+
+
+def _streaming_read_team_factory(db: Session, telemetry: RecruitmentTelemetry):
+    return lambda activity_publisher: RecruitmentTeam(
+        db,
+        None,
+        None,
+        None,
+        telemetry,
+        activity_publisher,
+    )
 
 
 def _streaming_team_factory(
@@ -625,14 +645,11 @@ def shortlist_thread_job(
     body: JobActionRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    conversation_model: ConversationModel = Depends(get_conversation_model),
-    discovery: DiscoveryPort = Depends(get_job_discovery),
-    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
 ):
     try:
         return asdict(
-            _team(db, conversation_model, discovery, role_profiler, telemetry).execute(
+            _read_team(db, telemetry).execute(
                 user.id,
                 ShortlistJob(thread_id=thread_id, job_id=job_id),
                 body.idempotency_key,
@@ -649,16 +666,39 @@ def stream_shortlist_thread_job(
     body: JobActionRequest,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    conversation_model: ConversationModel = Depends(get_conversation_model),
-    discovery: DiscoveryPort = Depends(get_job_discovery),
-    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
 ):
     return StreamingResponse(
         stream_command(
-            _streaming_team_factory(db, conversation_model, discovery, role_profiler, telemetry),
+            _streaming_read_team_factory(db, telemetry),
             user.id,
             ShortlistJob(thread_id=thread_id, job_id=job_id),
+            body.idempotency_key,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@router.post("/threads/{thread_id}/jobs/{job_id}/feedback/stream")
+def stream_job_feedback(
+    thread_id: str,
+    job_id: int,
+    body: JobFeedbackRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    return StreamingResponse(
+        stream_command(
+            _streaming_read_team_factory(db, telemetry),
+            user.id,
+            HideJob(
+                thread_id=thread_id,
+                job_id=job_id,
+                scope=body.scope,
+                reason=body.reason,
+            ),
             body.idempotency_key,
         ),
         media_type="text/event-stream",

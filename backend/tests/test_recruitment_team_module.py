@@ -1220,6 +1220,7 @@ def test_search_shortlist_and_target_are_source_backed_and_durable():
     assert restored.case_facts.shortlisted_jobs == (job,)
     assert restored.case_facts.shortlisted_job_ids == (job.job_id,)
     assert restored.case_facts.selected_target == job
+    tracked_job_id = restored.case_facts.tracked_job_ids[str(job.job_id)]
     assert restored.case_facts.selected_target.source.url == ("https://example.test/jobs/101")
     assert restored.case_facts.role_success_profile is not None
     assert restored.case_facts.role_success_profile.target_job_id == job.job_id
@@ -1237,12 +1238,67 @@ def test_search_shortlist_and_target_are_source_backed_and_durable():
         "result_count": 1,
         "truncated": False,
     }
+    from models import TrackedJob
+
+    with sessions() as db:
+        tracked = db.query(TrackedJob).filter(TrackedJob.user_id == owner_id).one()
+        assert tracked.id == tracked_job_id
+        assert tracked.resume_version_id == resume_id
+        assert tracked.status == "saved"
+        pipeline = tracked.role_metadata["recruitment_pipeline"]
+        assert pipeline["state"] == "selected"
+        assert pipeline["posting_snapshot"]["source"]["snapshot_sha256"] == job.source.snapshot_sha256
+        assert [event["action"] for event in pipeline["activity"]] == ["shortlisted", "selected"]
+        assert pipeline["next_action"]["destination"] == "application_workspace"
     profile_span = next(span for span in telemetry.spans if span.name == "role_success.profile")
     assert profile_span.attributes["criterion_count"] == 1
     assert profile_span.attributes["taxonomy_match_quality"] == "unmatched"
     assert profile_span.attributes["comparable_job_count"] == 0
     assert profile_span.attributes["candidate_profile_version"] == "candidate-evidence-profile-v3"
     assert profile_span.attributes["candidate_profile_field_count"] == 1
+
+
+def test_hidden_job_feedback_is_durable_and_filters_later_searches():
+    from dataclasses import replace
+
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.interface import HideJob, SearchJobs, StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    same_company = replace(job, job_id=202, title="A second role")
+    discovery = ScriptedDiscovery([
+        JobSearchResult("first", (job,), 1, 1, False, False),
+        JobSearchResult("second", (job, same_company), 2, 2, False, False),
+    ])
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["I can search current roles."]),
+            discovery,
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        started = team.execute(owner_id, StartThread(resume_id, "Find roles."), "feedback-start")
+        team.execute(owner_id, SearchJobs(started.thread_id, "agent systems"), "feedback-search")
+        team.execute(
+            owner_id,
+            HideJob(started.thread_id, job.job_id, "company", "Not the environment I want"),
+            "feedback-hide",
+        )
+        team.execute(owner_id, SearchJobs(started.thread_id, "more agent systems"), "feedback-search-again")
+        snapshot = team.snapshot(owner_id, started.thread_id)
+
+    assert snapshot.case_facts.recommendations == ()
+    assert len(snapshot.case_facts.job_feedback) == 1
+    assert snapshot.case_facts.job_feedback[0]["scope"] == "company"
+    assert snapshot.case_facts.job_feedback[0]["reason"] == "Not the environment I want"
 
 
 def test_target_selection_requires_completed_candidate_profile_without_raw_resume_fallback():

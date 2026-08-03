@@ -525,6 +525,8 @@ describe("RecruitmentTeamPanel", () => {
     localStorage.setItem("jobhunter:recruitment-thread:42", "thread-jobs");
     let shortlisted = false;
     let selected = false;
+    const onOpenApplication = vi.fn();
+    const onTailorJob = vi.fn();
     const job = {
       job_id: 101,
       title: "Applied AI Solution Architect",
@@ -602,6 +604,7 @@ describe("RecruitmentTeamPanel", () => {
             }],
             shortlisted_job_ids: shortlisted || selected ? [101] : [],
             selected_target: selected ? job : null,
+            tracked_job_ids: selected ? { "101": 7001 } : {},
             role_success_profile: selected ? roleProfile : null,
           },
           messages: [],
@@ -615,7 +618,13 @@ describe("RecruitmentTeamPanel", () => {
     });
 
     await act(async () => {
-      root.render(<RecruitmentTeamPanel user={{ id: 42 }} />);
+      root.render(
+        <RecruitmentTeamPanel
+          user={{ id: 42 }}
+          onOpenApplication={onOpenApplication}
+          onTailorJob={onTailorJob}
+        />,
+      );
     });
 
     expect(container.textContent).toContain("Applied AI Solution Architect");
@@ -624,6 +633,7 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).toContain("Production agent reliability is directly relevant.");
     expect(container.textContent).toContain("Built reliable Python agent platforms");
     expect(container.textContent).toContain("Named cloud platform");
+    expect(container.textContent).toContain("Profile-ranked match");
     expect(container.textContent).toContain("StretchNone identified.");
     expect(container.querySelector('a[href="https://example.test/jobs/101"]')).not.toBeNull();
 
@@ -668,6 +678,72 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).toContain("Build and evaluate reliable agent systems.");
     expect(container.textContent).toContain("raw evidence confidence 93%");
     expect(container.textContent).toContain("Which production reliability outcomes matter most?");
+    expect(container.textContent).toContain("Next action: review the evidence, tailor your resume, then manage the application");
+
+    const tailorButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Tailor resume"));
+    const workspaceButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Open application workspace"));
+    await act(async () => {
+      tailorButton.click();
+      workspaceButton.click();
+    });
+    expect(onTailorJob).toHaveBeenCalledWith(job);
+    expect(onOpenApplication).toHaveBeenCalledWith(7001);
+  });
+
+  it("records optional role feedback and removes the committed result after refresh", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-feedback");
+    let hidden = false;
+    const job = {
+      job_id: 301,
+      title: "Sales Manager",
+      company: "Example Equipment",
+      location: "Singapore",
+      salary: "$6,000 - $8,000",
+      seniority: "Manager",
+      source: { source: "MyCareersFuture", url: "https://example.test/jobs/301", availability: "current" },
+      posting_variants: [],
+    };
+    streamRecruitmentCommand.mockImplementation(async (path, body) => {
+      expect(path).toBe("/api/recruitment-team/threads/thread-feedback/jobs/301/feedback/stream");
+      expect(body).toEqual(expect.objectContaining({
+        scope: "role",
+        reason: "Wrong function",
+        idempotency_key: expect.any(String),
+      }));
+      hidden = true;
+      return { thread_id: "thread-feedback", status: "completed" };
+    });
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-feedback") {
+        return response({
+          thread_id: "thread-feedback",
+          workflow_state: "exploring",
+          case_facts: { recommendations: hidden ? [] : [job], match_rationales: [] },
+          messages: [],
+        });
+      }
+      if (path.endsWith("/events") || path.endsWith("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+    const hideButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Not for me"));
+    await act(async () => hideButton.click());
+    const reasonInput = container.querySelector('input[placeholder="Reason (optional)"]');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")
+        .set.call(reasonInput, "Wrong function");
+      reasonInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const saveButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Save feedback"));
+    await act(async () => saveButton.click());
+
+    expect(container.textContent).not.toContain("Sales Manager");
   });
 
   it("labels unranked retrieval as search results rather than matches", async () => {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DndContext, PointerSensor, closestCorners, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -94,7 +94,14 @@ function PipelineColumn({ status, jobs, movingId, openWorkspace, handleEdit, han
   );
 }
 
-export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiveTab }) {
+export default function TrackerTab({
+  jobs,
+  loadError = "",
+  refreshJobs,
+  setActiveTab,
+  openJobId = null,
+  onOpenJobHandled,
+}) {
   const [showForm, setShowForm] = useState(false);
   const [formMode, setFormMode] = useState("manual");
   const [editingId, setEditingId] = useState(null);
@@ -230,6 +237,12 @@ export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiv
     }
   };
 
+  useEffect(() => {
+    if (!openJobId) return;
+    openWorkspace(openJobId);
+    onOpenJobHandled?.();
+  }, [openJobId]);
+
   const runWorkspaceAgentReview = async () => {
     if (!workspace || workspaceAgentLoading) return;
     setWorkspaceAgentLoading(true);
@@ -310,6 +323,14 @@ export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiv
   };
 
   const agentReview = workspace?.role_metadata?.agent_review;
+  const recruitmentPipeline = workspace?.role_metadata?.recruitment_pipeline;
+  const workspaceContacts = Array.isArray(workspace?.role_metadata?.contacts)
+    ? workspace.role_metadata.contacts
+    : [];
+  const workspaceActivity = [
+    ...(Array.isArray(workspace?.role_metadata?.activity) ? workspace.role_metadata.activity : []),
+    ...(Array.isArray(recruitmentPipeline?.activity) ? recruitmentPipeline.activity : []),
+  ];
   const debateSummary = agentReview?.debate_summary;
   const submittedResume = workspace?.role_metadata?.submitted_resume;
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
@@ -506,20 +527,20 @@ export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiv
 
       {(workspaceLoading || workspace || workspaceError) && (
         <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5 space-y-4 shadow-sm">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h3 className="font-semibold text-[#384959]">Application Workspace</h3>
               {workspace && (
                 <p className="text-sm text-[#6A89A7]">{workspace.title} at {workspace.company}</p>
               )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex w-full items-center gap-2 sm:w-auto">
               {workspace && (
                 <button
                   type="button"
                   onClick={runWorkspaceAgentReview}
                   disabled={workspaceAgentLoading}
-                  className="flex items-center gap-2 rounded-lg bg-[#384959] px-3 py-2 text-xs font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-50"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-[#384959] px-3 py-2 text-xs font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-50 sm:flex-none"
                 >
                   {workspaceAgentLoading ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
                   {workspaceAgentLoading ? "Reviewing..." : agentReview ? "Run review again" : "Run Deep Agent review"}
@@ -571,11 +592,56 @@ export default function TrackerTab({ jobs, loadError = "", refreshJobs, setActiv
                   <div className="text-[#384959] break-all">{workspace.source_url || workspace.source || "Manual"}</div>
                 </div>
               </div>
+              {(workspace.follow_up_date || workspace.notes) && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+                  <div className="rounded-lg border border-[#BDDDFC]/30 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Follow-up</div>
+                    <p className="mt-2 text-[#384959]">{workspace.follow_up_date || "No follow-up date set."}</p>
+                  </div>
+                  <div className="rounded-lg border border-[#BDDDFC]/30 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Notes</div>
+                    <p className="mt-2 whitespace-pre-wrap text-[#384959]">{workspace.notes || "No notes saved."}</p>
+                  </div>
+                </div>
+              )}
               <div>
                 <div className="text-xs text-[#6A89A7] mb-1">Job description</div>
                 <p className="whitespace-pre-wrap rounded-lg bg-[#f0f4f8] p-3 text-sm text-[#384959]">
                   {workspace.job_description || "No job description saved."}
                 </p>
+              </div>
+              {recruitmentPipeline && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
+                  <div className="rounded-lg border border-[#BDDDFC]/30 p-3 sm:col-span-2">
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Next action</div>
+                    <p className="mt-2 text-[#384959]">{recruitmentPipeline.next_action?.label || "Review this application"}</p>
+                  </div>
+                  <div className="rounded-lg border border-[#BDDDFC]/30 p-3">
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Fit evidence</div>
+                    <p className="mt-2 text-[#384959]">
+                      {recruitmentPipeline.fit_evidence?.matched?.length || 0} matched · {recruitmentPipeline.fit_evidence?.stretch?.length || 0} stretch · {recruitmentPipeline.fit_evidence?.missing?.length || 0} missing
+                    </p>
+                  </div>
+                </div>
+              )}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
+                <div className="rounded-lg border border-[#BDDDFC]/30 p-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Contacts</div>
+                  {workspaceContacts.length ? workspaceContacts.map((contact, index) => (
+                    <div key={`${contact.name || "contact"}-${index}`} className="mt-2 text-[#384959]">
+                      {contact.name || contact.label || "Contact"}{contact.details ? ` · ${contact.details}` : ""}
+                    </div>
+                  )) : <p className="mt-2 text-[#6A89A7]">No contacts saved yet.</p>}
+                </div>
+                <div className="rounded-lg border border-[#BDDDFC]/30 p-3">
+                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Application activity</div>
+                  {workspaceActivity.length ? workspaceActivity.map((item, index) => (
+                    <div key={`${item.action || item.type || "activity"}-${index}`} className="mt-2 flex justify-between gap-2 text-[#384959]">
+                      <span>{String(item.action || item.type || "updated").replaceAll("_", " ")}</span>
+                      <span className="text-xs text-[#6A89A7]">{item.recorded_at ? new Date(item.recorded_at).toLocaleDateString() : ""}</span>
+                    </div>
+                  )) : <p className="mt-2 text-[#6A89A7]">No application activity recorded yet.</p>}
+                </div>
               </div>
               <div>
                 <div className="text-xs text-[#6A89A7] mb-2">Stage history</div>

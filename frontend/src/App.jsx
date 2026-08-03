@@ -73,6 +73,7 @@ export default function JobHunterSG() {
   const [trackedJobs, setTrackedJobs] = useState([]);
   const [trackedJobsError, setTrackedJobsError] = useState("");
   const [selectedJob, setSelectedJob] = useState(null);
+  const [openTrackedJobId, setOpenTrackedJobId] = useState(null);
 
   // Scroll state for glassmorphism header
   const [scrolled, setScrolled] = useState(false);
@@ -460,7 +461,24 @@ export default function JobHunterSG() {
               )}
               {activeTab === "team" && (
                 user ? (
-                  <RecruitmentTeamPanel user={user} setActiveTab={navigateTo} />
+                  <RecruitmentTeamPanel
+                    user={user}
+                    setActiveTab={navigateTo}
+                    onOpenApplication={async (trackedJobId) => {
+                      await refreshJobs();
+                      setOpenTrackedJobId(trackedJobId);
+                      navigateTo("tracker");
+                    }}
+                    onTailorJob={(job) => {
+                      setSelectedJob({
+                        ...job,
+                        id: job.job_id,
+                        url: job.source?.url || "",
+                        source: job.source?.source || "",
+                      });
+                      navigateTo("resume");
+                    }}
+                  />
                 ) : (
                   <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="AI Recruitment Team" />
                 )
@@ -474,7 +492,14 @@ export default function JobHunterSG() {
               )}
               {activeTab === "tracker" && (
                 user ? (
-                  <TrackerTab jobs={trackedJobs} loadError={trackedJobsError} refreshJobs={refreshJobs} setActiveTab={navigateTo} />
+                  <TrackerTab
+                    jobs={trackedJobs}
+                    loadError={trackedJobsError}
+                    refreshJobs={refreshJobs}
+                    setActiveTab={navigateTo}
+                    openJobId={openTrackedJobId}
+                    onOpenJobHandled={() => setOpenTrackedJobId(null)}
+                  />
                 ) : (
                   <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Application Tracker" />
                 )

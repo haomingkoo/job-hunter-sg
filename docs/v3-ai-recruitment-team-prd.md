@@ -457,6 +457,15 @@ follow-up actions update the same record and activity history. Curated recommend
 and manual search remain visibly distinct. Feedback can tune later ranking, but it is
 stored as a user signal rather than silently treated as objective relevance.
 
+Issue #186 implements this contract through the existing `TrackedJob` and Application
+Workspace. Shortlist creates or reuses that record; target selection enriches it with
+the posting snapshot, fit evidence, resume artifact, activity, and next action. The
+thread stores the durable record reference and bounded candidate feedback only. Hiding
+an unsaved role or company is explicit, optional-reason feedback scoped to that
+conversation; it does not become universal relevance truth. The implementation has
+passed isolated authenticated desktop and mobile browser acceptance, but remains a
+local branch until its PR passes CI, merges, and deploys.
+
 ## Source-Backed Persona and Compensation Packs
 
 Persona and compensation knowledge is maintained as versioned evidence packs,
@@ -542,16 +551,16 @@ silently average incompatible figures.
 
 ## Dependency-Ordered Delivery Map
 
-1. [#89 Persist and resume a two-turn recruitment conversation](https://github.com/haomingkoo/job-hunter-sg/issues/89).
+1. [#89 Persist and resume a two-turn recruitment conversation](https://github.com/haomingkoo/job-hunter-sg/issues/89); delivered and closed.
 2. [#90 Manage conversation lifecycle and privacy](https://github.com/haomingkoo/job-hunter-sg/issues/90); delivered by PR #191 after #89.
-3. [#91 Search, define role success, explain, and shortlist jobs conversationally](https://github.com/haomingkoo/job-hunter-sg/issues/91); blocked by #89.
-4. [#92 Assess one selected job with source-backed recruiting personas and the bounded recruitment team](https://github.com/haomingkoo/job-hunter-sg/issues/92); blocked by #91.
-5. [#93 Research compensation and rehearse negotiation for a selected job](https://github.com/haomingkoo/job-hunter-sg/issues/93); blocked by #91.
-6. [#94 Turn an evidence gap into a user-approved resume edit](https://github.com/haomingkoo/job-hunter-sg/issues/94); blocked by #92.
-7. [#186 Connect ranked matches to one durable application pipeline](https://github.com/haomingkoo/job-hunter-sg/issues/186); includes the former #95 handoff contract and is blocked by #94.
+3. [#91 Search, define role success, explain, and shortlist jobs conversationally](https://github.com/haomingkoo/job-hunter-sg/issues/91); delivered and closed.
+4. [#92 Assess one selected job with source-backed recruiting personas and the bounded recruitment team](https://github.com/haomingkoo/job-hunter-sg/issues/92); delivered and closed.
+5. [#93 Research compensation and rehearse negotiation for a selected job](https://github.com/haomingkoo/job-hunter-sg/issues/93); ready after delivered #91.
+6. [#94 Turn an evidence gap into a user-approved resume edit](https://github.com/haomingkoo/job-hunter-sg/issues/94); delivered and closed.
+7. [#186 Connect ranked matches to one durable application pipeline](https://github.com/haomingkoo/job-hunter-sg/issues/186); includes the former #95 handoff contract and is implemented locally pending CI, merge, and production acceptance.
 8. [#42 Add a source-backed role and company research brief](https://github.com/haomingkoo/job-hunter-sg/issues/42); requires #186 and feeds #44 and #93.
 9. [#44 Save a source-backed interview preparation pack](https://github.com/haomingkoo/job-hunter-sg/issues/44); requires #186 and #42.
-10. [#96 Close the trace-to-evaluation tuning loop](https://github.com/haomingkoo/job-hunter-sg/issues/96); blocked by #92 through #94.
+10. [#96 Close the trace-to-evaluation tuning loop](https://github.com/haomingkoo/job-hunter-sg/issues/96); ready after delivered #92 through #94.
 11. [#97 Recover safely from failed, interrupted, and duplicate runs](https://github.com/haomingkoo/job-hunter-sg/issues/97); blocked by #90, #186, and #96.
 12. [#98 Complete the journey on mobile and with reduced motion](https://github.com/haomingkoo/job-hunter-sg/issues/98); blocked by the complete core journey.
 13. [#99 Validate model portability and Railway staging deployment](https://github.com/haomingkoo/job-hunter-sg/issues/99); includes the former #107 semantic E2E contract and is blocked by #186 and #96 through #98.
