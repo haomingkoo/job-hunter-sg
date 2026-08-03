@@ -188,12 +188,23 @@ def _apply_lightweight_migrations() -> None:
     # (ask_candidate) run with the candidate's answer
     if "target_assessment_artifacts" in inspector.get_table_names():
         assessment_columns = {col["name"] for col in inspector.get_columns("target_assessment_artifacts")}
+        if "execution_metrics" not in assessment_columns:
+            statements.append(
+                "ALTER TABLE target_assessment_artifacts ADD COLUMN execution_metrics JSON NOT NULL DEFAULT '{}'"
+            )
         if "pending_specialist_runs" not in assessment_columns:
             statements.append("ALTER TABLE target_assessment_artifacts ADD COLUMN pending_specialist_runs JSON")
         if "pending_synthesis" not in assessment_columns:
             statements.append("ALTER TABLE target_assessment_artifacts ADD COLUMN pending_synthesis TEXT")
         if "pending_proposed_edits" not in assessment_columns:
             statements.append("ALTER TABLE target_assessment_artifacts ADD COLUMN pending_proposed_edits JSON")
+
+    if "candidate_profile_artifacts" in inspector.get_table_names():
+        profile_columns = {col["name"] for col in inspector.get_columns("candidate_profile_artifacts")}
+        if "execution_metrics" not in profile_columns:
+            statements.append(
+                "ALTER TABLE candidate_profile_artifacts ADD COLUMN execution_metrics JSON NOT NULL DEFAULT '{}'"
+            )
 
     if "recruitment_activity_events" in inspector.get_table_names():
         activity_columns = {

@@ -7,7 +7,7 @@ belonged to the retired, fully-bounded native runner)."""
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterator, Literal, Protocol
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -60,6 +60,7 @@ class TargetAssessmentResult:
     error: dict | None
     execution_policy: dict
     proposed_edits: tuple[dict, ...] = ()
+    execution_metrics: dict = field(default_factory=dict)
 
 
 TargetAssessmentUpdate = TargetAssessmentProgress | TargetAssessmentResult

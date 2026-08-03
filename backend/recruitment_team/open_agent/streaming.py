@@ -25,6 +25,18 @@ def iter_progress_events(
                 continue
             for message in node_update.get("messages", []) or []:
                 persona_name = getattr(message, "name", None)
+                usage = getattr(message, "usage_metadata", None) or {}
+                response_metadata = getattr(message, "response_metadata", None) or {}
+                model_name = str(response_metadata.get("model_name") or response_metadata.get("model") or "")
+                if usage or model_name:
+                    yield {
+                        "kind": "model_attempt",
+                        "team_member": active_persona_by_namespace.get(namespace, persona_name or "coordinator"),
+                        "id": getattr(message, "id", None),
+                        "model": model_name,
+                        "input_tokens": int(usage.get("input_tokens") or 0),
+                        "output_tokens": int(usage.get("output_tokens") or 0),
+                    }
                 tool_calls = getattr(message, "tool_calls", None) or []
                 if tool_calls:
                     if persona_name:

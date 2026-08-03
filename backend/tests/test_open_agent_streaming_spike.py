@@ -104,6 +104,32 @@ def test_iter_progress_events_yields_tool_call_ids(monkeypatch):
     assert tool_call["id"] == "call-abc"
 
 
+def test_iter_progress_events_exposes_safe_model_usage_without_message_content():
+    message = AIMessage(
+        id="model-message-1",
+        content="private synthesis",
+        response_metadata={"model_name": "model-a"},
+        usage_metadata={"input_tokens": 13, "output_tokens": 5, "total_tokens": 18},
+    )
+
+    class Agent:
+        def stream(self, *_args, **_kwargs):
+            yield (), {"model": {"messages": [message]}}
+
+    events = list(iter_progress_events(Agent(), {}, {}))
+    model_event = next(event for event in events if event["kind"] == "model_attempt")
+
+    assert model_event == {
+        "kind": "model_attempt",
+        "team_member": "coordinator",
+        "id": "model-message-1",
+        "model": "model-a",
+        "input_tokens": 13,
+        "output_tokens": 5,
+    }
+    assert "private synthesis" not in str(model_event)
+
+
 def test_iter_progress_events_skips_a_tool_call_id_exactly_once(monkeypatch):
     """Proves the skip_tool_call_ids mechanism the resume path relies on to
     suppress LangGraph's replay of an interrupted ask_candidate call: a

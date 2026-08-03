@@ -1242,6 +1242,10 @@ def test_search_shortlist_and_target_are_source_backed_and_durable():
     assert restored.case_facts.role_success_profile.criteria[0].criterion_id == ("design_agent_systems")
     assert restored.case_facts.role_success_profile.candidate_evidence[0].alignment == ("direct")
     assert restored.case_facts.role_success_profile.source_coverage.taxonomy_match_quality == ("unmatched")
+    assert restored.case_facts.role_success_metrics is not None
+    assert restored.case_facts.role_success_metrics["model_call_count"] == 1
+    assert restored.case_facts.role_success_metrics["models"] == ["scripted-role-profiler"]
+    assert restored.case_facts.role_success_metrics["terminal_status"] == "completed"
     assert "job.search" in [span.name for span in telemetry.spans]
     search_span = next(span for span in telemetry.spans if span.name == "job.search")
     assert search_span.attributes == {
@@ -1954,6 +1958,19 @@ def test_answering_the_assessment_question_resumes_and_completes_it():
                     "specialist_runs": [{"persona_id": "recruiter", "status": "completed", "submission": {}}],
                     "synthesis": "",
                     "proposed_edits": [],
+                    "execution_metrics": {
+                        "logical_run_id": "assessment-trace",
+                        "trace_key": "assessment-trace",
+                        "stage": "target_assessment",
+                        "model_call_count": 2,
+                        "input_tokens": 40,
+                        "output_tokens": 10,
+                        "latency_ms": 250.0,
+                        "validation_codes": ["judge:timeout"],
+                        "models": ["model-a"],
+                        "attempts": [{"stage": "specialist", "status": "success"}],
+                        "terminal_status": "paused",
+                    },
                 },
             ),
         ],
@@ -1966,6 +1983,19 @@ def test_answering_the_assessment_question_resumes_and_completes_it():
                 correction=None,
                 error=None,
                 execution_policy=target_assessment_execution_policy(),
+                execution_metrics={
+                    "logical_run_id": "assessment-trace",
+                    "trace_key": "assessment-trace",
+                    "stage": "target_assessment",
+                    "model_call_count": 1,
+                    "input_tokens": 20,
+                    "output_tokens": 5,
+                    "latency_ms": 100.0,
+                    "validation_codes": [],
+                    "models": ["model-b"],
+                    "attempts": [{"stage": "judge", "status": "success"}],
+                    "terminal_status": "completed",
+                },
             ),
         ],
     )
@@ -2009,6 +2039,13 @@ def test_answering_the_assessment_question_resumes_and_completes_it():
     assert snapshot.case_facts.target_assessment_status == "completed"
     assert artifact.status == "completed"
     assert artifact.synthesis == "Consulted the recruiter; candidate confirmed the team size."
+    assert artifact.execution_metrics["model_call_count"] == 3
+    assert artifact.execution_metrics["input_tokens"] == 60
+    assert artifact.execution_metrics["output_tokens"] == 15
+    assert artifact.execution_metrics["latency_ms"] == 350.0
+    assert artifact.execution_metrics["validation_codes"] == ["judge:timeout"]
+    assert artifact.execution_metrics["models"] == ["model-a", "model-b"]
+    assert artifact.execution_metrics["terminal_status"] == "completed"
     # The pending-state columns exist only to survive the pause -- once the
     # assessment actually completes they must not linger.
     assert row.pending_specialist_runs is None
@@ -2578,6 +2615,10 @@ def test_candidate_profile_command_persists_reusable_artifact_across_restart():
     assert artifact.status == "completed"
     assert artifact.completed_scope_ids == ("experience_01",)
     assert artifact.profile["fields"][0]["field_id"] == "demonstrated_agent_platform"
+    assert artifact.execution_metrics["model_call_count"] == 1
+    assert artifact.execution_metrics["models"] == ["candidate-profile-test-model"]
+    assert artifact.execution_metrics["terminal_status"] == "completed"
+    assert artifact.execution_metrics["trace_key"]
 
     with sessions() as db:
         restored = RecruitmentTeam(

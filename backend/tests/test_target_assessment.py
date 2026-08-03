@@ -109,6 +109,13 @@ def test_open_agent_runner_corrects_and_rejudges_a_repairable_synthesis(monkeypa
     assert result.correction["attempted"] is True
     assert result.correction["status"] == "completed"
     assert result.correction["rejudge_disposition"] == "pass"
+    assert result.execution_metrics["trace_key"] == "assessment-trace-key"
+    assert result.execution_metrics["model_call_count"] == 3
+    assert result.execution_metrics["terminal_status"] == "completed"
+    assert {attempt["stage"] for attempt in result.execution_metrics["attempts"]} >= {
+        "target_assessment_judge",
+        "target_assessment_correction",
+    }
 
 
 def test_failed_correction_stays_quality_blocked_without_a_second_judge(monkeypatch):

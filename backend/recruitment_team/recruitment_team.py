@@ -58,6 +58,7 @@ from .interface import (
     TargetAssessmentArtifactSnapshot,
     confirmed_evidence_fact,
 )
+from .execution_metrics import merge_execution_metrics
 from .errors import (
     CandidateProfilingUnavailable,
     DiscoveryUnavailable,
@@ -485,7 +486,13 @@ class RecruitmentTeam:
                     reply, completion_detail = self._shortlist_job(owner_id, thread, resume, command)
                     completion_member = "coordinator"
                 elif isinstance(command, SelectTargetJob):
-                    reply, completion_detail = self._select_target(owner_id, thread, resume, command)
+                    reply, completion_detail = self._select_target(
+                        owner_id,
+                        thread,
+                        resume,
+                        run,
+                        command,
+                    )
                     completion_member = "coordinator"
                 elif isinstance(command, HideJob):
                     reply, completion_detail = self._hide_job(thread, command)
@@ -1069,6 +1076,20 @@ class RecruitmentTeam:
                 retryable=False,
             ) from error
 
+        current_metrics = store.execution_metrics(run.checkpoint_id)
+        store.merge_execution_metrics(run.checkpoint_id, {
+            "logical_run_id": run.checkpoint_id,
+            "trace_key": command_run.trace_key,
+            "stage": "candidate_profile",
+            "model_call_count": 0 if current_metrics else run.model_call_count,
+            "checkpoint_hit_count": 0 if current_metrics else run.checkpoint_hit_count,
+            "input_tokens": 0 if current_metrics else int(run.input_tokens or 0),
+            "output_tokens": 0 if current_metrics else int(run.output_tokens or 0),
+            "validation_codes": [] if current_metrics else list(run.validation_codes),
+            "models": [] if current_metrics else [run.model_name],
+            "attempts": [],
+            "terminal_status": "completed",
+        })
         artifact = store.complete(run.checkpoint_id, run.profile)
         facts = dict(thread.case_facts)
         facts["candidate_profile_artifact_id"] = artifact.id
@@ -1125,16 +1146,21 @@ class RecruitmentTeam:
         owner_id: int,
         thread: RecruitmentThread,
         resume: ResumeVersion,
+        run_record: RecruitmentRun,
         command: SelectTargetJob,
     ) -> tuple[ModelReply, dict]:
         job = self._known_job(thread, command.job_id)
         candidate_profile = self._completed_candidate_profile(thread, resume)
         comparable_jobs: tuple[JobSnapshot, ...] = ()
+        profile_started = time.perf_counter()
         try:
             with self._telemetry.operation(
                 "role_success.profile",
                 {
                     "attempt": FIRST_ATTEMPT,
+                    "logical_run_id": run_record.id,
+                    "trace_key": run_record.trace_key,
+                    "stage": "role_success_profile",
                     "target_source_type": "persisted_job_snapshot",
                     "comparable_job_count": len(comparable_jobs),
                     "candidate_profile_version": candidate_profile.profile_version,
@@ -1184,6 +1210,27 @@ class RecruitmentTeam:
         facts.pop("shortlisted_job_ids", None)
         facts["selected_target"] = asdict(job)
         facts["role_success_profile"] = asdict(run.profile)
+        facts["role_success_metrics"] = {
+            "logical_run_id": run_record.id,
+            "trace_key": run_record.trace_key,
+            "stage": "role_success_profile",
+            "model_call_count": run.attempt_count,
+            "checkpoint_hit_count": 0,
+            "input_tokens": int(run.input_tokens or 0),
+            "output_tokens": int(run.output_tokens or 0),
+            "latency_ms": round((time.perf_counter() - profile_started) * 1000, 3),
+            "validation_codes": list(run.validation_codes),
+            "models": list(dict.fromkeys(filter(None, (
+                run.generator_model_name,
+                run.assessor_model_name,
+                run.model_name,
+            )))),
+            "attempts": {
+                "generator": run.generator_attempt_count,
+                "assessor": run.assessor_attempt_count,
+            },
+            "terminal_status": "completed",
+        }
         tracked = self._ensure_application(owner_id, thread, resume, job, selected=True)
         tracked_job_ids = dict(facts.get("tracked_job_ids") or {})
         tracked_job_ids[str(job.job_id)] = tracked.id
@@ -1373,6 +1420,11 @@ class RecruitmentTeam:
             specialist_runs=[],
             synthesis="",
             execution_policy=target_assessment_execution_policy(),
+            execution_metrics={
+                "logical_run_id": run.id,
+                "trace_key": run.trace_key,
+                "stage": "target_assessment",
+            },
         )
         self._db.add(artifact)
         facts["target_assessment_artifact_id"] = artifact.id
@@ -1519,6 +1571,14 @@ class RecruitmentTeam:
         if result is None:
             if last_progress_status == "paused":
                 artifact.status = "paused"
+                artifact.execution_metrics = merge_execution_metrics(
+                    artifact.execution_metrics,
+                    {
+                        **(pause_detail.get("execution_metrics") or {}),
+                        "logical_run_id": run.id,
+                        "trace_key": run.trace_key,
+                    },
+                )
                 artifact.pending_specialist_runs = pause_detail.get("specialist_runs") or []
                 artifact.pending_synthesis = str(pause_detail.get("synthesis") or "")
                 artifact.pending_proposed_edits = pause_detail.get("proposed_edits") or []
@@ -1569,6 +1629,14 @@ class RecruitmentTeam:
         artifact.correction = result.correction
         artifact.error = effective_error
         artifact.execution_policy = result.execution_policy
+        artifact.execution_metrics = merge_execution_metrics(
+            artifact.execution_metrics,
+            {
+                **result.execution_metrics,
+                "logical_run_id": run.id,
+                "trace_key": run.trace_key,
+            },
+        )
         artifact.updated_at = _utcnow()
         facts = dict(thread.case_facts)
         facts["target_assessment_status"] = effective_status
@@ -1706,6 +1774,11 @@ class RecruitmentTeam:
                     if isinstance(facts.get("role_success_profile"), dict)
                     else None
                 ),
+                role_success_metrics=(
+                    dict(facts["role_success_metrics"])
+                    if isinstance(facts.get("role_success_metrics"), dict)
+                    else None
+                ),
                 preferences=self._preference_facts(facts),
                 confirmed_evidence=self._confirmed_evidence_facts(facts),
                 plan=self._plan_steps(facts),
@@ -1759,6 +1832,7 @@ class RecruitmentTeam:
             execution_policy=artifact.execution_policy,
             status=artifact.status,
             completed_scope_ids=tuple(scope_id for scope_id in artifact.scopes if scope_id != RETRY_FEEDBACK_SCOPE_KEY),
+            execution_metrics=artifact.execution_metrics or {},
             profile=artifact.profile,
             error=artifact.error,
             updated_at=artifact.updated_at,
@@ -1801,6 +1875,7 @@ class RecruitmentTeam:
             correction=artifact.correction,
             error=artifact.error,
             execution_policy=artifact.execution_policy,
+            execution_metrics=artifact.execution_metrics or {},
             updated_at=artifact.updated_at,
         )
 

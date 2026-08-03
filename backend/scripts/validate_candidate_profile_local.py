@@ -22,6 +22,7 @@ from recruitment_team.candidate_profile import (  # noqa: E402
     LangChainCandidateProfiler,
     candidate_profile_execution_policy,
 )
+from recruitment_team.execution_metrics import merge_execution_event  # noqa: E402
 from recruitment_team.telemetry import RecordedTelemetry  # noqa: E402
 from resume_document import create_resume_document  # noqa: E402
 from resume_parser import parse_resume_isolated  # noqa: E402
@@ -47,6 +48,7 @@ class JsonCandidateProfileCheckpointStore(CandidateProfileCheckpointStore):
                 "execution_policy": self.execution_policy,
                 "scopes": {},
                 "retry_feedback": {},
+                "execution_metrics": {},
             }
         payload = json.loads(self.path.read_text(encoding="utf-8"))
         stored_id = payload.get("checkpoint_id")
@@ -61,6 +63,8 @@ class JsonCandidateProfileCheckpointStore(CandidateProfileCheckpointStore):
             raise ValueError("Candidate profile checkpoint scopes must be an object")
         if not isinstance(payload.get("retry_feedback", {}), dict):
             raise ValueError("Candidate profile checkpoint retry feedback must be an object")
+        if not isinstance(payload.get("execution_metrics", {}), dict):
+            raise ValueError("Candidate profile checkpoint execution metrics must be an object")
         return payload
 
     def _write(self, document: dict) -> None:
@@ -106,6 +110,17 @@ class JsonCandidateProfileCheckpointStore(CandidateProfileCheckpointStore):
         retry_feedback.pop(scope_id)
         document["retry_feedback"] = retry_feedback
         self._write(document)
+
+    def record_execution_event(self, checkpoint_id: str, event: dict) -> None:
+        document = self._read(checkpoint_id)
+        document["execution_metrics"] = merge_execution_event(
+            document.get("execution_metrics"),
+            {**event, "logical_run_id": checkpoint_id},
+        )
+        self._write(document)
+
+    def execution_metrics(self, checkpoint_id: str) -> dict:
+        return dict(self._read(checkpoint_id).get("execution_metrics") or {})
 
 
 def main(argv: list[str] | None = None) -> int:

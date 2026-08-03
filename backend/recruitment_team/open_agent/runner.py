@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import uuid
 from dataclasses import asdict
 from typing import Iterator
@@ -80,6 +81,57 @@ _CHECKPOINTER.setup()
 def delete_checkpoint(thread_id: str) -> None:
     """Delete one durable LangGraph thread by its persisted identifier."""
     _CHECKPOINTER.delete_thread(thread_id)
+
+
+def _target_execution_metrics(
+    request: TargetAssessmentRequest,
+    model_attempts: list[dict],
+    judges,
+    correction: dict | None,
+    latency_ms: float,
+    terminal_status: str,
+) -> dict:
+    attempts = list(model_attempts)
+    for judge in judges:
+        attempts.append({
+            "stage": "target_assessment_judge",
+            "team_member": "quality_judge",
+            "model": str(judge.get("model_name") or ""),
+            "input_tokens": int(judge.get("input_tokens") or 0),
+            "output_tokens": int(judge.get("output_tokens") or 0),
+            "status": "success" if judge.get("disposition") else "validation_failed",
+            "validation_code": str(judge.get("score_reason") or "") if not judge.get("disposition") else "",
+        })
+    if correction and correction.get("attempted"):
+        attempts.append({
+            "stage": "target_assessment_correction",
+            "team_member": "coordinator",
+            "model": str(correction.get("model_name") or ""),
+            "input_tokens": int(correction.get("input_tokens") or 0),
+            "output_tokens": int(correction.get("output_tokens") or 0),
+            "attempt_count": int(correction.get("attempt_count") or 0),
+            "status": str(correction.get("status") or ""),
+            "validation_code": str(correction.get("failure") or ""),
+        })
+    models = list(dict.fromkeys(
+        str(item.get("model") or "") for item in attempts if item.get("model")
+    ))
+    return {
+        "logical_run_id": request.trace_key,
+        "trace_key": request.trace_key,
+        "stage": "target_assessment",
+        "model_call_count": sum(int(item.get("attempt_count") or 1) for item in attempts),
+        "checkpoint_hit_count": 0,
+        "input_tokens": sum(int(item.get("input_tokens") or 0) for item in attempts),
+        "output_tokens": sum(int(item.get("output_tokens") or 0) for item in attempts),
+        "latency_ms": round(latency_ms, 3),
+        "validation_codes": [
+            str(item["validation_code"]) for item in attempts if item.get("validation_code")
+        ],
+        "models": models,
+        "attempts": attempts,
+        "terminal_status": terminal_status,
+    }
 
 
 class OpenAgentTargetAssessmentRunner:
@@ -221,11 +273,29 @@ class OpenAgentTargetAssessmentRunner:
     ) -> Iterator[TargetAssessmentUpdate]:
         pending_question: str | None = None
         pending_question_call_id: str | None = None
+        model_attempts: list[dict] = []
+        seen_model_event_ids: set[str] = set()
+        drive_started = time.perf_counter()
         with context.assessment_context(request, initial_edits=initial_edits):
             try:
                 for event in iter_progress_events(
                     agent, payload, run_config, skip_tool_call_ids=skip_tool_call_ids
                 ):
+                    if event["kind"] == "model_attempt":
+                        event_id = str(event.get("id") or "")
+                        if event_id and event_id in seen_model_event_ids:
+                            continue
+                        if event_id:
+                            seen_model_event_ids.add(event_id)
+                        model_attempts.append({
+                            "stage": "target_assessment",
+                            "team_member": event.get("team_member") or "coordinator",
+                            "model": event.get("model") or "",
+                            "input_tokens": int(event.get("input_tokens") or 0),
+                            "output_tokens": int(event.get("output_tokens") or 0),
+                            "status": "success",
+                        })
+                        continue
                     if event["kind"] == "tool_call" and event["tool_name"] == ask_candidate.name:
                         pending_question = format_questions(event.get("args") or {})
                         pending_question_call_id = event.get("id")
@@ -316,12 +386,21 @@ class OpenAgentTargetAssessmentRunner:
                         "specialist_runs": specialist_runs,
                         "synthesis": synthesis,
                         "proposed_edits": list(edits),
+                        "execution_metrics": _target_execution_metrics(
+                            request,
+                            model_attempts,
+                            (),
+                            None,
+                            (time.perf_counter() - drive_started) * 1000,
+                            "paused",
+                        ),
                     },
                 )
                 return
 
         judge_model = self._judge_model_factory()
         judge = self._run_judge(judge_model, request, specialist_runs, synthesis)
+        judge_attempts = [judge]
         correction = None
         if (
             judge["disposition"] == "revise"
@@ -348,6 +427,7 @@ class OpenAgentTargetAssessmentRunner:
                     specialist_runs,
                     synthesis,
                 )
+                judge_attempts.append(judge)
                 correction["rejudge_disposition"] = judge["disposition"]
                 yield TargetAssessmentProgress(
                     team_member="quality_judge",
@@ -366,6 +446,14 @@ class OpenAgentTargetAssessmentRunner:
             error=None,
             execution_policy=target_assessment_execution_policy(),
             proposed_edits=tuple(edits),
+            execution_metrics=_target_execution_metrics(
+                request,
+                model_attempts,
+                judge_attempts,
+                correction,
+                (time.perf_counter() - drive_started) * 1000,
+                status,
+            ),
         )
 
     @staticmethod
@@ -407,7 +495,11 @@ class OpenAgentTargetAssessmentRunner:
             operation="open_agent_assessment.judge_attempt",
             attempt=1,
             max_attempts=1,
-            attributes={"trace_key": request.trace_key},
+            attributes={
+                "trace_key": request.trace_key,
+                "logical_run_id": request.trace_key,
+                "stage": "target_assessment_judge",
+            },
         )
         if payload is None:
             return {
@@ -449,7 +541,11 @@ class OpenAgentTargetAssessmentRunner:
                 operation="open_agent_assessment.synthesis_correction_attempt",
                 attempt=attempt,
                 max_attempts=config.RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS,
-                attributes={"trace_key": request.trace_key},
+                attributes={
+                    "trace_key": request.trace_key,
+                    "logical_run_id": request.trace_key,
+                    "stage": "target_assessment_correction",
+                },
             )
             if payload is not None:
                 return str(payload["synthesis"]), {

@@ -29,6 +29,24 @@ def _block(document, text):
     return next(item for item in document["blocks"] if text in item["text"])
 
 
+def _execution_metrics(checkpoint_id, events):
+    attempts = [event for event in events if event["event"] == "model_attempt"]
+    return {
+        "logical_run_id": checkpoint_id,
+        "model_call_count": len(attempts),
+        "checkpoint_hit_count": sum(event["event"] == "checkpoint_hit" for event in events),
+        "input_tokens": sum(int(event.get("input_tokens") or 0) for event in attempts),
+        "output_tokens": sum(int(event.get("output_tokens") or 0) for event in attempts),
+        "validation_codes": [
+            event["validation_code"] for event in attempts if event.get("validation_code")
+        ],
+        "models": list(dict.fromkeys(
+            event["model"] for event in attempts if event.get("model")
+        )),
+        "attempts": attempts,
+    }
+
+
 def _valid_payload(document):
     outcome = _block(document, "Reduced close")
     return {
@@ -212,6 +230,9 @@ def test_candidate_profile_retries_with_original_blocks_failed_output_and_exact_
         "scope_id": "experience_01",
         "configured_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
+        "logical_run_id": run.checkpoint_id,
+        "checkpoint_id": run.checkpoint_id,
+        "stage": "candidate_profile",
         "model": "candidate-profile-test-model",
         "input_tokens": 13,
         "output_tokens": 5,
@@ -219,17 +240,23 @@ def test_candidate_profile_retries_with_original_blocks_failed_output_and_exact_
         "error_type": "",
     }
     assert [span.attributes for span in validations] == [
-        {
-            "scope_id": "experience_01",
-            "attempt": 1,
-            "validation_code": "field:outcome_close_cycle:quote_not_found",
+            {
+                "scope_id": "experience_01",
+                "attempt": 1,
+                "logical_run_id": run.checkpoint_id,
+                "checkpoint_id": run.checkpoint_id,
+                "stage": "candidate_profile_validation",
+                "validation_code": "field:outcome_close_cycle:quote_not_found",
             "accepted": False,
             "retry_triggered": True,
         },
         {
-            "scope_id": "experience_01",
-            "attempt": 2,
-            "validation_code": "",
+                "scope_id": "experience_01",
+                "attempt": 2,
+                "logical_run_id": run.checkpoint_id,
+                "checkpoint_id": run.checkpoint_id,
+                "stage": "candidate_profile_validation",
+                "validation_code": "",
             "accepted": True,
             "retry_triggered": False,
         },
@@ -472,6 +499,8 @@ def test_candidate_profile_reuses_only_revalidated_scope_checkpoints():
     class Store:
         def __init__(self):
             self.saved = {}
+            self.retry_feedback = {}
+            self.execution_events = []
 
         def load(self, _checkpoint_id):
             return dict(self.saved)
@@ -479,13 +508,28 @@ def test_candidate_profile_reuses_only_revalidated_scope_checkpoints():
         def save(self, _checkpoint_id, scope_id, saved_payload):
             self.saved[scope_id] = saved_payload
 
+        def load_retry_feedback(self, _checkpoint_id, scope_id):
+            return self.retry_feedback.get(scope_id)
+
+        def save_retry_feedback(self, _checkpoint_id, scope_id, feedback):
+            self.retry_feedback[scope_id] = feedback
+
+        def clear_retry_feedback(self, _checkpoint_id, scope_id):
+            self.retry_feedback.pop(scope_id, None)
+
+        def record_execution_event(self, _checkpoint_id, event):
+            self.execution_events.append(event)
+
+        def execution_metrics(self, checkpoint_id):
+            return _execution_metrics(checkpoint_id, self.execution_events)
+
     store = Store()
     first = LangChainCandidateProfiler(_ProfileModel([payload]), checkpoint_store=store).profile(document)
     second_model = _ProfileModel([])
     second = LangChainCandidateProfiler(second_model, checkpoint_store=store).profile(document)
 
     assert first.model_call_count == 1
-    assert second.model_call_count == 0
+    assert second.model_call_count == 1
     assert second.checkpoint_hit_count == 1
     assert second.profile == first.profile
     assert second_model.requests == []
@@ -501,6 +545,7 @@ def test_candidate_profile_preserves_validation_feedback_across_transport_resume
         def __init__(self):
             self.saved = {}
             self.retry_feedback = {}
+            self.execution_events = []
 
         def load(self, _checkpoint_id):
             return dict(self.saved)
@@ -516,6 +561,12 @@ def test_candidate_profile_preserves_validation_feedback_across_transport_resume
 
         def clear_retry_feedback(self, _checkpoint_id, scope_id):
             self.retry_feedback.pop(scope_id, None)
+
+        def record_execution_event(self, _checkpoint_id, event):
+            self.execution_events.append(event)
+
+        def execution_metrics(self, checkpoint_id):
+            return _execution_metrics(checkpoint_id, self.execution_events)
 
     store = Store()
     with pytest.raises(CandidateProfileTransportError) as caught:
@@ -549,8 +600,13 @@ def test_candidate_profile_preserves_validation_feedback_across_transport_resume
         checkpoint_store=store,
     ).profile(document)
 
-    assert run.model_call_count == 1
+    assert run.model_call_count == 3
     assert run.validation_codes == ("field:outcome_close_cycle:quote_not_found",)
+    assert run.input_tokens == 26
+    assert run.output_tokens == 10
+    assert [event["status"] for event in store.execution_events] == [
+        "validation_failed", "error", "success",
+    ]
     correction = resumed_model.requests[0][-1].content
     assert "A quote absent from the cited block." in correction
     assert "field:outcome_close_cycle:quote_not_found" in correction
@@ -567,6 +623,7 @@ def test_candidate_profile_does_not_repeat_exhausted_semantic_attempts_after_res
     class Store:
         def __init__(self):
             self.feedback = {}
+            self.execution_events = []
 
         def load(self, _checkpoint_id):
             return {}
@@ -582,6 +639,12 @@ def test_candidate_profile_does_not_repeat_exhausted_semantic_attempts_after_res
 
         def clear_retry_feedback(self, *_args):
             raise AssertionError("invalid retry feedback must not be cleared")
+
+        def record_execution_event(self, _checkpoint_id, event):
+            self.execution_events.append(event)
+
+        def execution_metrics(self, checkpoint_id):
+            return _execution_metrics(checkpoint_id, self.execution_events)
 
     store = Store()
     first_model = _ProfileModel([rejected, rejected])

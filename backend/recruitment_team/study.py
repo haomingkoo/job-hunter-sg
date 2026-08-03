@@ -66,6 +66,7 @@ def study_resume_version(
     profiler_factory: CandidateProfilerFactory,
     telemetry: RecruitmentTelemetry,
     progress_publisher: CandidateProfileProgressPublisher | None = None,
+    trace_key: str = "",
 ) -> CandidateProfileArtifact:
     """Build or reuse the current evidence profile for one immutable resume."""
     resume = (
@@ -101,6 +102,12 @@ def study_resume_version(
         model_name=profiler_factory.model_name,
     )
     run = profiler_factory.create(store, progress_publisher).profile(document)
+    store.merge_execution_metrics(run.checkpoint_id, {
+        "logical_run_id": run.checkpoint_id,
+        "trace_key": trace_key,
+        "stage": "candidate_profile",
+        "terminal_status": "completed",
+    })
     return store.complete(run.checkpoint_id, run.profile)
 
 
@@ -231,6 +238,7 @@ def _run_dispatched_study(
             profiler_factory=profiler_factory,
             telemetry=telemetry,
             progress_publisher=publish_progress,
+            trace_key=run.trace_key,
         )
         db.refresh(thread)
         if thread.resume_version_id == resume_version_id:

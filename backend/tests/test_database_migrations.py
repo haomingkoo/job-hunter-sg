@@ -64,9 +64,11 @@ def test_legacy_users_remain_unverified_when_verification_column_is_added(monkey
         def get_table_names(self):
             return [
                 "scraped_jobs",
-                "users",
-                "recruitment_activity_events",
-                "proposed_resume_edits",
+                    "users",
+                    "recruitment_activity_events",
+                    "proposed_resume_edits",
+                    "candidate_profile_artifacts",
+                    "target_assessment_artifacts",
             ]
 
         def get_columns(self, table):
@@ -105,5 +107,13 @@ def test_legacy_users_remain_unverified_when_verification_column_is_added(monkey
     assert "ALTER TABLE recruitment_activity_events ADD COLUMN duration_ms FLOAT" in statements
     assert any("recruitment_activity_events ADD COLUMN attributes JSON" in item for item in statements)
     assert "ALTER TABLE proposed_resume_edits ADD COLUMN evidence_ids JSON" in statements
+    assert (
+        "ALTER TABLE candidate_profile_artifacts ADD COLUMN execution_metrics JSON NOT NULL DEFAULT '{}'"
+        in statements
+    )
+    assert (
+        "ALTER TABLE target_assessment_artifacts ADD COLUMN execution_metrics JSON NOT NULL DEFAULT '{}'"
+        in statements
+    )
     assert not any("SET email_verified_at" in statement for statement in statements)
     assert not any("SET tier = 'user'" in statement for statement in statements)
