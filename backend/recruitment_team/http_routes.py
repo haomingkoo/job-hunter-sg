@@ -40,50 +40,62 @@ from .interface import (
     ShortlistJob,
     StartThread,
 )
-from .recruitment_team import RecruitmentTeam
+from .recruitment_team import RecruitmentTeam, THREAD_TITLE_MAX_CHARS
 from .role_success import LangChainRoleDefinitionGenerator, RoleSuccessProfiler
 from .role_evidence_assessor import LangChainRoleEvidenceAssessor
 from .telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 from .assessment_contracts import TargetAssessmentRunner
-from .open_agent.runner import OpenAgentTargetAssessmentRunner
+from .open_agent.runner import OpenAgentTargetAssessmentRunner, delete_checkpoint
 from .study import dispatch_resume_study
 
 
 router = APIRouter(prefix="/api/recruitment-team", tags=["recruitment-team"])
 
+IDEMPOTENCY_KEY_MAX_CHARS = 200
+SEARCH_QUERY_MAX_CHARS = 500
+PROPOSED_EDIT_ACTION_MAX_ITEMS = 100
+
 
 class StartThreadRequest(BaseModel):
     resume_version_id: int
     message: str = Field(min_length=1)
-    idempotency_key: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=IDEMPOTENCY_KEY_MAX_CHARS)
 
 
 class SendMessageRequest(BaseModel):
     message: str = Field(min_length=1)
-    idempotency_key: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=IDEMPOTENCY_KEY_MAX_CHARS)
 
 
 class SearchJobsRequest(BaseModel):
     """Omit query to search from what the candidate has already said."""
 
-    query: str = Field(default="", max_length=500)
-    idempotency_key: str = Field(min_length=1, max_length=200)
+    query: str = Field(default="", max_length=SEARCH_QUERY_MAX_CHARS)
+    idempotency_key: str = Field(min_length=1, max_length=IDEMPOTENCY_KEY_MAX_CHARS)
 
 
 class JobActionRequest(BaseModel):
-    idempotency_key: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=IDEMPOTENCY_KEY_MAX_CHARS)
 
 
 class AnswerAssessmentQuestionRequest(BaseModel):
     answer: str = Field(min_length=1)
-    idempotency_key: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=1, max_length=IDEMPOTENCY_KEY_MAX_CHARS)
 
 
 class ProposedEditActionRequest(BaseModel):
     """Omit edit_ids on accept to take every pending edit."""
 
-    edit_ids: list[str] | None = Field(default=None, max_length=100)
-    idempotency_key: str = Field(min_length=1, max_length=200)
+    edit_ids: list[str] | None = Field(default=None, max_length=PROPOSED_EDIT_ACTION_MAX_ITEMS)
+    idempotency_key: str = Field(min_length=1, max_length=IDEMPOTENCY_KEY_MAX_CHARS)
+
+
+class RenameThreadRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=THREAD_TITLE_MAX_CHARS)
+
+
+class DeleteThreadRequest(BaseModel):
+    idempotency_key: str = Field(min_length=1, max_length=IDEMPOTENCY_KEY_MAX_CHARS)
 
 
 def get_recruitment_telemetry() -> RecruitmentTelemetry:
@@ -711,6 +723,72 @@ def list_threads(
     return [
         asdict(thread) for thread in _read_team(db, telemetry).threads(user.id)
     ]
+
+
+@router.get("/retention")
+def get_retention_contract(
+    _user: User = Depends(get_current_user),
+):
+    return RecruitmentTeam.retention_contract()
+
+
+@router.patch("/threads/{thread_id}")
+def rename_thread(
+    thread_id: str,
+    body: RenameThreadRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    try:
+        return _read_team(db, telemetry).rename_thread(user.id, thread_id, body.title)
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.post("/threads/{thread_id}/archive")
+def archive_thread(
+    thread_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    try:
+        return _read_team(db, telemetry).archive_thread(user.id, thread_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.post("/threads/{thread_id}/restore")
+def restore_thread(
+    thread_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    try:
+        return _read_team(db, telemetry).restore_thread(user.id, thread_id)
+    except Exception as error:
+        _raise_http_error(error)
+
+
+@router.delete("/threads/{thread_id}")
+def delete_thread(
+    thread_id: str,
+    body: DeleteThreadRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    try:
+        return _read_team(db, telemetry).delete_thread(
+            user.id,
+            thread_id,
+            body.idempotency_key,
+            delete_checkpoints=delete_checkpoint,
+        )
+    except Exception as error:
+        _raise_http_error(error)
 
 
 @router.get("/threads/{thread_id}")

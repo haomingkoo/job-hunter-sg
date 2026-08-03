@@ -29,7 +29,7 @@ Target behavior.
 
 | Issue | Observed remaining outcome |
 |---|---|
-| #90 | Add owner-only rename, archive, restore, and deletion with truthful retention behavior. |
+| #90 | PR #191 implements owner-only rename, archive, restore, and deletion with truthful retention behavior; keep open until CI, merge, and production acceptance complete. |
 | #93 | Add attributable Singapore compensation evidence and private negotiation rehearsal. |
 | #96 | Connect traces, semantic evaluation, field-level calibration, and regression decisions. |
 | #97 | Complete restart, disconnect, duplicate-delivery, partial-artifact, and idempotent recovery. |

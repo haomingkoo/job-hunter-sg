@@ -185,6 +185,11 @@ WORKSPACE_AGENT_REVIEW_DEFAULT_ROLES: tuple[str, ...] = _csv_env(
     "WORKSPACE_AGENT_REVIEW_DEFAULT_ROLES",
     "recruiter,hiring_manager,ats,skeptic,market_researcher",
 )
+RECRUITMENT_RETENTION_NOTICE: dict[str, str] = {
+    "live_data": "Deleted immediately from the live application database.",
+    "backups": "Infrastructure backups follow the provider retention policy and may expire later.",
+    "telemetry": "Trace and semantic-evaluation deletion is requested at the same time; provider-side removal may not be immediate.",
+}
 
 # ── SEA-LION throughput / network knobs ───────────────────────────────────────
 # Free tier is 10 req/min/key; default kept at 9 for headroom against 429s.

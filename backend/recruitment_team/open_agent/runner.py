@@ -77,6 +77,11 @@ _CHECKPOINTER = SqliteSaver(
 _CHECKPOINTER.setup()
 
 
+def delete_checkpoint(thread_id: str) -> None:
+    """Delete one durable LangGraph thread by its persisted identifier."""
+    _CHECKPOINTER.delete_thread(thread_id)
+
+
 class OpenAgentTargetAssessmentRunner:
     """Drives the open-agent target assessment, then the mandatory judge."""
 

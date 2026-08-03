@@ -13,7 +13,7 @@ from fastapi.encoders import jsonable_encoder
 
 from .activity_publisher import ActivityPublisher
 from .errors import RecruitmentTeamError
-from .interface import ActivityEvent, Command, RunReceipt
+from .interface import ActivityEvent, Command
 from .recruitment_team import RecruitmentTeam
 
 log = logging.getLogger("jobhunter.recruitment_team")
