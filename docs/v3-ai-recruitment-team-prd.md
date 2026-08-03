@@ -580,7 +580,7 @@ rather than converted into false precision. Exact evidence is recorded in the pa
 12. [#98 Complete the journey on mobile and with reduced motion](https://github.com/haomingkoo/job-hunter-sg/issues/98); blocked by the complete core journey.
 13. [#99 Validate model portability and Railway staging deployment](https://github.com/haomingkoo/job-hunter-sg/issues/99); includes the former #107 semantic E2E contract and is blocked by #186 and #96 through #98.
 14. [#102 Preserve cumulative model-call evidence across resumable runs](https://github.com/haomingkoo/job-hunter-sg/issues/102); delivered by PR #205 and production accepted at exact commit `316bcd7b234f7acf76d11a7e955c7a72687e920a`.
-15. [#108 Centralize retry classification and persist one attempt ledger](https://github.com/haomingkoo/job-hunter-sg/issues/108); unblocked by delivered #102 and completed fail-closed output validation in #104.
+15. [#108 Centralize retry classification and persist one attempt ledger](https://github.com/haomingkoo/job-hunter-sg/issues/108); delivered by PR #207 and production accepted at exact commit `9111ae74e3019dc902d30b25f0ef644fb79e3b5b`.
 16. [#113 Enforce the remaining open-agent safety guardrails](https://github.com/haomingkoo/job-hunter-sg/issues/113); delivered by PR #189 and closed.
 
 The dynamic-specialist factory formerly proposed in #100 is deliberately not in

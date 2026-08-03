@@ -8,7 +8,7 @@ acceptance contract was implemented.
 
 ## Closed as completed
 
-Issues #42, #44, #86, #90, #91, #93, #101, #102, #103, #104, #110, #111, #112,
+Issues #42, #44, #86, #90, #91, #93, #101, #102, #103, #104, #108, #110, #111, #112,
 #113, #186, and #201 were closed only after their current
 implementation and focused regression coverage were verified. Issue #184 was
 closed after production browser acceptance of streamed Shortlist and Select
@@ -53,6 +53,17 @@ making no duplicate model request. All CI jobs passed. Railway deployment
 query inside the service confirmed both artifact columns were created as non-nullable
 JSON with an empty-object default.
 
+Issue #108 was delivered by PR #207 and merged as
+`9111ae74e3019dc902d30b25f0ef644fb79e3b5b`. The recruitment-team boundary now uses
+one six-category failure classifier with stable cause codes and a content-free run
+ledger that keeps transport, semantic, and workflow-resume attempts separate. Restart
+and duplicate-delivery regressions prove budgets survive a new database session without
+duplicating threads or messages, valid-empty search does not retry, and exhaustion makes
+no surprise model call. Railway deployment
+`f697c5b4-fe16-4dfd-b9e5-48a7a583a99c` succeeded; startup and `/api/health` passed, and a
+read-only production query confirmed `recruitment_runs.attempt_ledger` is non-nullable
+JSON with an empty-object default.
+
 ## Closed as obsolete or duplicate
 
 | Issues | Disposition |
@@ -74,15 +85,14 @@ JSON with an empty-object default.
 | #98 | Prove the complete journey on narrow screens, keyboard, live regions, and reduced motion. |
 | #99 | Prove two-model portability and the authenticated semantic journey in isolated Railway staging. |
 | #106 | Globally merge and independently calibrate candidate evidence without losing exact provenance. |
-| #108 | Replace scattered retry flags with one persisted deterministic attempt ledger. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
 
 ## Verification boundary
 
 The focused candidate-profile, open-agent, role-evidence, and recruitment-module
 suite passed 124 tests during classification. After guard consolidation, the
-broader affected suite passed 208 tests and the current full repository run passed 956
-backend and repository-level tests with four explicit skips, 92 frontend tests,
+broader affected suite passed 208 tests and the current full repository run passed 972
+backend and repository-level tests with four explicit skips, 94 frontend tests,
 and the frontend production build. Compile, Ruff, ty, `pip check`, and
 `pip-audit` also passed. Production acceptance is documented in the V4 slice
 passdown. These facts support completed-item closure; they do not waive the open

@@ -219,14 +219,16 @@ The recovery policy is not complete until the module and public-interface E2E pr
 12. local and Railway canaries fail non-zero when semantic artifacts, trace
     parentage, retry accounting, or visible output are wrong despite HTTP 200.
 
-## Current implementation gap
+## Current implementation boundary
 
-Candidate-profile semantic feedback and scope checkpointing already implement part
-of this contract. The local canary exposes separate workflow resume limits. Role
-definition, role evidence, specialists, synthesis, and judge still need durable
-accepted-stage checkpoints and cumulative attempt evidence before the whole flow
-can claim safe recovery. Existing errors also mix `transport`, `transient`,
-`workflow`, `quality`, and `validation` as top-level failure types; these must be
-normalised to the category-plus-code contract above at the module interface. Until
-then, repeating a downstream phase may repeat costly accepted calls and is not
-considered production-ready.
+PR #207 implements the module-level classifier and persisted run ledger. Public
+failures now use only the six categories above, unknown failures fail closed, and
+transport, semantic, and explicit workflow-resume counters survive restart and
+duplicate delivery. Candidate correction state preserves its original input,
+rejected output, exact validation code, and fixability. Activity, telemetry, run
+receipts, and failure artifacts use the same recovery decision.
+
+Issue #97 retains the remaining interrupted-stage work: role definition, role
+evidence, specialists, synthesis, and judge must resume from their accepted durable
+checkpoint without repeating completed external work. The ledger is the shared
+accounting contract for that work; it is not a substitute for those checkpoints.
