@@ -68,6 +68,8 @@ _TITLE_NOISE = frozenset(
     }
 )
 
+_OCCUPATION_GENERIC_TERMS = frozenset({"engineer"})
+
 
 class ResearchAccessFailure(RuntimeError):
     """An approved source could not be reached or parsed."""
@@ -157,8 +159,8 @@ def _answer_scaffold(question: str, evidence: str) -> dict:
 
 
 def _occupation_score(role: str, occupation: str) -> float:
-    role_words = set(_normalized_words(role))
-    occupation_words = set(_normalized_words(occupation))
+    role_words = set(_normalized_words(role)) - _OCCUPATION_GENERIC_TERMS
+    occupation_words = set(_normalized_words(occupation)) - _OCCUPATION_GENERIC_TERMS
     if not role_words or not occupation_words:
         return 0.0
     intersection = len(role_words & occupation_words)
@@ -253,7 +255,7 @@ class CorpusAndMomResearchProvider:
             job_sources,
             role_company_brief["freshness"],
         )
-        compensation_brief, wage_status = self._compensation_brief(tracked, now)
+        compensation_brief, wage_status = self._compensation_brief(tracked, target, now)
         source_statuses = (
             {
                 "source": "public_job_corpus",
@@ -560,11 +562,18 @@ class CorpusAndMomResearchProvider:
             "restricted_source_status": "not_searched_without_an_approved_adapter",
         }
 
-    def _compensation_brief(self, tracked: TrackedJob, now: datetime) -> tuple[dict, dict]:
+    def _compensation_brief(
+        self,
+        tracked: TrackedJob,
+        target: ScrapedJob | None,
+        now: datetime,
+    ) -> tuple[dict, dict]:
         observations: list[dict] = []
         pipeline = (tracked.role_metadata or {}).get("recruitment_pipeline") or {}
         posting = pipeline.get("posting_snapshot") if isinstance(pipeline, dict) else {}
-        posting_salary = display_salary(str((posting or {}).get("salary") or ""))
+        posting_salary = display_salary(
+            str((target.salary if target is not None else "") or (posting or {}).get("salary") or "")
+        )
         if posting_salary:
             source = (posting or {}).get("source") if isinstance(posting, dict) else {}
             observations.append(
@@ -574,9 +583,16 @@ class CorpusAndMomResearchProvider:
                     "currency": "SGD",
                     "period": "as stated by employer",
                     "definition": "Employer-stated posting range; package components were not inferred.",
-                    "source_url": (source or {}).get("url") or tracked.source_url or "",
+                    "source_url": (
+                        (target.url if target is not None else "")
+                        or (source or {}).get("url")
+                        or tracked.source_url
+                        or ""
+                    ),
                     "source_type": "job_posting",
-                    "data_date": (source or {}).get("posted_date") or "",
+                    "data_date": (
+                        (target.posted_date if target is not None else "") or (source or {}).get("posted_date") or ""
+                    ),
                 }
             )
         try:
