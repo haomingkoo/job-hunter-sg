@@ -60,7 +60,7 @@ and PDF. The original resume remained available.
 | #102 | Preserve cumulative call, token, latency, validation, checkpoint, model, and trace evidence across replay. |
 | #106 | Globally merge and independently calibrate candidate evidence without losing exact provenance. |
 | #108 | Replace scattered retry flags with one persisted deterministic attempt ledger. |
-| #201 | Make the post-export action use the refined resume instead of opening the unfiltered chronological job feed. |
+| #201 | Implementation carries the exact exported resume into Recruitment Team and preserves a matching thread; merge, deployment, and signed-in browser acceptance remain. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
 
 ## Verification boundary
