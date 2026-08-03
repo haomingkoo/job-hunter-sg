@@ -438,15 +438,17 @@ def run_all_gates(
     jd_text: str = "",
     required_keywords: list[str] | None = None,
     injectable_keywords: set[str] | None = None,
+    supporting_evidence: str = "",
 ) -> list[GateResult]:
-    """Run all validation gates."""
+    """Run all validation gates against source text and cited candidate evidence."""
+    supported_source = "\n".join(part for part in (original, supporting_evidence) if part)
     return [
-        gate_fact_preservation(original, tailored),
+        gate_fact_preservation(supported_source, tailored),
         gate_ai_phrases(tailored, jd_text),
         gate_keyword_verbatim(tailored, required_keywords),
         gate_length_sanity(original, tailored),
-        gate_hallucination(original, tailored, injectable_keywords),
-        gate_unsupported_claims(original, tailored),
+        gate_hallucination(supported_source, tailored, injectable_keywords),
+        gate_unsupported_claims(supported_source, tailored),
     ]
 
 

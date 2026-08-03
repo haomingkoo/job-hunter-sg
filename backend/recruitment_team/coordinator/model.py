@@ -58,6 +58,7 @@ from ..open_agent.tools import (
     read_candidate_evidence,
     read_shortlist,
     read_target_job,
+    record_candidate_evidence,
     record_preferences,
     search_jobs,
     write_plan,
@@ -212,6 +213,7 @@ class DeepAgentConversationModel:
             model=self._build_model(),
             tools=[
                 read_shortlist,
+                record_candidate_evidence,
                 record_preferences,
                 search_jobs,
                 write_plan,

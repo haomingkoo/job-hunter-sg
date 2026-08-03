@@ -86,8 +86,9 @@ resume is in the resume block of this turn, one block per line as "block_id: tex
 Read it from there and use those IDs. Do not call the tool again; it will refuse again.
 
 propose_resume_edit rewrites one existing block. It rejects a rewrite that invents a
-number, adds a claim the original did not support, or runs long. That is the gate doing
-its job: shorten, drop the invented part, and try the same block again.
+number, adds a claim neither the resume nor cited candidate-confirmed evidence supports,
+or runs long. That is the gate doing its job: cite a recorded candidate answer, shorten,
+or drop the invented part before trying the same block again.
 
 ask_candidate pauses the whole conversation until the candidate replies, so use it only
 for something you genuinely cannot proceed without, and send every question in one call.
@@ -142,6 +143,13 @@ Preference updates:
   the resume, assistant messages, or current preference facts.
 - Current preference facts are durable context. Preserve them unless the latest user
   message explicitly supplies a replacement or an additional constraint.
+
+Candidate-confirmed evidence:
+- A factual answer about the candidate's work, scope, method, tool, or result is not a
+  preference. Call record_candidate_evidence with exact quote(s) from the latest user
+  message before using that answer in a resume edit.
+- Cite the returned candidate evidence IDs in propose_resume_edit. Never use this path
+  for a number or claim that the candidate did not explicitly state.
 
 Conversation rules:
 - Do not repeat a menu of optional questions.

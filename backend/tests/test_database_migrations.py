@@ -62,13 +62,20 @@ def test_legacy_users_remain_unverified_when_verification_column_is_added(monkey
 
     class Inspector:
         def get_table_names(self):
-            return ["scraped_jobs", "users", "recruitment_activity_events"]
+            return [
+                "scraped_jobs",
+                "users",
+                "recruitment_activity_events",
+                "proposed_resume_edits",
+            ]
 
         def get_columns(self, table):
             if table == "scraped_jobs":
                 names = scraped_columns
             elif table == "users":
                 names = {"id", "email", "tier", "terms_accepted_at", "privacy_accepted_at"}
+            elif table == "proposed_resume_edits":
+                names = {"id", "rewrite"}
             else:
                 names = {"id", "thread_id", "run_id"}
             return [{"name": name, "type": object()} for name in names]
@@ -97,5 +104,6 @@ def test_legacy_users_remain_unverified_when_verification_column_is_added(monkey
     assert "ALTER TABLE recruitment_activity_events ADD COLUMN parent_id TEXT" in statements
     assert "ALTER TABLE recruitment_activity_events ADD COLUMN duration_ms FLOAT" in statements
     assert any("recruitment_activity_events ADD COLUMN attributes JSON" in item for item in statements)
+    assert "ALTER TABLE proposed_resume_edits ADD COLUMN evidence_ids JSON" in statements
     assert not any("SET email_verified_at" in statement for statement in statements)
     assert not any("SET tier = 'user'" in statement for statement in statements)
