@@ -13,6 +13,7 @@ from validation_gates import _extract_numbers, run_all_gates
 
 from ..conversation_model import PreferenceUpdatePayload
 from ..interface import ConfirmedEvidenceFact, PreferenceUpdate, confirmed_evidence_fact
+from ..resume_edit_evidence import ResumeEditEvidenceRequest
 from . import context
 
 
@@ -469,10 +470,11 @@ def propose_resume_edit(
 
     `block_id` must be a canonical block ID visible in the active resume
     document. `rewrite` must replace that block's text without introducing
-    new numeric facts unless candidate_evidence_ids cites exact candidate-confirmed
-    evidence. It must stay within one block (no line breaks) -- this tool cannot
-    insert or delete a block. A valid proposal remains pending until the candidate
-    explicitly accepts it.
+    new facts unless candidate_evidence_ids cites exact profile fields returned by
+    read_candidate_evidence or candidate-confirmed evidence IDs returned by
+    record_candidate_evidence. It must stay within one block (no line breaks) --
+    this tool cannot insert or delete a block. A valid proposal remains pending
+    until the candidate explicitly accepts it.
     """
     document = context.current_document()
     edits = context.proposed_edits()
@@ -509,12 +511,16 @@ def propose_resume_edit(
     requested_ids = list(dict.fromkeys(candidate_evidence_ids or []))
     request = context.current_request()
     available_evidence = {
-        fact.evidence_id: fact
+        field.field_id: "\n".join((field.statement, *field.evidence_quotes))
+        for field in getattr(request.candidate_profile, "fields", ())
+    }
+    available_evidence.update({
+        fact.evidence_id: fact.evidence_quote
         for fact in (
             *getattr(request, "confirmed_evidence", ()),
             *getattr(request, "drafted_confirmed_evidence", ()),
         )
-    }
+    })
     unknown_evidence_ids = [
         evidence_id for evidence_id in requested_ids if evidence_id not in available_evidence
     ]
@@ -524,8 +530,9 @@ def propose_resume_edit(
             "reason": f"Unknown candidate evidence IDs: {', '.join(unknown_evidence_ids)}",
             "block_id": block_id,
         }
-    cited_evidence = [available_evidence[evidence_id] for evidence_id in requested_ids]
-    supporting_evidence = "\n".join(fact.evidence_quote for fact in cited_evidence)
+    supporting_evidence = "\n".join(
+        available_evidence[evidence_id] for evidence_id in requested_ids
+    )
     supported_source = "\n".join(
         part for part in (original_text, supporting_evidence) if part
     )
@@ -549,6 +556,22 @@ def propose_resume_edit(
     if failed:
         return {"accepted": False, "reason": "; ".join(gate.message for gate in failed), "block_id": block_id}
 
+    evidence_result = request.edit_evidence_validator.validate(
+        ResumeEditEvidenceRequest(
+            original=original_text,
+            supporting_evidence=supporting_evidence,
+            rewrite=clean_rewrite,
+        )
+    )
+    if not evidence_result.supported:
+        claims = "; ".join(evidence_result.unsupported_claims)
+        return {
+            "accepted": False,
+            "reason": claims or evidence_result.reason,
+            "failure_code": evidence_result.failure_code or "unsupported_claims",
+            "block_id": block_id,
+        }
+
     edits.append({
         "block_id": block_id,
         "section_key": block.get("section_key", ""),
@@ -556,7 +579,7 @@ def propose_resume_edit(
         "original": original_text,
         "rewrite": clean_rewrite,
         "document_revision": document.get("revision"),
-        "evidence_ids": [fact.evidence_id for fact in cited_evidence],
+        "evidence_ids": requested_ids,
         "status": "pending",
     })
     return {"accepted": True, "application_status": "pending_user_review", "block_id": block_id, "rewrite": clean_rewrite}

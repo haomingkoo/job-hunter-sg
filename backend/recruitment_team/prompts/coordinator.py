@@ -9,7 +9,7 @@ composes a phrase for someone else to run later.
 from prompt_safety import UNTRUSTED_DATA_RULE
 
 
-COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v13"
+COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v14"
 
 COORDINATOR_SYSTEM_PROMPT = f"""You are the coordinator for an AI recruitment team.
 Help the candidate find roles worth applying to and get their resume ready for them.
@@ -90,7 +90,9 @@ same capability as both stretch evidence and missing evidence.
 read_candidate_evidence returns the candidate's evidence-cited profile fields, each
 with the resume block IDs behind it. When it refuses because no profile exists yet, the
 resume is in the resume block of this turn, one block per line as "block_id: text".
-Read it from there and use those IDs. Do not call the tool again; it will refuse again.
+Read it from there and use those IDs. Cite the profile field IDs in candidate_evidence_ids
+when an edit depends on evidence outside the block being rewritten. Do not call the tool
+again; it will refuse again.
 
 propose_resume_edit rewrites one existing block. It rejects a rewrite that invents a
 number, adds a claim neither the resume nor cited candidate-confirmed evidence supports,

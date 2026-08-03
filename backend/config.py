@@ -76,6 +76,10 @@ SEALION_AGENT_MODEL: str = os.getenv("SEALION_AGENT_MODEL", "aisingapore/Qwen-SE
 COORDINATOR_MODEL: str = os.getenv("COORDINATOR_MODEL", "").strip() or SEALION_AGENT_MODEL
 # A reasoning tier thinks before it writes; with no floor the reply gets the rest.
 RECRUITMENT_CONVERSATION_MAX_TOKENS: int = _int_env("RECRUITMENT_CONVERSATION_MAX_TOKENS", 8000)
+RECRUITMENT_EDIT_EVIDENCE_MAX_TOKENS: int = _positive_int_env(
+    "RECRUITMENT_EDIT_EVIDENCE_MAX_TOKENS",
+    2000,
+)
 # SMART: deep-agent persona reviews (single-shot, no tools, latency-tolerant).
 SEALION_SMART_MODEL: str = os.getenv("SEALION_SMART_MODEL", "aisingapore/Qwen-SEA-LION-v4.5-27B-IT")
 # Models that must run in instruct/non-thinking mode for product-facing text and

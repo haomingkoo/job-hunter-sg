@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+from backend.tests.fakes import AllowingEditEvidenceValidator
 from recruitment_team.assessment_contracts import TargetAssessmentRequest
 from recruitment_team.open_agent.context import assessment_context
 from recruitment_team.open_agent.tools import (
@@ -8,6 +11,7 @@ from recruitment_team.open_agent.tools import (
     read_candidate_evidence,
     read_target_job,
 )
+from recruitment_team.resume_edit_evidence import ResumeEditEvidenceResult
 
 
 def _request(resume_document=None):
@@ -22,6 +26,7 @@ def _request(resume_document=None):
         role_profile=_role_profile_run().profile,
         target_job=_job_snapshot(),
         trace_key="open-agent-trace-key",
+        edit_evidence_validator=AllowingEditEvidenceValidator(),
         resume_document=resume_document,
     )
 
@@ -120,6 +125,59 @@ def test_propose_resume_edit_rejects_via_validation_gates_with_no_new_numbers():
         )
     assert result["accepted"] is False
     assert "25" not in (result.get("reason") or "")
+
+
+def test_propose_resume_edit_rejects_semantically_unsupported_scope():
+    class _RejectingValidator:
+        def validate(self, request):
+            return ResumeEditEvidenceResult(
+                supported=False,
+                unsupported_claims=("coached production teams on performance management",),
+                reason="Mentoring engineers does not establish production-team management.",
+            )
+
+    request = replace(
+        _request(resume_document=_document()),
+        edit_evidence_validator=_RejectingValidator(),
+    )
+    with assessment_context(request):
+        result = propose_resume_edit.invoke({
+            "block_id": "b1",
+            "rewrite": (
+                "Led team of 12 engineers saving $3M; coached production teams "
+                "on performance management."
+            ),
+        })
+
+    assert result["accepted"] is False
+    assert result["failure_code"] == "unsupported_claims"
+    assert "performance management" in result["reason"]
+
+
+def test_propose_resume_edit_resolves_profile_field_evidence_ids():
+    class _RecordingValidator:
+        def __init__(self):
+            self.request = None
+
+        def validate(self, request):
+            self.request = request
+            return ResumeEditEvidenceResult(supported=True, reason="Supported.")
+
+    validator = _RecordingValidator()
+    request = replace(
+        _request(resume_document=_document()),
+        edit_evidence_validator=validator,
+    )
+    field = request.candidate_profile.fields[0]
+    with assessment_context(request):
+        result = propose_resume_edit.invoke({
+            "block_id": "b1",
+            "rewrite": "Directed team of 12 engineers saving $3M.",
+            "candidate_evidence_ids": [field.field_id],
+        })
+
+    assert result["accepted"] is True
+    assert field.statement in validator.request.supporting_evidence
 
 
 def test_ask_candidate_carries_every_question_in_one_pause():

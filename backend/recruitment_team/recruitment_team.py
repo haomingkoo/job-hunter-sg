@@ -119,6 +119,10 @@ from .role_success import (
     SourceCoverage,
 )
 from .role_evidence_assessor import RoleEvidenceAssessmentError, role_evidence_attempt_limit
+from .resume_edit_evidence import (
+    LangChainResumeEditEvidenceValidator,
+    ResumeEditEvidenceValidator,
+)
 from .telemetry import RecruitmentTelemetry
 from .activity_publisher import ActivityPublisher
 from .prompts import CONVERSATION_PROMPT_VERSION
@@ -323,6 +327,7 @@ class RecruitmentTeam:
         candidate_profiler_factory: CandidateProfilerFactory | None = None,
         target_assessment_runner: TargetAssessmentRunner | None = None,
         study_dispatcher: Callable[[int, int, str], None] | None = None,
+        edit_evidence_validator: ResumeEditEvidenceValidator | None = None,
     ):
         self._db = db
         self._conversation_model = conversation_model
@@ -333,6 +338,9 @@ class RecruitmentTeam:
         self._candidate_profiler_factory = candidate_profiler_factory
         self._target_assessment_runner = target_assessment_runner
         self._study_dispatcher = study_dispatcher
+        self._edit_evidence_validator = edit_evidence_validator or LangChainResumeEditEvidenceValidator(
+            telemetry=telemetry
+        )
 
     def _record_run_attempt(
         self,
@@ -948,6 +956,7 @@ class RecruitmentTeam:
             ),
             plan=self._plan_steps(facts),
             discovery=self._discovery,
+            edit_evidence_validator=self._edit_evidence_validator,
             latest_user_message=latest_user.content,
             latest_user_message_id=latest_user.message_id,
             latest_user_run_id=latest_user.run_id,
@@ -1655,6 +1664,7 @@ class RecruitmentTeam:
             role_profile=self._role_profile_from_dict(facts["role_success_profile"]),
             target_job=self._job_from_dict(facts["selected_target"]),
             trace_key=trace_key_value,
+            edit_evidence_validator=self._edit_evidence_validator,
             resume_document=create_resume_document(resume.resume_text),
             confirmed_evidence=self._confirmed_evidence_facts(facts),
         )

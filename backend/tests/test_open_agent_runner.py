@@ -42,6 +42,7 @@ def _judge_call(call_id: str = "judge-call-1") -> AIMessage:
 
 
 def _request():
+    from backend.tests.fakes import AllowingEditEvidenceValidator
     from recruitment_team.assessment_contracts import TargetAssessmentRequest
     from backend.tests.test_recruitment_team_module import (
         _candidate_profile_run,
@@ -54,6 +55,7 @@ def _request():
         role_profile=_role_profile_run().profile,
         target_job=_job_snapshot(),
         trace_key="open-agent-runner-trace",
+        edit_evidence_validator=AllowingEditEvidenceValidator(),
         resume_document={
             "schema_version": 1,
             "revision": "rev-1",
