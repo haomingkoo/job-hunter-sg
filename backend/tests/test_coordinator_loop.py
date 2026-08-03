@@ -1504,6 +1504,31 @@ def test_a_turn_that_answers_in_prose_is_delivered_not_failed():
     assert snapshot.case_facts.preferences == ()
 
 
+def test_an_unsubmitted_reply_cut_off_mid_sentence_is_rejected():
+    """Never turn model truncation into a successful candidate-facing message."""
+    from recruitment_team.errors import ConversationUnavailable
+
+    agent = ScriptedDeepAgent(
+        responses=[final("The strongest fit is operations leadership because your manager")]
+    )
+
+    with pytest.raises(ConversationUnavailable) as error:
+        _model(agent).respond([], RESUME_TEXT, (), _context(_RecordingDiscovery([])))
+
+    assert error.value.failure_type == "incomplete_reply"
+
+
+def test_conversation_reply_schema_requires_a_complete_sentence():
+    """ToolStrategy uses this validation error to ask the model to repair its reply."""
+    from pydantic import ValidationError
+    from recruitment_team.conversation_model import ConversationReply
+
+    with pytest.raises(ValidationError, match="complete sentence"):
+        ConversationReply(reply="The strongest fit is operations leadership because")
+
+    assert ConversationReply(reply='Target the manufacturing manager role.').reply.endswith(".")
+
+
 def test_paragraphing_preserves_model_supplied_markdown():
     from recruitment_team.conversation_model import paragraph_reply
 

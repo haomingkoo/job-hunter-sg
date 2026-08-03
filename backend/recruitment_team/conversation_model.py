@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from prompt_safety import xml_data_block
 
 import config
@@ -47,6 +47,22 @@ class ConversationReply(BaseModel):
     reply: str = Field(min_length=1)
     preference_updates: list[PreferenceUpdatePayload] = Field(default_factory=list)
     search_query: str = ""
+
+    @field_validator("reply")
+    @classmethod
+    def require_complete_sentence(cls, value: str) -> str:
+        """Reject visibly cut-off prose while ToolStrategy can still repair it."""
+        if not reply_is_complete(value):
+            raise ValueError("reply must end with a complete sentence")
+        return value
+
+
+_SENTENCE_END = re.compile(r"[.!?](?:[\"'\u201d\u2019)\]])?\s*$")
+
+
+def reply_is_complete(value: str) -> bool:
+    """Whether candidate-facing prose has an explicit sentence ending."""
+    return bool(_SENTENCE_END.search(value))
 
 
 @tool(args_schema=ConversationReply)
