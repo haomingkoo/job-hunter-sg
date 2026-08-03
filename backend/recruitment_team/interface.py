@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
@@ -131,6 +131,7 @@ class RunReceipt:
     status: Literal["completed"]
     trace_key: str
     workflow_state: str = ""
+    attempt_ledger: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

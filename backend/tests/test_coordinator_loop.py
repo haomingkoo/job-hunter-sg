@@ -161,7 +161,7 @@ def _search_result(jobs):
     )
 
 
-def _failed_search(failure_type: str = "unavailable"):
+def _failed_search(failure_code: str = "connection_failure"):
     """What `LangChainJobDiscovery` really returns when the tool fails.
 
     `discovery.py:120-130`: no jobs, `valid_empty=False`, a `failure_type`. The
@@ -177,8 +177,8 @@ def _failed_search(failure_type: str = "unavailable"):
         visible_candidate_count=None,
         truncated=False,
         valid_empty=False,
-        failure_type=failure_type,
-        retryable=True,
+        failure_type="transient",
+        failure_code=failure_code,
     )
 
 
@@ -881,7 +881,7 @@ def test_a_failed_search_is_surfaced_to_the_agent_and_leaves_the_shortlist_alone
     discovery = _RecordingDiscovery(
         [
             _search_result([_job(601, "Yield Enhancement Engineer", "Micron")]),
-            _failed_search("unavailable"),
+            _failed_search(),
         ]
     )
     agent = ScriptedDeepAgent(
@@ -920,7 +920,7 @@ def test_a_failed_search_is_surfaced_to_the_agent_and_leaves_the_shortlist_alone
 
     assert [job.job_id for job in snapshot.case_facts.recommendations] == [601]
     assert snapshot.case_facts.latest_search_query == "semiconductor yield analytics"
-    assert "unavailable" in _rendered(agent.requests[2])
+    assert "connection_failure" in _rendered(agent.requests[2])
 
 
 def test_search_query_records_the_query_that_ran_not_the_one_the_model_asked_for():
@@ -1021,7 +1021,8 @@ def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(
                 idempotency_key="turn-2",
             )
 
-    assert error.value.failure_type == "tool_iteration_cap"
+    assert error.value.failure_type == "business"
+    assert error.value.failure_code == "attempt_budget_exhausted"
 
     # The cap was really honoured. Without this bound the test passes whether the
     # limit is 13, 45 or ignored: `repeat_last` never runs out of script.
@@ -1031,12 +1032,15 @@ def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(
 
     failed = [event for event in publisher.events if event.status == "failed"]
     assert len(failed) == 1
-    assert failed[0].detail["failure_type"] == "tool_iteration_cap"
+    assert failed[0].detail["failure_type"] == "business"
+    assert failed[0].detail["failure_code"] == "attempt_budget_exhausted"
     assert failed[0].parent_id == failed[0].run_id
     assert failed[0].attributes == {
         "error_type": "ConversationUnavailable",
-        "failure_type": "tool_iteration_cap",
-        "retryable": True,
+        "failure_type": "business",
+        "failure_code": "attempt_budget_exhausted",
+        "retryable": False,
+        "recovery_action": "start_new_logical_run",
     }
     assert failed[0].duration_ms is not None
 
@@ -1056,13 +1060,13 @@ def test_conversation_unavailable_maps_to_503():
 
     from recruitment_team.errors import ConversationUnavailable
     from recruitment_team.http_routes import _raise_http_error
+    from recruitment_team.recovery import classify_failure
 
     with pytest.raises(HTTPException) as error:
         _raise_http_error(
             ConversationUnavailable(
                 "coordinator loop hit its tool iteration cap",
-                failure_type="tool_iteration_cap",
-                retryable=True,
+                decision=classify_failure("attempt_budget_exhausted"),
             )
         )
 
@@ -1516,7 +1520,8 @@ def test_an_unsubmitted_reply_cut_off_mid_sentence_is_rejected():
     with pytest.raises(ConversationUnavailable) as error:
         _model(agent).respond([], RESUME_TEXT, (), _context(_RecordingDiscovery([])))
 
-    assert error.value.failure_type == "incomplete_reply"
+    assert error.value.failure_type == "validation"
+    assert error.value.failure_code == "structured_output_invalid"
 
 
 def test_conversation_reply_schema_requires_a_complete_sentence():
@@ -1576,4 +1581,5 @@ def test_a_turn_that_produces_no_text_at_all_still_fails():
                 idempotency_key="turn-1",
             )
 
-    assert error.value.failure_type == "no_submission"
+    assert error.value.failure_type == "validation"
+    assert error.value.failure_code == "structured_output_invalid"

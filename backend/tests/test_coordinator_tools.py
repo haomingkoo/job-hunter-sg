@@ -105,7 +105,7 @@ def _ranked_match(job_id: int, *, pay_position: str = "above_peer_median") -> di
     }
 
 
-def _failed_search(failure_type: str = "unavailable"):
+def _failed_search(failure_code: str = "connection_failure"):
     """What LangChainJobDiscovery really returns on a source failure.
 
     No jobs, `valid_empty=False`, a `failure_type` (discovery.py:120-130).
@@ -119,8 +119,8 @@ def _failed_search(failure_type: str = "unavailable"):
         visible_candidate_count=None,
         truncated=False,
         valid_empty=False,
-        failure_type=failure_type,
-        retryable=True,
+        failure_type="transient",
+        failure_code=failure_code,
     )
 
 
@@ -570,14 +570,15 @@ def test_a_source_failure_is_returned_to_the_agent_rather_than_raised():
     from recruitment_team.open_agent.context import assessment_context
     from recruitment_team.open_agent.tools import search_jobs
 
-    context = _context(_RecordingDiscovery([_failed_search("unavailable")]))
+    context = _context(_RecordingDiscovery([_failed_search()]))
 
     with assessment_context(context, initial_edits=context.proposed_edits):
         result = search_jobs.invoke({"query": "staff yield engineer"})
 
     assert result["ok"] is False
-    assert result["failure_type"] == "unavailable"
-    assert result["retryable"] is True
+    assert result["failure_type"] == "transient"
+    assert result["failure_code"] == "connection_failure"
+    assert result["retryable"] is False
     assert len(context.search_results) == 1
 
 
@@ -903,7 +904,7 @@ def test_a_failed_search_leaves_the_existing_shortlist_alone():
     discovery = _RecordingDiscovery(
         [
             _search_result([_job(901, "Yield Enhancement Engineer", "Micron")]),
-            _failed_search("unavailable"),
+            _failed_search(),
         ]
     )
     model = _ToolCallingConversationModel(
@@ -934,7 +935,7 @@ def test_a_failed_search_leaves_the_existing_shortlist_alone():
     assert [job.job_id for job in snapshot.case_facts.recommendations] == [901]
     assert snapshot.case_facts.latest_search_query == RESUME_HINT
     # The failure reached the agent rather than ending the turn.
-    assert model.results[1][0]["failure_type"] == "unavailable"
+    assert model.results[1][0]["failure_type"] == "transient"
 
 
 def test_search_query_records_the_query_that_ran_not_the_one_the_model_asked_for():

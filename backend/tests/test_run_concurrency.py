@@ -121,6 +121,8 @@ def test_streamed_concurrency_rejection_contains_only_authored_safe_metadata():
         "error_type": "RunConcurrencyExceeded",
         "message": "Another AI run is active. Try again shortly.",
         "retryable": True,
-        "failure_type": "concurrency",
+        "failure_type": "transient",
+        "failure_code": "capacity_exceeded",
+        "recovery_action": "retry_after",
     }
     assert "private-key" not in body

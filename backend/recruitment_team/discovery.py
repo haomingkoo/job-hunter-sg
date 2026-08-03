@@ -11,6 +11,8 @@ from typing import Protocol
 
 from sqlalchemy import and_, or_
 
+from .recovery import classify_failure, normalize_failure_code
+
 
 JOB_REASONING_REQUIREMENT_FIELDS = (
     "required_skills",
@@ -133,7 +135,7 @@ class JobSearchResult:
     truncated: bool
     valid_empty: bool
     failure_type: str | None = None
-    retryable: bool = False
+    failure_code: str | None = None
 
 
 class DiscoveryPort(Protocol):
@@ -241,6 +243,8 @@ class LangChainJobDiscovery:
             {"query": query, "detail": True}
         )
         if not result.get("ok"):
+            failure_code = normalize_failure_code(str(result.get("failure_type") or ""))
+            decision = classify_failure(failure_code, attempts_remaining=False)
             return JobSearchResult(
                 query=query,
                 jobs=(),
@@ -248,8 +252,8 @@ class LangChainJobDiscovery:
                 visible_candidate_count=None,
                 truncated=False,
                 valid_empty=False,
-                failure_type=str(result.get("failure_type") or "unavailable"),
-                retryable=bool(result.get("retryable")),
+                failure_type=decision.failure_type,
+                failure_code=decision.failure_code,
             )
         jobs = tuple(
             JobSnapshot.from_payload(item)

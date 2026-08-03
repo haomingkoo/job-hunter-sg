@@ -15,7 +15,7 @@ from fastapi.encoders import jsonable_encoder
 import config
 
 from .activity_publisher import ActivityPublisher
-from .errors import RecruitmentTeamError
+from .errors import RecruitmentTeamError, ServiceUnavailable
 from .interface import ActivityEvent, Command
 from .recruitment_team import RecruitmentTeam
 
@@ -99,10 +99,13 @@ def stream_command(
             }
             if isinstance(error, RecruitmentTeamError):
                 payload["message"] = str(error)
-                if hasattr(error, "retryable"):
-                    payload["retryable"] = bool(error.retryable)
-                if hasattr(error, "failure_type"):
-                    payload["failure_type"] = error.failure_type
+                if isinstance(error, ServiceUnavailable):
+                    payload.update({
+                        "failure_type": error.failure_type,
+                        "failure_code": error.failure_code,
+                        "retryable": error.retryable,
+                        "recovery_action": error.recovery_action,
+                    })
             publish("error", payload)
 
     worker = Thread(target=execute, name="recruitment-team-command")

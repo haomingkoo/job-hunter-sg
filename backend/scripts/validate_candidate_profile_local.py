@@ -201,9 +201,13 @@ def main(argv: list[str] | None = None) -> int:
         }
         report["profile"] = asdict(run.profile)
     except CandidateProfileValidationError as error:
+        failure_code = "information_absent" if error.validation_code == "profile:empty" else "semantic_fixable"
         report["error"] = {
             "type": type(error).__name__,
             "message": str(error),
+            "failure_type": "validation",
+            "failure_code": failure_code,
+            "retryable": False,
             "validation_code": error.validation_code,
             "rejected_submission": error.rejected_submission,
             "attempt_count": error.attempt_count,
@@ -218,7 +222,9 @@ def main(argv: list[str] | None = None) -> int:
         report["error"] = {
             "type": type(error).__name__,
             "message": str(error),
-            "failure_type": "transport",
+            "failure_type": "transient",
+            "failure_code": error.failure_code,
+            "retryable": False,
             "cause_type": error.cause_type,
             "failed_scope_id": error.scope_id,
             "attempt": error.attempt,

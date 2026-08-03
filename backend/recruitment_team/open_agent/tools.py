@@ -437,12 +437,17 @@ def search_jobs(query: str) -> dict:
     conversation.search_results.append(result)
 
     if result.failure_type:
+        from ..recovery import classify_failure
+
+        decision = classify_failure(result.failure_code or "unclassified_failure")
         # Returned, not raised. A source failure mid-turn is information the
         # agent can act on, not the end of the turn.
         return {
             "ok": False,
-            "failure_type": result.failure_type,
-            "retryable": result.retryable,
+            "failure_type": decision.failure_type,
+            "failure_code": decision.failure_code,
+            "retryable": decision.retryable,
+            "recovery_action": decision.recovery_action,
             "query": result.query,
         }
     return {

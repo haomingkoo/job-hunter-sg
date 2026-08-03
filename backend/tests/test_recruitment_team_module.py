@@ -528,6 +528,153 @@ def test_retrying_the_same_idempotency_key_after_a_failure_succeeds():
         assert runs[0].error_type is None
 
 
+def test_retry_budget_survives_restart_and_duplicate_delivery_is_side_effect_free():
+    from models import RecruitmentMessage, RecruitmentRun, RecruitmentThread
+    from recruitment_team import RecruitmentTeam
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.conversation_model import ModelReply
+    from recruitment_team.errors import ServiceUnavailable
+    from recruitment_team.interface import StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    class FlakyModel:
+        def __init__(self):
+            self.calls = 0
+
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
+            self.calls += 1
+            if self.calls < 2:
+                raise TimeoutError("provider timed out")
+            return ModelReply(content="Recovered reply.", model_name="flaky-model")
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    model = FlakyModel()
+    command = StartThread(resume_version_id=resume_id, message="Start my search.")
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            model,
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        with pytest.raises(TimeoutError):
+            team.execute(owner_id, command, "durable-retry")
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            model,
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        completed = team.execute(owner_id, command, "durable-retry")
+        duplicate = team.execute(owner_id, command, "durable-retry")
+
+        run = db.query(RecruitmentRun).filter_by(idempotency_key="durable-retry").one()
+        assert duplicate == completed
+        assert run.attempt_ledger["stages"]["start_thread"]["transport"]["used"] == 2
+        assert run.attempt_ledger["stages"]["start_thread"]["workflow_resume"]["used"] == 1
+        assert db.query(RecruitmentThread).count() == 1
+        assert db.query(RecruitmentMessage).filter_by(role="user").count() == 1
+        assert db.query(RecruitmentMessage).filter_by(role="assistant").count() == 1
+        assert model.calls == 2
+
+    class AlwaysTimeout:
+        def __init__(self):
+            self.calls = 0
+
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
+            self.calls += 1
+            raise TimeoutError("provider timed out")
+
+    exhausted_model = AlwaysTimeout()
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            exhausted_model,
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        with pytest.raises(TimeoutError):
+            team.execute(owner_id, command, "exhausted-retry")
+        with pytest.raises(TimeoutError):
+            team.execute(owner_id, command, "exhausted-retry")
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            exhausted_model,
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        with pytest.raises(ServiceUnavailable) as blocked:
+            team.execute(owner_id, command, "exhausted-retry")
+
+        assert blocked.value.failure_code == "transport_timeout"
+        assert blocked.value.retryable is False
+        assert exhausted_model.calls == 2
+
+
+def test_valid_empty_search_is_success_without_a_retry():
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.interface import SearchJobs, StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    discovery = ScriptedDiscovery([
+        JobSearchResult(
+            query="specialized role",
+            jobs=(),
+            candidate_count=0,
+            visible_candidate_count=0,
+            truncated=False,
+            valid_empty=True,
+        )
+    ])
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            discovery,
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Start my search."),
+            "empty-start",
+        )
+        receipt = team.execute(
+            owner_id,
+            SearchJobs(started.thread_id, "specialized role"),
+            "empty-search",
+        )
+
+        ledger = receipt.attempt_ledger["stages"]["search_jobs"]
+        assert ledger["transport"]["used"] == 1
+        assert "semantic" not in ledger
+        assert "workflow_resume" not in ledger
+        assert discovery.search_count == 1
+        assert team.snapshot(owner_id, started.thread_id).messages[-1].content.startswith(
+            "No current jobs matched"
+        )
+
+
 def test_model_failure_is_durable_and_visible():
     from recruitment_team import RecruitmentTeam
     from recruitment_team.activity_publisher import IgnoreActivityPublisher
@@ -592,6 +739,10 @@ def test_model_failure_is_durable_and_visible():
     assert telemetry.spans[0].status == "error"
     assert telemetry.spans[2].status == "error"
     assert telemetry.spans[3].status == "success"
+    decision = run.attempt_ledger["last_decision"]
+    for key in ("failure_type", "failure_code", "retryable", "recovery_action"):
+        assert events[-1].detail[key] == decision[key]
+        assert telemetry.spans[0].attributes[key] == decision[key]
 
 
 def test_running_activity_is_committed_and_published_before_model_completion():
@@ -1623,7 +1774,11 @@ def test_quality_blocked_target_assessment_is_durable_and_withholds_synthesis():
                 synthesis="",
                 judge={"verdict": "Unsupported claim", "requires_revision": True},
                 correction={"attempted": True, "resolved": False},
-                error={"failure_type": "quality", "retryable": False},
+                    error={
+                        "failure_type": "validation",
+                        "failure_code": "quality_gate_blocked",
+                        "retryable": False,
+                    },
                 execution_policy=target_assessment_execution_policy(),
             )
         ]
@@ -1655,7 +1810,8 @@ def test_quality_blocked_target_assessment_is_durable_and_withholds_synthesis():
         artifact = team.target_assessment(owner_id, started.thread_id)
         snapshot = team.snapshot(owner_id, started.thread_id)
 
-    assert caught.value.failure_type == "quality"
+    assert caught.value.failure_type == "validation"
+    assert caught.value.failure_code == "quality_gate_blocked"
     assert caught.value.retryable is False
     assert artifact is not None
     assert artifact.status == "quality_blocked"
@@ -1713,7 +1869,11 @@ def test_quality_blocked_open_agent_assessment_withholds_stored_synthesis():
                 synthesis=unapproved_synthesis,
                 judge={"verdict": "revise", "requires_revision": True},
                 correction={"attempted": True, "resolved": False},
-                error={"failure_type": "quality", "retryable": False},
+                    error={
+                        "failure_type": "validation",
+                        "failure_code": "quality_gate_blocked",
+                        "retryable": False,
+                    },
                 execution_policy=target_assessment_execution_policy(),
             )
         ]
@@ -1744,7 +1904,8 @@ def test_quality_blocked_open_agent_assessment_withholds_stored_synthesis():
 
         artifact = team.target_assessment(owner_id, started.thread_id)
 
-    assert caught.value.failure_type == "quality"
+    assert caught.value.failure_type == "validation"
+    assert caught.value.failure_code == "quality_gate_blocked"
     assert artifact is not None
     assert artifact.status == "quality_blocked"
     assert artifact.synthesis == ""
@@ -3458,6 +3619,7 @@ def test_answering_with_an_empty_synthesis_result_fails_closed_not_silently_comp
     proven for the initial AssessTargetJob run. This proves the same guard
     fires for a resumed run too -- the panel's exact "no test for a failed
     resume other than PauseTokenNotFound" gap."""
+    from models import RecruitmentRun
     from recruitment_team import RecruitmentTeam, ScriptedConversationModel
     from recruitment_team.activity_publisher import IgnoreActivityPublisher
     from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
@@ -3541,11 +3703,17 @@ def test_answering_with_an_empty_synthesis_result_fails_closed_not_silently_comp
             )
             assert False, "expected TargetAssessmentUnavailable when a resumed run reports empty synthesis"
         except TargetAssessmentUnavailable as error:
-            assert error.failure_type == "workflow"
+            assert error.failure_type == "validation"
+            assert error.failure_code == "structured_output_invalid"
 
         artifact = team.target_assessment(owner_id, started.thread_id)
         assert artifact.status == "failed"
         assert artifact.error["error_type"] == "EmptySynthesis"
+        failed_run = db.query(RecruitmentRun).filter_by(
+            idempotency_key="empty-synth-answer"
+        ).one()
+        for key in ("failure_type", "failure_code", "retryable", "recovery_action"):
+            assert artifact.error[key] == failed_run.attempt_ledger["last_decision"][key]
 
 
 def test_receipt_reports_the_workflow_state_the_run_actually_ended_in():

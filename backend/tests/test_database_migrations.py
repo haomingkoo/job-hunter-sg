@@ -67,6 +67,7 @@ def test_legacy_users_remain_unverified_when_verification_column_is_added(monkey
                     "users",
                     "recruitment_activity_events",
                     "proposed_resume_edits",
+                    "recruitment_runs",
                     "candidate_profile_artifacts",
                     "target_assessment_artifacts",
             ]
@@ -113,6 +114,10 @@ def test_legacy_users_remain_unverified_when_verification_column_is_added(monkey
     )
     assert (
         "ALTER TABLE target_assessment_artifacts ADD COLUMN execution_metrics JSON NOT NULL DEFAULT '{}'"
+        in statements
+    )
+    assert (
+        "ALTER TABLE recruitment_runs ADD COLUMN attempt_ledger JSON NOT NULL DEFAULT '{}'"
         in statements
     )
     assert not any("SET email_verified_at" in statement for statement in statements)

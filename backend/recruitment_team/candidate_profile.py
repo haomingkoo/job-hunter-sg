@@ -25,6 +25,7 @@ from .prompts import (
     CANDIDATE_PROFILE_VALIDATION_FEEDBACK_VERSION,
     candidate_profile_validation_feedback,
 )
+from .recovery import classify_exception
 from .telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 
 
@@ -204,6 +205,7 @@ class CandidateProfileTransportError(RuntimeError):
         scope_id: str,
         attempt: int,
         cause_type: str,
+        failure_code: str,
         completed_scope_ids: tuple[str, ...],
         checkpoint_id: str,
         model_call_count: int,
@@ -214,6 +216,7 @@ class CandidateProfileTransportError(RuntimeError):
         self.scope_id = scope_id
         self.attempt = attempt
         self.cause_type = cause_type
+        self.failure_code = failure_code
         self.completed_scope_ids = completed_scope_ids
         self.checkpoint_id = checkpoint_id
         self.model_call_count = model_call_count
@@ -831,6 +834,7 @@ class LangChainCandidateProfiler:
                         try:
                             response = bound_model.invoke(attempt_request)
                         except Exception as error:
+                            decision = classify_exception(error, attempts_remaining=False)
                             self._record_execution_event(
                                 checkpoint_id,
                                 {
@@ -842,6 +846,10 @@ class LangChainCandidateProfiler:
                                     "model": model_name,
                                     "latency_ms": (time.perf_counter() - attempt_started) * 1000,
                                     "error_type": type(error).__name__,
+                                    "failure_type": decision.failure_type,
+                                    "failure_code": decision.failure_code,
+                                    "retryable": decision.retryable,
+                                    "recovery_action": decision.recovery_action,
                                 },
                             )
                             progress("failure", scope, attempt=attempt)
@@ -851,6 +859,7 @@ class LangChainCandidateProfiler:
                                 scope_id=scope.scope_id,
                                 attempt=attempt,
                                 cause_type=type(error).__name__,
+                                failure_code=decision.failure_code,
                                 completed_scope_ids=tuple(completed_scope_ids),
                                 checkpoint_id=checkpoint_id,
                                 model_call_count=model_call_count,
@@ -913,9 +922,14 @@ class LangChainCandidateProfiler:
                             checkpoint_id,
                             scope.scope_id,
                             {
+                                "original_input": {
+                                    "scope_id": scope.scope_id,
+                                    "resume_blocks": scope_blocks,
+                                },
                                 "failed_output": failed_output,
                                 "rejected_payload": rejected_payload,
                                 "validation_code": failure,
+                                "fixability": "fixable",
                                 "next_attempt": attempt if exhausted else attempt + 1,
                                 "exhausted": exhausted,
                             },
