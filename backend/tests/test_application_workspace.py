@@ -5,8 +5,10 @@ import io
 import secrets
 import sys
 from datetime import datetime, timezone
+from io import BytesIO
 
 from fastapi.testclient import TestClient
+from openpyxl import Workbook
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -48,6 +50,18 @@ def _create_workspace_with_resume(client: TestClient, headers: dict, role_metada
     }, headers=headers)
     assert created.status_code == 201
     return created.json()
+
+
+def _mom_workbook(occupation: str = "Artificial intelligence engineer") -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "T4"
+    sheet.cell(row=10, column=3, value=occupation)
+    for column, value in enumerate((6000, 8000, 10000, 6200, 8500, 10500), start=4):
+        sheet.cell(row=10, column=column, value=value)
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
 
 
 def test_application_workspace_stores_job_context_and_append_only_history():
@@ -519,3 +533,501 @@ def test_application_workspace_rejects_submitted_resume_over_five_megabytes():
     )
 
     assert response.status_code == 413
+
+
+def test_research_pack_route_persists_through_the_workspace_interface(monkeypatch):
+    from application_research import ResearchPack
+    from database import init_db
+    from recruitment_team.http_routes import get_recruitment_telemetry
+    from recruitment_team.telemetry import RecordedTelemetry
+    import main
+
+    init_db()
+    client = TestClient(main.app)
+    headers = _signup(client)
+    workspace = _create_workspace_with_resume(
+        client,
+        headers,
+        role_metadata={"contacts": [{"name": "Hiring manager"}]},
+    )
+
+    pack = ResearchPack(
+        status="complete",
+        role_company_brief={
+            "status": "complete",
+            "company": {"name": "GovTech"},
+            "role": {"ats_terms": [{"term": "python"}]},
+            "sources": [{"url": "https://example.com/job", "source_type": "job_posting"}],
+        },
+        interview_pack={
+            "status": "complete",
+            "questions": [{"cluster": "technical", "question": "How did you use Python?"}],
+        },
+        compensation_brief={
+            "status": "complete",
+            "observations": [{"kind": "employer_posting", "value": "$8,000"}],
+        },
+        source_statuses=({"source": "fixture", "status": "complete"},),
+        built_at="2026-08-03T00:00:00+00:00",
+    )
+
+    class FakeProvider:
+        def build(self, tracked, resume_text):
+            assert tracked.id == workspace["id"]
+            assert "Python data pipelines" in resume_text
+            return pack
+
+    telemetry = RecordedTelemetry()
+    main.app.dependency_overrides[get_recruitment_telemetry] = lambda: telemetry
+    monkeypatch.setattr(main, "CorpusAndMomResearchProvider", lambda _db: FakeProvider())
+    built = client.post(
+        f"/api/applications/workspaces/{workspace['id']}/research-pack",
+        headers=headers,
+    )
+    assert built.status_code == 200
+    metadata = built.json()["role_metadata"]
+    assert metadata["contacts"] == [{"name": "Hiring manager"}]
+    assert metadata["application_research"]["status"] == "complete"
+    assert built.json()["stage_history"][-1]["source"] == "application_research"
+    assert telemetry.spans[0].attributes == {
+        "workspace_id": workspace["id"],
+        "provider": "public_job_corpus_and_mom",
+        "status": "complete",
+        "source_count": 1,
+    }
+
+    reloaded = client.get(
+        f"/api/applications/workspaces/{workspace['id']}",
+        headers=headers,
+    )
+    assert reloaded.json()["role_metadata"]["application_research"]["built_at"] == (
+        "2026-08-03T00:00:00+00:00"
+    )
+
+    other_headers = _signup(client)
+    denied = client.post(
+        f"/api/applications/workspaces/{workspace['id']}/research-pack",
+        headers=other_headers,
+    )
+    assert denied.status_code == 404
+    main.app.dependency_overrides.pop(get_recruitment_telemetry, None)
+
+
+def test_corpus_and_mom_provider_keeps_sources_and_wage_definitions_separate():
+    from application_research import CorpusAndMomResearchProvider
+    from database import SessionLocal, init_db
+    from models import ScrapedJob, TrackedJob
+
+    init_db()
+    unique = secrets.token_hex(6)
+    with SessionLocal() as db:
+        target = ScrapedJob(
+            title="Artificial Intelligence Engineer",
+            company=f"Evidence Company {unique}",
+            location="Singapore",
+            salary="$8,000 - $10,000",
+            source="MyCareersFuture",
+            url=f"https://example.com/{unique}/target",
+            posted_date="2026-08-01",
+            posted_at_sort="2026-08-01T00:00:00+00:00",
+            scraped_at="2026-08-02T00:00:00+00:00",
+            description="Required Python, machine learning, and stakeholder communication.",
+            skills=["Python", "Machine Learning"],
+            parsed_jd={"required_skills": ["Python", "Machine Learning"]},
+            dedup_key=f"research-target-{unique}",
+            hidden=0,
+        )
+        comparable = ScrapedJob(
+            title="Machine Learning Engineer",
+            company=f"Comparable Company {unique}",
+            location="Singapore",
+            salary="$7,000 - $9,000",
+            source="MyCareersFuture",
+            url=f"https://example.com/{unique}/comparable",
+            posted_date="2026-08-01",
+            posted_at_sort="2026-08-01T00:00:00+00:00",
+            scraped_at="2026-08-02T00:00:00+00:00",
+            description="Build Python machine learning systems with product stakeholders.",
+            skills=["Python", "Machine Learning"],
+            dedup_key=f"research-comparable-{unique}",
+            hidden=0,
+        )
+        db.add_all([target, comparable])
+        db.flush()
+        tracked = TrackedJob(
+            user_id=1,
+            company=target.company,
+            role=target.title,
+            status="saved",
+            source=target.source,
+            source_url=target.url,
+            job_description=target.description,
+            scraped_job_id=target.id,
+            role_metadata={
+                "recruitment_pipeline": {
+                    "posting_snapshot": {
+                        "salary": target.salary,
+                        "source": {"url": target.url, "posted_date": target.posted_date},
+                    }
+                }
+            },
+        )
+
+        class Response:
+            content = _mom_workbook()
+
+            @staticmethod
+            def raise_for_status():
+                return None
+
+        pack = CorpusAndMomResearchProvider(db, http_get=lambda *_args, **_kwargs: Response()).build(
+            tracked,
+            "Built Python machine learning systems with product and operations teams.",
+        )
+
+    assert pack.status == "complete"
+    assert pack.role_company_brief["role"]["comparable_titles"]
+    python_term = next(
+        item for item in pack.role_company_brief["role"]["ats_terms"] if item["term"] == "python"
+    )
+    assert python_term["sources"]
+    technical = next(
+        item for item in pack.interview_pack["questions"] if item["cluster"] == "technical"
+    )
+    assert technical["answer_scaffold"]["evidence_quote"]
+    assert technical["sources"][0]["retrieved_at"] == target.scraped_at
+    assert technical["sources"][0]["evidence_note"]
+    assert pack.interview_pack["answer_formats"] == ["STAR", "XYZ"]
+    assert pack.interview_pack["source_state"] == "fresh"
+    observations = pack.compensation_brief["observations"]
+    assert [item["kind"] for item in observations] == [
+        "employer_posting",
+        "mom_occupational_wages",
+    ]
+    mom = observations[1]
+    assert mom["basic_wage"] == {"p25": 6000, "median": 8000, "p75": 10000}
+    assert mom["gross_wage"] == {"p25": 6200, "median": 8500, "p75": 10500}
+    assert mom["excludes"] == ["bonuses", "stock options", "employer CPF"]
+    assert pack.compensation_brief["comparison_state"] == "multiple_incompatible_observations"
+    assert "never silently averaged" in pack.compensation_brief["comparison_rule"]
+    assert [lead["publisher"] for lead in pack.compensation_brief["recruiter_guide_leads"]] == [
+        "Hays Singapore",
+        "Michael Page Singapore",
+    ]
+    assert all(lead["retrieved_at"] for lead in pack.compensation_brief["recruiter_guide_leads"])
+
+
+def test_research_provider_distinguishes_stale_and_sparse_niche_evidence():
+    from application_research import CorpusAndMomResearchProvider
+    from database import SessionLocal, init_db
+    from models import ScrapedJob, TrackedJob
+
+    init_db()
+    unique = secrets.token_hex(6)
+    with SessionLocal() as db:
+        stale_job = ScrapedJob(
+            title=f"Cryogenic Lithography Orchestrator {unique}",
+            company=f"Stale Evidence Company {unique}",
+            source="MyCareersFuture",
+            url=f"https://example.com/{unique}/stale",
+            posted_date="2024-01-01",
+            posted_at_sort="2024-01-01T00:00:00+00:00",
+            scraped_at="2024-01-02T00:00:00+00:00",
+            description="Operate cryogenic lithography systems.",
+            dedup_key=f"stale-research-{unique}",
+            hidden=0,
+        )
+        db.add(stale_job)
+        db.flush()
+        tracked = TrackedJob(
+            user_id=1,
+            company=stale_job.company,
+            role=stale_job.title,
+            status="saved",
+            source=stale_job.source,
+            source_url=stale_job.url,
+            job_description=stale_job.description,
+            scraped_job_id=stale_job.id,
+            role_metadata={},
+        )
+
+        class UnmatchedResponse:
+            content = _mom_workbook("Registered nurse")
+
+            @staticmethod
+            def raise_for_status():
+                return None
+
+        stale_pack = CorpusAndMomResearchProvider(
+            db,
+            http_get=lambda *_args, **_kwargs: UnmatchedResponse(),
+        ).build(tracked, "")
+        niche = TrackedJob(
+            user_id=1,
+            company="Unknown Niche Employer",
+            role="Quantum Basket Strategist",
+            status="saved",
+            role_metadata={},
+        )
+        sparse_pack = CorpusAndMomResearchProvider(
+            db,
+            http_get=lambda *_args, **_kwargs: UnmatchedResponse(),
+        ).build(niche, "")
+
+    assert stale_pack.role_company_brief["freshness"] == "stale"
+    assert stale_pack.interview_pack["source_state"] == "stale"
+    assert sparse_pack.status == "valid_empty"
+    assert sparse_pack.interview_pack["status"] == "sparse"
+    assert sparse_pack.interview_pack["source_state"] == "valid_empty"
+    assert sparse_pack.compensation_brief["comparison_state"] == "valid_empty"
+    mom_status = next(
+        item for item in sparse_pack.source_statuses if item["source"] == "mom_occupational_wages_2025"
+    )
+    assert mom_status["status"] == "valid_empty"
+    assert "No sufficiently similar" in mom_status["detail"]
+
+
+def test_research_provider_exposes_access_failure_without_fabricating_results():
+    import requests
+
+    from application_research import CorpusAndMomResearchProvider
+    from database import SessionLocal, init_db
+    from models import TrackedJob
+
+    init_db()
+    tracked = TrackedJob(
+        user_id=1,
+        company="Unknown Employer",
+        role="Niche Quantum Basket Strategist",
+        status="saved",
+        source="",
+        source_url="",
+        job_description="",
+        role_metadata={},
+    )
+
+    def unavailable(*_args, **_kwargs):
+        raise requests.ConnectionError("official source unavailable")
+
+    with SessionLocal() as db:
+        pack = CorpusAndMomResearchProvider(db, http_get=unavailable).build(tracked, "")
+
+    assert pack.status == "access_failure"
+    assert pack.role_company_brief["status"] == "valid_empty"
+    assert pack.compensation_brief["observations"] == []
+    statuses = {item["source"]: item["status"] for item in pack.source_statuses}
+    assert statuses["public_job_corpus"] == "valid_empty"
+    assert statuses["mom_occupational_wages_2025"] == "access_failure"
+    assert statuses["community_and_employer_reviews"] == "valid_empty"
+
+
+def test_private_negotiation_rehearsal_is_repeatable_and_never_invents_walk_away(monkeypatch):
+    from database import init_db
+    from main import app
+    from recruitment_team.http_routes import get_recruitment_telemetry
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    init_db()
+    client = TestClient(app)
+    headers = _signup(client)
+    workspace = _create_workspace_with_resume(client, headers)
+    path = f"/api/applications/workspaces/{workspace['id']}/negotiation/rehearse"
+    telemetry = RecordedTelemetry()
+    app.dependency_overrides[get_recruitment_telemetry] = lambda: telemetry
+
+    def fake_coach(context):
+        assert context["role"] == "Senior AI Engineer"
+        assert "walk_away_point" not in context
+        assert all("source_url" not in anchor for anchor in context["anchor_options"])
+        assert all("data_date" not in anchor for anchor in context["anchor_options"])
+        return {
+            "opening": f"Respond directly to: {context['scenario']}",
+            "questions": ["Which package definition applies?"],
+            "trade_offs": ["Protect the stated priorities before trading another term."],
+            "concessions": ["Offer flexibility only in exchange for a confirmed return."],
+        }
+
+    monkeypatch.setattr("main.coach_negotiation", fake_coach)
+
+    first = client.post(
+        path,
+        headers=headers,
+        json={
+            "priorities": ["Role scope", "Base salary"],
+            "walk_away_point": "Private candidate threshold",
+            "scenario": "The recruiter says the base is fixed but bonus may move.",
+            "authorized_evidence": [
+                {
+                    "label": "Written offer",
+                    "value": "$9,000 monthly base",
+                    "definition": "Monthly base excluding bonus",
+                    "source_url": "https://example.com/authorized-offer",
+                    "data_date": "2026-08-02",
+                }
+            ],
+        },
+    )
+    assert first.status_code == 200
+    negotiation = first.json()["role_metadata"]["negotiation"]
+    assert negotiation["walk_away_point"] == "Private candidate threshold"
+    assert negotiation["authorized_evidence"][0]["source_type"] == "self_reported_user_supplied"
+    assert negotiation["authorized_evidence"][0]["data_date"] == "2026-08-02"
+    assert negotiation["authorized_evidence"][0]["provided_at"]
+    assert negotiation["rounds"][0]["coach_response"]["anchor_options"][0]["value"] == (
+        "$9,000 monthly base"
+    )
+    assert "will not replace or infer" in negotiation["rounds"][0]["coach_response"][
+        "walk_away_guidance"
+    ]
+    assert negotiation["rounds"][0]["coach_response"]["questions"]
+    assert negotiation["rounds"][0]["coach_response"]["trade_offs"]
+    assert negotiation["rounds"][0]["coach_response"]["concessions"]
+    assert "base is fixed" in negotiation["rounds"][0]["coach_response"]["opening"]
+
+    second = client.post(
+        path,
+        headers=headers,
+        json={
+            "priorities": ["Flexibility"],
+            "scenario": "The recruiter asks for my minimum.",
+        },
+    )
+    assert second.status_code == 200
+    negotiation = second.json()["role_metadata"]["negotiation"]
+    assert len(negotiation["rounds"]) == 2
+    assert negotiation["walk_away_point"] == ""
+    assert negotiation["rounds"][-1]["coach_response"]["walk_away_guidance"] == (
+        "No walk-away point was supplied, so none was invented."
+    )
+    telemetry_payload = str([span.attributes for span in telemetry.spans])
+    assert "Private candidate threshold" not in telemetry_payload
+    assert "Written offer" not in telemetry_payload
+    assert "The recruiter says" not in telemetry_payload
+    assert [span.name for span in telemetry.spans] == [
+        "application.negotiation_rehearsal",
+        "application.negotiation_rehearsal",
+    ]
+
+    other_headers = _signup(client)
+    denied = client.post(
+        path,
+        headers=other_headers,
+        json={
+            "priorities": ["Role scope"],
+            "scenario": "Try to read another user's private negotiation.",
+        },
+    )
+    assert denied.status_code == 404
+    app.dependency_overrides.pop(get_recruitment_telemetry, None)
+
+
+def test_negotiation_route_returns_503_without_persisting_a_hidden_fallback(monkeypatch):
+    from database import init_db
+    import main
+    from negotiation_coach import NegotiationCoachUnavailable
+
+    init_db()
+    client = TestClient(main.app)
+    headers = _signup(client)
+    workspace = _create_workspace_with_resume(client, headers)
+
+    def unavailable(_context):
+        raise NegotiationCoachUnavailable("Negotiation coach unavailable.")
+
+    monkeypatch.setattr(main, "coach_negotiation", unavailable)
+    response = client.post(
+        f"/api/applications/workspaces/{workspace['id']}/negotiation/rehearse",
+        headers=headers,
+        json={
+            "priorities": ["Role scope"],
+            "scenario": "The recruiter asks for my minimum.",
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Negotiation coach unavailable."}
+    reloaded = client.get(
+        f"/api/applications/workspaces/{workspace['id']}",
+        headers=headers,
+    )
+    assert "negotiation" not in reloaded.json()["role_metadata"]
+
+
+def test_negotiation_route_rejects_empty_or_duplicate_priorities():
+    from database import init_db
+    from main import app
+
+    init_db()
+    client = TestClient(app)
+    headers = _signup(client)
+    workspace = _create_workspace_with_resume(client, headers)
+    path = f"/api/applications/workspaces/{workspace['id']}/negotiation/rehearse"
+
+    for priorities in (["  "], ["Role scope", "role scope"]):
+        response = client.post(
+            path,
+            headers=headers,
+            json={
+                "priorities": priorities,
+                "scenario": "The recruiter asks for my minimum.",
+            },
+        )
+        assert response.status_code == 422
+
+
+def test_negotiation_coach_fails_closed_on_unavailable_or_invented_figures(monkeypatch):
+    import negotiation_coach
+
+    context = {
+        "company": "Example Semiconductor",
+        "role": "Manufacturing Manager",
+        "scenario": "The employer offered S$9,000 monthly base.",
+        "priorities": ["Role scope"],
+        "anchor_options": [{"value": "S$9,000", "definition": "monthly base"}],
+    }
+    valid = {
+        "opening": [
+            "Thank them for the offer.",
+            "Confirm that S$9,000 means monthly base before responding.",
+        ],
+        "questions": ["Which package definition applies?"],
+        "priority_order": ["Role scope"],
+    }
+    monkeypatch.setattr(negotiation_coach, "call_sealion_json", lambda **_kwargs: __import__("json").dumps(valid))
+    coaching = negotiation_coach.coach_negotiation(context)
+    assert coaching["opening"] == "Thank them for the offer. Confirm that S$9,000 means monthly base before responding."
+    assert coaching["trade_offs"] == ["Protect Role scope before trading another term."]
+
+    invented = {**valid, "opening": "Counter at S$12,000 monthly base."}
+    monkeypatch.setattr(
+        negotiation_coach,
+        "call_sealion_json",
+        lambda **_kwargs: __import__("json").dumps(invented),
+    )
+    try:
+        negotiation_coach.coach_negotiation(context)
+    except negotiation_coach.NegotiationCoachUnavailable as error:
+        assert "unsupported figures" in str(error)
+    else:
+        raise AssertionError("invented compensation figure was accepted")
+
+    invented_period = {**valid, "opening": "Ask for a review after six months."}
+    monkeypatch.setattr(
+        negotiation_coach,
+        "call_sealion_json",
+        lambda **_kwargs: __import__("json").dumps(invented_period),
+    )
+    try:
+        negotiation_coach.coach_negotiation(context)
+    except negotiation_coach.NegotiationCoachUnavailable as error:
+        assert "unsupported figures" in str(error)
+    else:
+        raise AssertionError("invented review period was accepted")
+
+    monkeypatch.setattr(negotiation_coach, "call_sealion_json", lambda **_kwargs: None)
+    try:
+        negotiation_coach.coach_negotiation(context)
+    except negotiation_coach.NegotiationCoachUnavailable as error:
+        assert "unavailable" in str(error)
+    else:
+        raise AssertionError("unavailable coach silently fell back")

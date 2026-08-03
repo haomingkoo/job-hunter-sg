@@ -5,16 +5,23 @@ from __future__ import annotations
 import base64
 import secrets
 from contextlib import nullcontext
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Callable, ContextManager, Iterable
 
 import config
 from auth import get_account_limits
+from application_research import ResearchPack
 from fastapi import HTTPException, status
 from models import ResumeVersion, ScrapedJob, TrackedJob, User
 from resume_parser import parse_resume
 from sanitizer import sanitize_resume_text, sanitize_user_input
-from schemas import ApplicationWorkspaceCreate, TrackedJobCreate, TrackedJobUpdate
+from schemas import (
+    ApplicationWorkspaceCreate,
+    NegotiationRehearsalRequest,
+    TrackedJobCreate,
+    TrackedJobUpdate,
+)
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -23,6 +30,8 @@ AGENT_REVIEW_METADATA_KEY = "agent_review"
 SUBMITTED_RESUME_METADATA_KEY = "submitted_resume"
 SUBMITTED_RESUME_ARTIFACTS_METADATA_KEY = "submitted_resume_artifacts"
 RECRUITMENT_PIPELINE_METADATA_KEY = "recruitment_pipeline"
+APPLICATION_RESEARCH_METADATA_KEY = "application_research"
+NEGOTIATION_METADATA_KEY = "negotiation"
 WORKSPACE_SOURCE_CREATED = "created"
 WORKSPACE_SOURCE_MANUAL = "manual"
 WORKSPACE_SOURCE_AGENT_REVIEW = "agent_review"
@@ -31,6 +40,7 @@ WORKSPACE_RESUME_SOURCE_AGENT_REVIEW = "agent_review"
 WORKSPACE_DRAFT_STATUS = "draft"
 MAX_TRACKED_STAGE_EVENTS = 200
 MAX_RECRUITMENT_PIPELINE_EVENTS = 50
+MAX_NEGOTIATION_ROUNDS = 20
 
 APPLICATION_OUTCOME_GROUPS = {
     "submitted": {"applied"},
@@ -466,6 +476,146 @@ def create_application_workspace(
 
 def get_application_workspace(db: Session, user_id: int, workspace_id: int) -> dict:
     return workspace_response(_owned_tracked_job(db, user_id, workspace_id, workspace=True))
+
+
+def build_research_pack(
+    db: Session,
+    user: User,
+    workspace_id: int,
+    build: Callable[[TrackedJob, str], ResearchPack],
+) -> dict:
+    """Build and persist one research pack on the existing application record."""
+    tracked = _owned_tracked_job(db, user.id, workspace_id, workspace=True)
+    resume_text = ""
+    if tracked.resume_version_id is not None:
+        resume = (
+            db.query(ResumeVersion)
+            .filter(
+                ResumeVersion.id == tracked.resume_version_id,
+                ResumeVersion.user_id == user.id,
+                ResumeVersion.is_active == True,
+            )
+            .first()
+        )
+        if resume is None:
+            raise HTTPException(status_code=404, detail="Resume version not found")
+        resume_text = resume.resume_text or ""
+
+    pack = build(tracked, resume_text)
+    metadata = dict(tracked.role_metadata or {})
+    metadata[APPLICATION_RESEARCH_METADATA_KEY] = asdict(pack)
+    tracked.role_metadata = metadata
+    tracked.stage_history = (
+        list(tracked.stage_history or [])
+        + [
+            tracked_stage_event(
+                tracked.status,
+                "application_research",
+                notes=f"Research pack finished with status {pack.status}.",
+            )
+        ]
+    )[-MAX_TRACKED_STAGE_EVENTS:]
+    db.commit()
+    db.refresh(tracked)
+    return workspace_response(tracked)
+
+
+def rehearse_negotiation(
+    db: Session,
+    user: User,
+    workspace_id: int,
+    body: NegotiationRehearsalRequest,
+    coach: Callable[[dict], dict],
+) -> dict:
+    """Persist private priorities and one evidence-bounded rehearsal round."""
+    tracked = _owned_tracked_job(db, user.id, workspace_id, workspace=True)
+    metadata = dict(tracked.role_metadata or {})
+    research = metadata.get(APPLICATION_RESEARCH_METADATA_KEY)
+    compensation = (
+        research.get("compensation_brief", {})
+        if isinstance(research, dict)
+        else {}
+    )
+    public_observations = list(compensation.get("observations") or [])
+    authorized = [
+        {
+            "kind": "user_authorized",
+            "label": item.label,
+            "value": item.value,
+            "definition": item.definition,
+            "source_url": item.source_url,
+            "source_type": "self_reported_user_supplied",
+            "data_date": item.data_date,
+            "provided_at": datetime.now(timezone.utc).isoformat(),
+        }
+        for item in body.authorized_evidence
+    ]
+    anchors = [*public_observations, *authorized]
+    cited_anchors = [
+        {
+            "kind": item.get("kind", "observation"),
+            "label": item.get("label") or item.get("occupation") or item.get("kind"),
+            "value": item.get("value") or item.get("basic_wage") or item.get("gross_wage"),
+            "basic_wage": item.get("basic_wage"),
+            "gross_wage": item.get("gross_wage"),
+            "definition": item.get("definition") or item.get("period") or "",
+            "source_url": item.get("source_url") or "",
+            "source_type": item.get("source_type") or "",
+            "data_date": item.get("data_date") or "",
+        }
+        for item in anchors
+    ]
+    priorities = list(body.priorities)
+    coaching = coach({
+        "company": tracked.company,
+        "role": tracked.role,
+        "scenario": sanitize_user_input(body.scenario),
+        "priorities": priorities,
+        "anchor_options": [
+            {
+                key: anchor.get(key)
+                for key in (
+                    "kind",
+                    "label",
+                    "value",
+                    "basic_wage",
+                    "gross_wage",
+                    "definition",
+                    "source_type",
+                )
+            }
+            for anchor in cited_anchors
+        ],
+    })
+    round_item = {
+        "scenario": sanitize_user_input(body.scenario),
+        "coach_response": {
+            **coaching,
+            "anchor_options": cited_anchors,
+            "walk_away_guidance": (
+                "A private walk-away point is saved; the system will not replace or infer it."
+                if body.walk_away_point.strip()
+                else "No walk-away point was supplied, so none was invented."
+            ),
+        },
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    previous = metadata.get(NEGOTIATION_METADATA_KEY)
+    negotiation = dict(previous) if isinstance(previous, dict) else {}
+    rounds = [item for item in negotiation.get("rounds", []) if isinstance(item, dict)]
+    rounds.append(round_item)
+    negotiation.update({
+        "priorities": priorities,
+        "walk_away_point": sanitize_user_input(body.walk_away_point),
+        "authorized_evidence": authorized,
+        "rounds": rounds[-MAX_NEGOTIATION_ROUNDS:],
+        "privacy": "Private candidate input; excluded from metadata telemetry.",
+    })
+    metadata[NEGOTIATION_METADATA_KEY] = negotiation
+    tracked.role_metadata = metadata
+    db.commit()
+    db.refresh(tracked)
+    return workspace_response(tracked)
 
 
 def run_agent_review(

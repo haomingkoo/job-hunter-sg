@@ -31,7 +31,7 @@ deployed at exact commit `7a44e740482f85afa761f1bd4e2e635ec8c77244`, and product
 
 | Issue | Observed remaining outcome |
 |---|---|
-| #93 | Add attributable Singapore compensation evidence and private negotiation rehearsal. |
+| #93 | Implemented locally with separate posting/MOM/user observations and fail-closed model-backed rehearsal; merge, deploy, and production acceptance remain. |
 | #96 | Connect traces, semantic evaluation, field-level calibration, and regression decisions. |
 | #97 | Complete restart, disconnect, duplicate-delivery, partial-artifact, and idempotent recovery. |
 | #98 | Prove the complete journey on narrow screens, keyboard, live regions, and reduced motion. |
@@ -41,16 +41,16 @@ deployed at exact commit `7a44e740482f85afa761f1bd4e2e635ec8c77244`, and product
 | #106 | Globally merge and independently calibrate candidate evidence without losing exact provenance. |
 | #108 | Replace scattered retry flags with one persisted deterministic attempt ledger. |
 | #113 | Close the remaining open-agent repeated-call and total-budget guardrail gaps. |
-| #42 | Save current, attributable company/role research on the selected durable job record. |
-| #44 | Save an evidence-grounded, source-backed interview pack on the tracked application. |
+| #42 | Implemented locally on the existing tracked record with current corpus/MOM source states; merge, deploy, and production acceptance remain. |
+| #44 | Implemented locally with compact source/evidence disclosures and missing-evidence states; merge, deploy, and production acceptance remain. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
 
 ## Verification boundary
 
 The focused candidate-profile, open-agent, role-evidence, and recruitment-module
 suite passed 124 tests during classification. After guard consolidation, the
-broader affected suite passed 208 tests and the current full repository run passed 934
-backend and repository-level tests with four explicit skips, 90 frontend tests,
+broader affected suite passed 208 tests and the current full repository run passed 942
+backend and repository-level tests with four explicit skips, 91 frontend tests,
 and the frontend production build. Compile, Ruff, ty, `pip check`, and
 `pip-audit` also passed. Production acceptance is documented in the V4 slice
 passdown. These facts support completed-item closure; they do not waive the open
@@ -79,6 +79,10 @@ as a peer dependency, even though application source does not import it.
   duplicate parser test runner, and moved PDF fixture generation out of production
   dependencies.
 - Kept `react-is` after peer-dependency evidence refuted its apparent redundancy.
+- Reused the existing `TrackedJob`, corpus search, ATS extraction, telemetry, and
+  SEA-LION request paths for #42/#44/#93. The research builder is passed as one callable;
+  no provider registry, second job store, general tool loader, or hidden coaching
+  fallback was added.
 
 This cleanup removes 1,920 net lines and one direct dependency from the working
 change.

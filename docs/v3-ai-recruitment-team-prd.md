@@ -507,6 +507,16 @@ The advisor presents ranges as separate observations when definitions, populatio
 or dates differ. It may explain possible reasons for the variance but must not
 silently average incompatible figures.
 
+The #42/#44/#93 implementation uses the existing Application Workspace as that pack's
+only durable owner. It queries the current visible job corpus, reads the versioned MOM
+workbook with `openpyxl`, preserves explicit valid-empty/access-failure/stale states,
+and exposes recruiter guides only as attributable leads when compatible numeric evidence
+is unavailable. Interview scaffolds cite exact resume lines or say evidence is missing.
+Negotiation remains interactive through the configured SEA-LION model, but the model can
+order only user-supplied priorities; unsupported figures or terms fail before persistence,
+and no canned fallback is substituted. Local browser and full-suite verification is
+recorded in the passdown; delivery is not complete until merge and production acceptance.
+
 ## Testing Decisions
 
 - The module interface is the primary E2E test seam. A suite of narrow tracer
@@ -555,11 +565,11 @@ silently average incompatible figures.
 2. [#90 Manage conversation lifecycle and privacy](https://github.com/haomingkoo/job-hunter-sg/issues/90); delivered by PR #191 after #89.
 3. [#91 Search, define role success, explain, and shortlist jobs conversationally](https://github.com/haomingkoo/job-hunter-sg/issues/91); delivered and closed.
 4. [#92 Assess one selected job with source-backed recruiting personas and the bounded recruitment team](https://github.com/haomingkoo/job-hunter-sg/issues/92); delivered and closed.
-5. [#93 Research compensation and rehearse negotiation for a selected job](https://github.com/haomingkoo/job-hunter-sg/issues/93); ready after delivered #91.
+5. [#93 Research compensation and rehearse negotiation for a selected job](https://github.com/haomingkoo/job-hunter-sg/issues/93); implemented locally with #42/#44, awaiting merge and production acceptance.
 6. [#94 Turn an evidence gap into a user-approved resume edit](https://github.com/haomingkoo/job-hunter-sg/issues/94); delivered and closed.
 7. [#186 Connect ranked matches to one durable application pipeline](https://github.com/haomingkoo/job-hunter-sg/issues/186); includes the former #95 handoff contract and was delivered by PR #192.
-8. [#42 Add a source-backed role and company research brief](https://github.com/haomingkoo/job-hunter-sg/issues/42); requires #186 and feeds #44 and #93.
-9. [#44 Save a source-backed interview preparation pack](https://github.com/haomingkoo/job-hunter-sg/issues/44); requires #186 and #42.
+8. [#42 Add a source-backed role and company research brief](https://github.com/haomingkoo/job-hunter-sg/issues/42); implemented locally after #186, awaiting merge and production acceptance.
+9. [#44 Save a source-backed interview preparation pack](https://github.com/haomingkoo/job-hunter-sg/issues/44); implemented locally with #42, awaiting merge and production acceptance.
 10. [#96 Close the trace-to-evaluation tuning loop](https://github.com/haomingkoo/job-hunter-sg/issues/96); ready after delivered #92 through #94.
 11. [#97 Recover safely from failed, interrupted, and duplicate runs](https://github.com/haomingkoo/job-hunter-sg/issues/97); blocked by #90, #186, and #96.
 12. [#98 Complete the journey on mobile and with reduced motion](https://github.com/haomingkoo/job-hunter-sg/issues/98); blocked by the complete core journey.

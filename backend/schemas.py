@@ -268,6 +268,33 @@ class ApplicationWorkspaceOut(BaseModel):
     updated_at: datetime
 
 
+class NegotiationEvidence(BaseModel):
+    label: str = Field(..., min_length=1, max_length=200)
+    value: str = Field(..., min_length=1, max_length=500)
+    definition: str = Field(..., min_length=1, max_length=500)
+    source_url: str = Field("", max_length=2000)
+    data_date: str = Field("", max_length=100)
+
+
+class NegotiationRehearsalRequest(BaseModel):
+    priorities: list[str] = Field(..., min_length=1, max_length=10)
+    walk_away_point: str = Field("", max_length=500)
+    scenario: str = Field(..., min_length=1, max_length=2000)
+    authorized_evidence: list[NegotiationEvidence] = Field(default_factory=list, max_length=5)
+
+    @field_validator("priorities")
+    @classmethod
+    def validate_priorities(cls, priorities: list[str]) -> list[str]:
+        cleaned = [value.strip() for value in priorities if value.strip()]
+        if not cleaned:
+            raise ValueError("at least one non-empty priority is required")
+        if any(len(value) > 200 for value in cleaned):
+            raise ValueError("each priority must be at most 200 characters")
+        if len({value.casefold() for value in cleaned}) != len(cleaned):
+            raise ValueError("priorities must be unique")
+        return cleaned
+
+
 # ── Job Alerts ───────────────────────────────────────────────────────────────
 
 _ALERT_FREQUENCY = Literal["daily", "weekly"]
