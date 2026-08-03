@@ -32,6 +32,7 @@ from models import (
 import config
 from application_workspace import ensure_recruitment_application
 from resume_agent.telemetry import trace_key
+from run_concurrency import release_owner_run, reserve_owner_run
 from schemas import TrackedJobCreate
 
 from .interface import (
@@ -61,6 +62,7 @@ from .errors import (
     InvalidCommand,
     ResumeVersionNotFound,
     RoleProfilingUnavailable,
+    RunConcurrencyExceeded,
     ThreadNotFound,
     TargetAssessmentUnavailable,
 )
@@ -76,8 +78,10 @@ from .open_agent.context import assessment_context
 from .open_agent.streaming import describe_progress
 from .candidate_profile import (
     CandidateEvidenceProfile,
+    CandidateProfileProgress,
     CandidateProfileTransportError,
     CandidateProfileValidationError,
+    candidate_profile_progress_event,
     CandidateProfilerFactory,
     candidate_profile_from_dict,
 )
@@ -293,18 +297,6 @@ class RecruitmentTeam:
         command: Command,
         idempotency_key: str,
     ) -> RunReceipt:
-        thread_id = getattr(command, "thread_id", None)
-        if thread_id is None:
-            return self._execute_locked(owner_id, command, idempotency_key)
-        with _thread_lock(thread_id):
-            return self._execute_locked(owner_id, command, idempotency_key)
-
-    def _execute_locked(
-        self,
-        owner_id: int,
-        command: Command,
-        idempotency_key: str,
-    ) -> RunReceipt:
         key = idempotency_key.strip()
         if not key:
             raise InvalidCommand("idempotency_key is required")
@@ -318,6 +310,41 @@ class RecruitmentTeam:
         )
         if previous is not None and previous.status != "failed":
             return self._receipt(previous)
+
+        owner_key = f"user:{owner_id}"
+        capacity_limited = isinstance(
+            command,
+            (
+                StartThread,
+                SendMessage,
+                BuildCandidateProfile,
+                SearchJobs,
+                AssessTargetJob,
+                AnswerAssessmentQuestion,
+            ),
+        )
+        if capacity_limited and not reserve_owner_run(owner_key):
+            raise RunConcurrencyExceeded(
+                "Another AI run is already active for this user or the service is at capacity. Try again shortly."
+            )
+        try:
+            thread_id = getattr(command, "thread_id", None)
+            if thread_id is None:
+                return self._execute_locked(owner_id, command, key, previous)
+            with _thread_lock(thread_id):
+                return self._execute_locked(owner_id, command, key, previous)
+        finally:
+            if capacity_limited:
+                release_owner_run(owner_key)
+
+    def _execute_locked(
+        self,
+        owner_id: int,
+        command: Command,
+        idempotency_key: str,
+        previous: RecruitmentRun | None,
+    ) -> RunReceipt:
+        key = idempotency_key
 
         with self._telemetry.operation(
             "command",
@@ -441,6 +468,7 @@ class RecruitmentTeam:
                         owner_id,
                         thread,
                         resume,
+                        run,
                     )
                     completion_member = "candidate_profiler"
                 elif isinstance(command, ShortlistJob):
@@ -997,6 +1025,7 @@ class RecruitmentTeam:
         owner_id: int,
         thread: RecruitmentThread,
         resume: ResumeVersion,
+        command_run: RecruitmentRun,
     ) -> tuple[ModelReply, dict]:
         if self._candidate_profiler_factory is None:
             raise InvalidCommand("candidate profile capability is not configured")
@@ -1020,7 +1049,21 @@ class RecruitmentTeam:
             resume_version_id=resume.id,
             model_name=self._candidate_profiler_factory.model_name,
         )
-        profiler = self._candidate_profiler_factory.create(store)
+        def publish_progress(progress: CandidateProfileProgress) -> None:
+            status, summary, detail = candidate_profile_progress_event(progress)
+            event = self._event(
+                thread,
+                command_run,
+                event_type="candidate_profile",
+                status=status,
+                summary=summary,
+                detail=detail,
+                team_member="candidate_profiler",
+            )
+            self._db.commit()
+            self._activity_publisher.publish(self._activity(event))
+
+        profiler = self._candidate_profiler_factory.create(store, publish_progress)
         try:
             run = profiler.profile(document)
         except CandidateProfileTransportError as error:

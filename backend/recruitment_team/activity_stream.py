@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import asdict
-from queue import Queue
+from queue import Empty, Queue
 from threading import Thread
 from typing import Iterator
 
 from fastapi.encoders import jsonable_encoder
+
+import config
 
 from .activity_publisher import ActivityPublisher
 from .errors import RecruitmentTeamError
@@ -20,15 +23,29 @@ log = logging.getLogger("jobhunter.recruitment_team")
 
 
 class _QueueActivityPublisher(ActivityPublisher):
-    def __init__(self, output: Queue):
+    def __init__(
+        self,
+        output: Queue,
+        stream_open: threading.Event,
+        stream_lock: threading.Lock,
+    ):
         self._output = output
+        self._stream_open = stream_open
+        self._stream_lock = stream_lock
 
     def publish(self, event: ActivityEvent) -> None:
-        self._output.put(("activity", event))
+        with self._stream_lock:
+            if self._stream_open.is_set():
+                self._output.put(("activity", event))
 
 
 def _encode_event(event_name: str, payload: object) -> str:
     body = json.dumps(jsonable_encoder(asdict(payload)), separators=(",", ":"))
+    return f"event: {event_name}\ndata: {body}\n\n"
+
+
+def _encode_payload(event_name: str, payload: dict) -> str:
+    body = json.dumps(payload, separators=(",", ":"))
     return f"event: {event_name}\ndata: {body}\n\n"
 
 
@@ -41,11 +58,21 @@ def stream_command(
     """Yield committed activity followed by the command receipt or a safe error."""
 
     output: Queue = Queue()
+    stream_open = threading.Event()
+    stream_lock = threading.Lock()
+    stream_open.set()
+
+    def publish(event_name: str, payload: object) -> None:
+        with stream_lock:
+            if stream_open.is_set():
+                output.put((event_name, payload))
 
     def execute() -> None:
-        team: RecruitmentTeam = team_factory(_QueueActivityPublisher(output))
+        team: RecruitmentTeam = team_factory(
+            _QueueActivityPublisher(output, stream_open, stream_lock)
+        )
         try:
-            output.put(("receipt", team.execute(owner_id, command, idempotency_key)))
+            publish("receipt", team.execute(owner_id, command, idempotency_key))
         except Exception as error:
             # This runs in a background Thread fully decoupled from the SSE
             # client's connection (see the class docstring), so a client that
@@ -76,18 +103,28 @@ def stream_command(
                     payload["retryable"] = bool(error.retryable)
                 if hasattr(error, "failure_type"):
                     payload["failure_type"] = error.failure_type
-            output.put(("error", payload))
+            publish("error", payload)
 
     worker = Thread(target=execute, name="recruitment-team-command")
     worker.start()
 
-    while True:
-        event_name, payload = output.get()
-        if event_name == "error":
-            yield (f"event: error\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n")
-            break
-        yield _encode_event(event_name, payload)
-        if event_name == "receipt":
-            break
+    try:
+        while True:
+            try:
+                event_name, payload = output.get(
+                    timeout=config.RECRUITMENT_STREAM_HEARTBEAT_SECONDS
+                )
+            except Empty:
+                yield _encode_payload("heartbeat", {"status": "running"})
+                continue
+            if event_name == "error":
+                yield _encode_payload("error", payload)
+                break
+            yield _encode_event(event_name, payload)
+            if event_name == "receipt":
+                break
+    finally:
+        with stream_lock:
+            stream_open.clear()
 
     worker.join()

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 from recruitment_team.tool_call_guard import ToolCallGuardMiddleware
+import recruitment_team.tool_call_guard as tool_call_guard
 
 
 def _request(name: str, args: dict, call_id: str):
@@ -32,3 +36,38 @@ def test_allows_materially_different_calls():
     guard.wrap_tool_call(_request("search_jobs", {"query": "platform engineer"}, "2"), handler)
 
     assert len(calls) == 2
+
+
+def test_bounds_concurrent_specialist_delegations(monkeypatch):
+    specialist_limit = 2
+    monkeypatch.setattr(
+        tool_call_guard,
+        "_specialist_slots",
+        threading.BoundedSemaphore(specialist_limit),
+    )
+    guard = ToolCallGuardMiddleware()
+    active = 0
+    peak = 0
+    lock = threading.Lock()
+
+    def handler(_request):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        return {"ok": True}
+
+    def delegate(index):
+        return guard.wrap_tool_call(
+            _request("task", {"subagent_type": f"persona-{index}"}, str(index)),
+            handler,
+        )
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = list(executor.map(delegate, range(5)))
+
+    assert peak == specialist_limit
+    assert results == [{"ok": True}] * 5

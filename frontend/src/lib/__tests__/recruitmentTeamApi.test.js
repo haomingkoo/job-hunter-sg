@@ -43,4 +43,21 @@ describe("streamRecruitmentCommand", () => {
     expect(activities).toEqual([{ sequence: 1, status: "running" }]);
     expect(receipt).toEqual({ thread_id: "thread-1" });
   });
+
+  it("ignores heartbeat metadata without adding fake activity", async () => {
+    apiFetch.mockResolvedValue(streamedResponse([
+      'event: heartbeat\ndata: {"status":"running"}\n\n',
+      'event: receipt\ndata: {"thread_id":"thread-1"}\n\n',
+    ]));
+    const onActivity = vi.fn();
+
+    const receipt = await streamRecruitmentCommand(
+      "/api/recruitment-team/threads/stream",
+      { message: "Find roles." },
+      onActivity,
+    );
+
+    expect(onActivity).not.toHaveBeenCalled();
+    expect(receipt).toEqual({ thread_id: "thread-1" });
+  });
 });

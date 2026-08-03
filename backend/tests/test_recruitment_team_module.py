@@ -425,6 +425,9 @@ def test_public_http_adapter_uses_the_same_module_journey():
         assert [block.splitlines()[0] for block in profiled.text.strip().split("\n\n")] == [
             "event: activity",
             "event: activity",
+            "event: activity",
+            "event: activity",
+            "event: activity",
             "event: receipt",
         ]
 
@@ -445,7 +448,7 @@ def test_public_http_adapter_uses_the_same_module_journey():
             "user",
             "assistant",
         ]
-        assert [item["sequence"] for item in events.json()] == [1, 2, 3, 4, 5, 6]
+        assert [item["sequence"] for item in events.json()] == list(range(1, 10))
         assert candidate_profile.json()["status"] == "completed"
         assert candidate_profile.json()["profile"]["fields"][0]["field_id"] == ("demonstrated_agent_platform")
         listed = client.get("/api/recruitment-team/threads")
@@ -664,23 +667,14 @@ def test_running_activity_is_committed_and_published_before_model_completion():
     assert [event.status for event in activity.events] == ["running", "completed"]
 
 
-def test_two_concurrent_commands_on_the_same_thread_are_serialized_not_raced():
-    """Regression guard for a real race an adversarial review found: nothing
-    previously prevented two concurrent requests against the same thread
-    from both passing a check-then-act (e.g. the workflow_state guard on
-    AnswerAssessmentQuestion) before either committed its transition. This
-    proves a per-thread lock now genuinely blocks a second command from even
-    starting its own model call while a first is still in flight against the
-    same thread -- using two entirely independent RecruitmentTeam instances
-    with independent DB sessions, mirroring two separate HTTP requests each
-    getting their own Depends(get_db) session."""
+def test_two_concurrent_commands_for_one_user_reject_the_second_without_racing():
+    """A second request fails fast before it can enter a model or state transition."""
     from recruitment_team import RecruitmentTeam
     from recruitment_team.activity_publisher import IgnoreActivityPublisher
     from recruitment_team.conversation_model import ModelReply
+    from recruitment_team.errors import RunConcurrencyExceeded
     from recruitment_team.interface import SendMessage, StartThread
     from recruitment_team.telemetry import RecordedTelemetry
-
-    SHORT_WAIT_SECONDS = 0.3
 
     class BlockingModel:
         def __init__(self, reply_content: str):
@@ -737,28 +731,39 @@ def test_two_concurrent_commands_on_the_same_thread_are_serialized_not_raced():
         worker_a.start()
         assert model_a.started.wait(TEST_WAIT_SECONDS), "worker A never reached its model call"
 
-        worker_b = Thread(
-            target=lambda: outcome_b.append(
-                team_b.execute(owner_id, SendMessage(thread_id, "Message B."), "concurrency-b")
-            )
-        )
+        def run_second():
+            try:
+                outcome_b.append(
+                    team_b.execute(owner_id, SendMessage(thread_id, "Message B."), "concurrency-b")
+                )
+            except Exception as error:
+                outcome_b.append(error)
+
+        worker_b = Thread(target=run_second)
         worker_b.start()
-        assert not model_b.started.wait(SHORT_WAIT_SECONDS), (
-            "worker B reached its model call while worker A still held the same thread's lock -- "
-            "the per-thread lock did not serialize these two commands"
-        )
+        worker_b.join(TEST_WAIT_SECONDS)
+        assert not worker_b.is_alive()
+        assert isinstance(outcome_b[0], RunConcurrencyExceeded)
+        assert not model_b.started.is_set()
 
         model_a.release.set()
         worker_a.join(TEST_WAIT_SECONDS)
         assert not worker_a.is_alive()
 
-        assert model_b.started.wait(TEST_WAIT_SECONDS), "worker B never proceeded after A released the lock"
+        retry_outcome = []
+        retry = Thread(
+            target=lambda: retry_outcome.append(
+                team_b.execute(owner_id, SendMessage(thread_id, "Message B."), "concurrency-b-retry")
+            )
+        )
+        retry.start()
+        assert model_b.started.wait(TEST_WAIT_SECONDS), "capacity was not released after the first command"
         model_b.release.set()
-        worker_b.join(TEST_WAIT_SECONDS)
-        assert not worker_b.is_alive()
+        retry.join(TEST_WAIT_SECONDS)
+        assert not retry.is_alive()
 
     assert outcome_a[0].status == "completed"
-    assert outcome_b[0].status == "completed"
+    assert retry_outcome[0].status == "completed"
 
 
 def test_resume_data_cannot_break_out_of_the_untrusted_prompt_boundary():
@@ -2470,7 +2475,7 @@ def test_candidate_profile_command_persists_reusable_artifact_across_restart():
     class Factory:
         model_name = "candidate-profile-test-model"
 
-        def create(self, checkpoint_store):
+        def create(self, checkpoint_store, progress_publisher=None):
             class Profiler:
                 def profile(self, document):
                     block = document["blocks"][0]
@@ -2621,7 +2626,7 @@ def test_candidate_profile_checkpoint_mismatch_is_a_structured_business_failure(
     class Factory:
         model_name = "candidate-profile-test-model"
 
-        def create(self, checkpoint_store):
+        def create(self, checkpoint_store, progress_publisher=None):
             class Profiler:
                 def profile(self, document):
                     raise CandidateProfileCheckpointMismatch("c" * 64)

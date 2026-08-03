@@ -39,6 +39,13 @@ def _positive_int_env(name: str, default: int) -> int:
     return value
 
 
+def _positive_float_env(name: str, default: float) -> float:
+    value = _float_env(name, default)
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than zero, got {value}")
+    return value
+
+
 def _nonnegative_int_env(name: str, default: int) -> int:
     value = _int_env(name, default)
     if value < 0:
@@ -164,6 +171,14 @@ RECRUITMENT_PERSONA_PACK_VERSION: str = os.getenv(
 )
 AGENT_MAX_CONCURRENT_RUNS_PER_USER: int = _positive_int_env("AGENT_MAX_CONCURRENT_RUNS_PER_USER", 1)
 AGENT_MAX_ACTIVE_RUNS: int = _positive_int_env("AGENT_MAX_ACTIVE_RUNS", 4)
+RECRUITMENT_STREAM_HEARTBEAT_SECONDS: float = _positive_float_env(
+    "RECRUITMENT_STREAM_HEARTBEAT_SECONDS",
+    15.0,
+)
+RECRUITMENT_MAX_CONCURRENT_SPECIALISTS: int = _positive_int_env(
+    "RECRUITMENT_MAX_CONCURRENT_SPECIALISTS",
+    AGENT_MAX_ACTIVE_RUNS,
+)
 AGENT_CHAT_HISTORY_LIMIT: int = _positive_int_env("AGENT_CHAT_HISTORY_LIMIT", 20)
 AGENT_SESSION_TTL_SECONDS: int = _positive_int_env("AGENT_SESSION_TTL_SECONDS", 3600)
 AGENT_MAX_SESSIONS: int = _positive_int_env("AGENT_MAX_SESSIONS", 200)

@@ -119,11 +119,24 @@ def test_dispatched_study_is_visible_and_links_the_completed_artifact():
 
         thread = db.query(RecruitmentThread).filter_by(id=thread_id).one()
         events = db.query(RecruitmentActivityEvent).order_by(RecruitmentActivityEvent.sequence).all()
-        assert [event.status for event in events] == ["running", "completed"]
+        assert [event.detail.get("transition") for event in events] == [
+            None,
+            "start",
+            "checkpoint",
+            "completion",
+            None,
+        ]
+        assert [event.status for event in events] == [
+            "running",
+            "running",
+            "running",
+            "running",
+            "completed",
+        ]
         assert "studying" in events[0].summary
         assert thread.case_facts["candidate_profile_status"] == "completed"
         assert thread.case_facts["candidate_profile_artifact_id"]
-        assert [event.status for event in publisher.events] == ["running", "completed"]
+        assert [event.status for event in publisher.events] == [event.status for event in events]
 
 
 def test_second_thread_resolves_the_resume_scoped_study_without_rerunning_it():

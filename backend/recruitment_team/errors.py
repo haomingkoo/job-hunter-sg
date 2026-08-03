@@ -17,6 +17,13 @@ class InvalidCommand(RecruitmentTeamError):
     pass
 
 
+class RunConcurrencyExceeded(RecruitmentTeamError):
+    """A user or process already occupies the configured model-run capacity."""
+
+    failure_type = "concurrency"
+    retryable = True
+
+
 class DiscoveryUnavailable(RecruitmentTeamError):
     pass
 
