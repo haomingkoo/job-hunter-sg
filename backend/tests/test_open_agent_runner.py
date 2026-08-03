@@ -205,8 +205,8 @@ def test_runner_rejects_a_materially_identical_repeated_search_jobs_call(monkeyp
     from resume_agent.agent import create_resume_agent
 
     from recruitment_team.open_agent import context
-    from recruitment_team.open_agent.runner import guarded_search_jobs
     from recruitment_team.open_agent.streaming import iter_progress_events
+    from recruitment_team.tool_call_guard import ToolCallGuardMiddleware
 
     monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
 
@@ -227,18 +227,23 @@ def test_runner_rejects_a_materially_identical_repeated_search_jobs_call(monkeyp
     search_args = {"query": "backend engineer", "n": None, "detail": False}
     different_args = {"query": "platform engineer", "n": None, "detail": False}
     first_call = AIMessage(
-        content="", tool_calls=[{"name": "guarded_search_jobs", "args": search_args, "id": "call-1"}]
+        content="", tool_calls=[{"name": "search_jobs", "args": search_args, "id": "call-1"}]
     )
     repeat_call = AIMessage(
-        content="", tool_calls=[{"name": "guarded_search_jobs", "args": search_args, "id": "call-2"}]
+        content="", tool_calls=[{"name": "search_jobs", "args": search_args, "id": "call-2"}]
     )
     different_call = AIMessage(
-        content="", tool_calls=[{"name": "guarded_search_jobs", "args": different_args, "id": "call-3"}]
+        content="", tool_calls=[{"name": "search_jobs", "args": different_args, "id": "call-3"}]
     )
     final_reply = AIMessage(content="Done searching.")
     model = _ScriptedModel(responses=[first_call, repeat_call, different_call, final_reply])
 
-    agent = create_resume_agent(model=model, tools=[guarded_search_jobs], subagents=[])
+    agent = create_resume_agent(
+        model=model,
+        tools=[agent_tools.search_jobs],
+        subagents=[],
+        middleware=[ToolCallGuardMiddleware()],
+    )
     run_config = {"recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS}
 
     with context.assessment_context(_request()):
@@ -249,7 +254,7 @@ def test_runner_rejects_a_materially_identical_repeated_search_jobs_call(monkeyp
         ))
 
     search_results = [
-        e for e in events if e["kind"] == "tool_result" and e["tool_name"] == "guarded_search_jobs"
+        e for e in events if e["kind"] == "tool_result" and e["tool_name"] == "search_jobs"
     ]
     assert len(search_results) == 3
 
@@ -263,7 +268,7 @@ def test_runner_rejects_a_materially_identical_repeated_search_jobs_call(monkeyp
 
     assert first_result.get("reason") != "identical_call_no_new_information"
     assert repeat_result["ok"] is False
-    assert repeat_result["reason"] == "identical_call_no_new_information"
+    assert repeat_result["reason"].startswith("identical_call_no_new_information")
     # A materially different query is genuinely allowed through, not blocked
     # by the guardrail just because a prior call happened.
     assert different_result.get("reason") != "identical_call_no_new_information"

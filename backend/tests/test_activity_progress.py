@@ -110,7 +110,7 @@ def test_a_coordinator_search_result_reports_how_many_postings_came_back():
 def test_the_assessment_search_result_shape_reports_the_same_count():
     """`agent_tool_contract.search_jobs_result` reports `results` and a count."""
     _, detail = describe_progress(
-        _result("guarded_search_jobs", {"ok": True, "count": 1, "results": [{"id": 7}]})
+        _result("search_jobs", {"ok": True, "count": 1, "results": [{"id": 7}]})
     )
 
     assert detail["outcome"] == "1 matching posting"
@@ -248,7 +248,7 @@ def test_the_runner_streams_the_query_it_searched_for_and_the_count_that_came_ba
     search = AIMessage(
         content="",
         tool_calls=[{
-            "name": "guarded_search_jobs",
+            "name": "search_jobs",
             "args": {"query": "semiconductor yield analytics engineer", "n": None, "detail": False},
             "id": "call-1",
         }],
@@ -264,7 +264,7 @@ def test_the_runner_streams_the_query_it_searched_for_and_the_count_that_came_ba
     ]
     by_stage = {item.detail.get("stage"): item for item in progress if item.detail.get("tool_name")}
 
-    assert by_stage["call"].summary == "coordinator called guarded_search_jobs."
+    assert by_stage["call"].summary == "coordinator called search_jobs."
     assert by_stage["call"].detail["query"] == "semiconductor yield analytics engineer"
     assert by_stage["result"].detail["outcome"] == "0 matching postings"
     assert by_stage["result"].status == "running", (

@@ -761,7 +761,7 @@ def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results()
     assert agent.calls == 3
 
 
-def test_has_repeated_call_rejects_a_materially_identical_repeat_within_a_turn():
+def test_tool_call_guard_rejects_a_materially_identical_repeat_within_a_turn():
     """Guardrails limit volume, never choice.
 
     An identical repeat never reaches the discovery port. A materially different

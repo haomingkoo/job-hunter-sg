@@ -1,0 +1,80 @@
+# Issue backlog audit — 2026-08-03
+
+This is the current disposition ledger after checking the latest passdown,
+current `main`, focused tests, production acceptance records, and every open
+GitHub issue. Closing an issue as `not planned` means its proposed architecture
+is obsolete, duplicated, or unsupported by evidence; it does not mean the old
+acceptance contract was implemented.
+
+## Closed as completed
+
+Issues #91, #101, #104, #110, #111, and #112 were closed only after their current
+implementation and focused regression coverage were verified. Issue #184 was
+closed after production browser acceptance of streamed Shortlist and Select
+Target behavior.
+
+## Closed as obsolete or duplicate
+
+| Issues | Disposition |
+|---|---|
+| #41, #71 | A general runtime MCP/workbench surface would duplicate the small approved application tool set and widen authority. |
+| #43 | The vendor-specific Graphify path is superseded by canonical resume blocks, the Candidate Evidence Profile, and cited application artifacts. |
+| #72-#75 | The retired V2 ingestion and autonomous refresh stack would duplicate the maintained job corpus and explicit search states. |
+| #76 | Durable recruitment threads already own messages, preferences, plan, events, artifacts, failures, and resume/target links. |
+| #95 | Consolidated into #186; its explicit-confirmation, idempotency, provenance, history, and ownership requirements were preserved there. |
+| #100 | A dynamic specialist factory has no supporting benchmark or demonstrated capability gap. Fixed, versioned personas remain the bounded default. |
+| #107 | Consolidated into #99; its literal semantic, two-model, trace, checkpoint, judge, edit, and Railway canary checks were preserved there. |
+
+## Still valid and open
+
+| Issue | Observed remaining outcome |
+|---|---|
+| #86 | Preserve PDF/DOCX layout evidence in one canonical model and remove frontend raw-text re-parsing. |
+| #90 | Add owner-only rename, archive, restore, and deletion with truthful retention behavior. |
+| #93 | Add attributable Singapore compensation evidence and private negotiation rehearsal. |
+| #96 | Connect traces, semantic evaluation, field-level calibration, and regression decisions. |
+| #97 | Complete restart, disconnect, duplicate-delivery, partial-artifact, and idempotent recovery. |
+| #98 | Prove the complete journey on narrow screens, keyboard, live regions, and reduced motion. |
+| #99 | Prove two-model portability and the authenticated semantic journey in isolated Railway staging. |
+| #102 | Preserve cumulative call, token, latency, validation, checkpoint, model, and trace evidence across replay. |
+| #103 | Add SSE heartbeats plus per-user/global concurrency enforcement and disconnect cleanup. |
+| #106 | Globally merge and independently calibrate candidate evidence without losing exact provenance. |
+| #108 | Replace scattered retry flags with one persisted deterministic attempt ledger. |
+| #113 | Close the remaining open-agent repeated-call and total-budget guardrail gaps. |
+| #186 | Join discovery, shortlist, targeting, tailoring, and application tracking through one durable existing record. |
+| #42 | Save current, attributable company/role research on the selected durable job record. |
+| #44 | Save an evidence-grounded, source-backed interview pack on the tracked application. |
+| #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
+
+## Verification boundary
+
+The focused candidate-profile, open-agent, role-evidence, and recruitment-module
+suite passed 124 tests during classification. After guard consolidation, the
+broader affected suite passed 208 tests and the full repository run passed 887
+backend tests with four explicit skips, 45 repository-level tests, 193 frontend
+tests, and the frontend production build. Compile, Ruff, ty, `pip check`, and
+`pip-audit` also passed. Production acceptance is documented in the V4 slice
+passdown. These facts support completed-item closure; they do not waive the open
+outcomes above.
+
+## Dependency check
+
+`langchain-mcp-adapters` was removed because current code neither imports it nor
+depends on it; the hosted MCP surface uses the `mcp` package directly.
+`react-is` remains an explicit frontend dependency because Recharts declares it
+as a peer dependency, even though application source does not import it.
+
+## Over-engineering cleanup
+
+- Replaced two per-path duplicate-call implementations and their tool-history
+  context with one middleware used by both agent loops.
+- Removed one white-box test that asserted the deleted tool-local architecture;
+  equivalent behavior remains covered at middleware, coordinator-loop, and
+  assessment-stream levels.
+- Removed the completed 1,899-line open-agent build plan, whose instructions
+  would have recreated the deleted wrappers. Current design and acceptance live
+  in the PRD, issue ledger, and focused design record.
+- Kept `react-is` after peer-dependency evidence refuted its apparent redundancy.
+
+This cleanup removes 1,920 net lines and one direct dependency from the working
+change.

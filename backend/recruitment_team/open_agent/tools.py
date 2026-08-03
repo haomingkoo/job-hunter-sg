@@ -8,16 +8,14 @@ coordinator binds those four plus `read_shortlist` and `search_jobs` around a
 ContextVars, so a tool that needs a field the other shape does not carry says
 so rather than dereferencing `None`.
 
-`search_jobs` here is not the assessment runner's `guarded_search_jobs`
-(runner.py), which wraps `resume_agent.tools.search_jobs` with `detail=False`.
-This one goes through the typed DiscoveryPort on the conversation context, the
-same port the SearchJobs command uses.
+`search_jobs` here goes through the typed DiscoveryPort on the conversation
+context, the same port the SearchJobs command uses. The assessment runner binds
+the resume-agent corpus search tool instead.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict
-from types import SimpleNamespace
 from typing import Literal
 
 from langchain_core.tools import tool
@@ -29,17 +27,9 @@ from validation_gates import _extract_numbers, run_all_gates
 from ..conversation_model import PreferenceUpdatePayload
 from ..interface import PreferenceUpdate
 from . import context
-from .guardrails import has_repeated_call
 
 
 _NO_CONTEXT = {"ok": False, "failure_type": "business", "reason": "No active assessment context."}
-# A tool that answers the same question twice has told the agent nothing new.
-_REPEATED_CALL = {
-    "ok": False,
-    "failure_type": "validation",
-    "reason": "identical_call_no_new_information",
-    "retry": False,
-}
 _NO_CONVERSATION = {
     "ok": False,
     "failure_type": "business",
@@ -139,9 +129,6 @@ def read_candidate_evidence() -> dict:
     request = context.current_request()
     if request is None:
         return dict(_NO_CONTEXT)
-    history = context.tool_call_history()
-    if history is not None and has_repeated_call(history, "read_candidate_evidence", {}):
-        return dict(_REPEATED_CALL)
     if request.candidate_profile is None:
         # Say what to do instead. Live on 2026-08-02 the coordinator called this
         # twelve times against a thread with no profile, each time told only what
@@ -401,18 +388,7 @@ def search_jobs(query: str) -> dict:
     if conversation is None:
         return dict(_NO_CONVERSATION)
 
-    args = {"query": query}
-    history = context.tool_call_history()
-    if history is not None and has_repeated_call(history, "search_jobs", args):
-        return {
-            "ok": False,
-            "failure_type": "validation",
-            "reason": "identical_call_no_new_information",
-        }
-
     result = conversation.discovery.search_jobs(query)
-    if history is not None:
-        history.append(SimpleNamespace(tool_calls=[{"name": "search_jobs", "args": args}]))
     # Every result is recorded, failures included, so the turn's search history
     # stays observable. Which of them may change the thread is decided when the
     # sink is drained, not here.
