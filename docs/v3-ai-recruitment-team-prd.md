@@ -184,6 +184,11 @@ magic scores.
 70. As a candidate, I want role-success criteria separated into required evidence, preferred evidence, transferable evidence, and unknowns, so that absence is not treated as failure automatically.
 71. As a candidate, I want adjacent occupation data labelled as an analogy rather than direct evidence, so that niche-role recommendations remain honest.
 72. As a product operator, I want niche-role fixtures and coverage diagnostics, so that common-role accuracy cannot hide failures on sparse occupations.
+73. As a candidate, I want matched, shortlisted, targeted, applying, applied, interviewing, and archived states to form one durable pipeline, so that discovery does not become a disconnected card dump.
+74. As a candidate, I want each saved job to retain its posting snapshot, fit evidence, resume version, notes, contacts, activity, and next action, so that I can resume work after the live posting disappears.
+75. As a candidate, I want to hide a role or company and explain why a match is poor, so that future recommendations can improve without pretending feedback is ground truth.
+76. As a candidate, I want the product to distinguish a curated match feed from broad manual search, so that I understand whether a result was ranked for me or merely matched a query.
+77. As a candidate, I want the selected target to lead directly to evidence review, resume tailoring, application creation, and follow-up, so that the interface always offers one truthful next step.
 
 ## Implementation Decisions
 
@@ -417,6 +422,38 @@ quality category, call graph, latency, and cost. Human feedback and downstream
 outcomes are evaluation signals, not automatic ground truth. Fine-tuning model
 weights is considered only after a consented labelled dataset exists and simpler
 prompt, tool, rubric, and routing changes no longer explain the quality gap.
+
+## Current Product Benchmark — 2026-08-03
+
+The benchmark uses current first-party product and help documentation. It informs
+the interaction contract; it does not justify copying another product's visual
+design or unverifiable outcome claims.
+
+- [Simplify Job Matches](https://help.simplify.jobs/en/help/articles/2166608-using-your-job-matches)
+  separates a small personalized feed from broad search, explains why each role
+  matches, accepts hide and feedback actions, and moves applied jobs into one
+  tracker. Its [Job Tracker](https://help.simplify.jobs/en/articles/2140179-using-the-job-tracker)
+  keeps stages, documents, history, filters, list/column views, and imports/exports
+  together.
+- [Teal's Job Tracker](https://help.tealhq.com/en/articles/14435727-how-to-track-your-job-applications)
+  treats each saved posting as a durable workspace with stages, the full job
+  description, contacts, notes, follow-ups, resume attachments, and stage-specific
+  guidance. Its [tailoring flow](https://help.tealhq.com/en/articles/14435726-how-to-tailor-your-resume-for-a-specific-job)
+  connects one saved job to evidence-level resume choices and preserves the master
+  resume rather than rewriting it destructively.
+- [Huntr's extension](https://help.huntr.co/en/articles/9859408-the-huntr-chrome-extension)
+  makes saving a role from external job sites a one-click entry into the same job
+  board and lets candidates explicitly move it to the applied stage after autofill.
+- [Careerflow's feature overview](https://help.careerflow.ai/en/collections/16506159-core-features-overview)
+  likewise connects a searchable job portal, tracker, resume tools, and networking
+  contacts instead of presenting job discovery as an isolated transcript.
+
+The V3 implication is deliberately small: keep the conversation as the coordinator,
+but make the durable job/application record the product spine. A ranked match card is
+one view of that record, not a temporary answer. Save, target, tailor, apply, and
+follow-up actions update the same record and activity history. Curated recommendations
+and manual search remain visibly distinct. Feedback can tune later ranking, but it is
+stored as a user signal rather than silently treated as objective relevance.
 
 ## Source-Backed Persona and Compensation Packs
 
