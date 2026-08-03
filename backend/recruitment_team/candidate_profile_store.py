@@ -18,6 +18,7 @@ from .candidate_profile import (
     CandidateProfileCheckpointStore,
     candidate_profile_execution_policy,
 )
+from .execution_metrics import merge_execution_event, merge_execution_metrics
 from .prompts import CANDIDATE_PROFILE_PROMPT_VERSION
 
 log = logging.getLogger("jobhunter.recruitment_team")
@@ -191,6 +192,25 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         else:
             scopes.pop(RETRY_FEEDBACK_SCOPE_KEY, None)
         record.scopes = scopes
+        record.updated_at = _utcnow()
+        self._db.commit()
+
+    def record_execution_event(self, checkpoint_id: str, event: dict[str, Any]) -> None:
+        record = self._validated_record(checkpoint_id) or self._create(checkpoint_id)
+        record.execution_metrics = merge_execution_event(
+            dict(record.execution_metrics or {}),
+            {**event, "logical_run_id": checkpoint_id},
+        )
+        record.updated_at = _utcnow()
+        self._db.commit()
+
+    def execution_metrics(self, checkpoint_id: str) -> dict[str, Any]:
+        record = self._validated_record(checkpoint_id)
+        return dict(record.execution_metrics or {}) if record is not None else {}
+
+    def merge_execution_metrics(self, checkpoint_id: str, metrics: dict[str, Any]) -> None:
+        record = self._validated_record(checkpoint_id) or self._create(checkpoint_id)
+        record.execution_metrics = merge_execution_metrics(record.execution_metrics, metrics)
         record.updated_at = _utcnow()
         self._db.commit()
 

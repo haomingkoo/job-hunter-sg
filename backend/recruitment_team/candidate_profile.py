@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
@@ -258,6 +259,10 @@ class CandidateProfileCheckpointStore(Protocol):
         scope_id: str,
         feedback: dict[str, Any],
     ) -> None: ...
+
+    def record_execution_event(self, checkpoint_id: str, event: dict[str, Any]) -> None: ...
+
+    def execution_metrics(self, checkpoint_id: str) -> dict[str, Any]: ...
 
     def clear_retry_feedback(self, checkpoint_id: str, scope_id: str) -> None: ...
 
@@ -577,12 +582,11 @@ class LangChainCandidateProfiler:
         checkpoint_id: str,
         scope_id: str,
     ) -> dict[str, Any] | None:
-        if self._checkpoint_store is None or not hasattr(
-            self._checkpoint_store,
-            "load_retry_feedback",
-        ):
-            return None
-        return self._checkpoint_store.load_retry_feedback(checkpoint_id, scope_id)
+        return (
+            self._checkpoint_store.load_retry_feedback(checkpoint_id, scope_id)
+            if self._checkpoint_store is not None
+            else None
+        )
 
     def _save_retry_feedback(
         self,
@@ -590,10 +594,7 @@ class LangChainCandidateProfiler:
         scope_id: str,
         feedback: dict[str, Any],
     ) -> None:
-        if self._checkpoint_store is not None and hasattr(
-            self._checkpoint_store,
-            "save_retry_feedback",
-        ):
+        if self._checkpoint_store is not None:
             self._checkpoint_store.save_retry_feedback(
                 checkpoint_id,
                 scope_id,
@@ -601,11 +602,19 @@ class LangChainCandidateProfiler:
             )
 
     def _clear_retry_feedback(self, checkpoint_id: str, scope_id: str) -> None:
-        if self._checkpoint_store is not None and hasattr(
-            self._checkpoint_store,
-            "clear_retry_feedback",
-        ):
+        if self._checkpoint_store is not None:
             self._checkpoint_store.clear_retry_feedback(checkpoint_id, scope_id)
+
+    def _record_execution_event(self, checkpoint_id: str, event: dict[str, Any]) -> None:
+        if self._checkpoint_store is not None:
+            self._checkpoint_store.record_execution_event(checkpoint_id, event)
+
+    def _execution_metrics(self, checkpoint_id: str) -> dict[str, Any]:
+        return (
+            self._checkpoint_store.execution_metrics(checkpoint_id)
+            if self._checkpoint_store is not None
+            else {}
+        )
 
     def profile(self, resume_document: dict[str, Any]) -> CandidateProfileRun:
         ordered_blocks = [
@@ -657,6 +666,9 @@ class LangChainCandidateProfiler:
                     "scope_id": scope.scope_id,
                     "section_key": scope.section_key,
                     "block_count": len(scope.blocks),
+                    "logical_run_id": checkpoint_id,
+                    "checkpoint_id": checkpoint_id,
+                    "stage": "candidate_profile",
                 },
             ) as scope_span:
                 cached = checkpoints.get(scope.scope_id)
@@ -680,6 +692,15 @@ class LangChainCandidateProfiler:
                     accepted_fields.extend(payload["fields"])
                     completed_scope_ids.append(scope.scope_id)
                     checkpoint_hit_count += 1
+                    self._record_execution_event(
+                        checkpoint_id,
+                        {
+                            "event": "checkpoint_hit",
+                            "stage": "candidate_profile",
+                            "scope_id": scope.scope_id,
+                            "status": "success",
+                        },
+                    )
                     progress("checkpoint", scope)
                     progress("completion", scope)
                     scope_span.set_attribute("checkpoint_hit", True)
@@ -753,6 +774,7 @@ class LangChainCandidateProfiler:
                     config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS + 1,
                 ):
                     model_call_count += 1
+                    attempt_started = time.perf_counter()
                     if failure:
                         progress("correction", scope, attempt=attempt)
                     attempt_request = list(request)
@@ -801,11 +823,27 @@ class LangChainCandidateProfiler:
                             "prompt_version": CANDIDATE_PROFILE_PROMPT_VERSION,
                             "configured_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
                             "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
+                            "logical_run_id": checkpoint_id,
+                            "checkpoint_id": checkpoint_id,
+                            "stage": "candidate_profile",
                         },
                     ) as attempt_span:
                         try:
                             response = bound_model.invoke(attempt_request)
                         except Exception as error:
+                            self._record_execution_event(
+                                checkpoint_id,
+                                {
+                                    "event": "model_attempt",
+                                    "stage": "candidate_profile",
+                                    "scope_id": scope.scope_id,
+                                    "attempt": attempt,
+                                    "status": "error",
+                                    "model": model_name,
+                                    "latency_ms": (time.perf_counter() - attempt_started) * 1000,
+                                    "error_type": type(error).__name__,
+                                },
+                            )
                             progress("failure", scope, attempt=attempt)
                             attempt_span.set_attribute("status", "error")
                             attempt_span.set_attribute("error_type", type(error).__name__)
@@ -834,7 +872,13 @@ class LangChainCandidateProfiler:
                     output_tokens += int(usage.get("output_tokens") or 0)
                     with self._telemetry.operation(
                         "candidate_profile.validation",
-                        {"scope_id": scope.scope_id, "attempt": attempt},
+                        {
+                            "scope_id": scope.scope_id,
+                            "attempt": attempt,
+                            "logical_run_id": checkpoint_id,
+                            "checkpoint_id": checkpoint_id,
+                            "stage": "candidate_profile_validation",
+                        },
                     ) as validation_span:
                         submitted_payload, failed_output, failure = _response_payload(response)
                         rejected_payload = submitted_payload
@@ -847,6 +891,21 @@ class LangChainCandidateProfiler:
                             "retry_triggered",
                             payload is None and attempt < config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
                         )
+                    self._record_execution_event(
+                        checkpoint_id,
+                        {
+                            "event": "model_attempt",
+                            "stage": "candidate_profile",
+                            "scope_id": scope.scope_id,
+                            "attempt": attempt,
+                            "status": "success" if payload is not None else "validation_failed",
+                            "model": model_name,
+                            "input_tokens": int(usage.get("input_tokens") or 0),
+                            "output_tokens": int(usage.get("output_tokens") or 0),
+                            "latency_ms": (time.perf_counter() - attempt_started) * 1000,
+                            "validation_code": failure,
+                        },
+                    )
                     if failure:
                         validation_codes.append(failure)
                         exhausted = attempt == config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS
@@ -928,6 +987,7 @@ class LangChainCandidateProfiler:
             for block_id in blocks
             if block_id in cited_ids
         )
+        cumulative = self._execution_metrics(checkpoint_id)
         return CandidateProfileRun(
             profile=CandidateEvidenceProfile(
                 profile_version=CANDIDATE_PROFILE_PROMPT_VERSION,
@@ -936,14 +996,14 @@ class LangChainCandidateProfiler:
                 fields=fields,
                 cited_resume_evidence=cited,
             ),
-            model_name=model_name,
-            attempt_count=model_call_count,
-            input_tokens=input_tokens or None,
-            output_tokens=output_tokens or None,
-            validation_codes=tuple(validation_codes),
+            model_name=str((cumulative.get("models") or [model_name])[-1]),
+            attempt_count=int(cumulative.get("model_call_count") or model_call_count),
+            input_tokens=int(cumulative.get("input_tokens") or input_tokens) or None,
+            output_tokens=int(cumulative.get("output_tokens") or output_tokens) or None,
+            validation_codes=tuple(cumulative.get("validation_codes") or validation_codes),
             scope_count=len(scopes),
-            model_call_count=model_call_count,
-            checkpoint_hit_count=checkpoint_hit_count,
+            model_call_count=int(cumulative.get("model_call_count") or model_call_count),
+            checkpoint_hit_count=int(cumulative.get("checkpoint_hit_count") or checkpoint_hit_count),
             checkpoint_id=checkpoint_id,
         )
 

@@ -471,6 +471,7 @@ class CandidateProfileArtifact(Base):
     execution_policy: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     scopes: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    execution_metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
@@ -525,6 +526,7 @@ class TargetAssessmentArtifact(Base):
     correction: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     execution_policy: Mapped[dict] = mapped_column(JSON, nullable=False)
+    execution_metrics: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     # Internal-only bookkeeping for an ask_candidate pause: what the open
     # agent had accumulated before pausing, so a later answer can resume with
     # it. Never exposed on TargetAssessmentArtifactSnapshot / the public API --

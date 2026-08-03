@@ -147,6 +147,7 @@ class CaseFacts:
     tracked_job_ids: dict[str, int] | None = None
     job_feedback: tuple[dict, ...] = ()
     role_success_profile: RoleSuccessProfile | None = None
+    role_success_metrics: dict | None = None
     preferences: tuple[PreferenceFact, ...] = ()
     confirmed_evidence: tuple[ConfirmedEvidenceFact, ...] = ()
     plan: tuple[dict[str, str], ...] = ()
@@ -167,6 +168,7 @@ class CandidateProfileArtifactSnapshot:
     execution_policy: dict
     status: str
     completed_scope_ids: tuple[str, ...]
+    execution_metrics: dict
     profile: dict | None
     error: dict | None
     updated_at: datetime
@@ -183,6 +185,7 @@ class TargetAssessmentArtifactSnapshot:
     correction: dict | None
     error: dict | None
     execution_policy: dict
+    execution_metrics: dict
     updated_at: datetime
 
 

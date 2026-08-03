@@ -113,6 +113,60 @@ def test_candidate_profile_store_keeps_retry_feedback_out_of_completed_scopes():
         assert store.load(checkpoint_id) == {"summary_01": {"fields": []}}
 
 
+def test_candidate_profile_execution_metrics_survive_a_new_database_session():
+    factory = _session_factory()
+    owner_id, resume_id = _owner_resume(factory, "metrics-owner@example.com")
+    checkpoint_id = "f" * 64
+
+    with factory() as db:
+        store = SQLAlchemyCandidateProfileStore(
+            db, owner_id=owner_id, resume_version_id=resume_id, model_name="model-a",
+        )
+        store.record_execution_event(checkpoint_id, {
+            "event": "model_attempt",
+            "scope_id": "experience_01",
+            "attempt": 1,
+            "status": "validation_failed",
+            "model": "model-a",
+            "input_tokens": 13,
+            "output_tokens": 5,
+            "latency_ms": 120.5,
+            "validation_code": "field:quote_not_found",
+        })
+        store.record_execution_event(checkpoint_id, {
+            "event": "model_attempt",
+            "scope_id": "experience_01",
+            "attempt": 2,
+            "status": "error",
+            "model": "model-a",
+            "latency_ms": 300.0,
+            "error_type": "TimeoutError",
+        })
+
+    with factory() as db:
+        resumed = SQLAlchemyCandidateProfileStore(
+            db, owner_id=owner_id, resume_version_id=resume_id, model_name="model-a",
+        )
+        resumed.record_execution_event(checkpoint_id, {
+            "event": "model_attempt",
+            "scope_id": "experience_01",
+            "attempt": 2,
+            "status": "success",
+            "model": "model-a",
+            "input_tokens": 11,
+            "output_tokens": 4,
+            "latency_ms": 90.0,
+        })
+        metrics = resumed.execution_metrics(checkpoint_id)
+
+    assert metrics["model_call_count"] == 3
+    assert metrics["input_tokens"] == 24
+    assert metrics["output_tokens"] == 9
+    assert metrics["latency_ms"] == 510.5
+    assert metrics["validation_codes"] == ["field:quote_not_found"]
+    assert [attempt["status"] for attempt in metrics["attempts"]] == [
+        "validation_failed", "error", "success",
+    ]
 def test_candidate_profile_store_raises_a_distinct_error_on_checkpoint_mismatch():
     factory = _session_factory()
     owner_id, resume_id = _owner_resume(factory, "owner@example.com")
