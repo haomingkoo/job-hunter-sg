@@ -118,7 +118,7 @@ from .role_success import (
     RoleSuccessProfiler,
     SourceCoverage,
 )
-from .role_evidence_assessor import RoleEvidenceAssessmentError
+from .role_evidence_assessor import RoleEvidenceAssessmentError, role_evidence_attempt_limit
 from .telemetry import RecruitmentTelemetry
 from .activity_publisher import ActivityPublisher
 from .prompts import CONVERSATION_PROMPT_VERSION
@@ -1468,7 +1468,7 @@ class RecruitmentTeam:
                 "team_member": "role_evidence_assessor",
                 "model": run.assessor_model_name or run.model_name,
                 "attempt_count": run.assessor_attempt_count,
-                "attempt_limit": config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS,
+                "attempt_limit": role_evidence_attempt_limit(len(run.profile.criteria)),
                 "status": "success",
             })
         if not role_attempts:

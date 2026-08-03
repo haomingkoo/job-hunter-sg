@@ -220,54 +220,31 @@ def _targeted_correction_data(
         "failed_judgment": failed_judgment,
     }
     orphaned_ids = _orphaned_evidence_ids(failure)
+    unsupported_numbers = _unsupported_numbers(failure)
     if orphaned_ids:
-        # An evidence_mismatch failure means the model cited a resume block
-        # without also citing a candidate_profile_field_id that contains it.
-        # Finding which field(s) actually contain that block is a trivial,
-        # deterministic lookup here -- but a hard search for the model across
-        # 100+ hash-suffixed field IDs, which is why it was observed
-        # resubmitting the identical rejected judgment unchanged rather than
-        # attempting a fix. Handing over the exact valid field IDs removes
-        # that search entirely.
         valid_field_ids = {
             evidence_id: sorted(
-                field.field_id
-                for field in request.candidate_profile_fields
-                if evidence_id in field.resume_evidence_ids
+                field.field_id for field in request.candidate_profile_fields if evidence_id in field.resume_evidence_ids
             )
             for evidence_id in orphaned_ids
         }
-        relevant_field_ids = {
-            *failed_judgment["candidate_profile_field_ids"],
-            *(field_id for field_ids in valid_field_ids.values() for field_id in field_ids),
-        }
+        data["orphaned_evidence_valid_field_ids"] = valid_field_ids
+    else:
+        valid_field_ids = {}
+    if orphaned_ids or unsupported_numbers:
+        relevant_field_ids = set(failed_judgment["candidate_profile_field_ids"])
+        relevant_field_ids.update(field_id for field_ids in valid_field_ids.values() for field_id in field_ids)
         cited_evidence_ids = set(failed_judgment["resume_evidence_ids"])
         data["candidate_profile_fields"] = [
-            asdict(field)
-            for field in request.candidate_profile_fields
-            if field.field_id in relevant_field_ids
+            asdict(field) for field in request.candidate_profile_fields if field.field_id in relevant_field_ids
         ]
         data["resume_blocks"] = [
-            asdict(block)
-            for block in request.resume_blocks
-            if block.evidence_id in cited_evidence_ids
+            asdict(block) for block in request.resume_blocks if block.evidence_id in cited_evidence_ids
         ]
-        data["orphaned_evidence_valid_field_ids"] = valid_field_ids
     else:
         data["candidate_profile_fields"] = [asdict(field) for field in request.candidate_profile_fields]
         data["resume_blocks"] = [asdict(block) for block in request.resume_blocks]
-    unsupported_numbers = _unsupported_numbers(failure)
     if unsupported_numbers:
-        # A numeric_claim failure often means the narrative states a computed
-        # value (a duration, a difference, a fraction) derived from real,
-        # grounded numbers rather than an invented fact -- e.g. "2 years
-        # short" when the criterion requires 10 and the evidence shows 8.
-        # That computed value still doesn't appear verbatim in the grounding,
-        # so it still fails this check; "remove or replace" is genuinely
-        # ambiguous here (replace with what?), and the model was observed
-        # resubmitting the identical narrative unchanged rather than guessing.
-        # There is no safe way to keep a non-grounded computed number, so the
-        # correction data says so explicitly.
         data["unsupported_numbers"] = list(unsupported_numbers)
     return data
 
@@ -347,7 +324,9 @@ def _validate_submission(
         )
         quoted_phrases = [next(value for value in match if value) for match in _QUOTED_PHRASE_RE.findall(narrative)]
         unsupported_quotes = [
-            phrase for phrase in quoted_phrases if _normalized_text(unescape_xml_data(phrase)) not in _normalized_text(grounding)
+            phrase
+            for phrase in quoted_phrases
+            if _normalized_text(unescape_xml_data(phrase)) not in _normalized_text(grounding)
         ]
         if unsupported_quotes:
             return None, f"literal_quote:unsupported:{unsupported_quotes[0][:80]!r}:{criterion_id}"
@@ -359,16 +338,19 @@ def _validate_submission(
         # claim about the candidate and still has to be grounded.
         # candidate_profile.py:415 exempts the same value for the same reason.
         own_score = _extract_numbers(str(judgment["evidence_support_score"]))
-        unsupported_numbers = sorted(
-            _extract_numbers(narrative) - _extract_numbers(grounding) - own_score
-        )
+        unsupported_numbers = sorted(_extract_numbers(narrative) - _extract_numbers(grounding) - own_score)
         if unsupported_numbers:
             return None, f"numeric_claim:unsupported:{','.join(unsupported_numbers)}:{criterion_id}"
     return payload, ""
 
 
+def role_evidence_attempt_limit(criterion_count: int) -> int:
+    """Bound full submissions plus one correction per criterion."""
+    return config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS + criterion_count
+
+
 class LangChainRoleEvidenceAssessor:
-    """Assess all criteria with one model call and at most one correction retry."""
+    """Assess every criterion and correct each rejected criterion once."""
 
     def __init__(
         self,
@@ -410,11 +392,27 @@ class LangChainRoleEvidenceAssessor:
         validation_codes: list[str] = []
         total_input_tokens = 0
         total_output_tokens = 0
-        for attempt in range(1, config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS + 1):
+        attempt = 0
+        full_attempts = 0
+        corrected_criterion_ids: set[str] = set()
+        previous_scope = ""
+        max_attempts = role_evidence_attempt_limit(len(request.criteria))
+        while attempt < max_attempts:
             target_criterion_id = (
                 _target_criterion_id(failure, request.criteria) if failure and failed_payload is not None else None
             )
+            if attempt:
+                if target_criterion_id:
+                    if target_criterion_id in corrected_criterion_ids:
+                        break
+                    corrected_criterion_ids.add(target_criterion_id)
+                elif previous_scope != "full" or full_attempts >= config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS:
+                    break
             correction_scope = "single_criterion" if target_criterion_id else "full"
+            previous_scope = correction_scope
+            attempt += 1
+            if not target_criterion_id:
+                full_attempts += 1
             tool = _SUBMIT_CORRECTION_TOOL if target_criterion_id else _SUBMIT_ASSESSMENT_TOOL
             if target_criterion_id:
                 correction_data = _targeted_correction_data(
@@ -440,7 +438,7 @@ class LangChainRoleEvidenceAssessor:
                         "supported_strength, remaining_gap, or score_reason -- including a computed "
                         "duration, difference, or fraction derived from real evidence, since it still "
                         "does not appear verbatim in the grounding. Describe that comparison in words "
-                        "instead (e.g. \"a few years short\" rather than naming the computed gap), or "
+                        'instead (e.g. "a few years short" rather than naming the computed gap), or '
                         "state only the underlying numbers that do appear in the grounding.\n\n"
                         + xml_data_block(
                             "role_evidence_correction_data",
@@ -469,7 +467,7 @@ class LangChainRoleEvidenceAssessor:
                 "role_evidence_assessment.model_attempt",
                 {
                     "attempt": attempt,
-                    "max_attempts": config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS,
+                    "max_attempts": max_attempts,
                     "prompt_version": ROLE_EVIDENCE_ASSESSOR_PROMPT_VERSION,
                     "configured_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
                     "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
@@ -520,9 +518,17 @@ class LangChainRoleEvidenceAssessor:
                     accepted, failure = _validate_submission(failed_payload, request)
                 validation_span.set_attribute("validation_code", failure)
                 validation_span.set_attribute("accepted", accepted is not None)
+                next_target_criterion_id = (
+                    _target_criterion_id(failure, request.criteria) if failure and failed_payload is not None else None
+                )
+                can_retry = (
+                    next_target_criterion_id not in corrected_criterion_ids
+                    if next_target_criterion_id
+                    else correction_scope == "full" and full_attempts < config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS
+                )
                 validation_span.set_attribute(
                     "retry_triggered",
-                    accepted is None and attempt < config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS,
+                    accepted is None and can_retry,
                 )
             if accepted is not None:
                 judgments = tuple(

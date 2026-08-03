@@ -11,6 +11,7 @@ from recruitment_team.role_evidence_assessor import (
     RoleEvidenceAssessmentRun,
     RoleEvidenceJudgment,
     ScriptedRoleEvidenceAssessor,
+    role_evidence_attempt_limit,
 )
 from recruitment_team.role_success import (
     CandidateEvidenceMatch,
@@ -190,7 +191,7 @@ def test_assessor_returns_one_validated_judgment_and_uses_xml_tool_contract():
     run = LangChainRoleEvidenceAssessor(model).assess(_request())
 
     assert run.attempt_count == 1
-    assert run.prompt_version == "role-evidence-assessor-v7"
+    assert run.prompt_version == "role-evidence-assessor-v8"
     assert run.judgments[0].alignment == "partial"
     assert run.judgments[0].evidence_support_score == 55
     data_message = model.requests[0][1].content
@@ -228,8 +229,8 @@ def test_assessor_retries_once_with_original_evidence_failed_output_and_exact_er
     assert [span.parent_id for span in (*attempts, *validations)] == [parent.span_id] * 4
     assert attempts[0].attributes == {
         "attempt": 1,
-        "max_attempts": config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS,
-        "prompt_version": "role-evidence-assessor-v7",
+        "max_attempts": role_evidence_attempt_limit(len(_request().criteria)),
+        "prompt_version": "role-evidence-assessor-v8",
         "configured_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
         "correction_scope": "full",
@@ -321,6 +322,44 @@ def test_assessor_targets_one_failed_judgment_and_preserves_other_values():
         "Prepared monthly forecasts for senior leaders" in str(value)
         for span in telemetry.spans
         for value in span.attributes.values()
+    )
+
+
+def test_assessor_corrects_distinct_invalid_criteria_sequentially():
+    request = _two_criterion_request()
+    wrong_field = _judgment(candidate_profile_field_ids=["profile-monthly-forecast"])
+    unsupported_number = _stable_judgment()
+    unsupported_number["score_reason"] = "The evidence covers 30 of 35 required activities."
+    corrected_number = _stable_judgment()
+    model = _Model(
+        [
+            {"judgments": [wrong_field, unsupported_number]},
+            {"judgment": _judgment()},
+            {"judgment": corrected_number},
+        ]
+    )
+
+    run = LangChainRoleEvidenceAssessor(model).assess(request)
+
+    assert run.attempt_count == 3
+    assert run.validation_codes == (
+        "candidate_profile_field_ids:evidence_mismatch:block-1:regional_rollout",
+        "numeric_claim:unsupported:30,35:monthly_forecast",
+    )
+    assert model.bindings == [
+        "submit_role_evidence_assessment",
+        "submit_role_evidence_correction",
+        "submit_role_evidence_correction",
+    ]
+    numeric_correction = model.requests[2][1].content
+    assert '"unsupported_numbers":["30","35"]' in numeric_correction
+    assert '"field_id":"profile-monthly-forecast"' in numeric_correction
+    assert '"field_id":"profile-regional-rollout"' not in numeric_correction
+    assert '"evidence_id":"block-2"' in numeric_correction
+    assert '"evidence_id":"block-1"' not in numeric_correction
+    assert (
+        next(item for item in run.judgments if item.criterion_id == "monthly_forecast").score_reason
+        == (corrected_number["score_reason"])
     )
 
 
@@ -424,9 +463,7 @@ def test_assessor_correction_names_the_valid_field_for_orphaned_evidence_and_can
     run = LangChainRoleEvidenceAssessor(model).assess(request)
 
     correction_message = model.requests[1][1].content
-    assert (
-        '"orphaned_evidence_valid_field_ids":{"block-1":["profile-regional-rollout"]}' in correction_message
-    )
+    assert '"orphaned_evidence_valid_field_ids":{"block-1":["profile-regional-rollout"]}' in correction_message
     assert "Led the rollout for Singapore." in correction_message
     assert "Worked in an unrelated domain." not in correction_message
     assert '"source_locator":"experience[0].bullets[1]"' not in correction_message
