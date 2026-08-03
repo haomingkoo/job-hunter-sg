@@ -27,6 +27,7 @@ describe("RecruitmentTeamPanel", () => {
 
   afterEach(() => {
     act(() => root.unmount());
+    vi.useRealTimers();
     container.remove();
   });
 
@@ -118,6 +119,56 @@ describe("RecruitmentTeamPanel", () => {
       expect.objectContaining({ message: "Keep it in Singapore." }),
       expect.any(Function),
     );
+  });
+
+  it("refreshes a detached running action until its committed result appears", async () => {
+    vi.useFakeTimers();
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-detached");
+    let completed = false;
+    let threadReads = 0;
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-detached") {
+        threadReads += 1;
+        return response({
+          thread_id: "thread-detached",
+          workflow_state: completed ? "target_selected" : "exploring",
+          case_facts: completed
+            ? { selected_target: { job_id: 420181, title: "Quality Manager", company: "HME" } }
+            : {},
+          messages: completed
+            ? [{ role: "assistant", content: "Selected target persisted." }]
+            : [],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-detached/events") {
+        return response([
+          {
+            sequence: 1,
+            run_id: "detached-run",
+            event_type: "run",
+            team_member: "coordinator",
+            status: completed ? "completed" : "running",
+            summary: completed ? "The coordinator completed this turn." : "Reviewing your request.",
+          },
+        ]);
+      }
+      if (path.includes("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+    expect(container.textContent).toContain("Coordinator is working");
+    expect(container.textContent).not.toContain("Run complete");
+
+    completed = true;
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+
+    expect(threadReads).toBeGreaterThan(1);
+    expect(container.textContent).toContain("Selected target");
+    expect(container.textContent).toContain("Run complete");
   });
 
   it("runs autopilot once with the same request shown on its button", async () => {

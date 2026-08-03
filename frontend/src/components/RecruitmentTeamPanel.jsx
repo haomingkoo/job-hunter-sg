@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Bot, ChevronDown, Send, Users } from "lucide-react";
 
 const EVIDENCE_PAGE_SIZE = 25;
-const STUDY_POLL_INTERVAL_MS = 1500;
+const THREAD_REFRESH_POLL_INTERVAL_MS = 1500;
 
 import TeamActivityPanel from "./TeamActivityPanel.jsx";
 import SpecialistReport from "./SpecialistReport.jsx";
@@ -44,6 +44,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   );
   const awaitingAnswer = snapshot?.workflow_state === "awaiting_candidate_answer";
   const candidateStudyRunning = snapshot?.case_facts?.candidate_profile_status === "running";
+  const persistedRunActive = !busy && events.at(-1)?.status === "running";
   const plan = snapshot?.case_facts?.plan || [];
   const recommendations = snapshot?.case_facts?.recommendations || [];
   const shortlistedJobs = snapshot?.case_facts?.shortlisted_jobs || [];
@@ -183,14 +184,14 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   }, [threadId]);
 
   useEffect(() => {
-    if (!threadId || snapshot?.case_facts?.candidate_profile_status !== "running") {
+    if (!threadId || (!candidateStudyRunning && !persistedRunActive)) {
       return undefined;
     }
     const interval = setInterval(() => {
       refreshThread(threadId).catch((loadError) => setError(loadError.message));
-    }, STUDY_POLL_INTERVAL_MS);
+    }, THREAD_REFRESH_POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [threadId, snapshot?.case_facts?.candidate_profile_status]);
+  }, [threadId, candidateStudyRunning, persistedRunActive]);
 
   useEffect(() => {
     if (threadId || suppressAutoResume) return undefined;
@@ -995,7 +996,11 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
           />
         </div>
 
-        <TeamActivityPanel events={events} busy={busy} awaitingAnswer={awaitingAnswer} />
+        <TeamActivityPanel
+          events={events}
+          busy={busy || persistedRunActive}
+          awaitingAnswer={awaitingAnswer}
+        />
       </div>
     </section>
   );
