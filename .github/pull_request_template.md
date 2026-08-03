@@ -2,7 +2,7 @@
 
 -
 
-## V2 Quality Gates
+## Quality Gates
 
 - Acceptance check:
 - Normal tests:

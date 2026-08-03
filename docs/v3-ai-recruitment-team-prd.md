@@ -457,14 +457,14 @@ follow-up actions update the same record and activity history. Curated recommend
 and manual search remain visibly distinct. Feedback can tune later ranking, but it is
 stored as a user signal rather than silently treated as objective relevance.
 
-Issue #186 implements this contract through the existing `TrackedJob` and Application
+Issue #186 delivered this contract through the existing `TrackedJob` and Application
 Workspace. Shortlist creates or reuses that record; target selection enriches it with
 the posting snapshot, fit evidence, resume artifact, activity, and next action. The
 thread stores the durable record reference and bounded candidate feedback only. Hiding
 an unsaved role or company is explicit, optional-reason feedback scoped to that
 conversation; it does not become universal relevance truth. The implementation has
-passed isolated authenticated desktop and mobile browser acceptance, but remains a
-local branch until its PR passes CI, merges, and deploys.
+passed isolated authenticated desktop and mobile browser acceptance and production
+acceptance at exact commit `7a44e740482f85afa761f1bd4e2e635ec8c77244` after PR #192.
 
 ## Source-Backed Persona and Compensation Packs
 
@@ -557,7 +557,7 @@ silently average incompatible figures.
 4. [#92 Assess one selected job with source-backed recruiting personas and the bounded recruitment team](https://github.com/haomingkoo/job-hunter-sg/issues/92); delivered and closed.
 5. [#93 Research compensation and rehearse negotiation for a selected job](https://github.com/haomingkoo/job-hunter-sg/issues/93); ready after delivered #91.
 6. [#94 Turn an evidence gap into a user-approved resume edit](https://github.com/haomingkoo/job-hunter-sg/issues/94); delivered and closed.
-7. [#186 Connect ranked matches to one durable application pipeline](https://github.com/haomingkoo/job-hunter-sg/issues/186); includes the former #95 handoff contract and is implemented locally pending CI, merge, and production acceptance.
+7. [#186 Connect ranked matches to one durable application pipeline](https://github.com/haomingkoo/job-hunter-sg/issues/186); includes the former #95 handoff contract and was delivered by PR #192.
 8. [#42 Add a source-backed role and company research brief](https://github.com/haomingkoo/job-hunter-sg/issues/42); requires #186 and feeds #44 and #93.
 9. [#44 Save a source-backed interview preparation pack](https://github.com/haomingkoo/job-hunter-sg/issues/44); requires #186 and #42.
 10. [#96 Close the trace-to-evaluation tuning loop](https://github.com/haomingkoo/job-hunter-sg/issues/96); ready after delivered #92 through #94.

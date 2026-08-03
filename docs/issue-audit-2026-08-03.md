@@ -8,11 +8,12 @@ acceptance contract was implemented.
 
 ## Closed as completed
 
-Issues #86, #90, #91, #101, #104, #110, #111, and #112 were closed only after their current
+Issues #86, #90, #91, #101, #104, #110, #111, #112, and #186 were closed only after their current
 implementation and focused regression coverage were verified. Issue #184 was
 closed after production browser acceptance of streamed Shortlist and Select
 Target behavior. Issue #90 was merged in PR #191 and deployed on Railway at exact
-commit `e425b50aa6690a4d2c69e12e20a9add9042b6868`.
+commit `e425b50aa6690a4d2c69e12e20a9add9042b6868`. Issue #186 was merged in PR #192,
+deployed at exact commit `7a44e740482f85afa761f1bd4e2e635ec8c77244`, and production-browser verified.
 
 ## Closed as obsolete or duplicate
 
@@ -40,7 +41,6 @@ commit `e425b50aa6690a4d2c69e12e20a9add9042b6868`.
 | #106 | Globally merge and independently calibrate candidate evidence without losing exact provenance. |
 | #108 | Replace scattered retry flags with one persisted deterministic attempt ledger. |
 | #113 | Close the remaining open-agent repeated-call and total-budget guardrail gaps. |
-| #186 | Local implementation and isolated browser acceptance are complete on `codex/issue-186-durable-application-pipeline`; keep open until CI, merge, and exact-deployment production acceptance complete. |
 | #42 | Save current, attributable company/role research on the selected durable job record. |
 | #44 | Save an evidence-grounded, source-backed interview pack on the tracked application. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
@@ -49,7 +49,7 @@ commit `e425b50aa6690a4d2c69e12e20a9add9042b6868`.
 
 The focused candidate-profile, open-agent, role-evidence, and recruitment-module
 suite passed 124 tests during classification. After guard consolidation, the
-broader affected suite passed 208 tests and the current full repository run passed 938
+broader affected suite passed 208 tests and the current full repository run passed 934
 backend and repository-level tests with four explicit skips, 90 frontend tests,
 and the frontend production build. Compile, Ruff, ty, `pip check`, and
 `pip-audit` also passed. Production acceptance is documented in the V4 slice
@@ -74,8 +74,10 @@ as a peer dependency, even though application source does not import it.
   would have recreated the deleted wrappers. Current design and acceptance live
   in the PRD, issue ledger, and focused design record.
 - Replaced duplicate backend/browser resume semantics with one canonical document
-  interface, removed the obsolete V2 plan and duplicate parser test runner, and
-  moved PDF fixture generation out of production dependencies.
+  interface, removed the obsolete V2 plan and its phrase-lock test, retained the
+  still-current gates in the version-neutral `docs/quality-gates.md`, removed the
+  duplicate parser test runner, and moved PDF fixture generation out of production
+  dependencies.
 - Kept `react-is` after peer-dependency evidence refuted its apparent redundancy.
 
 This cleanup removes 1,920 net lines and one direct dependency from the working
