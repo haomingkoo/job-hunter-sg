@@ -24,9 +24,6 @@ _current_document: ContextVar[dict[str, Any] | None] = ContextVar(
 _proposed_edits: ContextVar[list[dict[str, Any]] | None] = ContextVar(
     "open_agent_proposed_edits", default=None
 )
-_tool_call_history: ContextVar[list[Any] | None] = ContextVar(
-    "open_agent_tool_call_history", default=None
-)
 
 
 @contextmanager
@@ -35,23 +32,20 @@ def assessment_context(
     *,
     initial_edits: list[dict[str, Any]] | None = None,
 ) -> Iterator[None]:
-    """`initial_edits` lets a resumed run (after an `ask_candidate` pause)
-    carry forward edits proposed before the pause, since each `with` block
-    otherwise starts this fresh. The no-repeat-call guardrail's memory is
-    not carried forward the same way -- it resets on resume, a deliberate,
-    low-stakes gap (worst case: one call the guardrail would have rejected
-    re-executes)."""
+    """Carry edits across an ``ask_candidate`` pause.
+
+    Duplicate-call state belongs to the agent middleware, not this tool-data
+    context.
+    """
     request_token = _current_request.set(request)
     document_token = _current_document.set(request.resume_document)
     edits_token = _proposed_edits.set(initial_edits if initial_edits is not None else [])
-    history_token = _tool_call_history.set([])
     try:
         yield
     finally:
         _current_request.reset(request_token)
         _current_document.reset(document_token)
         _proposed_edits.reset(edits_token)
-        _tool_call_history.reset(history_token)
 
 
 def current_request() -> "TargetAssessmentRequest | ConversationContext | None":
@@ -64,7 +58,3 @@ def current_document() -> dict[str, Any] | None:
 
 def proposed_edits() -> list[dict[str, Any]] | None:
     return _proposed_edits.get()
-
-
-def tool_call_history() -> list[Any] | None:
-    return _tool_call_history.get()

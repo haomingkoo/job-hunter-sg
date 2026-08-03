@@ -22,7 +22,7 @@ All 13 findings are resolved or superseded by a verified current contract.
 | Judge claimed evidence and failure inputs it did not receive | Fixed: judge input includes the candidate profile and explicit `no_submission` records; correction receives the same candidate evidence. |
 | Candidate-profile numeric retry contract was undisclosed | Fixed: the current prompt and retry feedback distinguish evidence numbers from evaluator metadata. |
 | Resume quality judge lacked the XML untrusted-data rule | Fixed: it receives the shared rule used by the other evidence prompts. |
-| `guarded_search_jobs` hid its result and failure shape | Fixed: its tool description states completed-empty and retryable-failure contracts. |
+| Duplicate-call protection existed in special-case tool wrappers | Consolidated: one per-turn middleware covers every bound tool while each search tool keeps its own completed-empty and failure contract. |
 | Coordinator rendering and length rules contradicted useful output | Superseded by coordinator prompt v11, paragraph rendering, and the current output budget. |
 
 ## Contract checks retained

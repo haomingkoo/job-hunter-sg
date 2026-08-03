@@ -8,10 +8,8 @@ import json
 import sqlite3
 import uuid
 from dataclasses import asdict
-from types import SimpleNamespace
 from typing import Iterator
 
-from langchain_core.tools import tool
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.errors import GraphRecursionError
@@ -35,8 +33,8 @@ from ..assessment_contracts import (
 from ..conversation_model import ConversationReply, PreferenceUpdatePayload
 from ..persona_packs import PersonaPackRegistry, load_persona_pack_registry
 from ..telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
+from ..tool_call_guard import ToolCallGuardMiddleware
 from . import context
-from .guardrails import has_repeated_call
 from .streaming import describe_progress, format_questions, iter_progress_events
 from .subagents import create_target_persona_subagents
 from .tools import ask_candidate, propose_resume_edit, read_candidate_evidence, read_target_job
@@ -63,29 +61,6 @@ def _ask_rounds_so_far(agent, run_config: dict) -> int:
         for call in (getattr(message, "tool_calls", None) or [])
         if call.get("name") == "ask_candidate"
     )
-
-
-@tool
-def guarded_search_jobs(query: str, n: int | None = None, detail: bool = False) -> dict:
-    """Search the current internal Singapore job corpus by role or responsibility.
-
-    Returns ``ok=true``, the result ``count``, and ``results``; zero results is
-    a valid completed search. A failed lookup returns ``ok=false`` with
-    ``failure_type`` and ``retryable``. A materially identical repeat within
-    this run is rejected instead of being queried again.
-    """
-    args = {"query": query, "n": n, "detail": detail}
-    history = context.tool_call_history()
-    if history is not None and has_repeated_call(history, "search_jobs", args):
-        return {
-            "ok": False,
-            "failure_type": "validation",
-            "reason": "identical_call_no_new_information",
-        }
-    result = search_jobs.invoke(args)
-    if history is not None:
-        history.append(SimpleNamespace(tool_calls=[{"name": "search_jobs", "args": args}]))
-    return result
 
 
 # A durable checkpointer so an ask_candidate pause survives a process
@@ -130,10 +105,11 @@ class OpenAgentTargetAssessmentRunner:
         persona_subagents = create_target_persona_subagents(self._registry, orchestrator_model)
         return create_resume_agent(
             model=orchestrator_model,
-            tools=[read_candidate_evidence, read_target_job, guarded_search_jobs, propose_resume_edit, ask_candidate],
+            tools=[read_candidate_evidence, read_target_job, search_jobs, propose_resume_edit, ask_candidate],
             subagents=persona_subagents,
             checkpointer=_CHECKPOINTER,
             interrupt_on={"ask_candidate": True},
+            middleware=[ToolCallGuardMiddleware()],
         )
 
     def run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]:
@@ -317,8 +293,8 @@ class OpenAgentTargetAssessmentRunner:
             # `state.interrupts`, because the checkpointer persisted it.
             # Past the cap the pause is not surfaced at all. Appending a "do not
             # ask again" sentence to the resume message only asks the model
-            # nicely, and has_repeated_call rejects a materially identical repeat
-            # rather than a reworded one, so nothing actually stopped a run
+            # nicely, and duplicate-call rejection does not reject a reworded
+            # question, so nothing actually stopped a run
             # pausing forever. Refusing to yield the pause is what bounds it.
             if agent.get_state(run_config).interrupts and _ask_rounds_so_far(
                 agent, run_config

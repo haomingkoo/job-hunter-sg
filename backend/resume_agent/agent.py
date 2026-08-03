@@ -21,6 +21,7 @@ def create_resume_agent(
     interrupt_on: dict[str, Any] | None = None,
     system_prompt: str | None = None,
     response_format: Any | None = None,
+    middleware: Sequence[Any] = (),
 ):
     """Create a deep-agent graph.
 
@@ -40,6 +41,7 @@ def create_resume_agent(
         checkpointer=checkpointer,
         interrupt_on=interrupt_on,
         response_format=response_format,
+        middleware=list(middleware),
     )
 
 

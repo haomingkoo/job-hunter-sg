@@ -546,19 +546,21 @@ silently average incompatible figures.
 4. [#92 Assess one selected job with source-backed recruiting personas and the bounded recruitment team](https://github.com/haomingkoo/job-hunter-sg/issues/92); blocked by #91.
 5. [#93 Research compensation and rehearse negotiation for a selected job](https://github.com/haomingkoo/job-hunter-sg/issues/93); blocked by #91.
 6. [#94 Turn an evidence gap into a user-approved resume edit](https://github.com/haomingkoo/job-hunter-sg/issues/94); blocked by #92.
-7. [#95 Create and track an application from approved artifacts](https://github.com/haomingkoo/job-hunter-sg/issues/95); blocked by #94.
-8. [#96 Close the trace-to-evaluation tuning loop](https://github.com/haomingkoo/job-hunter-sg/issues/96); blocked by #92 through #94.
-9. [#97 Recover safely from failed, interrupted, and duplicate runs](https://github.com/haomingkoo/job-hunter-sg/issues/97); blocked by #90, #95, and #96.
-10. [#98 Complete the journey on mobile and with reduced motion](https://github.com/haomingkoo/job-hunter-sg/issues/98); blocked by #91 through #95.
-11. [#99 Validate model portability and Railway staging deployment](https://github.com/haomingkoo/job-hunter-sg/issues/99); blocked by #95 through #98.
-12. [#100 Compose bounded specialists for uncovered recruitment tasks](https://github.com/haomingkoo/job-hunter-sg/issues/100);
-    blocked by #96 and #97. Benchmark niche-case coverage and cost against the
-    fixed team before enabling it by default.
-13. [#102 Preserve cumulative model-call evidence across resumable runs](https://github.com/haomingkoo/job-hunter-sg/issues/102); blocks #105.
-14. [#104 Fail closed on truncated or unsupported structured outputs](https://github.com/haomingkoo/job-hunter-sg/issues/104); blocks #105.
-15. [#108 Centralize retry classification and persist one attempt ledger](https://github.com/haomingkoo/job-hunter-sg/issues/108); blocked by #102 and #104.
-16. [#105 Resume role and assessment work from accepted stage checkpoints](https://github.com/haomingkoo/job-hunter-sg/issues/105); blocked by #102, #104, and #108.
-17. [#107 Prove semantic E2E locally and on Railway](https://github.com/haomingkoo/job-hunter-sg/issues/107); blocked by #103 through #106 and #108.
+7. [#186 Connect ranked matches to one durable application pipeline](https://github.com/haomingkoo/job-hunter-sg/issues/186); includes the former #95 handoff contract and is blocked by #94.
+8. [#42 Add a source-backed role and company research brief](https://github.com/haomingkoo/job-hunter-sg/issues/42); requires #186 and feeds #44 and #93.
+9. [#44 Save a source-backed interview preparation pack](https://github.com/haomingkoo/job-hunter-sg/issues/44); requires #186 and #42.
+10. [#96 Close the trace-to-evaluation tuning loop](https://github.com/haomingkoo/job-hunter-sg/issues/96); blocked by #92 through #94.
+11. [#97 Recover safely from failed, interrupted, and duplicate runs](https://github.com/haomingkoo/job-hunter-sg/issues/97); blocked by #90, #186, and #96.
+12. [#98 Complete the journey on mobile and with reduced motion](https://github.com/haomingkoo/job-hunter-sg/issues/98); blocked by the complete core journey.
+13. [#99 Validate model portability and Railway staging deployment](https://github.com/haomingkoo/job-hunter-sg/issues/99); includes the former #107 semantic E2E contract and is blocked by #186 and #96 through #98.
+14. [#102 Preserve cumulative model-call evidence across resumable runs](https://github.com/haomingkoo/job-hunter-sg/issues/102).
+15. [#108 Centralize retry classification and persist one attempt ledger](https://github.com/haomingkoo/job-hunter-sg/issues/108); blocked by #102 and completed fail-closed output validation in #104.
+16. [#113 Enforce the remaining open-agent safety guardrails](https://github.com/haomingkoo/job-hunter-sg/issues/113).
+
+The dynamic-specialist factory formerly proposed in #100 is deliberately not in
+the delivery map. Fixed, versioned personas remain the default; a narrow new issue
+requires demonstrated benchmark evidence of an uncovered capability before adding
+another orchestration path.
 
 Every slice crosses persistence, module behavior, transport, visible UI, tests,
 and telemetry where those layers participate. Issue 7 adds the semantic evaluation

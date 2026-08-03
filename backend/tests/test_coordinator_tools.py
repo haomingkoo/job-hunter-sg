@@ -561,35 +561,6 @@ def test_write_shortlist_does_not_infer_pay_for_a_job_without_salary():
     assert context.drafted_matches == []
 
 
-def test_an_identical_repeat_never_reaches_the_port_and_a_different_query_does():
-    """Guardrails limit volume, never choice."""
-    from recruitment_team.open_agent.context import assessment_context
-    from recruitment_team.open_agent.tools import search_jobs
-
-    same = {"query": "semiconductor yield engineer"}
-    other = {"query": "process integration engineer"}
-    discovery = _RecordingDiscovery(
-        [
-            _search_result([_job(301, "Yield Engineer", "Micron")]),
-            _search_result([_job(302, "Process Integration Engineer", "Avago")]),
-        ]
-    )
-    context = _context(discovery)
-
-    with assessment_context(context, initial_edits=context.proposed_edits):
-        first = search_jobs.invoke(dict(same))
-        repeat = search_jobs.invoke(dict(same))
-        different = search_jobs.invoke(dict(other))
-
-    assert first["ok"] is True
-    assert repeat["ok"] is False
-    assert repeat["reason"] == "identical_call_no_new_information"
-    assert different["ok"] is True
-    assert [call["query"] for call in discovery.calls] == [same["query"], other["query"]]
-    # The rejected call produced no result, so it cannot reach the thread either.
-    assert len(context.search_results) == 2
-
-
 def test_a_source_failure_is_returned_to_the_agent_rather_than_raised():
     """A failure mid-turn is information the agent can act on.
 

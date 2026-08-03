@@ -220,9 +220,8 @@ The only change to `context.py` is widening `_current_request`'s annotation to
 scopes `ty check` to `backend/schemas.py` and `backend/resume_agent`, so this module is
 not type-checked at all. Do not add a second manager.
 
-`_tool_call_history` resetting per turn is correct here: a repeated search on a later
-turn, after the candidate has said something new, is a different call in a meaningful
-sense and must be allowed.
+`ToolCallGuardMiddleware` is instantiated per turn, so a repeated search on a later
+turn, after the candidate has said something new, is allowed.
 
 ### Draining edits into the pending table
 
@@ -302,12 +301,11 @@ collaborator with no precedence rule is a bug waiting for its first divergent te
 `RecruitmentTeam` already holds the port at `self._discovery`, so `_model_reply` puts it
 on the context and `get_conversation_model` needs no `Depends(get_job_discovery)`.
 
-**Corrected in revision 4.** This section said each tool calls
-`has_repeated_call(history, name, args)` itself. Only two tools did, so every other tool
-could be called without limit while the design claimed otherwise. `RepeatedCallMiddleware`
-(`coordinator/repeat_guard.py`) now wraps every tool the loop binds and refuses a
-materially identical repeat once, with a reason. It still never restricts which tool the
-agent picks. Volume, never choice.
+**Corrected in revision 4 and consolidated in #113.** Per-tool duplicate checks covered
+only two tools and duplicated state plumbing. `ToolCallGuardMiddleware`
+(`recruitment_team/tool_call_guard.py`) now wraps both agent loops and refuses a
+materially identical repeat with an actionable reason. It does not restrict which tool
+the agent picks. Volume, never choice.
 
 The earlier required `exclude_junior` argument and `_wants_experienced_roles` heuristic
 were removed under #148. They discarded postings before the coordinator could inspect a

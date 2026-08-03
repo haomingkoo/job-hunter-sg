@@ -64,8 +64,8 @@ from ..open_agent.tools import (
     write_shortlist,
 )
 from ..prompts import COORDINATOR_PROMPT_VERSION, COORDINATOR_SYSTEM_PROMPT
-from .repeat_guard import RepeatedCallMiddleware
 from ..telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
+from ..tool_call_guard import ToolCallGuardMiddleware
 from .context import ConversationContext
 
 
@@ -222,7 +222,7 @@ class DeepAgentConversationModel:
                 ask_candidate,
             ],
             middleware=[
-                RepeatedCallMiddleware(),
+                ToolCallGuardMiddleware(),
                 HumanInTheLoopMiddleware(interrupt_on={"ask_candidate": True}),
             ],
             system_prompt=COORDINATOR_SYSTEM_PROMPT,
