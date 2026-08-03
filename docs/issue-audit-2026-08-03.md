@@ -8,8 +8,8 @@ acceptance contract was implemented.
 
 ## Closed as completed
 
-Issues #42, #44, #86, #90, #91, #93, #101, #103, #104, #110, #111, #112, #113,
-#186, and #201 were closed only after their current
+Issues #42, #44, #86, #90, #91, #93, #101, #102, #103, #104, #110, #111, #112,
+#113, #186, and #201 were closed only after their current
 implementation and focused regression coverage were verified. Issue #184 was
 closed after production browser acceptance of streamed Shortlist and Select
 Target behavior. Issue #90 was merged in PR #191 and deployed on Railway at exact
@@ -43,6 +43,16 @@ export into five source-backed, resume-ranked matches without opening the generi
 feed. The exact confirmed edit appeared in match evidence, and prior conversation and
 candidate history remained available.
 
+Issue #102 was delivered by PR #205 and merged as
+`316bcd7b234f7acf76d11a7e955c7a72687e920a`. Candidate-profile, role-profile, and
+target-assessment artifacts now expose cumulative content-free calls, tokens, latency,
+validation outcomes, checkpoint hits, model identities, and trace correlation across
+resumptions. The replay regression retains earlier rejection and timeout evidence while
+making no duplicate model request. All CI jobs passed. Railway deployment
+`0a1b8c9b-1136-4ea4-95ef-d36809aa8689` ran the exact commit successfully; a read-only
+query inside the service confirmed both artifact columns were created as non-nullable
+JSON with an empty-object default.
+
 ## Closed as obsolete or duplicate
 
 | Issues | Disposition |
@@ -63,7 +73,6 @@ candidate history remained available.
 | #97 | Complete restart, disconnect, duplicate-delivery, partial-artifact, and idempotent recovery. |
 | #98 | Prove the complete journey on narrow screens, keyboard, live regions, and reduced motion. |
 | #99 | Prove two-model portability and the authenticated semantic journey in isolated Railway staging. |
-| #102 | Preserve cumulative call, token, latency, validation, checkpoint, model, and trace evidence across replay. |
 | #106 | Globally merge and independently calibrate candidate evidence without losing exact provenance. |
 | #108 | Replace scattered retry flags with one persisted deterministic attempt ledger. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
@@ -72,7 +81,7 @@ candidate history remained available.
 
 The focused candidate-profile, open-agent, role-evidence, and recruitment-module
 suite passed 124 tests during classification. After guard consolidation, the
-broader affected suite passed 208 tests and the current full repository run passed 951
+broader affected suite passed 208 tests and the current full repository run passed 956
 backend and repository-level tests with four explicit skips, 92 frontend tests,
 and the frontend production build. Compile, Ruff, ty, `pip check`, and
 `pip-audit` also passed. Production acceptance is documented in the V4 slice
