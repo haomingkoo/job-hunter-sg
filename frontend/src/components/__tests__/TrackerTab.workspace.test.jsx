@@ -178,6 +178,67 @@ describe("TrackerTab workspace creation", () => {
     expect(container.textContent).toContain("No submitted resume recorded yet.");
   });
 
+  it("opens the selected recruitment application directly and shows durable pipeline context", async () => {
+    const onOpenJobHandled = vi.fn();
+    apiFetch.mockResolvedValueOnce({ json: vi.fn().mockResolvedValue({
+      id: 7001,
+      company: "Example Semiconductor",
+      title: "Operations Manager",
+      role: "Operations Manager",
+      job_description: "Lead fab operations transformation.",
+      source_url: "https://example.test/jobs/7001",
+      source: "MyCareersFuture",
+      status: "saved",
+      date_applied: null,
+      follow_up_date: null,
+      notes: "Call recruiter on Friday",
+      scraped_job_id: 101,
+      resume_version_id: 7,
+      role_metadata: {
+        contacts: [{ name: "Hiring Manager", details: "SEMICON introduction" }],
+        activity: [{ type: "contact_added", recorded_at: "2026-08-01T00:00:00Z" }],
+        recruitment_pipeline: {
+          fit_evidence: { matched: [{ statement: "Operations leadership" }], stretch: [], missing: ["Tool assembly"] },
+          next_action: { label: "Review the evidence, tailor the resume, then manage the application workspace" },
+          activity: [{ action: "selected", recorded_at: "2026-08-03T00:00:00Z" }],
+        },
+      },
+      stage_history: [{ stage: "saved", date: "2026-08-03", source: "created", notes: "" }],
+      created_at: "2026-08-03T00:00:00Z",
+      updated_at: "2026-08-03T00:00:00Z",
+    }) });
+
+    await act(async () => {
+      root.render(
+        <TrackerTab
+          jobs={[{
+            id: 7001,
+            company: "Example Semiconductor",
+            role: "Operations Manager",
+            date_applied: null,
+            status: "saved",
+            source: "MyCareersFuture",
+          }]}
+          refreshJobs={refreshJobs}
+          setActiveTab={() => {}}
+          openJobId={7001}
+          onOpenJobHandled={onOpenJobHandled}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(apiFetch).toHaveBeenCalledWith("/api/applications/workspaces/7001");
+    expect(onOpenJobHandled).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain("Review the evidence, tailor the resume, then manage the application workspace");
+    expect(container.textContent).toContain("1 matched · 0 stretch · 1 missing");
+    expect(container.textContent).toContain("Hiring Manager · SEMICON introduction");
+    expect(container.textContent).toContain("Call recruiter on Friday");
+    expect(container.textContent).toContain("contact added");
+    expect(container.textContent).toContain("selected");
+  });
+
   it("runs a linked resume through Deep Agent with a clear loading state", async () => {
     const workspace = {
       id: 123,

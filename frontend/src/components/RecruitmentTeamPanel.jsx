@@ -4,6 +4,7 @@ import { Archive, Bot, ChevronDown, MessageSquare, Pencil, RotateCcw, Send, Tras
 const EVIDENCE_PAGE_SIZE = 25;
 const THREAD_REFRESH_POLL_INTERVAL_MS = 1500;
 const THREAD_TITLE_MAX_CHARS = 120;
+const JOB_FEEDBACK_REASON_MAX_CHARS = 500;
 
 import TeamActivityPanel from "./TeamActivityPanel.jsx";
 import SpecialistReport from "./SpecialistReport.jsx";
@@ -18,7 +19,7 @@ function storedThreadKey(userId) {
 }
 
 
-export default function RecruitmentTeamPanel({ user, setActiveTab }) {
+export default function RecruitmentTeamPanel({ user, setActiveTab, onOpenApplication, onTailorJob }) {
   const [resumeVersions, setResumeVersions] = useState([]);
   const [resumeVersionId, setResumeVersionId] = useState("");
   const [threadId, setThreadId] = useState(
@@ -37,6 +38,9 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   const [error, setError] = useState("");
   const [visibleProfileCount, setVisibleProfileCount] = useState(EVIDENCE_PAGE_SIZE);
   const [visibleCriteriaCount, setVisibleCriteriaCount] = useState(EVIDENCE_PAGE_SIZE);
+  const [feedbackJobId, setFeedbackJobId] = useState(null);
+  const [feedbackScope, setFeedbackScope] = useState("role");
+  const [feedbackReason, setFeedbackReason] = useState("");
   const [suppressAutoResume, setSuppressAutoResume] = useState(false);
   const [threadSummaries, setThreadSummaries] = useState(null);
   const [showConversations, setShowConversations] = useState(false);
@@ -69,6 +73,8 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
   );
   const allDisplayedJobsRanked = displayedJobs.every((job) => matchRationales.has(job.job_id));
   const selectedTargetId = snapshot?.case_facts?.selected_target?.job_id;
+  const selectedTarget = snapshot?.case_facts?.selected_target;
+  const selectedTrackedJobId = snapshot?.case_facts?.tracked_job_ids?.[String(selectedTargetId)];
   const roleProfile = snapshot?.case_facts?.role_success_profile;
   const candidateProfileFields = useMemo(
     () => [...(candidateProfile?.profile?.fields || [])].sort(
@@ -140,9 +146,11 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
       await action();
       if (clearMessage) setMessage("");
       await refreshThread(threadId);
+      return true;
     } catch (turnError) {
       setError(turnError.message || fallbackError);
       if (refreshOnError) await refreshThread(threadId);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -519,6 +527,28 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
       { idempotency_key: globalThis.crypto.randomUUID() },
       appendActivity,
     ), { refreshOnError: true });
+  }
+
+  async function submitJobFeedback(event, jobId) {
+    event.preventDefault();
+    if (busy || archived) return;
+    const saved = await runTurn(
+      () => streamRecruitmentCommand(
+        `/api/recruitment-team/threads/${threadId}/jobs/${jobId}/feedback/stream`,
+        {
+          scope: feedbackScope,
+          reason: feedbackReason.trim(),
+          idempotency_key: globalThis.crypto.randomUUID(),
+        },
+        appendActivity,
+      ),
+      { refreshOnError: true },
+    );
+    if (saved) {
+      setFeedbackJobId(null);
+      setFeedbackScope("role");
+      setFeedbackReason("");
+    }
   }
 
   return (
@@ -1007,7 +1037,7 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
                           <p className="text-sm text-[#6A89A7]">{job.company} · {job.location}</p>
                         </div>
                         <span className="rounded-full bg-[#f0f5fa] px-2 py-1 text-xs text-[#384959]">
-                          {selected ? "Selected target" : shortlisted ? "Shortlisted" : job.source.availability}
+                          {selected ? "Selected target" : shortlisted ? "Shortlisted" : rationale ? "Profile-ranked match" : "Search result"}
                         </span>
                       </div>
                       <p className="mt-2 text-sm text-[#384959]">
@@ -1082,10 +1112,67 @@ export default function RecruitmentTeamPanel({ user, setActiveTab }) {
                             Select target
                           </button>
                         )}
+                        {!shortlisted && !selected && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFeedbackJobId(job.job_id);
+                              setFeedbackScope("role");
+                              setFeedbackReason("");
+                            }}
+                            disabled={busy || archived}
+                            className="rounded-xl px-3 py-2 text-xs font-medium text-[#6A89A7] hover:bg-[#f0f5fa] disabled:opacity-40"
+                          >
+                            Not for me
+                          </button>
+                        )}
                       </div>
+                      {feedbackJobId === job.job_id && (
+                        <form onSubmit={(event) => submitJobFeedback(event, job.job_id)} className="mt-3 rounded-xl border border-[#BDDDFC]/60 bg-[#f7fafc] p-3">
+                          <p className="text-xs font-medium text-[#384959]">Hide this result and save private feedback</p>
+                          <div className="mt-2 flex flex-wrap gap-3 text-xs text-[#384959]">
+                            <label className="flex items-center gap-1.5">
+                              <input type="radio" name={`feedback-scope-${job.job_id}`} checked={feedbackScope === "role"} onChange={() => setFeedbackScope("role")} />
+                              This role
+                            </label>
+                            <label className="flex items-center gap-1.5">
+                              <input type="radio" name={`feedback-scope-${job.job_id}`} checked={feedbackScope === "company"} onChange={() => setFeedbackScope("company")} />
+                              This company
+                            </label>
+                          </div>
+                          <input
+                            type="text"
+                            value={feedbackReason}
+                            maxLength={JOB_FEEDBACK_REASON_MAX_CHARS}
+                            onChange={(event) => setFeedbackReason(event.target.value)}
+                            placeholder="Reason (optional)"
+                            className="mt-2 w-full rounded-lg border border-[#BDDDFC] bg-white px-3 py-2 text-xs text-[#384959]"
+                          />
+                          <p className="mt-1 text-xs text-[#6A89A7]">This guides your conversation only; it does not change the role’s relevance for everyone.</p>
+                          <div className="mt-2 flex gap-2">
+                            <button type="submit" disabled={busy} className="rounded-lg bg-[#384959] px-3 py-2 text-xs font-medium text-white disabled:opacity-40">Save feedback</button>
+                            <button type="button" onClick={() => setFeedbackJobId(null)} className="rounded-lg px-3 py-2 text-xs text-[#6A89A7]">Cancel</button>
+                          </div>
+                        </form>
+                      )}
                     </article>
                   );
                 })}
+              </div>
+            </section>
+          )}
+
+          {selectedTarget && selectedTrackedJobId && (
+            <section aria-labelledby="selected-next-action-title" className="mt-6 rounded-2xl border border-[#88BDF2]/60 bg-[#f7fafc] p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Selected target</p>
+              <h2 id="selected-next-action-title" className="mt-1 font-semibold text-[#384959]">
+                Next action: review the evidence, tailor your resume, then manage the application
+              </h2>
+              <p className="mt-1 text-sm text-[#6A89A7]">{selectedTarget.title} at {selectedTarget.company} is saved as one durable application.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <a href="#role-success-title" className="rounded-xl border border-[#BDDDFC] px-3 py-2 text-xs font-medium text-[#384959]">Review evidence</a>
+                <button type="button" onClick={() => onTailorJob?.(selectedTarget)} className="rounded-xl border border-[#BDDDFC] px-3 py-2 text-xs font-medium text-[#384959]">Tailor resume</button>
+                <button type="button" onClick={() => onOpenApplication?.(selectedTrackedJobId)} className="rounded-xl bg-[#384959] px-3 py-2 text-xs font-medium text-white">Open application workspace</button>
               </div>
             </section>
           )}

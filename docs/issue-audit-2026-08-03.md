@@ -8,10 +8,11 @@ acceptance contract was implemented.
 
 ## Closed as completed
 
-Issues #86, #91, #101, #104, #110, #111, and #112 were closed only after their current
+Issues #86, #90, #91, #101, #104, #110, #111, and #112 were closed only after their current
 implementation and focused regression coverage were verified. Issue #184 was
 closed after production browser acceptance of streamed Shortlist and Select
-Target behavior.
+Target behavior. Issue #90 was merged in PR #191 and deployed on Railway at exact
+commit `e425b50aa6690a4d2c69e12e20a9add9042b6868`.
 
 ## Closed as obsolete or duplicate
 
@@ -29,7 +30,6 @@ Target behavior.
 
 | Issue | Observed remaining outcome |
 |---|---|
-| #90 | PR #191 implements owner-only rename, archive, restore, and deletion with truthful retention behavior; keep open until CI, merge, and production acceptance complete. |
 | #93 | Add attributable Singapore compensation evidence and private negotiation rehearsal. |
 | #96 | Connect traces, semantic evaluation, field-level calibration, and regression decisions. |
 | #97 | Complete restart, disconnect, duplicate-delivery, partial-artifact, and idempotent recovery. |
@@ -40,7 +40,7 @@ Target behavior.
 | #106 | Globally merge and independently calibrate candidate evidence without losing exact provenance. |
 | #108 | Replace scattered retry flags with one persisted deterministic attempt ledger. |
 | #113 | Close the remaining open-agent repeated-call and total-budget guardrail gaps. |
-| #186 | Join discovery, shortlist, targeting, tailoring, and application tracking through one durable existing record. |
+| #186 | Local implementation and isolated browser acceptance are complete on `codex/issue-186-durable-application-pipeline`; keep open until CI, merge, and exact-deployment production acceptance complete. |
 | #42 | Save current, attributable company/role research on the selected durable job record. |
 | #44 | Save an evidence-grounded, source-backed interview pack on the tracked application. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
@@ -49,8 +49,8 @@ Target behavior.
 
 The focused candidate-profile, open-agent, role-evidence, and recruitment-module
 suite passed 124 tests during classification. After guard consolidation, the
-broader affected suite passed 208 tests and the full repository run passed 933
-backend and repository-level tests with four explicit skips, 87 frontend tests,
+broader affected suite passed 208 tests and the current full repository run passed 938
+backend and repository-level tests with four explicit skips, 90 frontend tests,
 and the frontend production build. Compile, Ruff, ty, `pip check`, and
 `pip-audit` also passed. Production acceptance is documented in the V4 slice
 passdown. These facts support completed-item closure; they do not waive the open

@@ -26,9 +26,13 @@ from models import (
     RecruitmentThreadDeletionRequest,
     ResumeVersion,
     TargetAssessmentArtifact,
+    TrackedJob,
+    User,
 )
 import config
+from application_workspace import ensure_recruitment_application
 from resume_agent.telemetry import trace_key
+from schemas import TrackedJobCreate
 
 from .interface import (
     ActivityEvent,
@@ -38,6 +42,7 @@ from .interface import (
     CandidateProfileArtifactSnapshot,
     CaseFacts,
     Command,
+    HideJob,
     Message,
     PreferenceFact,
     RunReceipt,
@@ -115,6 +120,7 @@ FIRST_ATTEMPT = 1
 ACTIVE_THREAD_STATUS = "active"
 ARCHIVED_THREAD_STATUS = "archived"
 THREAD_TITLE_MAX_CHARS = 120
+MAX_JOB_FEEDBACK_SIGNALS = 100
 # A derived query stands in for a typed one, so keep it to a search-sized phrase.
 MAX_DERIVED_QUERY_CHARS = 200
 # Fallback for turns where the model composed no phrase. Only what the candidate
@@ -126,6 +132,18 @@ SEMANTIC_PREFERENCE_FIELDS = frozenset({"role"})
 AUTOPILOT_MARKER = "[autopilot]"
 _EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 _PHONE = re.compile(r"(?<!\d)(?:\+?65[\s-]?)?[689]\d{3}[\s-]?\d{4}(?!\d)")
+
+
+def _job_hidden_by_feedback(facts: dict, job: JobSnapshot) -> bool:
+    company = job.company.strip().casefold()
+    for signal in facts.get("job_feedback", []):
+        if not isinstance(signal, dict):
+            continue
+        if signal.get("scope") == "role" and signal.get("target") == str(job.job_id):
+            return True
+        if signal.get("scope") == "company" and signal.get("target") == company:
+            return True
+    return False
 
 
 def _safe_trace_query(query: str) -> tuple[str, bool]:
@@ -339,6 +357,12 @@ class RecruitmentTeam:
                 command_type = "select_target_job"
                 job = self._known_job(thread, command.job_id)
                 message = f"Select {job.title} at {job.company} as my target."
+            elif isinstance(command, HideJob):
+                thread = self._owned_thread(owner_id, command.thread_id)
+                resume = self._owned_resume(owner_id, thread.resume_version_id)
+                command_type = "hide_job"
+                job = self._known_job(thread, command.job_id)
+                message = f"Hide this {command.scope}: {job.title} at {job.company}."
             elif isinstance(command, AssessTargetJob):
                 thread = self._owned_thread(owner_id, command.thread_id)
                 resume = self._owned_resume(owner_id, thread.resume_version_id)
@@ -420,10 +444,13 @@ class RecruitmentTeam:
                     )
                     completion_member = "candidate_profiler"
                 elif isinstance(command, ShortlistJob):
-                    reply, completion_detail = self._shortlist_job(thread, command)
+                    reply, completion_detail = self._shortlist_job(owner_id, thread, resume, command)
                     completion_member = "coordinator"
                 elif isinstance(command, SelectTargetJob):
-                    reply, completion_detail = self._select_target(thread, resume, command)
+                    reply, completion_detail = self._select_target(owner_id, thread, resume, command)
+                    completion_member = "coordinator"
+                elif isinstance(command, HideJob):
+                    reply, completion_detail = self._hide_job(thread, command)
                     completion_member = "coordinator"
                 elif isinstance(command, AssessTargetJob):
                     reply, completion_detail = self._assess_target(
@@ -794,6 +821,9 @@ class RecruitmentTeam:
             return
         latest_query, recommendations = merged_recommendations(conversation)
         facts = dict(thread.case_facts)
+        recommendations = tuple(
+            job for job in recommendations if not _job_hidden_by_feedback(facts, job)
+        )
         facts["latest_search_query"] = latest_query
         facts["recommendations"] = [asdict(job) for job in recommendations]
         facts.pop("match_rationales", None)
@@ -812,12 +842,19 @@ class RecruitmentTeam:
             job.job_id: job
             for job in (*recommendations, *conversation.shortlisted_jobs)
         }
-        job_ids = [int(match["job_id"]) for match in conversation.drafted_matches]
-        if any(job_id not in known_jobs for job_id in job_ids):
+        requested_job_ids = [int(match["job_id"]) for match in conversation.drafted_matches]
+        if any(job_id not in known_jobs for job_id in requested_job_ids):
             raise InvalidCommand("published shortlist referenced an unavailable job")
         facts = dict(thread.case_facts)
+        job_ids = [
+            job_id
+            for job_id in requested_job_ids
+            if not _job_hidden_by_feedback(facts, known_jobs[job_id])
+        ]
         facts["recommendations"] = [asdict(known_jobs[job_id]) for job_id in job_ids]
-        facts["match_rationales"] = list(conversation.drafted_matches)
+        facts["match_rationales"] = [
+            match for match in conversation.drafted_matches if int(match["job_id"]) in job_ids
+        ]
         thread.case_facts = facts
 
     @staticmethod
@@ -932,10 +969,13 @@ class RecruitmentTeam:
                 raise DiscoveryUnavailable(f"job search unavailable: {result.failure_type}")
 
         facts = dict(thread.case_facts)
+        visible_jobs = tuple(
+            job for job in result.jobs if not _job_hidden_by_feedback(facts, job)
+        )
         facts["latest_search_query"] = result.query
-        facts["recommendations"] = [asdict(job) for job in result.jobs]
+        facts["recommendations"] = [asdict(job) for job in visible_jobs]
         thread.case_facts = facts
-        count = len(result.jobs)
+        count = len(visible_jobs)
         content = (
             "No current jobs matched this search. The source was reached successfully; "
             "you can refine the role or constraints."
@@ -1056,7 +1096,9 @@ class RecruitmentTeam:
 
     def _shortlist_job(
         self,
+        owner_id: int,
         thread: RecruitmentThread,
+        resume: ResumeVersion,
         command: ShortlistJob,
     ) -> tuple[ModelReply, dict]:
         job = self._known_job(thread, command.job_id)
@@ -1066,14 +1108,23 @@ class RecruitmentTeam:
             shortlist.append(asdict(job))
         facts["shortlisted_jobs"] = shortlist
         facts.pop("shortlisted_job_ids", None)
+        tracked = self._ensure_application(owner_id, thread, resume, job, selected=False)
+        tracked_job_ids = dict(facts.get("tracked_job_ids") or {})
+        tracked_job_ids[str(job.job_id)] = tracked.id
+        facts["tracked_job_ids"] = tracked_job_ids
         thread.case_facts = facts
         return ModelReply(
             content=f"Shortlisted {job.title} at {job.company}.",
             model_name="deterministic-workflow",
-        ), {"operation": "shortlist_job", "shortlist_count": len(shortlist)}
+        ), {
+            "operation": "shortlist_job",
+            "shortlist_count": len(shortlist),
+            "tracked_job_id": tracked.id,
+        }
 
     def _select_target(
         self,
+        owner_id: int,
         thread: RecruitmentThread,
         resume: ResumeVersion,
         command: SelectTargetJob,
@@ -1135,6 +1186,10 @@ class RecruitmentTeam:
         facts.pop("shortlisted_job_ids", None)
         facts["selected_target"] = asdict(job)
         facts["role_success_profile"] = asdict(run.profile)
+        tracked = self._ensure_application(owner_id, thread, resume, job, selected=True)
+        tracked_job_ids = dict(facts.get("tracked_job_ids") or {})
+        tracked_job_ids[str(job.job_id)] = tracked.id
+        facts["tracked_job_ids"] = tracked_job_ids
         thread.case_facts = facts
         thread.workflow_state = "target_selected"
         alignment_counts: dict[str, int] = {}
@@ -1161,6 +1216,112 @@ class RecruitmentTeam:
             "validation_codes": list(run.validation_codes),
             "candidate_profile_version": candidate_profile.profile_version,
             "candidate_profile_field_count": len(candidate_profile.fields),
+            "tracked_job_id": tracked.id,
+        }
+
+    def _ensure_application(
+        self,
+        owner_id: int,
+        thread: RecruitmentThread,
+        resume: ResumeVersion,
+        job: JobSnapshot,
+        *,
+        selected: bool,
+    ) -> TrackedJob:
+        user = self._db.get(User, owner_id)
+        if user is None:
+            raise InvalidCommand("application owner was not found")
+        rationale = next(
+            (
+                item
+                for item in thread.case_facts.get("match_rationales", [])
+                if isinstance(item, dict) and int(item.get("job_id", -1)) == job.job_id
+            ),
+            None,
+        )
+        tracked_job_id = (thread.case_facts.get("tracked_job_ids") or {}).get(str(job.job_id))
+        return ensure_recruitment_application(
+            self._db,
+            user,
+            TrackedJobCreate(
+                company=job.company,
+                role=job.title,
+                status="saved",
+                source=job.source.source,
+                source_url=job.source.url,
+                job_description=job.description,
+                scraped_job_id=job.job_id,
+                resume_version_id=resume.id,
+            ),
+            thread_id=thread.id,
+            source_job_id=job.job_id,
+            posting_snapshot=asdict(job),
+            fit_evidence=rationale,
+            selected=selected,
+            existing_tracked_job_id=int(tracked_job_id) if tracked_job_id is not None else None,
+        )
+
+    def _hide_job(
+        self,
+        thread: RecruitmentThread,
+        command: HideJob,
+    ) -> tuple[ModelReply, dict]:
+        job = self._known_job(thread, command.job_id)
+        facts = dict(thread.case_facts)
+        if any(
+            isinstance(item, dict) and int(item.get("job_id", -1)) == job.job_id
+            for item in facts.get("shortlisted_jobs", [])
+        ) or int((facts.get("selected_target") or {}).get("job_id", -1)) == job.job_id:
+            raise InvalidCommand("a shortlisted or selected role must be managed from its application workspace")
+
+        normalized_company = job.company.strip().casefold()
+        def hidden(item: dict) -> bool:
+            if command.scope == "role":
+                return int(item.get("job_id", -1)) == job.job_id
+            return str(item.get("company") or "").strip().casefold() == normalized_company
+
+        removed_job_ids = {
+            int(item.get("job_id", -1))
+            for item in facts.get("recommendations", [])
+            if isinstance(item, dict) and hidden(item)
+        }
+        facts["recommendations"] = [
+            item
+            for item in facts.get("recommendations", [])
+            if not (isinstance(item, dict) and hidden(item))
+        ]
+        facts["match_rationales"] = [
+            item
+            for item in facts.get("match_rationales", [])
+            if not isinstance(item, dict) or int(item.get("job_id", -1)) not in removed_job_ids
+        ]
+        target = str(job.job_id) if command.scope == "role" else normalized_company
+        feedback = [
+            item
+            for item in facts.get("job_feedback", [])
+            if not (
+                isinstance(item, dict)
+                and item.get("scope") == command.scope
+                and item.get("target") == target
+            )
+        ]
+        feedback.append({
+            "scope": command.scope,
+            "target": target,
+            "reason": command.reason.strip(),
+            "job": asdict(job),
+            "recorded_at": _utcnow().isoformat(),
+        })
+        facts["job_feedback"] = feedback[-MAX_JOB_FEEDBACK_SIGNALS:]
+        thread.case_facts = facts
+        subject = job.company if command.scope == "company" else f"{job.title} at {job.company}"
+        return ModelReply(
+            content=f"Hidden {subject} from this conversation. I recorded it as your feedback, not as a universal relevance rule.",
+            model_name="deterministic-workflow",
+        ), {
+            "operation": "hide_job",
+            "scope": command.scope,
+            "hidden_result_count": len(removed_job_ids),
         }
 
     def _target_assessment_request(
@@ -1516,6 +1677,13 @@ class RecruitmentTeam:
                     self._job_from_dict(facts["selected_target"])
                     if isinstance(facts.get("selected_target"), dict)
                     else None
+                ),
+                tracked_job_ids={
+                    str(job_id): int(tracked_id)
+                    for job_id, tracked_id in (facts.get("tracked_job_ids") or {}).items()
+                },
+                job_feedback=tuple(
+                    item for item in facts.get("job_feedback", []) if isinstance(item, dict)
                 ),
                 role_success_profile=(
                     self._role_profile_from_dict(facts["role_success_profile"])

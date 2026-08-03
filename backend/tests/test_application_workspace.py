@@ -247,6 +247,85 @@ def test_application_workspace_module_creates_and_moves_workspace():
         db.close()
 
 
+def test_recruitment_pipeline_reuses_record_and_preserves_user_workspace_data():
+    from application_workspace import create_tracked_job, ensure_recruitment_application
+    from database import SessionLocal, init_db
+    from models import ResumeVersion, TrackedJob, User
+    from schemas import TrackedJobCreate
+
+    init_db()
+    db = SessionLocal()
+    try:
+        user = User(
+            email=f"pipeline_{secrets.token_hex(4)}@aisg.sg",
+            password_hash="test-only",  # pragma: allowlist secret
+            name="Pipeline User",
+            tier="pro",
+        )
+        db.add(user)
+        db.flush()
+        resume = ResumeVersion(
+            user_id=user.id,
+            label="Operations resume",
+            resume_text="Led semiconductor manufacturing transformation.",
+            is_master=True,
+        )
+        db.add(resume)
+        db.commit()
+
+        existing = create_tracked_job(
+            db,
+            user,
+            TrackedJobCreate(
+                company="Example Semiconductor",
+                role="Operations Manager",
+                status="interview",
+                notes="Follow up with the hiring manager.",
+                role_metadata={
+                    "contacts": [{"name": "Hiring Manager", "details": "Introduced at SEMICON"}],
+                    "activity": [{"type": "contact_added", "recorded_at": "2026-08-01T00:00:00Z"}],
+                },
+                resume_version_id=resume.id,
+            ),
+        )
+        original_history = list(existing.stage_history)
+
+        reused = ensure_recruitment_application(
+            db,
+            user,
+            TrackedJobCreate(
+                company="Example Semiconductor",
+                role="Operations Manager",
+                status="saved",
+                source="MyCareersFuture",
+                source_url="https://example.test/jobs/901",
+                job_description="Lead fab operations and continuous improvement.",
+                scraped_job_id=901,
+                resume_version_id=resume.id,
+            ),
+            thread_id="thread-pipeline",
+            source_job_id=901,
+            posting_snapshot={"job_id": 901, "description": "Original posting snapshot"},
+            fit_evidence={"matched": [{"statement": "Manufacturing leadership"}]},
+            selected=True,
+            existing_tracked_job_id=existing.id,
+        )
+        db.commit()
+        db.refresh(reused)
+
+        assert db.query(TrackedJob).filter(TrackedJob.user_id == user.id).count() == 1
+        assert reused.id == existing.id
+        assert reused.status == "interview"
+        assert reused.notes == "Follow up with the hiring manager."
+        assert reused.stage_history == original_history
+        assert reused.role_metadata["contacts"][0]["name"] == "Hiring Manager"
+        assert reused.role_metadata["activity"][0]["type"] == "contact_added"
+        assert reused.role_metadata["recruitment_pipeline"]["state"] == "selected"
+        assert reused.role_metadata["recruitment_pipeline"]["posting_snapshot"]["job_id"] == 901
+    finally:
+        db.close()
+
+
 def test_application_workspace_agent_review_saves_artifacts(monkeypatch):
     from database import init_db
     import main

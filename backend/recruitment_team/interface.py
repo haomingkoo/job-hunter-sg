@@ -46,6 +46,14 @@ class SelectTargetJob:
 
 
 @dataclass(frozen=True)
+class HideJob:
+    thread_id: str
+    job_id: int
+    scope: Literal["role", "company"]
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class AssessTargetJob:
     thread_id: str
 
@@ -63,6 +71,7 @@ Command = (
     | SearchJobs
     | ShortlistJob
     | SelectTargetJob
+    | HideJob
     | AssessTargetJob
     | AnswerAssessmentQuestion
 )
@@ -111,6 +120,8 @@ class CaseFacts:
     shortlisted_jobs: tuple[JobSnapshot, ...] = ()
     shortlisted_job_ids: tuple[int, ...] = ()
     selected_target: JobSnapshot | None = None
+    tracked_job_ids: dict[str, int] | None = None
+    job_feedback: tuple[dict, ...] = ()
     role_success_profile: RoleSuccessProfile | None = None
     preferences: tuple[PreferenceFact, ...] = ()
     plan: tuple[dict[str, str], ...] = ()

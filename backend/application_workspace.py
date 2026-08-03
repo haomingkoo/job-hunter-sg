@@ -11,7 +11,7 @@ from typing import Any, Callable, ContextManager, Iterable
 import config
 from auth import get_account_limits
 from fastapi import HTTPException, status
-from models import ResumeVersion, TrackedJob, User
+from models import ResumeVersion, ScrapedJob, TrackedJob, User
 from resume_parser import parse_resume
 from sanitizer import sanitize_resume_text, sanitize_user_input
 from schemas import ApplicationWorkspaceCreate, TrackedJobCreate, TrackedJobUpdate
@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 AGENT_REVIEW_METADATA_KEY = "agent_review"
 SUBMITTED_RESUME_METADATA_KEY = "submitted_resume"
 SUBMITTED_RESUME_ARTIFACTS_METADATA_KEY = "submitted_resume_artifacts"
+RECRUITMENT_PIPELINE_METADATA_KEY = "recruitment_pipeline"
 WORKSPACE_SOURCE_CREATED = "created"
 WORKSPACE_SOURCE_MANUAL = "manual"
 WORKSPACE_SOURCE_AGENT_REVIEW = "agent_review"
@@ -29,6 +30,7 @@ WORKSPACE_SOURCE_AGENT_REVIEW_ERROR = "agent_review_error"
 WORKSPACE_RESUME_SOURCE_AGENT_REVIEW = "agent_review"
 WORKSPACE_DRAFT_STATUS = "draft"
 MAX_TRACKED_STAGE_EVENTS = 200
+MAX_RECRUITMENT_PIPELINE_EVENTS = 50
 
 APPLICATION_OUTCOME_GROUPS = {
     "submitted": {"applied"},
@@ -263,42 +265,149 @@ def create_tracked_job(
 ) -> TrackedJob:
     with storage_lock() if storage_lock else nullcontext():
         ensure_resume_version_owner(db, user.id, body.resume_version_id)
-        limits = get_account_limits(user)
-        current_count = (
-            db.query(func.count(TrackedJob.id))
-            .filter(TrackedJob.user_id == user.id)
-            .scalar()
-            or 0
-        )
-        if current_count >= limits["max_tracked_jobs"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Tracked job limit reached ({limits['max_tracked_jobs']})",
-            )
-
-        tracked = TrackedJob(
-            user_id=user.id,
-            company=sanitize_user_input(body.company),
-            role=sanitize_user_input(body.role),
-            date_applied=body.date_applied,
-            status=body.status,
-            source=sanitize_user_input(body.source),
-            source_url=sanitize_user_input(body.source_url),
-            job_description=sanitize_user_input(body.job_description),
-            role_metadata=body.role_metadata,
-            follow_up_date=body.follow_up_date,
-            notes=sanitize_user_input(body.notes),
-            scraped_job_id=body.scraped_job_id,
-            resume_version_id=body.resume_version_id,
-            stage_history=[
-                tracked_stage_event(body.status, WORKSPACE_SOURCE_CREATED, body.date_applied)
-            ],
-        )
+        _ensure_tracked_job_capacity(db, user)
+        tracked = _new_tracked_job(user.id, body)
         db.add(tracked)
         if on_tracked:
             on_tracked(tracked)
         db.commit()
         db.refresh(tracked)
+    return tracked
+
+
+def _ensure_tracked_job_capacity(db: Session, user: User) -> None:
+    limits = get_account_limits(user)
+    current_count = (
+        db.query(func.count(TrackedJob.id))
+        .filter(TrackedJob.user_id == user.id)
+        .scalar()
+        or 0
+    )
+    if current_count >= limits["max_tracked_jobs"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Tracked job limit reached ({limits['max_tracked_jobs']})",
+        )
+
+
+def _new_tracked_job(user_id: int, body: TrackedJobCreate) -> TrackedJob:
+    return TrackedJob(
+        user_id=user_id,
+        company=sanitize_user_input(body.company),
+        role=sanitize_user_input(body.role),
+        date_applied=body.date_applied,
+        status=body.status,
+        source=sanitize_user_input(body.source),
+        source_url=sanitize_user_input(body.source_url),
+        job_description=sanitize_user_input(body.job_description),
+        role_metadata=body.role_metadata,
+        follow_up_date=body.follow_up_date,
+        notes=sanitize_user_input(body.notes),
+        scraped_job_id=body.scraped_job_id,
+        resume_version_id=body.resume_version_id,
+        stage_history=[
+            tracked_stage_event(body.status, WORKSPACE_SOURCE_CREATED, body.date_applied)
+        ],
+    )
+
+
+def ensure_recruitment_application(
+    db: Session,
+    user: User,
+    body: TrackedJobCreate,
+    *,
+    thread_id: str,
+    source_job_id: int,
+    posting_snapshot: dict,
+    fit_evidence: dict | None,
+    selected: bool,
+    existing_tracked_job_id: int | None = None,
+) -> TrackedJob:
+    """Create or enrich the one durable application record for a discovered job.
+
+    This deliberately does not commit. Recruitment commands own their transaction,
+    so the application link and command receipt become durable together.
+    """
+    tracked = None
+    if existing_tracked_job_id is not None:
+        tracked = (
+            db.query(TrackedJob)
+            .filter(
+                TrackedJob.id == existing_tracked_job_id,
+                TrackedJob.user_id == user.id,
+            )
+            .first()
+        )
+    if tracked is None:
+        tracked = (
+            db.query(TrackedJob)
+            .filter(
+                TrackedJob.user_id == user.id,
+                TrackedJob.scraped_job_id == source_job_id,
+            )
+            .order_by(TrackedJob.created_at.asc())
+            .first()
+        )
+    if tracked is None:
+        ensure_resume_version_owner(db, user.id, body.resume_version_id)
+        _ensure_tracked_job_capacity(db, user)
+        source_row_exists = db.query(ScrapedJob.id).filter(ScrapedJob.id == source_job_id).first() is not None
+        tracked = _new_tracked_job(
+            user.id,
+            body.model_copy(update={"scraped_job_id": source_job_id if source_row_exists else None}),
+        )
+        db.add(tracked)
+        db.flush()
+
+    metadata = dict(tracked.role_metadata or {})
+    previous_pipeline = metadata.get(RECRUITMENT_PIPELINE_METADATA_KEY)
+    pipeline = dict(previous_pipeline) if isinstance(previous_pipeline, dict) else {}
+    activity = [item for item in pipeline.get("activity", []) if isinstance(item, dict)]
+    action = "selected" if selected else "shortlisted"
+    if not any(
+        item.get("action") == action
+        and item.get("thread_id") == thread_id
+        and item.get("source_job_id") == source_job_id
+        for item in activity
+    ):
+        activity.append({
+            "action": action,
+            "thread_id": thread_id,
+            "source_job_id": source_job_id,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    pipeline.update({
+        "thread_id": thread_id,
+        "source_job_id": source_job_id,
+        "state": action,
+        "posting_snapshot": posting_snapshot,
+        "fit_evidence": fit_evidence or pipeline.get("fit_evidence") or {},
+        "activity": activity[-MAX_RECRUITMENT_PIPELINE_EVENTS:],
+        "next_action": {
+            "kind": "review_evidence" if selected else "select_target",
+            "label": (
+                "Review the evidence, tailor the resume, then manage the application workspace"
+                if selected
+                else "Select this role as the target"
+            ),
+            "destination": "application_workspace",
+        },
+    })
+    metadata[RECRUITMENT_PIPELINE_METADATA_KEY] = pipeline
+    tracked.role_metadata = metadata
+
+    # Preserve user-authored fields on an existing record and only fill missing
+    # source evidence or resume linkage from the recruitment thread.
+    if not tracked.source_url:
+        tracked.source_url = sanitize_user_input(body.source_url)
+    if not tracked.job_description:
+        tracked.job_description = sanitize_user_input(body.job_description)
+    if not tracked.source:
+        tracked.source = sanitize_user_input(body.source)
+    if tracked.resume_version_id is None:
+        tracked.resume_version_id = body.resume_version_id
+    db.flush()
     return tracked
 
 
