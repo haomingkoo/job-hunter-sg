@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
 from html import unescape
@@ -131,6 +132,42 @@ class CandidateProfileRun:
     checkpoint_id: str = ""
 
 
+@dataclass(frozen=True)
+class CandidateProfileProgress:
+    """Safe lifecycle metadata for one semantic resume scope."""
+
+    transition: Literal["start", "correction", "checkpoint", "completion", "failure"]
+    scope_id: str
+    scope_count: int
+    completed_scope_count: int
+    attempt: int | None = None
+
+
+CandidateProfileProgressPublisher = Callable[[CandidateProfileProgress], None]
+
+_PROGRESS_SUMMARIES = {
+    "start": "The candidate profiler started a resume scope.",
+    "correction": "The candidate profiler is correcting a rejected scope submission.",
+    "checkpoint": "The candidate profiler saved a validated scope checkpoint.",
+    "completion": "The candidate profiler completed a resume scope.",
+    "failure": "The candidate profiler stopped on a resume scope.",
+}
+
+
+def candidate_profile_progress_event(progress: CandidateProfileProgress) -> tuple[str, str, dict]:
+    """Map internal progress to user-safe activity without resume or model content."""
+    detail: dict[str, int | str] = {
+        "transition": progress.transition,
+        "scope_id": progress.scope_id,
+        "scope_count": progress.scope_count,
+        "completed_scope_count": progress.completed_scope_count,
+    }
+    if progress.attempt is not None:
+        detail["attempt"] = progress.attempt
+    status = "failed" if progress.transition == "failure" else "running"
+    return status, _PROGRESS_SUMMARIES[progress.transition], detail
+
+
 class CandidateProfileValidationError(ValueError):
     def __init__(
         self,
@@ -193,6 +230,7 @@ class CandidateProfilerFactory(Protocol):
     def create(
         self,
         checkpoint_store: CandidateProfileCheckpointStore,
+        progress_publisher: CandidateProfileProgressPublisher | None = None,
     ) -> CandidateProfiler: ...
 
 
@@ -482,6 +520,7 @@ class LangChainCandidateProfiler:
         *,
         telemetry: RecruitmentTelemetry | None = None,
         checkpoint_store: CandidateProfileCheckpointStore | None = None,
+        progress_publisher: CandidateProfileProgressPublisher | None = None,
     ):
         if model is None:
             from resume_agent.models import create_agent_model
@@ -495,6 +534,7 @@ class LangChainCandidateProfiler:
         self._model = model
         self._telemetry = telemetry or OpenTelemetryRecorder()
         self._checkpoint_store = checkpoint_store
+        self._progress_publisher = progress_publisher
         self._configured_model_name = str(
             getattr(model, "model_name", "") or getattr(model, "model", "") or type(model).__name__
         )
@@ -591,7 +631,25 @@ class LangChainCandidateProfiler:
         validation_codes: list[str] = []
         model_name = self._configured_model_name
 
+        def progress(
+            transition: Literal["start", "correction", "checkpoint", "completion", "failure"],
+            scope: _ProfileScope,
+            *,
+            attempt: int | None = None,
+        ) -> None:
+            if self._progress_publisher is not None:
+                self._progress_publisher(
+                    CandidateProfileProgress(
+                        transition=transition,
+                        scope_id=scope.scope_id,
+                        scope_count=len(scopes),
+                        completed_scope_count=len(completed_scope_ids),
+                        attempt=attempt,
+                    )
+                )
+
         for scope in scopes:
+            progress("start", scope)
             scope_blocks = {str(block["id"]): block for block in scope.blocks}
             with self._telemetry.operation(
                 "candidate_profile.scope",
@@ -605,6 +663,7 @@ class LangChainCandidateProfiler:
                 if cached is not None:
                     payload, failure = _validate_submission(cached, scope_blocks)
                     if payload is None:
+                        progress("failure", scope)
                         scope_span.set_attribute("status", "error")
                         scope_span.set_attribute("error_type", "InvalidCheckpoint")
                         raise CandidateProfileValidationError(
@@ -621,6 +680,8 @@ class LangChainCandidateProfiler:
                     accepted_fields.extend(payload["fields"])
                     completed_scope_ids.append(scope.scope_id)
                     checkpoint_hit_count += 1
+                    progress("checkpoint", scope)
+                    progress("completion", scope)
                     scope_span.set_attribute("checkpoint_hit", True)
                     scope_span.set_attribute("status", "success")
                     continue
@@ -649,12 +710,15 @@ class LangChainCandidateProfiler:
                             )
                         accepted_fields.extend(resumed_payload["fields"])
                         completed_scope_ids.append(scope.scope_id)
+                        progress("checkpoint", scope)
+                        progress("completion", scope)
                         scope_span.set_attribute("checkpoint_hit", True)
                         scope_span.set_attribute("retry_payload_revalidated", True)
                         scope_span.set_attribute("status", "success")
                         continue
                     failure = resumed_failure
                 if retry_feedback and retry_feedback.get("exhausted") is True:
+                    progress("failure", scope)
                     scope_span.set_attribute("status", "error")
                     scope_span.set_attribute("error_type", "ValidationAttemptsExhausted")
                     raise CandidateProfileValidationError(
@@ -669,6 +733,7 @@ class LangChainCandidateProfiler:
                         completed_scope_ids=tuple(completed_scope_ids),
                     )
                 if first_attempt < 1 or first_attempt > config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS:
+                    progress("failure", scope)
                     raise CandidateProfileValidationError(
                         f"checkpoint:{scope.scope_id}:invalid_retry_attempt",
                         retry_feedback,
@@ -688,6 +753,8 @@ class LangChainCandidateProfiler:
                     config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS + 1,
                 ):
                     model_call_count += 1
+                    if failure:
+                        progress("correction", scope, attempt=attempt)
                     attempt_request = list(request)
                     if failure:
                         attempt_request.append(
@@ -739,6 +806,7 @@ class LangChainCandidateProfiler:
                         try:
                             response = bound_model.invoke(attempt_request)
                         except Exception as error:
+                            progress("failure", scope, attempt=attempt)
                             attempt_span.set_attribute("status", "error")
                             attempt_span.set_attribute("error_type", type(error).__name__)
                             raise CandidateProfileTransportError(
@@ -797,6 +865,7 @@ class LangChainCandidateProfiler:
                     break
 
                 if payload is None:
+                    progress("failure", scope)
                     scope_span.set_attribute("status", "error")
                     scope_span.set_attribute("error_type", "CandidateProfileValidationError")
                     raise CandidateProfileValidationError(
@@ -813,8 +882,10 @@ class LangChainCandidateProfiler:
                 self._clear_retry_feedback(checkpoint_id, scope.scope_id)
                 if self._checkpoint_store is not None:
                     self._checkpoint_store.save(checkpoint_id, scope.scope_id, payload)
+                    progress("checkpoint", scope)
                 accepted_fields.extend(payload["fields"])
                 completed_scope_ids.append(scope.scope_id)
+                progress("completion", scope)
                 scope_span.set_attribute("checkpoint_hit", False)
                 scope_span.set_attribute("status", "success")
 
@@ -900,11 +971,13 @@ class LangChainCandidateProfilerFactory:
     def create(
         self,
         checkpoint_store: CandidateProfileCheckpointStore,
+        progress_publisher: CandidateProfileProgressPublisher | None = None,
     ) -> CandidateProfiler:
         return LangChainCandidateProfiler(
             self._model,
             telemetry=self._telemetry,
             checkpoint_store=checkpoint_store,
+            progress_publisher=progress_publisher,
         )
 
 
@@ -925,6 +998,7 @@ class ScriptedCandidateProfilerFactory:
     def create(
         self,
         checkpoint_store: CandidateProfileCheckpointStore,
+        progress_publisher: CandidateProfileProgressPublisher | None = None,
     ) -> CandidateProfiler:
         runs = self._runs
         enforce_resume_identity = self._enforce_resume_identity
@@ -934,6 +1008,15 @@ class ScriptedCandidateProfilerFactory:
                 result = next(runs)
                 if isinstance(result, Exception):
                     raise result
+                if progress_publisher is not None:
+                    progress_publisher(
+                        CandidateProfileProgress(
+                            transition="start",
+                            scope_id="scripted_01",
+                            scope_count=1,
+                            completed_scope_count=0,
+                        )
+                    )
                 if enforce_resume_identity and (
                     result.profile.resume_document_id != resume_document.get("document_id")
                     or result.profile.resume_revision != resume_document.get("revision")
@@ -963,6 +1046,23 @@ class ScriptedCandidateProfilerFactory:
                         ]
                     },
                 )
+                if progress_publisher is not None:
+                    progress_publisher(
+                        CandidateProfileProgress(
+                            transition="checkpoint",
+                            scope_id="scripted_01",
+                            scope_count=1,
+                            completed_scope_count=0,
+                        )
+                    )
+                    progress_publisher(
+                        CandidateProfileProgress(
+                            transition="completion",
+                            scope_id="scripted_01",
+                            scope_count=1,
+                            completed_scope_count=1,
+                        )
+                    )
                 return result
 
         return ScriptedCandidateProfiler()

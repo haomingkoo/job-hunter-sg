@@ -18,7 +18,13 @@ from models import (
 )
 from resume_document import SCHEMA_VERSION, create_resume_document
 
-from .candidate_profile import CandidateProfilerFactory, candidate_profile_execution_policy
+from .candidate_profile import (
+    CandidateProfileProgress,
+    CandidateProfileProgressPublisher,
+    CandidateProfilerFactory,
+    candidate_profile_execution_policy,
+    candidate_profile_progress_event,
+)
 from .candidate_profile_store import SQLAlchemyCandidateProfileStore
 from .prompts import CANDIDATE_PROFILE_PROMPT_VERSION
 from .candidate_profile import CANDIDATE_PROFILE_DECOMPOSITION_VERSION
@@ -59,6 +65,7 @@ def study_resume_version(
     resume_version_id: int,
     profiler_factory: CandidateProfilerFactory,
     telemetry: RecruitmentTelemetry,
+    progress_publisher: CandidateProfileProgressPublisher | None = None,
 ) -> CandidateProfileArtifact:
     """Build or reuse the current evidence profile for one immutable resume."""
     resume = (
@@ -93,7 +100,7 @@ def study_resume_version(
         resume_version_id=resume.id,
         model_name=profiler_factory.model_name,
     )
-    run = profiler_factory.create(store).profile(document)
+    run = profiler_factory.create(store, progress_publisher).profile(document)
     return store.complete(run.checkpoint_id, run.profile)
 
 
@@ -205,12 +212,25 @@ def _run_dispatched_study(
         activity_publisher=activity_publisher,
     )
     try:
+        def publish_progress(progress: CandidateProfileProgress) -> None:
+            status, summary, detail = candidate_profile_progress_event(progress)
+            _record_event(
+                db,
+                thread=thread,
+                run=run,
+                status=status,
+                summary=summary,
+                detail=detail,
+                activity_publisher=activity_publisher,
+            )
+
         artifact = study_resume_version(
             db,
             owner_id=owner_id,
             resume_version_id=resume_version_id,
             profiler_factory=profiler_factory,
             telemetry=telemetry,
+            progress_publisher=publish_progress,
         )
         db.refresh(thread)
         if thread.resume_version_id == resume_version_id:

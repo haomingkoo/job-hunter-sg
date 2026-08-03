@@ -18,6 +18,12 @@ from openai import APITimeoutError
 from prompt_safety import xml_data_block
 from resume_document import apply_resume_patch, create_resume_document
 from resume_structurer import get_all_bullets, structure_resume
+from run_concurrency import (
+    active_runs as _active_runs,
+    owner_has_active_run,
+    release_owner_run,
+    reserve_owner_run,
+)
 
 from .agent import create_resume_agent, run_agent_turn
 from .judge import judge_assessment
@@ -36,8 +42,6 @@ from .tools import bullet_context
 log = logging.getLogger("jobhunter.resume_agent")
 _sessions: dict[str, dict] = {}
 _checkpointer: Any | None = None
-_active_runs: dict[str, int] = {}
-_active_runs_lock = threading.Lock()
 _sessions_lock = threading.Lock()
 
 
@@ -159,8 +163,7 @@ def get_state(session_id: str, owner_key: str | None = None) -> dict:
 
 
 def owner_has_active_sessions(owner_key: str) -> bool:
-    with _active_runs_lock:
-        return _active_runs.get(owner_key, 0) > 0
+    return owner_has_active_run(owner_key)
 
 
 def purge_owner_sessions(owner_key: str) -> None:
@@ -451,27 +454,6 @@ def _run_owner(body: dict, session_id: str, owner_key: str | None) -> str:
     if body.get("_owner_key"):
         return str(body["_owner_key"])
     return f"session:{session_id}"
-
-
-def reserve_owner_run(owner_key: str) -> bool:
-    with _active_runs_lock:
-        current = _active_runs.get(owner_key, 0)
-        if (
-            current >= app_config.AGENT_MAX_CONCURRENT_RUNS_PER_USER
-            or sum(_active_runs.values()) >= app_config.AGENT_MAX_ACTIVE_RUNS
-        ):
-            return False
-        _active_runs[owner_key] = current + 1
-        return True
-
-
-def release_owner_run(owner_key: str) -> None:
-    with _active_runs_lock:
-        current = _active_runs.get(owner_key, 0)
-        if current <= 1:
-            _active_runs.pop(owner_key, None)
-        else:
-            _active_runs[owner_key] = current - 1
 
 
 def stream_chat_events(

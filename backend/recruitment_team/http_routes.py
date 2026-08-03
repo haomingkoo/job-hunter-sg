@@ -28,6 +28,7 @@ from .errors import (
     DiscoveryUnavailable,
     InvalidCommand,
     ResumeVersionNotFound,
+    RunConcurrencyExceeded,
     ServiceUnavailable,
     ThreadNotFound,
 )
@@ -257,6 +258,8 @@ def _raise_http_error(error: Exception) -> None:
         raise HTTPException(status_code=404, detail=str(error)) from None
     if isinstance(error, InvalidCommand):
         raise HTTPException(status_code=422, detail=str(error)) from None
+    if isinstance(error, RunConcurrencyExceeded):
+        raise HTTPException(status_code=429, detail=str(error)) from None
     if isinstance(error, (DiscoveryUnavailable, ServiceUnavailable)):
         raise HTTPException(status_code=503, detail=str(error)) from None
     raise error

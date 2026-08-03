@@ -175,8 +175,13 @@ def test_candidate_profile_retries_with_original_blocks_failed_output_and_exact_
     failed["fields"][0]["evidence_quotes"] = ["A quote absent from the cited block."]
     model = _ProfileModel([failed, _valid_payload(document)])
     telemetry = RecordedTelemetry()
+    progress = []
 
-    run = LangChainCandidateProfiler(model, telemetry=telemetry).profile(document)
+    run = LangChainCandidateProfiler(
+        model,
+        telemetry=telemetry,
+        progress_publisher=progress.append,
+    ).profile(document)
 
     assert run.attempt_count == 2
     assert run.validation_codes == ("field:outcome_close_cycle:quote_not_found",)
@@ -191,6 +196,13 @@ def test_candidate_profile_retries_with_original_blocks_failed_output_and_exact_
     assert "A quote absent from the cited block." in correction
     assert "Reduced close from 8 days to 5 days" in correction
     assert "change the cited block IDs" in correction
+    assert [item.transition for item in progress] == [
+        "start",
+        "correction",
+        "completion",
+    ]
+    assert progress[1].attempt == 2
+    assert all(not hasattr(item, "resume_text") for item in progress)
     attempts = [span for span in telemetry.spans if span.name == "candidate_profile.model_attempt"]
     validations = [span for span in telemetry.spans if span.name == "candidate_profile.validation"]
     assert attempts[0].attributes == {
