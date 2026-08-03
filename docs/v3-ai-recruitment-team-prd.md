@@ -12,11 +12,13 @@ production evidence and remaining issue disposition live in
 `PASSDOWN-2026-08-02.md` and `issue-audit-2026-08-03.md`; this PRD does not preserve
 superseded July runtime failures as current status.
 
-The deployed journey now passes clarification, cited drafting, acceptance into a
-reversible version, and DOCX/PDF export. The issue #201 implementation carries the exact
-exported version back into Recruitment Team and preserves a matching conversation; it
-remains the observed north-star blocker until that change is merged, deployed, and
-accepted in the signed-in browser.
+The deployed north-star journey now passes clarification, cited drafting, acceptance
+into a reversible version, DOCX/PDF export, and continuation into new source-backed
+matches grounded in that refined resume. PR #203 passed signed-in production acceptance
+without opening the generic Jobs feed and retained the earlier conversation. Remaining
+whole-app work is limited to the valid open outcomes in the issue audit; this journey
+proof does not close those observability, recovery, calibration, accessibility, or
+staging requirements.
 
 The whole application is not complete until the north-star loop below passes as one
 signed-in deployed journey. Existing isolated capabilities, HTTP success, or a green

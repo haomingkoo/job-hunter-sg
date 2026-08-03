@@ -9,7 +9,7 @@ acceptance contract was implemented.
 ## Closed as completed
 
 Issues #42, #44, #86, #90, #91, #93, #101, #103, #104, #110, #111, #112, #113,
-and #186 were closed only after their current
+#186, and #201 were closed only after their current
 implementation and focused regression coverage were verified. Issue #184 was
 closed after production browser acceptance of streamed Shortlist and Select
 Target behavior. Issue #90 was merged in PR #191 and deployed on Railway at exact
@@ -37,6 +37,12 @@ candidate-confirmed number that the prior gate rejected, displayed its quote on 
 pending edit, created a separate resume version on acceptance, and exported both DOCX
 and PDF. The original resume remained available.
 
+Issue #201 was corrected in PR #203 and deployed at exact commit
+`5f46af2ece06ff49d56176f12a731fbf09e0ffd4`. Production continued from the refined
+export into five source-backed, resume-ranked matches without opening the generic Jobs
+feed. The exact confirmed edit appeared in match evidence, and prior conversation and
+candidate history remained available.
+
 ## Closed as obsolete or duplicate
 
 | Issues | Disposition |
@@ -60,7 +66,6 @@ and PDF. The original resume remained available.
 | #102 | Preserve cumulative call, token, latency, validation, checkpoint, model, and trace evidence across replay. |
 | #106 | Globally merge and independently calibrate candidate evidence without losing exact provenance. |
 | #108 | Replace scattered retry flags with one persisted deterministic attempt ledger. |
-| #201 | Implementation carries the exact exported resume into Recruitment Team and preserves a matching thread; merge, deployment, and signed-in browser acceptance remain. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
 
 ## Verification boundary
