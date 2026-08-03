@@ -15,7 +15,6 @@ export default function JobCardSkeleton({ count = 5 }) {
           className="bg-white rounded-2xl border border-[#BDDDFC]/25 p-5"
           style={{ animationDelay: `${i * 80}ms` }}
         >
-          {/* Title row */}
           <div className="flex items-center gap-2 mb-3">
             <div
               className={`${shimmerClass} h-4 w-2/3`}
@@ -27,7 +26,6 @@ export default function JobCardSkeleton({ count = 5 }) {
             />
           </div>
 
-          {/* Meta row: company, location, salary */}
           <div className="flex items-center gap-3 mb-3">
             <div
               className={`${shimmerClass} h-3 w-1/3`}
@@ -43,7 +41,6 @@ export default function JobCardSkeleton({ count = 5 }) {
             />
           </div>
 
-          {/* Description lines */}
           <div className="space-y-2 mb-4">
             <div
               className={`${shimmerClass} h-3 w-full`}
@@ -55,7 +52,6 @@ export default function JobCardSkeleton({ count = 5 }) {
             />
           </div>
 
-          {/* Skill pills */}
           <div className="flex gap-2">
             {[16, 20, 14].map((w, j) => (
               <div

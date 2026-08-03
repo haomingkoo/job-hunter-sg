@@ -1,17 +1,4 @@
-"""V3-specific tools bound to the open-agent orchestrator.
-
-Two audiences share this module. The target-assessment runner binds
-`ask_candidate`, `read_candidate_evidence`, `read_target_job` and
-`propose_resume_edit` around a `TargetAssessmentRequest`. The conversational
-coordinator also binds its shortlist, search, plan, preference, confirmed-evidence,
-and publishing tools around a `ConversationContext`. Both shapes arrive through the same `context`
-ContextVars, so a tool that needs a field the other shape does not carry says
-so rather than dereferencing `None`.
-
-`search_jobs` here goes through the typed DiscoveryPort on the conversation
-context, the same port the SearchJobs command uses. The assessment runner binds
-the resume-agent corpus search tool instead.
-"""
+"""Tools shared by conversational and target-assessment agent loops."""
 
 from __future__ import annotations
 

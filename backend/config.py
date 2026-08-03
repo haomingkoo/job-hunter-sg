@@ -58,7 +58,6 @@ def _csv_env(name: str, default: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
-# ── SEA-LION model tiers ──────────────────────────────────────────────────────
 # FAST: interactive rewrites, JD summaries, default classic pipeline tier.
 SEALION_FAST_MODEL: str = os.getenv(
     "SEALION_FAST_MODEL",
@@ -89,7 +88,6 @@ SEALION_DISABLE_THINKING_MODELS: tuple[str, ...] = _csv_env(
 # and returns empty. Floor its max_tokens at call sites that use it.
 SMART_MIN_MAX_TOKENS: int = _int_env("SMART_MIN_MAX_TOKENS", 6000)
 
-# ── Resume deep-agent v2 knobs ───────────────────────────────────────────────
 AGENT_MAX_TOOL_ITERATIONS: int = _positive_int_env("AGENT_MAX_TOOL_ITERATIONS", 20)
 OPEN_AGENT_MAX_PROPOSED_EDITS: int = _positive_int_env("OPEN_AGENT_MAX_PROPOSED_EDITS", 8)
 # Each ask_candidate call pauses the whole graph, and the guardrails only reject a
@@ -206,12 +204,10 @@ RECRUITMENT_RETENTION_NOTICE: dict[str, str] = {
     "telemetry": "Trace and semantic-evaluation deletion is requested at the same time; provider-side removal may not be immediate.",
 }
 
-# ── SEA-LION throughput / network knobs ───────────────────────────────────────
 # Free tier is 10 req/min/key; default kept at 9 for headroom against 429s.
 SEALION_REQ_PER_MIN: int = _int_env("SEALION_REQ_PER_MIN", 9)
 SEALION_HTTP_TIMEOUT: int = _int_env("SEALION_HTTP_TIMEOUT", 60)  # seconds
 
-# ── Database / scraper runtime knobs ─────────────────────────────────────────
 DATABASE_POOL_SIZE: int = _int_env("DATABASE_POOL_SIZE", 5)
 DATABASE_MAX_OVERFLOW: int = _int_env("DATABASE_MAX_OVERFLOW", 10)
 DATABASE_POOL_TIMEOUT: int = _int_env("DATABASE_POOL_TIMEOUT", 30)
@@ -236,12 +232,10 @@ COMPANY_PROMOTIONAL_MIN_POSTS: int = _positive_int_env("COMPANY_PROMOTIONAL_MIN_
 COMPANY_PROMOTIONAL_RATIO: float = _float_env("COMPANY_PROMOTIONAL_RATIO", 0.5)
 ANALYTICS_YIELD_PER: int = _int_env("ANALYTICS_YIELD_PER", 500)
 
-# ── Resume-tailoring pipeline token budgets (all on the FAST tier) ────────────
 PIPELINE_STRATEGY_MAX_TOKENS: int = _int_env("PIPELINE_STRATEGY_MAX_TOKENS", 800)
 PIPELINE_REWRITE_TOKENS_PER_BULLET: int = _int_env("PIPELINE_REWRITE_TOKENS_PER_BULLET", 150)
 PIPELINE_SUMMARY_MAX_TOKENS: int = _int_env("PIPELINE_SUMMARY_MAX_TOKENS", 200)
 
-# ── Resume validation gates ──────────────────────────────────────────────────
 VALIDATION_REWRITE_MAX_EXPANSION_RATIO: float = _float_env(
     "VALIDATION_REWRITE_MAX_EXPANSION_RATIO",
     2.0,

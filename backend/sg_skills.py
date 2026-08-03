@@ -14,7 +14,6 @@ Last updated: 2026-03-25
 
 from __future__ import annotations
 
-# ── 16 Critical Core Skills (CCS) ──────────────────────────────────────────
 # Grouped under 3 clusters: Thinking Critically, Interacting with Others,
 # Staying Relevant. Each skill has Basic / Intermediate / Advanced levels.
 
@@ -50,7 +49,6 @@ CCS_SKILLS: set[str] = {
     for skill in skills
 }
 
-# ── 38 SkillsFuture Sectors ────────────────────────────────────────────────
 # As listed on the Skills Framework sector information page.
 
 SG_SECTORS: set[str] = {
@@ -94,13 +92,11 @@ SG_SECTORS: set[str] = {
     "Workplace Safety and Health",
 }
 
-# ── SG-specific skills and terms ───────────────────────────────────────────
 # Terms commonly found in Singapore job postings that are specific to the
 # local ecosystem: government agencies, regulations, platforms, and
 # certifications. All stored lowercase for case-insensitive matching.
 
 SG_SKILLS: set[str] = {
-    # --- Critical Core Skills (lowercase for matching) ---
     "creative thinking",
     "decision making",
     "problem solving",
@@ -117,7 +113,6 @@ SG_SKILLS: set[str] = {
     "global perspective",
     "learning agility",
     "self management",
-    # --- SG Government Agencies & Bodies ---
     "govtech",
     "government technology agency",
     "smart nation",
@@ -204,7 +199,6 @@ SG_SKILLS: set[str] = {
     "sportsg",
     "sport singapore",
     "ntuc",
-    # --- SG Regulatory & Legal ---
     "pdpa",
     "personal data protection act",
     "employment act",
@@ -223,7 +217,6 @@ SG_SKILLS: set[str] = {
     "instruction manual",
     "im8",
     "government instruction manual",
-    # --- SG Finance & Banking ---
     "sgx",
     "singapore exchange",
     "mas regulations",
@@ -255,7 +248,6 @@ SG_SKILLS: set[str] = {
     "project guardian",
     "payment services",
     "digital payment token",
-    # --- SG Tech & Digital ---
     "national ai strategy",
     "ai governance framework",
     "model ai governance",
@@ -276,7 +268,6 @@ SG_SKILLS: set[str] = {
     "open government products",
     "ogp",
     "techpass",
-    # --- SG Education & Training ---
     "skillsfuture",
     "skillsfuture credit",
     "skillsfuture enterprise credit",
@@ -311,7 +302,6 @@ SG_SKILLS: set[str] = {
     "singapore institute of technology",
     "suss",
     "singapore university of social sciences",
-    # --- SG Industry Certifications & Standards ---
     "bizsafe",
     "bizsafe star",
     "iso 9001",
@@ -328,7 +318,6 @@ SG_SKILLS: set[str] = {
     "people developer",
     "singapore certified management consultant",
     "cmc",
-    # --- SG Healthcare ---
     "moh healthcare",
     "healthhub",
     "national electronic health record",
@@ -348,7 +337,6 @@ SG_SKILLS: set[str] = {
     "gp clinic",
     "polyclinic",
     "restructured hospital",
-    # --- SG Construction & Built Environment ---
     "bca green mark",
     "green mark",
     "buildability score",
@@ -364,7 +352,6 @@ SG_SKILLS: set[str] = {
     "registered surveyor",
     "builders licence",
     "construction safety",
-    # --- SG Transport & Logistics ---
     "erp",
     "electronic road pricing",
     "one motoring",
@@ -378,7 +365,6 @@ SG_SKILLS: set[str] = {
     "civil aviation authority",
     "caas",
     "jurong port",
-    # --- SG Defence & Security ---
     "national service",
     "ns",
     "saf",
@@ -393,7 +379,6 @@ SG_SKILLS: set[str] = {
     "restricted",
     "confidential",
     "secret",
-    # --- SG Procurement & Contracting ---
     "gebiz",
     "government procurement",
     "invitation to tender",
@@ -408,7 +393,6 @@ SG_SKILLS: set[str] = {
     "framework agreement",
     "term contract",
     "government contract",
-    # --- SG Sustainability & Green ---
     "singapore green plan",
     "singapore green plan 2030",
     "green finance",
@@ -420,7 +404,6 @@ SG_SKILLS: set[str] = {
     "green building",
     "solar energy",
     "nea carbon",
-    # --- SG Specific Business Terms ---
     "national wages council",
     "nwc",
     "tripartism",
@@ -444,7 +427,6 @@ SG_SKILLS: set[str] = {
     "edg",
     "market readiness assistance",
     "mra",
-    # --- SG Data & Analytics ---
     "data.gov.sg",
     "singstat",
     "singapore department of statistics",
@@ -455,7 +437,6 @@ SG_SKILLS: set[str] = {
     "evidence-based policy",
 }
 
-# ── Lookup helpers ─────────────────────────────────────────────────────────
 
 # Lowercase versions of sectors for case-insensitive matching
 SG_SECTORS_LOWER: set[str] = {s.lower() for s in SG_SECTORS}

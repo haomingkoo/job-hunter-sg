@@ -158,21 +158,7 @@ class OpenAgentTargetAssessmentRunner:
         proposed_edits: list[dict],
         ask_candidate_call_id: str | None = None,
     ) -> Iterator[TargetAssessmentUpdate]:
-        """Continue a paused run. The live agent object from the original
-        `run()` call is long gone (a fresh runner/request handles every HTTP
-        call) -- what makes this a real continuation, not a new run, is the
-        durable checkpointer: rebuilding an equivalent agent bound to the same
-        checkpointer and the same thread_id (`pause_token`) reattaches
-        LangGraph's own persisted conversation state. `specialist_runs`/
-        `synthesis`/`proposed_edits` accumulated before the pause come from
-        the caller (persisted on the TargetAssessmentArtifact row) because
-        they live only in this module's stream parsing, not in anything the
-        checkpointer stores -- a persona subagent's own submission never
-        appears in the parent's own checkpointed state.
-        `ask_candidate_call_id` (the id of the tool call that caused the
-        pause) is passed to skip that call's replayed re-emission on resume
-        -- see `_drive`'s `skip_tool_call_ids` for why that replay happens.
-        """
+        """Resume durable graph state and skip the replayed pause call."""
         agent = self._build_agent(self._model_factory())
         run_config = {
             "recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS,

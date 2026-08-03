@@ -1,8 +1,7 @@
 """Public hosted MCP surface for Job Hunter SG jobs.
 
-Names use underscores, never dots. The MCP spec's charset allows dots but the
-Claude API's tool-name validation (`[a-zA-Z0-9_-]`) does not, so a dot-namespaced
-name is spec-legal and still broken on the largest client.
+Names use underscores because some production MCP clients reject dot-namespaced
+tool names even though the protocol permits them.
 """
 
 from mcp.server.fastmcp import FastMCP
@@ -66,7 +65,6 @@ def jobhunter_recommend_skillsfuture_courses(skills: list[str], per_skill: int =
     return tools.recommend_skillsfuture_courses(skills, per_skill)
 
 
-# ── Resources ────────────────────────────────────────────────────────────────
 # Both were zero-argument tools returning the same content on every call, which is
 # the static-resource heuristic rather than a tool.
 
@@ -83,7 +81,6 @@ def job_resource(job_id: str) -> str:
     return tools.get_job(int(job_id))
 
 
-# ── Prompts ──────────────────────────────────────────────────────────────────
 
 
 def find_singapore_roles(role: str, must_have_skills: str = "", source: str = "") -> str:

@@ -24,7 +24,6 @@ class GateResult:
     fixed_text: str | None = None
 
 
-# ── Extraction helpers ──────────────────────────────────────────────────────
 
 _NUMBER_RE = re.compile(
     r"\$[\d,.]+[kKmMbB]?"
@@ -429,7 +428,6 @@ def gate_unsupported_claims(original: str, tailored: str) -> GateResult:
     )
 
 
-# ── Runners ─────────────────────────────────────────────────────────────────
 
 
 def run_all_gates(

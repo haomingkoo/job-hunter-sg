@@ -72,7 +72,6 @@ def build_job_embed_text(
     return " ".join(p for p in parts if p)
 
 
-# ── In-memory matrix cache for fast similarity search ─────────────────────────
 
 _job_matrix: np.ndarray | None = None
 _job_ids: list[int] = []
@@ -101,15 +100,7 @@ def is_similarity_matrix_ready() -> bool:
 
 
 def _refresh_matrix_if_stale(db_session: Session) -> None:
-    """Rebuild the matrix from the searchable corpus if older than TTL.
-
-    Only jobs a user could actually be shown belong here. Ranking the whole
-    embedded history and filtering the winners afterwards starves as the corpus
-    ages: in production 64,926 rows carried embeddings but 1,257 were still
-    inside the age cutoff, so every nearest neighbour was discarded after the
-    fact and search returned nothing. Constraining the candidates instead keeps
-    a stale index from silently emptying every result.
-    """
+    """Refresh the matrix from currently searchable jobs when stale."""
     global _job_matrix, _job_ids, _matrix_ts
     now = time.monotonic()
     if _job_matrix is not None and (now - _matrix_ts) < _MATRIX_TTL:

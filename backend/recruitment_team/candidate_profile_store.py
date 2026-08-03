@@ -86,16 +86,7 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         return record
 
     def _validated_record(self, checkpoint_id: str) -> CandidateProfileArtifact | None:
-        """The stored checkpoint, or None when it belongs to a superseded version.
-
-        A checkpoint exists to resume partial work. When the prompt, model,
-        decomposition or execution policy has moved on, its scopes were produced
-        under different rules and cannot be trusted, so it is abandoned and the
-        caller starts a fresh one. Treating a stale optimisation as a hard
-        failure left the candidate permanently unable to build a profile: any
-        deploy that changed a validation-attempt count or a timeout, both of
-        which sit inside execution_policy, bricked every existing checkpoint.
-        """
+        """Return a compatible partial checkpoint, otherwise start fresh."""
         record = self._record(checkpoint_id)
         if record is None:
             return None

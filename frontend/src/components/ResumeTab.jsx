@@ -341,7 +341,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
 
   const [downloadingPdf, setDownloadingPdf] = useState(false);
 
-  // ── Resume Chat Builder state ──────────────────────────────────
   const [showResumeChat, setShowResumeChat] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
@@ -1119,7 +1118,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     applyResumeText(pastedText.trim(), { rescore: true, clearRewrites: true });
   };
 
-  // ── Resume Versions ──────────────────────────────────────────────────
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (user) fetchVersions(); }, [user]);
 
@@ -2276,7 +2274,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
     });
   }, []);
 
-  // ─── Drag-and-Drop ─────────────────────────────────────────────────────────
   const dndSensors = useSensors(useSensor(PointerSensor, POINTER_SENSOR_CONFIG));
   const bulletIds = useMemo(() => bodySections.filter((s) => s.type === "bullet").map((s) => s.id), [bodySections]);
 
@@ -2365,7 +2362,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         }}
       />
 
-      {/* ── Wizard Progress Bar ──────────────────────────────────────── */}
       <div className="flex items-center gap-2 mb-6">
         {["Upload", "Template", "Edit", "Export"].map((label, i) => {
           const step = i + 1;
@@ -2432,17 +2428,14 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
         </div>
       )}
 
-      {/* ── Step 1: Upload ──────────────────────────────────────────── */}
       {wizardStep === 1 && setupVisible ? (
         <div className="mx-auto max-w-3xl space-y-6">
-          {/* ── Entry Point Cards ─────────────────────────────────────── */}
           <div>
             <h2 className="text-xl font-bold text-[#384959]">How would you like to start?</h2>
             <p className="mt-1 text-sm text-[#6A89A7]">Choose the option that fits your situation.</p>
           </div>
 
           <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-            {/* Upload */}
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -2464,7 +2457,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               </p>
             </button>
 
-            {/* Paste */}
             <button
               type="button"
               onClick={() => {
@@ -2478,7 +2470,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               <p className="mt-1.5 text-sm text-[#6A89A7]">Copy-paste your resume from any source</p>
             </button>
 
-            {/* Start Fresh — opens AI chat builder */}
             <button
               type="button"
               onClick={() => {
@@ -2499,7 +2490,6 @@ export default function ResumeTab({ selectedJob, user, setActiveTab }) {
               <p className="mt-1.5 text-sm text-[#6A89A7]">Build from scratch with AI-guided chat, or switch to a blank starter if you want to move faster</p>
             </button>
 
-            {/* Try Demo */}
             <button
               type="button"
               onClick={() => {
@@ -2552,7 +2542,6 @@ CERTIFICATIONS
             </button>
           </div>
 
-          {/* ── Paste Area (hidden by default, revealed on click) ──────── */}
           <div id="resume-paste-area" className="hidden rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-[#384959]">Paste your resume text</div>
             <textarea
@@ -2580,10 +2569,8 @@ CERTIFICATIONS
             </div>
           </div>
 
-          {/* ── AI Resume Chat Builder ─────────────────────────────────── */}
           {showResumeChat && (
             <div className="rounded-2xl border border-violet-200 bg-white shadow-sm overflow-hidden flex flex-col" style={{ height: "480px" }}>
-              {/* Header */}
               <div className="flex items-center justify-between border-b border-violet-100 bg-gradient-to-r from-violet-50 to-white px-5 py-3">
                 <div className="flex items-center gap-2">
                   <Sparkles size={18} className="text-violet-600" />
@@ -2599,7 +2586,6 @@ CERTIFICATIONS
                 </button>
               </div>
 
-              {/* Messages */}
               <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
                 {chatMessages.map((msg, i) => (
                   <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -2633,7 +2619,6 @@ CERTIFICATIONS
                 <div ref={chatEndRef} />
               </div>
 
-              {/* Input */}
               <div className="border-t border-[#BDDDFC]/20 px-4 py-3">
                 <div className="mb-2 flex items-center gap-2 text-[11px]">
                   <span className="font-semibold uppercase tracking-wide text-violet-600">{chatStageMeta.label}</span>
@@ -2794,7 +2779,6 @@ CERTIFICATIONS
             </div>
           )}
 
-          {/* ── Saved Versions (if logged in and has versions) ─────────── */}
           {user && resumeVersions.length > 0 && (
             <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
               <div className="flex items-center justify-between">
@@ -2806,7 +2790,6 @@ CERTIFICATIONS
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 {resumeVersions.slice(0, 4).map((v) => (
                   <div key={v.id} className="group/version relative">
-                    {/* Delete confirmation overlay */}
                     {deletingVersionId === v.id && (
                       <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white/95 px-3 backdrop-blur-sm">
                         <span className="text-xs font-medium text-[#384959]">Delete this version?</span>
@@ -2826,7 +2809,6 @@ CERTIFICATIONS
                         </button>
                       </div>
                     )}
-                    {/* Inline rename form */}
                     {renamingVersionId === v.id ? (
                       <div className="flex items-center gap-2 rounded-xl border border-[#6A89A7] bg-white px-4 py-3">
                         <input
@@ -2902,7 +2884,6 @@ CERTIFICATIONS
             </div>
           )}
 
-          {/* ── Profile Fields ─────────────────────────────────────────── */}
           <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-[#384959]">Your Details</div>
             <p className="mt-1 text-xs text-[#6A89A7]">Used for the resume header. Auto-detected from uploaded files.</p>
@@ -2950,7 +2931,6 @@ CERTIFICATIONS
             </div>
           </div>
 
-          {/* Step 1 Next button */}
           <div className="flex justify-end">
             <button
               type="button"
@@ -2965,7 +2945,6 @@ CERTIFICATIONS
         </div>
       ) : null}
 
-      {/* ── Step 3: Setup Complete bar ──────────────────────────────── */}
       {wizardStep === 3 && !setupVisible && (
         <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -3130,7 +3109,6 @@ CERTIFICATIONS
         </div>
       )}
 
-      {/* ── Step 2: Template ─────────────────────────────────────────── */}
       {wizardStep === 2 && (<>
       <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between gap-4">
@@ -3172,7 +3150,6 @@ CERTIFICATIONS
         </div>
       </div>
 
-      {/* Step 2 navigation */}
       <div className="flex items-center justify-between">
         <button
           type="button"
@@ -3193,7 +3170,6 @@ CERTIFICATIONS
       </div>
       </>)}
 
-      {/* ── Step 3: Review & Edit ────────────────────────────────────── */}
       {wizardStep === 3 && (<>
       <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -4416,7 +4392,6 @@ CERTIFICATIONS
 
               {tailoringStatus && (
                 <div className="mt-4 rounded-2xl border border-violet-200 bg-white p-4">
-                  {/* Step track */}
                   <div className="flex items-center">
                     {TAILOR_STAGE_LABELS.map((stage, stageIndex) => {
                       const currentStageNumber = Number.isFinite(tailoringStatus?.stage_number) ? tailoringStatus.stage_number : 0;
@@ -4443,7 +4418,6 @@ CERTIFICATIONS
                       );
                     })}
                   </div>
-                  {/* Active stage label + progress */}
                   <div className="mt-3 flex items-baseline justify-between gap-2">
                     <div className="text-sm font-semibold text-[#384959]">
                       {TAILOR_STAGE_LABELS.find((s) => s.id === tailoringStatus.stage)?.label
@@ -5366,7 +5340,6 @@ CERTIFICATIONS
                         </>
                       );
 
-                      // ── End-of-block buttons: Add Bullet / Add Entry ────────
                       const nextNonSpacer = bodySections.slice(sectionIndex + 1).find((s) => s.type !== "spacer");
                       const isAtEntryBoundary = !nextNonSpacer
                         || nextNonSpacer.type === "heading"
@@ -5572,7 +5545,6 @@ CERTIFICATIONS
       </div>
       </>)}
 
-      {/* ── Step 4: Export ────────────────────────────────────────────── */}
       {wizardStep === 4 && (
         <div className="mx-auto max-w-2xl space-y-6">
           <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-6 shadow-sm text-center">
@@ -5714,24 +5686,18 @@ CERTIFICATIONS
         </div>
       )}
 
-      {/* Mobile Bullet Feedback Sheet */}
       {mobileBulletSheet && (
         <div className="fixed inset-0 z-50 lg:hidden">
-          {/* Backdrop */}
           <div
             className="absolute inset-0 bg-black/40"
             onClick={() => setMobileBulletSheet(null)}
           />
-          {/* Sheet */}
           <div className="absolute bottom-0 left-0 right-0 rounded-t-3xl bg-white shadow-2xl max-h-[80vh] overflow-y-auto animate-slide-up" onClick={(e) => e.stopPropagation()}>
-            {/* Handle */}
             <div className="flex justify-center pt-3 pb-2">
               <div className="h-1 w-10 rounded-full bg-gray-300" />
             </div>
 
-            {/* Content */}
             <div className="px-5 pb-8 space-y-4">
-              {/* Annotation badge */}
               <div className="flex items-center gap-2">
                 <span className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-semibold ${mobileBulletSheet.annotation?.pillClass || "bg-gray-100"}`}>
                   {mobileBulletSheet.annotation?.icon}
@@ -5739,18 +5705,15 @@ CERTIFICATIONS
                 </span>
               </div>
 
-              {/* Issue description */}
               <p className="text-sm text-[#6A89A7] leading-relaxed">
                 {mobileBulletSheet.annotation?.message || "Review this bullet for improvements."}
               </p>
 
-              {/* Current bullet text */}
               <div className="rounded-xl bg-[#f0f4f8] p-4">
                 <div className="text-xs font-semibold uppercase tracking-wider text-[#6A89A7] mb-2">Current Bullet</div>
                 <p className="text-sm text-[#384959] leading-relaxed">{mobileBulletSheet.text}</p>
               </div>
 
-              {/* Action buttons */}
               <div className="flex gap-3">
                 <button
                   type="button"
@@ -5782,7 +5745,6 @@ CERTIFICATIONS
                 </button>
               </div>
 
-              {/* Rewrite results */}
               {mobileBulletSheet && isRewriteResultCurrent(rewriteResults[mobileBulletSheet.id], {
                 bullet: mobileBulletSheet.text || "",
                 jobTitle: selectedJob?.title || "",
@@ -5806,7 +5768,6 @@ CERTIFICATIONS
                 </div>
               )}
 
-              {/* Dismiss */}
               <button
                 type="button"
                 onClick={() => setMobileBulletSheet(null)}

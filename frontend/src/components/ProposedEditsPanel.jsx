@@ -1,12 +1,6 @@
 import { useState } from "react";
 
-/**
- * Agent-drafted resume edits, pending the candidate's decision.
- *
- * Accepting writes a NEW resume version and never touches the master, which is
- * what makes a single accept-all safe: nothing is overwritten and the original
- * stays intact.
- */
+/** Pending edits; acceptance creates a new resume version. */
 export default function ProposedEditsPanel({ edits, onAccept, onReject, busy, result }) {
   const [rejecting, setRejecting] = useState(() => new Set());
 

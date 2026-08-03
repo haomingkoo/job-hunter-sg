@@ -150,7 +150,6 @@ def _track_success() -> None:
         _probe_state["checked_at"] = time.time()
 
 
-# ── Liveness probe ────────────────────────────────────────────────────────────
 #
 # The failure counter only speaks when traffic does. It resets on any success and
 # needs several consecutive failures to trip, so on a quiet site it reads zero
@@ -205,7 +204,6 @@ def _refresh_probe_if_stale() -> None:
     threading.Thread(target=_run_probe, daemon=True).start()
 
 
-# ── UK/Singapore English post-processing ──────────────────────────────────────
 
 _UK_SPELLING_MAP: dict[str, str] = {
     "optimized": "optimised", "organized": "organised", "recognized": "recognised",

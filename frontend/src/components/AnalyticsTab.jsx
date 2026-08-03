@@ -810,7 +810,6 @@ export default function AnalyticsTab() {
         </div>
       )}
 
-      {/* Sectors */}
       {!loading && !error && data?.sectors?.length > 0 && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
@@ -838,7 +837,6 @@ export default function AnalyticsTab() {
         </div>
       )}
 
-      {/* Top Job Titles */}
       {!loading && !error && data?.top_titles?.length > 0 && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between mb-4">
@@ -873,7 +871,6 @@ export default function AnalyticsTab() {
         </div>
       )}
 
-      {/* Top Companies */}
       {!loading && !error && data?.top_companies?.length > 0 && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between gap-3">
@@ -901,7 +898,6 @@ export default function AnalyticsTab() {
         </div>
       )}
 
-      {/* Skills with search filter */}
       {!loading && !error && (data?.top_skills?.length || 0) > 0 && (
         <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between mb-4">

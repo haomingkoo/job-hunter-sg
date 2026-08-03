@@ -276,7 +276,6 @@ def crawl_all_jobs() -> dict:
     }
     start = time.time()
 
-    # ── MCF: paginate through all jobs ──────────────────────────────
     from scraper import MyCareersFutureScraper
     mcf = MyCareersFutureScraper()
 
@@ -408,7 +407,6 @@ def crawl_all_jobs() -> dict:
     else:
         log.warning("[MCF] Crawl was incomplete; stale-job retirement skipped")
 
-    # ── CareersGov: single JSON fetch via OpenGovSG ─────────────────
     from scraper import CareersGovScraper
     cgov = CareersGovScraper()
 

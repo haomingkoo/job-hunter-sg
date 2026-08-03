@@ -111,13 +111,11 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
 
   return (
     <div className="w-full rounded-xl border border-[#BDDDFC]/25 bg-white px-3 py-2 shadow-sm sm:w-[340px]">
-      {/* Header */}
       <div className="flex items-center gap-2">
         <BookOpen size={16} className="text-violet-600" />
         <h3 className="text-sm font-semibold text-[#384959]">Interview prep</h3>
       </div>
 
-      {/* Loading */}
       {loading && (
         <div className="mt-2 flex items-center gap-2 text-xs text-[#6A89A7]">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-violet-300 border-t-violet-600" />
@@ -125,12 +123,10 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
         </div>
       )}
 
-      {/* Error */}
       {error && (
         <p className="text-xs text-red-500 py-2">Failed to load suggestions.</p>
       )}
 
-      {/* Empty state: user has no stories */}
       {data && !data.suggestions?.length && !data.other_stories?.length && (
         <div className="mt-2 flex items-center gap-3">
           <Sparkles size={16} className="shrink-0 text-violet-400" />
@@ -146,10 +142,8 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
         </div>
       )}
 
-      {/* Results */}
       {data && (data.suggestions?.length > 0 || data.other_stories?.length > 0) && (
         <div className="mt-3 space-y-3">
-          {/* Detected tags */}
           {data.detected_tags?.length > 0 && (
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6A89A7] mb-1">
@@ -163,7 +157,6 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
             </div>
           )}
 
-          {/* Matched stories */}
           {data.suggestions?.length > 0 && (
             <div className="space-y-2">
               <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6A89A7]">
@@ -179,7 +172,6 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
             </div>
           )}
 
-          {/* Other stories */}
           {data.other_stories?.length > 0 && (
             <div>
               <button

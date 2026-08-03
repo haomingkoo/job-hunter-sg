@@ -1,37 +1,4 @@
-"""The conversational coordinator as a deep-agent tool loop (#146).
-
-`LangChainConversationModel` is one `model.invoke()` binding one submission
-tool. It cannot search, cannot read a posting, and never sees the results of a
-search the thread ran. This adapter implements the same port and gives it the
-loop the repo already has.
-
-Two mechanisms are worth knowing before changing anything here.
-
-**Termination is `response_format=ToolStrategy(ConversationReply)`.** LangChain
-parses and validates the submission inside the loop, retries an invalid payload
-without another round trip through this module, and ends the graph on the
-structured call with no trailing completion. The parsed object arrives on
-`state["structured_response"]`.
-
-**Every turn gets its own LangGraph thread id.** That is not the obvious choice
-and it is not cosmetic. `structured_response` is written into the checkpoint and
-never cleared, and `factory._make_model_to_tools_edge` ends the run on
-`"structured_response" in state` -- a key-presence check, so writing `None` over
-it does not help (verified against langchain 1.3.11). On a stable per-thread
-graph, the first completed turn therefore makes every later `ask_candidate`
-resume terminate the instant the answer is injected, silently, with no reply.
-So the DB transcript is replayed into a fresh graph each turn, and the
-checkpointer is used for exactly what it is good at: holding one paused graph
-between two HTTP requests. The pause's graph id travels back on
-`ModelReply.pause_token` and is persisted on `case_facts`, the same way the
-assessment runner persists its own pause token.
-
-Two costs of that, stated rather than discovered later. The checkpoint file gains
-a graph per chat turn and nothing prunes it, where the assessment runner adds one
-per assessment. And LangGraph warns that deserializing `ConversationReply` from a
-checkpoint will be blocked in a future version, which will need
-`allowed_msgpack_modules` before that release lands.
-"""
+"""Conversational coordinator with structured replies and resumable pauses."""
 
 from __future__ import annotations
 
@@ -116,12 +83,7 @@ def _model_name(state) -> str:
 
 
 def _final_reply_text(state) -> str:
-    """The last thing the model actually said to the candidate, or "".
-
-    Only plain text off the final assistant message. `reasoning_content` is never
-    read, because invariant 9 forbids surfacing private reasoning, and a message
-    that carries tool calls is mid-loop rather than an answer.
-    """
+    """Return final assistant text without reasoning or tool-call messages."""
     for message in reversed(state.values.get("messages") or []):
         if getattr(message, "type", "") != "ai" or getattr(message, "tool_calls", None):
             continue
@@ -137,11 +99,7 @@ def _final_reply_text(state) -> str:
 
 
 def _thread_state_block(context: ConversationContext, preferences: tuple[PreferenceFact, ...]) -> str:
-    """Counts and preferences, never the postings themselves.
-
-    Putting the shortlist here would make `read_shortlist` decorative and would
-    put every posting into every turn's prompt. The agent asks for them.
-    """
+    """Serialize thread state without duplicating posting content."""
     state = {
         "recommendation_count": len(context.recommendations),
         "shortlisted_count": len(context.shortlisted_jobs),
@@ -160,16 +118,7 @@ def _thread_state_block(context: ConversationContext, preferences: tuple[Prefere
 
 
 def _resume_block(context: ConversationContext, resume_text: str) -> str:
-    """The resume as blocks the agent can cite, not as prose it can only read.
-
-    `propose_resume_edit` takes a canonical block ID, and those are opaque
-    hashes. Handing over raw text gives the agent something to reason about and
-    nothing to quote, so its first edit is always a guess. Emitting `id: text`
-    per line costs about twenty characters a block and removes the guess.
-
-    Falls back to the raw text when the document carries no blocks, because a
-    resume the agent cannot see at all is the worse failure.
-    """
+    """Serialize the resume with canonical block IDs when available."""
     blocks = (context.resume_document or {}).get("blocks") or []
     if not blocks:
         return xml_data_block("resume", resume_text)

@@ -30,24 +30,24 @@ cd /Users/koohaoming/dev/job-hunter-sg/backend
 ./.venv/bin/python -m pip install -r requirements.txt
 ```
 
-## Claude Desktop
+## Client setup
 
-Add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Add an stdio server entry to your MCP client's configuration:
 
 ```json
 {
   "mcpServers": {
     "job-hunter-sg": {
-      "command": "/Users/koohaoming/dev/job-hunter-sg/backend/.venv/bin/python",
+      "command": "<repo>/backend/.venv/bin/python",
       "args": [
-        "/Users/koohaoming/dev/job-hunter-sg/backend/mcp_server.py"
+        "<repo>/backend/mcp_server.py"
       ]
     }
   }
 }
 ```
 
-Restart Claude Desktop after editing the file.
+Restart the client after editing its configuration.
 
 By default, the MCP and local API both use `backend/jobhunter.db`, independent
 of the directory they are launched from. Set `DATABASE_URL` explicitly only to
@@ -92,7 +92,7 @@ protected seed path, not through MCP:
 
 ## Try
 
-Ask Claude:
+Ask the MCP client:
 
 ```text
 Use the job-hunter-sg MCP tools. Parse this resume, score it, search for
@@ -114,7 +114,7 @@ with my pasted resume, show the strongest matches, missing ATS terms, and sugges
 SkillsFuture courses for the recurring gaps.
 ```
 
-For LinkedIn/profile review, paste the profile text and ask Claude to call
+For LinkedIn/profile review, paste the profile text and ask the client to call
 `compare_candidate_profile`. Profile-only details are questions or consistency
 gaps, not resume claims to add.
 
@@ -123,5 +123,5 @@ applications. It uses the pasted text for that tool call, public job rows,
 precomputed `parsed_jd` / `job_terms_preview` where available, and embedding
 similarity for candidate selection.
 
-The MCP server does not call SEA-LION or any other LLM. Claude/Gemini/Groq does
+The MCP server does not call SEA-LION or another model. The client-side model does
 the reasoning; this repo owns parsing, ATS scoring, job search, and validation.

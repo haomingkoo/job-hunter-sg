@@ -244,7 +244,6 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
 
       {accountView === "overview" && (
       <>
-      {/* User Info */}
       <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
         <h3 className="font-semibold text-[#384959] mb-4">Profile</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
@@ -313,7 +312,6 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
       </div>
       )}
 
-      {/* Usage Stats */}
       <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
         <h3 className="font-semibold text-[#384959] mb-4">Usage</h3>
         {usageLoading ? (
@@ -686,7 +684,6 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
       </div>
       )}
 
-      {/* Contact */}
       {accountView === "overview" && (
       <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
         <h3 className="font-semibold text-[#384959] mb-4">Contact</h3>
@@ -767,7 +764,6 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
       </div>
       )}
 
-      {/* Logout */}
       <button onClick={() => onLogout?.()}
         className="flex items-center gap-2 border border-red-200 text-red-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-50 transition w-full justify-center">
         <LogOut size={14} /> Sign Out

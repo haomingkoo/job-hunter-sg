@@ -190,17 +190,7 @@ def _team(
 
 
 def _read_team(db: Session, telemetry: RecruitmentTelemetry) -> RecruitmentTeam:
-    """A team for endpoints that only read, so none of them can need a model.
-
-    Every model-touching collaborator is None. Reading a thread, its events, its
-    profile or its pending edits calls no model, but taking them as `Depends`
-    made FastAPI construct all four before the handler ran, and
-    `create_agent_model` raises without a SEA-LION key. `GET /threads` was
-    therefore a 500 on any deployment missing one, and the browser reported it as
-    a CORS failure, because the exception escapes before CORSMiddleware adds its
-    headers. If a read path ever does reach for a model, it raises here rather
-    than silently working in dev and failing in production.
-    """
+    """Build a read-only team with no model dependencies."""
     return RecruitmentTeam(db, None, None, None, telemetry, IgnoreActivityPublisher())
 
 

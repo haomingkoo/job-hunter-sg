@@ -185,13 +185,11 @@ _is_production = is_production_environment()
 
 _CAREERSGOV_PATH_RE = re.compile(r"(?:/en-US/PublicServiceCareers(/job/.+)$|(/jobs/hrp/[^?#]+))")
 
-# ── Cached filter metadata (avoid 3 GROUP BY queries per page 1 load) ────────
 _filter_meta_cache: dict = {}
 _filter_meta_ts: float = 0.0
 _filter_meta_marker: str = ""
 _FILTER_META_TTL = app_config.ANALYTICS_FILTER_META_TTL_SECONDS
 
-# ── Cached analytics/skills response (avoid 70K row scan per request) ─────────
 _analytics_cache: dict | None = None
 _analytics_cache_ts: float = 0
 _ANALYTICS_CACHE_TTL = app_config.ANALYTICS_CACHE_TTL_SECONDS
@@ -318,7 +316,6 @@ def _admit_analytics_request():
     finally:
         _ANALYTICS_COMPUTE_SLOTS.release()
 
-# ── Per-user power-match cache (avoid recomputing every request) ──────────────
 _power_match_cache: dict[int, dict] = {}
 _POWER_MATCH_CACHE_TTL = 600  # 10 minutes
 _POWER_MATCH_SNAPSHOT_TTL_SECONDS = 86400  # 24 hours
@@ -331,7 +328,6 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup and shutdown lifecycle for the app."""
-    # ── Startup ──
     from resume_agent.telemetry import configure_telemetry, shutdown_telemetry
 
     configure_telemetry()
@@ -454,7 +450,6 @@ async def lifespan(application: FastAPI):
         _mcp_exact_proxy.target = None
         _mcp_mount_proxy.target = None
 
-    # ── Shutdown ──
     log.info("Shutting down Job Hunter SG API")
     shutdown_telemetry()
 
@@ -477,7 +472,6 @@ app.add_middleware(
 )
 app.include_router(recruitment_team_router)
 
-# ── CORS ─────────────────────────────────────────────────────────────────────
 
 allowed_origins = [
     o.strip() for o in os.environ.get(
@@ -522,7 +516,6 @@ async def reject_cross_site_cloudflare_writes(request: Request, call_next):
 app.router.routes.append(Route("/mcp", endpoint=_mcp_exact_proxy, name="jobhunter-mcp-exact"))
 app.mount("/mcp", _mcp_mount_proxy, name="jobhunter-mcp")
 
-# ── Singletons ───────────────────────────────────────────────────────────────
 
 aggregator = JobAggregator()
 _scorer = ResumeScorer()
@@ -1418,7 +1411,6 @@ def _build_bridge_plan(missing_skills: list[str]) -> list[dict]:
     return plans
 
 
-# ── Admin: Protected seed/refresh endpoint ────────────────────────────────────
 
 _ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
 
@@ -1972,9 +1964,6 @@ def terms() -> Response:
     return Response(content=render_terms_html(contact_line), media_type="text/html")
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# AUTH
-# ═════════════════════════════════════════════════════════════════════════════
 
 
 def _require_password_auth() -> None:
@@ -2706,9 +2695,6 @@ def delete_account(
     return response
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# JOB SEARCH
-# ═════════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/search", response_model=SearchResponse)
 def search_jobs(
@@ -4790,7 +4776,6 @@ def get_power_match(
         direct_employers_only=direct_employers_only,
     )
 
-    # ── Semantic similarity (RAG) ─────────────────────────────────────────
     semantic_scores: dict[int, float] = {}
     try:
         from embedding_service import find_similar_jobs, is_similarity_matrix_ready
@@ -5122,9 +5107,6 @@ def list_sources() -> dict:
     }
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# JOB ALERTS
-# ═════════════════════════════════════════════════════════════════════════════
 
 def _get_or_create_job_alert_preference(db: Session, user_id: int) -> JobAlertPreference:
     pref = (
@@ -5306,9 +5288,6 @@ def unsubscribe_job_alerts(
     )
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# TRACKED JOBS
-# ═════════════════════════════════════════════════════════════════════════════
 
 @app.get("/api/tracked", response_model=list[TrackedJobOut])
 def list_tracked(
@@ -5557,9 +5536,6 @@ def export_tracked(
     )
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# INTERVIEW STORY BANK
-# ═════════════════════════════════════════════════════════════════════════════
 
 STORY_TAGS = [
     "motivation", "proactiveness", "ambiguity", "perseverance",
@@ -5948,7 +5924,6 @@ def generate_stories_from_resume(
     if not isinstance(stories, list):
         raise HTTPException(status_code=500, detail="AI returned invalid format. Try again.")
 
-    # ── Validation gate: verify facts against resume (ISO 29119 + ISO 23894) ──
     resume_lower = resume_text.lower()
 
     resume_numbers = set(re.findall(r"\d+[\d,.]*%?", resume_text))
@@ -5995,9 +5970,6 @@ def generate_stories_from_resume(
     }
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# RESUME SCORING
-# ═════════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/resume/score")
 def score_resume(
@@ -6097,9 +6069,6 @@ def score_resume(
     return result
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# USER MEMORY — persistent context for AI coaching
-# ═════════════════════════════════════════════════════════════════════════════
 
 
 @app.get("/api/memory")
@@ -6195,11 +6164,6 @@ def _get_memory_context(user: Optional[User], db: Session) -> str:
     if not parts:
         return ""
     return "\n\nContext about this user (from previous sessions):\n" + "\n".join(parts)
-
-
-# ═════════════════════════════════════════════════════════════════════════════
-# AI — powered resume features
-# ═════════════════════════════════════════════════════════════════════════════
 
 
 @app.get("/api/ai/status")
@@ -6740,7 +6704,6 @@ def resume_chat_step(
             msg["role"] = "user"
 
     if body.action == "generate":
-        # ── Generate structured resume from conversation ──────────────
         system_prompt = (
             "You are an expert resume writer. Based ONLY on information the user explicitly "
             "shared in the conversation below, generate a complete resume in plain text.\n\n"
@@ -6803,7 +6766,6 @@ def resume_chat_step(
         return {"resume_text": resume_text, "word_count": word_count}
 
     if body.action == "refine":
-        # ── Refine mode: info collected, help user polish before generating ──
         system_prompt = (
             "You are a friendly resume coach. The user has finished sharing their resume details "
             "and is now in the refinement stage — ready to generate whenever they want.\n\n"
@@ -6842,7 +6804,6 @@ def resume_chat_step(
             "ready_to_generate": True,
         }
 
-    # ── Chat mode: guide user through resume building ─────────────────
 
     trending_skills_hint = ""
     user_text = " ".join(m.get("content", "") for m in messages if m.get("role") == "user").lower()
@@ -6970,9 +6931,6 @@ def resume_chat_step(
     }
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# RESUME UPLOAD + FORMAT
-# ═════════════════════════════════════════════════════════════════════════════
 
 
 @app.post("/api/resume/upload")
@@ -7388,9 +7346,6 @@ def get_templates() -> list[dict]:
     return list_templates()
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# UTILITY
-# ═════════════════════════════════════════════════════════════════════════════
 
 @app.post("/api/contact", status_code=201)
 def contact(
@@ -7774,7 +7729,6 @@ def get_usage(
     }
 
 
-# ── Resume Versions ────────────────────────────────────────────────────────
 
 
 def _resume_structure_for_storage(resume_text: str, supplied: object = None) -> dict:
@@ -7992,7 +7946,6 @@ def delete_resume_version(
     return {"id": version.id, "deleted": True}
 
 
-# ── Resume Deep Agent v2 ────────────────────────────────────────────────────
 
 
 def _validate_resume_agent_request(body: dict) -> None:
@@ -8249,7 +8202,6 @@ def dismiss_resume_agent_diff(
         raise HTTPException(status_code=404, detail="Pending resume edit not found") from None
 
 
-# ── Resume Tailoring Pipeline ───────────────────────────────────────────────
 
 
 @app.post("/api/resume/tailor")
@@ -8590,7 +8542,6 @@ def _replace_wrapped_resume_change(
     return updated, count == 1
 
 
-# ── Static frontend (single-service deploy) ─────────────────────────────────
 # IMPORTANT: This MUST be the last thing registered. app.mount("/") catches
 # all paths, so any API routes defined after this will get 405 errors.
 

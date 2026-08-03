@@ -22,12 +22,10 @@ from config import ANALYTICS_MAX_ROWS
 
 log = logging.getLogger("jobhunter.skills")
 
-# ── Known multi-word skill phrases ──────────────────────────────────────────
 # 200+ common multi-word skills in tech, business, and SG-specific domains.
 # All stored lowercase for case-insensitive matching.
 
 KNOWN_SKILLS: set[str] = {
-    # --- Programming & Software ---
     "software engineering", "software development", "software architecture",
     "software testing", "software design", "software deployment",
     "full stack", "full stack development", "full-stack development",
@@ -44,7 +42,6 @@ KNOWN_SKILLS: set[str] = {
     "open source", "version control",
     "embedded systems", "real-time systems",
     "low-level programming", "systems programming",
-    # --- AI / ML / Data ---
     "machine learning", "deep learning", "reinforcement learning",
     "transfer learning", "federated learning",
     "natural language processing", "computer vision",
@@ -70,7 +67,6 @@ KNOWN_SKILLS: set[str] = {
     "a/b testing", "hypothesis testing",
     "artificial intelligence", "business intelligence",
     "robotic process automation",
-    # --- Cloud & DevOps ---
     "cloud computing", "cloud architecture", "cloud migration",
     "cloud security", "cloud infrastructure", "cloud native",
     "hybrid cloud",
@@ -88,7 +84,6 @@ KNOWN_SKILLS: set[str] = {
     "incident management", "incident response",
     "disaster recovery", "high availability",
     "load balancing", "auto scaling",
-    # --- Cybersecurity ---
     "information security", "network security",
     "application security", "cyber security",
     "penetration testing", "vulnerability assessment",
@@ -97,16 +92,13 @@ KNOWN_SKILLS: set[str] = {
     "security operations", "security compliance",
     "security architecture", "endpoint security",
     "zero trust", "zero trust architecture",
-    # --- Databases ---
     "database administration", "database design",
     "database management", "database optimization",
     "relational database", "graph database",
     "nosql database",
-    # --- Networking ---
     "network administration", "network engineering",
     "network architecture", "network monitoring",
     "software-defined networking",
-    # --- Management & Leadership ---
     "project management", "program management", "product management",
     "portfolio management", "delivery management",
     "engineering management", "people management",
@@ -123,7 +115,6 @@ KNOWN_SKILLS: set[str] = {
     "decision making", "problem solving",
     "strategic thinking", "critical thinking",
     "emotional intelligence", "active listening",
-    # --- Agile & Process ---
     "agile methodology", "agile development",
     "scrum methodology", "scrum master",
     "kanban methodology", "lean methodology",
@@ -139,7 +130,6 @@ KNOWN_SKILLS: set[str] = {
     "total quality management", "quality management",
     "quality assurance", "quality control",
     "continuous improvement",
-    # --- Business & Strategy ---
     "business development", "business analysis",
     "business strategy", "business planning",
     "business transformation", "business operations",
@@ -156,7 +146,6 @@ KNOWN_SKILLS: set[str] = {
     "financial planning", "financial reporting",
     "risk assessment", "due diligence",
     "mergers and acquisitions",
-    # --- Sales & Marketing ---
     "account management", "key account management",
     "client management", "client relations",
     "customer relationship management",
@@ -175,13 +164,11 @@ KNOWN_SKILLS: set[str] = {
     "brand management", "brand strategy",
     "public relations", "media relations",
     "event management", "campaign management",
-    # --- Supply Chain & Operations ---
     "supply chain management", "supply chain optimization",
     "logistics management", "inventory management",
     "procurement management", "warehouse management",
     "operations management", "operational excellence",
     "facilities management", "fleet management",
-    # --- Modeling / Networks / Simulation ---
     "modeling and simulation", "modelling and simulation",
     "system modeling", "system modelling",
     "end-to-end systems", "end-to-end system modeling",
@@ -192,7 +179,6 @@ KNOWN_SKILLS: set[str] = {
     "performance metrics", "response time", "error rates",
     "technical documentation", "telecommunications engineering",
     "electrical engineering",
-    # --- Semiconductor / Manufacturing Engineering ---
     "semiconductor manufacturing", "semiconductor operations",
     "process integration", "process control", "process validation",
     "yield engineering", "yield improvement", "yield optimization",
@@ -205,19 +191,16 @@ KNOWN_SKILLS: set[str] = {
     "cross-site operations", "global operations", "fab operations",
     "inline detection", "predictive quality control", "virtual doe",
     "design of experiments", "root cause corrective action",
-    # --- HR & Training ---
     "human resources", "talent acquisition",
     "employee engagement", "employee relations",
     "learning and development", "training and development",
     "organizational development", "succession planning",
     "workforce planning", "compensation and benefits",
     "performance review", "onboarding process",
-    # --- Compliance & Governance ---
     "regulatory compliance", "corporate governance",
     "internal audit", "external audit",
     "legal compliance", "policy development",
     "data protection", "privacy compliance",
-    # --- UX / UI / Design ---
     "user experience", "user interface",
     "ux design", "ui design", "ux/ui design",
     "user research", "usability testing",
@@ -226,21 +209,18 @@ KNOWN_SKILLS: set[str] = {
     "design systems", "responsive design",
     "accessibility compliance", "human-centered design",
     "graphic design", "motion design",
-    # --- Singapore-specific ---
     "skills framework",
     "digital transformation", "smart nation",
     "industry transformation",
     "government technology",
     "public sector", "civil service",
     "singapore standards",
-    # --- Emerging / Specialized ---
     "blockchain technology", "distributed ledger",
     "internet of things", "edge computing",
     "quantum computing", "augmented reality",
     "virtual reality", "mixed reality",
     "digital twin", "3d printing",
     "autonomous systems", "computer-aided design",
-    # --- Additional common terms ---
     "technical writing", "technical support", "technical architecture",
     "systems integration", "enterprise architecture",
     "service delivery", "service management",
@@ -292,7 +272,6 @@ def _find_context(text: str, phrase: str) -> str:
     return snippet
 
 
-# ── Core extraction ─────────────────────────────────────────────────────────
 
 def _normalize_skill(raw: str) -> str:
     """Lowercase and collapse whitespace."""
@@ -416,31 +395,12 @@ def extract_skill_phrases(
     return unique
 
 
-# ── Resume matching ─────────────────────────────────────────────────────────
 
 def match_resume_skills(
     resume_text: str,
     jd_skills: list[str],
 ) -> dict:
-    """Compare resume text against JD skill phrases.
-
-    For each matched skill, shows WHERE in the resume it appears.
-    For each missing skill, shows WHERE in the JD it would need to be
-    (looked up from the original JD text is not available here, so we
-    use the skill name as the context hint -- callers can supply
-    jd_text separately via match_resume_skills_with_context).
-
-    Args:
-        resume_text: The full resume text.
-        jd_skills: List of skill phrases extracted from the JD.
-
-    Returns:
-        {
-            "matched": [{"skill": "...", "resume_context": "..."}],
-            "missing": [{"skill": "..."}],
-            "match_percent": int
-        }
-    """
+    """Compare resume text with job-description skill phrases."""
     return match_resume_skills_with_context(
         resume_text=resume_text,
         jd_skills=jd_skills,
@@ -515,7 +475,6 @@ def match_resume_skills_with_context(
     }
 
 
-# ── Dynamic skill dictionary (built from scraped JDs) ─────────────────────
 
 # Stop words to ignore when extracting n-grams
 _STOP_WORDS = {

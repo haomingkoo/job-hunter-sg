@@ -11,6 +11,8 @@ node_modules
 frontend/node_modules
 frontend/dist
 .playwright-mcp
+backend/evals/live-runs
+.superpowers
 tmp
 .venv
 backend/.venv
@@ -29,8 +31,6 @@ backend/crawl.log
 backend/enrich.log
 backend/full_crawl.log
 backend/reseed_cgov.log
-CODEX_TASK.md
 PARSER_ISSUES.md
-CLAUDE.md
 README.md
 DEPLOY.md

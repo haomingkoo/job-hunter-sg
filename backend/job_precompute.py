@@ -219,16 +219,7 @@ def apply_job_precomputes(job_data: dict) -> dict:
 
 
 def rollup_company_promotional_scores(db) -> dict:
-    """Spread a company's promotional rate onto every one of its postings.
-
-    A single emoji title is weak evidence. A company where most postings carry
-    the tells is an outfit, and its plain-looking listings are the same
-    operation wearing a quieter title, so they should rank with the rest.
-
-    Keyed on the share of a company's postings that are flagged, never the
-    count: a large legitimate agency has more flagged postings in absolute
-    terms than a small MLM outfit has postings at all.
-    """
+    """Roll each company's promotional-posting rate onto its jobs."""
     import config
     from sqlalchemy import case, func
 

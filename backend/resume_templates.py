@@ -1,23 +1,4 @@
-"""
-Resume template system — generates formatted DOCX files from resume data.
-
-8 templates based on Harvard, MIT/Jake's, NUS, and Stanford research:
-1. classic    — Serif, formal, education-first (Harvard style)
-2. modern     — Dense, clean, projects section (Jake's/tech style)
-3. singapore  — Includes nationality/PR, C.A.R. format (NUS style)
-4. compact    — Summary-first, 2-page friendly (experienced professionals)
-5. executive  — Large name, gray header bar, small-caps headings (C-suite/VP)
-6. creative   — Indigo accent, colored left border on headings (design/marketing)
-7. technical  — Monospace headings, skills-first, compact (engineering/data)
-8. minimal    — No borders, no backgrounds, maximum ATS compatibility
-
-All templates are ATS-friendly:
-- No tables for layout, no columns, no images, no text boxes
-- Standard fonts (Calibri or Times New Roman)
-- Standard section headers
-- Bullet points with action verbs
-- Dates right-aligned via tab stops
-"""
+"""Generate ATS-friendly DOCX resumes in the supported templates."""
 
 from __future__ import annotations
 
@@ -32,7 +13,6 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 log = logging.getLogger("jobhunter.docx")
 
 
-# ── ATS Unicode Normalization ─────────────────────────────────────────────────
 # Many ATS systems (Workday, Taleo, Greenhouse) only handle basic ASCII.
 # Smart quotes, em dashes, non-breaking spaces, and zero-width characters
 # cause garbled text or failed keyword matching in these systems.

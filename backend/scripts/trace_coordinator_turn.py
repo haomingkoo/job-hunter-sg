@@ -1,22 +1,4 @@
-"""Run one live coordinator turn and write a full trace.
-
-Not a test. Hits the real model and writes JSON to backend/evals/live-runs/.
-
-The loop's main failure mode is invisible to the unit suite: a ScriptedDeepAgent
-returns a terminating response by construction, so it can never reproduce a model
-that will not stop. On 2026-08-02 the coordinator called read_candidate_evidence
-twelve times against a profile-less thread and died on the iteration cap. Nothing
-in 914 green tests could have shown that.
-
-    PYTHONPATH=backend python backend/scripts/trace_coordinator_turn.py \
-        --resume path/to/resume.txt \
-        --corpus /path/to/jobs.db \
-        --message "Find me roles worth applying to."
-
-Set LANGSMITH_TRACING=true and LANGSMITH_API_KEY to also stream the run to
-LangSmith, which captures the full prompt and every model call without any
-instrumentation here.
-"""
+"""Run one live coordinator turn and save its trace."""
 
 from __future__ import annotations
 
