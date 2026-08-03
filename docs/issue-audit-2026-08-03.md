@@ -84,7 +84,7 @@ JSON with an empty-object default.
 | #97 | Complete restart, disconnect, duplicate-delivery, partial-artifact, and idempotent recovery. |
 | #98 | Prove the complete journey on narrow screens, keyboard, live regions, and reduced motion. |
 | #99 | Prove two-model portability and the authenticated semantic journey in isolated Railway staging. |
-| #106 | PRs #209 and #210 and both private canaries pass. Production now rebuilds and exposes the current profile truthfully. Two target attempts found one remaining stale-quality seam: a targeted evidence correction buried exact repair IDs in the full 113-field profile and failed identically. Merge/deploy the compact v7 correction and pass target -> pending draft -> reload acceptance. |
+| #106 | PRs #209-#211 and both private canaries pass. Production now rebuilds and exposes the current 64-field profile truthfully. The compact v7 correction fixed the original evidence mismatch on the same target, then revalidation exposed a different invalid criterion after the global two-call limit was spent. Merge/deploy the naturally bounded v8 sequential correction and pass target -> pending draft -> reload acceptance. |
 | #88 | Keep the umbrella PRD open until its surviving delivery outcomes are complete. |
 
 ## Verification boundary
