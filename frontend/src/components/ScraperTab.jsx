@@ -264,7 +264,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       if (activePostedTo) params.set("posted_to", activePostedTo);
       if (activeScrapedFrom) params.set("scraped_from", activeScrapedFrom);
       if (activeScrapedTo) params.set("scraped_to", activeScrapedTo);
-      if (String(activeMinMatchScore).trim() && powerMatch?.status === "ready") {
+      if (activeView === "active" && String(activeMinMatchScore).trim() && powerMatch?.status === "ready") {
         params.set("min_match_score", String(activeMinMatchScore).trim());
       }
       if (activeView === "expired") params.set("view", "expired");
@@ -692,7 +692,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     directEmployersOnly,
     postedFromFilter !== "" || postedToFilter !== "",
     scrapedFromFilter !== "" || scrapedToFilter !== "",
-    String(minMatchScore).trim() !== "",
+    jobsView === "active" && String(minMatchScore).trim() !== "",
   ].filter(Boolean).length;
 
   const clearFilters = () => {
@@ -820,7 +820,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </p>
       </div>
 
-      {user && (
+      {user && jobsView === "active" && (
         <div>
           <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-1.5">Minimum Power Match</label>
           <select
@@ -1146,7 +1146,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         <div className="mt-4 rounded-lg border border-[#88BDF2]/20 bg-[#BDDDFC]/10 px-3 py-2 text-xs text-[#384959]">
           <strong>Beta</strong> -- Free to use with 500 AI requests/day to help fund hosting and API costs. Data refreshes nightly.
         </div>
-        {user && (
+        {user && jobsView === "active" && (
           <div className="mt-4 flex flex-col gap-3 rounded-xl border border-[#BDDDFC]/30 bg-[#f7fafc] p-3 sm:flex-row sm:items-center sm:justify-between" data-testid="browse-power-match-state">
             <div>
               <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]"><Sparkles size={15} /> Power Match scores</div>

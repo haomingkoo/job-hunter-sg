@@ -104,7 +104,7 @@ describe("ScraperTab persisted Power Match scores", () => {
     expect(apiFetch).toHaveBeenCalledTimes(1);
     expect(apiFetch).toHaveBeenCalledWith(
       "/api/jobs?page=1&per_page=20&sort=balanced",
-      { method: "GET" },
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
     expect(container.textContent).toContain("Generate Power Match scores to use scored Browse.");
     const scoreFilter = container.querySelector('select[aria-label="Minimum Power Match score"]');
@@ -130,7 +130,7 @@ describe("ScraperTab persisted Power Match scores", () => {
 
     expect(apiFetch).toHaveBeenLastCalledWith(
       "/api/jobs?page=1&per_page=20&min_match_score=55&sort=balanced",
-      { method: "GET" },
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
     expect(apiFetch.mock.calls.every(([url]) => (
       url.startsWith("/api/jobs?") || url.startsWith("/api/jobs/power-match?")

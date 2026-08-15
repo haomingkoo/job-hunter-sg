@@ -307,6 +307,8 @@ describe("ScraperTab source filter", () => {
     expect(container.textContent).not.toContain("Application Pack");
     expect(container.textContent).not.toContain("Tailor Resume");
     expect(container.textContent).not.toContain("Cover Letter");
+    expect(container.textContent).not.toContain("Power Match scores");
+    expect(container.querySelector('[aria-label="Minimum Power Match score"]')).toBeNull();
   });
 
   it("ignores a late active response after switching to the expired archive", async () => {
