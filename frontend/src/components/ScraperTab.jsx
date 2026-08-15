@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Search, Plus, ChevronRight, Clock, AlertCircle,
@@ -194,6 +194,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [powerGenerating, setPowerGenerating] = useState(false);
   const [powerError, setPowerError] = useState("");
   const [jobsView, setJobsView] = useState("active");
+  const jobsRequestRef = useRef({ id: 0, controller: null });
   const activeSearchQuery = submittedQuery;
 
   const trackedJobIds = useMemo(() => {
@@ -228,9 +229,14 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
   useEffect(() => {
     loadJobs("");
+    return () => jobsRequestRef.current.controller?.abort();
   }, []);
 
   const loadJobs = async (searchQuery, pageNum = 1, nextFilters = {}) => {
+    jobsRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    const requestId = jobsRequestRef.current.id + 1;
+    jobsRequestRef.current = { id: requestId, controller };
     setLoading(true);
     setError("");
     try {
@@ -279,8 +285,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       const activeSector = nextFilters.sectorFilter ?? sectorFilter;
       if (activeSector) params.set("sector", activeSector);
 
-      const resp = await apiFetch(`/api/jobs?${params}`, { method: "GET" });
+      const resp = await apiFetch(`/api/jobs?${params}`, { method: "GET", signal: controller.signal });
       const data = await resp.json();
+      if (jobsRequestRef.current.id !== requestId) return;
       if (!data || !Array.isArray(data.jobs)) {
         throw new Error("Jobs response was malformed.");
       }
@@ -338,6 +345,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         : `${Math.max(totalCount, 0).toLocaleString()} unique active postings`;
       setTotalLabel(total);
     } catch (err) {
+      if (controller.signal.aborted || jobsRequestRef.current.id !== requestId) return;
       if (err.detail?.code === "power_match_not_ready") {
         setPowerMatch(err.detail);
         setMinMatchScore("");
@@ -350,7 +358,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       setTotalLabel("");
       setSubmittedQuery(searchQuery.trim());
     } finally {
-      setLoading(false);
+      if (jobsRequestRef.current.id === requestId) setLoading(false);
     }
   };
 

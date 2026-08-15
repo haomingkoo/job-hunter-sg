@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -20,10 +20,29 @@ def archive_client():
     )
     testing_session = sessionmaker(bind=engine)
     Base.metadata.create_all(engine)
+    statements = []
+    event.listen(
+        engine,
+        "before_cursor_execute",
+        lambda _conn, _cursor, statement, _parameters, _context, _many: statements.append(statement),
+    )
     db = testing_session()
+    db.info["statements"] = statements
     now = datetime.now(timezone.utc)
 
-    def add_job(title, *, hidden=0, reason="", retired_at="", closing_date="", source="MyCareersFuture", location="Central Area", salary_floor=5000):
+    def add_job(
+        title,
+        *,
+        hidden=0,
+        reason="",
+        retired_at="",
+        closing_date="",
+        source="MyCareersFuture",
+        location="Central Area",
+        salary_floor=5000,
+        employment_type="Full Time",
+        sector="Technology",
+    ):
         index = db.query(ScrapedJob).count() + 1
         posted = (now - timedelta(minutes=index)).isoformat()
         db.add(ScrapedJob(
@@ -32,6 +51,8 @@ def archive_client():
             location=location,
             salary=f"${salary_floor}",
             salary_floor=salary_floor,
+            employment_type=employment_type,
+            sector=sector,
             source=source,
             source_posting_id=f"archive-{index}",
             dedup_key=f"archive-{index}",
@@ -43,11 +64,18 @@ def archive_client():
             closing_date=closing_date,
         ))
 
-    add_job("Active role")
+    add_job("Active role", source="LinkedIn", location="Active Only")
     add_job("Source retired role", hidden=1, reason="source_retired", retired_at=now.isoformat())
     add_job("Age retired role", hidden=1, reason="age_retired", retired_at=now.isoformat())
     add_job("Legacy hidden duplicate", hidden=1)
-    add_job("Closed role", closing_date=(now.date() - timedelta(days=1)).isoformat())
+    add_job(
+        "Closed role",
+        closing_date=(now.date() - timedelta(days=1)).isoformat(),
+        source="JobStreet",
+        location="Archive Only",
+        employment_type="Contract",
+        sector="Public Service",
+    )
     db.commit()
 
     def override_db():
@@ -84,10 +112,21 @@ def test_active_and_expired_views_are_truthfully_separated(archive_client):
         "Closed role": "closing_date",
     }
     assert all(job["last_seen"] for job in expired["jobs"])
+    assert {item["value"] for item in expired["filter_meta"]["sources"]} == {
+        "MyCareersFuture", "JobStreet",
+    }
+    assert "LinkedIn" not in {item["value"] for item in expired["filter_meta"]["sources"]}
+    assert {item["value"] for item in expired["filter_meta"]["locations"]} == {
+        "Central Area", "Archive Only",
+    }
+    assert {item["value"] for item in expired["filter_meta"]["employment_types"]} == {
+        "Full Time", "Contract",
+    }
 
 
 def test_archive_filters_before_count_and_pagination(archive_client):
-    client, _ = archive_client
+    client, db = archive_client
+    db.info["statements"].clear()
     response = client.get(
         "/api/jobs",
         params={"view": "expired", "q": "retired", "source": "MyCareersFuture", "per_page": 1},
@@ -98,6 +137,12 @@ def test_archive_filters_before_count_and_pagination(archive_client):
     assert payload["total"] == 2
     assert payload["pages"] == 2
     assert len(payload["jobs"]) == 1
+    assert any(
+        "scraped_jobs.id IN" in statement
+        and "scraped_jobs.retirement_reason IN" in statement
+        and "lower(scraped_jobs.title) LIKE" in statement
+        for statement in db.info["statements"]
+    )
 
 
 def test_age_retirement_records_evidence(archive_client):

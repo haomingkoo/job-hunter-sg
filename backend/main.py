@@ -4703,9 +4703,7 @@ def list_cached_jobs(
         ]
         by_id = {
             job.id: job
-            for job in db.query(ScrapedJob)
-            .options(load_only(*_JOB_LIST_COLUMNS))
-            .filter(ScrapedJob.id.in_(page_ids))
+            for job in query.filter(ScrapedJob.id.in_(page_ids))
         }
         jobs = [by_id[job_id] for job_id in page_ids if job_id in by_id]
     else:
@@ -4716,34 +4714,34 @@ def list_cached_jobs(
     if page == 1:
         global _filter_meta_cache, _filter_meta_ts, _filter_meta_marker
         now = time.monotonic()
-        corpus_marker = _job_corpus_marker(db)
+        corpus_marker = _job_corpus_marker(db) if view == "active" else ""
         if (
-            _filter_meta_cache
+            view == "active"
+            and _filter_meta_cache
             and _filter_meta_marker == corpus_marker
             and (now - _filter_meta_ts) < _FILTER_META_TTL
         ):
             filter_meta = _filter_meta_cache
         else:
+            selected_visibility = (
+                apply_expired_job_visibility
+                if view == "expired"
+                else apply_public_job_visibility
+            )
             source_counts = (
-                apply_public_job_visibility(
-                    db.query(ScrapedJob.source, func.count()),
-                )
+                selected_visibility(db.query(ScrapedJob.source, func.count()))
                 .filter(ScrapedJob.source != "")
                 .group_by(ScrapedJob.source)
                 .all()
             )
             emp_counts = (
-                apply_public_job_visibility(
-                    db.query(ScrapedJob.employment_type, func.count()),
-                )
+                selected_visibility(db.query(ScrapedJob.employment_type, func.count()))
                 .filter(ScrapedJob.employment_type != "")
                 .group_by(ScrapedJob.employment_type)
                 .all()
             )
             loc_counts = (
-                apply_public_job_visibility(
-                    db.query(ScrapedJob.location, func.count()),
-                )
+                selected_visibility(db.query(ScrapedJob.location, func.count()))
                 .filter(ScrapedJob.location != "", ScrapedJob.location != "Singapore")
                 .group_by(ScrapedJob.location)
                 .order_by(func.count().desc())
@@ -4751,9 +4749,7 @@ def list_cached_jobs(
                 .all()
             )
             sector_counts = (
-                apply_public_job_visibility(
-                    db.query(ScrapedJob.sector, func.count()),
-                )
+                selected_visibility(db.query(ScrapedJob.sector, func.count()))
                 .filter(
                     ScrapedJob.sector.isnot(None),
                     ScrapedJob.sector != "",
@@ -4787,9 +4783,10 @@ def list_cached_jobs(
                     key=lambda x: -x["count"],
                 ),
             }
-            _filter_meta_cache = filter_meta
-            _filter_meta_ts = now
-            _filter_meta_marker = corpus_marker
+            if view == "active":
+                _filter_meta_cache = filter_meta
+                _filter_meta_ts = now
+                _filter_meta_marker = corpus_marker
 
     result = {
         "jobs": [
