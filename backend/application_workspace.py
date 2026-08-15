@@ -32,6 +32,7 @@ SUBMITTED_RESUME_ARTIFACTS_METADATA_KEY = "submitted_resume_artifacts"
 RECRUITMENT_PIPELINE_METADATA_KEY = "recruitment_pipeline"
 APPLICATION_RESEARCH_METADATA_KEY = "application_research"
 NEGOTIATION_METADATA_KEY = "negotiation"
+COVER_LETTER_METADATA_KEY = "cover_letter"
 WORKSPACE_SOURCE_CREATED = "created"
 WORKSPACE_SOURCE_MANUAL = "manual"
 WORKSPACE_SOURCE_AGENT_REVIEW = "agent_review"
@@ -110,6 +111,92 @@ def _owned_tracked_job(db: Session, user_id: int, job_id: int, *, workspace: boo
         detail = "Application workspace not found" if workspace else "Tracked job not found"
         raise HTTPException(status_code=404, detail=detail)
     return tracked
+
+
+def cover_letter_context(
+    db: Session,
+    user: User,
+    workspace_id: int,
+    *,
+    expected_job_id: int | None,
+    fallback_resume_text: str,
+) -> dict:
+    """Return owner-checked canonical application context and resume provenance."""
+    tracked = _owned_tracked_job(db, user.id, workspace_id, workspace=True)
+    if expected_job_id is not None and tracked.scraped_job_id != expected_job_id:
+        raise HTTPException(status_code=409, detail="Job does not match the tracked application")
+
+    resume_version_id = tracked.resume_version_id
+    resume_text = sanitize_resume_text(fallback_resume_text)
+    if resume_version_id is not None:
+        version = (
+            db.query(ResumeVersion)
+            .filter(
+                ResumeVersion.id == resume_version_id,
+                ResumeVersion.user_id == user.id,
+                ResumeVersion.is_active == True,
+            )
+            .first()
+        )
+        if version is None:
+            raise HTTPException(status_code=404, detail="Resume version not found")
+        resume_text = version.resume_text or ""
+    if len(resume_text) < 50:
+        raise HTTPException(status_code=400, detail="Resume text too short")
+
+    return {
+        "tracked": tracked,
+        "resume_text": resume_text,
+        "resume_version_id": resume_version_id,
+        "job_title": tracked.role,
+        "job_company": tracked.company,
+        "job_description": tracked.job_description or "",
+    }
+
+
+def save_cover_letter(
+    db: Session,
+    tracked: TrackedJob,
+    *,
+    content: str,
+    resume_version_id: int | None,
+) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
+    clean_content = sanitize_resume_text(content)
+    document = {
+        "content": clean_content,
+        "resume_version_id": resume_version_id,
+        "generated_at": now,
+        "updated_at": now,
+    }
+    metadata = dict(tracked.role_metadata or {})
+    metadata[COVER_LETTER_METADATA_KEY] = document
+    tracked.role_metadata = metadata
+    db.commit()
+    return document
+
+
+def update_cover_letter(
+    db: Session,
+    user: User,
+    workspace_id: int,
+    content: str,
+) -> dict:
+    tracked = _owned_tracked_job(db, user.id, workspace_id, workspace=True)
+    metadata = dict(tracked.role_metadata or {})
+    current = metadata.get(COVER_LETTER_METADATA_KEY)
+    if not isinstance(current, dict):
+        raise HTTPException(status_code=404, detail="Cover letter not found")
+    clean_content = sanitize_resume_text(content)
+    document = {
+        **current,
+        "content": clean_content,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    metadata[COVER_LETTER_METADATA_KEY] = document
+    tracked.role_metadata = metadata
+    db.commit()
+    return document
 
 
 def _workspace_agent_review_prompt(tracked: TrackedJob) -> str:

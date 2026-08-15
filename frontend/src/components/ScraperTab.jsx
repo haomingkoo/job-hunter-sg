@@ -137,6 +137,10 @@ const CheckboxFilter = ({ active, onChange, children }) => (
   </label>
 );
 
+export const trackedWorkspaceFor = (trackedJobs, job) => (trackedJobs || []).find((tracked) => (
+  tracked.scraped_job_id != null && String(tracked.scraped_job_id) === String(job.id)
+));
+
 export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, onSignIn }) {
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
@@ -183,6 +187,12 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [coverLetterLoading, setCoverLetterLoading] = useState(false);
   const [coverLetterError, setCoverLetterError] = useState("");
   const [coverLetterCopied, setCoverLetterCopied] = useState(false);
+  const [coverLetterWorkspaceId, setCoverLetterWorkspaceId] = useState(null);
+  const [coverLetterSaveState, setCoverLetterSaveState] = useState("");
+  const [coverLetterSaving, setCoverLetterSaving] = useState(false);
+  const coverLetterWorkspace = coverLetterModal
+    ? trackedWorkspaceFor(trackedJobs, coverLetterModal.job)
+    : null;
 
   const [applicationPackModal, setApplicationPackModal] = useState(null); // { job } or null
   const [applicationPackDirection, setApplicationPackDirection] = useState("");
@@ -347,6 +357,8 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     setCoverLetterText("");
     setCoverLetterError("");
     setCoverLetterCopied(false);
+    setCoverLetterWorkspaceId(null);
+    setCoverLetterSaveState("");
   };
 
   const closeCoverLetterModal = () => {
@@ -356,16 +368,19 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     setCoverLetterError("");
     setCoverLetterLoading(false);
     setCoverLetterCopied(false);
+    setCoverLetterWorkspaceId(null);
+    setCoverLetterSaveState("");
+    setCoverLetterSaving(false);
   };
 
   const generateCoverLetter = async () => {
     const resumeText = sessionStorage.getItem("jh_resume_text") || "";
-    if (!resumeText || resumeText.length < 50) {
+    const job = coverLetterModal?.job;
+    if (!job) return;
+    if (resumeText.length < 50 && !coverLetterWorkspace?.resume_version_id) {
       setCoverLetterError("Please upload or paste your resume in the Resume tab first (at least 50 characters).");
       return;
     }
-    const job = coverLetterModal?.job;
-    if (!job) return;
 
     setCoverLetterLoading(true);
     setCoverLetterError("");
@@ -378,6 +393,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         body: JSON.stringify({
           resume_text: resumeText,
           job_id: job.id || null,
+          workspace_id: coverLetterWorkspace?.id || null,
           job_title: job.title || "",
           job_company: job.company || "",
           job_description: job.description || "",
@@ -386,10 +402,29 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       });
       const data = await resp.json();
       setCoverLetterText(data.cover_letter || "");
+      setCoverLetterWorkspaceId(data.workspace_id || null);
+      setCoverLetterSaveState(data.saved ? "saved" : "unsaved");
     } catch (err) {
       setCoverLetterError(err.message || "Failed to generate cover letter. Please try again.");
     } finally {
       setCoverLetterLoading(false);
+    }
+  };
+
+  const saveCoverLetterChanges = async () => {
+    if (!coverLetterWorkspaceId || !coverLetterText.trim()) return;
+    setCoverLetterSaving(true);
+    setCoverLetterError("");
+    try {
+      await apiFetch(`/api/applications/workspaces/${coverLetterWorkspaceId}/cover-letter`, {
+        method: "PUT",
+        body: JSON.stringify({ content: coverLetterText }),
+      });
+      setCoverLetterSaveState("saved");
+    } catch (err) {
+      setCoverLetterError(err.message || "Failed to save cover letter changes.");
+    } finally {
+      setCoverLetterSaving(false);
     }
   };
 
@@ -1363,7 +1398,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                         maxLength={500}
                       />
                     </div>
-                    {!sessionStorage.getItem("jh_resume_text") && (
+                    {!sessionStorage.getItem("jh_resume_text") && !coverLetterWorkspace?.resume_version_id && (
                       <p className="text-sm text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
                         No resume found in this session. Upload or paste your resume in the Resume tab first.
                       </p>
@@ -1386,11 +1421,21 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 )}
 
                 {coverLetterText && (
-                  <textarea
-                    value={coverLetterText}
-                    onChange={(e) => setCoverLetterText(e.target.value)}
-                    className="w-full h-80 px-4 py-3 border border-gray-200 rounded-lg text-sm leading-relaxed resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-[system-ui]"
-                  />
+                  <>
+                    <textarea
+                      value={coverLetterText}
+                      onChange={(e) => {
+                        setCoverLetterText(e.target.value);
+                        if (coverLetterWorkspaceId) setCoverLetterSaveState("dirty");
+                      }}
+                      className="w-full h-80 px-4 py-3 border border-gray-200 rounded-lg text-sm leading-relaxed resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-[system-ui]"
+                    />
+                    <p className={`text-xs ${coverLetterSaveState === "dirty" ? "text-amber-700" : "text-[#6A89A7]"}`}>
+                      {coverLetterSaveState === "saved" && "Saved to Documents."}
+                      {coverLetterSaveState === "dirty" && "You have unsaved changes."}
+                      {coverLetterSaveState === "unsaved" && "Not saved. Track this job to save future letters in Documents."}
+                    </p>
+                  </>
                 )}
               </div>
 
@@ -1401,6 +1446,15 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                       {coverLetterText.split(/\s+/).length} words
                     </span>
                     <div className="flex gap-2">
+                      {coverLetterWorkspaceId && coverLetterSaveState === "dirty" && (
+                        <button
+                          onClick={saveCoverLetterChanges}
+                          disabled={coverLetterSaving}
+                          className="px-4 py-2 text-sm border border-blue-300 rounded-lg text-blue-700 hover:bg-blue-50 transition disabled:opacity-50"
+                        >
+                          {coverLetterSaving ? "Saving..." : "Save changes"}
+                        </button>
+                      )}
                       <button
                         onClick={downloadCoverLetter}
                         className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-[#384959] hover:bg-gray-100 transition"

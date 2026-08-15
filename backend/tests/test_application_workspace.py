@@ -124,6 +124,161 @@ def test_application_workspace_stores_job_context_and_append_only_history():
     ]
 
 
+def test_cover_letter_persists_exact_resume_provenance_and_latest_candidate_edits(monkeypatch):
+    from database import init_db
+    import main
+
+    init_db()
+    client = TestClient(main.app)
+    headers = _signup(client)
+    workspace = _create_workspace_with_resume(client, headers)
+    prompts = []
+    monkeypatch.setattr(main, "_consume_ai_credit", lambda *args, **kwargs: None)
+
+    def draft(messages, **_kwargs):
+        prompts.append(messages[1]["content"])
+        return "Dear Hiring Team, " + "My Python delivery experience aligns with this public-sector role. " * 8
+
+    monkeypatch.setattr(main, "_call_sealion", draft)
+    generated = client.post("/api/ai/cover-letter", json={
+        "workspace_id": workspace["id"],
+        "job_title": workspace["title"],
+        "job_company": workspace["company"],
+    }, headers=headers)
+
+    assert generated.status_code == 200
+    assert generated.json()["saved"] is True
+    assert generated.json()["resume_version_id"] == workspace["resume_version_id"]
+    assert "Built Python data pipelines" in prompts[0]
+
+    loaded = client.get(f"/api/applications/workspaces/{workspace['id']}", headers=headers)
+    document = loaded.json()["role_metadata"]["cover_letter"]
+    assert document["resume_version_id"] == workspace["resume_version_id"]
+    assert document["content"] == generated.json()["cover_letter"]
+
+    edited_content = "Dear Hiring Team,\n\n" + "This candidate-verified edit remains grounded in my stored experience. " * 8
+    edited = client.put(
+        f"/api/applications/workspaces/{workspace['id']}/cover-letter",
+        json={"content": edited_content},
+        headers=headers,
+    )
+    assert edited.status_code == 200
+    assert edited.json()["content"] == edited_content.strip()
+    assert edited.json()["generated_at"] == document["generated_at"]
+
+    replaced = client.post("/api/ai/cover-letter", json={
+        "resume_text": "UNTRUSTED FALLBACK " * 10,
+        "workspace_id": workspace["id"],
+        "job_title": workspace["title"],
+        "job_company": workspace["company"],
+    }, headers=headers)
+    assert replaced.status_code == 200
+    reloaded = client.get(f"/api/applications/workspaces/{workspace['id']}", headers=headers).json()
+    assert isinstance(reloaded["role_metadata"]["cover_letter"], dict)
+    assert reloaded["role_metadata"]["cover_letter"]["content"] == replaced.json()["cover_letter"]
+
+    unlinked = client.post("/api/applications/workspaces", json={
+        "company": "Unlinked Company",
+        "title": "AI Platform Engineer",
+        "job_description": "Build reliable production AI platforms.",
+    }, headers=headers)
+    assert unlinked.status_code == 201
+    unlinked_generation = client.post("/api/ai/cover-letter", json={
+        "resume_text": "Built reliable Python and AI systems for production teams. " * 3,
+        "workspace_id": unlinked.json()["id"],
+        "job_title": "AI Platform Engineer",
+        "job_company": "Unlinked Company",
+    }, headers=headers)
+    assert unlinked_generation.status_code == 200
+    assert unlinked_generation.json()["resume_version_id"] is None
+    unlinked_loaded = client.get(
+        f"/api/applications/workspaces/{unlinked.json()['id']}", headers=headers,
+    ).json()
+    assert unlinked_loaded["role_metadata"]["cover_letter"]["resume_version_id"] is None
+
+    other_headers = _signup(client)
+    denied_generation = client.post("/api/ai/cover-letter", json={
+        "resume_text": "Built reliable Python and AI systems for production teams. " * 3,
+        "workspace_id": workspace["id"],
+        "job_title": workspace["title"],
+        "job_company": workspace["company"],
+    }, headers=other_headers)
+    assert denied_generation.status_code == 404
+    denied = client.put(
+        f"/api/applications/workspaces/{workspace['id']}/cover-letter",
+        json={"content": edited_content},
+        headers=other_headers,
+    )
+    assert denied.status_code == 404
+
+
+def test_cover_letter_rejects_mismatch_and_failed_generation_stores_nothing(monkeypatch):
+    from database import SessionLocal, init_db
+    from models import ScrapedJob
+    import main
+
+    init_db()
+    client = TestClient(main.app)
+    headers = _signup(client)
+    workspace = _create_workspace_with_resume(client, headers)
+    monkeypatch.setattr(main, "_consume_ai_credit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "_call_sealion", lambda *args, **kwargs: None)
+
+    mismatch = client.post("/api/ai/cover-letter", json={
+        "resume_text": "Fallback resume content with enough detail for request validation. " * 2,
+        "workspace_id": workspace["id"],
+        "job_id": 999999,
+        "job_title": workspace["title"],
+        "job_company": workspace["company"],
+    }, headers=headers)
+    assert mismatch.status_code == 409
+
+    marker = secrets.token_hex(6)
+    with SessionLocal() as db:
+        original = ScrapedJob(
+            title="AI Engineer",
+            company="Same Company",
+            description="Original posting",
+            dedup_key=f"cover-original-{marker}",
+        )
+        repost = ScrapedJob(
+            title="AI Engineer",
+            company="Same Company",
+            description="Reposted role",
+            dedup_key=f"cover-repost-{marker}",
+        )
+        db.add_all([original, repost])
+        db.commit()
+        original_id, repost_id = original.id, repost.id
+
+    repost_workspace = client.post("/api/applications/workspaces", json={
+        "company": "Same Company",
+        "title": "AI Engineer",
+        "job_description": "Original posting",
+        "scraped_job_id": original_id,
+        "resume_version_id": workspace["resume_version_id"],
+    }, headers=headers)
+    assert repost_workspace.status_code == 201
+    repost_collision = client.post("/api/ai/cover-letter", json={
+        "resume_text": "",
+        "workspace_id": repost_workspace.json()["id"],
+        "job_id": repost_id,
+        "job_title": "AI Engineer",
+        "job_company": "Same Company",
+    }, headers=headers)
+    assert repost_collision.status_code == 409
+
+    failed = client.post("/api/ai/cover-letter", json={
+        "resume_text": "Fallback resume content with enough detail for request validation. " * 2,
+        "workspace_id": workspace["id"],
+        "job_title": workspace["title"],
+        "job_company": workspace["company"],
+    }, headers=headers)
+    assert failed.status_code == 503
+    loaded = client.get(f"/api/applications/workspaces/{workspace['id']}", headers=headers)
+    assert "cover_letter" not in loaded.json()["role_metadata"]
+
+
 def test_application_outcomes_are_queryable_by_status_history_and_resume_version():
     from database import init_db
     from main import app
