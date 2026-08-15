@@ -31,6 +31,32 @@ const EMPLOYMENT_TYPE_GROUPS = [
 
 const normalizeEmploymentType = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
+const singaporeToday = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Singapore",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+}).format(new Date());
+
+const formatScrapedDate = (value) => {
+  if (!value) return "";
+  const timestamp = /(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`;
+  const parsed = new Date(timestamp);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(parsed);
+};
+
+const dateRangeLabel = (from, to) => {
+  if (from && to) return from === to ? from : `${from} to ${to}`;
+  if (from) return `from ${from}`;
+  return to ? `through ${to}` : "";
+};
+
 const buildEmploymentTypeOptions = (rawTypes) => {
   const rawValues = [...new Set((rawTypes || []).map((type) => String(type || "").trim()).filter(Boolean))];
   const used = new Set();
@@ -135,6 +161,10 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [sectorFilter, setSectorFilter] = useState("");
   const [sourceFilter, setSourceFilter] = useState("");
   const [directEmployersOnly, setDirectEmployersOnly] = useState(false);
+  const [postedFromFilter, setPostedFromFilter] = useState("");
+  const [postedToFilter, setPostedToFilter] = useState("");
+  const [scrapedFromFilter, setScrapedFromFilter] = useState("");
+  const [scrapedToFilter, setScrapedToFilter] = useState("");
   const activeSearchQuery = submittedQuery;
 
   const trackedJobIds = useMemo(() => {
@@ -179,6 +209,10 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       const activeSource = nextFilters.sourceFilter ?? sourceFilter;
       const activeSort = nextFilters.sortBy ?? sortBy;
       const activeDirectEmployersOnly = nextFilters.directEmployersOnly ?? directEmployersOnly;
+      const activePostedFrom = nextFilters.postedFromFilter ?? postedFromFilter;
+      const activePostedTo = nextFilters.postedToFilter ?? postedToFilter;
+      const activeScrapedFrom = nextFilters.scrapedFromFilter ?? scrapedFromFilter;
+      const activeScrapedTo = nextFilters.scrapedToFilter ?? scrapedToFilter;
 
       if (normalizedQuery) params.set("q", normalizedQuery);
       if (activeLevel !== "all") params.set("seniority", activeLevel);
@@ -196,6 +230,10 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         activeLocations.forEach((value) => params.append("location", value));
       }
       if (String(activeMinSalary).trim()) params.set("min_salary", String(activeMinSalary).trim());
+      if (activePostedFrom) params.set("posted_from", activePostedFrom);
+      if (activePostedTo) params.set("posted_to", activePostedTo);
+      if (activeScrapedFrom) params.set("scraped_from", activeScrapedFrom);
+      if (activeScrapedTo) params.set("scraped_to", activeScrapedTo);
       params.set("sort", activeSort);
       const activeSector = nextFilters.sectorFilter ?? sectorFilter;
       if (activeSector) params.set("sector", activeSector);
@@ -214,6 +252,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         salary: j.salary || "",
         source: j.source,
         posted: j.posted_date || "",
+        scrapedAt: j.scraped_at || "",
         skills: j.skills || [],
         jobTermsPreview: normalizeJobTermLabels(j.job_terms_preview || []),
         jobTermsPreviewReady: Boolean(j.job_terms_preview_ready),
@@ -553,6 +592,8 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     sectorFilter !== "",
     sourceFilter !== "",
     directEmployersOnly,
+    postedFromFilter !== "" || postedToFilter !== "",
+    scrapedFromFilter !== "" || scrapedToFilter !== "",
   ].filter(Boolean).length;
 
   const clearFilters = () => {
@@ -564,6 +605,10 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     setSectorFilter("");
     setSourceFilter("");
     setDirectEmployersOnly(false);
+    setPostedFromFilter("");
+    setPostedToFilter("");
+    setScrapedFromFilter("");
+    setScrapedToFilter("");
     setExpandedJobId(null);
     loadJobs(activeSearchQuery, 1, {
       levelFilter: "all",
@@ -574,6 +619,10 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       sectorFilter: "",
       sourceFilter: "",
       directEmployersOnly: false,
+      postedFromFilter: "",
+      postedToFilter: "",
+      scrapedFromFilter: "",
+      scrapedToFilter: "",
     });
   };
 
@@ -820,6 +869,92 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       </div>
 
       <div>
+        <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Posted date</label>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="min-w-0 text-[11px] text-[#6A89A7]">
+            From
+            <input
+              type="date"
+              aria-label="Posted from"
+              value={postedFromFilter}
+              max={postedToFilter || undefined}
+              onChange={(event) => {
+                const next = event.target.value;
+                setPostedFromFilter(next);
+                loadJobs(activeSearchQuery, 1, { postedFromFilter: next });
+              }}
+              className="mt-1 w-full min-w-0 rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-2 text-xs text-[#384959]"
+            />
+          </label>
+          <label className="min-w-0 text-[11px] text-[#6A89A7]">
+            To
+            <input
+              type="date"
+              aria-label="Posted to"
+              value={postedToFilter}
+              min={postedFromFilter || undefined}
+              onChange={(event) => {
+                const next = event.target.value;
+                setPostedToFilter(next);
+                loadJobs(activeSearchQuery, 1, { postedToFilter: next });
+              }}
+              className="mt-1 w-full min-w-0 rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-2 text-xs text-[#384959]"
+            />
+          </label>
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <label className="text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Scraped date</label>
+          <button
+            type="button"
+            onClick={() => {
+              const today = singaporeToday();
+              setScrapedFromFilter(today);
+              setScrapedToFilter(today);
+              loadJobs(activeSearchQuery, 1, { scrapedFromFilter: today, scrapedToFilter: today });
+            }}
+            className="rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-1 text-[11px] font-medium text-[#384959] hover:bg-[#f0f4f8]"
+          >
+            Scraped today
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="min-w-0 text-[11px] text-[#6A89A7]">
+            From
+            <input
+              type="date"
+              aria-label="Scraped from"
+              value={scrapedFromFilter}
+              max={scrapedToFilter || undefined}
+              onChange={(event) => {
+                const next = event.target.value;
+                setScrapedFromFilter(next);
+                loadJobs(activeSearchQuery, 1, { scrapedFromFilter: next });
+              }}
+              className="mt-1 w-full min-w-0 rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-2 text-xs text-[#384959]"
+            />
+          </label>
+          <label className="min-w-0 text-[11px] text-[#6A89A7]">
+            To
+            <input
+              type="date"
+              aria-label="Scraped to"
+              value={scrapedToFilter}
+              min={scrapedFromFilter || undefined}
+              onChange={(event) => {
+                const next = event.target.value;
+                setScrapedToFilter(next);
+                loadJobs(activeSearchQuery, 1, { scrapedToFilter: next });
+              }}
+              className="mt-1 w-full min-w-0 rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-2 text-xs text-[#384959]"
+            />
+          </label>
+        </div>
+      </div>
+
+      <div>
         <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-1.5">Sort By</label>
         <select
           value={sortBy}
@@ -939,12 +1074,19 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
         <div className="flex-1 min-w-0 space-y-4">
           {totalLabel && (
-            <div className="flex items-center justify-between">
+            <div className="space-y-1">
               <p className="text-sm text-[#6A89A7]">
                 <span className="font-medium text-[#384959]">{totalLabel}</span>
                 {activeSearchQuery ? ` matching "${activeSearchQuery}"` : " across Singapore"}
                 {results.length > 0 && ` -- page ${page}`}
               </p>
+              {(postedFromFilter || postedToFilter || scrapedFromFilter || scrapedToFilter) && (
+                <p className="text-xs text-[#6A89A7]" aria-live="polite">
+                  {dateRangeLabel(postedFromFilter, postedToFilter) && `Posted ${dateRangeLabel(postedFromFilter, postedToFilter)}`}
+                  {dateRangeLabel(postedFromFilter, postedToFilter) && dateRangeLabel(scrapedFromFilter, scrapedToFilter) && " · "}
+                  {dateRangeLabel(scrapedFromFilter, scrapedToFilter) && `Scraped ${dateRangeLabel(scrapedFromFilter, scrapedToFilter)}`}
+                </p>
+              )}
             </div>
           )}
 
@@ -992,6 +1134,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             const summaryText = (parsedMeta?.jdSummary || job.jdSummary || "").trim();
             const longCueLoad = Boolean(parsedMeta?.loading && parsedMeta?.stalled);
             const cuesWereAlreadyChecked = Boolean(job.jobTermsPreviewReady || parsedMeta?.previewReady);
+            const scrapedDate = formatScrapedDate(job.scrapedAt);
 
             return (
             <motion.div
@@ -1117,9 +1260,10 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               )}
               </AnimatePresence>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between border-t border-[#BDDDFC]/20 pt-3 mt-1 gap-2">
-                <div className="flex items-center gap-3 text-xs text-[#6A89A7]">
+                <div className="flex flex-wrap items-center gap-3 text-xs text-[#6A89A7]">
                   {job.source && <span>{job.source}</span>}
-                  {job.posted && <span>{job.posted}</span>}
+                  {job.posted && <span>Posted {job.posted}</span>}
+                  {scrapedDate && <span>Scraped {scrapedDate}</span>}
                   {job.type && <span>{job.type}</span>}
                 </div>
                 {user && isExpanded && (
