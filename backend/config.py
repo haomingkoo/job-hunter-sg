@@ -212,7 +212,7 @@ RECRUITMENT_RETENTION_NOTICE: dict[str, str] = {
     "telemetry": "Trace and semantic-evaluation deletion is requested at the same time; provider-side removal may not be immediate.",
 }
 
-# Free tier is 10 req/min/key; default kept at 9 for headroom against 429s.
+# Conservative per-key request budget; override only to match provider limits.
 SEALION_REQ_PER_MIN: int = _int_env("SEALION_REQ_PER_MIN", 9)
 SEALION_HTTP_TIMEOUT: int = _int_env("SEALION_HTTP_TIMEOUT", 60)  # seconds
 

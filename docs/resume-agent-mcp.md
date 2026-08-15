@@ -26,8 +26,8 @@ directory can supply the bearer key without exposing it.
 ## Install
 
 ```bash
-cd /Users/koohaoming/dev/job-hunter-sg/backend
-./.venv/bin/python -m pip install -r requirements.txt
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r backend/requirements.txt
 ```
 
 ## Client setup
@@ -38,7 +38,7 @@ Add an stdio server entry to your MCP client's configuration:
 {
   "mcpServers": {
     "job-hunter-sg": {
-      "command": "<repo>/backend/.venv/bin/python",
+      "command": "<repo>/.venv/bin/python",
       "args": [
         "<repo>/backend/mcp_server.py"
       ]
@@ -87,8 +87,9 @@ protected seed path, not through MCP:
 - Full crawl cron: deploy `railway.seed.toml`, which runs `python seed_jobs.py --full`.
 - Extra API sources: set `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, and/or `JOOBLE_API_KEY`,
   then run `python seed_jobs.py --sources adzuna,jooble --limit 50`.
-- HTML scrapers for NodeFlair, Indeed SG, and JobStreet exist in `SOURCE_MAP`,
-  but keep them opt-in because they are more likely to block or change markup.
+- The current source status and authorization requirements are maintained in
+  the [job source matrix](sources.md). NodeFlair, Indeed SG, LinkedIn, and
+  JobStreet are not implemented sources on this branch.
 
 ## Try
 

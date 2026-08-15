@@ -1,5 +1,9 @@
 # Job Hunter SG — Railway Deployment Guide
 
+Start with the [maintainer handbook](docs/README.md). Use the
+[operations runbook](docs/operations.md) for live health, freshness, incidents,
+deployment receipts, rollback, and production-browser acceptance.
+
 ## Project Structure
 
 ```
@@ -23,7 +27,7 @@ job-hunter-sg/
 
 The backend uses SQLAlchemy with auto-migration. Tables are created automatically on startup — no manual migration step needed.
 
-- **Local dev**: SQLite (default `sqlite:///./jobhunter.db`)
+- **Local dev**: SQLite at `backend/jobhunter.db`
 - **Production**: PostgreSQL on Railway (set `DATABASE_URL` env var)
 
 On deploy, the app may backfill derived job metadata (`sector`, `salary_floor`,
@@ -32,20 +36,9 @@ of doing full-result filtering in Python.
 
 ## Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DATABASE_URL` | No | `sqlite:///./jobhunter.db` | DB connection string. Use Postgres URL on Railway. |
-| `JWT_SECRET` | **Yes** (prod) | — | Secret key for signing JWT tokens. Generate a random string. |
-| `PORT` | No | `8000` | Server port. Railway sets this automatically. |
-| `APP_ENV` | **Yes** (prod) | development | Set to `production` on hosted deployments. Railway presence also fails closed. |
-| `ALLOWED_ORIGINS` | No | local frontend URLs | Comma-separated CORS origins. Wildcards are rejected in production. |
-| `TRUST_CLOUDFLARE_IP_HEADER` | No | `0` | Set to `1` only when all public origins are Cloudflare-proxied and direct Railway domains are removed. Restores per-visitor throttling from `CF-Connecting-IP`. |
-| `AUTH_MODE` | No | `password` | Use verified email/password accounts for public signup, or `cloudflare` for a restricted Access deployment. |
-| `CF_ACCESS_TEAM_DOMAIN` | Cloudflare mode | — | Cloudflare Access team domain used to validate JWT issuer and keys. |
-| `CF_ACCESS_AUD` | Cloudflare mode | — | Access application audience tag. |
-| `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Password signup | — | Required to deliver verification and password-reset links. Signup fails closed when email is unavailable. |
-| `ACCOUNT_AI_PER_DAY` | No | `500` | Daily AI/RAG requests allowed per account. |
-| `VITE_API_URL` | No | `""` | (Frontend) Backend API URL. Empty = same-origin. |
+Use [`.env.example`](.env.example) as the canonical variable reference. Configure
+hosted values on the intended Railway service; Railway supplies `PORT`. Do not
+maintain a second variable inventory in this deployment guide.
 
 ## Deploy to Railway
 
@@ -55,27 +48,30 @@ npm install -g @railway/cli
 railway login
 ```
 
-### 2. Deploy Main Service
-```bash
-railway init
-railway up
-railway domain
-```
+### 2. Deploy through GitHub
 
-Set environment variables:
-```bash
-railway variables set JWT_SECRET=<your-random-secret>
-railway variables set DATABASE_URL=<postgres-url-from-railway>
-railway variables set ALLOWED_ORIGINS=https://job.kooexperience.com
-railway variables set AUTH_MODE=password
-railway variables set APP_ENV=production
-railway variables set ACCOUNT_AI_PER_DAY=500
-railway variables set TRUST_CLOUDFLARE_IP_HEADER=0
-```
+GitHub is the release source of truth for the existing production project:
 
-Keep `TRUST_CLOUDFLARE_IP_HEADER=0` unless the origin rejects every request that
-did not come through Cloudflare. A custom domain alone does not provide that
-boundary.
+1. Push a branch and open a pull request.
+2. Wait for the repository's GitHub Actions checks to pass, then merge into
+   `main`.
+3. Let Railway's GitHub integration deploy that `main` commit.
+4. Match the Railway deployment commit to the merged Git SHA before accepting
+   the release.
+
+Do not use `railway init` for this repository's routine releases: it creates or
+links a project rather than selecting the established production service. Do
+not use `railway up` for a routine release either, because it can deploy local
+files that have not passed through GitHub. The current auto-deploy path must not
+be described as CI-gated until issue #223 verifies Railway's Wait for CI setting
+and branch protection.
+
+Use the Railway CLI only after confirming the linked project, environment, and
+service with `railway status`, or use the provider dashboard. A new fork should
+connect its GitHub repository to a new Railway project through the dashboard.
+
+Set the variables documented in [`.env.example`](.env.example) only after
+confirming the intended Railway target.
 
 Railway uses `railway.toml`, which points at the root `Dockerfile`. The image
 builds the Vite frontend, copies `frontend/dist` into `backend/static`, and runs
@@ -86,64 +82,34 @@ tailoring, rate-limit, and account-deletion coordination is intentionally
 in-process. Move those controls to shared storage before enabling multiple
 replicas or workers.
 
-## Post-Deploy Checks
+## After Deployment
 
-Run these checks after a production deploy:
-
-- `https://job.kooexperience.com/api/health` returns healthy.
-- `https://job.kooexperience.com/robots.txt` is reachable.
-- `https://job.kooexperience.com/sitemap.xml` is reachable.
-- `https://job.kooexperience.com/llms.txt` is reachable.
-- Railway memory chart is stable after startup backfills complete.
-- `/api/jobs?sector=Engineering&per_page=20` returns quickly and does not spike memory.
-
-Submit the canonical URL and sitemap in Google Search Console and Bing Webmaster
-Tools. ChatGPT search visibility depends on normal web indexing plus allowing
-OpenAI's search crawler in `robots.txt`.
+Use the [operations runbook](docs/operations.md) for deployment receipts, health
+and freshness checks, incident diagnosis, rollback, and production-browser
+acceptance. A Railway deployment status or health response alone is not release
+acceptance.
 
 ## Quality Gates
 
-GitHub Actions runs backend compile checks, Ruff, the scoped ty baseline,
-backend tests, frontend tests/build, and Gitleaks secret scanning. Dependabot
-tracks GitHub Actions, npm, and pip updates.
+The authoritative [CI and local gates](docs/ci.md) cover documentation links,
+both dependency audits, backend compile/Ruff/ty/tests, frontend tests/build, and
+Gitleaks. Dependabot tracks GitHub Actions, npm, and pip updates.
 
-Recommended local checks before pushing:
+Run the canonical commands in that guide before pushing.
 
-```bash
-python -m compileall -q backend
-ruff check backend tests
-ty check
-cd frontend && npm test -- --run && npm run build
-```
+## API Reference
 
-## API Endpoints
+The canonical routes and authorization dependencies are defined by the
+[FastAPI application](backend/main.py). In non-production environments, inspect
+its generated `/docs` or `/openapi.json`; those endpoints are disabled in
+production. Do not maintain a partial endpoint inventory here.
 
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/api/auth/signup` | POST | No | Create an unverified account and send a verification link |
-| `/api/auth/verify-email` | POST | No | Verify email and return the first JWT |
-| `/api/auth/login` | POST | No | Login, returns JWT |
-| `/api/auth/me` | GET | Yes | Current user info |
-| `/api/auth/change-password` | POST | Yes | Change password and invalidate older JWTs |
-| `/api/account` | DELETE | Yes | Permanently delete the account and user-owned data |
-| `/api/search?q=keyword` | POST | Admin | Run a live multi-source refresh |
-| `/api/jobs` | GET | No | Cached job listings |
-| `/api/tracked` | GET | Yes | User's tracked jobs |
-| `/api/tracked` | POST | Yes | Track a job |
-| `/api/tracked/{id}` | PUT | Yes | Update tracked job |
-| `/api/tracked/{id}` | DELETE | Yes | Remove tracked job |
-| `/api/tracked/export` | GET | Yes | CSV export of tracked jobs |
-| `/api/contact` | POST | No | Contact form submission |
+## Job Sources
 
-## Sources Scraped
-
-| Source | Key | Method |
-|--------|-----|--------|
-| MyCareersFuture | `mcf` | API: `api.mycareersfuture.gov.sg/v2/search` |
-| Careers@Gov | `careersgov` | OpenGovSG pre-parsed JSON |
-| NodeFlair | `nodeflair` | HTML scrape |
-| Indeed SG | `indeed` | HTML scrape |
-| JobStreet | `jobstreet` | HTML scrape |
+The authoritative [source status matrix](docs/sources.md) distinguishes the two
+scheduled sources, optional credentialed APIs, absent adapters, and
+authorization-blocked planned portals. Do not infer production source coverage
+from an adapter class or `/api/sources` alone.
 
 ## Accounts
 
