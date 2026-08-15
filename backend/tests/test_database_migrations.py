@@ -104,6 +104,8 @@ def test_legacy_users_remain_unverified_when_verification_column_is_added(monkey
     database._apply_lightweight_migrations()
 
     assert "ALTER TABLE users ADD COLUMN email_verified_at TIMESTAMP" in statements
+    assert "ALTER TABLE scraped_jobs ADD COLUMN retirement_reason VARCHAR(30) DEFAULT ''" in statements
+    assert "ALTER TABLE scraped_jobs ADD COLUMN retired_at VARCHAR(50) DEFAULT ''" in statements
     assert "ALTER TABLE recruitment_activity_events ADD COLUMN parent_id TEXT" in statements
     assert "ALTER TABLE recruitment_activity_events ADD COLUMN duration_ms FLOAT" in statements
     assert any("recruitment_activity_events ADD COLUMN attributes JSON" in item for item in statements)

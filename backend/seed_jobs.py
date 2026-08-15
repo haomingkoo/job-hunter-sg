@@ -124,7 +124,14 @@ def _retire_stale_jobs(db, source: str, crawl_marker: str) -> int:
                 ScrapedJob.scraped_at.is_(None),
             ),
         )
-        .update({ScrapedJob.hidden: 1}, synchronize_session=False)
+        .update(
+            {
+                ScrapedJob.hidden: 1,
+                ScrapedJob.retirement_reason: "source_retired",
+                ScrapedJob.retired_at: datetime.now(timezone.utc).isoformat(),
+            },
+            synchronize_session=False,
+        )
     )
 
 DEFAULT_KEYWORDS = [
@@ -347,6 +354,8 @@ def crawl_all_jobs() -> dict:
                                 if key != "id":
                                     setattr(existing, key, val)
                             existing.hidden = 0
+                            existing.retirement_reason = ""
+                            existing.retired_at = ""
                             _build_term_preview(existing, db)
                         else:
                             job_row = ScrapedJob(**clean)
@@ -477,6 +486,8 @@ def crawl_all_jobs() -> dict:
                             if key != "id":
                                 setattr(existing, key, val)
                         existing.hidden = 0
+                        existing.retirement_reason = ""
+                        existing.retired_at = ""
                         _build_term_preview(existing, db)
                     else:
                         job_row = ScrapedJob(**clean)

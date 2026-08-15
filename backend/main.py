@@ -65,7 +65,7 @@ from job_precompute import (
 )
 from job_alerts import verify_unsubscribe_token
 from job_store import find_existing_scraped_job
-from job_visibility import apply_public_job_visibility
+from job_visibility import apply_expired_job_visibility, apply_public_job_visibility
 from legal_pages import render_privacy_html, render_terms_html
 from models import (
     EmailVerificationToken,
@@ -328,6 +328,25 @@ _BROWSE_POWER_MATCH_LIMIT = 200
 from contextlib import asynccontextmanager
 
 
+def _retire_jobs_older_than(db: Session, cutoff: datetime, retired_at: str) -> int:
+    """Retire visible jobs that have not been refreshed since the cutoff."""
+    return (
+        db.query(ScrapedJob)
+        .filter(
+            ScrapedJob.hidden == 0,
+            _normalized_utc_iso(ScrapedJob.scraped_at) < cutoff.isoformat(),
+        )
+        .update(
+            {
+                ScrapedJob.hidden: 1,
+                ScrapedJob.retirement_reason: "age_retired",
+                ScrapedJob.retired_at: retired_at,
+            },
+            synchronize_session=False,
+        )
+    )
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup and shutdown lifecycle for the app."""
@@ -346,14 +365,13 @@ async def lifespan(application: FastAPI):
         try:
             db = SessionLocal()
             cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-            stale_query = db.query(ScrapedJob).filter(
-                ScrapedJob.hidden == 0,
-                _normalized_utc_iso(ScrapedJob.scraped_at) < cutoff.isoformat(),
+            stale = _retire_jobs_older_than(
+                db,
+                cutoff,
+                datetime.now(timezone.utc).isoformat(),
             )
-            stale = stale_query.count()
             if stale > 0:
                 log.info(f"[STARTUP] Retiring {stale} stale jobs...")
-                stale_query.update({ScrapedJob.hidden: 1}, synchronize_session=False)
                 db.commit()
                 _clear_analytics_cache()
                 log.info(f"[STARTUP] Retired {stale} stale jobs")
@@ -4397,6 +4415,8 @@ _JOB_LIST_COLUMNS = (
     ScrapedJob.source_posting_id,
     ScrapedJob.openings,
     ScrapedJob.scraped_at,
+    ScrapedJob.retirement_reason,
+    ScrapedJob.retired_at,
     ScrapedJob.posted_at_sort,
     ScrapedJob.parsed_jd,
     ScrapedJob.jd_summary,
@@ -4432,6 +4452,7 @@ def list_cached_jobs(
     scraped_to: Optional[date] = Query(None),
     min_match_score: Optional[int] = Query(None, ge=0, le=100),
     sort: str = Query("balanced", pattern="^(balanced|newest|salary)$"),
+    view: str = Query("active", pattern="^(active|expired)$"),
     direct_employers_only: bool = Query(False),
     # Separate axis from direct_employers_only: the heaviest promotional posters
     # are legitimately direct employers.
@@ -4479,8 +4500,11 @@ def list_cached_jobs(
                 headers={"Cache-Control": "no-store"},
             )
 
-    query = apply_public_job_visibility(
-        db.query(ScrapedJob).options(load_only(*_JOB_LIST_COLUMNS)),
+    query = db.query(ScrapedJob).options(load_only(*_JOB_LIST_COLUMNS))
+    query = (
+        apply_expired_job_visibility(query)
+        if view == "expired"
+        else apply_public_job_visibility(query)
     )
     if min_match_score is not None:
         eligible_ids = [
@@ -4679,9 +4703,7 @@ def list_cached_jobs(
         ]
         by_id = {
             job.id: job
-            for job in db.query(ScrapedJob)
-            .options(load_only(*_JOB_LIST_COLUMNS))
-            .filter(ScrapedJob.id.in_(page_ids))
+            for job in query.filter(ScrapedJob.id.in_(page_ids))
         }
         jobs = [by_id[job_id] for job_id in page_ids if job_id in by_id]
     else:
@@ -4692,34 +4714,34 @@ def list_cached_jobs(
     if page == 1:
         global _filter_meta_cache, _filter_meta_ts, _filter_meta_marker
         now = time.monotonic()
-        corpus_marker = _job_corpus_marker(db)
+        corpus_marker = _job_corpus_marker(db) if view == "active" else ""
         if (
-            _filter_meta_cache
+            view == "active"
+            and _filter_meta_cache
             and _filter_meta_marker == corpus_marker
             and (now - _filter_meta_ts) < _FILTER_META_TTL
         ):
             filter_meta = _filter_meta_cache
         else:
+            selected_visibility = (
+                apply_expired_job_visibility
+                if view == "expired"
+                else apply_public_job_visibility
+            )
             source_counts = (
-                apply_public_job_visibility(
-                    db.query(ScrapedJob.source, func.count()),
-                )
+                selected_visibility(db.query(ScrapedJob.source, func.count()))
                 .filter(ScrapedJob.source != "")
                 .group_by(ScrapedJob.source)
                 .all()
             )
             emp_counts = (
-                apply_public_job_visibility(
-                    db.query(ScrapedJob.employment_type, func.count()),
-                )
+                selected_visibility(db.query(ScrapedJob.employment_type, func.count()))
                 .filter(ScrapedJob.employment_type != "")
                 .group_by(ScrapedJob.employment_type)
                 .all()
             )
             loc_counts = (
-                apply_public_job_visibility(
-                    db.query(ScrapedJob.location, func.count()),
-                )
+                selected_visibility(db.query(ScrapedJob.location, func.count()))
                 .filter(ScrapedJob.location != "", ScrapedJob.location != "Singapore")
                 .group_by(ScrapedJob.location)
                 .order_by(func.count().desc())
@@ -4727,9 +4749,7 @@ def list_cached_jobs(
                 .all()
             )
             sector_counts = (
-                apply_public_job_visibility(
-                    db.query(ScrapedJob.sector, func.count()),
-                )
+                selected_visibility(db.query(ScrapedJob.sector, func.count()))
                 .filter(
                     ScrapedJob.sector.isnot(None),
                     ScrapedJob.sector != "",
@@ -4763,9 +4783,10 @@ def list_cached_jobs(
                     key=lambda x: -x["count"],
                 ),
             }
-            _filter_meta_cache = filter_meta
-            _filter_meta_ts = now
-            _filter_meta_marker = corpus_marker
+            if view == "active":
+                _filter_meta_cache = filter_meta
+                _filter_meta_ts = now
+                _filter_meta_marker = corpus_marker
 
     result = {
         "jobs": [
@@ -4781,6 +4802,13 @@ def list_cached_jobs(
                 "jd_summary_status": j.jd_summary_status or "",
                 "experience_years": (j.parsed_jd or {}).get("experience_years", "") if isinstance(j.parsed_jd, dict) else "",
                 "agency": j.agency, "scraped_at": j.scraped_at,
+                "last_seen": j.scraped_at or "",
+                "retired_at": j.retired_at or "",
+                "archive_reason": (
+                    j.retirement_reason
+                    if j.retirement_reason in {"source_retired", "age_retired"}
+                    else "closing_date" if view == "expired" else ""
+                ),
                 "source_posting_id": j.source_posting_id or "",
                 "openings": int(j.openings or 1),
                 "closing_date": getattr(j, "closing_date", "") or "",
@@ -4798,6 +4826,7 @@ def list_cached_jobs(
             for j in jobs
         ],
         "total": total,
+        "view": view,
         "page": page,
         "pages": max(1, (total + per_page - 1) // per_page),
         "filter_meta": filter_meta,

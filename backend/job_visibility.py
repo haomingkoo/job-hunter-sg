@@ -6,12 +6,13 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 
 from models import ScrapedJob
 
 
 DEFAULT_PUBLIC_JOB_MAX_AGE_DAYS = int(os.environ.get("PUBLIC_JOB_MAX_AGE_DAYS", "60"))
+KNOWN_RETIREMENT_REASONS = ("source_retired", "age_retired")
 
 
 def public_job_cutoff_iso(max_age_days: int | None = None, now: datetime | None = None) -> str:
@@ -36,6 +37,25 @@ def apply_public_job_visibility(query, include_old: bool = False):
             ScrapedJob.closing_date == "",
             ScrapedJob.closing_date >= today,
         ),
+    )
+
+
+def apply_expired_job_visibility(query):
+    """Return only jobs with evidence that they are no longer active."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    return query.filter(
+        or_(
+            and_(
+                ScrapedJob.hidden == 1,
+                ScrapedJob.retirement_reason.in_(KNOWN_RETIREMENT_REASONS),
+            ),
+            and_(
+                ScrapedJob.hidden == 0,
+                ScrapedJob.closing_date.isnot(None),
+                ScrapedJob.closing_date != "",
+                ScrapedJob.closing_date < today,
+            ),
+        )
     )
 
 

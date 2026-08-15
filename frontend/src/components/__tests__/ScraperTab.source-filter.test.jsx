@@ -35,6 +35,15 @@ const changeInput = (input, value) => {
   input.dispatchEvent(new Event("input", { bubbles: true }));
 };
 
+const responseWithJob = (job) => ({
+  json: () => Promise.resolve({
+    jobs: [job],
+    total: 1,
+    pages: 1,
+    filter_meta: { employment_types: [], locations: [], sectors: [], sources: [] },
+  }),
+});
+
 describe("ScraperTab source filter", () => {
   let container;
   let root;
@@ -78,7 +87,7 @@ describe("ScraperTab source filter", () => {
 
     expect(apiFetch).toHaveBeenLastCalledWith(
       "/api/jobs?page=1&per_page=20&source=MyCareersFuture&sort=balanced",
-      { method: "GET" },
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -107,7 +116,7 @@ describe("ScraperTab source filter", () => {
     });
     expect(apiFetch).toHaveBeenLastCalledWith(
       "/api/jobs?page=1&per_page=20&location=Central+Area&sort=balanced",
-      { method: "GET" },
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
 
     await act(async () => {
@@ -115,7 +124,7 @@ describe("ScraperTab source filter", () => {
     });
     expect(apiFetch).toHaveBeenLastCalledWith(
       "/api/jobs?page=1&per_page=20&experience=3-5+yrs&location=Central+Area&sort=balanced",
-      { method: "GET" },
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
 
     const sort = container.querySelector("select");
@@ -125,7 +134,7 @@ describe("ScraperTab source filter", () => {
     });
     expect(apiFetch).toHaveBeenLastCalledWith(
       "/api/jobs?page=1&per_page=20&experience=3-5+yrs&location=Central+Area&sort=salary",
-      { method: "GET" },
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -153,7 +162,7 @@ describe("ScraperTab source filter", () => {
     });
     expect(apiFetch).toHaveBeenLastCalledWith(
       "/api/jobs?page=1&per_page=20&posted_from=2026-08-01&sort=balanced",
-      { method: "GET" },
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
 
     await act(async () => {
@@ -161,7 +170,7 @@ describe("ScraperTab source filter", () => {
     });
     expect(apiFetch).toHaveBeenLastCalledWith(
       "/api/jobs?page=1&per_page=20&posted_from=2026-08-01&posted_to=2026-08-15&sort=balanced",
-      { method: "GET" },
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
     expect(container.textContent).toContain("Posted 2026-08-01 to 2026-08-15");
 
@@ -170,7 +179,7 @@ describe("ScraperTab source filter", () => {
     await act(async () => clear.click());
     expect(apiFetch).toHaveBeenLastCalledWith(
       "/api/jobs?page=1&per_page=20&sort=balanced",
-      { method: "GET" },
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -200,7 +209,7 @@ describe("ScraperTab source filter", () => {
     await act(async () => scrapedToday.click());
     expect(apiFetch).toHaveBeenLastCalledWith(
       `/api/jobs?page=1&per_page=20&scraped_from=${today}&scraped_to=${today}&sort=balanced`,
-      { method: "GET" },
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
     expect(container.textContent).toContain(`Scraped ${today}`);
 
@@ -254,5 +263,106 @@ describe("ScraperTab source filter", () => {
     expect(container.textContent).toContain("Scraped 15 Aug 2026");
     expect(container.textContent).not.toContain("Posted date unavailable");
     expect(container.textContent).not.toContain("Scraped date unavailable");
+  });
+
+  it("loads the expired archive with evidence and no application actions", async () => {
+    await act(async () => {
+      root.render(
+        <ScraperTab
+          user={{ id: 1 }}
+          trackedJobs={[]}
+          onTrack={vi.fn()}
+          setActiveTab={vi.fn()}
+          setSelectedJob={vi.fn()}
+          onSignIn={vi.fn()}
+        />,
+      );
+    });
+
+    apiFetch.mockResolvedValueOnce(responseWithJob({
+      id: 42,
+      title: "Archived Engineer",
+      company: "Example Employer",
+      source: "MyCareersFuture",
+      archive_reason: "source_retired",
+      retired_at: "2026-08-15T00:00:00+00:00",
+      last_seen: "2026-08-14T00:00:00+00:00",
+      skills: [],
+    }));
+
+    const archiveButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Expired archive");
+    await act(async () => {
+      archiveButton.click();
+    });
+
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      "/api/jobs?page=1&per_page=20&view=expired&sort=balanced",
+      expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
+    );
+    expect(container.textContent).toContain("1 known expired postings");
+    expect(container.textContent).toContain("No longer present in a completed source crawl.");
+    expect(container.textContent).toContain("Last seen 14 Aug 2026");
+    expect(container.textContent).toContain("Archived listing — application actions are unavailable.");
+    expect(container.textContent).not.toContain("Application Pack");
+    expect(container.textContent).not.toContain("Tailor Resume");
+    expect(container.textContent).not.toContain("Cover Letter");
+    expect(container.textContent).not.toContain("Power Match scores");
+    expect(container.querySelector('[aria-label="Minimum Power Match score"]')).toBeNull();
+  });
+
+  it("ignores a late active response after switching to the expired archive", async () => {
+    let resolveActive;
+    apiFetch.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveActive = resolve;
+    }));
+
+    act(() => {
+      root.render(
+        <ScraperTab
+          user={{ id: 1 }}
+          trackedJobs={[]}
+          onTrack={vi.fn()}
+          setActiveTab={vi.fn()}
+          setSelectedJob={vi.fn()}
+          onSignIn={vi.fn()}
+        />,
+      );
+    });
+    await act(async () => Promise.resolve());
+
+    apiFetch.mockResolvedValueOnce(responseWithJob({
+      id: 42,
+      title: "Archived Engineer",
+      company: "Example Employer",
+      source: "MyCareersFuture",
+      archive_reason: "age_retired",
+      retired_at: "2026-08-15T00:00:00+00:00",
+      last_seen: "2026-08-14T00:00:00+00:00",
+      skills: [],
+    }));
+
+    const archiveButton = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Expired archive");
+    await act(async () => {
+      archiveButton.click();
+    });
+    expect(container.textContent).toContain("Archived Engineer");
+
+    await act(async () => {
+      resolveActive(responseWithJob({
+        id: 7,
+        title: "Late Active Engineer",
+        company: "Example Employer",
+        source: "LinkedIn",
+        skills: [],
+      }));
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Archived Engineer");
+    expect(container.textContent).not.toContain("Late Active Engineer");
+    expect(container.textContent).toContain("Archived listing — application actions are unavailable.");
+    expect(container.textContent).not.toContain("Application Pack");
   });
 });

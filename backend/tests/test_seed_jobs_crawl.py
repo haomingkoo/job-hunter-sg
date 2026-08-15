@@ -41,7 +41,14 @@ def _prepare_crawl(monkeypatch):
     return engine, testing_session
 
 
-def _seed(db, job: Job, *, hidden: int = 0) -> None:
+def _seed(
+    db,
+    job: Job,
+    *,
+    hidden: int = 0,
+    retirement_reason: str = "",
+    retired_at: str = "",
+) -> None:
     db.add(
         ScrapedJob(
             title=job.title,
@@ -53,6 +60,8 @@ def _seed(db, job: Job, *, hidden: int = 0) -> None:
             dedup_key=job.dedup_key,
             scraped_at="2020-01-01T00:00:00",
             hidden=hidden,
+            retirement_reason=retirement_reason,
+            retired_at=retired_at,
         )
     )
     db.commit()
@@ -109,7 +118,13 @@ def test_mcf_completed_crawl_retires_unseen_and_reactivates_seen(monkeypatch):
     seen.description = "Build and operate a software platform."
     db = testing_session()
     _seed(db, stale)
-    _seed(db, seen, hidden=1)
+    _seed(
+        db,
+        seen,
+        hidden=1,
+        retirement_reason="source_retired",
+        retired_at="2026-07-01T00:00:00+00:00",
+    )
     db.close()
 
     monkeypatch.setattr(
@@ -122,8 +137,14 @@ def test_mcf_completed_crawl_retires_unseen_and_reactivates_seen(monkeypatch):
     stats = seed_jobs.crawl_all_jobs()
 
     db = testing_session()
-    assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "stale").one().hidden == 1
-    assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "seen").one().hidden == 0
+    stale_row = db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "stale").one()
+    seen_row = db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "seen").one()
+    assert stale_row.hidden == 1
+    assert stale_row.retirement_reason == "source_retired"
+    assert stale_row.retired_at
+    assert seen_row.hidden == 0
+    assert seen_row.retirement_reason == ""
+    assert seen_row.retired_at == ""
     assert stats["retired"] == 1
     assert stats["reactivated"] == 1
     assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "seen").one().scraped_at.endswith("+00:00")
@@ -281,7 +302,13 @@ def test_careersgov_completed_crawl_retires_unseen_and_reactivates_seen(monkeypa
     seen.description = "Deliver public digital services."
     db = testing_session()
     _seed(db, stale)
-    _seed(db, seen, hidden=1)
+    _seed(
+        db,
+        seen,
+        hidden=1,
+        retirement_reason="source_retired",
+        retired_at="2026-07-01T00:00:00+00:00",
+    )
     db.close()
 
     monkeypatch.setattr(MyCareersFutureScraper, "search", lambda self, keyword, limit, page: [])
@@ -291,8 +318,14 @@ def test_careersgov_completed_crawl_retires_unseen_and_reactivates_seen(monkeypa
     stats = seed_jobs.crawl_all_jobs()
 
     db = testing_session()
-    assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "stale").one().hidden == 1
-    assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "seen").one().hidden == 0
+    stale_row = db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "stale").one()
+    seen_row = db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "seen").one()
+    assert stale_row.hidden == 1
+    assert stale_row.retirement_reason == "source_retired"
+    assert stale_row.retired_at
+    assert seen_row.hidden == 0
+    assert seen_row.retirement_reason == ""
+    assert seen_row.retired_at == ""
     assert stats["retired"] == 1
     assert stats["reactivated"] == 1
     db.close()
@@ -316,7 +349,10 @@ def test_careersgov_duplicate_spam_cannot_pass_retirement_health_check(monkeypat
     stats = seed_jobs.crawl_all_jobs()
 
     db = testing_session()
-    assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "stale").one().hidden == 0
+    stale_row = db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "stale").one()
+    assert stale_row.hidden == 0
+    assert stale_row.retirement_reason == ""
+    assert stale_row.retired_at == ""
     assert stats["retired"] == 0
     assert stats["errors"] >= 1
     db.close()

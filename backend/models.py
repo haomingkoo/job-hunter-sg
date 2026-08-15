@@ -102,8 +102,11 @@ class ScrapedJob(Base):
     # Cached skill term labels for fast list-page rendering (JSON array of strings)
     job_terms_preview: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
 
-    # Hidden from listings (stale duplicate kept for FK references)
+    # Hidden rows can be source/age retired or legacy duplicates. Only rows with
+    # an explicit retirement reason belong in the expired archive.
     hidden: Mapped[bool] = mapped_column(Integer, default=0)
+    retirement_reason: Mapped[str] = mapped_column(String(30), default="")
+    retired_at: Mapped[str] = mapped_column(String(50), default="")
 
     # RAG embedding vector (384-dim, all-MiniLM-L6-v2)
     embedding_vector: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
