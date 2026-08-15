@@ -7,7 +7,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
@@ -89,7 +89,7 @@ class Job:
     closing_date: str = ""
     source_posting_id: str = ""
     openings: int = 1
-    scraped_at: str = field(default_factory=lambda: datetime.now().isoformat())
+    scraped_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     @property
     def dedup_key(self) -> str:
@@ -700,7 +700,7 @@ class JobAggregator:
 
         return {
             "keyword": keyword,
-            "searched_at": datetime.now().isoformat(),
+            "searched_at": datetime.now(timezone.utc).isoformat(),
             "total_raw": total_raw,
             "total_deduped": len(deduped_jobs),
             "duplicates_removed": total_raw - len(deduped_jobs),

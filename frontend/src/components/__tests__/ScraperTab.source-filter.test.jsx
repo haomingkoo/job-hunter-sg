@@ -30,6 +30,11 @@ const jobsResponse = (source = "MyCareersFuture") => ({
   }),
 });
 
+const changeInput = (input, value) => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+};
+
 describe("ScraperTab source filter", () => {
   let container;
   let root;
@@ -122,5 +127,132 @@ describe("ScraperTab source filter", () => {
       "/api/jobs?page=1&per_page=20&experience=3-5+yrs&location=Central+Area&sort=salary",
       { method: "GET" },
     );
+  });
+
+  it("wires native posted dates and resets them with the other filters", async () => {
+    await act(async () => {
+      root.render(
+        <ScraperTab
+          user={null}
+          trackedJobs={[]}
+          onTrack={vi.fn()}
+          setActiveTab={vi.fn()}
+          setSelectedJob={vi.fn()}
+          onSignIn={vi.fn()}
+        />,
+      );
+    });
+
+    const postedFrom = container.querySelector('input[aria-label="Posted from"]');
+    const postedTo = container.querySelector('input[aria-label="Posted to"]');
+    expect(postedFrom.type).toBe("date");
+    expect(postedTo.type).toBe("date");
+
+    await act(async () => {
+      changeInput(postedFrom, "2026-08-01");
+    });
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      "/api/jobs?page=1&per_page=20&posted_from=2026-08-01&sort=balanced",
+      { method: "GET" },
+    );
+
+    await act(async () => {
+      changeInput(postedTo, "2026-08-15");
+    });
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      "/api/jobs?page=1&per_page=20&posted_from=2026-08-01&posted_to=2026-08-15&sort=balanced",
+      { method: "GET" },
+    );
+    expect(container.textContent).toContain("Posted 2026-08-01 to 2026-08-15");
+
+    const clear = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Clear all filters"));
+    await act(async () => clear.click());
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      "/api/jobs?page=1&per_page=20&sort=balanced",
+      { method: "GET" },
+    );
+  });
+
+  it("uses the Singapore date for Scraped today and exposes filters in the mobile drawer", async () => {
+    await act(async () => {
+      root.render(
+        <ScraperTab
+          user={null}
+          trackedJobs={[]}
+          onTrack={vi.fn()}
+          setActiveTab={vi.fn()}
+          setSelectedJob={vi.fn()}
+          onSignIn={vi.fn()}
+        />,
+      );
+    });
+
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Singapore",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    const scrapedToday = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.trim() === "Scraped today");
+
+    await act(async () => scrapedToday.click());
+    expect(apiFetch).toHaveBeenLastCalledWith(
+      `/api/jobs?page=1&per_page=20&scraped_from=${today}&scraped_to=${today}&sort=balanced`,
+      { method: "GET" },
+    );
+    expect(container.textContent).toContain(`Scraped ${today}`);
+
+    const mobileFilters = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.startsWith("Filters"));
+    await act(async () => mobileFilters.click());
+    expect(container.querySelector('button[aria-label="Close filters"]')).toBeTruthy();
+    expect(container.querySelectorAll('input[aria-label="Scraped from"]').length).toBe(2);
+  });
+
+  it("labels posting and scrape dates separately without inventing missing dates", async () => {
+    apiFetch.mockResolvedValue({
+      json: () => Promise.resolve({
+        jobs: [
+          {
+            id: 1,
+            title: "Dated role",
+            company: "Example Employer",
+            source: "MyCareersFuture",
+            posted_date: "14 Aug 2026",
+            // Legacy writers stored offset-free UTC. 16:00 UTC is midnight in Singapore.
+            scraped_at: "2026-08-14T16:00:00",
+          },
+          {
+            id: 2,
+            title: "Undated role",
+            company: "Example Employer",
+            source: "Careers@Gov",
+          },
+        ],
+        total: 2,
+        pages: 1,
+        filter_meta: { employment_types: [], locations: [], sectors: [], sources: [] },
+      }),
+    });
+
+    await act(async () => {
+      root.render(
+        <ScraperTab
+          user={null}
+          trackedJobs={[]}
+          onTrack={vi.fn()}
+          setActiveTab={vi.fn()}
+          setSelectedJob={vi.fn()}
+          onSignIn={vi.fn()}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("Posted 14 Aug 2026");
+    expect(container.textContent).toContain("Scraped 15 Aug 2026");
+    expect(container.textContent).not.toContain("Posted date unavailable");
+    expect(container.textContent).not.toContain("Scraped date unavailable");
   });
 });

@@ -21,8 +21,9 @@ import weakref
 from collections import Counter
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Optional
+from zoneinfo import ZoneInfo
 
 from pathlib import Path
 
@@ -346,7 +347,7 @@ async def lifespan(application: FastAPI):
             cutoff = datetime.now(timezone.utc) - timedelta(days=30)
             stale_query = db.query(ScrapedJob).filter(
                 ScrapedJob.hidden == 0,
-                ScrapedJob.scraped_at < cutoff.isoformat(),
+                _normalized_utc_iso(ScrapedJob.scraped_at) < cutoff.isoformat(),
             )
             stale = stale_query.count()
             if stale > 0:
@@ -4226,6 +4227,34 @@ def _contains_like_pattern(value: str) -> str:
     return f"%{escaped}%"
 
 
+def _singapore_date_range(
+    start: date | None,
+    end: date | None,
+    *,
+    label: str,
+) -> tuple[str | None, str | None]:
+    if start and end and start > end:
+        raise HTTPException(status_code=422, detail=f"{label} from date must be on or before to date")
+
+    singapore = ZoneInfo("Asia/Singapore")
+    lower = datetime.combine(start, datetime.min.time(), singapore) if start else None
+    upper = datetime.combine(end + timedelta(days=1), datetime.min.time(), singapore) if end else None
+    return (
+        lower.astimezone(timezone.utc).isoformat() if lower else None,
+        upper.astimezone(timezone.utc).isoformat() if upper else None,
+    )
+
+
+def _normalized_utc_iso(column):
+    """Treat legacy offset-free scraper timestamps as UTC."""
+    has_offset = or_(
+        column.like("%Z"),
+        column.like("%+__:__"),
+        column.like("%-__:__"),
+    )
+    return case((~has_offset, column.concat("+00:00")), else_=column)
+
+
 # detect_promotional_spam's own is_promotional cut-off. Named here because the
 # feed both filters and orders on it.
 def _effective_promotional_score():
@@ -4283,6 +4312,10 @@ def list_cached_jobs(
     experience: Optional[list[str]] = Query(None),
     sector: Optional[str] = Query(None, max_length=100),
     min_salary: Optional[int] = Query(None, ge=0),
+    posted_from: Optional[date] = Query(None),
+    posted_to: Optional[date] = Query(None),
+    scraped_from: Optional[date] = Query(None),
+    scraped_to: Optional[date] = Query(None),
     sort: str = Query("balanced", pattern="^(balanced|newest|salary)$"),
     direct_employers_only: bool = Query(False),
     # Separate axis from direct_employers_only: the heaviest promotional posters
@@ -4411,6 +4444,26 @@ def list_cached_jobs(
                 ScrapedJob.salary_floor.is_(None),
             )
         )
+
+    posted_lower, posted_upper = _singapore_date_range(
+        posted_from,
+        posted_to,
+        label="Posted",
+    )
+    scraped_lower, scraped_upper = _singapore_date_range(
+        scraped_from,
+        scraped_to,
+        label="Scraped",
+    )
+    if posted_lower:
+        query = query.filter(ScrapedJob.posted_at_sort >= posted_lower)
+    if posted_upper:
+        query = query.filter(ScrapedJob.posted_at_sort < posted_upper)
+    normalized_scraped_at = _normalized_utc_iso(ScrapedJob.scraped_at)
+    if scraped_lower:
+        query = query.filter(normalized_scraped_at >= scraped_lower)
+    if scraped_upper:
+        query = query.filter(normalized_scraped_at < scraped_upper)
 
     offset = (page - 1) * per_page
 

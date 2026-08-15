@@ -21,7 +21,7 @@ import re
 import sys
 import time
 from dataclasses import asdict
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import or_
 
@@ -283,7 +283,7 @@ def crawl_all_jobs() -> dict:
     log.info("FULL CRAWL: MyCareersFuture")
     log.info("=" * 60)
 
-    mcf_crawl_marker = datetime.now().isoformat()
+    mcf_crawl_marker = datetime.now(timezone.utc).isoformat()
     mcf_complete = True
     mcf_seen = 0
     mcf_seen_semantic_keys: set[str] = set()
@@ -417,7 +417,7 @@ def crawl_all_jobs() -> dict:
 
     try:
         cgov_jobs = cgov.fetch_all()
-        cgov_crawl_marker = datetime.now().isoformat()
+        cgov_crawl_marker = datetime.now(timezone.utc).isoformat()
 
         # Health check unique postings so repeated source spam cannot retire the corpus.
         cgov_unique_keys = {

@@ -18,6 +18,10 @@ def _job(source: str, posting_id: str, title: str = "Software Engineer") -> Job:
     )
 
 
+def test_job_scrape_timestamp_is_aware_utc():
+    assert _job("MyCareersFuture", "timestamp").scraped_at.endswith("+00:00")
+
+
 def _prepare_crawl(monkeypatch):
     engine = create_engine(
         "sqlite://",
@@ -122,6 +126,7 @@ def test_mcf_completed_crawl_retires_unseen_and_reactivates_seen(monkeypatch):
     assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "seen").one().hidden == 0
     assert stats["retired"] == 1
     assert stats["reactivated"] == 1
+    assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "seen").one().scraped_at.endswith("+00:00")
     db.close()
     engine.dispose()
 
