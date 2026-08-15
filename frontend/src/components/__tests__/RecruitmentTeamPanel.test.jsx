@@ -721,6 +721,7 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).toContain("Named cloud platform");
     expect(container.textContent).toContain("Profile-ranked match");
     expect(container.textContent).toContain("StretchNone identified.");
+    expect(container.textContent).not.toContain("Role Success Profile");
     expect(container.querySelector('a[href="https://example.test/jobs/101"]')).not.toBeNull();
 
     const textarea = container.querySelector("textarea");

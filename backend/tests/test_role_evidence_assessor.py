@@ -42,12 +42,15 @@ class _Model:
 
     def invoke(self, messages):
         self.requests.append(messages)
+        payload = next(self.payloads)
+        if isinstance(payload, BaseException):
+            raise payload
         return AIMessage(
             content="",
             tool_calls=[
                 {
                     "name": self.bound_tool,
-                    "args": next(self.payloads),
+                    "args": payload,
                     "id": f"assessment-{len(self.requests)}",
                     "type": "tool_call",
                 }
@@ -325,6 +328,42 @@ def test_assessor_targets_one_failed_judgment_and_preserves_other_values():
     )
 
 
+def test_rejected_assessment_resumes_at_its_correction_after_timeout():
+    request = _two_criterion_request()
+    rejected = {
+        "judgments": [
+            _stable_judgment(),
+            _judgment(supported_strength='The candidate "led 5 markets".'),
+        ]
+    }
+    checkpoints = []
+    interrupted_model = _Model([rejected, TimeoutError("correction timed out")])
+
+    with pytest.raises(TimeoutError, match="correction timed out"):
+        LangChainRoleEvidenceAssessor(interrupted_model).assess(
+            request,
+            save_checkpoint=checkpoints.append,
+        )
+
+    assert [item.previous_scope for item in checkpoints] == ["full", "single_criterion"]
+    checkpoint = checkpoints[-1]
+    assert checkpoint.attempt_count == 1
+    assert checkpoint.previous_scope == "single_criterion"
+    assert checkpoint.validation_code.startswith("literal_quote:unsupported:")
+
+    corrected = _judgment(
+        supported_strength="The candidate led the Singapore rollout.",
+        remaining_gap="Leadership across all required markets is not shown.",
+        score_reason="The cited evidence supports one-market rollout leadership.",
+    )
+    resumed_model = _Model([{"judgment": corrected}])
+    run = LangChainRoleEvidenceAssessor(resumed_model).assess(request, checkpoint=checkpoint)
+
+    assert resumed_model.bindings == ["submit_role_evidence_correction"]
+    assert run.attempt_count == 2
+    assert run.judgments[1].supported_strength == corrected["supported_strength"]
+
+
 def test_assessor_corrects_distinct_invalid_criteria_sequentially():
     request = _two_criterion_request()
     wrong_field = _judgment(candidate_profile_field_ids=["profile-monthly-forecast"])
@@ -345,8 +384,8 @@ def test_assessor_corrects_distinct_invalid_criteria_sequentially():
 
     assert run.attempt_count == 3
     assert run.validation_codes == (
-        "candidate_profile_field_ids:evidence_mismatch:block-1:regional_rollout",
-        "numeric_claim:unsupported:30,35:monthly_forecast",
+        "candidate_profile_field_ids:evidence_mismatch",
+        "numeric_claim:unsupported",
     )
     assert model.bindings == [
         "submit_role_evidence_assessment",

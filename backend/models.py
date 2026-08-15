@@ -503,6 +503,39 @@ class CandidateProfileArtifact(Base):
     )
 
 
+class RoleProfileArtifact(Base):
+    """Private definition/evidence checkpoints for one target-role profile."""
+
+    __tablename__ = "role_profile_artifacts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    thread_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("recruitment_threads.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("recruitment_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    resume_version_id: Mapped[int] = mapped_column(Integer, ForeignKey("resume_versions.id"), nullable=False)
+    target_job_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    identity: Mapped[dict] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    definition: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    assessment_checkpoint: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("run_id", name="uq_role_profile_artifact_run"),
+        Index("ix_role_profile_artifact_thread", "user_id", "thread_id", "updated_at"),
+    )
+
+
 class TargetAssessmentArtifact(Base):
     """Durable output and partial results for one bounded target assessment run."""
 

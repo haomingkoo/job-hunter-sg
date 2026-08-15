@@ -22,7 +22,7 @@ class InvalidCommand(RecruitmentTeamError):
 class ServiceUnavailable(RecruitmentTeamError):
     """A recruitment dependency failed with one deterministic recovery decision."""
 
-    def __init__(self, message: str, *, decision: RecoveryDecision):
+    def __init__(self, message: str, *, decision: RecoveryDecision, detail: dict | None = None):
         super().__init__(message)
         self.failure_type = decision.failure_type
         self.failure_code = decision.failure_code
@@ -30,6 +30,7 @@ class ServiceUnavailable(RecruitmentTeamError):
         self.recovery_action = decision.recovery_action
         self.retry_after_seconds = decision.retry_after_seconds
         self.decision = decision
+        self.detail = dict(detail or {})
 
 
 class RunConcurrencyExceeded(ServiceUnavailable):
@@ -85,4 +86,22 @@ def safe_terminal_error_payload(error: BaseException) -> dict:
         })
         if error.retry_after_seconds is not None:
             payload["retry_after_seconds"] = error.retry_after_seconds
+        payload.update({
+            key: value
+            for key, value in error.detail.items()
+            if key in {
+                "attempted_stage",
+                "correction_scope",
+                "partial_artifact_id",
+                "alternatives",
+            }
+        })
+        if error.detail.get("validation_code"):
+            # Import lazily so the stable error types do not depend on the
+            # role-profile persistence module during import.
+            from .role_profile_store import public_role_validation_code
+
+            payload["validation_code"] = public_role_validation_code(
+                str(error.detail["validation_code"])
+            )
     return payload

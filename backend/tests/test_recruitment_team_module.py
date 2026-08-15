@@ -1799,6 +1799,234 @@ def test_search_shortlist_and_target_are_source_backed_and_durable():
     assert profile_span.attributes["candidate_profile_field_count"] == 1
 
 
+def test_target_role_profile_resumes_rejected_correction_after_restart_without_partial_facts():
+    from dataclasses import replace
+
+    from langchain_core.messages import AIMessage
+
+    from models import RoleProfileArtifact
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_stream import stream_command
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.assessed_role_success import EvidenceAssessedRoleSuccessProfiler
+    from recruitment_team.candidate_profile import CandidateProfileEvidence, ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.interface import (
+        BuildCandidateProfile,
+        SearchJobs,
+        SelectTargetJob,
+        StartThread,
+    )
+    from recruitment_team.role_evidence_assessor import LangChainRoleEvidenceAssessor
+    from recruitment_team.role_success import ScriptedRoleDefinitionGenerator
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    class AssessorModel:
+        def __init__(self, payloads):
+            self.payloads = iter(payloads)
+            self.call_count = 0
+
+        def bind_tools(self, tools, **kwargs):
+            self.tool_name = tools[0].name
+            return self
+
+        def invoke(self, messages):
+            self.call_count += 1
+            payload = next(self.payloads)
+            if isinstance(payload, BaseException):
+                raise payload
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": self.tool_name,
+                    "args": payload,
+                    "id": f"role-assessment-{self.call_count}",
+                    "type": "tool_call",
+                }],
+                response_metadata={"model_name": "role-assessor-test"},
+            )
+
+    private_quote = "traced model and tool calls"
+    invalid = {
+        "judgments": [{
+            "criterion_id": "design_agent_systems",
+            "alignment": "direct",
+            "resume_evidence_ids": ["b_test"],
+            "candidate_profile_field_ids": ["demonstrated_agent_platform"],
+            "supported_strength": f'The candidate used "{private_quote}".',
+            "remaining_gap": "None",
+            "evidence_support_score": 90,
+            "score_reason": "The cited resume block supports the claim.",
+        }]
+    }
+    corrected = {
+        "judgment": {
+            **invalid["judgments"][0],
+            "supported_strength": "The candidate built a production agent platform.",
+            "score_reason": "The cited block directly supports production agent-platform work.",
+        }
+    }
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery([
+        JobSearchResult(
+            query="agentic AI",
+            jobs=(job,),
+            candidate_count=1,
+            visible_candidate_count=1,
+            truncated=False,
+            valid_empty=False,
+        )
+    ])
+    definition = replace(
+        _role_profile_run(job.job_id),
+        profile=replace(_role_profile_run(job.job_id).profile, candidate_evidence=()),
+    )
+    first_definition_generator = ScriptedRoleDefinitionGenerator([definition])
+    first_model = AssessorModel([invalid, TimeoutError("correction timed out")])
+    first_telemetry = RecordedTelemetry()
+    candidate_run = _candidate_profile_run()
+    candidate_run = replace(
+        candidate_run,
+        profile=replace(
+            candidate_run.profile,
+            cited_resume_evidence=(
+                CandidateProfileEvidence(
+                    evidence_id="b_test",
+                    kind="bullet",
+                    text="Built a production agent platform.",
+                    source_locator="experience[0].bullets[0]",
+                    section_key="experience",
+                ),
+            ),
+        ),
+    )
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            discovery,
+            EvidenceAssessedRoleSuccessProfiler(
+                first_definition_generator,
+                LangChainRoleEvidenceAssessor(first_model),
+            ),
+            first_telemetry,
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([candidate_run]),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "role-resume-start",
+        )
+        team.execute(
+            owner_id,
+            BuildCandidateProfile(thread_id=started.thread_id),
+            "role-resume-profile",
+        )
+        team.execute(
+            owner_id,
+            SearchJobs(thread_id=started.thread_id, query="agentic AI"),
+            "role-resume-search",
+        )
+        blocks = "".join(stream_command(
+            lambda _publisher: team,
+            owner_id,
+            SelectTargetJob(thread_id=started.thread_id, job_id=job.job_id),
+            "role-resume-select",
+        ))
+        error_payload = next(
+            json.loads(block.split("data: ", 1)[1])
+            for block in blocks.split("\n\n")
+            if "event: error" in block
+        )
+
+        failed_snapshot = team.snapshot(owner_id, started.thread_id)
+        artifact = db.query(RoleProfileArtifact).one()
+        assert failed_snapshot.case_facts.role_success_profile is None
+        assert failed_snapshot.case_facts.selected_target is None
+        assert artifact.status == "assessment_rejected"
+        assert artifact.definition is not None
+        assert artifact.result is None
+        assert artifact.error["attempted_stage"] == "role_evidence"
+        assert artifact.error["correction_scope"] == "single_criterion"
+        assert artifact.error["validation_code"] == "literal_quote:unsupported"
+        assert private_quote in artifact.assessment_checkpoint["validation_code"]
+        assert error_payload["partial_artifact_id"] == artifact.id
+        assert error_payload["retryable"] is True
+        assert error_payload["recovery_action"] == "retry_incomplete_stage"
+        assert error_payload["correction_scope"] == "single_criterion"
+        assert error_payload["validation_code"] == "literal_quote:unsupported"
+        assert private_quote not in blocks
+        assert private_quote not in json.dumps(error_payload)
+        assert not any(
+            private_quote in str(value)
+            for span in first_telemetry.spans
+            for value in span.attributes.values()
+        )
+
+    resumed_definition_generator = ScriptedRoleDefinitionGenerator([])
+    resumed_model = AssessorModel([corrected])
+    resumed_telemetry = RecordedTelemetry()
+    with sessions() as db:
+        resumed = RecruitmentTeam(
+            db,
+            ScriptedConversationModel([]),
+            ScriptedDiscovery([]),
+            EvidenceAssessedRoleSuccessProfiler(
+                resumed_definition_generator,
+                LangChainRoleEvidenceAssessor(resumed_model),
+            ),
+            resumed_telemetry,
+            IgnoreActivityPublisher(),
+        )
+        receipt = resumed.execute(
+            owner_id,
+            SelectTargetJob(thread_id=started.thread_id, job_id=job.job_id),
+            "role-resume-select",
+        )
+        snapshot = resumed.snapshot(owner_id, started.thread_id)
+        before_replay_calls = resumed_model.call_count
+        replay = resumed.execute(
+            owner_id,
+            SelectTargetJob(thread_id=started.thread_id, job_id=job.job_id),
+            "role-resume-select",
+        )
+        resumed.execute(
+            owner_id,
+            SelectTargetJob(thread_id=started.thread_id, job_id=job.job_id),
+            "role-resume-select-new-delivery",
+        )
+        reused_snapshot = resumed.snapshot(owner_id, started.thread_id)
+        artifact = db.query(RoleProfileArtifact).one()
+
+    assert receipt == replay
+    assert resumed_definition_generator.call_count == 0
+    assert resumed_model.call_count == before_replay_calls == 1
+    assert snapshot.case_facts.role_success_profile is not None
+    assert snapshot.case_facts.role_success_profile.candidate_evidence[0].alignment == "direct"
+    assert snapshot.case_facts.role_success_metrics["validation_codes"] == [
+        "assessor:literal_quote:unsupported"
+    ]
+    assert private_quote not in json.dumps(snapshot.case_facts.role_success_metrics)
+    assert artifact.status == "completed"
+    assert artifact.result is not None
+    assert artifact.assessment_checkpoint is None
+    assert private_quote not in json.dumps(artifact.result)
+    assert not any(
+        private_quote in str(value)
+        for span in resumed_telemetry.spans
+        for value in span.attributes.values()
+    )
+    assert reused_snapshot.case_facts.role_success_metrics["model_call_count"] == 0
+    assert reused_snapshot.case_facts.role_success_metrics["checkpoint_hit_count"] == 1
+    assert reused_snapshot.case_facts.role_success_metrics["input_tokens"] == 0
+    assert reused_snapshot.case_facts.role_success_metrics["output_tokens"] == 0
+    assert reused_snapshot.case_facts.role_success_metrics["attempts"] == []
+
+
 def test_hidden_job_feedback_is_durable_and_filters_later_searches():
     from dataclasses import replace
 
