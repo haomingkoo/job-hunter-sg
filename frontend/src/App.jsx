@@ -25,9 +25,10 @@ import AccountTab from "./components/AccountTab.jsx";
 import StoriesTab from "./components/StoriesTab.jsx";
 import ResumeTab from "./components/ResumeTab.jsx";
 import RecruitmentTeamPanel from "./components/RecruitmentTeamPanel.jsx";
+import DocumentsTab from "./components/DocumentsTab.jsx";
 
 const AUTH_LINK_TOKEN_NAMES = ["reset_token", "verify_token"];
-const APP_TABS = new Set(["team", "jobs", "resume", "stories", "tracker", "reminders", "analytics", "power", "account"]);
+const APP_TABS = new Set(["team", "jobs", "resume", "documents", "stories", "tracker", "reminders", "analytics", "power", "account"]);
 
 export function readActiveTab(hash = window.location.hash) {
   const fragment = hash.replace(/^#/, "");
@@ -541,6 +542,16 @@ export default function JobHunterSG() {
                     navigateTo("team");
                   }}
                 />
+              )}
+              {activeTab === "documents" && (
+                user ? (
+                  <DocumentsTab onOpenResume={(versionId) => {
+                    setResumeVersionToOpen(versionId);
+                    navigateTo("resume");
+                  }} />
+                ) : (
+                  <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Documents" />
+                )
               )}
               {activeTab === "stories" && (
                 user ? (

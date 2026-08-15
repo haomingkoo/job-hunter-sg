@@ -153,6 +153,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [coverLetterLoading, setCoverLetterLoading] = useState(false);
   const [coverLetterError, setCoverLetterError] = useState("");
   const [coverLetterCopied, setCoverLetterCopied] = useState(false);
+  const [coverLetterWorkspaceId, setCoverLetterWorkspaceId] = useState(null);
+  const [coverLetterSaveState, setCoverLetterSaveState] = useState("");
+  const [coverLetterSaving, setCoverLetterSaving] = useState(false);
 
   const [applicationPackModal, setApplicationPackModal] = useState(null); // { job } or null
   const [applicationPackDirection, setApplicationPackDirection] = useState("");
@@ -308,6 +311,8 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     setCoverLetterText("");
     setCoverLetterError("");
     setCoverLetterCopied(false);
+    setCoverLetterWorkspaceId(null);
+    setCoverLetterSaveState("");
   };
 
   const closeCoverLetterModal = () => {
@@ -317,7 +322,19 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     setCoverLetterError("");
     setCoverLetterLoading(false);
     setCoverLetterCopied(false);
+    setCoverLetterWorkspaceId(null);
+    setCoverLetterSaveState("");
+    setCoverLetterSaving(false);
   };
+
+  const trackedWorkspaceFor = (job) => (trackedJobs || []).find((tracked) => (
+    Number(tracked.scraped_job_id) === Number(job.id)
+    || (
+      !tracked.scraped_job_id
+      && `${tracked.role}|${tracked.company}`.toLowerCase()
+        === `${job.title}|${job.company}`.toLowerCase()
+    )
+  ));
 
   const generateCoverLetter = async () => {
     const resumeText = sessionStorage.getItem("jh_resume_text") || "";
@@ -327,6 +344,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     }
     const job = coverLetterModal?.job;
     if (!job) return;
+    const workspace = trackedWorkspaceFor(job);
 
     setCoverLetterLoading(true);
     setCoverLetterError("");
@@ -339,6 +357,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         body: JSON.stringify({
           resume_text: resumeText,
           job_id: job.id || null,
+          workspace_id: workspace?.id || null,
           job_title: job.title || "",
           job_company: job.company || "",
           job_description: job.description || "",
@@ -347,10 +366,29 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       });
       const data = await resp.json();
       setCoverLetterText(data.cover_letter || "");
+      setCoverLetterWorkspaceId(data.workspace_id || null);
+      setCoverLetterSaveState(data.saved ? "saved" : "unsaved");
     } catch (err) {
       setCoverLetterError(err.message || "Failed to generate cover letter. Please try again.");
     } finally {
       setCoverLetterLoading(false);
+    }
+  };
+
+  const saveCoverLetterChanges = async () => {
+    if (!coverLetterWorkspaceId || !coverLetterText.trim()) return;
+    setCoverLetterSaving(true);
+    setCoverLetterError("");
+    try {
+      await apiFetch(`/api/applications/workspaces/${coverLetterWorkspaceId}/cover-letter`, {
+        method: "PUT",
+        body: JSON.stringify({ content: coverLetterText }),
+      });
+      setCoverLetterSaveState("saved");
+    } catch (err) {
+      setCoverLetterError(err.message || "Failed to save cover letter changes.");
+    } finally {
+      setCoverLetterSaving(false);
     }
   };
 
@@ -1242,11 +1280,21 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 )}
 
                 {coverLetterText && (
-                  <textarea
-                    value={coverLetterText}
-                    onChange={(e) => setCoverLetterText(e.target.value)}
-                    className="w-full h-80 px-4 py-3 border border-gray-200 rounded-lg text-sm leading-relaxed resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-[system-ui]"
-                  />
+                  <>
+                    <textarea
+                      value={coverLetterText}
+                      onChange={(e) => {
+                        setCoverLetterText(e.target.value);
+                        if (coverLetterWorkspaceId) setCoverLetterSaveState("dirty");
+                      }}
+                      className="w-full h-80 px-4 py-3 border border-gray-200 rounded-lg text-sm leading-relaxed resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-[system-ui]"
+                    />
+                    <p className={`text-xs ${coverLetterSaveState === "dirty" ? "text-amber-700" : "text-[#6A89A7]"}`}>
+                      {coverLetterSaveState === "saved" && "Saved to Documents."}
+                      {coverLetterSaveState === "dirty" && "You have unsaved changes."}
+                      {coverLetterSaveState === "unsaved" && "Not saved. Track this job to save future letters in Documents."}
+                    </p>
+                  </>
                 )}
               </div>
 
@@ -1257,6 +1305,15 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                       {coverLetterText.split(/\s+/).length} words
                     </span>
                     <div className="flex gap-2">
+                      {coverLetterWorkspaceId && coverLetterSaveState === "dirty" && (
+                        <button
+                          onClick={saveCoverLetterChanges}
+                          disabled={coverLetterSaving}
+                          className="px-4 py-2 text-sm border border-blue-300 rounded-lg text-blue-700 hover:bg-blue-50 transition disabled:opacity-50"
+                        >
+                          {coverLetterSaving ? "Saving..." : "Save changes"}
+                        </button>
+                      )}
                       <button
                         onClick={downloadCoverLetter}
                         className="px-4 py-2 text-sm border border-gray-300 rounded-lg text-[#384959] hover:bg-gray-100 transition"

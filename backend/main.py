@@ -110,6 +110,7 @@ from schemas import (
     CloudflareRegisterRequest,
     ContactRequest,
     CoverLetterRequest,
+    CoverLetterUpdate,
     DeleteAccountRequest,
     ForgotPasswordRequest,
     IntegrateKeywordsRequest,
@@ -6487,16 +6488,32 @@ def generate_cover_letter(
     Generate a professional cover letter from resume content,
     optionally tailored to a specific job description.
     """
-    _consume_ai_credit(user, db, "cover_letter")
-
     resume_text = sanitize_resume_text(body.resume_text)
-
-    jd_context = ""
     job_title = body.job_title
     job_company = body.job_company
     job_description = body.job_description
+    tracked_context = None
+    workspace_id = getattr(body, "workspace_id", None)
+    if workspace_id is not None:
+        tracked_context = workspace_module.cover_letter_context(
+            db,
+            user,
+            workspace_id,
+            expected_job_id=body.job_id,
+            expected_title=body.job_title,
+            expected_company=body.job_company,
+            fallback_resume_text=body.resume_text,
+        )
+        resume_text = tracked_context["resume_text"]
+        job_title = tracked_context["job_title"]
+        job_company = tracked_context["job_company"]
+        job_description = tracked_context["job_description"]
 
-    if body.job_id:
+    _consume_ai_credit(user, db, "cover_letter")
+
+    jd_context = ""
+
+    if body.job_id and tracked_context is None:
         target_job = db.query(ScrapedJob).filter(
             ScrapedJob.id == body.job_id,
         ).first()
@@ -6593,7 +6610,37 @@ Return ONLY the cover letter text. No subject lines, no labels, no markdown form
         )
 
     word_count = len(cover_letter.split())
-    return {"cover_letter": cover_letter, "word_count": word_count}
+    if tracked_context is not None:
+        document = workspace_module.save_cover_letter(
+            db,
+            tracked_context["tracked"],
+            content=cover_letter,
+            resume_version_id=tracked_context["resume_version_id"],
+        )
+        return {
+            "cover_letter": cover_letter,
+            "word_count": word_count,
+            "saved": True,
+            "workspace_id": workspace_id,
+            "resume_version_id": document["resume_version_id"],
+        }
+    return {
+        "cover_letter": cover_letter,
+        "word_count": word_count,
+        "saved": False,
+        "workspace_id": None,
+        "resume_version_id": None,
+    }
+
+
+@app.put("/api/applications/workspaces/{workspace_id}/cover-letter")
+def update_workspace_cover_letter(
+    workspace_id: int,
+    body: CoverLetterUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    return workspace_module.update_cover_letter(db, user, workspace_id, body.content)
 
 
 @app.post("/api/ai/application-pack")
