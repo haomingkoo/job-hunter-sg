@@ -27,19 +27,6 @@ const ARCHIVE_REASON_COPY = {
   closing_date: "Closing date has passed.",
 };
 
-const formatArchiveDate = (value) => {
-  if (!value) return "";
-  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`;
-  const parsed = new Date(normalized);
-  if (Number.isNaN(parsed.getTime())) return "";
-  return new Intl.DateTimeFormat("en-SG", {
-    timeZone: "Asia/Singapore",
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  }).format(parsed);
-};
-
 const EMPLOYMENT_TYPE_GROUPS = [
   { value: "full_time", label: "Full Time", aliases: ["Full Time", "Full-time"] },
   { value: "part_time", label: "Part Time", aliases: ["Part Time", "Part-time"] },
@@ -1374,8 +1361,8 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                     <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
                       <p className="font-medium">{ARCHIVE_REASON_COPY[job.archiveReason] || "This listing has expired."}</p>
                       <p className="mt-1 text-amber-800">
-                        {job.lastSeen && `Last seen ${formatArchiveDate(job.lastSeen)}`}
-                        {job.retiredAt && ` · Retired ${formatArchiveDate(job.retiredAt)}`}
+                        {job.lastSeen && `Last seen ${formatScrapedDate(job.lastSeen)}`}
+                        {job.retiredAt && ` · Retired ${formatScrapedDate(job.retiredAt)}`}
                         {!job.retiredAt && job.closingDate && ` · Closed ${job.closingDate}`}
                       </p>
                     </div>
