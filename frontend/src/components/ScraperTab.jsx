@@ -310,6 +310,12 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       const total = `${Math.max(totalCount, 0).toLocaleString()} unique active postings`;
       setTotalLabel(total);
     } catch (err) {
+      if (err.detail?.code === "power_match_not_ready") {
+        setPowerMatch(err.detail);
+        setMinMatchScore("");
+        await loadJobs(searchQuery, pageNum, { ...nextFilters, minMatchScore: "" });
+        return;
+      }
       setError(err.message || "Failed to load jobs. Please try again.");
       setResults([]);
       setTotalPages(1);
@@ -1266,25 +1272,25 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             >
               <div className="flex justify-between items-start">
                 <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="font-semibold text-[#384959]">{job.title}</h3>
-                    {job.level && <span className="text-[10px] bg-[#f0f4f8] text-[#6A89A7] px-2 py-0.5 rounded-full">{job.level}</span>}
+                  <div className="flex min-w-0 flex-wrap items-center gap-2 mb-1" data-testid={`job-badge-row-${job.id}`}>
+                    <h3 className="min-w-0 break-words font-semibold text-[#384959]">{job.title}</h3>
+                    {job.level && <span className="shrink-0 text-[10px] bg-[#f0f4f8] text-[#6A89A7] px-2 py-0.5 rounded-full">{job.level}</span>}
                     {job.sector && job.sector !== "Other" && (
                       <span
                         title={job.companySsicSource === "acra" ? `${job.companySsicCode} ${job.companySsicDescription}` : "Inferred sector"}
-                        className={`text-[10px] border px-2 py-0.5 rounded-full ${job.companySsicSource === "acra" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-violet-50 text-violet-700 border-violet-200"}`}
+                        className={`shrink-0 text-[10px] border px-2 py-0.5 rounded-full ${job.companySsicSource === "acra" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-violet-50 text-violet-700 border-violet-200"}`}
                       >
                         {job.sector}
                       </span>
                     )}
-                    {job.archetype && job.archetype !== "Generalist" && <span className={`text-[10px] border px-2 py-0.5 rounded-full ${ARCHETYPE_COLORS[job.archetype] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{job.archetype}</span>}
+                    {job.archetype && job.archetype !== "Generalist" && <span className={`shrink-0 text-[10px] border px-2 py-0.5 rounded-full ${ARCHETYPE_COLORS[job.archetype] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{job.archetype}</span>}
                     {Number.isFinite(job.powerMatchScore) && (
-                      <span className="text-[10px] border border-indigo-200 bg-indigo-50 px-2 py-0.5 rounded-full font-semibold text-indigo-700" data-testid={`power-match-score-${job.id}`}>
+                      <span className="shrink-0 text-[10px] border border-indigo-200 bg-indigo-50 px-2 py-0.5 rounded-full font-semibold text-indigo-700" data-testid={`power-match-score-${job.id}`}>
                         {job.powerMatchScore} · {job.powerMatchLabel}
                       </span>
                     )}
-                    {(trackedJobIds.has(job.id) || trackedJobIds.has(`${job.title}|${job.company}`.toLowerCase())) && <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><CheckCircle2 size={10} />Tracked</span>}
-                    <ChevronRight size={14} className={`ml-auto text-[#6A89A7] transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                    {(trackedJobIds.has(job.id) || trackedJobIds.has(`${job.title}|${job.company}`.toLowerCase())) && <span className="flex shrink-0 items-center gap-0.5 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700"><CheckCircle2 size={10} />Tracked</span>}
+                    <ChevronRight size={14} className={`ml-auto shrink-0 text-[#6A89A7] transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                   </div>
                   <div className="flex items-center gap-4 text-sm text-[#6A89A7] mb-2 flex-wrap">
                     <span className="flex items-center gap-1"><Building2 size={13} />{job.company}</span>

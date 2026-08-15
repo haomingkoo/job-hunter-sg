@@ -23,7 +23,7 @@ const job = {
   description: "Build reliable platforms.",
 };
 
-const jobsResponse = ({ ready = false, filtered = false } = {}) => ({
+const jobsResponse = ({ ready = false, filtered = false, powerMatchState = null } = {}) => ({
   json: () => Promise.resolve({
     jobs: ready ? [{
       ...job,
@@ -38,7 +38,7 @@ const jobsResponse = ({ ready = false, filtered = false } = {}) => ({
       sectors: [],
       sources: [],
     },
-    power_match: ready
+    power_match: powerMatchState || (ready
       ? {
         status: "ready",
         reason: "ready",
@@ -51,7 +51,7 @@ const jobsResponse = ({ ready = false, filtered = false } = {}) => ({
         reason: "snapshot_missing",
         message: "Generate Power Match scores to use scored Browse.",
         generate_action: "Generate Power Match scores",
-      },
+      }),
   }),
 });
 
@@ -158,5 +158,46 @@ describe("ScraperTab persisted Power Match scores", () => {
       .find((element) => typeof element.className === "string" && element.className.includes("fixed inset-0"));
     expect(drawer).toBeTruthy();
     expect(drawer.querySelector('select[aria-label="Minimum Power Match score"]')).toBeTruthy();
+  });
+
+  it("recovers from a typed stale snapshot without repeating the score threshold", async () => {
+    let stale = false;
+    apiFetch.mockImplementation((url) => {
+      if (url.includes("min_match_score=55")) {
+        stale = true;
+        const error = new Error("Your resume changed. Generate Browse scores again.");
+        error.detail = {
+          code: "power_match_not_ready",
+          status: "not_ready",
+          reason: "resume_changed",
+          message: "Your resume changed. Generate Browse scores again.",
+          generate_action: "Generate Power Match scores",
+        };
+        return Promise.reject(error);
+      }
+      return Promise.resolve(jobsResponse({
+        ready: !stale,
+        powerMatchState: stale ? {
+          status: "not_ready",
+          reason: "resume_changed",
+          message: "Your resume changed. Generate Browse scores again.",
+          generate_action: "Generate Power Match scores",
+        } : null,
+      }));
+    });
+
+    await renderScraper(root);
+    const scoreFilter = container.querySelector('select[aria-label="Minimum Power Match score"]');
+    await act(async () => {
+      scoreFilter.value = "55";
+      scoreFilter.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(apiFetch.mock.calls.at(-1)[0]).toBe("/api/jobs?page=1&per_page=20&sort=balanced");
+    expect(scoreFilter.value).toBe("");
+    expect(scoreFilter.disabled).toBe(true);
+    expect(container.textContent).toContain("Your resume changed. Generate Browse scores again.");
+    expect(container.textContent).toContain("Generate Power Match scores");
+    expect(container.textContent).not.toContain("409:");
   });
 });
