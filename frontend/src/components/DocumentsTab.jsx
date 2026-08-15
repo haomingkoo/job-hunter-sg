@@ -49,7 +49,6 @@ export default function DocumentsTab({ onOpenResume }) {
             label: `Cover letter for ${application.role}`,
             role: application.role,
             company: application.company,
-            workspaceId: application.id,
           }];
         });
         setDocuments([...resumeDocuments, ...coverLetters].sort((left, right) => timestamp(right) - timestamp(left)));

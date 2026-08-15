@@ -2,7 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import ScraperTab from "../ScraperTab.jsx";
+import ScraperTab, { trackedWorkspaceFor } from "../ScraperTab.jsx";
 import { apiFetch } from "../../lib/api.js";
 
 vi.mock("../../lib/api.js", () => ({
@@ -84,18 +84,39 @@ describe("ScraperTab cover-letter persistence", () => {
     expect(container.textContent).toContain("Not saved. Track this job to save future letters in Documents.");
   });
 
+  it("does not infer persistence from duplicate titles, companies, or reposts", () => {
+    expect(trackedWorkspaceFor([
+      { id: 8, scraped_job_id: null, role: job.title, company: job.company },
+    ], job)).toBeUndefined();
+    expect(trackedWorkspaceFor([
+      { id: 9, scraped_job_id: 41, role: job.title, company: job.company },
+    ], job)).toBeUndefined();
+    expect(trackedWorkspaceFor([
+      { id: 10, scraped_job_id: 42, role: "Stale title", company: "Stale company" },
+    ], job)?.id).toBe(10);
+  });
+
   it("saves tracked generation and subsequent candidate edits", async () => {
+    sessionStorage.removeItem("jh_resume_text");
     apiFetch
       .mockResolvedValueOnce(jobsResponse)
       .mockResolvedValueOnce({
         json: async () => ({ cover_letter: "Dear Hiring Team, " + "Relevant experience. ".repeat(8), saved: true, workspace_id: 9 }),
       })
       .mockResolvedValueOnce({ json: async () => ({}) });
-    await renderAndOpen(root, container, [{ id: 9, scraped_job_id: 42, role: job.title, company: job.company }]);
+    await renderAndOpen(root, container, [{
+      id: 9,
+      scraped_job_id: 42,
+      resume_version_id: 7,
+      role: job.title,
+      company: job.company,
+    }]);
+    expect(container.textContent).not.toContain("No resume found in this session.");
     const generate = [...container.querySelectorAll("button")].find((item) => item.textContent === "Generate");
     await act(async () => generate.click());
 
     expect(JSON.parse(apiFetch.mock.calls[1][1].body).workspace_id).toBe(9);
+    expect(JSON.parse(apiFetch.mock.calls[1][1].body).resume_text).toBe("");
     expect(container.textContent).toContain("Saved to Documents.");
 
     const textarea = container.querySelector("textarea");

@@ -119,20 +119,12 @@ def cover_letter_context(
     workspace_id: int,
     *,
     expected_job_id: int | None,
-    expected_title: str,
-    expected_company: str,
     fallback_resume_text: str,
 ) -> dict:
     """Return owner-checked canonical application context and resume provenance."""
     tracked = _owned_tracked_job(db, user.id, workspace_id, workspace=True)
-    if expected_job_id is not None:
-        if tracked.scraped_job_id is not None and tracked.scraped_job_id != expected_job_id:
-            raise HTTPException(status_code=409, detail="Job does not match the tracked application")
-        if tracked.scraped_job_id is None:
-            title_matches = " ".join(expected_title.split()).casefold() == " ".join(tracked.role.split()).casefold()
-            company_matches = " ".join(expected_company.split()).casefold() == " ".join(tracked.company.split()).casefold()
-            if not title_matches or not company_matches:
-                raise HTTPException(status_code=409, detail="Job does not match the tracked application")
+    if expected_job_id is not None and tracked.scraped_job_id != expected_job_id:
+        raise HTTPException(status_code=409, detail="Job does not match the tracked application")
 
     resume_version_id = tracked.resume_version_id
     resume_text = sanitize_resume_text(fallback_resume_text)
@@ -173,7 +165,6 @@ def save_cover_letter(
     clean_content = sanitize_resume_text(content)
     document = {
         "content": clean_content,
-        "word_count": len(clean_content.split()),
         "resume_version_id": resume_version_id,
         "generated_at": now,
         "updated_at": now,
@@ -200,7 +191,6 @@ def update_cover_letter(
     document = {
         **current,
         "content": clean_content,
-        "word_count": len(clean_content.split()),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     metadata[COVER_LETTER_METADATA_KEY] = document

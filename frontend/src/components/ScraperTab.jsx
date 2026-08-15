@@ -111,6 +111,10 @@ const CheckboxFilter = ({ active, onChange, children }) => (
   </label>
 );
 
+export const trackedWorkspaceFor = (trackedJobs, job) => (trackedJobs || []).find((tracked) => (
+  tracked.scraped_job_id != null && String(tracked.scraped_job_id) === String(job.id)
+));
+
 export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, onSignIn }) {
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
@@ -156,6 +160,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [coverLetterWorkspaceId, setCoverLetterWorkspaceId] = useState(null);
   const [coverLetterSaveState, setCoverLetterSaveState] = useState("");
   const [coverLetterSaving, setCoverLetterSaving] = useState(false);
+  const coverLetterWorkspace = coverLetterModal
+    ? trackedWorkspaceFor(trackedJobs, coverLetterModal.job)
+    : null;
 
   const [applicationPackModal, setApplicationPackModal] = useState(null); // { job } or null
   const [applicationPackDirection, setApplicationPackDirection] = useState("");
@@ -327,24 +334,14 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     setCoverLetterSaving(false);
   };
 
-  const trackedWorkspaceFor = (job) => (trackedJobs || []).find((tracked) => (
-    Number(tracked.scraped_job_id) === Number(job.id)
-    || (
-      !tracked.scraped_job_id
-      && `${tracked.role}|${tracked.company}`.toLowerCase()
-        === `${job.title}|${job.company}`.toLowerCase()
-    )
-  ));
-
   const generateCoverLetter = async () => {
     const resumeText = sessionStorage.getItem("jh_resume_text") || "";
-    if (!resumeText || resumeText.length < 50) {
+    const job = coverLetterModal?.job;
+    if (!job) return;
+    if (resumeText.length < 50 && !coverLetterWorkspace?.resume_version_id) {
       setCoverLetterError("Please upload or paste your resume in the Resume tab first (at least 50 characters).");
       return;
     }
-    const job = coverLetterModal?.job;
-    if (!job) return;
-    const workspace = trackedWorkspaceFor(job);
 
     setCoverLetterLoading(true);
     setCoverLetterError("");
@@ -357,7 +354,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         body: JSON.stringify({
           resume_text: resumeText,
           job_id: job.id || null,
-          workspace_id: workspace?.id || null,
+          workspace_id: coverLetterWorkspace?.id || null,
           job_title: job.title || "",
           job_company: job.company || "",
           job_description: job.description || "",
@@ -1257,7 +1254,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                         maxLength={500}
                       />
                     </div>
-                    {!sessionStorage.getItem("jh_resume_text") && (
+                    {!sessionStorage.getItem("jh_resume_text") && !coverLetterWorkspace?.resume_version_id && (
                       <p className="text-sm text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
                         No resume found in this session. Upload or paste your resume in the Resume tab first.
                       </p>

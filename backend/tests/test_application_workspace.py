@@ -141,7 +141,6 @@ def test_cover_letter_persists_exact_resume_provenance_and_latest_candidate_edit
 
     monkeypatch.setattr(main, "_call_sealion", draft)
     generated = client.post("/api/ai/cover-letter", json={
-        "resume_text": "UNTRUSTED FALLBACK " * 10,
         "workspace_id": workspace["id"],
         "job_title": workspace["title"],
         "job_company": workspace["company"],
@@ -151,7 +150,6 @@ def test_cover_letter_persists_exact_resume_provenance_and_latest_candidate_edit
     assert generated.json()["saved"] is True
     assert generated.json()["resume_version_id"] == workspace["resume_version_id"]
     assert "Built Python data pipelines" in prompts[0]
-    assert "UNTRUSTED FALLBACK" not in prompts[0]
 
     loaded = client.get(f"/api/applications/workspaces/{workspace['id']}", headers=headers)
     document = loaded.json()["role_metadata"]["cover_letter"]
@@ -215,7 +213,8 @@ def test_cover_letter_persists_exact_resume_provenance_and_latest_candidate_edit
 
 
 def test_cover_letter_rejects_mismatch_and_failed_generation_stores_nothing(monkeypatch):
-    from database import init_db
+    from database import SessionLocal, init_db
+    from models import ScrapedJob
     import main
 
     init_db()
@@ -229,10 +228,45 @@ def test_cover_letter_rejects_mismatch_and_failed_generation_stores_nothing(monk
         "resume_text": "Fallback resume content with enough detail for request validation. " * 2,
         "workspace_id": workspace["id"],
         "job_id": 999999,
-        "job_title": "Different role",
+        "job_title": workspace["title"],
         "job_company": workspace["company"],
     }, headers=headers)
     assert mismatch.status_code == 409
+
+    marker = secrets.token_hex(6)
+    with SessionLocal() as db:
+        original = ScrapedJob(
+            title="AI Engineer",
+            company="Same Company",
+            description="Original posting",
+            dedup_key=f"cover-original-{marker}",
+        )
+        repost = ScrapedJob(
+            title="AI Engineer",
+            company="Same Company",
+            description="Reposted role",
+            dedup_key=f"cover-repost-{marker}",
+        )
+        db.add_all([original, repost])
+        db.commit()
+        original_id, repost_id = original.id, repost.id
+
+    repost_workspace = client.post("/api/applications/workspaces", json={
+        "company": "Same Company",
+        "title": "AI Engineer",
+        "job_description": "Original posting",
+        "scraped_job_id": original_id,
+        "resume_version_id": workspace["resume_version_id"],
+    }, headers=headers)
+    assert repost_workspace.status_code == 201
+    repost_collision = client.post("/api/ai/cover-letter", json={
+        "resume_text": "",
+        "workspace_id": repost_workspace.json()["id"],
+        "job_id": repost_id,
+        "job_title": "AI Engineer",
+        "job_company": "Same Company",
+    }, headers=headers)
+    assert repost_collision.status_code == 409
 
     failed = client.post("/api/ai/cover-letter", json={
         "resume_text": "Fallback resume content with enough detail for request validation. " * 2,

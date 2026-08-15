@@ -6493,21 +6493,21 @@ def generate_cover_letter(
     job_company = body.job_company
     job_description = body.job_description
     tracked_context = None
-    workspace_id = getattr(body, "workspace_id", None)
+    workspace_id = body.workspace_id
     if workspace_id is not None:
         tracked_context = workspace_module.cover_letter_context(
             db,
             user,
             workspace_id,
             expected_job_id=body.job_id,
-            expected_title=body.job_title,
-            expected_company=body.job_company,
             fallback_resume_text=body.resume_text,
         )
         resume_text = tracked_context["resume_text"]
         job_title = tracked_context["job_title"]
         job_company = tracked_context["job_company"]
         job_description = tracked_context["job_description"]
+    elif len(resume_text) < 50:
+        raise HTTPException(status_code=400, detail="Resume text too short")
 
     _consume_ai_credit(user, db, "cover_letter")
 

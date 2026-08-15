@@ -383,7 +383,7 @@ class RegenerateSummaryRequest(BaseModel):
 
 
 class CoverLetterRequest(BaseModel):
-    resume_text: str = Field(..., min_length=50, max_length=10000)
+    resume_text: str = Field("", max_length=10000)
     job_id: int | None = Field(None)
     workspace_id: int | None = Field(None)
     job_title: str = Field("", max_length=200)

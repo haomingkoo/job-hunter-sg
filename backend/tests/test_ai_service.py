@@ -393,6 +393,7 @@ def test_cover_letter_receives_late_resume_role_context(monkeypatch):
         SimpleNamespace(
             resume_text=_resume_with_late_role_context(),
             job_id=None,
+            workspace_id=None,
             job_title="AI Engineer",
             job_company="Example Company",
             job_description="",
@@ -474,6 +475,7 @@ def test_cover_letter_retries_metric_drift_once(monkeypatch):
         SimpleNamespace(
             resume_text=source,
             job_id=None,
+            workspace_id=None,
             job_title="AI Engineer",
             job_company="Example Company",
             job_description="",
@@ -507,6 +509,7 @@ def test_cover_letter_fails_closed_after_metric_retry(monkeypatch):
             SimpleNamespace(
                 resume_text="Identified USD 600M+ in opportunities; USD 50M+ realized.",
                 job_id=None,
+                workspace_id=None,
                 job_title="AI Engineer",
                 job_company="Example Company",
                 job_description="",
