@@ -23,7 +23,7 @@ from .candidate_profile import (
 from .discovery import DiscoveryPort, LangChainJobDiscovery
 from .activity_publisher import IgnoreActivityPublisher
 from .assessed_role_success import EvidenceAssessedRoleSuccessProfiler
-from .activity_stream import stream_command
+from .activity_stream import stream_command, stream_run
 from .errors import (
     DiscoveryUnavailable,
     InvalidCommand,
@@ -884,6 +884,28 @@ def get_thread_events(
         ]
     except Exception as error:
         _raise_http_error(error)
+
+
+@router.get("/runs/{run_id}/stream")
+def reattach_run(
+    run_id: str,
+    after_sequence: int = Query(default=0, ge=0),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    team = _read_team(db, telemetry)
+    try:
+        # Validate ownership before response headers are sent, so missing and
+        # other-user run IDs remain the same non-disclosing 404.
+        team.run_replay(user.id, run_id, after_sequence)
+    except Exception as error:
+        _raise_http_error(error)
+    return StreamingResponse(
+        stream_run(team, user.id, run_id, after_sequence),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 
 @router.get("/threads/{thread_id}/proposed-edits")

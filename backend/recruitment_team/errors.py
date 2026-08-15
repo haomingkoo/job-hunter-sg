@@ -60,3 +60,29 @@ class TargetAssessmentUnavailable(ServiceUnavailable):
 
 class ConversationUnavailable(ServiceUnavailable):
     pass
+
+
+def safe_terminal_error_payload(error: BaseException) -> dict:
+    """Return the user-safe terminal payload, preferring its durable decision."""
+
+    durable = getattr(error, "recruitment_terminal_payload", None)
+    if isinstance(durable, dict):
+        return durable
+    payload = {
+        "error_type": type(error).__name__,
+        "message": (
+            str(error)
+            if isinstance(error, RecruitmentTeamError)
+            else "The recruitment team could not complete this turn."
+        ),
+    }
+    if isinstance(error, ServiceUnavailable):
+        payload.update({
+            "failure_type": error.failure_type,
+            "failure_code": error.failure_code,
+            "retryable": error.retryable,
+            "recovery_action": error.recovery_action,
+        })
+        if error.retry_after_seconds is not None:
+            payload["retry_after_seconds"] = error.retry_after_seconds
+    return payload
