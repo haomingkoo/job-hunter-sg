@@ -322,6 +322,7 @@ _power_match_cache: dict[int, dict] = {}
 _POWER_MATCH_CACHE_TTL = 600  # 10 minutes
 _POWER_MATCH_SNAPSHOT_TTL_SECONDS = 86400  # 24 hours
 _POWER_MATCH_RESULT_VERSION = "power_match_v4"
+_BROWSE_POWER_MATCH_LIMIT = 200
 
 
 from contextlib import asynccontextmanager
@@ -1280,6 +1281,118 @@ def _save_power_match_snapshot(
     snapshot.result = result
     snapshot.created_at = datetime.now(timezone.utc)
     db.flush()
+
+
+def _power_match_identity(db: Session, user_id: int, direct_employers_only: bool) -> tuple[str, str, str]:
+    mem = db.query(UserMemory).filter(UserMemory.user_id == user_id).first()
+    resume_text = (mem.resume_text or "").strip() if mem else ""
+    resume_hash = _resume_snapshot_hash(resume_text)
+    corpus_marker = f"{_job_corpus_marker(db)}:direct={int(direct_employers_only)}"
+    return resume_text, resume_hash, corpus_marker
+
+
+def _power_match_readiness(
+    db: Session,
+    user: User,
+    *,
+    limit: int,
+    direct_employers_only: bool,
+) -> tuple[dict, dict | None]:
+    """Read an exact current snapshot without scoring or consuming quota."""
+    resume_text, resume_hash, corpus_marker = _power_match_identity(
+        db, user.id, direct_employers_only,
+    )
+    base = {
+        "direct_employers_only": direct_employers_only,
+        "snapshot_limit": limit,
+        "generate_action": "Generate Power Match scores",
+    }
+    if len(resume_text) < 50:
+        return ({
+            **base,
+            "status": "not_ready",
+            "reason": "resume_missing",
+            "message": "Save a resume before generating Browse scores.",
+        }, None)
+
+    now = time.monotonic()
+    cached = _power_match_cache.get(user.id)
+    if (
+        cached
+        and now - cached["_ts"] < _POWER_MATCH_CACHE_TTL
+        and cached.get("resume_hash") == resume_hash
+        and cached.get("corpus_marker") == corpus_marker
+        and cached.get("limit") == limit
+    ):
+        snapshot = cached["data"]
+        return ({
+            **base,
+            "status": "ready",
+            "reason": "ready",
+            "message": "Browse scores are ready for this resume and job corpus.",
+            "generate_action": "Refresh Power Match scores",
+            "score_count": len(snapshot.get("recommendations", [])),
+        }, snapshot)
+
+    snapshot = _load_power_match_snapshot(
+        db=db,
+        user_id=user.id,
+        resume_hash=resume_hash,
+        corpus_marker=corpus_marker,
+        limit=limit,
+    )
+    if snapshot:
+        _power_match_cache[user.id] = {
+            "data": snapshot,
+            "_ts": time.monotonic(),
+            "resume_hash": resume_hash,
+            "corpus_marker": corpus_marker,
+            "limit": limit,
+        }
+        return ({
+            **base,
+            "status": "ready",
+            "reason": "ready",
+            "message": "Browse scores are ready for this resume and job corpus.",
+            "generate_action": "Refresh Power Match scores",
+            "score_count": len(snapshot.get("recommendations", [])),
+        }, snapshot)
+
+    latest = (
+        db.query(PowerMatchSnapshot)
+        .filter(
+            PowerMatchSnapshot.user_id == user.id,
+            PowerMatchSnapshot.limit == limit,
+        )
+        .order_by(PowerMatchSnapshot.created_at.desc(), PowerMatchSnapshot.id.desc())
+        .first()
+    )
+    reason = "snapshot_missing"
+    message = "Generate Power Match scores to use scored Browse."
+    if latest is not None:
+        created_at = latest.created_at
+        if created_at and created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        expired = not created_at or created_at < (
+            datetime.now(timezone.utc) - timedelta(seconds=_POWER_MATCH_SNAPSHOT_TTL_SECONDS)
+        )
+        latest_base, _, latest_mode = latest.corpus_marker.rpartition(":direct=")
+        current_base, _, current_mode = corpus_marker.rpartition(":direct=")
+        if expired or not isinstance(latest.result, dict) or latest.result.get("result_version") != _POWER_MATCH_RESULT_VERSION:
+            reason, message = "snapshot_stale", "Saved Browse scores are stale. Generate them again."
+        elif latest.resume_hash != resume_hash:
+            reason, message = "resume_changed", "Your resume changed. Generate Browse scores again."
+        elif latest_mode != current_mode:
+            reason, message = "employer_mode_changed", "Employer mode changed. Generate scores for this view."
+        elif latest_base != current_base:
+            reason, message = "corpus_changed", "The active job corpus changed. Generate Browse scores again."
+
+    return ({
+        **base,
+        "status": "not_ready",
+        "reason": reason,
+        "message": message,
+    }, None)
 
 
 def _power_resume_source_meta(db: Session, user_id: int, resume_text: str) -> dict:
@@ -4304,6 +4417,7 @@ _JOB_LIST_COLUMNS = (
 @app.get("/api/jobs")
 def list_cached_jobs(
     request: Request,
+    response: Response,
     q: Optional[str] = Query(None, min_length=2, max_length=200, description="Filter by keyword"),
     employment_type: Optional[str] = Query(None, max_length=500),
     seniority: Optional[str] = Query(None, max_length=100),
@@ -4316,6 +4430,7 @@ def list_cached_jobs(
     posted_to: Optional[date] = Query(None),
     scraped_from: Optional[date] = Query(None),
     scraped_to: Optional[date] = Query(None),
+    min_match_score: Optional[int] = Query(None, ge=0, le=100),
     sort: str = Query("balanced", pattern="^(balanced|newest|salary)$"),
     direct_employers_only: bool = Query(False),
     # Separate axis from direct_employers_only: the heaviest promotional posters
@@ -4323,6 +4438,7 @@ def list_cached_jobs(
     exclude_promotional: bool = Query(False),
     page: int = Query(1, ge=1, le=500),
     per_page: int = Query(20, ge=1, le=100),
+    user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ) -> dict:
     if not _PUBLIC_RATE_LIMITER.allow(
@@ -4331,9 +4447,48 @@ def list_cached_jobs(
         window_seconds=60,
     ):
         raise HTTPException(status_code=429, detail="Too many job searches")
+    if min_match_score is not None and user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Sign in and generate Power Match scores before filtering by score",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    power_match_state = None
+    score_by_job_id: dict[int, dict] = {}
+    if user is not None:
+        response.headers["Cache-Control"] = "no-store"
+        power_match_state, snapshot = _power_match_readiness(
+            db,
+            user,
+            limit=_BROWSE_POWER_MATCH_LIMIT,
+            direct_employers_only=direct_employers_only,
+        )
+        if snapshot:
+            score_by_job_id = {
+                int(item["job"]["id"]): item
+                for item in snapshot.get("recommendations", [])
+                if isinstance(item, dict)
+                and isinstance(item.get("job"), dict)
+                and item["job"].get("id") is not None
+            }
+        if min_match_score is not None and not snapshot:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "power_match_not_ready", **power_match_state},
+                headers={"Cache-Control": "no-store"},
+            )
+
     query = apply_public_job_visibility(
         db.query(ScrapedJob).options(load_only(*_JOB_LIST_COLUMNS)),
     )
+    if min_match_score is not None:
+        eligible_ids = [
+            job_id
+            for job_id, item in score_by_job_id.items()
+            if int(item.get("suitability_score") or 0) >= min_match_score
+        ]
+        query = query.filter(ScrapedJob.id.in_(eligible_ids))
     if q:
         # Split query into words — match ALL words (AND logic)
         # "micron i4" matches jobs with BOTH "micron" AND "i4" anywhere
@@ -4635,6 +4790,10 @@ def list_cached_jobs(
                 "company_ssic_source": j.company_ssic_source or "",
                 "archetype": (j.parsed_jd or {}).get("archetype", "") if isinstance(j.parsed_jd, dict) else "",
                 "promotional_score": int(j.promotional_score or 0),
+                **({
+                    "power_match_score": score_by_job_id[j.id]["suitability_score"],
+                    "power_match_label": score_by_job_id[j.id]["suitability_label"],
+                } if j.id in score_by_job_id else {}),
             }
             for j in jobs
         ],
@@ -4643,6 +4802,8 @@ def list_cached_jobs(
         "pages": max(1, (total + per_page - 1) // per_page),
         "filter_meta": filter_meta,
     }
+    if power_match_state is not None:
+        result["power_match"] = power_match_state
 
     return result
 
@@ -4752,9 +4913,28 @@ def reject_power_match_get() -> None:
     )
 
 
+@app.get("/api/jobs/power-match/readiness")
+def get_power_match_readiness(
+    response: Response,
+    limit: int = Query(_BROWSE_POWER_MATCH_LIMIT, ge=1, le=_BROWSE_POWER_MATCH_LIMIT),
+    direct_employers_only: bool = Query(False),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Report exact snapshot readiness without generating scores or spending quota."""
+    response.headers["Cache-Control"] = "no-store"
+    readiness, _snapshot = _power_match_readiness(
+        db,
+        user,
+        limit=limit,
+        direct_employers_only=direct_employers_only,
+    )
+    return readiness
+
+
 @app.post("/api/jobs/power-match")
 def get_power_match(
-    limit: int = Query(8, ge=1, le=20),
+    limit: int = Query(8, ge=1, le=_BROWSE_POWER_MATCH_LIMIT),
     direct_employers_only: bool = Query(True),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),

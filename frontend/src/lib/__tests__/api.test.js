@@ -77,6 +77,29 @@ describe("apiFetch", () => {
     window.removeEventListener(AUTH_EXPIRED_EVENT, listener);
   });
 
+  it("preserves typed API error details", async () => {
+    global.fetch = vi.fn(() => Promise.resolve({
+      ok: false,
+      status: 409,
+      text: () => Promise.resolve(JSON.stringify({
+        detail: {
+          code: "power_match_not_ready",
+          status: "not_ready",
+          message: "Your resume changed. Generate Browse scores again.",
+        },
+      })),
+      headers: { get: () => "application/json" },
+    }));
+
+    const error = await apiFetch("/api/jobs?min_match_score=55").catch((caught) => caught);
+
+    expect(error.message).toBe("Your resume changed. Generate Browse scores again.");
+    expect(error.detail).toMatchObject({
+      code: "power_match_not_ready",
+      status: "not_ready",
+    });
+  });
+
   it("clears the full resume draft when explicitly requested", () => {
     sessionStorage.setItem("jh_resume_profile", "{}");
     sessionStorage.setItem("jh_resume_text", "draft");

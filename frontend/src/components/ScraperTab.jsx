@@ -5,6 +5,7 @@ import {
   ExternalLink, Filter, Loader2, FileText,
   MapPin, DollarSign, Building2, X, SlidersHorizontal,
   PanelLeftClose, PanelLeftOpen, CheckCircle2, Bot, Copy,
+  Sparkles, RefreshCw,
 } from "lucide-react";
 import { apiFetch, downloadBlob } from "../lib/api.js";
 import { todayStr } from "../lib/helpers.js";
@@ -169,6 +170,10 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [postedToFilter, setPostedToFilter] = useState("");
   const [scrapedFromFilter, setScrapedFromFilter] = useState("");
   const [scrapedToFilter, setScrapedToFilter] = useState("");
+  const [powerMatch, setPowerMatch] = useState(null);
+  const [minMatchScore, setMinMatchScore] = useState("");
+  const [powerGenerating, setPowerGenerating] = useState(false);
+  const [powerError, setPowerError] = useState("");
   const activeSearchQuery = submittedQuery;
 
   const trackedJobIds = useMemo(() => {
@@ -223,6 +228,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       const activePostedTo = nextFilters.postedToFilter ?? postedToFilter;
       const activeScrapedFrom = nextFilters.scrapedFromFilter ?? scrapedFromFilter;
       const activeScrapedTo = nextFilters.scrapedToFilter ?? scrapedToFilter;
+      const activeMinMatchScore = nextFilters.minMatchScore ?? minMatchScore;
 
       if (normalizedQuery) params.set("q", normalizedQuery);
       if (activeLevel !== "all") params.set("seniority", activeLevel);
@@ -244,6 +250,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       if (activePostedTo) params.set("posted_to", activePostedTo);
       if (activeScrapedFrom) params.set("scraped_from", activeScrapedFrom);
       if (activeScrapedTo) params.set("scraped_to", activeScrapedTo);
+      if (String(activeMinMatchScore).trim() && powerMatch?.status === "ready") {
+        params.set("min_match_score", String(activeMinMatchScore).trim());
+      }
       params.set("sort", activeSort);
       const activeSector = nextFilters.sectorFilter ?? sectorFilter;
       if (activeSector) params.set("sector", activeSector);
@@ -278,7 +287,10 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         companySsicDescription: j.company_ssic_description || "",
         companySsicSource: j.company_ssic_source || "",
         archetype: j.archetype || "",
+        powerMatchScore: j.power_match_score,
+        powerMatchLabel: j.power_match_label || "",
       }));
+      if (user) setPowerMatch(data.power_match || null);
       setResults(mapped);
       if (pageNum === 1 && data.filter_meta && typeof data.filter_meta === "object") {
         setFilterMeta({
@@ -298,6 +310,12 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       const total = `${Math.max(totalCount, 0).toLocaleString()} unique active postings`;
       setTotalLabel(total);
     } catch (err) {
+      if (err.detail?.code === "power_match_not_ready") {
+        setPowerMatch(err.detail);
+        setMinMatchScore("");
+        await loadJobs(searchQuery, pageNum, { ...nextFilters, minMatchScore: "" });
+        return;
+      }
       setError(err.message || "Failed to load jobs. Please try again.");
       setResults([]);
       setTotalPages(1);
@@ -310,6 +328,28 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
   const handleSearch = () => {
     loadJobs(query, 1);
+  };
+
+  const generateBrowseScores = async () => {
+    if (!user || powerGenerating) return;
+    setPowerGenerating(true);
+    setPowerError("");
+    try {
+      const params = new URLSearchParams({
+        limit: "200",
+        direct_employers_only: String(directEmployersOnly),
+      });
+      await apiFetch(`/api/jobs/power-match?${params}`, {
+        method: "POST",
+        timeoutMs: 45000,
+      });
+      setMinMatchScore("");
+      await loadJobs(activeSearchQuery, 1, { minMatchScore: "" });
+    } catch (err) {
+      setPowerError(err.message || "Power Match scores could not be generated.");
+    } finally {
+      setPowerGenerating(false);
+    }
   };
 
   const employmentTypeOptions = useMemo(
@@ -629,6 +669,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     directEmployersOnly,
     postedFromFilter !== "" || postedToFilter !== "",
     scrapedFromFilter !== "" || scrapedToFilter !== "",
+    String(minMatchScore).trim() !== "",
   ].filter(Boolean).length;
 
   const clearFilters = () => {
@@ -644,6 +685,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     setPostedToFilter("");
     setScrapedFromFilter("");
     setScrapedToFilter("");
+    setMinMatchScore("");
     setExpandedJobId(null);
     loadJobs(activeSearchQuery, 1, {
       levelFilter: "all",
@@ -658,6 +700,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       postedToFilter: "",
       scrapedFromFilter: "",
       scrapedToFilter: "",
+      minMatchScore: "",
     });
   };
 
@@ -733,7 +776,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           onClick={() => {
             const next = !directEmployersOnly;
             setDirectEmployersOnly(next);
-            loadJobs(activeSearchQuery, 1, { directEmployersOnly: next });
+            setMinMatchScore("");
+            setPowerMatch(null);
+            loadJobs(activeSearchQuery, 1, { directEmployersOnly: next, minMatchScore: "" });
           }}
           aria-pressed={directEmployersOnly}
           className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition active:scale-[0.99] ${
@@ -751,6 +796,31 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           Hides recruitment and staffing firms so results focus on companies hiring directly.
         </p>
       </div>
+
+      {user && (
+        <div>
+          <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-1.5">Minimum Power Match</label>
+          <select
+            aria-label="Minimum Power Match score"
+            value={minMatchScore}
+            disabled={powerMatch?.status !== "ready"}
+            onChange={(event) => {
+              const next = event.target.value;
+              setMinMatchScore(next);
+              loadJobs(activeSearchQuery, 1, { minMatchScore: next });
+            }}
+            className="w-full rounded-lg border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <option value="">Any score</option>
+            <option value="35">35+ · Stretch</option>
+            <option value="55">55+ · Good</option>
+            <option value="75">75+ · Strong</option>
+          </select>
+          {powerMatch?.status !== "ready" && (
+            <p className="mt-1.5 text-[11px] leading-tight text-[#6A89A7]">Generate scores for this resume, corpus, and employer mode first.</p>
+          )}
+        </div>
+      )}
 
       <div>
         <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Seniority</label>
@@ -1031,6 +1101,26 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         <div className="mt-4 rounded-lg border border-[#88BDF2]/20 bg-[#BDDDFC]/10 px-3 py-2 text-xs text-[#384959]">
           <strong>Beta</strong> -- Free to use with 500 AI requests/day to help fund hosting and API costs. Data refreshes nightly.
         </div>
+        {user && (
+          <div className="mt-4 flex flex-col gap-3 rounded-xl border border-[#BDDDFC]/30 bg-[#f7fafc] p-3 sm:flex-row sm:items-center sm:justify-between" data-testid="browse-power-match-state">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]"><Sparkles size={15} /> Power Match scores</div>
+              <p className="mt-1 text-xs text-[#6A89A7]">
+                {powerMatch?.message || "Checking for scores saved for this exact resume and job view."}
+              </p>
+              {powerError && <p className="mt-1 text-xs text-red-600">{powerError}</p>}
+            </div>
+            <button
+              type="button"
+              onClick={generateBrowseScores}
+              disabled={powerGenerating}
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[#384959] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+            >
+              {powerGenerating ? <Loader2 size={14} className="animate-spin" /> : powerMatch?.status === "ready" ? <RefreshCw size={14} /> : <Sparkles size={14} />}
+              {powerGenerating ? "Generating..." : (powerMatch?.generate_action || "Generate Power Match scores")}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="lg:hidden">
@@ -1182,20 +1272,25 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             >
               <div className="flex justify-between items-start">
                 <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="font-semibold text-[#384959]">{job.title}</h3>
-                    {job.level && <span className="text-[10px] bg-[#f0f4f8] text-[#6A89A7] px-2 py-0.5 rounded-full">{job.level}</span>}
+                  <div className="flex min-w-0 flex-wrap items-center gap-2 mb-1" data-testid={`job-badge-row-${job.id}`}>
+                    <h3 className="min-w-0 break-words font-semibold text-[#384959]">{job.title}</h3>
+                    {job.level && <span className="shrink-0 text-[10px] bg-[#f0f4f8] text-[#6A89A7] px-2 py-0.5 rounded-full">{job.level}</span>}
                     {job.sector && job.sector !== "Other" && (
                       <span
                         title={job.companySsicSource === "acra" ? `${job.companySsicCode} ${job.companySsicDescription}` : "Inferred sector"}
-                        className={`text-[10px] border px-2 py-0.5 rounded-full ${job.companySsicSource === "acra" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-violet-50 text-violet-700 border-violet-200"}`}
+                        className={`shrink-0 text-[10px] border px-2 py-0.5 rounded-full ${job.companySsicSource === "acra" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-violet-50 text-violet-700 border-violet-200"}`}
                       >
                         {job.sector}
                       </span>
                     )}
-                    {job.archetype && job.archetype !== "Generalist" && <span className={`text-[10px] border px-2 py-0.5 rounded-full ${ARCHETYPE_COLORS[job.archetype] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{job.archetype}</span>}
-                    {(trackedJobIds.has(job.id) || trackedJobIds.has(`${job.title}|${job.company}`.toLowerCase())) && <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"><CheckCircle2 size={10} />Tracked</span>}
-                    <ChevronRight size={14} className={`ml-auto text-[#6A89A7] transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                    {job.archetype && job.archetype !== "Generalist" && <span className={`shrink-0 text-[10px] border px-2 py-0.5 rounded-full ${ARCHETYPE_COLORS[job.archetype] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{job.archetype}</span>}
+                    {Number.isFinite(job.powerMatchScore) && (
+                      <span className="shrink-0 text-[10px] border border-indigo-200 bg-indigo-50 px-2 py-0.5 rounded-full font-semibold text-indigo-700" data-testid={`power-match-score-${job.id}`}>
+                        {job.powerMatchScore} · {job.powerMatchLabel}
+                      </span>
+                    )}
+                    {(trackedJobIds.has(job.id) || trackedJobIds.has(`${job.title}|${job.company}`.toLowerCase())) && <span className="flex shrink-0 items-center gap-0.5 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700"><CheckCircle2 size={10} />Tracked</span>}
+                    <ChevronRight size={14} className={`ml-auto shrink-0 text-[#6A89A7] transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                   </div>
                   <div className="flex items-center gap-4 text-sm text-[#6A89A7] mb-2 flex-wrap">
                     <span className="flex items-center gap-1"><Building2 size={13} />{job.company}</span>
