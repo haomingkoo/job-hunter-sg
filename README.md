@@ -9,9 +9,9 @@ Searches MyCareersFuture and Careers@Gov in one interface. Scores your resume, r
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![AI](https://img.shields.io/badge/AI-SEA--LION-purple)
 ![CI](https://github.com/haomingkoo/job-hunter-sg/actions/workflows/ci.yml/badge.svg)
-![Quality](https://img.shields.io/badge/quality-ruff%20%2B%20gitleaks%20%2B%20build-green)
 
 See [CHANGELOG.md](CHANGELOG.md) for recent enhancements and fixes.
+Maintainers should start with the authoritative [maintainer handbook](docs/README.md).
 
 ## Screenshots
 
@@ -43,11 +43,11 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 ## Features
 
 ### Job Search
-- Aggregates MyCareersFuture (~12K jobs) and Careers@Gov (~2K jobs) — CareersGov data via [OpenGovSG](https://github.com/opengovsg/careersgovsg-jobs-data) (credit: Alwyn Tan @ OGP)
+- Aggregates MyCareersFuture and Careers@Gov; current source counts and freshness are shown in the dashboard — CareersGov data via [OpenGovSG](https://github.com/opengovsg/careersgovsg-jobs-data) (credit: Alwyn Tan @ OGP)
 - Production source integrations should use official APIs, public employer feeds, or documented ATS job-board endpoints; browser automation is kept out of the hosted crawler unless explicitly reviewed for legal, privacy, and reliability risk
-- Nightly crawl via Railway cron (22:00 UTC); extensible `SOURCE_MAP` supports 5 additional scrapers
+- Nightly crawl via Railway cron (22:00 UTC) for MyCareersFuture and Careers@Gov; Adzuna and Jooble are optional API integrations
 - Filter by seniority, job type, salary range, skills
-- ATS skill tags extracted at scrape time (413 known skills, ~50ms/job)
+- ATS skill tags extracted at scrape time using the maintained [`skill_extractor`](backend/skill_extractor.py) taxonomy
 - Source-aware dedupe uses official posting IDs or canonical source URLs, so repeated keyword hits collapse without merging distinct postings from the same employer
 - Precomputed sector, salary floor, official SSIC fields, and skill-search fields keep filters fast without loading full job tables
 
@@ -61,9 +61,9 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 ### AI Resume Coach (SEA-LION)
 - ATS scoring (0-100) across Impact, Presentation, Competencies
 - Per-bullet feedback with annotations (Solid Impact, Review, Verb Check)
-- AI rewrite with 3 options per bullet (32B model, <2s)
-- 7-stage tailoring pipeline for specific JDs (70B + 32B, 45-60s)
-- 5 validation gates on every AI rewrite: fact preservation, AI phrase detection (84 patterns), keyword verbatim, length sanity, hallucination detection
+- AI rewrite with 3 validated options per bullet
+- 7-stage tailoring pipeline for specific JDs; active model tiers and budgets are configured in [`backend/config.py`](backend/config.py)
+- Deterministic [`validation gates`](backend/validation_gates.py) check fact preservation, AI phrasing, keywords, length, and hallucination risk on every rewrite
 - Injectable vs non-injectable keyword classification — AI can only add skills the user plausibly has
 - Custom summary generation with user prompts
 
@@ -113,10 +113,10 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 |-------|-----------|
 | Backend | FastAPI + SQLAlchemy + SQLite/PostgreSQL |
 | Frontend | React 18 + Vite + Tailwind CSS + Framer Motion |
-| AI | SEA-LION (AI Singapore) — 32B interactive, 70B reasoning |
+| AI | SEA-LION (AI Singapore), with model tiers configured in [`backend/config.py`](backend/config.py) |
 | Embeddings | sentence-transformers/all-MiniLM-L6-v2 |
 | Skills | SSG-WSG Skills Framework + data.gov.sg MySkillsFuture Course Directory |
-| Rate Limiting | In-memory token bucket, 5 API keys cycled (~45 req/min) |
+| Rate Limiting | Provider and per-account limits configured through [`backend/config.py`](backend/config.py) and environment variables |
 | Auth | Verified email/password accounts (JWT + bcrypt), optional Cloudflare Access, per-account throttling |
 | Deploy | Railway (Docker), persistent PostgreSQL |
 | Quality | GitHub Actions, Ruff, Gitleaks, Dependabot, pre-commit hooks |
@@ -125,15 +125,19 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 
 ## Quick Start
 
+The authoritative fresh-clone instructions, prerequisites, and environment
+boundaries are in [docs/getting-started.md](docs/getting-started.md). The short
+development loop is:
+
 ```bash
 # Backend
-cd backend
-pip install -r requirements.txt
-python main.py  # starts on :8000
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r backend/requirements.txt
+.venv/bin/python backend/main.py  # starts on :8000
 
 # Frontend
 cd frontend
-npm install
+npm ci --legacy-peer-deps
 npm run dev     # starts on :5173, proxies /api to :8000
 ```
 
@@ -150,7 +154,7 @@ ruff check backend tests
 cd frontend && npm run build
 
 # Full test suites
-PYTHONPATH=backend python -m pytest backend/tests -q
+PYTHONPATH=backend python -m pytest backend/tests tests -q
 cd frontend && npm test
 ```
 
@@ -165,32 +169,15 @@ pre-commit install
 
 ## Architecture
 
+See [docs/architecture.md](docs/architecture.md) for the maintained end-to-end
+flow and trust boundaries. This compact map is only an orientation:
+
 ```
-scrapers (MCF, CareersGov, +5 pluggable)
-    ↓
-jd_preparser.py (50ms/job → skills, exp, education)
-    ↓
-scraped_jobs table (parsed_jd JSON, ATS terms, JD summary,
-sector, company_ssic_code, company_ssic_description,
-company_ssic_source, salary_floor, skills_flat)
-    ↓
-embedding_service.py (MiniLM-L6-v2, 384-dim vectors)
-
-User uploads resume
-    ↓
-resume_structurer.py → sections/entries/bullets with IDs
-    ↓
-resume_scorer.py → 0-100 score (Impact/Presentation/Competencies)
-    ↓
-tailoring_pipeline.py (7 stages: Analyze → Strategize → Cleanup → Rewrite → Polish → Summarize → Validate)
-    ↓
-validation_gates.py (5 gates, revert on failure)
-    ↓
-DOCX export via python-docx
-
-Power Match snapshots cache ranked results by resume hash + job corpus marker.
-
-shared/resume-classification.json ← single source of truth for both backend + frontend
+configured sources → sanitize/precompute → scraped_jobs → API ↔ React
+resume upload → isolated parser → canonical browser document
+saved resume versions → scoring / Power Match / Documents
+classic tailoring or accepted recruitment edits → new derived resume version
+tracked_jobs.role_metadata → latest application cover letters → Documents
 ```
 
 ---
@@ -224,7 +211,7 @@ shared/resume-classification.json ← single source of truth for both backend + 
 JWT_SECRET=your-secret
 AUTH_MODE=password
 ACCOUNT_AI_PER_DAY=500
-sealion_api=your-sealion-key          # supports sealion_api2 through sealion_api5
+SEALION_API_KEYS=your-key,another-key # canonical comma-separated key pool
 ALLOWED_EMAIL_DOMAINS=*               # or comma-separated domains
 ALLOWED_ORIGINS=http://localhost:5173  # CORS
 
@@ -240,7 +227,8 @@ ALLOWED_ORIGINS=http://localhost:5173  # CORS
 ACRA_LIVE_LOOKUP=0
 ```
 
-See `.env.example` for full list.
+See `.env.example` for the maintained operational reference and
+`backend/config.py` for lower-level tuning defaults.
 
 ---
 

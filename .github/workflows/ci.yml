@@ -30,6 +30,9 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Check maintainer documentation
+        run: python scripts/check_docs.py
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
