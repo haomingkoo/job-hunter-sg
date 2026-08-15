@@ -89,6 +89,10 @@ def _apply_lightweight_migrations() -> None:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN openings INTEGER DEFAULT 1")
     if "hidden" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN hidden INTEGER DEFAULT 0")
+    if "retirement_reason" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN retirement_reason VARCHAR(30) DEFAULT ''")
+    if "retired_at" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN retired_at VARCHAR(50) DEFAULT ''")
     if "sector" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN sector VARCHAR(100) DEFAULT ''")
     if "company_ssic_code" not in existing_columns:

@@ -21,6 +21,25 @@ const ARCHETYPE_COLORS = {
   Leader: "bg-emerald-50 text-emerald-700 border-emerald-200",
 };
 
+const ARCHIVE_REASON_COPY = {
+  source_retired: "No longer present in a completed source crawl.",
+  age_retired: "Retired after it was not refreshed for 30 days.",
+  closing_date: "Closing date has passed.",
+};
+
+const formatArchiveDate = (value) => {
+  if (!value) return "";
+  const normalized = /(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`;
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(parsed);
+};
+
 const EMPLOYMENT_TYPE_GROUPS = [
   { value: "full_time", label: "Full Time", aliases: ["Full Time", "Full-time"] },
   { value: "part_time", label: "Part Time", aliases: ["Part Time", "Part-time"] },
@@ -174,6 +193,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [minMatchScore, setMinMatchScore] = useState("");
   const [powerGenerating, setPowerGenerating] = useState(false);
   const [powerError, setPowerError] = useState("");
+  const [jobsView, setJobsView] = useState("active");
   const activeSearchQuery = submittedQuery;
 
   const trackedJobIds = useMemo(() => {
@@ -229,6 +249,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       const activeScrapedFrom = nextFilters.scrapedFromFilter ?? scrapedFromFilter;
       const activeScrapedTo = nextFilters.scrapedToFilter ?? scrapedToFilter;
       const activeMinMatchScore = nextFilters.minMatchScore ?? minMatchScore;
+      const activeView = nextFilters.jobsView ?? jobsView;
 
       if (normalizedQuery) params.set("q", normalizedQuery);
       if (activeLevel !== "all") params.set("seniority", activeLevel);
@@ -253,6 +274,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       if (String(activeMinMatchScore).trim() && powerMatch?.status === "ready") {
         params.set("min_match_score", String(activeMinMatchScore).trim());
       }
+      if (activeView === "expired") params.set("view", "expired");
       params.set("sort", activeSort);
       const activeSector = nextFilters.sectorFilter ?? sectorFilter;
       if (activeSector) params.set("sector", activeSector);
@@ -289,6 +311,10 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         archetype: j.archetype || "",
         powerMatchScore: j.power_match_score,
         powerMatchLabel: j.power_match_label || "",
+        archiveReason: j.archive_reason || "",
+        retiredAt: j.retired_at || "",
+        lastSeen: j.last_seen || j.scraped_at || "",
+        closingDate: j.closing_date || "",
       }));
       if (user) setPowerMatch(data.power_match || null);
       setResults(mapped);
@@ -307,7 +333,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       setExpandedJobId(null);
       const totalCountValue = Number(data.total);
       const totalCount = Number.isFinite(totalCountValue) && totalCountValue >= 0 ? totalCountValue : mapped.length;
-      const total = `${Math.max(totalCount, 0).toLocaleString()} unique active postings`;
+      const total = activeView === "expired"
+        ? `${Math.max(totalCount, 0).toLocaleString()} known expired postings`
+        : `${Math.max(totalCount, 0).toLocaleString()} unique active postings`;
       setTotalLabel(total);
     } catch (err) {
       if (err.detail?.code === "power_match_not_ready") {
@@ -1089,13 +1117,35 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   return (
     <div className="space-y-4">
       <div className="rounded-2xl bg-white border border-[#BDDDFC]/25 p-6 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#384959]">
-            <Search size={18} className="text-white" />
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#384959]">
+              <Search size={18} className="text-white" />
+            </div>
+            <div>
+              <h2 className="font-bold text-[#384959] text-lg">Singapore Jobs</h2>
+              <p className="text-sm text-[#6A89A7]">
+                {jobsView === "expired"
+                  ? "Inspect listings with a known expiry reason. Application actions are disabled."
+                  : "Browse jobs from MyCareersFuture and Careers@Gov."}
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="font-bold text-[#384959] text-lg">Singapore Jobs</h2>
-            <p className="text-sm text-[#6A89A7]">Browse jobs from MyCareersFuture and Careers@Gov.</p>
+          <div className="inline-flex w-full rounded-lg bg-[#f0f4f8] p-1 sm:w-auto" aria-label="Job listing view">
+            {[{ value: "active", label: "Active jobs" }, { value: "expired", label: "Expired archive" }].map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={jobsView === option.value}
+                onClick={() => {
+                  setJobsView(option.value);
+                  loadJobs(activeSearchQuery, 1, { jobsView: option.value });
+                }}
+                className={`flex-1 whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold transition sm:flex-none ${jobsView === option.value ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7] hover:text-[#384959]"}`}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         </div>
         <div className="mt-4 rounded-lg border border-[#88BDF2]/20 bg-[#BDDDFC]/10 px-3 py-2 text-xs text-[#384959]">
@@ -1233,7 +1283,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           {!loading && !error && results.length === 0 && (
             <div className="text-center py-12 text-[#6A89A7]">
               <Search size={32} className="mx-auto mb-2 opacity-40" />
-              <p>{query ? "No jobs matched your search. Try broader keywords." : "No jobs available yet. Please check back later."}</p>
+              <p>{jobsView === "expired"
+                ? "No known expired jobs match these filters."
+                : query ? "No jobs matched your search. Try broader keywords." : "No jobs available yet. Please check back later."}</p>
             </div>
           )}
 
@@ -1275,6 +1327,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   <div className="flex min-w-0 flex-wrap items-center gap-2 mb-1" data-testid={`job-badge-row-${job.id}`}>
                     <h3 className="min-w-0 break-words font-semibold text-[#384959]">{job.title}</h3>
                     {job.level && <span className="shrink-0 text-[10px] bg-[#f0f4f8] text-[#6A89A7] px-2 py-0.5 rounded-full">{job.level}</span>}
+                    {jobsView === "expired" && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-200">Expired</span>}
                     {job.sector && job.sector !== "Other" && (
                       <span
                         title={job.companySsicSource === "acra" ? `${job.companySsicCode} ${job.companySsicDescription}` : "Inferred sector"}
@@ -1307,6 +1360,16 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                         <span key={skill} className="bg-[#BDDDFC]/15 text-[#384959] px-2 py-0.5 rounded-full text-xs">{skill}</span>
                       ))}
                       {effectiveSkillDisplay.visibleSkills.length > previewSkills.length && <span className="text-xs text-[#6A89A7]">+{effectiveSkillDisplay.visibleSkills.length - previewSkills.length} more</span>}
+                    </div>
+                  )}
+                  {jobsView === "expired" && (
+                    <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
+                      <p className="font-medium">{ARCHIVE_REASON_COPY[job.archiveReason] || "This listing has expired."}</p>
+                      <p className="mt-1 text-amber-800">
+                        {job.lastSeen && `Last seen ${formatArchiveDate(job.lastSeen)}`}
+                        {job.retiredAt && ` · Retired ${formatArchiveDate(job.retiredAt)}`}
+                        {!job.retiredAt && job.closingDate && ` · Closed ${job.closingDate}`}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -1396,12 +1459,15 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   {scrapedDate && <span>Scraped {scrapedDate}</span>}
                   {job.type && <span>{job.type}</span>}
                 </div>
-                {user && isExpanded && (
+                {jobsView === "active" && user && isExpanded && (
                   <div className="mb-3" onClick={(e) => e.stopPropagation()}>
                     <InterviewPrep jobId={job.id} user={user} onNavigateToStories={() => setActiveTab("stories")} />
                   </div>
                 )}
 
+                {jobsView === "expired" ? (
+                  <p className="text-xs font-medium text-amber-700">Archived listing — application actions are unavailable.</p>
+                ) : (
                 <div className="flex flex-wrap gap-2">
                   <button onClick={(event) => { event.stopPropagation(); openApplicationPackModal(job); }} className="flex items-center gap-1.5 bg-[#384959] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#2d3a47] transition">
                     <Bot size={12} /> Application Pack
@@ -1428,6 +1494,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                     </a>
                   )}
                 </div>
+                )}
               </div>
             </motion.div>
           );
