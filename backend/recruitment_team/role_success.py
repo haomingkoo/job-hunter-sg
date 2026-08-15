@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -284,6 +285,7 @@ class RoleDefinitionGenerator(Protocol):
         self,
         target: JobSnapshot,
         comparable_jobs: tuple[JobSnapshot, ...],
+        before_model_call: Callable[[], None] | None = None,
     ) -> RoleProfileRun: ...
 
 
@@ -296,6 +298,7 @@ class RoleSuccessProfiler(Protocol):
         target: JobSnapshot,
         comparable_jobs: tuple[JobSnapshot, ...],
         checkpoint_store: Any | None = None,
+        before_model_call: Callable[[], None] | None = None,
     ) -> RoleProfileRun: ...
 
 
@@ -489,6 +492,7 @@ class LangChainRoleDefinitionGenerator:
         self,
         target: JobSnapshot,
         comparable_jobs: tuple[JobSnapshot, ...],
+        before_model_call: Callable[[], None] | None = None,
     ) -> RoleProfileRun:
         sources = [
             RoleSource(
@@ -617,6 +621,8 @@ class LangChainRoleDefinitionGenerator:
         total_output_tokens = 0
 
         for attempt in range(1, config.ROLE_DEFINITION_VALIDATION_ATTEMPTS + 1):
+            if before_model_call is not None:
+                before_model_call()
             request = list(messages)
             if failure:
                 request.append(
@@ -652,6 +658,8 @@ class LangChainRoleDefinitionGenerator:
                     attempt_span.set_attribute("status", "error")
                     attempt_span.set_attribute("error_type", type(error).__name__)
                     raise
+                if before_model_call is not None:
+                    before_model_call()
                 usage = getattr(response, "usage_metadata", None) or {}
                 model_name = str(
                     getattr(response, "response_metadata", {}).get("model_name") or type(self._model).__name__
@@ -760,6 +768,7 @@ class ScriptedRoleDefinitionGenerator:
         self,
         target: JobSnapshot,
         comparable_jobs: tuple[JobSnapshot, ...],
+        before_model_call: Callable[[], None] | None = None,
     ) -> RoleProfileRun:
         self.call_count += 1
         return next(self._runs)
@@ -776,6 +785,7 @@ class ScriptedRoleSuccessProfiler:
         target: JobSnapshot,
         comparable_jobs: tuple[JobSnapshot, ...],
         checkpoint_store: Any | None = None,
+        before_model_call: Callable[[], None] | None = None,
     ) -> RoleProfileRun:
         self.call_count += 1
         return next(self._runs)

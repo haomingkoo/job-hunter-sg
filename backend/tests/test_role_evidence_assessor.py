@@ -213,14 +213,16 @@ def test_assessor_retries_once_with_original_evidence_failed_output_and_exact_er
     rejected = {"judgments": [_judgment(), _judgment()]}
     model = _Model([rejected, {"judgments": [_judgment()]}])
     telemetry = RecordedTelemetry()
+    renewals = []
 
     with telemetry.operation("role_success.profile") as parent:
         run = LangChainRoleEvidenceAssessor(
             model,
             telemetry=telemetry,
-        ).assess(_request())
+        ).assess(_request(), before_model_call=lambda: renewals.append("renewed"))
 
     assert run.attempt_count == 2
+    assert renewals == ["renewed"] * 4
     assert run.validation_codes == ("criterion_coverage:duplicate_ids",)
     retry = model.requests[1]
     assert retry[1].content == model.requests[0][1].content

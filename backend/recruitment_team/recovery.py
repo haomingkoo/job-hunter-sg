@@ -32,6 +32,7 @@ _FAILURE_TYPES: dict[str, FailureType] = {
     "connection_failure": "transient",
     "rate_limited": "transient",
     "capacity_exceeded": "transient",
+    "process_interrupted": "transient",
     "structured_output_invalid": "validation",
     "semantic_fixable": "validation",
     "information_absent": "validation",
@@ -55,6 +56,7 @@ _RETRY_ACTIONS = {
     "connection_failure": "retry_incomplete_stage",
     "rate_limited": "retry_after",
     "capacity_exceeded": "retry_after",
+    "process_interrupted": "retry_incomplete_stage",
     "structured_output_invalid": "correct_rejected_output",
     "semantic_fixable": "correct_rejected_output",
 }

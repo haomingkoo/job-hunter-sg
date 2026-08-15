@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, replace
 from typing import Protocol
 
@@ -95,6 +96,7 @@ class EvidenceAssessedRoleSuccessProfiler:
         target: JobSnapshot,
         comparable_jobs: tuple[JobSnapshot, ...],
         checkpoint_store: RoleProfileCheckpointStore | None = None,
+        before_model_call: Callable[[], None] | None = None,
     ) -> RoleProfileRun:
         completed = checkpoint_store.completed() if checkpoint_store else None
         if completed is not None:
@@ -112,7 +114,11 @@ class EvidenceAssessedRoleSuccessProfiler:
         generated = (
             role_profile_run_from_dict(saved_definition)
             if saved_definition is not None
-            else self._definition_generator.define(target, comparable_jobs)
+            else self._definition_generator.define(
+                target,
+                comparable_jobs,
+                before_model_call,
+            )
         )
         if saved_definition is None and checkpoint_store is not None:
             checkpoint_store.save_definition(asdict(generated))
@@ -136,6 +142,7 @@ class EvidenceAssessedRoleSuccessProfiler:
             ),
             checkpoint=checkpoint_store.assessment() if checkpoint_store else None,
             save_checkpoint=checkpoint_store.save_assessment if checkpoint_store else None,
+            before_model_call=before_model_call,
         )
         judgments = {judgment.criterion_id: judgment for judgment in assessed.judgments}
         candidate_evidence = tuple(

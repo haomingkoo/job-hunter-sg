@@ -91,6 +91,7 @@ class RoleEvidenceAssessor(Protocol):
         request: RoleEvidenceAssessmentRequest,
         checkpoint: RoleEvidenceCheckpoint | None = None,
         save_checkpoint: Callable[[RoleEvidenceCheckpoint], None] | None = None,
+        before_model_call: Callable[[], None] | None = None,
     ) -> RoleEvidenceAssessmentRun: ...
 
 
@@ -440,6 +441,7 @@ class LangChainRoleEvidenceAssessor:
         request: RoleEvidenceAssessmentRequest,
         checkpoint: RoleEvidenceCheckpoint | None = None,
         save_checkpoint: Callable[[RoleEvidenceCheckpoint], None] | None = None,
+        before_model_call: Callable[[], None] | None = None,
     ) -> RoleEvidenceAssessmentRun:
         original_evidence = {
             "prompt_version": ROLE_EVIDENCE_ASSESSOR_PROMPT_VERSION,
@@ -551,6 +553,8 @@ class LangChainRoleEvidenceAssessor:
                         )
                     )
                 )
+            if before_model_call is not None:
+                before_model_call()
             with self._telemetry.operation(
                 "role_evidence_assessment.model_attempt",
                 {
@@ -571,6 +575,8 @@ class LangChainRoleEvidenceAssessor:
                     attempt_span.set_attribute("status", "error")
                     attempt_span.set_attribute("error_type", type(error).__name__)
                     raise
+                if before_model_call is not None:
+                    before_model_call()
                 usage = getattr(response, "usage_metadata", None) or {}
                 model_name = str(
                     getattr(response, "response_metadata", {}).get("model_name") or type(self._model).__name__
@@ -675,6 +681,7 @@ class ScriptedRoleEvidenceAssessor:
         request: RoleEvidenceAssessmentRequest,
         checkpoint: RoleEvidenceCheckpoint | None = None,
         save_checkpoint: Callable[[RoleEvidenceCheckpoint], None] | None = None,
+        before_model_call: Callable[[], None] | None = None,
     ) -> RoleEvidenceAssessmentRun:
         self.call_count += 1
         return next(self._runs)

@@ -11,7 +11,7 @@ import uuid
 import weakref
 from collections.abc import Callable
 from dataclasses import asdict, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import update
 from sqlalchemy.orm import Session
@@ -92,6 +92,7 @@ from .recovery import (
     normalize_failure_code,
     record_attempt,
 )
+from .run_lease import claim_failed_run, reconcile_expired_runs, renew_run_lease
 from .candidate_profile import (
     CandidateEvidenceProfile,
     CandidateProfileProgress,
@@ -422,7 +423,7 @@ class RecruitmentTeam:
                 merged["error_type"] = cause_type
             artifact.error = merged
 
-    def _prepare_workflow_resume(self, run: RecruitmentRun) -> None:
+    def _prepare_workflow_resume(self, run: RecruitmentRun, *, record: bool = True) -> None:
         stage = run.command_type
         remaining = attempts_remaining(
             run.attempt_ledger,
@@ -446,15 +447,23 @@ class RecruitmentTeam:
                 "the failed command cannot be resumed safely",
                 decision=decision,
             )
-        self._record_run_attempt(
-            run,
-            stage=stage,
-            layer="workflow_resume",
-            limit=config.RECRUITMENT_WORKFLOW_RESUME_LIMIT,
-            status="resumed",
-            decision=decision,
-        )
-        self._db.commit()
+        if record:
+            self._record_run_attempt(
+                run,
+                stage=stage,
+                layer="workflow_resume",
+                limit=config.RECRUITMENT_WORKFLOW_RESUME_LIMIT,
+                status="resumed",
+                decision=decision,
+            )
+
+    def _renew_run_lease(self, run: RecruitmentRun, *, commit: bool = False) -> None:
+        owner = run.lease_owner or ""
+        if not owner or not renew_run_lease(self._db, run.id, owner, _utcnow()):
+            self._db.rollback()
+            raise InvalidCommand("the run lease expired before this worker finished")
+        if commit:
+            self._db.commit()
 
     def execute(
         self,
@@ -514,7 +523,10 @@ class RecruitmentTeam:
                 if previous is not None:
                     if previous.command_type in {"start_thread", "send_message"}:
                         self._assert_latest_failed_conversation_turn(previous)
-                    self._prepare_workflow_resume(previous)
+                    # Validate before the atomic claim so an unapproved retry
+                    # never takes ownership. Record only after claim refreshes
+                    # the row; production sessions disable autoflush.
+                    self._prepare_workflow_resume(previous, record=False)
                 return self._execute_locked(owner_id, command, key, previous)
 
             if thread_id is None:
@@ -607,14 +619,21 @@ class RecruitmentTeam:
                 command_span.set_attribute("trace_key", correlation_key)
                 command_span.set_attribute("command_type", command_type)
                 run = previous
+                lease_owner = uuid.uuid4().hex
+                if not claim_failed_run(self._db, run.id, lease_owner, _utcnow()):
+                    self._db.rollback()
+                    self._db.refresh(run)
+                    if run.status == "completed":
+                        return self._receipt(run)
+                    raise InvalidCommand(f"command is {run.status}")
+                self._db.refresh(run)
+                self._prepare_workflow_resume(run)
                 run.command_type = command_type
-                run.status = "running"
                 run.trace_key = correlation_key
-                run.error_type = None
-                run.result = None
-                run.completed_at = None
+                run.lease_owner = lease_owner
             else:
                 run_id = str(uuid.uuid4())
+                lease_owner = uuid.uuid4().hex
                 correlation_key = trace_key(run_id)
                 command_span.set_attribute("trace_key", correlation_key)
                 command_span.set_attribute("command_type", command_type)
@@ -626,6 +645,10 @@ class RecruitmentTeam:
                     command_type=command_type,
                     status="running",
                     trace_key=correlation_key,
+                    lease_owner=lease_owner,
+                    lease_expires_at=(
+                        _utcnow() + timedelta(seconds=config.RECRUITMENT_RUN_LEASE_SECONDS)
+                    ),
                 )
                 self._db.add(run)
             if previous is None and not isinstance(command, SearchJobs):
@@ -729,9 +752,12 @@ class RecruitmentTeam:
                     completion_detail = {"model": reply.model_name}
                     completion_member = "coordinator"
             except BaseException as error:
+                self._renew_run_lease(run)
                 run.status = "failed"
                 run.error_type = type(error).__name__
                 run.completed_at = _utcnow()
+                run.lease_owner = None
+                run.lease_expires_at = None
                 initial_decision = (
                     error.decision
                     if isinstance(error, ServiceUnavailable)
@@ -847,6 +873,7 @@ class RecruitmentTeam:
                 }
                 raise
 
+            self._renew_run_lease(run)
             if command_type in {"start_thread", "send_message"}:
                 self._record_run_attempt(
                     run,
@@ -884,6 +911,8 @@ class RecruitmentTeam:
             )
             run.status = "completed"
             run.completed_at = _utcnow()
+            run.lease_owner = None
+            run.lease_expires_at = None
             run.result = {
                 "run_id": run.id,
                 "thread_id": run.thread_id,
@@ -1132,6 +1161,8 @@ class RecruitmentTeam:
         def publish(item: dict) -> None:
             described = describe_progress(item)
             if described is None:
+                if item.get("kind") == "model_attempt":
+                    self._renew_run_lease(run, commit=True)
                 return
             summary, detail = described
             call_id = str(item.get("id") or "")
@@ -1155,7 +1186,7 @@ class RecruitmentTeam:
                 duration_ms=duration_ms,
                 attributes=attributes,
             )
-            self._db.commit()
+            self._renew_run_lease(run, commit=True)
             self._activity_publisher.publish(self._activity(event))
 
         return publish
@@ -1403,6 +1434,7 @@ class RecruitmentTeam:
                 detail=detail,
                 team_member="candidate_profiler",
             )
+            self._renew_run_lease(command_run)
             self._db.commit()
             self._activity_publisher.publish(self._activity(event))
 
@@ -1602,6 +1634,7 @@ class RecruitmentTeam:
                     job,
                     comparable_jobs,
                     checkpoint_store,
+                    before_model_call=lambda: self._renew_run_lease(run_record, commit=True),
                 )
                 profile_span.set_attribute("model", run.model_name)
                 profile_span.set_attribute("attempt_count", run.attempt_count)
@@ -1939,7 +1972,15 @@ class RecruitmentTeam:
         self._db.commit()
 
         return self._consume_target_assessment_updates(
-            owner_id, thread, resume, run, artifact, self._target_assessment_runner.run(request)
+            owner_id,
+            thread,
+            resume,
+            run,
+            artifact,
+            self._target_assessment_runner.run(
+                request,
+                renew_lease=lambda: self._renew_run_lease(run, commit=True),
+            ),
         )
 
     def _answer_assessment_question(
@@ -1999,6 +2040,7 @@ class RecruitmentTeam:
             artifact.pending_synthesis or "",
             list(artifact.pending_proposed_edits or []),
             ask_candidate_call_id=facts.get("target_assessment_pause_call_id") or None,
+            renew_lease=lambda: self._renew_run_lease(run, commit=True),
         )
         return self._consume_target_assessment_updates(owner_id, thread, resume, run, artifact, updates)
 
@@ -2047,6 +2089,7 @@ class RecruitmentTeam:
                         duration_ms=duration_ms,
                         attributes=attributes,
                     )
+                    self._renew_run_lease(run)
                     self._db.commit()
                     self._activity_publisher.publish(self._activity(progress_event))
                 elif isinstance(update, TargetAssessmentResult):
@@ -2413,6 +2456,7 @@ class RecruitmentTeam:
         after_sequence: int,
     ) -> list[ActivityEvent]:
         self._owned_thread(owner_id, thread_id)
+        reconcile_expired_runs(self._db, thread_id=thread_id)
         records = (
             self._db.query(RecruitmentActivityEvent)
             .filter(
@@ -2440,6 +2484,8 @@ class RecruitmentTeam:
         )
         if run is None:
             raise ThreadNotFound("recruitment run not found")
+        reconcile_expired_runs(self._db, thread_id=run.thread_id)
+        self._db.refresh(run)
         records = (
             self._db.query(RecruitmentActivityEvent)
             .filter(

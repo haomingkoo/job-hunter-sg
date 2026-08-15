@@ -375,6 +375,8 @@ class RecruitmentRun(Base):
     attempt_ledger: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

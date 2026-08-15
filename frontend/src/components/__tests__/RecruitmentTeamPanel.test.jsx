@@ -1205,6 +1205,39 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).not.toContain("Retry this turn");
   });
 
+  it("replaces a persisted working turn with stopped and retry after interruption", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-interrupted");
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-interrupted") {
+        return response({
+          thread_id: "thread-interrupted",
+          status: "active",
+          workflow_state: "exploring",
+          case_facts: {},
+          messages: [{ run_id: "run-interrupted", role: "user", content: "Keep going." }],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-interrupted/events") {
+        return response([
+          { sequence: 1, run_id: "run-interrupted", event_type: "run", status: "running", team_member: "coordinator", summary: "Working." },
+          { sequence: 2, run_id: "run-interrupted", event_type: "run", status: "failed", team_member: "coordinator", summary: "Stopped.", detail: { command_type: "send_message", error_type: "process_interrupted", retryable: true, recovery_action: "retry_incomplete_stage" } },
+        ]);
+      }
+      if (path.endsWith("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => {
+      root.render(<RecruitmentTeamPanel user={{ id: 42 }} />);
+    });
+
+    expect(container.textContent).toContain("This turn stopped");
+    expect(container.textContent).toContain("retry incomplete stage");
+    expect(container.textContent).toContain("Retry this turn");
+    expect(container.textContent).not.toContain("Working from");
+  });
+
   it("manages conversation lifecycle and shows retention before permanent deletion", async () => {
     localStorage.setItem("jobhunter:recruitment-thread:42", "thread-1");
     const lifecycle = { title: "Operations search", status: "active", deleted: false };

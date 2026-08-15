@@ -9,7 +9,7 @@ import sqlite3
 import time
 import uuid
 from dataclasses import asdict
-from typing import Iterator
+from typing import Callable, Iterator
 
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -171,7 +171,12 @@ class OpenAgentTargetAssessmentRunner:
             middleware=[ToolCallGuardMiddleware()],
         )
 
-    def run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]:
+    def run(
+        self,
+        request: TargetAssessmentRequest,
+        *,
+        renew_lease: Callable[[], None] | None = None,
+    ) -> Iterator[TargetAssessmentUpdate]:
         yield TargetAssessmentProgress(
             team_member="coordinator", status="running", summary="Open-agent run started.", detail={}
         )
@@ -205,7 +210,15 @@ class OpenAgentTargetAssessmentRunner:
             "recursion_limit": config.AGENT_MAX_TOOL_ITERATIONS,
             "configurable": {"thread_id": str(uuid.uuid4())},
         }
-        yield from self._drive(agent, payload, run_config, request, specialist_runs=[], synthesis="")
+        yield from self._drive(
+            agent,
+            payload,
+            run_config,
+            request,
+            specialist_runs=[],
+            synthesis="",
+            renew_lease=renew_lease,
+        )
 
     def resume(
         self,
@@ -216,6 +229,7 @@ class OpenAgentTargetAssessmentRunner:
         synthesis: str,
         proposed_edits: list[dict],
         ask_candidate_call_id: str | None = None,
+        renew_lease: Callable[[], None] | None = None,
     ) -> Iterator[TargetAssessmentUpdate]:
         """Resume durable graph state and skip the replayed pause call."""
         agent = self._build_agent(self._model_factory())
@@ -266,6 +280,7 @@ class OpenAgentTargetAssessmentRunner:
             synthesis=synthesis,
             initial_edits=list(proposed_edits),
             skip_tool_call_ids={ask_candidate_call_id} if ask_candidate_call_id else None,
+            renew_lease=renew_lease,
         )
 
     def _drive(
@@ -279,6 +294,7 @@ class OpenAgentTargetAssessmentRunner:
         synthesis: str,
         initial_edits: list[dict] | None = None,
         skip_tool_call_ids: set[str] | None = None,
+        renew_lease: Callable[[], None] | None = None,
     ) -> Iterator[TargetAssessmentUpdate]:
         pending_question: str | None = None
         pending_question_call_id: str | None = None
@@ -305,6 +321,8 @@ class OpenAgentTargetAssessmentRunner:
                                 "status": "success",
                             }
                         )
+                        if renew_lease is not None:
+                            renew_lease()
                         continue
                     if event["kind"] == "tool_call" and event["tool_name"] == ask_candidate.name:
                         pending_question = format_questions(event.get("args") or {})
@@ -377,10 +395,14 @@ class OpenAgentTargetAssessmentRunner:
                     summary="Question limit reached; finishing with the evidence on hand.",
                     detail={"question_limit": config.OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS},
                 )
+                if renew_lease is not None:
+                    renew_lease()
                 agent.invoke(
                     Command(resume={"decisions": [{"type": "respond", "message": _QUESTION_LIMIT_REPLY}]}),
                     run_config,
                 )
+                if renew_lease is not None:
+                    renew_lease()
             elif agent.get_state(run_config).interrupts:
                 yield TargetAssessmentProgress(
                     team_member="coordinator",
@@ -410,7 +432,13 @@ class OpenAgentTargetAssessmentRunner:
                 return
 
         judge_model = self._judge_model_factory()
-        judge = self._run_judge(judge_model, request, specialist_runs, synthesis)
+        judge = self._run_judge(
+            judge_model,
+            request,
+            specialist_runs,
+            synthesis,
+            renew_lease=renew_lease,
+        )
         judge_attempts = [judge]
         correction = None
         if judge["disposition"] == "revise" and config.RECRUITMENT_MAX_SYNTHESIS_CORRECTIONS == 1:
@@ -426,6 +454,7 @@ class OpenAgentTargetAssessmentRunner:
                 specialist_runs,
                 synthesis,
                 judge,
+                renew_lease=renew_lease,
             )
             if corrected_synthesis is not None:
                 synthesis = corrected_synthesis
@@ -434,6 +463,7 @@ class OpenAgentTargetAssessmentRunner:
                     request,
                     specialist_runs,
                     synthesis,
+                    renew_lease=renew_lease,
                 )
                 judge_attempts.append(judge)
                 correction["rejudge_disposition"] = judge["disposition"]
@@ -475,7 +505,15 @@ class OpenAgentTargetAssessmentRunner:
         except json.JSONDecodeError:
             return None
 
-    def _run_judge(self, model, request: TargetAssessmentRequest, specialist_runs: list[dict], synthesis: str) -> dict:
+    def _run_judge(
+        self,
+        model,
+        request: TargetAssessmentRequest,
+        specialist_runs: list[dict],
+        synthesis: str,
+        *,
+        renew_lease: Callable[[], None] | None = None,
+    ) -> dict:
         from ..prompts.target_assessment import TARGET_JUDGE_SYSTEM_PROMPT
 
         completed_personas = {str(run.get("persona_id") or "") for run in specialist_runs}
@@ -495,6 +533,8 @@ class OpenAgentTargetAssessmentRunner:
             ],
             "synthesis": synthesis,
         }
+        if renew_lease is not None:
+            renew_lease()
         payload, failure, input_tokens, output_tokens, model_name = invoke_structured(
             model,
             JUDGE_TOOL,
@@ -511,6 +551,8 @@ class OpenAgentTargetAssessmentRunner:
                 "stage": "target_assessment_judge",
             },
         )
+        if renew_lease is not None:
+            renew_lease()
         if payload is None:
             return {
                 "disposition": "block",
@@ -538,6 +580,8 @@ class OpenAgentTargetAssessmentRunner:
         specialist_runs: list[dict],
         synthesis: str,
         judge: dict,
+        *,
+        renew_lease: Callable[[], None] | None = None,
     ) -> tuple[str | None, dict]:
         from ..prompts.target_assessment import TARGET_SYNTHESIS_CORRECTION_SYSTEM_PROMPT
 
@@ -551,6 +595,8 @@ class OpenAgentTargetAssessmentRunner:
         }
         last_failure = ""
         for attempt in range(1, config.RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS + 1):
+            if renew_lease is not None:
+                renew_lease()
             payload, failure, input_tokens, output_tokens, model_name = invoke_structured(
                 model,
                 SYNTHESIS_CORRECTION_TOOL,
@@ -567,6 +613,8 @@ class OpenAgentTargetAssessmentRunner:
                     "stage": "target_assessment_correction",
                 },
             )
+            if renew_lease is not None:
+                renew_lease()
             if payload is not None:
                 return str(payload["synthesis"]), {
                     "attempted": True,
