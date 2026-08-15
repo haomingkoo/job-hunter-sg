@@ -57,15 +57,37 @@ The gates prove different things and must not be collapsed into one green tick:
 2. Required pull-request checks validate the reviewed commit.
 3. Railway **Wait for CI** decides whether that commit may deploy.
 4. `Production acceptance` polls production for the GitHub SHA, database
-   connectivity, the public jobs feed, the SPA shell, `robots.txt`,
-   `sitemap.xml`, and `llms.txt`. Its JSON output is the public receipt.
+   connectivity, the public jobs feed, the SPA shell and its hashed JavaScript
+   asset, `robots.txt`, `sitemap.xml`, and `llms.txt`. Its JSON output is the
+   public receipt. Rendering the `#jobs` SPA route remains part of browser
+   acceptance; an HTTP client cannot observe a URL fragment.
 5. Signed-in browser acceptance verifies authentication and user journeys; the
    public smoke does not claim this.
 6. Issue #99 owns a future isolated staging and model-backed promotion gate.
 
 The production workflow runs automatically after successful `CI` on `main`.
 It can also be rerun from GitHub Actions with `workflow_dispatch`, supplying a
-full `expected_sha` and the production base URL.
+full `expected_sha` and the production base URL. Manual runs use the verifier
+from the immutable workflow-dispatch commit (normally the current default-branch
+commit), so they can validate rollback commits that predate the verifier.
+
+### Scheduled-service receipt
+
+Record the live values during external settings acceptance in the release's
+GitHub issue using this template, and include links to the production workflow
+run and pull request in that comment:
+
+```text
+Release SHA: <full SHA>
+Recorded at: <UTC timestamp>
+| Service | Repo schedule | Live Railway schedule | Latest execution/deployment ID | Status | Finished at | Failure detail | Kill switch checked |
+| Full crawl | 0 22 * * * | <live value> | <ID> | <SUCCESS/FAILED/ACTIVE> | <UTC or n/a> | <none or summary> | <clear Cron Schedule verified> |
+| Job alerts | 0 23 * * * | <live value> | <ID> | <SUCCESS/FAILED/ACTIVE> | <UTC or n/a> | <none or summary> | <clear Cron Schedule verified> |
+```
+
+The repository supplies only the expected schedules above. The live schedule,
+execution IDs, timestamps, and failure state must come from Railway during
+acceptance; do not copy placeholders into a completed receipt.
 
 For the controlled negative check, confirm a pull request with a deliberately
 failing required check cannot merge. Then verify Railway records no production

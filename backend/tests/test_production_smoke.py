@@ -13,7 +13,11 @@ COMMIT = "a" * 40
 class _ProductionHandler(BaseHTTPRequestHandler):
     commit = COMMIT
     responses = {
-        "/": ("text/html", '<div id="root"></div>'),
+        "/": (
+            "text/html",
+            '<div id="root"></div><script type="module" src="/assets/index-abc123.js"></script>',
+        ),
+        "/assets/index-abc123.js": ("text/javascript", "const app = true;"),
         "/api/jobs?per_page=1": ("application/json", '{"jobs": [], "total": 0}'),
         "/robots.txt": ("text/plain", "User-agent: *\nAllow: /"),
         "/sitemap.xml": ("application/xml", "<urlset></urlset>"),
@@ -56,8 +60,19 @@ def test_production_smoke_records_exact_commit_and_public_surfaces(production_ur
     assert receipt["commit"] == COMMIT
     assert receipt["database"] == "connected"
     assert receipt["public_jobs"] == 0
+    assert receipt["asset_path"] == "/assets/index-abc123.js"
 
 
 def test_production_smoke_rejects_a_different_deployed_commit(production_url):
     with pytest.raises(RuntimeError, match="deployed commit"):
         verify_until_deployed(production_url, "b" * 40, wait_seconds=0, poll_seconds=1)
+
+
+def test_production_smoke_requires_a_hashed_module_asset(production_url):
+    original = _ProductionHandler.responses["/"]
+    _ProductionHandler.responses["/"] = ("text/html", '<div id="root"></div>')
+    try:
+        with pytest.raises(RuntimeError, match="hashed module asset"):
+            verify_once(production_url, COMMIT)
+    finally:
+        _ProductionHandler.responses["/"] = original
