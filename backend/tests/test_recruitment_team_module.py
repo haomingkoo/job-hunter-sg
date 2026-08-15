@@ -552,7 +552,348 @@ def test_retrying_the_same_idempotency_key_after_a_failure_succeeds():
         assert runs[0].error_type is None
 
 
-def test_retry_budget_survives_restart_and_duplicate_delivery_is_side_effect_free():
+def test_retry_conversation_run_reuses_the_failed_turn_and_its_semantic_budget():
+    from models import ProposedResumeEdit, RecruitmentMessage, RecruitmentRun
+    from recruitment_team import RecruitmentTeam
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.conversation_model import ModelReply
+    from recruitment_team.errors import ConversationUnavailable
+    from recruitment_team.interface import StartThread
+    from recruitment_team.recovery import classify_failure
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    class InvalidThenValidModel:
+        def __init__(self):
+            self.calls = 0
+
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise ConversationUnavailable(
+                    "coordinator loop ended without a reply",
+                    decision=classify_failure("structured_output_invalid"),
+                )
+            block = context.resume_document["blocks"][0]
+            context.proposed_edits.append({
+                "block_id": block["id"],
+                "section_key": block.get("section_key", ""),
+                "entry_id": block.get("entry_id", ""),
+                "original": block["text"],
+                "rewrite": f"{block['text']} Shipped reliably.",
+                "document_revision": context.resume_document["revision"],
+            })
+            return ModelReply(content="One edit is ready for review.", model_name="retry-test")
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    model = InvalidThenValidModel()
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db, model, _discovery(), _role_profiler(), RecordedTelemetry(), IgnoreActivityPublisher()
+        )
+        with pytest.raises(ConversationUnavailable):
+            team.execute(
+                owner_id,
+                StartThread(resume_version_id=resume_id, message="Sharpen this resume."),
+                "semantic-retry",
+            )
+        run = db.query(RecruitmentRun).filter_by(idempotency_key="semantic-retry").one()
+        failed_event = team.events(owner_id, run.thread_id, 0)[-1]
+        semantic = run.attempt_ledger["stages"]["start_thread"]["semantic"]
+        assert semantic["used"] == 1
+        assert semantic["limit"] == 2
+        assert failed_event.detail["command_type"] == "start_thread"
+        assert failed_event.detail["attempt_count"] == semantic["used"] == 1
+        assert failed_event.detail["attempt_limit"] == semantic["limit"] == 2
+        assert failed_event.detail["retryable"] is True
+        assert failed_event.detail["recovery_action"] == "correct_rejected_output"
+        thread_id = run.thread_id
+        run_id = run.id
+
+    # A new session models a reload or process restart. The server rebuilds the
+    # command from the durable message; the browser supplies no replacement.
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db, model, _discovery(), _role_profiler(), RecordedTelemetry(), IgnoreActivityPublisher()
+        )
+        completed = team.retry_conversation_run(owner_id, thread_id, run_id)
+        duplicate = team.retry_conversation_run(owner_id, thread_id, run_id)
+
+        assert duplicate == completed
+        assert db.query(RecruitmentRun).filter_by(id=run_id).count() == 1
+        assert db.query(RecruitmentMessage).filter_by(run_id=run_id, role="user").count() == 1
+        assert db.query(RecruitmentMessage).filter_by(run_id=run_id, role="assistant").count() == 1
+        assert db.query(ProposedResumeEdit).filter_by(run_id=run_id).count() == 1
+        assert model.calls == 2
+
+
+def test_retry_conversation_run_http_is_owner_scoped():
+    from fastapi.testclient import TestClient
+
+    import main
+    from auth import get_current_user
+    from database import get_db
+    from models import RecruitmentRun
+    from recruitment_team import RecruitmentTeam
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.conversation_model import ModelReply
+    from recruitment_team.errors import ConversationUnavailable
+    from recruitment_team.http_routes import (
+        get_conversation_model,
+        get_recruitment_telemetry,
+        get_role_success_profiler,
+    )
+    from recruitment_team.interface import StartThread
+    from recruitment_team.recovery import classify_failure
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    class InvalidThenValidModel:
+        def __init__(self):
+            self.calls = 0
+
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise ConversationUnavailable(
+                    "coordinator loop ended without a reply",
+                    decision=classify_failure("structured_output_invalid"),
+                )
+            return ModelReply(content="Recovered through HTTP.", model_name="retry-http-test")
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        other = User(email="other@example.com", password_hash="test-only", name="Other")
+        db.add(other)
+        db.commit()
+        other_id = other.id
+    model = InvalidThenValidModel()
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db, model, _discovery(), _role_profiler(), RecordedTelemetry(), IgnoreActivityPublisher()
+        )
+        with pytest.raises(ConversationUnavailable):
+            team.execute(
+                owner_id,
+                StartThread(resume_version_id=resume_id, message="Retry me through HTTP."),
+                "retry-http",
+            )
+        run = db.query(RecruitmentRun).filter_by(idempotency_key="retry-http").one()
+        thread_id, run_id = run.thread_id, run.id
+
+    def override_db():
+        with sessions() as db:
+            yield db
+
+    active_owner = {"id": other_id}
+    main.app.dependency_overrides[get_db] = override_db
+    main.app.dependency_overrides[get_current_user] = lambda: type(
+        "AuthenticatedUser", (), {"id": active_owner["id"]}
+    )()
+    main.app.dependency_overrides[get_conversation_model] = lambda: model
+    main.app.dependency_overrides[get_recruitment_telemetry] = RecordedTelemetry
+    main.app.dependency_overrides[get_role_success_profiler] = _role_profiler
+    try:
+        client = TestClient(main.app)
+        hidden = client.post(
+            f"/api/recruitment-team/threads/{thread_id}/runs/{run_id}/retry"
+        )
+        assert hidden.status_code == 404
+        assert "Retry me" not in hidden.text
+
+        active_owner["id"] = owner_id
+        recovered = client.post(
+            f"/api/recruitment-team/threads/{thread_id}/runs/{run_id}/retry"
+        )
+        duplicate = client.post(
+            f"/api/recruitment-team/threads/{thread_id}/runs/{run_id}/retry"
+        )
+        assert recovered.status_code == 200
+        assert duplicate.json() == recovered.json()
+        assert model.calls == 2
+    finally:
+        main.app.dependency_overrides.pop(get_db, None)
+        main.app.dependency_overrides.pop(get_current_user, None)
+        main.app.dependency_overrides.pop(get_conversation_model, None)
+        main.app.dependency_overrides.pop(get_recruitment_telemetry, None)
+        main.app.dependency_overrides.pop(get_role_success_profiler, None)
+
+
+def test_retry_conversation_run_rejects_terminal_running_and_unsupported_runs():
+    from models import RecruitmentRun
+    from recruitment_team import RecruitmentTeam
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.errors import ConversationUnavailable, InvalidCommand, ServiceUnavailable
+    from recruitment_team.interface import StartThread
+    from recruitment_team.recovery import classify_failure
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    class TruncatedModel:
+        def __init__(self):
+            self.calls = 0
+
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
+            self.calls += 1
+            raise ConversationUnavailable(
+                "coordinator output was truncated",
+                decision=classify_failure("output_truncated"),
+            )
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    model = TruncatedModel()
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db, model, _discovery(), _role_profiler(), RecordedTelemetry(), IgnoreActivityPublisher()
+        )
+        with pytest.raises(ConversationUnavailable):
+            team.execute(
+                owner_id,
+                StartThread(resume_version_id=resume_id, message="Do not retry blindly."),
+                "terminal-retry",
+            )
+        run = db.query(RecruitmentRun).filter_by(idempotency_key="terminal-retry").one()
+
+        with pytest.raises(ServiceUnavailable) as terminal:
+            team.retry_conversation_run(owner_id, run.thread_id, run.id)
+        assert terminal.value.failure_code == "output_truncated"
+
+        run.status = "running"
+        db.commit()
+        with pytest.raises(InvalidCommand, match="command is running"):
+            team.retry_conversation_run(owner_id, run.thread_id, run.id)
+
+        run.status = "failed"
+        run.command_type = "search_jobs"
+        db.commit()
+        with pytest.raises(InvalidCommand, match="only failed conversation turns"):
+            team.retry_conversation_run(owner_id, run.thread_id, run.id)
+        assert model.calls == 1
+
+
+def test_retry_rejects_an_old_failed_turn_after_a_later_user_message():
+    from models import ProposedResumeEdit, RecruitmentRun
+    from recruitment_team import RecruitmentTeam
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.conversation_model import ModelReply
+    from recruitment_team.errors import ConversationUnavailable, InvalidCommand
+    from recruitment_team.interface import SendMessage, StartThread
+    from recruitment_team.recovery import classify_failure
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    class FirstTurnFails:
+        def __init__(self):
+            self.calls = 0
+
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise ConversationUnavailable(
+                    "coordinator loop ended without a reply",
+                    decision=classify_failure("structured_output_invalid"),
+                )
+            block = context.resume_document["blocks"][0]
+            context.proposed_edits.append({
+                "block_id": block["id"],
+                "original": block["text"],
+                "rewrite": f"{block['text']} Later turn.",
+                "document_revision": context.resume_document["revision"],
+            })
+            return ModelReply(content="The later turn completed.", model_name="later-turn-test")
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    model = FirstTurnFails()
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db, model, _discovery(), _role_profiler(), RecordedTelemetry(), IgnoreActivityPublisher()
+        )
+        with pytest.raises(ConversationUnavailable):
+            team.execute(
+                owner_id,
+                StartThread(resume_version_id=resume_id, message="This turn fails."),
+                "old-failed-turn",
+            )
+        old_run = db.query(RecruitmentRun).filter_by(idempotency_key="old-failed-turn").one()
+        team.execute(
+            owner_id,
+            SendMessage(thread_id=old_run.thread_id, message="Continue with newer context."),
+            "later-turn",
+        )
+        edit_count = db.query(ProposedResumeEdit).count()
+
+        with pytest.raises(InvalidCommand, match="only the latest failed conversation turn"):
+            team.retry_conversation_run(owner_id, old_run.thread_id, old_run.id)
+
+        db.refresh(old_run)
+        assert model.calls == 2
+        assert db.query(ProposedResumeEdit).count() == edit_count == 1
+        assert "workflow_resume" not in old_run.attempt_ledger["stages"]["start_thread"]
+
+
+def test_duplicate_refreshes_run_status_after_taking_the_thread_lock(monkeypatch):
+    from models import RecruitmentRun
+    from recruitment_team import RecruitmentTeam
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.errors import ConversationUnavailable
+    from recruitment_team.interface import StartThread
+    from recruitment_team.recovery import classify_failure
+    from recruitment_team.telemetry import RecordedTelemetry
+    import recruitment_team.recruitment_team as module
+
+    class FailingModel:
+        def __init__(self):
+            self.calls = 0
+
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
+            self.calls += 1
+            raise ConversationUnavailable(
+                "coordinator loop ended without a reply",
+                decision=classify_failure("structured_output_invalid"),
+            )
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    model = FailingModel()
+    command = StartThread(resume_version_id=resume_id, message="Run once.")
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db, model, _discovery(), _role_profiler(), RecordedTelemetry(), IgnoreActivityPublisher()
+        )
+        with pytest.raises(ConversationUnavailable):
+            team.execute(owner_id, command, "lock-refresh")
+        failed = db.query(RecruitmentRun).filter_by(idempotency_key="lock-refresh").one()
+        run_id, thread_id, trace = failed.id, failed.thread_id, failed.trace_key
+
+        class CompletingLock:
+            def __enter__(self):
+                with sessions() as writer:
+                    run = writer.get(RecruitmentRun, run_id)
+                    run.status = "completed"
+                    run.error_type = None
+                    run.result = {
+                        "run_id": run_id,
+                        "thread_id": thread_id,
+                        "status": "completed",
+                        "trace_key": trace,
+                        "workflow_state": "exploring",
+                    }
+                    writer.commit()
+
+            def __exit__(self, *_args):
+                return False
+
+        monkeypatch.setattr(module, "_thread_lock", lambda _thread_id: CompletingLock())
+        replay = team.execute(owner_id, command, "lock-refresh")
+
+        db.refresh(failed)
+        assert replay.run_id == run_id
+        assert model.calls == 1
+        assert "workflow_resume" not in failed.attempt_ledger["stages"]["start_thread"]
+
+
+def test_retry_budget_survives_restart_and_sequential_duplicate_replay_is_side_effect_free():
     from models import RecruitmentMessage, RecruitmentRun, RecruitmentThread
     from recruitment_team import RecruitmentTeam
     from recruitment_team.activity_publisher import IgnoreActivityPublisher
