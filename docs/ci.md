@@ -21,3 +21,6 @@ backend/.venv/bin/pre-commit run --all-files
 ```
 
 The hook is intentionally fast: file hygiene, no commits to `main`, Ruff critical checks, staged secret detection, backend compile, and the scoped ty baseline. Tests stay in CI.
+
+Production enforcement, exact-commit acceptance, scheduled-service receipts,
+and rollback are documented in [Production release](production-release.md).
