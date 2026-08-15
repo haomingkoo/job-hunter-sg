@@ -2046,7 +2046,12 @@ def health(db: Session = Depends(get_db)) -> dict:
         db.execute(text("SELECT 1"))
     except Exception:
         raise HTTPException(status_code=503, detail="Database unavailable") from None
-    return {"status": "ok", "service": "Job Hunter SG API", "db": "connected"}
+    return {
+        "status": "ok",
+        "service": "Job Hunter SG API",
+        "db": "connected",
+        "commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "").strip() or "unknown",
+    }
 
 
 @app.get("/health")

@@ -1,0 +1,46 @@
+name: Production acceptance
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Full Git SHA that production must serve
+        required: true
+      base_url:
+        description: Production URL
+        required: true
+        default: https://jobhunter.kooexperience.com
+
+permissions:
+  contents: read
+
+jobs:
+  public-smoke:
+    name: Exact-commit public smoke
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BASE_URL: ${{ github.event.inputs.base_url || 'https://jobhunter.kooexperience.com' }}
+      EXPECTED_SHA: ${{ github.event.inputs.expected_sha || github.event.workflow_run.head_sha }}
+    steps:
+      - name: Check out accepted commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+
+      - name: Wait for and verify exact production commit
+        run: |
+          python backend/scripts/verify_production.py \
+            "$BASE_URL" "$EXPECTED_SHA" --wait-seconds 900 \
+            | tee production-receipt.json
+          {
+            echo '### Production receipt'
+            echo '```json'
+            cat production-receipt.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

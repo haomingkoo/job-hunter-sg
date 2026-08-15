@@ -759,11 +759,15 @@ class TestAPIEndpoints:
         from main import app
         return TestClient(app)
 
-    def test_health_endpoint(self, client):
+    def test_health_endpoint(self, client, monkeypatch):
+        commit_sha = "a" * 40
+        monkeypatch.setenv("RAILWAY_GIT_COMMIT_SHA", commit_sha)
         resp = client.get("/api/health")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
+        assert data["db"] == "connected"
+        assert data["commit"] == commit_sha
 
     def test_jobs_endpoint(self, client):
         resp = client.get("/api/jobs")
