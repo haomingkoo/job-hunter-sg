@@ -347,6 +347,29 @@ def send_message(
         _raise_http_error(error)
 
 
+@router.post("/threads/{thread_id}/runs/{run_id}/retry")
+def retry_conversation_run(
+    thread_id: str,
+    run_id: str,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    conversation_model: ConversationModel = Depends(get_conversation_model),
+    discovery: DiscoveryPort = Depends(get_job_discovery),
+    role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
+    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+):
+    try:
+        return asdict(
+            _team(db, conversation_model, discovery, role_profiler, telemetry).retry_conversation_run(
+                user.id,
+                thread_id,
+                run_id,
+            )
+        )
+    except Exception as error:
+        _raise_http_error(error)
+
+
 @router.post("/threads/{thread_id}/candidate-profile")
 def build_candidate_profile(
     thread_id: str,

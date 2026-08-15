@@ -214,7 +214,8 @@ The recovery policy is not complete until the module and public-interface E2E pr
 7. absent resume evidence asks the user instead of retrying;
 8. `finish_reason=length` is rejected and never accepted as a partial tool result;
 9. exhaustion survives process restart and causes zero surprise model calls;
-10. duplicate command delivery causes no duplicate messages, artifacts, or side effects;
+10. sequential replay and same-process duplicate command delivery cause no duplicate
+    messages, artifacts, or side effects;
 11. cumulative model-call and token evidence survives checkpoint replay; and
 12. local and Railway canaries fail non-zero when semantic artifacts, trace
     parentage, retry accounting, or visible output are wrong despite HTTP 200.
@@ -224,7 +225,10 @@ The recovery policy is not complete until the module and public-interface E2E pr
 PR #207 implements the module-level classifier and persisted run ledger. Public
 failures now use only the six categories above, unknown failures fail closed, and
 transport, semantic, and explicit workflow-resume counters survive restart and
-duplicate delivery. Candidate correction state preserves its original input,
+sequential replay. Same-process duplicates re-read durable status under the
+thread lock. Cross-worker claiming and hard-killed `running` reconciliation remain
+issue #229; this policy does not claim those cases are safe yet. Candidate correction
+state preserves its original input,
 rejected output, exact validation code, and fixability. Activity, telemetry, run
 receipts, and failure artifacts use the same recovery decision.
 
