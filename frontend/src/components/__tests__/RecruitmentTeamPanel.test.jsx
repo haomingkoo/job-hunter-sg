@@ -1089,6 +1089,121 @@ describe("RecruitmentTeamPanel", () => {
     expect(setActiveTab).toHaveBeenCalledWith("resume");
   });
 
+  it("shows a durable failed turn after reload and retries it by run id", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-retry");
+    let recovered = false;
+    const retryCalls = [];
+    apiFetch.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/resume/versions") {
+        return response([{ id: 7, label: "AI resume", is_master: true }]);
+      }
+      if (path === "/api/recruitment-team/threads/thread-retry") {
+        return response({
+          thread_id: "thread-retry",
+          status: "active",
+          workflow_state: "exploring",
+          case_facts: { resume_version_id: 7, resume_label: "AI resume" },
+          messages: recovered
+            ? [
+              { run_id: "run-retry", role: "user", content: "Tailor this resume." },
+              { run_id: "run-retry", role: "assistant", content: "One edit is ready for review." },
+            ]
+            : [{ run_id: "run-retry", role: "user", content: "Tailor this resume." }],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-retry/events") {
+        return response(recovered
+          ? [
+            { sequence: 1, run_id: "run-retry", event_type: "run", status: "running", team_member: "coordinator", summary: "Reviewing request." },
+            { sequence: 2, run_id: "run-retry", event_type: "run", status: "failed", team_member: "coordinator", summary: "Stopped.", detail: { command_type: "send_message", retryable: true, recovery_action: "correct_rejected_output" } },
+            { sequence: 3, run_id: "run-retry", event_type: "run", status: "running", team_member: "coordinator", summary: "Reviewing request." },
+            { sequence: 4, run_id: "run-retry", event_type: "run", status: "completed", team_member: "coordinator", summary: "Turn completed." },
+          ]
+          : [
+            { sequence: 1, run_id: "run-retry", event_type: "run", status: "running", team_member: "coordinator", summary: "Reviewing request." },
+            { sequence: 2, run_id: "run-retry", event_type: "run", status: "failed", team_member: "coordinator", summary: "Stopped.", detail: { command_type: "send_message", retryable: true, recovery_action: "correct_rejected_output" } },
+          ]);
+      }
+      if (path === "/api/recruitment-team/threads/thread-retry/proposed-edits") {
+        return response(recovered ? [{ id: "edit-1", status: "pending" }] : []);
+      }
+      if (path === "/api/recruitment-team/threads/thread-retry/runs/run-retry/retry") {
+        retryCalls.push(options);
+        recovered = true;
+        return response({ run_id: "run-retry", thread_id: "thread-retry", status: "completed" });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => {
+      root.render(<RecruitmentTeamPanel user={{ id: 42 }} />);
+    });
+
+    expect(container.textContent).toContain("Retry this turn");
+    expect(container.textContent).toContain("correct rejected output");
+    expect(container.textContent.match(/Tailor this resume\./g)).toHaveLength(1);
+
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent.includes("Retry this turn"))
+        .click();
+    });
+
+    expect(retryCalls).toEqual([{ method: "POST" }]);
+    expect(container.textContent).toContain("One edit is ready for review.");
+    expect(container.textContent.match(/Tailor this resume\./g)).toHaveLength(1);
+    expect(container.textContent).not.toContain("Retry this turn");
+
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await act(async () => {
+      root.render(<RecruitmentTeamPanel user={{ id: 42 }} />);
+    });
+    expect(container.textContent).toContain("One edit is ready for review.");
+    expect(container.textContent.match(/Tailor this resume\./g)).toHaveLength(1);
+    expect(container.textContent).not.toContain("Retry this turn");
+  });
+
+  it("shows a terminal conversation recovery action without a retry button", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-terminal");
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-terminal") {
+        return response({
+          thread_id: "thread-terminal",
+          status: "active",
+          workflow_state: "exploring",
+          case_facts: {},
+          messages: [{ run_id: "run-terminal", role: "user", content: "Try this." }],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-terminal/events") {
+        return response([{
+          sequence: 2,
+          run_id: "run-terminal",
+          event_type: "run",
+          status: "failed",
+          team_member: "coordinator",
+          summary: "Stopped.",
+          detail: {
+            command_type: "send_message",
+            retryable: false,
+            recovery_action: "operator_review",
+          },
+        }]);
+      }
+      if (path.endsWith("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => {
+      root.render(<RecruitmentTeamPanel user={{ id: 42 }} />);
+    });
+
+    expect(container.textContent).toContain("operator review");
+    expect(container.textContent).not.toContain("Retry this turn");
+  });
+
   it("manages conversation lifecycle and shows retention before permanent deletion", async () => {
     localStorage.setItem("jobhunter:recruitment-thread:42", "thread-1");
     const lifecycle = { title: "Operations search", status: "active", deleted: false };

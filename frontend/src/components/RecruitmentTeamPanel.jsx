@@ -67,6 +67,11 @@ export default function RecruitmentTeamPanel({
   const candidateStudyRunning = snapshot?.case_facts?.candidate_profile_status === "running";
   const candidateProfileReady = snapshot?.case_facts?.candidate_profile_status === "completed";
   const persistedRunActive = !busy && events.at(-1)?.status === "running";
+  const latestRunEvent = [...events].reverse().find((item) => item.event_type === "run");
+  const failedConversationTurn = latestRunEvent?.status === "failed"
+    && ["start_thread", "send_message"].includes(latestRunEvent.detail?.command_type)
+    ? latestRunEvent
+    : null;
   const plan = snapshot?.case_facts?.plan || [];
   const recommendations = snapshot?.case_facts?.recommendations || [];
   const shortlistedJobs = snapshot?.case_facts?.shortlisted_jobs || [];
@@ -160,6 +165,24 @@ export default function RecruitmentTeamPanel({
       setError(turnError.message || fallbackError);
       if (refreshOnError) await refreshThread(threadId);
       return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retryFailedConversationTurn() {
+    if (!threadId || !failedConversationTurn?.detail?.retryable || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await apiFetch(
+        `/api/recruitment-team/threads/${threadId}/runs/${failedConversationTurn.run_id}/retry`,
+        { method: "POST" },
+      );
+      await refreshThread(threadId);
+    } catch (retryError) {
+      setError(retryError.message || "Could not retry this turn.");
+      await refreshThread(threadId);
     } finally {
       setBusy(false);
     }
@@ -905,6 +928,25 @@ export default function RecruitmentTeamPanel({
           </div>
 
           {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+          {failedConversationTurn && (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <span>
+                This turn stopped. Next step: {String(
+                  failedConversationTurn.detail?.recovery_action || "review the failure",
+                ).replaceAll("_", " ")}.
+              </span>
+              {failedConversationTurn.detail?.retryable && (
+                <button
+                  type="button"
+                  onClick={retryFailedConversationTurn}
+                  disabled={busy || archived}
+                  className="rounded-xl border border-amber-700 px-3 py-2 text-xs font-semibold disabled:opacity-40"
+                >
+                  Retry this turn
+                </button>
+              )}
+            </div>
+          )}
           <AiServiceStatus />
           {awaitingAnswer && (
             <p className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">

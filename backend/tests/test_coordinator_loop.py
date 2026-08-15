@@ -1041,6 +1041,9 @@ def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(
     assert failed[0].parent_id == failed[0].run_id
     assert failed[0].attributes == {
         "error_type": "ConversationUnavailable",
+        "command_type": "send_message",
+        "attempt_count": 1,
+        "attempt_limit": 2,
         "failure_type": "business",
         "failure_code": "attempt_budget_exhausted",
         "retryable": False,

@@ -288,7 +288,8 @@ SEMANTIC_ATTEMPT_LIMITS = {
 # two browser tabs) can't both pass a workflow_state check-then-act before
 # either commits its transition. Weakly held so the registry doesn't grow
 # unbounded over a long-running process -- an entry disappears once nothing
-# is actively holding that thread's lock.
+# is actively holding that thread's lock. This is deliberately process-local;
+# cross-worker claiming requires the database lease tracked in issue #229.
 _THREAD_LOCKS: "weakref.WeakValueDictionary[str, threading.Lock]" = weakref.WeakValueDictionary()
 _THREAD_LOCKS_REGISTRY_LOCK = threading.Lock()
 
@@ -460,11 +461,6 @@ class RecruitmentTeam:
             )
             .first()
         )
-        if previous is not None and previous.status != "failed":
-            return self._receipt(previous)
-        if previous is not None:
-            self._prepare_workflow_resume(previous)
-
         owner_key = f"user:{owner_id}"
         capacity_limited = isinstance(
             command,
@@ -482,11 +478,37 @@ class RecruitmentTeam:
                 "Another AI run is already active for this user or the service is at capacity. Try again shortly."
             )
         try:
-            thread_id = getattr(command, "thread_id", None)
+            thread_id = getattr(command, "thread_id", None) or (
+                previous.thread_id if previous is not None else None
+            )
+
+            def execute_current() -> RunReceipt:
+                nonlocal previous
+                if previous is not None:
+                    self._db.refresh(previous)
+                else:
+                    # A same-process duplicate can have been committed while
+                    # this request waited for capacity/the thread lock.
+                    previous = (
+                        self._db.query(RecruitmentRun)
+                        .filter(
+                            RecruitmentRun.user_id == owner_id,
+                            RecruitmentRun.idempotency_key == key,
+                        )
+                        .first()
+                    )
+                if previous is not None and previous.status != "failed":
+                    return self._receipt(previous)
+                if previous is not None:
+                    if previous.command_type in {"start_thread", "send_message"}:
+                        self._assert_latest_failed_conversation_turn(previous)
+                    self._prepare_workflow_resume(previous)
+                return self._execute_locked(owner_id, command, key, previous)
+
             if thread_id is None:
-                return self._execute_locked(owner_id, command, key, previous)
+                return execute_current()
             with _thread_lock(thread_id):
-                return self._execute_locked(owner_id, command, key, previous)
+                return execute_current()
         finally:
             if capacity_limited:
                 release_owner_run(owner_key)
@@ -717,14 +739,14 @@ class RecruitmentTeam:
                     layer,
                     limit - FIRST_ATTEMPT,
                 )
-                decision = (
-                    classify_failure(
-                        initial_decision.failure_code,
-                        attempts_remaining=remaining,
-                        retry_after_seconds=initial_decision.retry_after_seconds,
-                    )
-                    if initial_decision.failure_type == "transient"
-                    else initial_decision
+                # The error source cannot know the durable budget. Reclassify
+                # here, where the persisted ledger says whether a known
+                # transport or semantic correction is still allowed. Terminal
+                # categories remain terminal in classify_failure.
+                decision = classify_failure(
+                    initial_decision.failure_code,
+                    attempts_remaining=remaining,
+                    retry_after_seconds=initial_decision.retry_after_seconds,
                 )
                 self._record_run_attempt(
                     run,
@@ -735,7 +757,11 @@ class RecruitmentTeam:
                     decision=decision,
                     error_type=type(error).__name__,
                 )
+                attempt_budget = run.attempt_ledger["stages"][command_type][layer]
                 failure_detail = {
+                    "command_type": command_type,
+                    "attempt_count": attempt_budget["used"],
+                    "attempt_limit": attempt_budget["limit"],
                     "error_type": type(error).__name__,
                     "failure_type": decision.failure_type,
                     "failure_code": decision.failure_code,
@@ -831,6 +857,69 @@ class RecruitmentTeam:
                 self._db.commit()
             self._activity_publisher.publish(self._activity(completed_event))
             return self._receipt(run)
+
+    def retry_conversation_run(
+        self,
+        owner_id: int,
+        thread_id: str,
+        run_id: str,
+    ) -> RunReceipt:
+        """Retry one durable conversation turn with its original identity."""
+
+        thread = self._owned_thread(owner_id, thread_id)
+        run = (
+            self._db.query(RecruitmentRun)
+            .filter(
+                RecruitmentRun.id == run_id,
+                RecruitmentRun.user_id == owner_id,
+                RecruitmentRun.thread_id == thread.id,
+            )
+            .first()
+        )
+        if run is None:
+            raise ThreadNotFound("recruitment run not found")
+        if run.status == "completed":
+            return self._receipt(run)
+        if run.status != "failed":
+            raise InvalidCommand(f"command is {run.status}")
+        if run.command_type not in {"start_thread", "send_message"}:
+            raise InvalidCommand("only failed conversation turns can be retried here")
+
+        message = self._conversation_run_message(run)
+        command: Command = (
+            StartThread(resume_version_id=thread.resume_version_id, message=message.content)
+            if run.command_type == "start_thread"
+            else SendMessage(thread_id=thread.id, message=message.content)
+        )
+        return self.execute(owner_id, command, run.idempotency_key)
+
+    def _conversation_run_message(self, run: RecruitmentRun) -> RecruitmentMessage:
+        message = (
+            self._db.query(RecruitmentMessage)
+            .filter(
+                RecruitmentMessage.thread_id == run.thread_id,
+                RecruitmentMessage.run_id == run.id,
+                RecruitmentMessage.role == "user",
+            )
+            .one_or_none()
+        )
+        if message is None:
+            raise InvalidCommand("failed conversation turn has no durable user message")
+        return message
+
+    def _assert_latest_failed_conversation_turn(self, run: RecruitmentRun) -> None:
+        message = self._conversation_run_message(run)
+        latest = (
+            self._db.query(RecruitmentMessage)
+            .filter(
+                RecruitmentMessage.thread_id == run.thread_id,
+                RecruitmentMessage.role == "user",
+            )
+            .order_by(RecruitmentMessage.id.desc())
+            .first()
+        )
+        if latest is None or latest.id != message.id:
+            raise InvalidCommand("only the latest failed conversation turn can be retried")
 
     def _model_reply(
         self,
