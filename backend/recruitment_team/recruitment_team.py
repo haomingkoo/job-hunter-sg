@@ -69,6 +69,7 @@ from .errors import (
     ThreadNotFound,
     TargetAssessmentUnavailable,
     ServiceUnavailable,
+    safe_terminal_error_payload,
 )
 from .conversation_model import (
     ConversationModel,
@@ -767,12 +768,14 @@ class RecruitmentTeam:
                     "failure_code": decision.failure_code,
                     "retryable": decision.retryable,
                     "recovery_action": decision.recovery_action,
+                    "message": safe_terminal_error_payload(error)["message"],
                 }
                 if decision.retry_after_seconds is not None:
                     failure_detail["retry_after_seconds"] = decision.retry_after_seconds
                 self._persist_recovery_decision(thread, command_type, failure_detail)
                 for attribute, value in failure_detail.items():
-                    command_span.set_attribute(attribute, value)
+                    if attribute != "message":
+                        command_span.set_attribute(attribute, value)
                 failed_event = self._event(
                     thread,
                     run,
@@ -782,11 +785,28 @@ class RecruitmentTeam:
                     detail=failure_detail,
                     parent_id=run.id,
                     duration_ms=_run_duration_ms(run),
-                    attributes=failure_detail,
+                    attributes={
+                        key: value
+                        for key, value in failure_detail.items()
+                        if key != "message"
+                    },
                 )
                 with self._telemetry.operation("persist_failed"):
                     self._db.commit()
                 self._activity_publisher.publish(self._activity(failed_event))
+                error.recruitment_terminal_payload = {
+                    key: failure_detail[key]
+                    for key in (
+                        "error_type",
+                        "message",
+                        "failure_type",
+                        "failure_code",
+                        "retryable",
+                        "recovery_action",
+                        "retry_after_seconds",
+                    )
+                    if key in failure_detail
+                }
                 raise
 
             if command_type in {"start_thread", "send_message"}:
@@ -2289,6 +2309,70 @@ class RecruitmentTeam:
             .all()
         )
         return [self._activity(item) for item in records]
+
+    def run_replay(
+        self,
+        owner_id: int,
+        run_id: str,
+        after_sequence: int,
+    ) -> tuple[list[ActivityEvent], tuple[str, RunReceipt | dict] | None]:
+        """Read new durable events and the terminal result for one owned run."""
+
+        self._db.expire_all()
+        run = (
+            self._db.query(RecruitmentRun)
+            .filter(RecruitmentRun.id == run_id, RecruitmentRun.user_id == owner_id)
+            .first()
+        )
+        if run is None:
+            raise ThreadNotFound("recruitment run not found")
+        records = (
+            self._db.query(RecruitmentActivityEvent)
+            .filter(
+                RecruitmentActivityEvent.thread_id == run.thread_id,
+                RecruitmentActivityEvent.run_id == run.id,
+                RecruitmentActivityEvent.sequence > after_sequence,
+            )
+            .order_by(RecruitmentActivityEvent.sequence)
+            .all()
+        )
+        events = [self._activity(item) for item in records]
+        if run.status == "completed":
+            return events, ("receipt", self._receipt(run))
+        if run.status != "failed":
+            return events, None
+
+        failed = (
+            self._db.query(RecruitmentActivityEvent)
+            .filter(
+                RecruitmentActivityEvent.run_id == run.id,
+                RecruitmentActivityEvent.status == "failed",
+            )
+            .order_by(RecruitmentActivityEvent.sequence.desc())
+            .first()
+        )
+        detail = failed.detail if failed is not None else {}
+        return events, (
+            "error",
+            {
+                "error_type": run.error_type or detail.get("error_type", "RecruitmentTeamError"),
+                "message": detail.get(
+                    "message",
+                    failed.summary if failed is not None else "The recruitment team could not complete this turn.",
+                ),
+                **{
+                    key: detail[key]
+                    for key in (
+                        "failure_type",
+                        "failure_code",
+                        "retryable",
+                        "recovery_action",
+                        "retry_after_seconds",
+                    )
+                    if key in detail
+                },
+            },
+        )
 
     def threads(self, owner_id: int) -> list[ThreadSummary]:
         records = (

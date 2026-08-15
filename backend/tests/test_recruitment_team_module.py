@@ -457,7 +457,13 @@ def test_public_http_adapter_uses_the_same_module_journey():
             "event: receipt",
         ]
         profile_activity = [
-            json.loads(block.split("data: ", 1)[1])
+            json.loads(
+                next(
+                    line.removeprefix("data: ")
+                    for line in block.splitlines()
+                    if line.startswith("data: ")
+                )
+            )
             for block in profiled.text.strip().split("\n\n")
             if block.startswith("event: activity")
         ]
