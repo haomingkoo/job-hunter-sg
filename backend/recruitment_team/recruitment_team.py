@@ -24,6 +24,7 @@ from models import (
     RecruitmentRun,
     RecruitmentThread,
     RecruitmentThreadDeletionRequest,
+    RoleProfileArtifact,
     ResumeVersion,
     TargetAssessmentArtifact,
     TrackedJob,
@@ -108,18 +109,18 @@ from .candidate_profile_store import (
 )
 from .discovery import DiscoveryPort, JobPostingVariant, JobSnapshot, JobSource
 from .role_success import (
-    CandidateEvidenceMatch,
-    PolicyConstraint,
-    ResumeEvidenceRecord,
-    RoleCitation,
-    RoleCriterion,
     RoleProfileValidationError,
-    RoleSource,
     RoleSuccessProfile,
     RoleSuccessProfiler,
-    SourceCoverage,
+    role_profile_from_dict,
 )
 from .role_evidence_assessor import RoleEvidenceAssessmentError, role_evidence_attempt_limit
+from .role_profile_store import (
+    RoleProfileCheckpointMismatch,
+    SQLAlchemyRoleProfileStore,
+    public_role_validation_code,
+    role_profile_identity,
+)
 from .resume_edit_evidence import (
     LangChainResumeEditEvidenceValidator,
     ResumeEditEvidenceValidator,
@@ -401,6 +402,16 @@ class RecruitmentTeam:
         elif command_type in {"assess_target_job", "answer_assessment_question"}:
             artifact_id = facts.get("target_assessment_artifact_id")
             artifact = self._db.get(TargetAssessmentArtifact, artifact_id) if artifact_id else None
+        elif command_type == "select_target_job":
+            artifact = (
+                self._db.query(RoleProfileArtifact)
+                .filter(
+                    RoleProfileArtifact.user_id == thread.user_id,
+                    RoleProfileArtifact.thread_id == thread.id,
+                )
+                .order_by(RoleProfileArtifact.updated_at.desc())
+                .first()
+            )
         else:
             artifact = None
         if artifact is not None:
@@ -749,6 +760,16 @@ class RecruitmentTeam:
                     attempts_remaining=remaining,
                     retry_after_seconds=initial_decision.retry_after_seconds,
                 )
+                if isinstance(error, ServiceUnavailable):
+                    # The durable ledger is authoritative. Streaming observes
+                    # this same exception after the command unwinds, so keep
+                    # its public decision aligned with the persisted one.
+                    error.failure_type = decision.failure_type
+                    error.failure_code = decision.failure_code
+                    error.retryable = decision.retryable
+                    error.recovery_action = decision.recovery_action
+                    error.retry_after_seconds = decision.retry_after_seconds
+                    error.decision = decision
                 self._record_run_attempt(
                     run,
                     stage=command_type,
@@ -772,6 +793,18 @@ class RecruitmentTeam:
                 }
                 if decision.retry_after_seconds is not None:
                     failure_detail["retry_after_seconds"] = decision.retry_after_seconds
+                if isinstance(error, ServiceUnavailable):
+                    failure_detail.update({
+                        key: value
+                        for key, value in error.detail.items()
+                        if key in {
+                            "attempted_stage",
+                            "validation_code",
+                            "correction_scope",
+                            "partial_artifact_id",
+                            "alternatives",
+                        }
+                    })
                 self._persist_recovery_decision(thread, command_type, failure_detail)
                 for attribute, value in failure_detail.items():
                     if attribute != "message":
@@ -804,6 +837,11 @@ class RecruitmentTeam:
                         "retryable",
                         "recovery_action",
                         "retry_after_seconds",
+                        "attempted_stage",
+                        "validation_code",
+                        "correction_scope",
+                        "partial_artifact_id",
+                        "alternatives",
                     )
                     if key in failure_detail
                 }
@@ -1514,6 +1552,36 @@ class RecruitmentTeam:
         job = self._known_job(thread, command.job_id)
         candidate_profile = self._completed_candidate_profile(thread, resume)
         comparable_jobs: tuple[JobSnapshot, ...] = ()
+        checkpoint_store = None
+        try:
+            if hasattr(self._role_profiler, "checkpoint_identity"):
+                checkpoint_store = SQLAlchemyRoleProfileStore(
+                    self._db,
+                    owner_id=owner_id,
+                    thread_id=thread.id,
+                    run_id=run_record.id,
+                    resume_version_id=resume.id,
+                    target_job_id=job.job_id,
+                    identity=role_profile_identity(
+                        candidate_profile=candidate_profile,
+                        target=job,
+                        comparable_jobs=comparable_jobs,
+                        profiler=self._role_profiler,
+                    ),
+                )
+                checkpoint_store.start()
+        except RoleProfileCheckpointMismatch as error:
+            raise RoleProfilingUnavailable(
+                "the saved target-role checkpoint does not match this run",
+                decision=classify_failure("checkpoint_mismatch"),
+                detail={
+                    "attempted_stage": "role_definition",
+                    "validation_code": "checkpoint_mismatch",
+                    "correction_scope": "none",
+                    "partial_artifact_id": error.artifact_id,
+                    "alternatives": ["start_new_logical_run"],
+                },
+            ) from error
         profile_started = time.perf_counter()
         try:
             with self._telemetry.operation(
@@ -1533,6 +1601,7 @@ class RecruitmentTeam:
                     candidate_profile,
                     job,
                     comparable_jobs,
+                    checkpoint_store,
                 )
                 profile_span.set_attribute("model", run.model_name)
                 profile_span.set_attribute("attempt_count", run.attempt_count)
@@ -1542,7 +1611,10 @@ class RecruitmentTeam:
                     profile_span.set_attribute("generator_model", run.generator_model_name)
                 if run.assessor_model_name:
                     profile_span.set_attribute("assessor_model", run.assessor_model_name)
-                profile_span.set_attribute("validation_codes", list(run.validation_codes))
+                profile_span.set_attribute(
+                    "validation_codes",
+                    [public_role_validation_code(code) for code in run.validation_codes],
+                )
                 profile_span.set_attribute("criterion_count", len(run.profile.criteria))
                 profile_span.set_attribute(
                     "taxonomy_match_quality",
@@ -1553,14 +1625,52 @@ class RecruitmentTeam:
                 if run.output_tokens is not None:
                     profile_span.set_attribute("output_tokens", run.output_tokens)
         except (RoleProfileValidationError, RoleEvidenceAssessmentError) as error:
+            validation_code = str(getattr(error, "validation_code", "semantic_fixable"))
+            if checkpoint_store is not None:
+                assessment_checkpoint = checkpoint_store.assessment()
+                checkpoint_store.fail(
+                    {
+                        "attempted_stage": (
+                            "role_evidence"
+                            if isinstance(error, RoleEvidenceAssessmentError)
+                            else "role_definition"
+                        ),
+                        "validation_code": validation_code,
+                        "correction_scope": (
+                            assessment_checkpoint.previous_scope
+                            if assessment_checkpoint
+                            else "full"
+                        ),
+                        "retryable": True,
+                        "alternatives": ["retry_incomplete_stage", "start_new_logical_run"],
+                    }
+                )
             raise RoleProfilingUnavailable(
                 "role success profile failed semantic validation",
                 decision=classify_failure("semantic_fixable"),
+                detail=checkpoint_store.error_detail() if checkpoint_store else {},
             ) from error
         except Exception as error:
+            if checkpoint_store is not None:
+                stage = "role_evidence" if checkpoint_store.definition() else "role_definition"
+                assessment_checkpoint = checkpoint_store.assessment()
+                checkpoint_store.fail(
+                    {
+                        "attempted_stage": stage,
+                        "validation_code": str(
+                            assessment_checkpoint.validation_code if assessment_checkpoint else ""
+                        ),
+                        "correction_scope": (
+                            assessment_checkpoint.previous_scope if assessment_checkpoint else "none"
+                        ),
+                        "retryable": classify_exception(error, attempts_remaining=True).retryable,
+                        "alternatives": ["retry_incomplete_stage", "start_new_logical_run"],
+                    }
+                )
             raise RoleProfilingUnavailable(
                 f"role success profiling unavailable: {type(error).__name__}",
                 decision=classify_exception(error),
+                detail=checkpoint_store.error_detail() if checkpoint_store else {},
             ) from error
         facts = dict(thread.case_facts)
         shortlist = list(facts.get("shortlisted_jobs", []))
@@ -1571,7 +1681,7 @@ class RecruitmentTeam:
         facts["selected_target"] = asdict(job)
         facts["role_success_profile"] = asdict(run.profile)
         role_attempts = []
-        if run.generator_attempt_count:
+        if not run.checkpoint_hit_count and run.generator_attempt_count:
             role_attempts.append({
                 "stage": "role_definition",
                 "team_member": "role_profiler",
@@ -1580,7 +1690,7 @@ class RecruitmentTeam:
                 "attempt_limit": config.ROLE_DEFINITION_VALIDATION_ATTEMPTS,
                 "status": "success",
             })
-        if run.assessor_attempt_count:
+        if not run.checkpoint_hit_count and run.assessor_attempt_count:
             role_attempts.append({
                 "stage": "role_evidence",
                 "team_member": "role_evidence_assessor",
@@ -1589,7 +1699,7 @@ class RecruitmentTeam:
                 "attempt_limit": role_evidence_attempt_limit(len(run.profile.criteria)),
                 "status": "success",
             })
-        if not role_attempts:
+        if not role_attempts and not run.checkpoint_hit_count:
             role_attempts.append({
                 "stage": "role_success_profile",
                 "team_member": "role_profiler",
@@ -1602,12 +1712,14 @@ class RecruitmentTeam:
             "logical_run_id": run_record.id,
             "trace_key": run_record.trace_key,
             "stage": "role_success_profile",
-            "model_call_count": run.attempt_count,
-            "checkpoint_hit_count": 0,
+            "model_call_count": 0 if run.checkpoint_hit_count else run.attempt_count,
+            "checkpoint_hit_count": run.checkpoint_hit_count,
             "input_tokens": int(run.input_tokens or 0),
             "output_tokens": int(run.output_tokens or 0),
             "latency_ms": round((time.perf_counter() - profile_started) * 1000, 3),
-            "validation_codes": list(run.validation_codes),
+            "validation_codes": [
+                public_role_validation_code(code) for code in run.validation_codes
+            ],
             "models": list(dict.fromkeys(filter(None, (
                 run.generator_model_name,
                 run.assessor_model_name,
@@ -1645,10 +1757,12 @@ class RecruitmentTeam:
             "alignment_counts": alignment_counts,
             "taxonomy_match_quality": run.profile.source_coverage.taxonomy_match_quality,
             "source_count": len(run.profile.sources),
-            "attempt_count": run.attempt_count,
+            "attempt_count": 0 if run.checkpoint_hit_count else run.attempt_count,
             "generator_attempt_count": run.generator_attempt_count,
             "assessor_attempt_count": run.assessor_attempt_count,
-            "validation_codes": list(run.validation_codes),
+            "validation_codes": [
+                public_role_validation_code(code) for code in run.validation_codes
+            ],
             "candidate_profile_version": candidate_profile.profile_version,
             "candidate_profile_field_count": len(candidate_profile.fields),
             "tracked_job_id": tracked.id,
@@ -2801,99 +2915,7 @@ class RecruitmentTeam:
 
     @staticmethod
     def _role_profile_from_dict(item: dict) -> RoleSuccessProfile:
-        coverage = item["source_coverage"]
-        return RoleSuccessProfile(
-            profile_version=str(item["profile_version"]),
-            target_job_id=int(item["target_job_id"]),
-            sources=tuple(
-                RoleSource(
-                    source_id=str(source["source_id"]),
-                    source_type=source["source_type"],
-                    title=str(source["title"]),
-                    url=str(source.get("url") or ""),
-                    publication_date=str(source.get("publication_date") or ""),
-                    evidence_strength=source["evidence_strength"],
-                    evidence_fields=tuple(str(field) for field in source.get("evidence_fields") or []),
-                )
-                for source in item["sources"]
-            ),
-            criteria=tuple(
-                RoleCriterion(
-                    criterion_id=str(criterion["criterion_id"]),
-                    category=criterion["category"],
-                    requirement_level=criterion["requirement_level"],
-                    statement=str(criterion["statement"]),
-                    source_ids=tuple(str(value) for value in criterion["source_ids"]),
-                    source_citations=tuple(
-                        RoleCitation(
-                            source_id=str(citation["source_id"]),
-                            source_path=str(citation["source_path"]),
-                            relevant_excerpt=str(citation["relevant_excerpt"]),
-                        )
-                        for citation in criterion.get("source_citations") or []
-                    ),
-                    alternative_group_id=(
-                        str(criterion["alternative_group_id"]) if criterion.get("alternative_group_id") else None
-                    ),
-                )
-                for criterion in item["criteria"]
-            ),
-            candidate_evidence=tuple(
-                CandidateEvidenceMatch(
-                    criterion_id=str(match["criterion_id"]),
-                    alignment=match["alignment"],
-                    resume_evidence_ids=tuple(str(value) for value in match["resume_evidence_ids"]),
-                    explanation=str(match["explanation"]),
-                    confidence=float(match["confidence"]),
-                    confidence_basis=str(match["confidence_basis"]),
-                    supported_strength=str(match.get("supported_strength") or ""),
-                    remaining_gap=str(match.get("remaining_gap") or ""),
-                    evidence_support_score=(
-                        int(match["evidence_support_score"])
-                        if match.get("evidence_support_score") is not None
-                        else None
-                    ),
-                    score_reason=str(match.get("score_reason") or ""),
-                    candidate_profile_field_ids=tuple(
-                        str(value) for value in match.get("candidate_profile_field_ids") or []
-                    ),
-                )
-                for match in item["candidate_evidence"]
-            ),
-            source_coverage=SourceCoverage(
-                exact_job=bool(coverage["exact_job"]),
-                comparable_job_count=int(coverage["comparable_job_count"]),
-                occupation_source_count=int(coverage["occupation_source_count"]),
-                taxonomy_match_quality=coverage["taxonomy_match_quality"],
-                notes=tuple(str(note) for note in coverage["notes"]),
-            ),
-            clarification_question=(
-                str(item["clarification_question"]) if item.get("clarification_question") else None
-            ),
-            validation_notes=tuple(str(note) for note in item.get("validation_notes") or []),
-            cited_resume_evidence=tuple(
-                ResumeEvidenceRecord(
-                    evidence_id=str(record["evidence_id"]),
-                    kind=str(record.get("kind") or ""),
-                    text=str(record["text"]),
-                    source_locator=str(record.get("source_locator") or ""),
-                    section_key=str(record.get("section_key") or ""),
-                )
-                for record in item.get("cited_resume_evidence") or []
-            ),
-            policy_constraints=tuple(
-                PolicyConstraint(
-                    constraint_id=str(constraint["constraint_id"]),
-                    statement=str(constraint["statement"]),
-                    source_id=str(constraint["source_id"]),
-                )
-                for constraint in item.get("policy_constraints") or []
-            ),
-            assessment_disposition=item.get("assessment_disposition"),
-            evidence_assessment_prompt_version=str(item.get("evidence_assessment_prompt_version") or ""),
-            evidence_assessment_model=str(item.get("evidence_assessment_model") or ""),
-            evidence_assessment_attempt_count=int(item.get("evidence_assessment_attempt_count") or 0),
-        )
+        return role_profile_from_dict(item)
 
     @staticmethod
     def _candidate_profile_from_dict(item: dict) -> CandidateEvidenceProfile:

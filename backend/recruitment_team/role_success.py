@@ -150,6 +150,123 @@ class RoleProfileRun:
     assessor_attempt_count: int = 0
     generator_model_name: str = ""
     assessor_model_name: str = ""
+    checkpoint_hit_count: int = 0
+
+
+def role_profile_from_dict(item: dict) -> RoleSuccessProfile:
+    """Restore the public profile payload stored in JSON artifacts/case facts."""
+
+    coverage = item["source_coverage"]
+    return RoleSuccessProfile(
+        profile_version=str(item["profile_version"]),
+        target_job_id=int(item["target_job_id"]),
+        sources=tuple(
+            RoleSource(
+                source_id=str(source["source_id"]),
+                source_type=source["source_type"],
+                title=str(source["title"]),
+                url=str(source.get("url") or ""),
+                publication_date=str(source.get("publication_date") or ""),
+                evidence_strength=source["evidence_strength"],
+                evidence_fields=tuple(str(field) for field in source.get("evidence_fields") or []),
+            )
+            for source in item["sources"]
+        ),
+        criteria=tuple(
+            RoleCriterion(
+                criterion_id=str(criterion["criterion_id"]),
+                category=criterion["category"],
+                requirement_level=criterion["requirement_level"],
+                statement=str(criterion["statement"]),
+                source_ids=tuple(str(value) for value in criterion["source_ids"]),
+                source_citations=tuple(
+                    RoleCitation(
+                        source_id=str(citation["source_id"]),
+                        source_path=str(citation["source_path"]),
+                        relevant_excerpt=str(citation["relevant_excerpt"]),
+                    )
+                    for citation in criterion.get("source_citations") or []
+                ),
+                alternative_group_id=(
+                    str(criterion["alternative_group_id"])
+                    if criterion.get("alternative_group_id")
+                    else None
+                ),
+            )
+            for criterion in item["criteria"]
+        ),
+        candidate_evidence=tuple(
+            CandidateEvidenceMatch(
+                criterion_id=str(match["criterion_id"]),
+                alignment=match["alignment"],
+                resume_evidence_ids=tuple(str(value) for value in match["resume_evidence_ids"]),
+                explanation=str(match["explanation"]),
+                confidence=float(match["confidence"]),
+                confidence_basis=str(match["confidence_basis"]),
+                supported_strength=str(match.get("supported_strength") or ""),
+                remaining_gap=str(match.get("remaining_gap") or ""),
+                evidence_support_score=(
+                    int(match["evidence_support_score"])
+                    if match.get("evidence_support_score") is not None
+                    else None
+                ),
+                score_reason=str(match.get("score_reason") or ""),
+                candidate_profile_field_ids=tuple(
+                    str(value) for value in match.get("candidate_profile_field_ids") or []
+                ),
+            )
+            for match in item["candidate_evidence"]
+        ),
+        source_coverage=SourceCoverage(
+            exact_job=bool(coverage["exact_job"]),
+            comparable_job_count=int(coverage["comparable_job_count"]),
+            occupation_source_count=int(coverage["occupation_source_count"]),
+            taxonomy_match_quality=coverage["taxonomy_match_quality"],
+            notes=tuple(str(note) for note in coverage["notes"]),
+        ),
+        clarification_question=(
+            str(item["clarification_question"]) if item.get("clarification_question") else None
+        ),
+        validation_notes=tuple(str(note) for note in item.get("validation_notes") or []),
+        cited_resume_evidence=tuple(
+            ResumeEvidenceRecord(
+                evidence_id=str(record["evidence_id"]),
+                kind=str(record.get("kind") or ""),
+                text=str(record["text"]),
+                source_locator=str(record.get("source_locator") or ""),
+                section_key=str(record.get("section_key") or ""),
+            )
+            for record in item.get("cited_resume_evidence") or []
+        ),
+        policy_constraints=tuple(
+            PolicyConstraint(
+                constraint_id=str(constraint["constraint_id"]),
+                statement=str(constraint["statement"]),
+                source_id=str(constraint["source_id"]),
+            )
+            for constraint in item.get("policy_constraints") or []
+        ),
+        assessment_disposition=item.get("assessment_disposition"),
+        evidence_assessment_prompt_version=str(item.get("evidence_assessment_prompt_version") or ""),
+        evidence_assessment_model=str(item.get("evidence_assessment_model") or ""),
+        evidence_assessment_attempt_count=int(item.get("evidence_assessment_attempt_count") or 0),
+    )
+
+
+def role_profile_run_from_dict(item: dict) -> RoleProfileRun:
+    return RoleProfileRun(
+        profile=role_profile_from_dict(item["profile"]),
+        model_name=str(item["model_name"]),
+        attempt_count=int(item["attempt_count"]),
+        input_tokens=(int(item["input_tokens"]) if item.get("input_tokens") is not None else None),
+        output_tokens=(int(item["output_tokens"]) if item.get("output_tokens") is not None else None),
+        validation_codes=tuple(str(value) for value in item.get("validation_codes") or []),
+        generator_attempt_count=int(item.get("generator_attempt_count") or 0),
+        assessor_attempt_count=int(item.get("assessor_attempt_count") or 0),
+        generator_model_name=str(item.get("generator_model_name") or ""),
+        assessor_model_name=str(item.get("assessor_model_name") or ""),
+        checkpoint_hit_count=int(item.get("checkpoint_hit_count") or 0),
+    )
 
 
 class RoleDefinitionValidationError(ValueError):
@@ -178,6 +295,7 @@ class RoleSuccessProfiler(Protocol):
         candidate_profile: "CandidateEvidenceProfile",
         target: JobSnapshot,
         comparable_jobs: tuple[JobSnapshot, ...],
+        checkpoint_store: Any | None = None,
     ) -> RoleProfileRun: ...
 
 
@@ -205,6 +323,9 @@ class _RoleDefinitionSubmission(BaseModel):
 
     criteria: list[_CriterionSubmission]
     clarification_question: str | None = None
+
+
+ROLE_DEFINITION_TOOL_SCHEMA = _RoleDefinitionSubmission.model_json_schema()
 
 
 def _submit_role_definition(**payload: Any) -> dict:
@@ -654,6 +775,7 @@ class ScriptedRoleSuccessProfiler:
         candidate_profile: "CandidateEvidenceProfile",
         target: JobSnapshot,
         comparable_jobs: tuple[JobSnapshot, ...],
+        checkpoint_store: Any | None = None,
     ) -> RoleProfileRun:
         self.call_count += 1
         return next(self._runs)

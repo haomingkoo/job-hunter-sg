@@ -57,6 +57,33 @@ def test_a_simple_module_error_still_carries_its_reason():
     assert "retryable" not in payload
 
 
+def test_role_profile_failure_exposes_only_safe_resume_metadata():
+    from recruitment_team.errors import RoleProfilingUnavailable
+    from recruitment_team.recovery import classify_failure
+
+    payload = _error_payload(
+        RoleProfilingUnavailable(
+            "role evidence correction timed out",
+            decision=classify_failure("transport_timeout", attempts_remaining=True),
+            detail={
+                "attempted_stage": "role_evidence",
+                "validation_code": "literal_quote:unsupported:c1",
+                "correction_scope": "single_criterion",
+                "partial_artifact_id": "artifact-1",
+                "alternatives": ["retry_incomplete_stage", "start_new_logical_run"],
+                "private_resume_text": "must never be streamed",
+            },
+        )
+    )
+
+    assert payload["attempted_stage"] == "role_evidence"
+    assert payload["correction_scope"] == "single_criterion"
+    assert payload["partial_artifact_id"] == "artifact-1"
+    assert payload["validation_code"] == "literal_quote:unsupported"
+    assert payload["retryable"] is True
+    assert "private_resume_text" not in payload
+
+
 def test_an_unexpected_exception_stays_generic():
     """Its text is not written for a user, and may carry internals."""
     payload = _error_payload(RuntimeError("psycopg2.OperationalError: FATAL password auth failed"))

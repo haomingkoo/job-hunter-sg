@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -62,6 +63,21 @@ class RoleEvidenceAssessmentRun:
     validation_codes: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class RoleEvidenceCheckpoint:
+    """The last rejected assessment, sufficient to resume its correction."""
+
+    validation_code: str
+    rejected_submission: dict
+    validation_codes: tuple[str, ...]
+    attempt_count: int
+    full_attempt_count: int
+    corrected_criterion_ids: tuple[str, ...]
+    previous_scope: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
 class RoleEvidenceAssessmentError(ValueError):
     def __init__(self, validation_code: str, rejected_submission: dict | None):
         super().__init__(f"role evidence assessment failed: {validation_code}")
@@ -70,7 +86,12 @@ class RoleEvidenceAssessmentError(ValueError):
 
 
 class RoleEvidenceAssessor(Protocol):
-    def assess(self, request: RoleEvidenceAssessmentRequest) -> RoleEvidenceAssessmentRun: ...
+    def assess(
+        self,
+        request: RoleEvidenceAssessmentRequest,
+        checkpoint: RoleEvidenceCheckpoint | None = None,
+        save_checkpoint: Callable[[RoleEvidenceCheckpoint], None] | None = None,
+    ) -> RoleEvidenceAssessmentRun: ...
 
 
 class _JudgmentSubmission(BaseModel):
@@ -96,6 +117,44 @@ class _CorrectionSubmission(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     judgment: _JudgmentSubmission
+
+
+ROLE_EVIDENCE_TOOL_SCHEMAS = {
+    "assessment": _AssessmentSubmission.model_json_schema(),
+    "correction": _CorrectionSubmission.model_json_schema(),
+}
+
+_PUBLIC_EVIDENCE_VALIDATION_CODES = {
+    "criterion_coverage:duplicate_ids",
+    "criterion_coverage:mismatch",
+    "invalid_submission",
+    "missing_correction_tool_call",
+    "missing_tool_call",
+    "schema_validation",
+}
+_PUBLIC_EVIDENCE_VALIDATION_CATEGORIES = (
+    "candidate_profile_field_ids:evidence_mismatch",
+    "candidate_profile_field_ids:missing_for_positive",
+    "candidate_profile_field_ids:unknown",
+    "literal_quote:unsupported",
+    "numeric_claim:unsupported",
+    "resume_evidence_ids:missing_for_positive",
+    "resume_evidence_ids:unknown",
+)
+
+
+def public_role_evidence_validation_code(value: str) -> str:
+    """Drop model text and identifiers while retaining the failure category."""
+
+    code = value.strip()
+    if not code:
+        return ""
+    if code in _PUBLIC_EVIDENCE_VALIDATION_CODES:
+        return code
+    for category in _PUBLIC_EVIDENCE_VALIDATION_CATEGORIES:
+        if code == category or code.startswith(f"{category}:"):
+            return category
+    return "role_evidence:invalid"
 
 
 def _submit_role_evidence_assessment(**payload: Any) -> dict:
@@ -376,7 +435,12 @@ class LangChainRoleEvidenceAssessor:
         self._model = model
         self._telemetry = telemetry or OpenTelemetryRecorder()
 
-    def assess(self, request: RoleEvidenceAssessmentRequest) -> RoleEvidenceAssessmentRun:
+    def assess(
+        self,
+        request: RoleEvidenceAssessmentRequest,
+        checkpoint: RoleEvidenceCheckpoint | None = None,
+        save_checkpoint: Callable[[RoleEvidenceCheckpoint], None] | None = None,
+    ) -> RoleEvidenceAssessmentRun:
         original_evidence = {
             "prompt_version": ROLE_EVIDENCE_ASSESSOR_PROMPT_VERSION,
             "criteria": [asdict(item) for item in request.criteria],
@@ -394,15 +458,15 @@ class LangChainRoleEvidenceAssessor:
                 )
             ),
         ]
-        failure = ""
-        failed_payload: dict | None = None
-        validation_codes: list[str] = []
-        total_input_tokens = 0
-        total_output_tokens = 0
-        attempt = 0
-        full_attempts = 0
-        corrected_criterion_ids: set[str] = set()
-        previous_scope = ""
+        failure = checkpoint.validation_code if checkpoint else ""
+        failed_payload: dict | None = checkpoint.rejected_submission if checkpoint else None
+        validation_codes = list(checkpoint.validation_codes) if checkpoint else []
+        total_input_tokens = checkpoint.input_tokens if checkpoint else 0
+        total_output_tokens = checkpoint.output_tokens if checkpoint else 0
+        attempt = checkpoint.attempt_count if checkpoint else 0
+        full_attempts = checkpoint.full_attempt_count if checkpoint else 0
+        corrected_criterion_ids = set(checkpoint.corrected_criterion_ids) if checkpoint else set()
+        previous_scope = checkpoint.previous_scope if checkpoint else ""
         max_attempts = role_evidence_attempt_limit(len(request.criteria))
         while attempt < max_attempts:
             target_criterion_id = (
@@ -412,6 +476,23 @@ class LangChainRoleEvidenceAssessor:
                 if target_criterion_id:
                     if target_criterion_id in corrected_criterion_ids:
                         break
+                    if save_checkpoint is not None and failed_payload is not None:
+                        # Commit the stage we are about to attempt. If the
+                        # correction transport times out, restart at this same
+                        # criterion rather than reporting the prior full pass.
+                        save_checkpoint(
+                            RoleEvidenceCheckpoint(
+                                validation_code=failure,
+                                rejected_submission=failed_payload,
+                                validation_codes=tuple(validation_codes),
+                                attempt_count=attempt,
+                                full_attempt_count=full_attempts,
+                                corrected_criterion_ids=tuple(sorted(corrected_criterion_ids)),
+                                previous_scope="single_criterion",
+                                input_tokens=total_input_tokens,
+                                output_tokens=total_output_tokens,
+                            )
+                        )
                     corrected_criterion_ids.add(target_criterion_id)
                 elif previous_scope != "full" or full_attempts >= config.ROLE_EVIDENCE_VALIDATION_ATTEMPTS:
                     break
@@ -523,7 +604,10 @@ class LangChainRoleEvidenceAssessor:
                 accepted = None
                 if not failure:
                     accepted, failure = _validate_submission(failed_payload, request)
-                validation_span.set_attribute("validation_code", failure)
+                validation_span.set_attribute(
+                    "validation_code",
+                    public_role_evidence_validation_code(failure),
+                )
                 validation_span.set_attribute("accepted", accepted is not None)
                 next_target_criterion_id = (
                     _target_criterion_id(failure, request.criteria) if failure and failed_payload is not None else None
@@ -558,9 +642,26 @@ class LangChainRoleEvidenceAssessor:
                     attempt_count=attempt,
                     input_tokens=total_input_tokens or None,
                     output_tokens=total_output_tokens or None,
-                    validation_codes=tuple(validation_codes),
+                    validation_codes=tuple(
+                        public_role_evidence_validation_code(code)
+                        for code in validation_codes
+                    ),
                 )
             validation_codes.append(failure)
+            if save_checkpoint is not None and failed_payload is not None:
+                save_checkpoint(
+                    RoleEvidenceCheckpoint(
+                        validation_code=failure,
+                        rejected_submission=failed_payload,
+                        validation_codes=tuple(validation_codes),
+                        attempt_count=attempt,
+                        full_attempt_count=full_attempts,
+                        corrected_criterion_ids=tuple(sorted(corrected_criterion_ids)),
+                        previous_scope=correction_scope,
+                        input_tokens=total_input_tokens,
+                        output_tokens=total_output_tokens,
+                    )
+                )
         raise RoleEvidenceAssessmentError(failure, failed_payload)
 
 
@@ -569,6 +670,11 @@ class ScriptedRoleEvidenceAssessor:
         self._runs = iter(runs)
         self.call_count = 0
 
-    def assess(self, request: RoleEvidenceAssessmentRequest) -> RoleEvidenceAssessmentRun:
+    def assess(
+        self,
+        request: RoleEvidenceAssessmentRequest,
+        checkpoint: RoleEvidenceCheckpoint | None = None,
+        save_checkpoint: Callable[[RoleEvidenceCheckpoint], None] | None = None,
+    ) -> RoleEvidenceAssessmentRun:
         self.call_count += 1
         return next(self._runs)

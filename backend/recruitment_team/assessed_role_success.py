@@ -2,20 +2,54 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
+from typing import Protocol
 
 from .candidate_profile import CandidateEvidenceProfile
 from .discovery import JobSnapshot
 from .role_evidence_assessor import (
     RoleEvidenceAssessmentRequest,
     RoleEvidenceAssessor,
+    RoleEvidenceCheckpoint,
+    ROLE_EVIDENCE_TOOL_SCHEMAS,
 )
 from .role_success import (
     CandidateEvidenceMatch,
     ResumeEvidenceRecord,
     RoleProfileRun,
     RoleDefinitionGenerator,
+    ROLE_DEFINITION_TOOL_SCHEMA,
+    role_profile_run_from_dict,
 )
+from .prompts import ROLE_SUCCESS_PROMPT_VERSION, ROLE_SUCCESS_SYSTEM_PROMPT
+from .prompts.role_evidence_assessor import ROLE_EVIDENCE_ASSESSOR_PROMPT_VERSION
+from .prompts.role_evidence_assessor import ROLE_EVIDENCE_ASSESSOR_SYSTEM_PROMPT
+from .role_profile_store import public_role_validation_code
+
+
+def _configured_model_identity(component) -> dict:
+    model = getattr(component, "_model", None)
+    configured_name = next(
+        (
+            str(getattr(model, attribute))
+            for attribute in ("model", "model_name", "model_id", "deployment_name")
+            if getattr(model, attribute, None)
+        ),
+        type(model).__name__ if model is not None else type(component).__name__,
+    )
+    return {
+        "adapter": f"{type(component).__module__}.{type(component).__qualname__}",
+        "model": configured_name,
+    }
+
+
+class RoleProfileCheckpointStore(Protocol):
+    def completed(self) -> dict | None: ...
+    def definition(self) -> dict | None: ...
+    def assessment(self) -> RoleEvidenceCheckpoint | None: ...
+    def save_definition(self, definition: dict) -> None: ...
+    def save_assessment(self, checkpoint: RoleEvidenceCheckpoint) -> None: ...
+    def complete(self, result: dict) -> None: ...
 
 
 class EvidenceAssessedRoleSuccessProfiler:
@@ -29,16 +63,59 @@ class EvidenceAssessedRoleSuccessProfiler:
         self._definition_generator = definition_generator
         self._evidence_assessor = evidence_assessor
 
+    def checkpoint_identity(self) -> dict:
+        return {
+            "prompts": {
+                "definition": {
+                    "version": ROLE_SUCCESS_PROMPT_VERSION,
+                    "content": ROLE_SUCCESS_SYSTEM_PROMPT,
+                },
+                "assessment": {
+                    "version": ROLE_EVIDENCE_ASSESSOR_PROMPT_VERSION,
+                    "content": ROLE_EVIDENCE_ASSESSOR_SYSTEM_PROMPT,
+                },
+            },
+            "schemas": {
+                "definition": ROLE_DEFINITION_TOOL_SCHEMA,
+                "evidence": ROLE_EVIDENCE_TOOL_SCHEMAS,
+            },
+            "models": {
+                "definition": _configured_model_identity(self._definition_generator),
+                "assessment": _configured_model_identity(self._evidence_assessor),
+            },
+            "sources": [
+                asdict(source)
+                for source in getattr(self._definition_generator, "_occupation_sources", ())
+            ],
+        }
+
     def profile(
         self,
         candidate_profile: CandidateEvidenceProfile,
         target: JobSnapshot,
         comparable_jobs: tuple[JobSnapshot, ...],
+        checkpoint_store: RoleProfileCheckpointStore | None = None,
     ) -> RoleProfileRun:
-        generated = self._definition_generator.define(
-            target,
-            comparable_jobs,
+        completed = checkpoint_store.completed() if checkpoint_store else None
+        if completed is not None:
+            return replace(
+                role_profile_run_from_dict(completed),
+                attempt_count=0,
+                input_tokens=None,
+                output_tokens=None,
+                validation_codes=(),
+                generator_attempt_count=0,
+                assessor_attempt_count=0,
+                checkpoint_hit_count=1,
+            )
+        saved_definition = checkpoint_store.definition() if checkpoint_store else None
+        generated = (
+            role_profile_run_from_dict(saved_definition)
+            if saved_definition is not None
+            else self._definition_generator.define(target, comparable_jobs)
         )
+        if saved_definition is None and checkpoint_store is not None:
+            checkpoint_store.save_definition(asdict(generated))
         resume_blocks = tuple(
             ResumeEvidenceRecord(
                 evidence_id=block.evidence_id,
@@ -56,7 +133,9 @@ class EvidenceAssessedRoleSuccessProfiler:
                 role_sources=generated.profile.sources,
                 candidate_profile_fields=candidate_profile.fields,
                 proposed_evidence=generated.profile.candidate_evidence,
-            )
+            ),
+            checkpoint=checkpoint_store.assessment() if checkpoint_store else None,
+            save_checkpoint=checkpoint_store.save_assessment if checkpoint_store else None,
         )
         judgments = {judgment.criterion_id: judgment for judgment in assessed.judgments}
         candidate_evidence = tuple(
@@ -76,14 +155,15 @@ class EvidenceAssessedRoleSuccessProfiler:
             evidence_assessment_model=assessed.model_name,
             evidence_assessment_attempt_count=assessed.attempt_count,
         )
-        return RoleProfileRun(
+        result = RoleProfileRun(
             profile=profile,
             model_name=assessed.model_name,
             attempt_count=generated.attempt_count + assessed.attempt_count,
             input_tokens=(generated.input_tokens or 0) + (assessed.input_tokens or 0) or None,
             output_tokens=(generated.output_tokens or 0) + (assessed.output_tokens or 0) or None,
             validation_codes=tuple(
-                (
+                public_role_validation_code(code)
+                for code in (
                     *(f"generator:{code}" for code in generated.validation_codes),
                     *(f"assessor:{code}" for code in assessed.validation_codes),
                 )
@@ -93,6 +173,9 @@ class EvidenceAssessedRoleSuccessProfiler:
             generator_model_name=(generated.generator_model_name or generated.model_name),
             assessor_model_name=assessed.model_name,
         )
+        if checkpoint_store is not None:
+            checkpoint_store.complete(asdict(result))
+        return result
 
     @staticmethod
     def _candidate_match(judgment) -> CandidateEvidenceMatch:
