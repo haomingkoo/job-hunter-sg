@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Literal, Protocol
+from typing import Any, Callable, Iterator, Literal, Protocol
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import StructuredTool
@@ -69,7 +69,12 @@ TargetAssessmentUpdate = TargetAssessmentProgress | TargetAssessmentResult
 
 
 class TargetAssessmentRunner(Protocol):
-    def run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]: ...
+    def run(
+        self,
+        request: TargetAssessmentRequest,
+        *,
+        renew_lease: Callable[[], None] | None = None,
+    ) -> Iterator[TargetAssessmentUpdate]: ...
 
     def resume(
         self,
@@ -80,6 +85,7 @@ class TargetAssessmentRunner(Protocol):
         synthesis: str,
         proposed_edits: list[dict],
         ask_candidate_call_id: str | None = None,
+        renew_lease: Callable[[], None] | None = None,
     ) -> Iterator[TargetAssessmentUpdate]: ...
 
 
@@ -95,7 +101,12 @@ class ScriptedTargetAssessmentRunner:
         self.resume_calls: list[tuple[str, str]] = []
         self.resume_call_args: list[dict] = []
 
-    def run(self, request: TargetAssessmentRequest) -> Iterator[TargetAssessmentUpdate]:
+    def run(
+        self,
+        request: TargetAssessmentRequest,
+        *,
+        renew_lease: Callable[[], None] | None = None,
+    ) -> Iterator[TargetAssessmentUpdate]:
         self.call_count += 1
         yield from self._updates
 
@@ -108,6 +119,7 @@ class ScriptedTargetAssessmentRunner:
         synthesis: str,
         proposed_edits: list[dict],
         ask_candidate_call_id: str | None = None,
+        renew_lease: Callable[[], None] | None = None,
     ) -> Iterator[TargetAssessmentUpdate]:
         self.resume_calls.append((pause_token, answer))
         self.resume_call_args.append(

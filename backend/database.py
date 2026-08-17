@@ -220,6 +220,14 @@ def _apply_lightweight_migrations() -> None:
             statements.append(
                 "ALTER TABLE recruitment_runs ADD COLUMN attempt_ledger JSON NOT NULL DEFAULT '{}'"
             )
+        if "lease_owner" not in run_columns:
+            statements.append(
+                "ALTER TABLE recruitment_runs ADD COLUMN lease_owner VARCHAR(64)"
+            )
+        if "lease_expires_at" not in run_columns:
+            statements.append(
+                "ALTER TABLE recruitment_runs ADD COLUMN lease_expires_at TIMESTAMP"
+            )
 
     if "recruitment_activity_events" in inspector.get_table_names():
         activity_columns = {

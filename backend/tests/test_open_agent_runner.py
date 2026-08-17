@@ -16,7 +16,7 @@ class _ScriptedModel(FakeMessagesListChatModel):
         return self
 
 
-def _judge_call(call_id: str = "judge-call-1") -> AIMessage:
+def _judge_call(call_id: str = "judge-call-1", disposition: str = "pass") -> AIMessage:
     return AIMessage(
         content="",
         tool_calls=[{
@@ -34,7 +34,7 @@ def _judge_call(call_id: str = "judge-call-1") -> AIMessage:
                 "score_reason": "Grounded in directly supplied evidence.",
                 "confidence": 85,
                 "confidence_reason": "No ambiguity in the source evidence.",
-                "disposition": "pass",
+                "disposition": disposition,
             },
             "id": call_id,
         }],
@@ -91,6 +91,55 @@ def test_runner_reaches_completed_via_mandatory_judge_with_zero_personas_consult
     assert result.judge["disposition"] == "pass"
     assert result.specialist_runs == ()
     assert result.synthesis == "No specialist consultation needed; evidence is unambiguous."
+
+
+def test_sequential_judge_correction_and_rejudge_renew_a_controlled_clock(monkeypatch):
+    import resume_agent.models as agent_models
+
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+    clock = {"seconds": 0}
+
+    class AdvancingModel(_ScriptedModel):
+        def invoke(self, *args, **kwargs):
+            clock["seconds"] += 9
+            return super().invoke(*args, **kwargs)
+
+    judge_responses = iter((
+        _judge_call("judge-revise", disposition="revise"),
+        _judge_call("judge-pass", disposition="pass"),
+    ))
+    correction = AIMessage(
+        content="",
+        tool_calls=[{
+            "name": "submit_corrected_target_assessment",
+            "args": {"synthesis": "Corrected, evidence-grounded synthesis."},
+            "id": "correction-1",
+        }],
+    )
+    runner = OpenAgentTargetAssessmentRunner(
+        model_factory=lambda: _ScriptedModel(responses=[AIMessage(content="Initial synthesis.")]),
+        judge_model_factory=lambda: AdvancingModel(responses=[next(judge_responses)]),
+        correction_model_factory=lambda: AdvancingModel(responses=[correction]),
+        telemetry=RecordedTelemetry(),
+    )
+    renewals = []
+    last_renewal = {"seconds": 0}
+
+    def renew_lease():
+        assert clock["seconds"] - last_renewal["seconds"] < 10
+        renewals.append(clock["seconds"])
+        last_renewal["seconds"] = clock["seconds"]
+
+    result = next(
+        item
+        for item in runner.run(_request(), renew_lease=renew_lease)
+        if isinstance(item, TargetAssessmentResult)
+    )
+
+    assert result.status == "completed"
+    assert result.correction["attempted"] is True
+    assert clock["seconds"] == 27
+    assert {9, 18, 27} <= set(renewals)
 
 
 def _valid_specialist_args(persona_id: str, summary: str, score: int) -> dict:

@@ -15,7 +15,7 @@ from models import ResumeVersion, User
 TEST_WAIT_SECONDS = 2
 
 
-def _session_factory():
+def _session_factory(*, autoflush: bool = True):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -27,7 +27,7 @@ def _session_factory():
         connection.execute("PRAGMA foreign_keys=ON")
 
     Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, expire_on_commit=False)
+    return sessionmaker(bind=engine, expire_on_commit=False, autoflush=autoflush)
 
 
 def _owner_with_resume(session_factory) -> tuple[int, int]:
@@ -558,6 +558,41 @@ def test_retrying_the_same_idempotency_key_after_a_failure_succeeds():
         assert runs[0].error_type is None
 
 
+def test_retry_records_workflow_resume_when_production_autoflush_is_disabled():
+    from models import RecruitmentRun
+    from recruitment_team import RecruitmentTeam
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.conversation_model import ModelReply
+    from recruitment_team.interface import StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    class TimeoutThenReply:
+        def __init__(self):
+            self.calls = 0
+
+        def respond(self, messages, resume_text, current_preferences=(), context=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("provider timed out")
+            return ModelReply(content="Recovered reply.", model_name="autoflush-test")
+
+    sessions = _session_factory(autoflush=False)
+    owner_id, resume_id = _owner_with_resume(sessions)
+    model = TimeoutThenReply()
+    command = StartThread(resume_version_id=resume_id, message="Resume this turn.")
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db, model, _discovery(), _role_profiler(), RecordedTelemetry(), IgnoreActivityPublisher()
+        )
+        with pytest.raises(TimeoutError):
+            team.execute(owner_id, command, "autoflush-retry")
+        receipt = team.execute(owner_id, command, "autoflush-retry")
+        run = db.get(RecruitmentRun, receipt.run_id)
+
+        assert receipt.status == "completed"
+        assert run.attempt_ledger["stages"]["start_thread"]["workflow_resume"]["used"] == 1
+
+
 def test_retry_conversation_run_reuses_the_failed_turn_and_its_semantic_budget():
     from models import ProposedResumeEdit, RecruitmentMessage, RecruitmentRun
     from recruitment_team import RecruitmentTeam
@@ -632,6 +667,52 @@ def test_retry_conversation_run_reuses_the_failed_turn_and_its_semantic_budget()
         assert db.query(RecruitmentMessage).filter_by(run_id=run_id, role="assistant").count() == 1
         assert db.query(ProposedResumeEdit).filter_by(run_id=run_id).count() == 1
         assert model.calls == 2
+
+
+def test_interrupted_turn_retries_with_original_identity_and_no_duplicate_message():
+    from datetime import datetime, timedelta, timezone
+
+    from models import RecruitmentActivityEvent, RecruitmentMessage, RecruitmentRun, RecruitmentThread
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.interface import StartThread
+    from recruitment_team.run_lease import reconcile_expired_runs
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    model = ScriptedConversationModel(["Initial reply.", "Recovered reply."])
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db, model, _discovery(), _role_profiler(), RecordedTelemetry(), IgnoreActivityPublisher()
+        )
+        receipt = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Recover this exact turn."),
+            "interrupted-key",
+        )
+        run = db.get(RecruitmentRun, receipt.run_id)
+        db.query(RecruitmentMessage).filter_by(run_id=run.id, role="assistant").delete()
+        db.query(RecruitmentActivityEvent).filter_by(run_id=run.id, status="completed").delete()
+        thread = db.get(RecruitmentThread, run.thread_id)
+        thread.next_event_sequence = 2
+        run.status = "running"
+        run.result = None
+        run.completed_at = None
+        run.lease_owner = "dead-worker"
+        run.lease_expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+        db.commit()
+
+        assert reconcile_expired_runs(db) == 1
+        recovered = team.retry_conversation_run(owner_id, run.thread_id, run.id)
+        duplicate = team.retry_conversation_run(owner_id, run.thread_id, run.id)
+
+        assert duplicate == recovered
+        assert recovered.run_id == receipt.run_id
+        assert db.query(RecruitmentRun).filter_by(id=run.id, idempotency_key="interrupted-key").count() == 1
+        assert db.query(RecruitmentMessage).filter_by(run_id=run.id, role="user").count() == 1
+        assert db.query(RecruitmentMessage).filter_by(run_id=run.id, role="assistant").count() == 1
+        assert model.call_count == 2
 
 
 def test_retry_conversation_run_http_is_owner_scoped():
@@ -764,6 +845,9 @@ def test_retry_conversation_run_rejects_terminal_running_and_unsupported_runs():
         with pytest.raises(ServiceUnavailable) as terminal:
             team.retry_conversation_run(owner_id, run.thread_id, run.id)
         assert terminal.value.failure_code == "output_truncated"
+        db.refresh(run)
+        assert run.status == "failed"
+        assert run.lease_owner is None
 
         run.status = "running"
         db.commit()
@@ -2999,14 +3083,20 @@ def test_role_definition_retries_with_original_input_failed_output_and_exact_cod
     accepted = _role_definition_submission()
     model = _RoleDefinitionModel([rejected, accepted])
     telemetry = RecordedTelemetry()
+    renewals = []
 
     with telemetry.operation("role_success.profile") as parent:
         run = LangChainRoleDefinitionGenerator(
             model,
             telemetry=telemetry,
-        ).define(_job_snapshot(), ())
+        ).define(
+            _job_snapshot(),
+            (),
+            before_model_call=lambda: renewals.append("renewed"),
+        )
 
     assert run.attempt_count == 2
+    assert renewals == ["renewed"] * 4
     assert run.validation_codes == ("criterion:build_reliable_agents:role_citation_excerpt_not_found",)
     retry = model.requests[1]
     assert retry[1].content == model.requests[0][1].content

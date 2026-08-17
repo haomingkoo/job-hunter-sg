@@ -347,6 +347,15 @@ def _retire_jobs_older_than(db: Session, cutoff: datetime, retired_at: str) -> i
     )
 
 
+def _reconcile_interrupted_recruitment_runs(session_factory) -> int:
+    """Run the idempotent recruitment recovery step for one app startup."""
+
+    from recruitment_team.run_lease import reconcile_expired_runs
+
+    with session_factory() as db:
+        return reconcile_expired_runs(db)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup and shutdown lifecycle for the app."""
@@ -357,12 +366,13 @@ async def lifespan(application: FastAPI):
     init_db()
     log.info("[STARTUP] Database initialized")
     from database import SessionLocal
-    startup_maintenance_done = threading.Event()
-
     # Retire jobs older than 30 days (run in background to not block health check).
     # Keep rows because user-owned records can reference them.
     def _startup_maintenance() -> None:
         try:
+            interrupted = _reconcile_interrupted_recruitment_runs(SessionLocal)
+            if interrupted:
+                log.warning("[STARTUP] Reconciled %s interrupted recruitment runs", interrupted)
             db = SessionLocal()
             cutoff = datetime.now(timezone.utc) - timedelta(days=30)
             stale = _retire_jobs_older_than(
@@ -426,7 +436,6 @@ async def lifespan(application: FastAPI):
             log.warning(f"[STARTUP] job metadata backfill failed: {e}")
         finally:
             db_sort.close()
-            startup_maintenance_done.set()
 
     threading.Thread(target=_startup_maintenance, daemon=True).start()
 
