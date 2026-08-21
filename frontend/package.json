@@ -17,13 +17,13 @@
     "@dnd-kit/utilities": "^3.2.2",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.31.0",
-    "react": "^18.3.1",
+    "react": "^19.2.8",
     "react-dom": "^18.3.1",
     "react-is": "^18.3.1",
     "recharts": "^3.9.2"
   },
   "devDependencies": {
-    "@types/react": "^18.3.3",
+    "@types/react": "^19.2.18",
     "@vitejs/plugin-react": "^6.0.5",
     "autoprefixer": "^10.5.4",
     "jsdom": "^29.0.1",
