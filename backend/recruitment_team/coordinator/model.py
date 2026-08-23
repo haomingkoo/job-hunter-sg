@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
+from dataclasses import replace
 from typing import Any
 
 from langchain.agents.structured_output import ToolStrategy
@@ -16,9 +18,10 @@ from prompt_safety import xml_data_block
 
 from ..conversation_model import ConversationReply, ModelReply, reply_is_complete
 from ..errors import ConversationUnavailable, InvalidCommand
+from ..fair_hiring import mentions_protected_status
 from ..interface import Message, PreferenceFact, PreferenceUpdate
 from ..open_agent import context as open_agent_context
-from ..open_agent.streaming import format_questions, iter_progress_events
+from ..open_agent.streaming import format_questions, iter_progress_events, rejected_tool_result
 from ..open_agent.tools import (
     ask_candidate,
     propose_resume_edit,
@@ -32,6 +35,8 @@ from ..open_agent.tools import (
     write_shortlist,
 )
 from ..prompts import COORDINATOR_PROMPT_VERSION, COORDINATOR_SYSTEM_PROMPT
+from ..model_transport_observer import create_observed_agent_model
+from ..provider_compatibility import provider_message_compatibility
 from ..recovery import classify_failure
 from ..telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 from ..tool_call_guard import ToolCallGuardMiddleware
@@ -73,6 +78,20 @@ def _ask_rounds_so_far(state) -> int:
         for call in (getattr(message, "tool_calls", None) or [])
         if call.get("name") == ask_candidate.name
     )
+
+
+def _delete_terminal_checkpoint(run_config: dict) -> bool:
+    """Delete a terminal coordinator checkpoint and report whether it is gone."""
+    thread_id = str(run_config.get("configurable", {}).get("thread_id") or "")
+    if not thread_id:
+        return True
+    try:
+        from ..open_agent.checkpoint_store import delete_checkpoint
+
+        delete_checkpoint(thread_id)
+    except Exception:
+        return False
+    return True
 
 
 def _model_name(state) -> str:
@@ -120,6 +139,48 @@ def _resume_edit_reply(edits: list[dict], reply: ConversationReply) -> str:
     return "\n\n".join(paragraphs)
 
 
+_TOOL_CLAIM_RULES = (
+    (re.compile(r"\b(?:searched|ran (?:a )?search)\b", re.I), "search_jobs", lambda c: bool(c.search_results)),
+    (
+        re.compile(r"\b(?:shortlisted|added .{0,40} to (?:the |your )?shortlist|published .{0,20}shortlist)\b", re.I),
+        "write_shortlist",
+        lambda c: bool(c.drafted_matches),
+    ),
+    (
+        re.compile(r"\b(?:saved|recorded|updated) .{0,40}\bpreferences?\b", re.I),
+        "record_preferences",
+        lambda c: bool(c.drafted_preferences),
+    ),
+    (
+        re.compile(r"\b(?:saved|recorded) .{0,40}\bevidence\b", re.I),
+        "record_candidate_evidence",
+        lambda c: bool(c.drafted_confirmed_evidence),
+    ),
+    (
+        re.compile(r"\b(?:created|updated|wrote) .{0,30}\bplan\b", re.I),
+        "write_plan",
+        lambda c: bool(c.drafted_plan),
+    ),
+    (
+        re.compile(r"\b(?:rewrote|edited|updated) .{0,40}\b(?:resume|bullet)\b", re.I),
+        "propose_resume_edit",
+        lambda c: bool(c.proposed_edits),
+    ),
+)
+
+
+def _unverified_tool_claim(content: str, context: ConversationContext) -> str:
+    """Return the named tool when prose claims work absent from its result sink."""
+    return next(
+        (
+            tool_name
+            for pattern, tool_name, evidence in _TOOL_CLAIM_RULES
+            if pattern.search(content) and not evidence(context)
+        ),
+        "",
+    )
+
+
 def _thread_state_block(context: ConversationContext, preferences: tuple[PreferenceFact, ...]) -> str:
     """Serialize thread state without duplicating posting content."""
     state = {
@@ -160,16 +221,28 @@ class DeepAgentConversationModel:
         """Always explicit: model=None inherits a 60s timeout and no retries."""
         if self._model_factory:
             return self._model_factory()
-        from resume_agent.models import create_agent_model
-
-        return create_agent_model(
+        return create_observed_agent_model(
+            self._telemetry,
+            role="coordinator",
             timeout=config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
             max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
             model=config.COORDINATOR_MODEL,
             max_completion_tokens=config.RECRUITMENT_CONVERSATION_MAX_TOKENS,
         )
 
-    def _build_agent(self):
+    def _cleanup_terminal_checkpoint(self, run_config: dict) -> bool:
+        """Observe cleanup outcome without recording the private checkpoint id."""
+        with self._telemetry.operation(
+            "checkpoint_cleanup",
+            {"role": "coordinator"},
+        ) as span:
+            cleaned = _delete_terminal_checkpoint(run_config)
+            span.set_attribute("cleanup_succeeded", cleaned)
+            if not cleaned:
+                span.mark_error("CheckpointCleanupFailed")
+            return cleaned
+
+    def _build_agent(self, context: ConversationContext):
         from langchain.agents import create_agent
         from langchain.agents.middleware import HumanInTheLoopMiddleware
 
@@ -180,21 +253,26 @@ class DeepAgentConversationModel:
 
         # Not create_deep_agent: its base stack binds eight more tools and its
         # `middleware` argument only appends, so they cannot be declined.
+        tools = [
+            read_shortlist,
+            record_candidate_evidence,
+            record_preferences,
+            search_jobs,
+            write_plan,
+            write_shortlist,
+            propose_resume_edit,
+            ask_candidate,
+        ]
+        if context.target_job is not None:
+            tools.append(read_target_job)
+        if context.candidate_profile is not None:
+            tools.append(read_candidate_evidence)
+
         return create_agent(
             model=self._build_model(),
-            tools=[
-                read_shortlist,
-                record_candidate_evidence,
-                record_preferences,
-                search_jobs,
-                write_plan,
-                write_shortlist,
-                read_target_job,
-                read_candidate_evidence,
-                propose_resume_edit,
-                ask_candidate,
-            ],
+            tools=tools,
             middleware=[
+                provider_message_compatibility,
                 ToolCallGuardMiddleware(),
                 HumanInTheLoopMiddleware(interrupt_on={"ask_candidate": True}),
             ],
@@ -265,19 +343,51 @@ class DeepAgentConversationModel:
             # coordinator this adapter exists to replace.
             raise InvalidCommand("DeepAgentConversationModel requires a ConversationContext")
 
-        agent = self._build_agent()
-        run_config, payload, skip_tool_call_ids = self._turn(
+        agent = self._build_agent(context)
+        run_config, payload, skip_tool_call_ids, question_limit_enforced = self._turn(
             agent, context, messages, current_preferences, resume_text
         )
 
+        try:
+            reply = self._respond(
+                agent,
+                context,
+                run_config,
+                payload,
+                skip_tool_call_ids,
+                question_limit_enforced,
+            )
+        except BaseException as error:
+            if not self._cleanup_terminal_checkpoint(run_config):
+                error.checkpoint_cleanup_token = run_config["configurable"]["thread_id"]
+            raise
+        if reply.pause_token:
+            return reply
+        if self._cleanup_terminal_checkpoint(run_config):
+            return reply
+        return replace(
+            reply,
+            checkpoint_cleanup_token=run_config["configurable"]["thread_id"],
+        )
+
+    def _respond(
+        self,
+        agent,
+        context: ConversationContext,
+        run_config: dict,
+        payload,
+        skip_tool_call_ids: set[str] | None,
+        question_limit_enforced: bool,
+    ) -> ModelReply:
         pending_question = ""
         submitted = False
         edit_attempted = False
+        rejected_tool_name = ""
+        consecutive_tool_rejections = 0
         with self._telemetry.operation(
             "conversation.loop",
             {
                 "trace_key": context.trace_key,
-                "graph_thread_id": run_config["configurable"]["thread_id"],
                 "resumed": skip_tool_call_ids is not None,
                 "recursion_limit": run_config["recursion_limit"],
             },
@@ -295,6 +405,34 @@ class DeepAgentConversationModel:
                             # called ConversationReply" in the activity stream.
                             submitted = submitted or event["kind"] == "tool_call"
                             continue
+                        if event.get("kind") == "tool_result":
+                            tool_name = str(event.get("tool_name") or "")
+                            if rejected_tool_result(event):
+                                if tool_name == rejected_tool_name:
+                                    consecutive_tool_rejections += 1
+                                else:
+                                    rejected_tool_name = tool_name
+                                    consecutive_tool_rejections = 1
+                                if (
+                                    consecutive_tool_rejections
+                                    >= config.COORDINATOR_MAX_CONSECUTIVE_TOOL_REJECTIONS
+                                ):
+                                    span.set_attribute("failure_type", "business")
+                                    span.set_attribute(
+                                        "failure_code", "attempt_budget_exhausted"
+                                    )
+                                    span.set_attribute("rejected_tool_name", tool_name)
+                                    span.set_attribute(
+                                        "consecutive_tool_rejections",
+                                        consecutive_tool_rejections,
+                                    )
+                                    raise ConversationUnavailable(
+                                        "coordinator repeatedly retried a rejected tool call",
+                                        decision=classify_failure("attempt_budget_exhausted"),
+                                    )
+                            else:
+                                rejected_tool_name = ""
+                                consecutive_tool_rejections = 0
                         if (
                             event["kind"] == "tool_call"
                             and event["tool_name"] == propose_resume_edit.name
@@ -323,6 +461,20 @@ class DeepAgentConversationModel:
             span.set_attribute("proposed_edit_count", len(context.proposed_edits))
 
             if state.interrupts:
+                if mentions_protected_status(pending_question):
+                    span.set_attribute("failure_type", "safety")
+                    span.set_attribute("failure_code", "protected_candidate_question")
+                    raise ConversationUnavailable(
+                        "coordinator rejected a protected-status question",
+                        decision=classify_failure("protected_candidate_question"),
+                    )
+                if question_limit_enforced:
+                    span.set_attribute("failure_type", "business")
+                    span.set_attribute("failure_code", "attempt_budget_exhausted")
+                    raise ConversationUnavailable(
+                        "coordinator continued asking after the candidate question limit",
+                        decision=classify_failure("attempt_budget_exhausted"),
+                    )
                 span.set_attribute("outcome", "paused")
                 return ModelReply(
                     prompt_version=COORDINATOR_PROMPT_VERSION,
@@ -361,6 +513,15 @@ class DeepAgentConversationModel:
                             "coordinator returned an incomplete reply",
                             decision=classify_failure("structured_output_invalid"),
                         )
+                    unverified_tool = _unverified_tool_claim(prose, context)
+                    if unverified_tool:
+                        span.set_attribute("failure_type", "validation")
+                        span.set_attribute("failure_code", "structured_output_invalid")
+                        span.set_attribute("unverified_tool_claim", unverified_tool)
+                        raise ConversationUnavailable(
+                            "coordinator prose claimed tool work that did not complete",
+                            decision=classify_failure("structured_output_invalid"),
+                        )
                     span.set_attribute("outcome", "unsubmitted_prose")
                     return ModelReply(
                         prompt_version=COORDINATOR_PROMPT_VERSION,
@@ -388,6 +549,15 @@ class DeepAgentConversationModel:
                 if edit_attempted
                 else reply.reply.strip()
             )
+            unverified_tool = _unverified_tool_claim(content, context)
+            if unverified_tool:
+                span.set_attribute("failure_type", "validation")
+                span.set_attribute("failure_code", "structured_output_invalid")
+                span.set_attribute("unverified_tool_claim", unverified_tool)
+                raise ConversationUnavailable(
+                    "coordinator reply claimed tool work that did not complete",
+                    decision=classify_failure("structured_output_invalid"),
+                )
             span.set_attribute("outcome", "submitted")
             return ModelReply(
                 prompt_version=COORDINATOR_PROMPT_VERSION,
@@ -415,23 +585,24 @@ class DeepAgentConversationModel:
         messages: list[Message],
         current_preferences: tuple[PreferenceFact, ...],
         resume_text: str,
-    ) -> tuple[dict, Any, set[str] | None]:
+    ) -> tuple[dict, Any, set[str] | None, bool]:
         """Resume the paused graph if there is one, otherwise start a fresh one."""
         if context.pause_token:
             run_config = self._run_config(context.pause_token)
             state = agent.get_state(run_config)
             if state.interrupts:
                 answer = _latest_user_message(messages)
-                if _ask_rounds_so_far(state) >= config.OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS:
-                    # Prompt text, so it asks rather than enforces. Stated as a
-                    # limitation: an extra question in a conversation costs one
-                    # more turn, not a stuck run.
+                question_limit_enforced = (
+                    _ask_rounds_so_far(state) >= config.OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS
+                )
+                if question_limit_enforced:
                     answer = f"{answer}\n\n{_QUESTION_LIMIT_SENTENCE}"
                 call_id = _pending_ask_call_id(state)
                 return (
                     run_config,
                     Command(resume={"decisions": [{"type": "respond", "message": answer}]}),
                     {call_id} if call_id else None,
+                    question_limit_enforced,
                 )
 
         run_config = self._run_config(f"coordinator-{context.thread_id}-{uuid.uuid4()}")
@@ -439,4 +610,5 @@ class DeepAgentConversationModel:
             run_config,
             self._new_turn_payload(context, messages, current_preferences, resume_text),
             None,
+            False,
         )

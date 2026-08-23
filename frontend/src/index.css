@@ -25,8 +25,12 @@
   animation: story-progress 1.45s cubic-bezier(0.23, 1, 0.32, 1) infinite;
 }
 
-/* Smooth scroll for anchor links */
-html { scroll-behavior: smooth; }
+/* Smooth scroll for anchor links. Framer Motion measures section offsets
+   against this container and requires a non-static positioning context. */
+html {
+  position: relative;
+  scroll-behavior: smooth;
+}
 
 /* Force single-column layout on resume preview — prevents any inherited
    or injected multi-column styles from splitting paragraph text */
@@ -54,6 +58,21 @@ html { scroll-behavior: smooth; }
 }
 .animate-slide-up {
   animation: slide-up 0.3s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Noise texture overlay for hero */

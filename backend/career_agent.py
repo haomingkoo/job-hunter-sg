@@ -217,7 +217,7 @@ def _coerce_decision(value: Any) -> str:
     return "maybe"
 
 
-def _normalise_pack(raw: Any, *, resume_text: str, job_text: str, match_result: dict[str, Any]) -> dict[str, Any]:
+def _normalise_pack(raw: Any, *, resume_text: str, match_result: dict[str, Any]) -> dict[str, Any]:
     pack = json.loads(json.dumps(_DEFAULT_PACK))
     if isinstance(raw, dict):
         for key, default_value in _DEFAULT_PACK.items():
@@ -396,7 +396,6 @@ def _local_fallback_pack(
             ],
         },
         resume_text=resume_text,
-        job_text="",
         match_result=match_result,
     ) | {"degraded": True}
 
@@ -544,7 +543,6 @@ SECURITY: {untrusted_rule}""".format(untrusted_rule=UNTRUSTED_DATA_RULE)
     pack = _normalise_pack(
         raw,
         resume_text=resume_text,
-        job_text=job_description,
         match_result=match_result,
     )
     pack["degraded"] = False

@@ -18,8 +18,10 @@ import config
 from prompt_safety import unescape_xml_data, xml_data_block
 
 from .discovery import JobSnapshot
+from .fair_hiring import mentions_protected_status
 from .prompts import ROLE_SUCCESS_PROMPT_VERSION, ROLE_SUCCESS_SYSTEM_PROMPT
 from .telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
+from .model_transport_observer import create_observed_agent_model, transport_role
 
 if TYPE_CHECKING:
     from .candidate_profile import CandidateEvidenceProfile
@@ -437,6 +439,8 @@ def _validate_submission(
         criterion_id = str(item["criterion_id"]).strip()
         if not str(item.get("statement") or "").strip():
             return None, f"criterion:{criterion_id}:missing_statement"
+        if mentions_protected_status(str(item.get("statement") or "")):
+            return None, f"criterion:{criterion_id}:protected_status"
         refs = item.get("source_ids")
         if not isinstance(refs, list) or not refs:
             return None, f"criterion:{criterion_id}:missing_role_sources"
@@ -461,7 +465,13 @@ def _validate_submission(
                 return None, f"criterion:{criterion_id}:invalid_role_citation_path"
             if excerpt not in _normalize_source_text(source_value):
                 return None, f"criterion:{criterion_id}:role_citation_excerpt_not_found"
+            if mentions_protected_status(unescaped_excerpt):
+                return None, f"criterion:{criterion_id}:protected_status"
             citation["relevant_excerpt"] = unescaped_excerpt
+
+    clarification_question = str(payload.get("clarification_question") or "").strip()
+    if mentions_protected_status(clarification_question):
+        return None, "clarification_question:protected_status"
 
     return payload, ""
 
@@ -475,10 +485,11 @@ class LangChainRoleDefinitionGenerator:
         occupation_sources: tuple[OccupationSource, ...] = (),
         telemetry: RecruitmentTelemetry | None = None,
     ):
+        self._telemetry = telemetry or OpenTelemetryRecorder()
         if model is None:
-            from resume_agent.models import create_agent_model
-
-            model = create_agent_model(
+            model = create_observed_agent_model(
+                self._telemetry,
+                role="role_definition",
                 timeout=config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
                 max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
             )
@@ -486,7 +497,6 @@ class LangChainRoleDefinitionGenerator:
             raise TypeError("Role definition model must support bind_tools")
         self._model = model
         self._occupation_sources = occupation_sources
-        self._telemetry = telemetry or OpenTelemetryRecorder()
 
     def define(
         self,
@@ -650,10 +660,11 @@ class LangChainRoleDefinitionGenerator:
                 },
             ) as attempt_span:
                 try:
-                    response = self._model.bind_tools(
-                        [_SUBMIT_ROLE_DEFINITION_TOOL],
-                        tool_choice=_SUBMIT_ROLE_DEFINITION_TOOL.name,
-                    ).invoke(request)
+                    with transport_role("role_definition"):
+                        response = self._model.bind_tools(
+                            [_SUBMIT_ROLE_DEFINITION_TOOL],
+                            tool_choice=_SUBMIT_ROLE_DEFINITION_TOOL.name,
+                        ).invoke(request)
                 except BaseException as error:
                     attempt_span.set_attribute("status", "error")
                     attempt_span.set_attribute("error_type", type(error).__name__)

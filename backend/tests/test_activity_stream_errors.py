@@ -84,10 +84,27 @@ def test_role_profile_failure_exposes_only_safe_resume_metadata():
     assert "private_resume_text" not in payload
 
 
-def test_an_unexpected_exception_stays_generic():
+def test_an_unexpected_exception_stays_generic(caplog):
     """Its text is not written for a user, and may carry internals."""
     payload = _error_payload(RuntimeError("psycopg2.OperationalError: FATAL password auth failed"))
 
     assert payload["message"] == "The recruitment team could not complete this turn."
     assert "password" not in payload["message"]
     assert payload["error_type"] == "RuntimeError"
+    assert "password auth failed" not in caplog.text
+    assert "error_type=RuntimeError" in caplog.text
+
+
+def test_team_factory_failure_emits_one_error_and_terminates(monkeypatch):
+    import config
+
+    monkeypatch.setattr(config, "RECRUITMENT_STREAM_HEARTBEAT_SECONDS", 0.01)
+
+    def broken_factory(_publisher):
+        raise RuntimeError("factory unavailable")
+
+    blocks = list(stream_command(broken_factory, 1, object(), "k"))
+
+    assert len(blocks) == 1
+    assert blocks[0].startswith("event: error\n")
+    assert "heartbeat" not in blocks[0]

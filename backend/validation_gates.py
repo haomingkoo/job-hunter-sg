@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ai_phrases import clean_ai_phrases
 from config import VALIDATION_REWRITE_MAX_EXPANSION_RATIO
@@ -159,7 +159,7 @@ _METRIC_CONTEXT_RADIUS = 80
 _CLAIM_BOUNDARY_RE = re.compile(r"[;.!?\n]")
 
 
-def _extract_numbers(text: str) -> set[str]:
+def extract_numbers(text: str) -> set[str]:
     """Extract all numeric facts from text."""
     return {m.strip().lower() for m in _NUMBER_RE.findall(text)}
 
@@ -242,8 +242,8 @@ def numeric_metric_claims_verifiable(source: str, generated: str) -> bool:
 
 def gate_fact_preservation(original: str, tailored: str) -> GateResult:
     """Ensure numeric facts are preserved and not newly introduced."""
-    orig_numbers = _extract_numbers(original)
-    tail_numbers = _extract_numbers(tailored)
+    orig_numbers = extract_numbers(original)
+    tail_numbers = extract_numbers(tailored)
     missing = orig_numbers - tail_numbers
     added = tail_numbers - orig_numbers
 

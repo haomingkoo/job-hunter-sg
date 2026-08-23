@@ -5,15 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import threading
 import time
 import uuid
-import weakref
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from models import (
@@ -60,6 +57,7 @@ from .interface import (
     confirmed_evidence_fact,
 )
 from .execution_metrics import merge_execution_metrics
+from .model_transport_observer import collect_transport_metrics
 from .errors import (
     CandidateProfilingUnavailable,
     DiscoveryUnavailable,
@@ -128,6 +126,7 @@ from .resume_edit_evidence import (
 )
 from .telemetry import RecruitmentTelemetry
 from .activity_publisher import ActivityPublisher
+from . import activity_events
 from .prompts import CONVERSATION_PROMPT_VERSION
 from .assessment_contracts import (
     TargetAssessmentProgress,
@@ -156,8 +155,6 @@ SEMANTIC_PREFERENCE_FIELDS = frozenset({"role"})
 # A UI-sent opener is an instruction to the team, not something the candidate
 # wants searched, so it must never become the query.
 AUTOPILOT_MARKER = "[autopilot]"
-_EMAIL = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
-_PHONE = re.compile(r"(?<!\d)(?:\+?65[\s-]?)?[689]\d{3}[\s-]?\d{4}(?!\d)")
 
 
 def _job_hidden_by_feedback(facts: dict, job: JobSnapshot) -> bool:
@@ -172,30 +169,6 @@ def _job_hidden_by_feedback(facts: dict, job: JobSnapshot) -> bool:
     return False
 
 
-def _safe_trace_query(query: str) -> tuple[str, bool]:
-    if _EMAIL.search(query) or _PHONE.search(query):
-        return "[redacted: possible contact data]", True
-    return query, False
-
-
-def _trace_attributes(item: dict, detail: dict) -> dict:
-    """Persist operational facts only; never raw messages, resumes, or reasoning."""
-    attributes = {}
-    for key in ("tool_name", "stage"):
-        if isinstance(detail.get(key), str):
-            attributes[key] = detail[key]
-    args = item.get("args") if isinstance(item.get("args"), dict) else {}
-    if isinstance(args.get("query"), str):
-        query, redacted = _safe_trace_query(args["query"])
-        attributes["query"] = query
-        attributes["query_redacted"] = redacted
-    if isinstance(detail.get("result_count"), int):
-        attributes["result_count"] = detail["result_count"]
-    if item.get("id"):
-        attributes["span_id"] = str(item["id"])
-    return attributes
-
-
 def _trace_event_fields(
     *,
     kind: str,
@@ -203,7 +176,6 @@ def _trace_event_fields(
     run_id: str,
     detail: dict,
     started_calls: dict[str, float],
-    args: dict | None = None,
 ) -> tuple[str, float | None, dict]:
     duration_ms = None
     if kind == "tool_call" and call_id:
@@ -212,9 +184,9 @@ def _trace_event_fields(
         started_at = started_calls.pop(call_id, None)
         if started_at is not None:
             duration_ms = (time.perf_counter() - started_at) * 1000
-    item = {"kind": kind, "id": call_id, "args": args or {}}
+    item = {"kind": kind, "id": call_id}
     parent_id = call_id if kind == "tool_result" and call_id else run_id
-    return parent_id, duration_ms, _trace_attributes(item, detail)
+    return parent_id, duration_ms, activity_events.trace_attributes(item, detail)
 
 
 def _run_duration_ms(run: RecruitmentRun) -> float | None:
@@ -268,6 +240,7 @@ ASSESS_TARGET_JOB_MESSAGE = "Run the bounded recruitment-team assessment for my 
 COMPLETION_SUMMARIES = {
     "coordinator": "The coordinator completed this turn.",
     "candidate_profiler": "The candidate profiler completed this turn.",
+    "role_profiler": "The role profiler completed this turn.",
     "quality_judge": "The independent quality judge completed this turn.",
 }
 TRANSPORT_ATTEMPT_LIMIT = FIRST_ATTEMPT + config.RECRUITMENT_MODEL_TRANSPORT_RETRIES
@@ -285,37 +258,6 @@ SEMANTIC_ATTEMPT_LIMITS = {
     "answer_assessment_question": config.AGENT_JUDGE_VALIDATION_ATTEMPTS,
     "hide_job": FIRST_ATTEMPT,
 }
-
-# One lock per thread_id, serializing every command against that thread so two
-# concurrent requests (e.g. a double-click answering a paused assessment, or
-# two browser tabs) can't both pass a workflow_state check-then-act before
-# either commits its transition. Weakly held so the registry doesn't grow
-# unbounded over a long-running process -- an entry disappears once nothing
-# is actively holding that thread's lock. This is deliberately process-local;
-# cross-worker claiming requires the database lease tracked in issue #229.
-_THREAD_LOCKS: "weakref.WeakValueDictionary[str, threading.Lock]" = weakref.WeakValueDictionary()
-_THREAD_LOCKS_REGISTRY_LOCK = threading.Lock()
-
-
-def _thread_lock(thread_id: str) -> threading.Lock:
-    with _THREAD_LOCKS_REGISTRY_LOCK:
-        lock = _THREAD_LOCKS.get(thread_id)
-        if lock is None:
-            lock = threading.Lock()
-            _THREAD_LOCKS[thread_id] = lock
-        return lock
-
-
-def _reserve_event_sequence(db: Session, thread_id: str) -> int:
-    """Atomically reserve one ordered event number across database sessions."""
-    next_value = db.execute(
-        update(RecruitmentThread)
-        .where(RecruitmentThread.id == thread_id)
-        .values(next_event_sequence=RecruitmentThread.next_event_sequence + 1)
-        .returning(RecruitmentThread.next_event_sequence)
-    ).scalar_one()
-    return int(next_value) - 1
-
 
 class RecruitmentTeam:
     """The sole orchestration interface used by transports, canaries, and tests."""
@@ -447,6 +389,8 @@ class RecruitmentTeam:
                 "the failed command cannot be resumed safely",
                 decision=decision,
             )
+        if stage == "answer_assessment_question":
+            self._restore_paused_assessment(run, restore=record)
         if record:
             self._record_run_attempt(
                 run,
@@ -456,6 +400,28 @@ class RecruitmentTeam:
                 status="resumed",
                 decision=decision,
             )
+
+    def _restore_paused_assessment(self, run: RecruitmentRun, *, restore: bool) -> None:
+        """Restore the durable pause consumed by a failed answer attempt."""
+
+        thread = self._db.get(RecruitmentThread, run.thread_id)
+        if thread is None:
+            raise ThreadNotFound("recruitment thread not found")
+        facts = dict(thread.case_facts or {})
+        artifact_id = facts.get("target_assessment_artifact_id")
+        pause_token = facts.get("target_assessment_pause_token")
+        artifact = self._db.get(TargetAssessmentArtifact, artifact_id) if artifact_id else None
+        if artifact is None or not pause_token or artifact.pending_specialist_runs is None:
+            raise ServiceUnavailable(
+                "the failed assessment answer no longer has a resumable checkpoint",
+                decision=classify_failure("checkpoint_state_unavailable"),
+            )
+        if not restore:
+            return
+        artifact.status = "paused"
+        facts["target_assessment_status"] = "paused"
+        thread.case_facts = facts
+        thread.workflow_state = "awaiting_candidate_answer"
 
     def _renew_run_lease(self, run: RecruitmentRun, *, commit: bool = False) -> None:
         owner = run.lease_owner or ""
@@ -521,7 +487,11 @@ class RecruitmentTeam:
                 if previous is not None and previous.status != "failed":
                     return self._receipt(previous)
                 if previous is not None:
-                    if previous.command_type in {"start_thread", "send_message"}:
+                    if previous.command_type in {
+                        "start_thread",
+                        "send_message",
+                        "answer_assessment_question",
+                    }:
                         self._assert_latest_failed_conversation_turn(previous)
                     # Validate before the atomic claim so an unapproved retry
                     # never takes ownership. Record only after claim refreshes
@@ -531,7 +501,7 @@ class RecruitmentTeam:
 
             if thread_id is None:
                 return execute_current()
-            with _thread_lock(thread_id):
+            with activity_events.thread_lock(thread_id):
                 return execute_current()
         finally:
             if capacity_limited:
@@ -677,11 +647,12 @@ class RecruitmentTeam:
             )
             with self._telemetry.operation("persist_running"):
                 self._db.commit()
-            self._activity_publisher.publish(self._activity(running_event))
+            self._activity_publisher.publish(activity_events.to_activity_event(running_event))
 
             if isinstance(command, StartThread) and self._study_dispatcher is not None:
                 self._study_dispatcher(owner_id, resume.id, thread.id)
 
+            command_transport_metrics: dict = {}
             try:
                 if isinstance(command, SearchJobs):
                     reply, completion_detail = self._search_jobs(thread, command, message)
@@ -705,7 +676,7 @@ class RecruitmentTeam:
                         run,
                         command,
                     )
-                    completion_member = "coordinator"
+                    completion_member = "role_profiler"
                 elif isinstance(command, HideJob):
                     reply, completion_detail = self._hide_job(thread, command)
                     completion_member = "coordinator"
@@ -742,16 +713,22 @@ class RecruitmentTeam:
                         else "quality_judge"
                     )
                 else:
-                    reply = self._model_reply(
-                        thread,
-                        resume,
-                        run,
-                        correlation_key,
-                        command_type,
-                    )
+                    with collect_transport_metrics() as conversation_transport_metrics:
+                        reply = self._model_reply(
+                            thread,
+                            resume,
+                            run,
+                            correlation_key,
+                            command_type,
+                        )
+                    command_transport_metrics = conversation_transport_metrics.summary()
                     completion_detail = {"model": reply.model_name}
                     completion_member = "coordinator"
             except BaseException as error:
+                command_transport_metrics = (
+                    getattr(error, "recruitment_transport_metrics", None)
+                    or command_transport_metrics
+                )
                 self._renew_run_lease(run)
                 run.status = "failed"
                 run.error_type = type(error).__name__
@@ -777,6 +754,25 @@ class RecruitmentTeam:
                     layer,
                     limit - FIRST_ATTEMPT,
                 )
+                if (
+                    command_type == "answer_assessment_question"
+                    and initial_decision.failure_code == "checkpoint_state_unavailable"
+                ):
+                    remaining = remaining and attempts_remaining(
+                        run.attempt_ledger,
+                        command_type,
+                        "workflow_resume",
+                        config.RECRUITMENT_WORKFLOW_RESUME_LIMIT,
+                    )
+                elif (
+                    command_type == "answer_assessment_question"
+                    and initial_decision.failure_type != "transient"
+                ):
+                    # Semantic corrections must happen inside the still-running
+                    # assessment graph. A terminal result has already cleaned its
+                    # pause checkpoint, so advertising a workflow retry here would
+                    # direct the caller to state that cannot be resumed.
+                    remaining = False
                 # The error source cannot know the durable budget. Reclassify
                 # here, where the persisted ledger says whether a known
                 # transport or semantic correction is still allowed. Terminal
@@ -832,6 +828,28 @@ class RecruitmentTeam:
                         }
                     })
                 self._persist_recovery_decision(thread, command_type, failure_detail)
+                terminal_error = {
+                    key: failure_detail[key]
+                    for key in (
+                        "error_type",
+                        "message",
+                        "failure_type",
+                        "failure_code",
+                        "retryable",
+                        "recovery_action",
+                        "retry_after_seconds",
+                        "attempted_stage",
+                        "validation_code",
+                        "correction_scope",
+                        "partial_artifact_id",
+                        "alternatives",
+                    )
+                    if key in failure_detail
+                }
+                run.result = {
+                    "terminal_error": terminal_error,
+                    "transport_metrics": command_transport_metrics,
+                }
                 for attribute, value in failure_detail.items():
                     if attribute != "message":
                         command_span.set_attribute(attribute, value)
@@ -852,25 +870,8 @@ class RecruitmentTeam:
                 )
                 with self._telemetry.operation("persist_failed"):
                     self._db.commit()
-                self._activity_publisher.publish(self._activity(failed_event))
-                error.recruitment_terminal_payload = {
-                    key: failure_detail[key]
-                    for key in (
-                        "error_type",
-                        "message",
-                        "failure_type",
-                        "failure_code",
-                        "retryable",
-                        "recovery_action",
-                        "retry_after_seconds",
-                        "attempted_stage",
-                        "validation_code",
-                        "correction_scope",
-                        "partial_artifact_id",
-                        "alternatives",
-                    )
-                    if key in failure_detail
-                }
+                self._activity_publisher.publish(activity_events.to_activity_event(failed_event))
+                error.recruitment_terminal_payload = terminal_error
                 raise
 
             self._renew_run_lease(run)
@@ -922,6 +923,7 @@ class RecruitmentTeam:
                 # thread moves on, so replaying a paused run's idempotency key
                 # after it resumed would otherwise report the later state.
                 "workflow_state": thread.workflow_state or "",
+                "transport_metrics": command_transport_metrics,
             }
             completed_event = self._event(
                 thread,
@@ -942,7 +944,7 @@ class RecruitmentTeam:
             thread.updated_at = _utcnow()
             with self._telemetry.operation("persist_completed"):
                 self._db.commit()
-            self._activity_publisher.publish(self._activity(completed_event))
+            self._activity_publisher.publish(activity_events.to_activity_event(completed_event))
             return self._receipt(run)
 
     def retry_conversation_run(
@@ -969,15 +971,25 @@ class RecruitmentTeam:
             return self._receipt(run)
         if run.status != "failed":
             raise InvalidCommand(f"command is {run.status}")
-        if run.command_type not in {"start_thread", "send_message"}:
-            raise InvalidCommand("only failed conversation turns can be retried here")
+        if run.command_type not in {
+            "start_thread",
+            "send_message",
+            "answer_assessment_question",
+        }:
+            raise InvalidCommand(
+                "only failed conversation turns or assessment answers can be retried here"
+            )
 
         message = self._conversation_run_message(run)
-        command: Command = (
-            StartThread(resume_version_id=thread.resume_version_id, message=message.content)
-            if run.command_type == "start_thread"
-            else SendMessage(thread_id=thread.id, message=message.content)
-        )
+        if run.command_type == "start_thread":
+            command: Command = StartThread(
+                resume_version_id=thread.resume_version_id,
+                message=message.content,
+            )
+        elif run.command_type == "send_message":
+            command = SendMessage(thread_id=thread.id, message=message.content)
+        else:
+            command = AnswerAssessmentQuestion(thread_id=thread.id, answer=message.content)
         return self.execute(owner_id, command, run.idempotency_key)
 
     def _conversation_run_message(self, run: RecruitmentRun) -> RecruitmentMessage:
@@ -1045,13 +1057,23 @@ class RecruitmentTeam:
             # fourth argument, which is what DeepAgentConversationModel requires
             # and refuses to run without, and through the ContextVars the
             # coordinator's tools read once the loop binds them.
-            with assessment_context(conversation, initial_edits=conversation.proposed_edits):
-                reply = self._conversation_model.respond(
-                    messages,
-                    resume.resume_text,
-                    preferences,
-                    conversation,
-                )
+            try:
+                with assessment_context(conversation, initial_edits=conversation.proposed_edits):
+                    reply = self._conversation_model.respond(
+                        messages,
+                        resume.resume_text,
+                        preferences,
+                        conversation,
+                    )
+            except BaseException as error:
+                cleanup_token = str(getattr(error, "checkpoint_cleanup_token", "") or "")
+                if cleanup_token:
+                    self._remember_coordinator_checkpoint_state(
+                        thread,
+                        pause_token="",
+                        cleanup_token=cleanup_token,
+                    )
+                raise
             if not reply.content:
                 raise InvalidCommand("conversation model returned no user-facing reply")
             reply = replace(reply, content=paragraph_reply(reply.content))
@@ -1071,7 +1093,11 @@ class RecruitmentTeam:
             self._persist_conversation_matches(thread, conversation)
             self._persist_conversation_plan(thread, conversation)
             self._persist_conversation_edits(thread, resume, run, conversation)
-            self._remember_pause_token(thread, reply.pause_token)
+            self._remember_coordinator_checkpoint_state(
+                thread,
+                pause_token=reply.pause_token,
+                cleanup_token=reply.checkpoint_cleanup_token,
+            )
             model_span.set_attribute("model", reply.model_name)
             model_span.set_attribute(
                 "prompt_version",
@@ -1142,15 +1168,22 @@ class RecruitmentTeam:
         )
 
     @staticmethod
-    def _remember_pause_token(thread: RecruitmentThread, pause_token: str) -> None:
-        """Persist or clear the conversational pause token."""
+    def _remember_coordinator_checkpoint_state(
+        thread: RecruitmentThread,
+        *,
+        pause_token: str,
+        cleanup_token: str,
+    ) -> None:
+        """Persist the only coordinator checkpoint that still needs work."""
         facts = dict(thread.case_facts)
         if pause_token:
             facts["coordinator_pause_token"] = pause_token
-        elif "coordinator_pause_token" not in facts:
-            return
         else:
-            facts.pop("coordinator_pause_token")
+            facts.pop("coordinator_pause_token", None)
+        if cleanup_token:
+            facts["coordinator_cleanup_token"] = cleanup_token
+        else:
+            facts.pop("coordinator_cleanup_token", None)
         thread.case_facts = facts
 
     def _conversation_activity(self, thread: RecruitmentThread, run: RecruitmentRun):
@@ -1172,7 +1205,6 @@ class RecruitmentTeam:
                 run_id=run.id,
                 detail=detail,
                 started_calls=started_calls,
-                args=item.get("args") if isinstance(item.get("args"), dict) else None,
             )
             event = self._event(
                 thread,
@@ -1187,7 +1219,7 @@ class RecruitmentTeam:
                 attributes=attributes,
             )
             self._renew_run_lease(run, commit=True)
-            self._activity_publisher.publish(self._activity(event))
+            self._activity_publisher.publish(activity_events.to_activity_event(event))
 
         return publish
 
@@ -1436,7 +1468,7 @@ class RecruitmentTeam:
             )
             self._renew_run_lease(command_run)
             self._db.commit()
-            self._activity_publisher.publish(self._activity(event))
+            self._activity_publisher.publish(activity_events.to_activity_event(event))
 
         profiler = self._candidate_profiler_factory.create(store, publish_progress)
         try:
@@ -1629,13 +1661,14 @@ class RecruitmentTeam:
                     "candidate_profile_field_count": len(candidate_profile.fields),
                 },
             ) as profile_span:
-                run = self._role_profiler.profile(
-                    candidate_profile,
-                    job,
-                    comparable_jobs,
-                    checkpoint_store,
-                    before_model_call=lambda: self._renew_run_lease(run_record, commit=True),
-                )
+                with collect_transport_metrics() as role_transport_metrics:
+                    run = self._role_profiler.profile(
+                        candidate_profile,
+                        job,
+                        comparable_jobs,
+                        checkpoint_store,
+                        before_model_call=lambda: self._renew_run_lease(run_record, commit=True),
+                    )
                 profile_span.set_attribute("model", run.model_name)
                 profile_span.set_attribute("attempt_count", run.attempt_count)
                 profile_span.set_attribute("generator_attempt_count", run.generator_attempt_count)
@@ -1676,6 +1709,11 @@ class RecruitmentTeam:
                         ),
                         "retryable": True,
                         "alternatives": ["retry_incomplete_stage", "start_new_logical_run"],
+                        "transport_metrics": getattr(
+                            error,
+                            "recruitment_transport_metrics",
+                            {},
+                        ),
                     }
                 )
             raise RoleProfilingUnavailable(
@@ -1698,6 +1736,11 @@ class RecruitmentTeam:
                         ),
                         "retryable": classify_exception(error, attempts_remaining=True).retryable,
                         "alternatives": ["retry_incomplete_stage", "start_new_logical_run"],
+                        "transport_metrics": getattr(
+                            error,
+                            "recruitment_transport_metrics",
+                            {},
+                        ),
                     }
                 )
             raise RoleProfilingUnavailable(
@@ -1760,6 +1803,7 @@ class RecruitmentTeam:
             )))),
             "attempts": role_attempts,
             "terminal_status": "completed",
+            **role_transport_metrics.summary(),
         }
         self._merge_run_metrics(
             run_record,
@@ -1957,6 +2001,7 @@ class RecruitmentTeam:
             status="running",
             specialist_runs=[],
             synthesis="",
+            synthesis_claims=[],
             execution_policy=target_assessment_execution_policy(),
             execution_metrics={
                 "logical_run_id": run.id,
@@ -2041,6 +2086,7 @@ class RecruitmentTeam:
             list(artifact.pending_proposed_edits or []),
             ask_candidate_call_id=facts.get("target_assessment_pause_call_id") or None,
             renew_lease=lambda: self._renew_run_lease(run, commit=True),
+            synthesis_claims=list(artifact.pending_synthesis_claims or []),
         )
         return self._consume_target_assessment_updates(owner_id, thread, resume, run, artifact, updates)
 
@@ -2067,15 +2113,17 @@ class RecruitmentTeam:
                         pause_detail = update.detail or {}
                     detail = update.detail or {}
                     call_id = str(detail.get("tool_call_id") or "")
-                    kind = "tool_result" if detail.get("stage") == "result" else "tool_call"
-                    args = {"query": detail["query"]} if isinstance(detail.get("query"), str) else None
+                    kind = {
+                        "call": "tool_call",
+                        "result": "tool_result",
+                        "model": "model_attempt",
+                    }.get(str(detail.get("stage") or ""), "lifecycle")
                     parent_id, duration_ms, attributes = _trace_event_fields(
                         kind=kind,
                         call_id=call_id,
                         run_id=run.id,
                         detail=detail,
                         started_calls=started_calls,
-                        args=args,
                     )
                     progress_event = self._event(
                         thread,
@@ -2091,7 +2139,7 @@ class RecruitmentTeam:
                     )
                     self._renew_run_lease(run)
                     self._db.commit()
-                    self._activity_publisher.publish(self._activity(progress_event))
+                    self._activity_publisher.publish(activity_events.to_activity_event(progress_event))
                 elif isinstance(update, TargetAssessmentResult):
                     if result is not None:
                         raise ValueError("target assessment runner returned more than one result")
@@ -2108,9 +2156,28 @@ class RecruitmentTeam:
                 "retryable": decision.retryable,
                 "recovery_action": decision.recovery_action,
             }
+            artifact.execution_metrics = merge_execution_metrics(
+                artifact.execution_metrics,
+                {
+                    **(getattr(error, "recruitment_transport_metrics", None) or {}),
+                    "command_run_id": run.id,
+                    "command_trace_key": run.trace_key,
+                    "stage": "target_assessment",
+                    "terminal_status": "failed",
+                },
+            )
+            self._merge_run_metrics(
+                run,
+                artifact.execution_metrics,
+                semantic_limit=config.AGENT_JUDGE_VALIDATION_ATTEMPTS,
+            )
             facts = dict(thread.case_facts)
             facts["target_assessment_status"] = artifact.status
+            cleanup_token = str(getattr(error, "checkpoint_cleanup_token", "") or "")
+            if cleanup_token:
+                facts["target_assessment_cleanup_token"] = cleanup_token
             thread.case_facts = facts
+            thread.workflow_state = "assessment_failed"
             artifact.updated_at = _utcnow()
             self._db.commit()
             raise TargetAssessmentUnavailable(
@@ -2125,8 +2192,8 @@ class RecruitmentTeam:
                     artifact.execution_metrics,
                     {
                         **(pause_detail.get("execution_metrics") or {}),
-                        "logical_run_id": run.id,
-                        "trace_key": run.trace_key,
+                        "command_run_id": run.id,
+                        "command_trace_key": run.trace_key,
                     },
                 )
                 self._merge_run_metrics(
@@ -2136,6 +2203,7 @@ class RecruitmentTeam:
                 )
                 artifact.pending_specialist_runs = pause_detail.get("specialist_runs") or []
                 artifact.pending_synthesis = str(pause_detail.get("synthesis") or "")
+                artifact.pending_synthesis_claims = pause_detail.get("synthesis_claims") or []
                 artifact.pending_proposed_edits = pause_detail.get("proposed_edits") or []
                 artifact.updated_at = _utcnow()
                 facts = dict(thread.case_facts)
@@ -2160,6 +2228,7 @@ class RecruitmentTeam:
             facts = dict(thread.case_facts)
             facts["target_assessment_status"] = artifact.status
             thread.case_facts = facts
+            thread.workflow_state = "assessment_failed"
             artifact.updated_at = _utcnow()
             self._db.commit()
             raise TargetAssessmentUnavailable(
@@ -2190,7 +2259,27 @@ class RecruitmentTeam:
                     )
                 )
             )
-            terminal_decision = classify_failure(failure_code)
+            retry_same_run = (
+                run.command_type == "answer_assessment_question"
+                and failure_code == "checkpoint_state_unavailable"
+                and (effective_error or {}).get("retryable") is True
+                and (effective_error or {}).get("recovery_action") == "retry_same_run"
+            )
+            retry_remaining = retry_same_run and attempts_remaining(
+                run.attempt_ledger,
+                run.command_type,
+                "transport",
+                TRANSPORT_ATTEMPT_LIMIT - FIRST_ATTEMPT,
+            ) and attempts_remaining(
+                run.attempt_ledger,
+                run.command_type,
+                "workflow_resume",
+                config.RECRUITMENT_WORKFLOW_RESUME_LIMIT,
+            )
+            terminal_decision = classify_failure(
+                failure_code,
+                attempts_remaining=retry_remaining,
+            )
             effective_error = {
                 **(effective_error or {}),
                 "failure_type": terminal_decision.failure_type,
@@ -2199,11 +2288,23 @@ class RecruitmentTeam:
                 "recovery_action": terminal_decision.recovery_action,
             }
         artifact.status = effective_status
+        # Unapproved model content stays out of the durable artifact. Attempt
+        # metadata and lifecycle events remain available for diagnosis.
         artifact.specialist_runs = list(result.specialist_runs) if effective_status == "completed" else []
         artifact.synthesis = result.synthesis if effective_status == "completed" else ""
-        artifact.pending_specialist_runs = None
-        artifact.pending_synthesis = None
-        artifact.pending_proposed_edits = None
+        artifact.synthesis_claims = (
+            list(result.synthesis_claims) if effective_status == "completed" else []
+        )
+        retain_pause = (
+            terminal_decision is not None
+            and terminal_decision.retryable
+            and terminal_decision.recovery_action == "retry_same_run"
+        )
+        if not retain_pause:
+            artifact.pending_specialist_runs = None
+            artifact.pending_synthesis = None
+            artifact.pending_synthesis_claims = None
+            artifact.pending_proposed_edits = None
         artifact.judge = result.judge
         artifact.correction = result.correction
         artifact.error = effective_error
@@ -2212,8 +2313,8 @@ class RecruitmentTeam:
             artifact.execution_metrics,
             {
                 **result.execution_metrics,
-                "logical_run_id": run.id,
-                "trace_key": run.trace_key,
+                "command_run_id": run.id,
+                "command_trace_key": run.trace_key,
             },
         )
         self._merge_run_metrics(
@@ -2224,15 +2325,20 @@ class RecruitmentTeam:
         artifact.updated_at = _utcnow()
         facts = dict(thread.case_facts)
         facts["target_assessment_status"] = effective_status
-        facts.pop("target_assessment_pause_token", None)
-        facts.pop("target_assessment_pause_call_id", None)
+        if result.checkpoint_cleanup_token:
+            facts["target_assessment_cleanup_token"] = result.checkpoint_cleanup_token
+        if not retain_pause:
+            facts.pop("target_assessment_pause_token", None)
+            facts.pop("target_assessment_pause_call_id", None)
         thread.case_facts = facts
         self._db.commit()
 
         if effective_status != "completed":
             if effective_status == "quality_blocked":
                 thread.workflow_state = "quality_blocked"
-                self._db.commit()
+            else:
+                thread.workflow_state = "assessment_failed"
+            self._db.commit()
             raise TargetAssessmentUnavailable(
                 "target assessment did not pass its independent quality gate",
                 decision=terminal_decision or classify_failure("unclassified_failure"),
@@ -2263,7 +2369,7 @@ class RecruitmentTeam:
             "operation": "assess_target_job",
             "assessment_artifact_id": artifact.id,
             "specialist_run_count": len(result.specialist_runs),
-            "judge_status": (result.judge or {}).get("verdict", "completed"),
+            "judge_status": (result.judge or {}).get("disposition", "completed"),
             "correction_attempted": bool((result.correction or {}).get("attempted")),
             "execution_policy": result.execution_policy,
         }
@@ -2428,19 +2534,17 @@ class RecruitmentTeam:
         )
         if artifact is None:
             raise InvalidCommand("target assessment artifact reference is invalid")
-        # A paused run parks completed specialist work in pending_specialist_runs,
-        # so reading specialist_runs alone showed a candidate nothing while their
-        # scored verdicts sat in the row. Pausing is the normal HITL state, not an
-        # error, so surface what the specialists already reported.
-        reported = list(artifact.specialist_runs or []) or list(
-            artifact.pending_specialist_runs or []
-        )
+        # pending_specialist_runs is resumable coordinator state, not a reviewed
+        # candidate-facing result. Only the post-judge specialist_runs field crosses
+        # this API boundary.
+        reported = list(artifact.specialist_runs or [])
         return TargetAssessmentArtifactSnapshot(
             artifact_id=artifact.id,
             target_job_id=artifact.target_job_id,
             status=artifact.status,
             specialist_runs=tuple(reported),
             synthesis=artifact.synthesis,
+            synthesis_claims=tuple(artifact.synthesis_claims or []),
             judge=artifact.judge,
             correction=artifact.correction,
             error=artifact.error,
@@ -2466,7 +2570,7 @@ class RecruitmentTeam:
             .order_by(RecruitmentActivityEvent.sequence)
             .all()
         )
-        return [self._activity(item) for item in records]
+        return [activity_events.to_activity_event(item) for item in records]
 
     def run_replay(
         self,
@@ -2496,11 +2600,15 @@ class RecruitmentTeam:
             .order_by(RecruitmentActivityEvent.sequence)
             .all()
         )
-        events = [self._activity(item) for item in records]
+        events = [activity_events.to_activity_event(item) for item in records]
         if run.status == "completed":
             return events, ("receipt", self._receipt(run))
         if run.status != "failed":
             return events, None
+
+        persisted_error = (run.result or {}).get("terminal_error")
+        if isinstance(persisted_error, dict):
+            return events, ("error", dict(persisted_error))
 
         failed = (
             self._db.query(RecruitmentActivityEvent)
@@ -2600,6 +2708,45 @@ class RecruitmentTeam:
             self._db.commit()
         return {"thread_id": thread.id, "title": self._thread_title(thread), "status": thread.status}
 
+    def _finish_thread_checkpoint_cleanup(
+        self,
+        request: RecruitmentThreadDeletionRequest,
+        result: dict,
+        delete_checkpoints: Callable[[str], None] | None,
+    ) -> dict:
+        checkpoint_tokens = [
+            str(token)
+            for token in (request.targets or {}).get("checkpoint_tokens", [])
+            if token
+        ]
+        if not checkpoint_tokens:
+            return result
+        if delete_checkpoints is None:
+            raise ServiceUnavailable(
+                "thread data was deleted, but checkpoint cleanup is still pending",
+                decision=classify_failure(
+                    "checkpoint_cleanup_failed",
+                    attempts_remaining=True,
+                ),
+            )
+        try:
+            for token in checkpoint_tokens:
+                delete_checkpoints(token)
+        except Exception as error:
+            raise ServiceUnavailable(
+                "thread data was deleted, but checkpoint cleanup is still pending",
+                decision=classify_failure(
+                    "checkpoint_cleanup_failed",
+                    attempts_remaining=True,
+                ),
+            ) from error
+        result["deletion_request_status"] = "completed"
+        request.status = "completed"
+        request.targets = {}
+        request.result = result
+        self._db.commit()
+        return result
+
     def delete_thread(
         self,
         owner_id: int,
@@ -2620,7 +2767,31 @@ class RecruitmentTeam:
             .first()
         )
         if previous is not None:
-            return dict(previous.result)
+            result = dict(previous.result or {})
+            # Normalize legacy tombstones that claimed an external deletion
+            # request existed even though no provider deletion integration was
+            # configured. Exported telemetry is content-free, so the truthful
+            # contract is synchronous application deletion plus provider
+            # retention for operational metadata.
+            result.update({
+                "deletion_request_status": "completed",
+                "provider_deletion_required": False,
+                "retention": self.retention_contract(),
+            })
+            result.pop("trace_deletion_requests", None)
+            result.pop("evaluation_deletion_requests", None)
+            if (previous.targets or {}).get("checkpoint_tokens"):
+                return self._finish_thread_checkpoint_cleanup(
+                    previous,
+                    result,
+                    delete_checkpoints,
+                )
+            if previous.status != "completed" or previous.result != result or previous.targets:
+                previous.status = "completed"
+                previous.targets = {}
+                previous.result = result
+                self._db.commit()
+            return result
 
         thread = self._owned_thread(owner_id, thread_id)
         trace_keys = [
@@ -2641,47 +2812,49 @@ class RecruitmentTeam:
             str(value)
             for value in {
                 facts.get("coordinator_pause_token"),
+                facts.get("coordinator_cleanup_token"),
                 facts.get("target_assessment_pause_token"),
+                facts.get("target_assessment_cleanup_token"),
             }
             if value
         ]
-        if delete_checkpoints is not None:
-            for token in checkpoint_tokens:
-                delete_checkpoints(token)
-
         result = {
             "thread_id": thread.id,
             "status": "deleted",
-            "deletion_request_status": "requested",
-            "trace_deletion_requests": len(trace_keys),
-            "evaluation_deletion_requests": len(assessment_ids),
+            "deletion_request_status": "cleanup_pending" if checkpoint_tokens else "completed",
+            "provider_deletion_required": False,
             "retention": self.retention_contract(),
         }
-        self._db.add(
-            RecruitmentThreadDeletionRequest(
-                id=str(uuid.uuid4()),
-                user_id=owner_id,
-                thread_id=thread.id,
-                idempotency_key=key,
-                status="requested",
-                targets={
-                    "trace_keys": trace_keys,
-                    "assessment_artifact_ids": assessment_ids,
-                    "checkpoint_tokens": checkpoint_tokens,
-                },
-                result=result,
-            )
+        request = RecruitmentThreadDeletionRequest(
+            id=str(uuid.uuid4()),
+            user_id=owner_id,
+            thread_id=thread.id,
+            idempotency_key=key,
+            status="cleanup_pending" if checkpoint_tokens else "completed",
+            # Retain only opaque local checkpoint identifiers until their
+            # idempotent cleanup succeeds. Never retain deleted content or
+            # model-provider identifiers in this tombstone.
+            targets={"checkpoint_tokens": checkpoint_tokens} if checkpoint_tokens else {},
+            result=result,
         )
+        self._db.add(request)
         self._db.delete(thread)
         with self._telemetry.operation(
             "delete_thread",
             {
                 "owner_type": "user",
-                "trace_request_count": len(trace_keys),
-                "evaluation_request_count": len(assessment_ids),
+                "local_run_count": len(trace_keys),
+                "local_evaluation_count": len(assessment_ids),
+                "provider_deletion_required": False,
             },
         ):
             self._db.commit()
+        if checkpoint_tokens:
+            return self._finish_thread_checkpoint_cleanup(
+                request,
+                result,
+                delete_checkpoints,
+            )
         return result
 
     def _start_thread(
@@ -3095,41 +3268,18 @@ class RecruitmentTeam:
         duration_ms: float | None = None,
         attributes: dict | None = None,
     ) -> RecruitmentActivityEvent:
-        sequence = _reserve_event_sequence(self._db, thread.id)
-        event = RecruitmentActivityEvent(
-            thread_id=thread.id,
-            run_id=run.id,
-            sequence=sequence,
+        return activity_events.create_record(
+            self._db,
+            thread=thread,
+            run=run,
             event_type=event_type,
             status=status,
-            team_member=team_member,
-            attempt=FIRST_ATTEMPT,
-            trace_key=run.trace_key,
             summary=summary,
-            detail=detail or {},
+            detail=detail,
+            team_member=team_member,
             parent_id=parent_id,
             duration_ms=duration_ms,
-            attributes=attributes or {},
-        )
-        self._db.add(event)
-        return event
-
-    @staticmethod
-    def _activity(item: RecruitmentActivityEvent) -> ActivityEvent:
-        return ActivityEvent(
-            sequence=item.sequence,
-            run_id=item.run_id,
-            event_type=item.event_type,
-            status=item.status,
-            team_member=item.team_member,
-            attempt=item.attempt,
-            trace_key=item.trace_key,
-            summary=item.summary,
-            detail=item.detail,
-            parent_id=item.parent_id,
-            duration_ms=item.duration_ms,
-            attributes=item.attributes or {},
-            created_at=item.created_at,
+            attributes=attributes,
         )
 
     def _receipt(self, run: RecruitmentRun) -> RunReceipt:

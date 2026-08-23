@@ -13,13 +13,22 @@ import { ChevronDown } from "lucide-react";
 const MEMBERS = {
   coordinator: { name: "Coordinator", remit: "Runs the brief and decides who works next" },
   candidate_profiler: { name: "Candidate profiler", remit: "Builds your evidence profile from the resume" },
+  role_profiler: { name: "Role profiler", remit: "Builds the target role's source-backed success profile" },
   recruiter: { name: "Recruiter screen", remit: "Judges it the way a first-pass screen would" },
   hiring_manager: { name: "Hiring manager", remit: "Checks the work against what the team needs" },
   ats: { name: "ATS and parsing", remit: "Reads it as the applicant tracking system will" },
   skeptic: { name: "Evidence skeptic", remit: "Attacks every claim that lacks proof" },
   market_researcher: { name: "Target-market analyst", remit: "Places the role in the current market" },
-  judge: { name: "Independent judge", remit: "Reviews the team's verdict before you see it" },
+  quality_judge: { name: "Independent judge", remit: "Reviews the team's verdict before you see it" },
 };
+
+const SPECIALIST_IDS = new Set([
+  "recruiter",
+  "hiring_manager",
+  "ats",
+  "skeptic",
+  "market_researcher",
+]);
 
 // Phrased for a candidate, not a job runner.
 const STATUS = {
@@ -67,6 +76,7 @@ const TOOL_PHRASES = {
   search_jobs: "searching current postings",
   ask_candidate: "asking you a question",
   propose_resume_edit: "drafting a resume edit",
+  task: "delegating a specialist review",
   submit_target_specialist_assessment: "writing up its assessment",
   ConversationReply: "writing your reply",
 };
@@ -96,8 +106,7 @@ function humanize(item) {
 
   const tool = normalizeTool(detail.tool_name || summary.match(/^\w+ called (\w+)\.?$/)?.[1]);
   const phrase = TOOL_PHRASES[tool];
-  // What it looked for, when the tool searched for something.
-  if (phrase) return capitalize(detail.query ? `${phrase} for “${detail.query}”` : phrase);
+  if (phrase) return capitalize(phrase);
 
   // The row already names the agent, so drop a leading "ats ..." / "hiring_manager ..." subject.
   return capitalize(summary.replace(new RegExp(`^${item.team_member}\\s+`), ""));
@@ -121,8 +130,14 @@ function buildRoster(events) {
   for (const row of byMember.values()) {
     // Stream order is not arrival order, so sequence decides both trail order and status.
     row.steps.sort((a, b) => a.key - b.key);
-    // A repeated planning step is one step the user cares about, not five.
-    row.steps = row.steps.filter((step, i) => i === 0 || step.summary !== row.steps[i - 1].summary);
+    // Collapse repeated narration, but never erase a state transition. A tool
+    // call and its accepted result can intentionally share candidate-facing
+    // wording while carrying different running/completed states.
+    row.steps = row.steps.filter((step, i) => (
+      i === 0
+      || step.summary !== row.steps[i - 1].summary
+      || step.status !== row.steps[i - 1].status
+    ));
     row.status = row.steps[row.steps.length - 1]?.status;
     // A specialist can submit and then be re-engaged, so its verdict is the last completed
     // step rather than the last step. Keep both: the verdict is what the candidate wants,
@@ -133,6 +148,14 @@ function buildRoster(events) {
   }
   rows.sort((a, b) => (a.id === "coordinator" ? -1 : b.id === "coordinator" ? 1 : 0));
   return rows;
+}
+
+function latestRunIdOf(events) {
+  let latest = null;
+  for (const item of events) {
+    if (!latest || Number(item.sequence) > Number(latest.sequence)) latest = item;
+  }
+  return latest?.run_id;
 }
 
 function AgentRow({ agent, defaultOpen }) {
@@ -213,24 +236,45 @@ function AgentRow({ agent, defaultOpen }) {
 export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
   const roster = useMemo(() => buildRoster(events), [events]);
   const elapsed = useElapsed(busy);
+  // Reconnect catch-up and live SSE can arrive out of order. Sequence is the
+  // durable ordering contract; array position is only transport timing.
+  const latestRunId = useMemo(() => latestRunIdOf(events), [events]);
+  const latestRunEvents = useMemo(
+    () => events.filter((item) => item.run_id === latestRunId),
+    [events, latestRunId],
+  );
   // Only a full assessment runs specialists and a judge. A chat turn now streams
   // its own tool steps through this panel, and promising it several minutes of
   // specialists would be a lie on every message.
   const assessing = useMemo(() => {
-    if (!events.length) return false;
-    const latestRunId = events[events.length - 1].run_id;
-    return events.some((item) => item.run_id === latestRunId && item.event_type === "assessment");
-  }, [events]);
+    return latestRunEvents.some((item) => item.event_type === "assessment");
+  }, [latestRunEvents]);
 
-  const specialists = roster.filter((a) => a.id !== "coordinator");
+  const assessmentRoster = useMemo(
+    () => buildRoster(latestRunEvents.filter((item) => item.event_type === "assessment")),
+    [latestRunEvents],
+  );
+  const specialists = assessmentRoster.filter((agent) => SPECIALIST_IDS.has(agent.id));
   // "Reported" means it has produced a verdict, even if it was re-engaged afterwards.
   const reported = specialists.filter((a) => a.conclusion).length;
-  const active = roster.find((a) => a.status === "running");
+  const active = buildRoster(latestRunEvents).find((a) => a.status === "running");
+  const latestRunFailed = latestRunEvents.some((item) => item.status === "failed");
+  const latestRunBlocked = latestRunEvents.some((item) => item.status === "quality_blocked");
+  const latestRunCompleted = latestRunEvents.some(
+    (item) => item.event_type === "run" && item.status === "completed",
+  );
+  const displayRoster = useMemo(() => roster.map((agent) => (
+    latestRunCompleted && agent.status === "running"
+      ? { ...agent, status: "completed", liveStep: null }
+      : agent
+  )), [latestRunCompleted, roster]);
 
   let headline = "Idle";
   if (awaitingAnswer) headline = "Waiting on your answer";
   else if (busy && active) headline = `${MEMBERS[active.id]?.name || active.id} is working`;
   else if (busy) headline = "Team is working";
+  else if (latestRunBlocked) headline = "Assessment held back for review";
+  else if (latestRunFailed) headline = "Run stopped before completion";
   else if (roster.length) headline = "Run complete";
 
   return (
@@ -246,7 +290,7 @@ export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
 
       <p className="mt-0.5 text-[11px] text-[#4A6785]" aria-live="polite">
         {headline}
-        {specialists.length > 0 && ` · ${reported} of ${specialists.length} reported`}
+        {assessing && specialists.length > 0 && ` · ${reported} of ${specialists.length} reported`}
       </p>
 
       {busy && assessing && (
@@ -262,7 +306,7 @@ export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
         </p>
       ) : (
         <ol className="mt-3 space-y-2">
-          {roster.map((agent) => (
+          {displayRoster.map((agent) => (
             <AgentRow key={agent.id} agent={agent} defaultOpen={agent.status === "running"} />
           ))}
         </ol>

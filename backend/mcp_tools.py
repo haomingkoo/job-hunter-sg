@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import asdict
 from typing import Any
@@ -10,7 +11,6 @@ from typing import Any
 from sqlalchemy import func
 
 import agent_tool_contract as contract
-import config
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms
 from database import SessionLocal
 from embedding_service import encode_text, find_similar_jobs
@@ -23,7 +23,10 @@ from sanitizer import sanitize_resume_text
 from skill_extractor import extract_skill_phrases
 from skillsfuture_courses import recommend_courses_for_skills
 from skills_taxonomy import TIER1_SKILLS
-from validation_gates import _extract_numbers, validate_and_fix
+from validation_gates import extract_numbers, validate_and_fix
+
+
+log = logging.getLogger("jobhunter.mcp_tools")
 
 
 def _json(value: Any) -> str:
@@ -137,11 +140,12 @@ def get_job(job_id: int, include_old: bool = False) -> str:
             return _json(contract.get_job_empty_result(job_id))
         return _json(contract.get_job_result(contract.job_payload(job, detail=True)))
     except Exception as exc:
+        log.warning("MCP job lookup failed: %s", type(exc).__name__)
         return _json(
             contract.tool_error(
                 contract.GET_JOB_TOOL,
                 "get_job_failed",
-                str(exc) or "Job lookup failed.",
+                "Job lookup temporarily unavailable.",
                 job_id=job_id,
             )
         )
@@ -187,7 +191,7 @@ def search_jobs(query: str, limit: int | None = None, detail: bool = False) -> s
             if len(jobs) >= capped:
                 break
         return _json(contract.search_jobs_result(clean_query, capped, jobs, detail=detail))
-    except Exception as exc:
+    except Exception:
         return _json(
             contract.search_jobs_error(
                 clean_query,
@@ -362,8 +366,8 @@ def validate_bullet_edit(
     required_keywords: list[str] | None = None,
 ) -> str:
     """Validate one proposed bullet rewrite and return gates plus final text."""
-    original_numbers = _extract_numbers(original or "")
-    rewrite_numbers = _extract_numbers(rewrite or "")
+    original_numbers = extract_numbers(original or "")
+    rewrite_numbers = extract_numbers(rewrite or "")
     fabricated_numbers = sorted(rewrite_numbers - original_numbers)
     final_text, gates = validate_and_fix(
         original=original or "",

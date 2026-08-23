@@ -7,7 +7,6 @@ from __future__ import annotations
 import csv
 import html
 import hashlib
-import ipaddress
 import io
 import json
 import logging
@@ -17,7 +16,6 @@ import time
 import re
 import secrets
 import threading
-import weakref
 from collections import Counter
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
@@ -31,10 +29,9 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import and_, case, func, or_, text
+from sqlalchemy import case, func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, load_only
-from starlette.concurrency import run_in_threadpool
 from starlette.routing import Route
 
 from auth import (
@@ -56,34 +53,54 @@ from auth import (
     verify_password_or_dummy,
 )
 from database import SessionLocal, get_db, init_db
-from email_service import email_configured, send_email
+from email_service import EmailDeliveryError, email_configured, send_email
 from employer_filter import direct_employer_condition, is_recruitment_employer
 from job_precompute import (
     apply_job_precomputes as _apply_job_precomputes,
     display_salary as _display_salary,
-    salary_bounds_from_text as _salary_bounds_from_text,
+    posted_sort_iso as _posted_sort_iso,
 )
-from job_alerts import verify_unsubscribe_token
+from job_alert_preferences import record_delivery_action
+from job_alert_routes import router as job_alert_router
+from market_analytics import invalidate as invalidate_market_analytics
+from market_analytics import router as market_analytics_router
+from resume_version_routes import router as resume_version_router
+from resume_versions import (
+    MAX_ACTIVE_RESUME_VERSIONS as _MAX_ACTIVE_RESUME_VERSIONS,
+    MAX_RESUME_STRUCTURED_BYTES as _MAX_RESUME_STRUCTURED_BYTES,
+    MAX_SAVED_RESUME_CHARS as _MAX_SAVED_RESUME_CHARS,
+)
+from story_bank import STORY_TAGS
+from story_routes import router as story_router
 from job_store import find_existing_scraped_job
-from job_visibility import apply_expired_job_visibility, apply_public_job_visibility
+from job_visibility import (
+    apply_expired_job_visibility,
+    apply_public_job_visibility,
+    job_corpus_marker as _job_corpus_marker,
+    sector_filter_condition as _sector_filter_condition,
+    sector_label as _analytics_sector_label,
+    source_label as _analytics_source_label,
+)
 from legal_pages import render_privacy_html, render_terms_html
 from models import (
     EmailVerificationToken,
-    InterviewStory,
-    JobAlertDelivery,
-    JobAlertPreference,
     PasswordResetToken,
     PowerMatchSnapshot,
     ResumeVersion,
     ScrapedJob,
-    StoryUsage,
-    TailoredResume,
     TrackedJob,
     UsageLog,
     User,
     UserMemory,
 )
 from sanitizer import sanitize_html, sanitize_job, sanitize_resume_text, sanitize_user_input
+from account_lifecycle import (
+    account_lifecycle_lock as _account_lifecycle_lock,
+    delete_owned_account_rows as _delete_owned_account_rows,
+    has_active_recruitment_runs as _has_active_recruitment_runs,
+    locked_account_storage as _locked_account_storage,
+    purge_recruitment_checkpoints as _purge_recruitment_checkpoints,
+)
 from recruitment_team.conversation_model import ConversationModel
 from recruitment_team.discovery import DiscoveryPort
 from recruitment_team.http_routes import (
@@ -115,8 +132,6 @@ from schemas import (
     DeleteAccountRequest,
     ForgotPasswordRequest,
     IntegrateKeywordsRequest,
-    JobAlertPreferenceOut,
-    JobAlertPreferenceUpdate,
     ResumeChatRequest,
     ResumeHeadingDecisionRequest,
     ResumeIngestTextRequest,
@@ -148,10 +163,10 @@ from ats_terms import (
 )
 from career_agent import build_application_pack
 from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
-from resume_parser import MAX_FILE_SIZE, parse_resume_isolated
+from resume_upload import MAX_FILE_SIZE, parse_uploaded_resume
 from resume_scorer import ResumeScorer
 from resume_templates import generate_docx, inspect_resume_export, list_templates
-from skill_extractor import extract_skill_phrases
+from skill_extractor import extract_skill_phrases, normalize_skill_strings
 from scraper import CareersGovScraper, JobAggregator, _clean_html
 from skillsfuture_courses import recommend_courses_for_skills
 from tailoring_pipeline import (
@@ -164,7 +179,13 @@ from validation_gates import numeric_metric_claims_verifiable
 from jd_analyzer import PROMOTIONAL_THRESHOLD
 from jd_preparser import preparse_job_description as preparse_jd
 from mcp_public import create_mcp as create_public_mcp
-from security import FixedWindowRateLimiter, RequestBodyLimitMiddleware, SecurityHeadersMiddleware
+from security import (
+    FixedWindowRateLimiter,
+    RequestBodyLimitMiddleware,
+    SecurityHeadersMiddleware,
+    contains_like_pattern as _contains_like_pattern,
+    get_client_ip as _get_client_ip,
+)
 import config as app_config
 import application_workspace as workspace_module
 
@@ -191,50 +212,12 @@ _filter_meta_cache: dict = {}
 _filter_meta_ts: float = 0.0
 _filter_meta_marker: str = ""
 _FILTER_META_TTL = app_config.ANALYTICS_FILTER_META_TTL_SECONDS
-
-_analytics_cache: dict | None = None
-_analytics_cache_ts: float = 0
-_ANALYTICS_CACHE_TTL = app_config.ANALYTICS_CACHE_TTL_SECONDS
-_analytics_query_cache: dict[tuple, tuple[float, dict]] = {}
-_ANALYTICS_QUERY_CACHE_TTL = app_config.ANALYTICS_QUERY_CACHE_TTL_SECONDS
-_ANALYTICS_QUERY_CACHE_MAX = app_config.ANALYTICS_QUERY_CACHE_MAX
-_ANALYTICS_MAX_ROWS = app_config.ANALYTICS_MAX_ROWS
-_ANALYTICS_YIELD_PER = app_config.ANALYTICS_YIELD_PER
-_ANALYTICS_CACHE_LOCK = threading.Lock()
-_ANALYTICS_COMPUTE_SLOTS = threading.BoundedSemaphore(2)
-_analytics_cache_generation = 0
-_ANALYTICS_UNCLASSIFIED_SECTOR = "Unclassified"
-_ANALYTICS_SALARY_MAX = 1_000_000
-_ANALYTICS_SALARY_BUCKET_MIN_ROLES = 5
-_ANALYTICS_OVERINDEX_MIN_TOTAL = 20
-_ANALYTICS_OVERINDEX_MIN_BASELINE_COUNT = 10
-_ANALYTICS_OVERINDEX_MIN_SHARE = 0.015
-_ANALYTICS_OVERINDEX_LIFT_THRESHOLD = 1.35
-_ANALYTICS_OVERINDEX_LIMIT = 10
-_ANALYTICS_MARKET_WINDOW_DAYS = 30
-_ANALYTICS_MARKET_MIN_TOTAL = 50
-_ANALYTICS_MARKET_MIN_COUNT = 5
-_ANALYTICS_MARKET_RECENT_MIN_SHARE = 0.01
-_ANALYTICS_MARKET_OLDER_MIN_SHARE = 0.005
-_ANALYTICS_MARKET_LIFT_THRESHOLD = 1.35
-_ANALYTICS_MARKET_COOLING_MIN_RECENT_COUNT = 2
-_ANALYTICS_MARKET_MOVER_LIMIT = 8
-_ANALYTICS_LABEL_MOVER_MIN_COUNT = 3
-_ANALYTICS_LABEL_MOVER_MIN_SHARE = 0.002
-_ANALYTICS_SOURCE_OTHER_LABEL = "Unknown"
+_FILTER_META_CACHE_LOCK = threading.Lock()
 _PUBLIC_RATE_LIMITER = FixedWindowRateLimiter()
 _AI_QUOTA_LOCK = threading.Lock()
-_ACCOUNT_STORAGE_LOCK = threading.Lock()
-_ACCOUNT_LIFECYCLE_LOCKS = weakref.WeakValueDictionary()
-_ACCOUNT_LIFECYCLE_LOCKS_GUARD = threading.Lock()
 _CREDENTIAL_MUTATION_LOCK = threading.Lock()
-_RESUME_PARSE_SLOTS = threading.BoundedSemaphore(1)
 _COURSE_RECOMMEND_SLOTS = threading.BoundedSemaphore(2)
 _SEED_RUN_LOCK = threading.Lock()
-_TRUST_CLOUDFLARE_IP_HEADER = os.environ.get(
-    "TRUST_CLOUDFLARE_IP_HEADER",
-    "0",
-).strip().lower() in {"1", "true", "yes"}
 _MCP_REQUESTS_PER_MINUTE = int(os.environ.get("MCP_REQUESTS_PER_MINUTE", "60"))
 
 
@@ -278,45 +261,12 @@ _mcp_mount_proxy = _ASGIProxy()
 
 
 def _clear_analytics_cache() -> None:
-    global _analytics_cache, _analytics_cache_ts, _analytics_cache_generation
     global _filter_meta_cache, _filter_meta_ts, _filter_meta_marker
-    with _ANALYTICS_CACHE_LOCK:
-        _analytics_cache = None
-        _analytics_cache_ts = 0
-        _analytics_query_cache.clear()
-        _analytics_cache_generation += 1
+    invalidate_market_analytics()
+    with _FILTER_META_CACHE_LOCK:
         _filter_meta_cache = {}
         _filter_meta_ts = 0.0
         _filter_meta_marker = ""
-
-
-def _store_analytics_query_cache(cache_key: tuple, cache_ts: float, result: dict, generation: int) -> None:
-    with _ANALYTICS_CACHE_LOCK:
-        if generation != _analytics_cache_generation:
-            return
-        expired_keys = [
-            key for key, (stored_ts, _) in _analytics_query_cache.items()
-            if cache_ts - stored_ts >= _ANALYTICS_QUERY_CACHE_TTL
-        ]
-        for key in expired_keys:
-            _analytics_query_cache.pop(key, None)
-        if len(_analytics_query_cache) >= _ANALYTICS_QUERY_CACHE_MAX:
-            oldest_key = min(_analytics_query_cache, key=lambda key: _analytics_query_cache[key][0])
-            _analytics_query_cache.pop(oldest_key, None)
-        _analytics_query_cache[cache_key] = (cache_ts, result)
-
-
-def _admit_analytics_request():
-    if not _ANALYTICS_COMPUTE_SLOTS.acquire(blocking=False):
-        raise HTTPException(
-            status_code=503,
-            detail="Analytics is busy. Try again shortly.",
-            headers={"Retry-After": "2"},
-        )
-    try:
-        yield
-    finally:
-        _ANALYTICS_COMPUTE_SLOTS.release()
 
 _power_match_cache: dict[int, dict] = {}
 _POWER_MATCH_CACHE_TTL = 600  # 10 minutes
@@ -357,7 +307,7 @@ def _reconcile_interrupted_recruitment_runs(session_factory) -> int:
 
 
 @asynccontextmanager
-async def lifespan(application: FastAPI):
+async def lifespan(_application: FastAPI):
     """Startup and shutdown lifecycle for the app."""
     from resume_agent.telemetry import configure_telemetry, shutdown_telemetry
 
@@ -464,6 +414,8 @@ async def lifespan(application: FastAPI):
         log.warning(f"Admin account creation failed: {e}")
 
     global jobhunter_mcp
+    # A StreamableHTTPSessionManager is single-use, so each application
+    # lifespan needs a fresh server (including repeated TestClient lifespans).
     jobhunter_mcp = create_public_mcp()
     mcp_http_app = jobhunter_mcp.streamable_http_app()
     mcp_root_route = next(
@@ -501,6 +453,10 @@ app.add_middleware(
     },
 )
 app.include_router(recruitment_team_router)
+app.include_router(job_alert_router)
+app.include_router(market_analytics_router)
+app.include_router(resume_version_router)
+app.include_router(story_router)
 
 
 allowed_origins = [
@@ -692,39 +648,6 @@ POWER_BRIDGE_LIBRARY = [
 ]
 
 
-def _normalize_skill_strings(raw_skills) -> list[str]:
-    collected: list[str] = []
-
-    def visit(value) -> None:
-        if isinstance(value, str):
-            for part in re.split(r"[;,|/]", value):
-                cleaned = part.strip()
-                if cleaned:
-                    collected.append(cleaned)
-        elif isinstance(value, list):
-            for item in value:
-                visit(item)
-        elif isinstance(value, dict):
-            for key, item in value.items():
-                visit(key)
-                visit(item)
-
-    visit(raw_skills)
-
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for skill in collected:
-        cleaned = re.sub(r"\s+", " ", skill).strip(" -•\t")
-        lower = cleaned.lower()
-        if not cleaned or len(cleaned) < 2 or len(cleaned) > 60:
-            continue
-        if lower in seen:
-            continue
-        seen.add(lower)
-        deduped.append(cleaned)
-    return deduped
-
-
 def _is_power_skill_noise(skill: str) -> bool:
     lower = re.sub(r"\s+", " ", (skill or "").strip().lower())
     if not lower:
@@ -815,7 +738,7 @@ def _build_canonical_job_terms(job: ScrapedJob, db: Session | None = None) -> li
     source tags, title hints, and safe single-word technical terms so score,
     job match, and Power Match stop drifting.
     """
-    db_skills = _normalize_skill_strings(job.skills)
+    db_skills = normalize_skill_strings(job.skills, max_length=60)
     parsed_jd = job.parsed_jd if isinstance(job.parsed_jd, dict) else None
 
     if not parsed_jd and (job.description or "").strip():
@@ -846,65 +769,6 @@ def _build_canonical_job_terms(job: ScrapedJob, db: Session | None = None) -> li
 
 def _count_domain_hits(terms: list[str], domain_terms: set[str]) -> int:
     return sum(1 for term in terms if term.lower() in domain_terms)
-
-
-def _parse_job_posted_at(posted_date: str, scraped_at: str = "") -> datetime:
-    raw = str(posted_date or "").strip()
-    lowered = raw.lower()
-    now = datetime.now(timezone.utc)
-
-    if lowered:
-        if "today" in lowered:
-            return now
-        if "yesterday" in lowered:
-            return now - timedelta(days=1)
-
-        relative_patterns = (
-            (r"(\d+)\s*\+?\s*hour", "hours"),
-            (r"(\d+)\s*\+?\s*day", "days"),
-            (r"(\d+)\s*\+?\s*week", "weeks"),
-            (r"(\d+)\s*\+?\s*month", "months"),
-        )
-        for pattern, unit in relative_patterns:
-            match = re.search(pattern, lowered)
-            if not match:
-                continue
-            amount = int(match.group(1))
-            if unit == "months":
-                return now - timedelta(days=amount * 30)
-            return now - timedelta(**{unit: amount})
-
-        normalized = raw.replace("Z", "+00:00")
-        for candidate in (normalized, normalized.split("T")[0]):
-            try:
-                parsed = datetime.fromisoformat(candidate)
-                if parsed.tzinfo is None:
-                    parsed = parsed.replace(tzinfo=timezone.utc)
-                return parsed.astimezone(timezone.utc)
-            except ValueError:
-                pass
-
-        for fmt in ("%d %b %Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y", "%Y/%m/%d", "%d/%m/%Y"):
-            try:
-                return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
-            except ValueError:
-                pass
-
-    if scraped_at:
-        normalized_scraped = scraped_at.replace("Z", "+00:00")
-        try:
-            parsed = datetime.fromisoformat(normalized_scraped)
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
-        except ValueError:
-            pass
-
-    return datetime.fromtimestamp(0, tz=timezone.utc)
-
-
-def _posted_sort_iso(posted_date: str, scraped_at: str = "") -> str:
-    return _parse_job_posted_at(posted_date, scraped_at).isoformat()
 
 
 def _get_or_create_memory(user: Optional[User], db: Session) -> Optional[UserMemory]:
@@ -1225,16 +1089,6 @@ def _select_power_match_candidates(
 
 def _resume_snapshot_hash(resume_text: str) -> str:
     return hashlib.sha256((resume_text or "").encode("utf-8")).hexdigest()
-
-
-def _job_corpus_marker(db: Session) -> str:
-    corpus_query = db.query(
-        func.count(ScrapedJob.id),
-        func.max(ScrapedJob.id),
-        func.max(ScrapedJob.scraped_at),
-    )
-    count, max_id, max_scraped_at = apply_public_job_visibility(corpus_query).one()
-    return f"{int(count or 0)}:{int(max_id or 0)}:{max_scraped_at or ''}"
 
 
 def _power_job_duplicate_key(job: ScrapedJob) -> tuple[str, ...]:
@@ -1572,10 +1426,21 @@ def _start_seed_task(target) -> bool:
     if not _SEED_RUN_LOCK.acquire(blocking=False):
         return False
 
+    acquisition_done = threading.Event()
+    acquisition: dict[str, object] = {}
+
     def guarded_target() -> None:
         try:
-            target()
+            from crawl_lease import job_crawl_lease
+
+            with job_crawl_lease() as acquired:
+                acquisition["acquired"] = acquired
+                acquisition_done.set()
+                if acquired:
+                    target()
         except Exception:
+            acquisition["failed"] = True
+            acquisition_done.set()
             log.exception("Background seed failed")
         finally:
             _SEED_RUN_LOCK.release()
@@ -1585,7 +1450,8 @@ def _start_seed_task(target) -> bool:
     except Exception:
         _SEED_RUN_LOCK.release()
         raise
-    return True
+    acquisition_done.wait()
+    return bool(acquisition.get("acquired"))
 
 
 @app.post("/api/admin/seed")
@@ -1932,7 +1798,14 @@ def admin_backfill_embeddings(
     batch_size = max(1, min(batch_size, 256))
 
     def run_backfill() -> None:
-        _embedding_backfill_progress.update(running=True, done=0, total=0, phase="embedding")
+        _embedding_backfill_progress.update(
+            running=True,
+            done=0,
+            total=0,
+            phase="embedding",
+            error_code="",
+            error_type="",
+        )
         try:
             from embedding_service import build_job_embed_text, encode_texts, invalidate_matrix_cache
             from database import SessionLocal
@@ -1981,8 +1854,15 @@ def admin_backfill_embeddings(
                 db.close()
         except Exception as e:
             log.error("[EmbedBackfill] Failed: %s", e, exc_info=True)
+            _embedding_backfill_progress.update(
+                phase="failed",
+                error_code="embedding_backfill_failed",
+                error_type=type(e).__name__,
+            )
+        else:
+            _embedding_backfill_progress["phase"] = "done"
         finally:
-            _embedding_backfill_progress.update(running=False, phase="done")
+            _embedding_backfill_progress["running"] = False
 
     threading.Thread(target=run_backfill, daemon=True).start()
     return {"status": "started", "force": force}
@@ -2130,27 +2010,6 @@ def _locked_credential_user(user_id: int, db: Session):
         yield query.first()
 
 
-@contextmanager
-def _locked_account_storage(user_id: int, db: Session):
-    with _ACCOUNT_STORAGE_LOCK:
-        if db.get_bind().dialect.name == "postgresql":
-            db.execute(
-                text("SELECT pg_advisory_xact_lock(:key)"),
-                {"key": 0x4A490000 + user_id},
-            )
-        yield
-
-
-def _account_lifecycle_lock(user_id: int):
-    """Return the process-local admission lock for one account."""
-    with _ACCOUNT_LIFECYCLE_LOCKS_GUARD:
-        lock = _ACCOUNT_LIFECYCLE_LOCKS.get(user_id)
-        if lock is None:
-            lock = threading.Lock()
-            _ACCOUNT_LIFECYCLE_LOCKS[user_id] = lock
-        return lock
-
-
 @app.get("/api/auth/config")
 def get_auth_config() -> dict:
     return auth_config()
@@ -2162,7 +2021,7 @@ def register_cloudflare_account(
     email: str = Depends(get_cloudflare_email),
     db: Session = Depends(get_db),
 ) -> User:
-    existing = db.query(User).filter(User.email == email).first()
+    existing = db.query(User).filter(func.lower(User.email) == email).first()
     if existing:
         if existing.password_hash != CLOUDFLARE_PASSWORD_SENTINEL:
             raise HTTPException(status_code=409, detail="Email already registered with password")
@@ -2194,7 +2053,27 @@ def register_cloudflare_account(
         last_login=now,
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Another request may have registered this Cloudflare identity after
+        # our existence check. Reuse its explicit registration, but never turn
+        # an existing password account into a Cloudflare account.
+        db.rollback()
+        existing = db.query(User).filter(func.lower(User.email) == email).first()
+        if existing is None:
+            raise
+        if existing.password_hash != CLOUDFLARE_PASSWORD_SENTINEL:
+            raise HTTPException(status_code=409, detail="Email already registered with password")
+        if name:
+            existing.name = name
+        existing.email_verified_at = existing.email_verified_at or now
+        existing.terms_accepted_at = existing.terms_accepted_at or now
+        existing.privacy_accepted_at = existing.privacy_accepted_at or now
+        existing.last_login = now
+        db.commit()
+        db.refresh(existing)
+        return existing
     db.refresh(user)
     return user
 
@@ -2321,10 +2200,14 @@ def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db))
         _send_verification_email(user, verification_token)
     except Exception as exc:
         log.warning("Verification email failed for user_id=%s: %s", user.id, type(exc).__name__)
-        db.query(EmailVerificationToken).filter(
-            EmailVerificationToken.token_hash == _auth_token_hash(verification_token)
-        ).delete(synchronize_session=False)
-        db.commit()
+        delivery_unknown = (
+            isinstance(exc, EmailDeliveryError) and exc.delivery_unknown
+        )
+        if not delivery_unknown:
+            db.query(EmailVerificationToken).filter(
+                EmailVerificationToken.token_hash == _auth_token_hash(verification_token)
+            ).delete(synchronize_session=False)
+            db.commit()
         raise HTTPException(status_code=503, detail="Verification email could not be sent")
     return _VERIFICATION_MESSAGE
 
@@ -2734,51 +2617,6 @@ def change_password(
     }
 
 
-def _delete_owned_account_rows(user: User, db: Session) -> None:
-    user_id = user.id
-    email_hash = hashlib.sha256(user.email.lower().encode()).hexdigest()[:16]
-    db.query(StoryUsage).filter(StoryUsage.user_id == user_id).delete(synchronize_session=False)
-    db.query(JobAlertDelivery).filter(JobAlertDelivery.user_id == user_id).delete(
-        synchronize_session=False
-    )
-    db.query(TrackedJob).filter(TrackedJob.user_id == user_id).delete(synchronize_session=False)
-    db.query(PasswordResetToken).filter(PasswordResetToken.user_id == user_id).delete(
-        synchronize_session=False
-    )
-    db.query(EmailVerificationToken).filter(
-        EmailVerificationToken.user_id == user_id
-    ).delete(synchronize_session=False)
-    db.query(PowerMatchSnapshot).filter(PowerMatchSnapshot.user_id == user_id).delete(
-        synchronize_session=False
-    )
-    db.query(TailoredResume).filter(TailoredResume.user_id == user_id).delete(
-        synchronize_session=False
-    )
-    db.query(ResumeVersion).filter(ResumeVersion.user_id == user_id).delete(
-        synchronize_session=False
-    )
-    db.query(InterviewStory).filter(InterviewStory.user_id == user_id).delete(
-        synchronize_session=False
-    )
-    db.query(JobAlertPreference).filter(JobAlertPreference.user_id == user_id).delete(
-        synchronize_session=False
-    )
-    db.query(UserMemory).filter(UserMemory.user_id == user_id).delete(synchronize_session=False)
-    db.query(UsageLog).filter(
-        or_(
-            UsageLog.user_id == user_id,
-            and_(
-                UsageLog.user_id.is_(None),
-                UsageLog.action.in_(
-                    ("login_failed", "password_reset_request", "email_verification_request")
-                ),
-                UsageLog.detail == email_hash,
-            ),
-        )
-    ).delete(synchronize_session=False)
-    db.delete(user)
-
-
 @app.delete("/api/account")
 def delete_account(
     body: DeleteAccountRequest,
@@ -2813,7 +2651,11 @@ def delete_account(
             ):
                 db.rollback()
                 raise HTTPException(status_code=400, detail="Current password is incorrect")
-            if owner_has_active_sessions(owner_key) or owner_has_active_pipelines(owner_key):
+            if (
+                owner_has_active_sessions(owner_key)
+                or owner_has_active_pipelines(owner_key)
+                or _has_active_recruitment_runs(user_id, db)
+            ):
                 db.rollback()
                 raise HTTPException(
                     status_code=409,
@@ -2821,7 +2663,18 @@ def delete_account(
                 )
 
             try:
-                _delete_owned_account_rows(locked_user, db)
+                recruitment_checkpoint_tokens = _delete_owned_account_rows(locked_user, db) or ()
+                # These stores are process-local but still contain private user
+                # material. Purge them before the SQL commit so a failure cannot
+                # produce a false "Account deleted" privacy promise. Do this
+                # before irreversible durable-checkpoint deletion so a local
+                # cleanup failure leaves every durable account record intact.
+                purge_owner_sessions(owner_key)
+                purge_owner_pipelines(owner_key)
+                # Production checkpoints share PostgreSQL and are deleted in
+                # this transaction, so a commit failure restores both stores.
+                # Local SQLite uses its isolated development checkpoint file.
+                _purge_recruitment_checkpoints(recruitment_checkpoint_tokens, db)
                 db.commit()
             except Exception as exc:
                 db.rollback()
@@ -2829,12 +2682,6 @@ def delete_account(
                 raise
 
         _power_match_cache.pop(user_id, None)
-        try:
-            purge_owner_sessions(owner_key)
-            purge_owner_pipelines(owner_key)
-        except Exception:
-            log.exception("Failed to purge in-memory sessions for deleted user_id=%s", user_id)
-
     response = {"message": "Account deleted."}
     logout_url = auth_config().get("cloudflare_logout_url")
     if logout_url:
@@ -3079,1272 +2926,6 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
     return total_done
 
 
-def _sector_filter_condition(selected_sector: str):
-    selected = selected_sector.strip()
-    if selected == _ANALYTICS_UNCLASSIFIED_SECTOR:
-        return or_(ScrapedJob.sector.is_(None), ScrapedJob.sector == "")
-    return ScrapedJob.sector == selected
-
-
-def _normalize_title(raw_title: str) -> str:
-    """Normalize a job title for grouping (strip seniority prefixes, title case)."""
-    import re
-    t = raw_title.strip()
-    t = re.sub(
-        r"^(Senior|Junior|Jr\.?|Sr\.?|Lead|Principal|Staff|Chief|Head of|"
-        r"Associate|Assistant|Intern\b)[,\s]+",
-        "", t, flags=re.IGNORECASE,
-    ).strip()
-    t = re.sub(r"\s+", " ", t)
-    # Title case normalization (fix "PROJECT ENGINEER" -> "Project Engineer")
-    _SMALL_WORDS = {"a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"}
-    if t == t.upper() or t == t.lower():
-        words = t.split()
-        t = " ".join(
-            w.lower() if w.lower() in _SMALL_WORDS and i > 0 else w.capitalize()
-            for i, w in enumerate(words)
-        )
-    return t
-
-
-_ANALYTICS_SKILL_ALIASES = {
-    "excel": "microsoft excel",
-    "ms excel": "microsoft excel",
-    "microsoft excel": "microsoft excel",
-    "word": "microsoft word",
-    "ms word": "microsoft word",
-    "microsoft word": "microsoft word",
-    "powerpoint": "microsoft powerpoint",
-    "ms powerpoint": "microsoft powerpoint",
-    "microsoft powerpoint": "microsoft powerpoint",
-    "aws": "aws",
-    "amazon web services": "aws",
-    "gcp": "gcp",
-    "google cloud": "gcp",
-    "google cloud platform": "gcp",
-    "azure": "microsoft azure",
-    "microsoft azure": "microsoft azure",
-    "power bi": "power bi",
-    "microsoft power bi": "power bi",
-    "javascript": "javascript",
-    "java script": "javascript",
-    "typescript": "typescript",
-    "node": "node.js",
-    "nodejs": "node.js",
-    "node.js": "node.js",
-    "reactjs": "react",
-    "react.js": "react",
-    "react": "react",
-    "ui ux": "ui/ux",
-    "ui/ux": "ui/ux",
-}
-
-_ANALYTICS_SKILL_DISPLAY = {
-    "aws": "AWS",
-    "gcp": "GCP",
-    "sql": "SQL",
-    "ai": "AI",
-    "api": "API",
-    "apis": "APIs",
-    "ui/ux": "UI/UX",
-    "power bi": "Power BI",
-    "node.js": "Node.js",
-    "javascript": "JavaScript",
-    "typescript": "TypeScript",
-    "microsoft azure": "Microsoft Azure",
-    "microsoft excel": "Microsoft Excel",
-    "microsoft word": "Microsoft Word",
-    "microsoft powerpoint": "Microsoft PowerPoint",
-}
-
-_ANALYTICS_GENERIC_SKILLS = {
-    "customer service", "communication skills", "leadership", "problem solving",
-    "teamwork", "interpersonal skills", "customer satisfaction", "customer experience",
-    "administrative support", "administrative work", "data entry", "driving license",
-    "microsoft office", "microsoft word", "microsoft powerpoint", "time management",
-    "attention to detail", "written communication", "verbal communication",
-    "cross-functional teams", "continuous improvement", "communication",
-    "critical thinking", "decision making", "emotional intelligence",
-    "learning & putting skills", "improving & innovating", "passion for sport",
-    "centre of excellence",
-}
-
-_ANALYTICS_EXCLUDED_SKILLS = {
-    "express",
-    "government technology",
-    "insolvency & public trustee",
-    "ministry of home affairs",
-}
-
-_ANALYTICS_EXCLUDED_SKILL_PATTERNS = (
-    re.compile(r"\bministry of\b", re.IGNORECASE),
-    re.compile(r"\bpublic trustee\b", re.IGNORECASE),
-    re.compile(r"\bgovernment technology\b", re.IGNORECASE),
-    re.compile(r"\bcentre of excellence\b", re.IGNORECASE),
-    re.compile(r"\bpassion for\b", re.IGNORECASE),
-    re.compile(r"\blearning\s*&\s*putting skills\b", re.IGNORECASE),
-    re.compile(r"\bimproving\s*&\s*innovating\b", re.IGNORECASE),
-)
-
-_ANALYTICS_GENERIC_COMPANY_NAMES = {
-    "singapore public service",
-}
-_CAREERSGOV_AGENCY_ALIASES = {
-    "AGC": "Attorney-General's Chambers",
-    "AIC": "Agency for Integrated Care",
-    "A*STAR": "Agency for Science, Technology and Research",
-    "ASTAR": "Agency for Science, Technology and Research",
-    "BCA": "Building and Construction Authority",
-    "CAA": "Civil Aviation Authority of Singapore",
-    "CDA": "Communicable Diseases Agency",
-    "CPF": "Central Provident Fund Board",
-    "ECDA": "Early Childhood Development Agency",
-    "EDB": "Economic Development Board",
-    "ESG": "Enterprise Singapore",
-    "GOVTECH": "Government Technology Agency",
-    "HDB": "Housing & Development Board",
-    "HSA": "Health Sciences Authority",
-    "HTX": "Home Team Science and Technology Agency",
-    "IMD": "Infocomm Media Development Authority",
-    "IMDA": "Infocomm Media Development Authority",
-    "LTA": "Land Transport Authority",
-    "MAS": "Monetary Authority of Singapore",
-    "MCCY": "Ministry of Culture, Community and Youth",
-    "MDDI": "Ministry of Digital Development and Information",
-    "MFA": "Ministry of Foreign Affairs",
-    "MHA": "Ministry of Home Affairs",
-    "MINDEF": "Ministry of Defence",
-    "MINLAW": "Ministry of Law",
-    "MND": "Ministry of National Development",
-    "MOE": "Ministry of Education",
-    "MOF": "Ministry of Finance",
-    "MOH": "Ministry of Health",
-    "MOM": "Ministry of Manpower",
-    "MOT": "Ministry of Transport",
-    "MPA": "Maritime and Port Authority of Singapore",
-    "MSF": "Ministry of Social and Family Development",
-    "MTI": "Ministry of Trade and Industry",
-    "NAC": "National Arts Council",
-    "NEA": "National Environment Agency",
-    "NLB": "National Library Board",
-    "NPARKS": "National Parks Board",
-    "PA": "People's Association",
-    "PAS": "People's Association",
-    "PUB": "PUB, Singapore's National Water Agency",
-    "SCB": "Science Centre Board",
-    "SLA": "Singapore Land Authority",
-    "SSG": "SkillsFuture Singapore",
-    "URA": "Urban Redevelopment Authority",
-}
-_CAREERSGOV_AGENCY_LABEL_TO_CODES: dict[str, list[str]] = {}
-for _agency_code, _agency_label in _CAREERSGOV_AGENCY_ALIASES.items():
-    _CAREERSGOV_AGENCY_LABEL_TO_CODES.setdefault(_agency_label.lower(), []).append(_agency_code)
-_CAREERSGOV_BRACKET_CODE_RE = re.compile(r"^\[([A-Z][A-Z0-9*]{1,8})(?:[-\]/\s]|$)")
-_CAREERSGOV_MINISTRY_RE = re.compile(r"\b(Ministry of [A-Za-z][A-Za-z &]+)")
-_CAREERSGOV_MINISTRY_PHRASE_ALIASES = {
-    "ministry of social and family": "Ministry of Social and Family Development",
-}
-_ANALYTICS_AGENCY_SUBSETS = {
-    "public_sector": {
-        "label": "Public sector",
-        "terms": ["Careers@Gov", "Singapore Public Service"],
-    },
-    "ministries": {
-        "label": "Ministries",
-        "terms": [
-            "Ministry of", "MCCY", "MDDI", "MFA", "MHA", "MINDEF", "MINLAW", "MND",
-            "MOE", "MOF", "MOH", "MOM", "MOT", "MSF", "MTI",
-            *[label for label in _CAREERSGOV_AGENCY_ALIASES.values() if label.startswith("Ministry of ")],
-        ],
-    },
-    "stat_boards": {
-        "label": "Stat boards",
-        "terms": [
-            "AIC", "AGC", "A*STAR", "ASTAR", "BCA", "CAA", "CDA", "CPF", "ECDA",
-            "EDB", "ESG", "GOVTECH", "HDB", "HSA", "HTX", "IMD", "IMDA", "LTA",
-            "MAS", "MPA", "NAC", "NEA", "NLB", "NPARKS", "PA", "PAS", "PUB",
-            "SCB", "SLA", "SSG", "URA",
-            *[
-                label for label in _CAREERSGOV_AGENCY_ALIASES.values()
-                if not label.startswith("Ministry of ")
-            ],
-        ],
-    },
-    "digital_gov": {
-        "label": "Digital Gov",
-        "terms": [
-            "GOVTECH", "Government Technology Agency", "IMD", "IMDA",
-            "Infocomm Media Development Authority", "MDDI",
-            "Ministry of Digital Development and Information", "HTX",
-            "Home Team Science and Technology Agency",
-        ],
-    },
-    "defence_home": {
-        "label": "Defence / Home Team",
-        "terms": [
-            "MINDEF", "Ministry of Defence", "MHA", "Ministry of Home Affairs",
-            "HTX", "Home Team Science and Technology Agency",
-        ],
-    },
-    "transport": {
-        "label": "Transport",
-        "terms": [
-            "MOT", "Ministry of Transport", "LTA", "Land Transport Authority",
-            "MPA", "Maritime and Port Authority of Singapore",
-            "CAA", "Civil Aviation Authority of Singapore",
-        ],
-    },
-    "education_research": {
-        "label": "Education / Research",
-        "terms": [
-            "MOE", "Ministry of Education", "A*STAR", "ASTAR",
-            "Agency for Science, Technology and Research", "ECDA",
-            "Early Childhood Development Agency", "SSG", "SkillsFuture Singapore",
-            "SCB", "Science Centre Board", "NLB", "National Library Board",
-        ],
-    },
-    "healthcare": {
-        "label": "Healthcare",
-        "terms": [
-            "MOH", "Ministry of Health", "HSA", "Health Sciences Authority",
-            "CDA", "Communicable Diseases Agency", "AIC", "Agency for Integrated Care",
-        ],
-    },
-}
-
-
-def _analytics_skill_key(raw: str) -> str:
-    key = re.sub(r"\s+", " ", (raw or "").strip().lower())
-    key = key.strip(" -•.,;:")
-    key = _ANALYTICS_SKILL_ALIASES.get(key, key)
-    if key in _ANALYTICS_EXCLUDED_SKILLS or any(pattern.search(key) for pattern in _ANALYTICS_EXCLUDED_SKILL_PATTERNS):
-        return ""
-    return key
-
-
-def _analytics_skill_display(key: str) -> str:
-    if key in _ANALYTICS_SKILL_DISPLAY:
-        return _ANALYTICS_SKILL_DISPLAY[key]
-    return key.title()
-
-
-def _is_generic_analytics_skill(key: str) -> bool:
-    return key in _ANALYTICS_GENERIC_SKILLS
-
-
-def _analytics_source_label(source: str | None) -> str:
-    return (source or "").strip() or _ANALYTICS_SOURCE_OTHER_LABEL
-
-
-def _display_ministry_name(raw: str) -> str:
-    cleaned = re.sub(r"\s+", " ", raw.replace("&", "and")).strip(" ,.-")
-    return _CAREERSGOV_MINISTRY_PHRASE_ALIASES.get(cleaned.lower(), cleaned)
-
-
-def _careersgov_hiring_org(job: ScrapedJob) -> str:
-    title = (getattr(job, "title", "") or "").strip()
-    agency = (getattr(job, "agency", "") or "").strip()
-    haystacks = [agency, title]
-
-    for text in haystacks:
-        if not text:
-            continue
-        bracket = _CAREERSGOV_BRACKET_CODE_RE.search(text)
-        if bracket:
-            code = bracket.group(1).upper()
-            if code in _CAREERSGOV_AGENCY_ALIASES:
-                return _CAREERSGOV_AGENCY_ALIASES[code]
-
-    for text in haystacks:
-        if not text:
-            continue
-        for token in re.findall(r"\b[A-Z][A-Z0-9*]{1,8}\b", text.upper()):
-            if token in _CAREERSGOV_AGENCY_ALIASES:
-                return _CAREERSGOV_AGENCY_ALIASES[token]
-
-    ministry = _CAREERSGOV_MINISTRY_RE.search(title)
-    if ministry:
-        return _display_ministry_name(ministry.group(1))
-
-    if agency and agency.lower() not in {"singapore", "not available", "n/a"}:
-        return agency
-    return ""
-
-
-def _analytics_company_label(job: ScrapedJob) -> str:
-    company = (getattr(job, "company", "") or "").strip()
-    agency = (getattr(job, "agency", "") or "").strip()
-    if company.lower() in _ANALYTICS_GENERIC_COMPANY_NAMES:
-        return _careersgov_hiring_org(job)
-    if agency and not company:
-        return _careersgov_hiring_org(job) or agency
-    return company or agency
-
-
-def _analytics_company_filter_condition(raw_company: str):
-    cleaned = (raw_company or "").strip()
-    terms = [cleaned]
-    terms.extend(_CAREERSGOV_AGENCY_LABEL_TO_CODES.get(cleaned.lower(), []))
-    terms = [term for term in _split_multi_value_filter(",".join(terms)) if term]
-    if not terms:
-        return ScrapedJob.company.ilike("%%")
-    return or_(*(
-        or_(
-            ScrapedJob.company.ilike(_contains_like_pattern(term), escape="\\"),
-            ScrapedJob.agency.ilike(_contains_like_pattern(term), escape="\\"),
-            ScrapedJob.title.ilike(_contains_like_pattern(term), escape="\\"),
-        )
-        for term in terms
-    ))
-
-
-def _normalise_agency_subset_id(value: str | None) -> str:
-    key = re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
-    return key if key in _ANALYTICS_AGENCY_SUBSETS else ""
-
-
-def _analytics_agency_subset_options() -> list[dict]:
-    return [
-        {"id": subset_id, "label": meta["label"]}
-        for subset_id, meta in _ANALYTICS_AGENCY_SUBSETS.items()
-    ]
-
-
-def _is_agency_code_term(term: str) -> bool:
-    return bool(re.fullmatch(r"[A-Z][A-Z0-9*]{1,8}", term or ""))
-
-
-def _agency_term_condition(term: str):
-    if _is_agency_code_term(term):
-        return or_(
-            ScrapedJob.agency.ilike(f"{term}%"),
-            ScrapedJob.agency.ilike(f"% {term}%"),
-            ScrapedJob.title.ilike(f"%[{term}%"),
-            ScrapedJob.title.ilike(f"% {term} %"),
-        )
-    return or_(
-        ScrapedJob.company.ilike(f"%{term}%"),
-        ScrapedJob.agency.ilike(f"%{term}%"),
-        ScrapedJob.title.ilike(f"%{term}%"),
-        ScrapedJob.source.ilike(f"%{term}%"),
-    )
-
-
-def _analytics_agency_subset_condition(subset_id: str):
-    subset_key = _normalise_agency_subset_id(subset_id)
-    if not subset_key:
-        return ScrapedJob.company.ilike("%%")
-
-    terms = []
-    seen = set()
-    for raw in _ANALYTICS_AGENCY_SUBSETS[subset_key]["terms"]:
-        term = str(raw or "").strip()
-        key = term.lower()
-        if term and key not in seen:
-            seen.add(key)
-            terms.append(term)
-
-    conditions = []
-    if subset_key == "public_sector":
-        conditions.append(ScrapedJob.source.ilike("%Careers@Gov%"))
-    for term in terms:
-        conditions.append(_agency_term_condition(term))
-    return or_(*conditions) if conditions else ScrapedJob.company.ilike("%%")
-
-
-def _agency_term_matches(text: str, term: str) -> bool:
-    cleaned = str(term or "").strip()
-    if not cleaned:
-        return False
-    if _is_agency_code_term(cleaned):
-        return bool(re.search(rf"(^|[^A-Z0-9*]){re.escape(cleaned)}([^A-Z0-9*]|$)", text.upper()))
-    return cleaned.lower() in text.lower()
-
-
-def _analytics_job_matches_agency_subset(job: ScrapedJob, subset_id: str) -> bool:
-    subset_key = _normalise_agency_subset_id(subset_id)
-    if not subset_key:
-        return False
-    haystack = " ".join(
-        str(value or "")
-        for value in (
-            getattr(job, "source", ""),
-            getattr(job, "company", ""),
-            getattr(job, "agency", ""),
-            getattr(job, "title", ""),
-            _analytics_company_label(job),
-        )
-    )
-    return any(_agency_term_matches(haystack, str(term or "")) for term in _ANALYTICS_AGENCY_SUBSETS[subset_key]["terms"])
-
-
-_SSIC_SECTION_LETTER_PREFIX_RE = re.compile(r"^[A-U]\s+(?=[A-Z])")
-
-
-def _analytics_sector_label(sector: str | None) -> str:
-    cleaned = (sector or "").strip()
-    if not cleaned:
-        return _ANALYTICS_UNCLASSIFIED_SECTOR
-    # Older rows were written with the SSIC section letter embedded in the label
-    # (e.g. "K Financial & Insurance"). Strip it for display so the analytics
-    # surface stays consistent with newly-written, letter-free labels.
-    return _SSIC_SECTION_LETTER_PREFIX_RE.sub("", cleaned) or _ANALYTICS_UNCLASSIFIED_SECTOR
-
-
-def _analytics_seniority_label(job: ScrapedJob) -> str:
-    text = f"{job.seniority or ''} {job.title or ''}".lower()
-    if "intern" in text:
-        return "Intern"
-    if any(term in text for term in {"assistant director", "associate director", "deputy director"}):
-        return "Manager / Lead"
-    if any(term in text for term in {"vice president", "vp", "director", "head of", "chief"}):
-        return "Leadership"
-    if any(term in text for term in {"manager", "lead", "principal", "staff"}):
-        return "Manager / Lead"
-    if "senior" in text:
-        return "Senior IC"
-    if any(term in text for term in {"entry", "fresh", "junior", "assistant", "associate"}):
-        return "Entry / Junior"
-    return "Mid / Unspecified"
-
-
-def _parse_posted_sort(value: str) -> datetime | None:
-    raw = str(value or "").strip()
-    if not raw:
-        return None
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    except ValueError:
-        return None
-
-
-def _trend_bucket_start(posted_at: datetime, bucket: str) -> datetime:
-    if bucket == "month":
-        return posted_at.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    start = posted_at - timedelta(days=posted_at.weekday())
-    return start.replace(hour=0, minute=0, second=0, microsecond=0)
-
-
-def _trend_bucket_label(start: datetime, bucket: str) -> str:
-    if bucket == "month":
-        return start.strftime("%b %Y")
-    year, week, _weekday = start.isocalendar()
-    return f"{year} W{week:02d}"
-
-
-def _trend_bucket_series(cutoff: datetime, now: datetime, bucket: str) -> list[datetime]:
-    current = _trend_bucket_start(cutoff, bucket)
-    end = _trend_bucket_start(now, bucket)
-    starts = []
-    while current <= end:
-        starts.append(current)
-        if bucket == "month":
-            year = current.year + (1 if current.month == 12 else 0)
-            month = 1 if current.month == 12 else current.month + 1
-            current = current.replace(year=year, month=month)
-        else:
-            current += timedelta(days=7)
-    return starts
-
-
-def _percentile(sorted_values: list[int], percentile: float) -> int:
-    if not sorted_values:
-        return 0
-    index = min(len(sorted_values) - 1, max(0, round((len(sorted_values) - 1) * percentile)))
-    return int(sorted_values[index])
-
-
-def _salary_bucket(
-    items: dict[str, list[int]],
-    label_key: str,
-    midpoint_items: dict[str, list[int]] | None = None,
-    ceiling_items: dict[str, list[int]] | None = None,
-) -> list[dict]:
-    rows = []
-    for label, values in items.items():
-        if len(values) < _ANALYTICS_SALARY_BUCKET_MIN_ROLES:
-            continue
-        sorted_values = sorted(values)
-        midpoint_values = sorted((midpoint_items or {}).get(label, []))
-        ceiling_values = sorted((ceiling_items or {}).get(label, []))
-        row = {
-            label_key: label,
-            "count": len(sorted_values),
-            "median_floor": _percentile(sorted_values, 0.5),
-            "p75_floor": _percentile(sorted_values, 0.75),
-        }
-        if midpoint_values:
-            row["median_midpoint"] = _percentile(midpoint_values, 0.5)
-        if ceiling_values:
-            row["median_ceiling"] = _percentile(ceiling_values, 0.5)
-        rows.append(row)
-    return sorted(rows, key=lambda item: (-item["count"], -item["median_floor"]))[:8]
-
-
-def _increment_analytics_skill(bucket: dict[str, dict], key: str) -> None:
-    if key not in bucket:
-        bucket[key] = {"display": _analytics_skill_display(key), "count": 0}
-    bucket[key]["count"] += 1
-
-
-def _increment_label_count(bucket: dict[str, dict], key: str, display: str) -> None:
-    if not key:
-        return
-    if key not in bucket:
-        bucket[key] = {"display": display, "count": 0}
-    bucket[key]["count"] += 1
-
-
-def _build_overindexed_skills(
-    current_counts: dict[str, dict],
-    current_total: int,
-    baseline_counts: dict[str, int] | None,
-    baseline_total: int,
-) -> list[dict]:
-    if not baseline_counts or current_total < _ANALYTICS_OVERINDEX_MIN_TOTAL or baseline_total <= 0:
-        return []
-    minimum_count = max(
-        _ANALYTICS_MARKET_MIN_COUNT,
-        round(current_total * _ANALYTICS_OVERINDEX_MIN_SHARE),
-    )
-    rows = []
-    for key, item in current_counts.items():
-        count = int(item["count"])
-        baseline_count = int(baseline_counts.get(key, 0))
-        if (
-            count < minimum_count
-            or baseline_count < _ANALYTICS_OVERINDEX_MIN_BASELINE_COUNT
-            or _is_generic_analytics_skill(key)
-        ):
-            continue
-        current_rate = count / current_total
-        baseline_rate = baseline_count / baseline_total
-        if baseline_rate <= 0:
-            continue
-        lift = current_rate / baseline_rate
-        if lift < _ANALYTICS_OVERINDEX_LIFT_THRESHOLD:
-            continue
-        rows.append({
-            "skill": item["display"],
-            "count": count,
-            "lift": round(lift, 1),
-            "rate_percent": round(current_rate * 100, 1),
-            "market_rate_percent": round(baseline_rate * 100, 1),
-        })
-    return sorted(rows, key=lambda item: (-item["lift"], -item["count"]))[:_ANALYTICS_OVERINDEX_LIMIT]
-
-
-def _build_label_movers(
-    recent_counts: dict[str, dict],
-    recent_total: int,
-    older_counts: dict[str, dict],
-    older_total: int,
-    label_key: str,
-    *,
-    min_count: int = _ANALYTICS_LABEL_MOVER_MIN_COUNT,
-    recent_min_share: float = _ANALYTICS_LABEL_MOVER_MIN_SHARE,
-    older_min_share: float = _ANALYTICS_LABEL_MOVER_MIN_SHARE,
-    skip: Callable[[str], bool] | None = None,
-    display_fallback: Callable[[str], str] = str.title,
-    sparse_note: str = "Needs enough dated postings to compare recent hiring against older hiring.",
-) -> dict:
-    if recent_total < _ANALYTICS_MARKET_MIN_TOTAL or older_total < _ANALYTICS_MARKET_MIN_TOTAL:
-        return {
-            "window_days": _ANALYTICS_MARKET_WINDOW_DAYS,
-            "recent_total": recent_total,
-            "older_total": older_total,
-            "rising": [],
-            "cooling": [],
-            "note": sparse_note,
-        }
-
-    minimum_recent = max(min_count, round(recent_total * recent_min_share))
-    minimum_older = max(min_count, round(older_total * older_min_share))
-    rising = []
-    cooling = []
-
-    for key in set(recent_counts) | set(older_counts):
-        if skip is not None and skip(key):
-            continue
-        recent_count = int(recent_counts.get(key, {}).get("count", 0))
-        older_count = int(older_counts.get(key, {}).get("count", 0))
-        recent_rate = recent_count / recent_total if recent_total else 0
-        older_rate = older_count / older_total if older_total else 0
-        display = (
-            recent_counts.get(key, {}).get("display")
-            or older_counts.get(key, {}).get("display")
-            or display_fallback(key)
-        )
-
-        if recent_count >= minimum_recent and older_count >= minimum_older and older_rate > 0:
-            lift = recent_rate / older_rate
-            if lift >= _ANALYTICS_MARKET_LIFT_THRESHOLD:
-                rising.append({
-                    label_key: display,
-                    "recent_count": recent_count,
-                    "older_count": older_count,
-                    "lift": round(lift, 1),
-                    "recent_rate_percent": round(recent_rate * 100, 1),
-                    "older_rate_percent": round(older_rate * 100, 1),
-                })
-
-        if (
-            older_count >= minimum_older
-            and recent_count >= _ANALYTICS_MARKET_COOLING_MIN_RECENT_COUNT
-            and recent_rate > 0
-        ):
-            drop = older_rate / recent_rate
-            if drop >= _ANALYTICS_MARKET_LIFT_THRESHOLD:
-                cooling.append({
-                    label_key: display,
-                    "recent_count": recent_count,
-                    "older_count": older_count,
-                    "drop": round(drop, 1),
-                    "recent_rate_percent": round(recent_rate * 100, 1),
-                    "older_rate_percent": round(older_rate * 100, 1),
-                })
-
-    return {
-        "window_days": _ANALYTICS_MARKET_WINDOW_DAYS,
-        "recent_total": recent_total,
-        "older_total": older_total,
-        "rising": sorted(rising, key=lambda item: (-item["lift"], -item["recent_count"]))[:_ANALYTICS_MARKET_MOVER_LIMIT],
-        "cooling": sorted(cooling, key=lambda item: (-item["drop"], -item["older_count"]))[:_ANALYTICS_MARKET_MOVER_LIMIT],
-        "note": f"Compares dated postings from the last {_ANALYTICS_MARKET_WINDOW_DAYS} days against older dated postings in the current corpus.",
-    }
-
-
-def _build_market_movers(
-    recent_counts: dict[str, dict],
-    recent_total: int,
-    older_counts: dict[str, dict],
-    older_total: int,
-) -> dict:
-    return _build_label_movers(
-        recent_counts,
-        recent_total,
-        older_counts,
-        older_total,
-        "skill",
-        min_count=_ANALYTICS_MARKET_MIN_COUNT,
-        recent_min_share=_ANALYTICS_MARKET_RECENT_MIN_SHARE,
-        older_min_share=_ANALYTICS_MARKET_OLDER_MIN_SHARE,
-        skip=_is_generic_analytics_skill,
-        display_fallback=_analytics_skill_display,
-        sparse_note="Needs enough dated postings to compare recent demand against older demand.",
-    )
-
-
-@app.get("/api/analytics/skills")
-def analytics_skills(
-    request: Request,
-    limit: int = Query(50, ge=1, le=200),
-    source: str | None = Query(None, max_length=50),
-    q: str | None = Query(None, max_length=100),
-    sector: str | None = Query(None, max_length=100),
-    company: str | None = Query(None, max_length=200),
-    title: str | None = Query(None, max_length=200),
-    agency_subset: str | None = Query(None, max_length=50),
-    direct_employers_only: bool = Query(False),
-    db: Session = Depends(get_db),
-    _admission: None = Depends(_admit_analytics_request),
-) -> dict:
-    """Aggregate ATS skill demand, top titles, and sectors from scraped jobs."""
-    global _analytics_cache, _analytics_cache_ts
-
-    if not _PUBLIC_RATE_LIMITER.allow(
-        f"analytics-skills:{_get_client_ip(request)}",
-        limit=30,
-        window_seconds=60,
-    ):
-        raise HTTPException(status_code=429, detail="Too many analytics requests")
-
-    agency_subset_key = _normalise_agency_subset_id(agency_subset)
-    has_filter = source or sector or company or title or agency_subset_key or direct_employers_only
-    now = time.time()
-    corpus_marker = _job_corpus_marker(db)
-    query_cache_key = (
-        corpus_marker,
-        limit,
-        source or "",
-        q or "",
-        sector or "",
-        company or "",
-        title or "",
-        agency_subset_key,
-        int(direct_employers_only),
-    )
-    with _ANALYTICS_CACHE_LOCK:
-        cache_generation = _analytics_cache_generation
-        cached_query = _analytics_query_cache.get(query_cache_key)
-        if cached_query and now - cached_query[0] < _ANALYTICS_QUERY_CACHE_TTL:
-            return cached_query[1]
-
-        cached = (
-            _analytics_cache
-            if not has_filter
-            and _analytics_cache is not None
-            and _analytics_cache.get("_corpus_marker") == corpus_marker
-            and now - _analytics_cache_ts < _ANALYTICS_CACHE_TTL
-            else None
-        )
-
-    if cached is not None:
-        all_skills = cached["_all_skills"]
-        if q:
-            q_lower = q.lower()
-            all_skills = [
-                s for s in all_skills
-                if q_lower in s["skill"].lower()
-            ]
-        result = {
-            "top_skills": all_skills[:limit],
-            "total_jobs_with_terms": cached["total_jobs_with_terms"],
-            "skill_signal_count": cached.get("skill_signal_count", len(cached.get("_all_skills", []))),
-            "company_count": cached.get("company_count", len(cached.get("top_companies", []))),
-            "title_count": cached.get("title_count", len(cached.get("top_titles", []))),
-            "sector_count": cached.get("sector_count", len(cached.get("sectors", []))),
-            "sources": cached["sources"],
-            "top_titles": cached["top_titles"],
-            "sectors": cached["sectors"],
-            "top_companies": cached.get("top_companies", []),
-            "hard_skills": cached.get("hard_skills", []),
-            "overindexed_skills": cached.get("overindexed_skills", []),
-            "market_movers": cached.get("market_movers", {}),
-            "company_movers": cached.get("company_movers", {}),
-            "salary_insights": cached.get("salary_insights", {}),
-            "freshness": cached.get("freshness", {}),
-            "sampled_jobs": cached.get("sampled_jobs", cached["total_jobs_with_terms"]),
-            "sampled_job_limit": cached.get("sampled_job_limit", _ANALYTICS_MAX_ROWS),
-            "partial": cached.get("partial", False),
-            "seniority_mix": cached.get("seniority_mix", []),
-            "ssic_coverage": cached.get("ssic_coverage", {}),
-            "sector_source_mix": cached.get("sector_source_mix", []),
-            "agency_subsets": cached.get("agency_subsets", _analytics_agency_subset_options()),
-            "agency_subset": agency_subset_key,
-            "direct_employers_only": direct_employers_only,
-        }
-        _store_analytics_query_cache(query_cache_key, now, result, cache_generation)
-        return result
-
-    baseline_counts: dict[str, int] | None = None
-    baseline_total = 0
-    with _ANALYTICS_CACHE_LOCK:
-        if (
-            _analytics_cache is not None
-            and now - _analytics_cache_ts < _ANALYTICS_CACHE_TTL
-        ):
-            baseline_counts = _analytics_cache.get("_skill_counts")
-            baseline_total = int(_analytics_cache.get("total_jobs_with_terms", 0) or 0)
-    baseline_ready = bool(baseline_counts and baseline_total > 0)
-
-    db_query = db.query(ScrapedJob).options(
-        load_only(
-            ScrapedJob.id,
-            ScrapedJob.job_terms_preview,
-            ScrapedJob.source,
-            ScrapedJob.title,
-            ScrapedJob.company,
-            ScrapedJob.agency,
-            ScrapedJob.salary,
-            ScrapedJob.sector,
-            ScrapedJob.company_ssic_source,
-            ScrapedJob.company_ssic_description,
-            ScrapedJob.skills_flat,
-            ScrapedJob.salary_floor,
-            ScrapedJob.posted_at_sort,
-            ScrapedJob.seniority,
-        )
-    ).filter(
-        ScrapedJob.hidden == 0,
-        ScrapedJob.job_terms_preview.isnot(None),
-    )
-    if source:
-        db_query = db_query.filter(ScrapedJob.source == source)
-    if company:
-        db_query = db_query.filter(_analytics_company_filter_condition(company))
-    if title:
-        db_query = db_query.filter(
-            ScrapedJob.title.ilike(_contains_like_pattern(title), escape="\\")
-        )
-    if sector:
-        db_query = db_query.filter(_sector_filter_condition(sector))
-    if agency_subset_key:
-        db_query = db_query.filter(_analytics_agency_subset_condition(agency_subset_key))
-    if direct_employers_only:
-        db_query = db_query.filter(
-            direct_employer_condition(
-                ScrapedJob.company,
-                ScrapedJob.company_ssic_description,
-                ScrapedJob.description,
-            )
-        )
-
-    skill_counts: dict[str, dict] = {}
-    source_counts: dict[str, int] = {}
-    title_counts: dict[str, int] = {}
-    sector_counts: dict[str, int] = {}
-    company_counts: dict[str, int] = {}
-    seniority_counts: dict[str, int] = {}
-    sector_source_counts: dict[str, int] = {}
-    agency_subset_counts: dict[str, int] = {subset_id: 0 for subset_id in _ANALYTICS_AGENCY_SUBSETS}
-    salary_floors: list[int] = []
-    salary_midpoints: list[int] = []
-    salary_ceilings: list[int] = []
-    salary_by_sector: dict[str, list[int]] = {}
-    salary_mid_by_sector: dict[str, list[int]] = {}
-    salary_ceiling_by_sector: dict[str, list[int]] = {}
-    salary_by_title: dict[str, list[int]] = {}
-    salary_mid_by_title: dict[str, list[int]] = {}
-    salary_ceiling_by_title: dict[str, list[int]] = {}
-    recent_skill_counts: dict[str, dict] = {}
-    older_skill_counts: dict[str, dict] = {}
-    recent_company_counts: dict[str, dict] = {}
-    older_company_counts: dict[str, dict] = {}
-    recent_total = 0
-    older_total = 0
-    fresh_counts = {"last_7": 0, "last_14": 0, "last_30": 0}
-    posted_count = 0
-    total_jobs = 0
-    scanned_rows = 0
-    utc_now = datetime.now(timezone.utc)
-
-    scan_query = (
-        db_query
-        .order_by(ScrapedJob.posted_at_sort.desc().nullslast(), ScrapedJob.id.desc())
-        .limit(_ANALYTICS_MAX_ROWS)
-    )
-    for job in scan_query.yield_per(_ANALYTICS_YIELD_PER):
-        scanned_rows += 1
-        preview = job.job_terms_preview
-        if not isinstance(preview, list) or not preview:
-            continue
-
-        raw_title = (job.title or "").strip()
-        job_sector = _analytics_sector_label(job.sector)
-        sector_source = (job.company_ssic_source or "").strip().lower() or "unavailable"
-        if sector_source not in {"acra", "inferred", "unavailable"}:
-            sector_source = "unavailable"
-        norm_title = _normalize_title(raw_title) if raw_title else ""
-
-        total_jobs += 1
-        sector_source_counts[sector_source] = sector_source_counts.get(sector_source, 0) + 1
-        for subset_id in agency_subset_counts:
-            if _analytics_job_matches_agency_subset(job, subset_id):
-                agency_subset_counts[subset_id] += 1
-
-        src = _analytics_source_label(job.source)
-        source_counts[src] = source_counts.get(src, 0) + 1
-
-        # Company/agency aggregation. Careers@Gov rows often use the generic
-        # "Singapore Public Service" company; agency is the useful hiring org.
-        comp = _analytics_company_label(job)
-        comp_key = comp.lower() if comp else ""
-        if comp_key:
-            _increment_label_count(company_counts, comp_key, comp)
-
-        term_keys: set[str] = set()
-        for term in preview:
-            key = _analytics_skill_key(str(term))
-            if not key:
-                continue
-            _increment_analytics_skill(skill_counts, key)
-            term_keys.add(key)
-
-        if norm_title:
-            title_key = norm_title.lower()
-            if title_key:
-                if title_key not in title_counts:
-                    title_counts[title_key] = {"display": norm_title, "count": 0}
-                title_counts[title_key]["count"] += 1
-
-        sector_counts[job_sector] = sector_counts.get(job_sector, 0) + 1
-
-        seniority_label = _analytics_seniority_label(job)
-        seniority_counts[seniority_label] = seniority_counts.get(seniority_label, 0) + 1
-
-        parsed_floor, parsed_ceiling, parsed_midpoint = _salary_bounds_from_text(job.salary or "")
-        salary_floor = int(job.salary_floor or parsed_floor or 0)
-        if 0 < salary_floor < 1000000:
-            salary_floors.append(salary_floor)
-            salary_by_sector.setdefault(job_sector, []).append(salary_floor)
-            if norm_title:
-                salary_by_title.setdefault(norm_title, []).append(salary_floor)
-        if 0 < parsed_midpoint < 1000000:
-            salary_midpoints.append(parsed_midpoint)
-            salary_mid_by_sector.setdefault(job_sector, []).append(parsed_midpoint)
-            if norm_title:
-                salary_mid_by_title.setdefault(norm_title, []).append(parsed_midpoint)
-        if 0 < parsed_ceiling < 1000000:
-            salary_ceilings.append(parsed_ceiling)
-            salary_ceiling_by_sector.setdefault(job_sector, []).append(parsed_ceiling)
-            if norm_title:
-                salary_ceiling_by_title.setdefault(norm_title, []).append(parsed_ceiling)
-
-        posted_at = _parse_posted_sort(job.posted_at_sort or "")
-        if posted_at:
-            posted_count += 1
-            age_days = (utc_now - posted_at).days
-            if 0 <= age_days <= 7:
-                fresh_counts["last_7"] += 1
-            if 0 <= age_days <= 14:
-                fresh_counts["last_14"] += 1
-            if 0 <= age_days <= 30:
-                fresh_counts["last_30"] += 1
-                recent_total += 1
-                _increment_label_count(recent_company_counts, comp_key, comp)
-                for key in term_keys:
-                    _increment_analytics_skill(recent_skill_counts, key)
-            elif age_days > 30:
-                older_total += 1
-                _increment_label_count(older_company_counts, comp_key, comp)
-                for key in term_keys:
-                    _increment_analytics_skill(older_skill_counts, key)
-
-    sorted_skills = sorted(skill_counts.values(), key=lambda x: -x["count"])
-
-    all_skills = [
-        {"skill": item["display"], "count": item["count"]}
-        for item in sorted_skills
-    ]
-    skill_count_numbers = {
-        key: int(item["count"])
-        for key, item in skill_counts.items()
-    }
-
-    hard_skills = [
-        {"skill": item["display"], "count": item["count"]}
-        for key, item in sorted(skill_counts.items(), key=lambda x: -x[1]["count"])
-        if not _is_generic_analytics_skill(key)
-    ][:20]
-
-    overindexed_skills = _build_overindexed_skills(
-        current_counts=skill_counts,
-        current_total=total_jobs,
-        baseline_counts=baseline_counts,
-        baseline_total=baseline_total,
-    )
-    market_movers = _build_market_movers(
-        recent_counts=recent_skill_counts,
-        recent_total=recent_total,
-        older_counts=older_skill_counts,
-        older_total=older_total,
-    )
-    company_movers = _build_label_movers(
-        recent_counts=recent_company_counts,
-        recent_total=recent_total,
-        older_counts=older_company_counts,
-        older_total=older_total,
-        label_key="company",
-    )
-
-    sources_list = [
-        {"source": s, "label": _analytics_source_label(s), "count": c}
-        for s, c in sorted(source_counts.items(), key=lambda x: -x[1])
-    ]
-
-    top_titles = sorted(
-        [{"title": v["display"], "count": v["count"]} for v in title_counts.values()],
-        key=lambda x: -x["count"],
-    )[:20]
-
-    sectors = sorted(
-        [{"sector": s, "count": c} for s, c in sector_counts.items()],
-        key=lambda x: -x["count"],
-    )
-
-    top_companies = sorted(
-        [{"company": v["display"], "count": v["count"]} for v in company_counts.values()],
-        key=lambda x: -x["count"],
-    )[:30]
-
-    sorted_salary_floors = sorted(salary_floors)
-    sorted_salary_midpoints = sorted(salary_midpoints)
-    sorted_salary_ceilings = sorted(salary_ceilings)
-    salary_insights = {
-        "coverage_count": len(sorted_salary_floors),
-        "coverage_percent": round((len(sorted_salary_floors) / total_jobs) * 100, 1) if total_jobs else 0,
-        "median_floor": _percentile(sorted_salary_floors, 0.5),
-        "median_midpoint": _percentile(sorted_salary_midpoints, 0.5),
-        "median_ceiling": _percentile(sorted_salary_ceilings, 0.5),
-        "p75_floor": _percentile(sorted_salary_floors, 0.75),
-        "by_sector": _salary_bucket(
-            salary_by_sector,
-            "sector",
-            salary_mid_by_sector,
-            salary_ceiling_by_sector,
-        ),
-        "by_title": _salary_bucket(
-            salary_by_title,
-            "title",
-            salary_mid_by_title,
-            salary_ceiling_by_title,
-        ),
-    }
-    freshness = {
-        **fresh_counts,
-        "coverage_count": posted_count,
-        "last_30_percent": round((fresh_counts["last_30"] / posted_count) * 100, 1) if posted_count else 0,
-    }
-    partial = scanned_rows >= _ANALYTICS_MAX_ROWS
-    seniority_order = {
-        "Intern": 0,
-        "Entry / Junior": 1,
-        "Mid / Unspecified": 2,
-        "Senior IC": 3,
-        "Manager / Lead": 4,
-        "Leadership": 5,
-    }
-    seniority_mix = [
-        {
-            "label": label,
-            "count": count,
-            "percent": round((count / total_jobs) * 100, 1) if total_jobs else 0,
-        }
-        for label, count in sorted(
-            seniority_counts.items(),
-            key=lambda item: (-item[1], seniority_order.get(item[0], 99)),
-        )
-    ]
-    sector_source_labels = {
-        "acra": "Official ACRA SSIC",
-        "inferred": "Inferred fallback",
-        "unavailable": "Unavailable",
-    }
-    sector_source_mix = [
-        {
-            "source": key,
-            "label": sector_source_labels[key],
-            "count": sector_source_counts.get(key, 0),
-            "percent": round((sector_source_counts.get(key, 0) / total_jobs) * 100, 1) if total_jobs else 0,
-        }
-        for key in ("acra", "inferred", "unavailable")
-        if sector_source_counts.get(key, 0)
-    ]
-    ssic_coverage = {
-        "official_count": sector_source_counts.get("acra", 0),
-        "official_percent": round((sector_source_counts.get("acra", 0) / total_jobs) * 100, 1) if total_jobs else 0,
-        "inferred_count": sector_source_counts.get("inferred", 0),
-        "unavailable_count": sector_source_counts.get("unavailable", 0),
-    }
-    agency_subsets = [
-        {
-            **option,
-            "count": agency_subset_counts.get(option["id"], 0),
-        }
-        for option in _analytics_agency_subset_options()
-    ]
-
-    filtered_skills = all_skills
-    if q:
-        q_lower = q.lower()
-        filtered_skills = [
-            s for s in all_skills if q_lower in s["skill"].lower()
-        ]
-
-    result = {
-        "top_skills": filtered_skills[:limit],
-        "total_jobs_with_terms": total_jobs,
-        "skill_signal_count": len(all_skills),
-        "company_count": len(company_counts),
-        "title_count": len(title_counts),
-        "sector_count": len(sector_counts),
-        "sources": sources_list,
-        "top_titles": top_titles,
-        "sectors": sectors,
-        "top_companies": top_companies,
-        "hard_skills": hard_skills,
-        "overindexed_skills": overindexed_skills,
-        "market_movers": market_movers,
-        "company_movers": company_movers,
-        "salary_insights": salary_insights,
-        "freshness": freshness,
-        "sampled_jobs": scanned_rows,
-        "sampled_job_limit": _ANALYTICS_MAX_ROWS,
-        "partial": partial,
-        "seniority_mix": seniority_mix,
-        "ssic_coverage": ssic_coverage,
-        "sector_source_mix": sector_source_mix,
-        "agency_subsets": agency_subsets,
-        "agency_subset": agency_subset_key,
-        "direct_employers_only": direct_employers_only,
-    }
-    cache_payload = None
-    if not has_filter:
-        cache_payload = dict(result)
-        cache_payload.pop("top_skills")
-        cache_payload.update({
-            "_corpus_marker": corpus_marker,
-            "_all_skills": all_skills,
-            "_skill_counts": skill_count_numbers,
-        })
-    if cache_payload is not None:
-        with _ANALYTICS_CACHE_LOCK:
-            if cache_generation == _analytics_cache_generation:
-                _analytics_cache = cache_payload
-                _analytics_cache_ts = now
-    if not has_filter or baseline_ready:
-        _store_analytics_query_cache(query_cache_key, now, result, cache_generation)
-    return result
-
-
-@app.get("/api/analytics/trends")
-def analytics_trends(
-    request: Request,
-    source: str | None = Query(None, max_length=50),
-    sector: str | None = Query(None, max_length=100),
-    company: str | None = Query(None, max_length=200),
-    title: str | None = Query(None, max_length=200),
-    agency_subset: str | None = Query(None, max_length=50),
-    direct_employers_only: bool = Query(False),
-    bucket: str = Query("week", pattern="^(week|month)$"),
-    weeks: int = Query(26, ge=4, le=104),
-    db: Session = Depends(get_db),
-    _admission: None = Depends(_admit_analytics_request),
-) -> dict:
-    """Return posting-count trend buckets plus recent role and ATS-term mix."""
-    if not _PUBLIC_RATE_LIMITER.allow(
-        f"analytics-trends:{_get_client_ip(request)}",
-        limit=30,
-        window_seconds=60,
-    ):
-        raise HTTPException(status_code=429, detail="Too many analytics requests")
-    now_dt = datetime.now(timezone.utc)
-    now = time.time()
-    cutoff = now_dt - timedelta(weeks=weeks)
-    agency_subset_key = _normalise_agency_subset_id(agency_subset)
-    cache_key = (
-        "trends",
-        _job_corpus_marker(db),
-        source or "",
-        sector or "",
-        company or "",
-        title or "",
-        agency_subset_key,
-        int(direct_employers_only),
-        bucket,
-        weeks,
-    )
-    with _ANALYTICS_CACHE_LOCK:
-        cache_generation = _analytics_cache_generation
-        cached_query = _analytics_query_cache.get(cache_key)
-        if cached_query and now - cached_query[0] < _ANALYTICS_QUERY_CACHE_TTL:
-            return cached_query[1]
-
-    db_query = db.query(ScrapedJob).options(
-        load_only(
-            ScrapedJob.id,
-            ScrapedJob.title,
-            ScrapedJob.source,
-            ScrapedJob.company,
-            ScrapedJob.agency,
-            ScrapedJob.sector,
-            ScrapedJob.company_ssic_description,
-            ScrapedJob.job_terms_preview,
-            ScrapedJob.posted_at_sort,
-        )
-    ).filter(
-        ScrapedJob.hidden == 0,
-        ScrapedJob.posted_at_sort.isnot(None),
-        ScrapedJob.posted_at_sort != "",
-        ScrapedJob.posted_at_sort >= cutoff.isoformat(),
-    )
-    if source:
-        db_query = db_query.filter(ScrapedJob.source == source)
-    if company:
-        db_query = db_query.filter(_analytics_company_filter_condition(company))
-    if title:
-        db_query = db_query.filter(
-            ScrapedJob.title.ilike(_contains_like_pattern(title), escape="\\")
-        )
-    if sector:
-        db_query = db_query.filter(_sector_filter_condition(sector))
-    if agency_subset_key:
-        db_query = db_query.filter(_analytics_agency_subset_condition(agency_subset_key))
-    if direct_employers_only:
-        db_query = db_query.filter(
-            direct_employer_condition(
-                ScrapedJob.company,
-                ScrapedJob.company_ssic_description,
-                ScrapedJob.description,
-            )
-        )
-
-    bucket_starts = _trend_bucket_series(cutoff, now_dt, bucket)
-    bucket_counts = {start.date().isoformat(): 0 for start in bucket_starts}
-    recent_title_counts: dict[str, dict] = {}
-    recent_skill_counts: dict[str, dict] = {}
-    recent_cutoff = now_dt - timedelta(days=30)
-    total = 0
-    recent_total = 0
-
-    for job in (
-        db_query
-        .order_by(ScrapedJob.posted_at_sort.desc().nullslast(), ScrapedJob.id.desc())
-        .limit(_ANALYTICS_MAX_ROWS)
-        .yield_per(_ANALYTICS_YIELD_PER)
-    ):
-        posted_at = _parse_posted_sort(job.posted_at_sort or "")
-        if not posted_at or posted_at < cutoff:
-            continue
-        total += 1
-        bucket_key = _trend_bucket_start(posted_at, bucket).date().isoformat()
-        bucket_counts[bucket_key] = bucket_counts.get(bucket_key, 0) + 1
-
-        if posted_at >= recent_cutoff:
-            recent_total += 1
-            norm_title = _normalize_title(job.title or "")
-            if norm_title:
-                _increment_label_count(recent_title_counts, norm_title.lower(), norm_title)
-            preview = job.job_terms_preview
-            if isinstance(preview, list):
-                for term in preview:
-                    key = _analytics_skill_key(str(term))
-                    if key and not _is_generic_analytics_skill(key):
-                        _increment_analytics_skill(recent_skill_counts, key)
-
-    series = [
-        {
-            "start": start.date().isoformat(),
-            "label": _trend_bucket_label(start, bucket),
-            "count": bucket_counts.get(start.date().isoformat(), 0),
-        }
-        for start in bucket_starts
-    ]
-    peak = max(series, key=lambda item: item["count"], default=None)
-    result = {
-        "bucket": bucket,
-        "window_weeks": weeks,
-        "total_postings": total,
-        "recent_30_postings": recent_total,
-        "peak": peak,
-        "series": series,
-        "recent_top_titles": sorted(
-            [{"title": item["display"], "count": item["count"]} for item in recent_title_counts.values()],
-            key=lambda item: -item["count"],
-        )[:8],
-        "recent_ats_terms": sorted(
-            [{"skill": item["display"], "count": item["count"]} for item in recent_skill_counts.values()],
-            key=lambda item: -item["count"],
-        )[:8],
-    }
-    _store_analytics_query_cache(cache_key, now, result, cache_generation)
-    return result
-
-
-def _split_multi_value_filter(value: str | None) -> list[str]:
-    seen: set[str] = set()
-    terms: list[str] = []
-    for term in str(value or "").split(","):
-        cleaned = term.strip()
-        key = cleaned.lower()
-        if cleaned and key not in seen:
-            seen.add(key)
-            terms.append(cleaned)
-    return terms
 
 
 def _bounded_filter_terms(
@@ -4365,11 +2946,6 @@ def _bounded_filter_terms(
     if len(terms) > max_terms or any(len(term) > max_length for term in terms):
         raise HTTPException(status_code=422, detail=f"Too many or oversized {label} filters")
     return terms
-
-
-def _contains_like_pattern(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return f"%{escaped}%"
 
 
 def _singapore_date_range(
@@ -5078,7 +3654,7 @@ def get_power_match(
         if isinstance(preview, list) and preview:
             job_skills = [str(s) for s in preview if s]
         else:
-            job_skills = _clean_power_skills(_normalize_skill_strings(job.skills))
+            job_skills = _clean_power_skills(normalize_skill_strings(job.skills, max_length=60))
             if not job_skills:
                 job_skills = _extract_title_terms(job.title)
         matched_skills = [
@@ -5385,187 +3961,6 @@ def list_sources() -> dict:
 
 
 
-def _get_or_create_job_alert_preference(db: Session, user_id: int) -> JobAlertPreference:
-    pref = (
-        db.query(JobAlertPreference)
-        .filter(JobAlertPreference.user_id == user_id)
-        .first()
-    )
-    if pref:
-        return pref
-    pref = JobAlertPreference(user_id=user_id)
-    db.add(pref)
-    db.flush()
-    return pref
-
-
-def _mark_job_alert_delivery_action(
-    db: Session,
-    user_id: int,
-    scraped_job_id: int | None,
-    action: str,
-) -> None:
-    if not scraped_job_id:
-        return
-    pref = _get_or_create_job_alert_preference(db, user_id)
-    delivery = (
-        db.query(JobAlertDelivery)
-        .filter(
-            JobAlertDelivery.user_id == user_id,
-            JobAlertDelivery.scraped_job_id == scraped_job_id,
-        )
-        .first()
-    )
-    now = datetime.now(timezone.utc)
-    if not delivery:
-        delivery = JobAlertDelivery(
-            user_id=user_id,
-            preference_id=pref.id,
-            scraped_job_id=scraped_job_id,
-            action=action,
-            sent_at=now,
-        )
-        db.add(delivery)
-    delivery.preference_id = pref.id
-    delivery.action = action
-    if action != "sent":
-        delivery.dismissed_at = now
-
-
-@app.get("/api/job-alerts/preferences", response_model=JobAlertPreferenceOut)
-def get_job_alert_preference(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> JobAlertPreference:
-    pref = _get_or_create_job_alert_preference(db, user.id)
-    db.commit()
-    db.refresh(pref)
-    return pref
-
-
-@app.put("/api/job-alerts/preferences", response_model=JobAlertPreferenceOut)
-def update_job_alert_preference(
-    body: JobAlertPreferenceUpdate,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> JobAlertPreference:
-    pref = _get_or_create_job_alert_preference(db, user.id)
-    updates = body.model_dump(exclude_unset=True)
-
-    enabling = updates.get("enabled") is True and not bool(pref.enabled)
-    disabling = updates.get("enabled") is False and bool(pref.enabled)
-    if updates.get("enabled") is True:
-        mem = db.query(UserMemory).filter(UserMemory.user_id == user.id).first()
-        resume_text = (mem.resume_text or "").strip() if mem else ""
-        if len(resume_text) < 50:
-            raise HTTPException(
-                status_code=400,
-                detail="Upload or score a resume first before enabling matched job alerts.",
-            )
-
-    for key, value in updates.items():
-        if key == "keywords" and isinstance(value, str):
-            value = sanitize_user_input(value)[:300]
-        setattr(pref, key, value)
-
-    if enabling:
-        # Start from now so opt-in does not send a large backlog of old jobs.
-        pref.last_run_at = datetime.now(timezone.utc)
-        pref.consented_at = datetime.now(timezone.utc)
-        pref.unsubscribed_at = None
-    if disabling:
-        pref.unsubscribed_at = datetime.now(timezone.utc)
-    pref.updated_at = datetime.now(timezone.utc)
-    db.commit()
-    db.refresh(pref)
-    return pref
-
-
-@app.post("/api/job-alerts/jobs/{job_id}/dismiss")
-def dismiss_job_alert(
-    job_id: int,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    _mark_job_alert_delivery_action(db, user.id, job_id, "dismissed")
-    db.commit()
-    return {"ok": True}
-
-
-@app.get("/api/job-alerts/unsubscribe")
-@app.post("/api/job-alerts/unsubscribe")
-def unsubscribe_job_alerts(
-    request: Request,
-    token: str = Query(..., min_length=20, max_length=200),
-    db: Session = Depends(get_db),
-) -> Response:
-    try:
-        user_id = verify_unsubscribe_token(token, db)
-    except RuntimeError:
-        user_id = None
-    if not user_id:
-        return Response(
-            content=(
-                "<!DOCTYPE html><html><body style=\"font-family:system-ui,sans-serif;"
-                "max-width:640px;margin:48px auto;line-height:1.6;\">"
-                "<h1>Invalid unsubscribe link</h1>"
-                "<p>This alert link is invalid or expired. Sign in and turn off Job Match Alerts from Account.</p>"
-                "</body></html>"
-            ),
-            media_type="text/html",
-            status_code=400,
-        )
-
-    if request.method == "GET":
-        escaped_token = html.escape(token, quote=True)
-        return Response(
-            content=(
-                "<!DOCTYPE html><html><body style=\"font-family:system-ui,sans-serif;"
-                "max-width:640px;margin:48px auto;line-height:1.6;color:#243447;\">"
-                "<h1>Unsubscribe from job alerts?</h1>"
-                "<p>Confirm below to stop receiving Job Hunter SG match alert emails.</p>"
-                f"<form method=\"post\" action=\"/api/job-alerts/unsubscribe?token={escaped_token}\">"
-                "<button type=\"submit\">Unsubscribe</button>"
-                "</form></body></html>"
-            ),
-            media_type="text/html",
-        )
-
-    with _account_lifecycle_lock(user_id):
-        try:
-            current_user_id = verify_unsubscribe_token(token, db)
-        except RuntimeError:
-            current_user_id = None
-        if current_user_id != user_id:
-            return Response(
-                content="Invalid or expired unsubscribe link.",
-                media_type="text/plain",
-                status_code=400,
-            )
-        pref = _get_or_create_job_alert_preference(db, user_id)
-        pref.enabled = False
-        pref.unsubscribed_at = datetime.now(timezone.utc)
-        pref.updated_at = datetime.now(timezone.utc)
-        db.commit()
-    app_base_url = os.environ.get("APP_BASE_URL", "https://job.kooexperience.com").rstrip("/")
-    return Response(
-        content=(
-            "<!DOCTYPE html><html><body style=\"font-family:system-ui,sans-serif;"
-            "max-width:640px;margin:48px auto;line-height:1.6;color:#243447;\">"
-            "<h1>Job alerts unsubscribed</h1>"
-            "<p>You will no longer receive Job Hunter SG match alert emails. "
-            "You can turn alerts back on from the Account page anytime.</p>"
-            f"<p><a href=\"{app_base_url}\">Return to Job Hunter SG</a></p>"
-            "</body></html>"
-        ),
-        media_type="text/html",
-    )
-
-
-
 @app.get("/api/tracked", response_model=list[TrackedJobOut])
 def list_tracked(
     user: User = Depends(get_current_user),
@@ -5597,7 +3992,7 @@ def create_tracked(
         db,
         user,
         body,
-        on_tracked=lambda tracked: _mark_job_alert_delivery_action(
+        on_tracked=lambda tracked: record_delivery_action(
             db, user.id, tracked.scraped_job_id, "tracked"
         ),
         storage_lock=lambda: _locked_account_storage(user.id, db),
@@ -5624,7 +4019,7 @@ def create_application_workspace(
         db,
         user,
         body,
-        on_tracked=lambda tracked: _mark_job_alert_delivery_action(
+        on_tracked=lambda tracked: record_delivery_action(
             db, user.id, tracked.scraped_job_id, "tracked"
         ),
         storage_lock=lambda: _locked_account_storage(user.id, db),
@@ -5725,32 +4120,15 @@ async def upload_workspace_submitted_resume(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    file_bytes = await file.read(MAX_FILE_SIZE + 1)
-    await file.close()
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File exceeds 5 MB limit")
-    if not _RESUME_PARSE_SLOTS.acquire(blocking=False):
-        raise HTTPException(status_code=503, detail="Resume parser is busy; try again shortly")
-    try:
-        try:
-            parsed_resume = await run_in_threadpool(
-                parse_resume_isolated,
-                filename=file.filename or "resume",
-                content_type=file.content_type or "",
-                file_bytes=file_bytes,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-    finally:
-        _RESUME_PARSE_SLOTS.release()
+    upload = await parse_uploaded_resume(file)
     return workspace_module.save_submitted_resume(
         db,
         user,
         workspace_id,
-        filename=file.filename or "resume",
-        content_type=file.content_type or "",
-        file_bytes=file_bytes,
-        parsed_resume=parsed_resume,
+        filename=upload.filename,
+        content_type=upload.content_type,
+        file_bytes=upload.file_bytes,
+        parsed_resume=upload.parsed_resume,
         submitted_date=submitted_date,
         notes=notes,
     )
@@ -5812,282 +4190,6 @@ def export_tracked(
         headers={"Content-Disposition": "attachment; filename=tracked_jobs.csv"},
     )
 
-
-
-STORY_TAGS = [
-    "motivation", "proactiveness", "ambiguity", "perseverance",
-    "conflict_resolution", "empathy", "growth", "communication",
-]
-_MAX_ACTIVE_STORIES = 100
-_MAX_STORY_USAGES = 1_000
-_MAX_ACTIVE_RESUME_VERSIONS = 50
-_MAX_SAVED_RESUME_CHARS = 30_000
-_MAX_RESUME_STRUCTURED_BYTES = 200_000
-
-
-@app.get("/api/stories")
-def list_stories(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> list[dict]:
-    """List all active stories for the current user."""
-    from models import InterviewStory
-    stories = (
-        db.query(InterviewStory)
-        .filter(InterviewStory.user_id == user.id, InterviewStory.is_active == 1)
-        .order_by(InterviewStory.updated_at.desc())
-        .all()
-    )
-    return [
-        {
-            "id": s.id,
-            "title": s.title,
-            "project_name": s.project_name,
-            "situation": s.situation,
-            "task": s.task,
-            "action": s.action,
-            "result": s.result,
-            "reflection": s.reflection,
-            "tags": s.tags or [],
-            "seniority": s.seniority,
-            "created_at": s.created_at.isoformat() if s.created_at else "",
-            "updated_at": s.updated_at.isoformat() if s.updated_at else "",
-        }
-        for s in stories
-    ]
-
-
-@app.post("/api/stories", status_code=201)
-def create_story(
-    body: dict,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Create a new STAR+R story."""
-    from models import InterviewStory
-
-    active_count = (
-        db.query(func.count(InterviewStory.id))
-        .filter(InterviewStory.user_id == user.id, InterviewStory.is_active == 1)
-        .scalar()
-        or 0
-    )
-    if active_count >= _MAX_ACTIVE_STORIES:
-        raise HTTPException(status_code=409, detail="Story limit reached")
-
-    title = sanitize_user_input(body.get("title", "")).strip()[:300]
-    if not title:
-        raise HTTPException(status_code=400, detail="Title is required")
-
-    tags = body.get("tags", [])
-    if not isinstance(tags, list):
-        tags = []
-    tags = [t for t in tags if t in STORY_TAGS]
-
-    seniority = body.get("seniority", "mid")
-    if seniority not in ("junior", "mid", "senior", "staff"):
-        seniority = "mid"
-
-    story = InterviewStory(
-        user_id=user.id,
-        title=title,
-        project_name=sanitize_user_input(body.get("project_name", ""))[:300],
-        situation=sanitize_user_input(body.get("situation", "")),
-        task=sanitize_user_input(body.get("task", "")),
-        action=sanitize_user_input(body.get("action", "")),
-        result=sanitize_user_input(body.get("result", "")),
-        reflection=sanitize_user_input(body.get("reflection", "")),
-        tags=tags,
-        seniority=seniority,
-    )
-    db.add(story)
-    db.commit()
-    db.refresh(story)
-
-    return {"id": story.id, "message": "Story created"}
-
-
-@app.put("/api/stories/{story_id}")
-def update_story(
-    story_id: int,
-    body: dict,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Update an existing story."""
-    from models import InterviewStory
-
-    story = (
-        db.query(InterviewStory)
-        .filter(InterviewStory.id == story_id, InterviewStory.user_id == user.id, InterviewStory.is_active == 1)
-        .first()
-    )
-    if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
-
-    updatable = ("title", "project_name", "situation", "task", "action", "result", "reflection")
-    for field in updatable:
-        if field in body:
-            value = sanitize_user_input(body[field])
-            if field == "title":
-                value = value[:300]
-            elif field == "project_name":
-                value = value[:300]
-            setattr(story, field, value)
-
-    if "tags" in body:
-        tags = body["tags"]
-        if isinstance(tags, list):
-            story.tags = [t for t in tags if t in STORY_TAGS]
-
-    if "seniority" in body and body["seniority"] in ("junior", "mid", "senior", "staff"):
-        story.seniority = body["seniority"]
-
-    db.commit()
-    return {"id": story.id, "message": "Story updated"}
-
-
-@app.delete("/api/stories/{story_id}")
-def delete_story(
-    story_id: int,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Soft-delete a story."""
-    from models import InterviewStory
-
-    story = (
-        db.query(InterviewStory)
-        .filter(InterviewStory.id == story_id, InterviewStory.user_id == user.id, InterviewStory.is_active == 1)
-        .first()
-    )
-    if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
-
-    story.is_active = 0
-    db.commit()
-    return {"message": "Story deleted"}
-
-
-@app.get("/api/stories/suggest/{job_id}")
-def suggest_stories_for_job(
-    job_id: int,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Suggest which stories to prep based on a job description's behavioral signals."""
-    from models import InterviewStory
-
-    job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    stories = (
-        db.query(InterviewStory)
-        .filter(InterviewStory.user_id == user.id, InterviewStory.is_active == 1)
-        .all()
-    )
-    if not stories:
-        return {"suggestions": [], "detected_tags": [], "message": "No stories yet. Create some first!"}
-
-    jd_text = (job.description or "").lower()
-    tag_keywords = {
-        "motivation": ["passion", "driven", "motivated", "mission", "purpose", "impact"],
-        "proactiveness": ["initiative", "proactive", "self-starter", "ownership", "autonomous"],
-        "ambiguity": ["ambiguous", "unstructured", "fast-paced", "startup", "greenfield", "undefined"],
-        "perseverance": ["resilient", "challenge", "obstacle", "pressure", "deadline", "persist"],
-        "conflict_resolution": ["conflict", "stakeholder", "negotiate", "disagree", "alignment", "cross-functional"],
-        "empathy": ["empathy", "user-centric", "customer", "inclusive", "diversity", "mentor"],
-        "growth": ["learn", "grow", "feedback", "continuous improvement", "adapt", "mentor"],
-        "communication": ["communicate", "present", "write", "collaborate", "cross-functional", "influence"],
-    }
-
-    detected_tags: list[str] = []
-    for tag, keywords in tag_keywords.items():
-        if any(kw in jd_text for kw in keywords):
-            detected_tags.append(tag)
-
-    suggestions = []
-    for story in stories:
-        story_tags = set(story.tags or [])
-        overlap = story_tags & set(detected_tags)
-        if overlap:
-            suggestions.append({
-                "story_id": story.id,
-                "title": story.title,
-                "project_name": story.project_name,
-                "situation": story.situation or "",
-                "task": story.task or "",
-                "action": story.action or "",
-                "result": story.result or "",
-                "reflection": story.reflection or "",
-                "matching_tags": sorted(overlap),
-                "match_count": len(overlap),
-                "tags": story.tags or [],
-            })
-
-    suggestions.sort(key=lambda s: s["match_count"], reverse=True)
-
-    # Also suggest unmatched stories if user has few
-    unmatched = [
-        {
-            "story_id": s.id, "title": s.title, "project_name": s.project_name,
-            "situation": s.situation or "", "task": s.task or "", "action": s.action or "",
-            "result": s.result or "", "reflection": s.reflection or "",
-            "tags": s.tags or [], "matching_tags": [], "match_count": 0,
-        }
-        for s in stories
-        if not (set(s.tags or []) & set(detected_tags))
-    ]
-
-    return {
-        "suggestions": suggestions,
-        "other_stories": unmatched,
-        "detected_tags": detected_tags,
-        "job_title": job.title,
-    }
-
-
-@app.post("/api/stories/{story_id}/use")
-def record_story_usage(
-    story_id: int,
-    body: dict,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Record that a story was used for a specific job interview."""
-    from models import InterviewStory, StoryUsage
-
-    story = (
-        db.query(InterviewStory)
-        .filter(InterviewStory.id == story_id, InterviewStory.user_id == user.id, InterviewStory.is_active == 1)
-        .first()
-    )
-    if not story:
-        raise HTTPException(status_code=404, detail="Story not found")
-
-    if not _PUBLIC_RATE_LIMITER.allow(f"story-use:{user.id}", limit=60, window_seconds=60):
-        raise HTTPException(status_code=429, detail="Too many story usage requests")
-
-    with _locked_account_storage(user.id, db):
-        usage_count = (
-            db.query(func.count(StoryUsage.id))
-            .filter(StoryUsage.user_id == user.id)
-            .scalar()
-            or 0
-        )
-        if usage_count >= _MAX_STORY_USAGES:
-            raise HTTPException(status_code=409, detail="Story usage limit reached")
-        usage = StoryUsage(
-            story_id=story_id,
-            job_id=body.get("job_id"),
-            user_id=user.id,
-            question_asked=sanitize_user_input(body.get("question_asked", ""))[:1_000],
-            notes=sanitize_user_input(body.get("notes", ""))[:5_000],
-        )
-        db.add(usage)
-        db.commit()
-    return {"message": "Usage recorded"}
 
 
 @app.post("/api/stories/generate")
@@ -6265,7 +4367,7 @@ def score_resume(
     _persist_resume_to_memory(user, db, resume_text)
     db.commit()
 
-    jd_text = sanitize_user_input(body.job_description)
+    jd_text = sanitize_user_input(body.job_description, max_length=10_000)
 
     # Resolve parsed_jd: prefer stored data from job_id, fall back to
     # parsing the raw JD text provided in the request body.
@@ -6282,7 +4384,7 @@ def score_resume(
                 except (ValueError, TypeError):
                     scored_parsed_jd = None
             if not jd_text.strip() and job_row.description:
-                jd_text = sanitize_user_input(job_row.description)
+                jd_text = sanitize_user_input(job_row.description, max_length=10_000)
 
     log.info(
         "Resume score requested words=%s jd_chars=%s job_id=%s user=%s",
@@ -6449,19 +4551,6 @@ def ai_status() -> dict:
     return get_ai_status()
 
 
-def _get_client_ip(request: Request) -> str:
-    """Return the visitor IP when the Cloudflare-only origin boundary is enabled."""
-    peer_ip = request.client.host if request.client else "unknown"
-    if not _TRUST_CLOUDFLARE_IP_HEADER:
-        return peer_ip
-    try:
-        return ipaddress.ip_address(
-            request.headers.get("cf-connecting-ip", "")
-        ).compressed
-    except ValueError:
-        return peer_ip
-
-
 def _consume_ai_credit(
     user: User,
     db: Session,
@@ -6498,7 +4587,7 @@ def ai_coach_resume(
 
     memory_context = _get_memory_context(user, db)
     resume_text = sanitize_resume_text(body.resume_text)
-    jd = sanitize_user_input(body.job_description)
+    jd = sanitize_user_input(body.job_description, max_length=10_000)
 
     result = coach_resume(
         resume_text=resume_text + memory_context,
@@ -6534,10 +4623,18 @@ def ai_rewrite_bullet(
 
     bullet = sanitize_user_input(body.bullet)
     job_title = sanitize_user_input(body.job_title)
-    job_description = sanitize_user_input(body.job_description) if hasattr(body, "job_description") else ""
+    job_description = (
+        sanitize_user_input(body.job_description, max_length=10_000)
+        if hasattr(body, "job_description")
+        else ""
+    )
     used_verbs = sanitize_user_input(body.used_verbs) if hasattr(body, "used_verbs") else ""
     rewrite_focus = sanitize_user_input(body.rewrite_focus) if hasattr(body, "rewrite_focus") else ""
-    focused_feedback = sanitize_user_input(body.focused_feedback) if hasattr(body, "focused_feedback") else ""
+    focused_feedback = (
+        sanitize_user_input(body.focused_feedback, max_length=2_000)
+        if hasattr(body, "focused_feedback")
+        else ""
+    )
 
     # Structured JD context: parsed skills, never the raw blob.
     jd_context = job_description
@@ -6934,7 +5031,7 @@ def generate_application_pack(
     resume_text = sanitize_resume_text(body.resume_text)
     job_title = sanitize_user_input(body.job_title)
     job_company = sanitize_user_input(body.job_company)
-    job_description = sanitize_user_input(body.job_description)
+    job_description = sanitize_user_input(body.job_description, max_length=15_000)
     parsed_jd = None
     skills_list: list[str] = []
     job_id = body.job_id
@@ -6986,7 +5083,7 @@ def generate_application_pack(
         job_terms=job_terms,
         match_result=match_result,
         parsed_jd=parsed_jd if isinstance(parsed_jd, dict) else None,
-        user_direction=sanitize_user_input(body.user_direction or ""),
+        user_direction=sanitize_user_input(body.user_direction or "", max_length=1_000),
     )
     return {
         **pack,
@@ -7022,7 +5119,7 @@ def resume_chat_step(
         messages = messages[-30:]
     for msg in messages:
         if isinstance(msg.get("content"), str):
-            msg["content"] = sanitize_user_input(msg["content"])[:3000]
+            msg["content"] = sanitize_user_input(msg["content"], max_length=3_000)
         if msg.get("role") not in ("user", "assistant"):
             msg["role"] = "user"
 
@@ -7226,30 +5323,9 @@ def resume_chat_step(
     ready_to_generate = "[READY]" in reply.upper()
     reply_clean = apply_uk_spelling(re.sub(r"\[READY\]", "", reply, flags=re.IGNORECASE).strip())
 
-    user_msg_count = sum(1 for m in messages if m.get("role") == "user")
-    if user_msg_count <= 1:
-        stage = "contact"
-    elif user_msg_count <= 2:
-        stage = "summary"
-    elif user_msg_count <= 4:
-        stage = "experience_1"
-    elif user_msg_count <= 6:
-        stage = "experience_2"
-    elif user_msg_count <= 7:
-        stage = "education"
-    elif user_msg_count <= 8:
-        stage = "skills"
-    else:
-        stage = "done"
-
-    # Fallback: if user has answered 8+ questions, allow generation even if
-    # the LLM forgot to include [READY] (by message 8 they're past education/skills)
-    if not ready_to_generate and user_msg_count >= 8:
-        ready_to_generate = True
-
     return {
         "reply": reply_clean,
-        "stage": stage,
+        "stage": "done" if ready_to_generate else "in_progress",
         "ready_to_generate": ready_to_generate,
     }
 
@@ -7270,27 +5346,7 @@ async def upload_resume(
     owner = f"user:{user.id}" if user else f"ip:{_get_client_ip(request)}"
     if not _PUBLIC_RATE_LIMITER.allow(f"resume-upload:{owner}", limit=10, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many resume uploads. Please try again later.")
-    file_bytes = await file.read(MAX_FILE_SIZE + 1)
-    await file.close()
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail="File too large. Maximum is 5MB.")
-    if not _RESUME_PARSE_SLOTS.acquire(blocking=False):
-        raise HTTPException(
-            status_code=503,
-            detail="Resume parsing is busy. Please try again shortly.",
-            headers={"Retry-After": "2"},
-        )
-    try:
-        result = await run_in_threadpool(
-            parse_resume_isolated,
-            filename=file.filename or "resume",
-            content_type=file.content_type or "",
-            file_bytes=file_bytes,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        _RESUME_PARSE_SLOTS.release()
+    result = (await parse_uploaded_resume(file)).parsed_resume
 
     parse_quality = result.get("parse_quality", {})
     db.add(UsageLog(
@@ -7357,7 +5413,7 @@ def review_all_bullets(
     _consume_ai_credit(user, db, "review_all")
 
     resume_text = sanitize_resume_text(body.resume_text)
-    jd = sanitize_user_input(body.job_description)
+    jd = sanitize_user_input(body.job_description, max_length=10_000)
 
     system = """You are an expert resume reviewer. Analyze each bullet point in the resume and provide specific improvement suggestions.
 
@@ -8054,223 +6110,6 @@ def get_usage(
 
 
 
-def _resume_structure_for_storage(resume_text: str, supplied: object = None) -> dict:
-    from resume_document import SCHEMA_VERSION, create_resume_document
-
-    if supplied is None:
-        return create_resume_document(resume_text)
-    if not isinstance(supplied, dict):
-        raise HTTPException(status_code=422, detail="Structured resume must be an object")
-    if supplied.get("schema_version") != SCHEMA_VERSION:
-        return create_resume_document(resume_text)
-    if supplied.get("raw_text") != resume_text:
-        raise HTTPException(status_code=409, detail="Structured resume does not match resume text")
-    return supplied
-
-
-@app.get("/api/resume/versions")
-def list_resume_versions(
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> list[dict]:
-    """List all resume versions for the current user."""
-    from models import ResumeVersion
-
-    versions = (
-        db.query(ResumeVersion)
-        .filter(ResumeVersion.user_id == user.id, ResumeVersion.is_active == True)
-        .order_by(ResumeVersion.updated_at.desc())
-        .all()
-    )
-    return [
-        {
-            "id": v.id,
-            "label": v.label,
-            "source": v.source,
-            "job_id": v.job_id,
-            "job_title": v.job_title,
-            "job_company": v.job_company,
-            "score": v.score,
-            "word_count": v.word_count,
-            "is_master": v.is_master,
-            "created_at": v.created_at.isoformat() if v.created_at else "",
-            "updated_at": v.updated_at.isoformat() if v.updated_at else "",
-        }
-        for v in versions
-    ]
-
-
-@app.post("/api/resume/versions")
-def save_resume_version(
-    body: dict,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """
-    Save a new resume version.
-    Body: {label, resume_text, resume_structured?, job_id?, score?, is_master?}
-    """
-    from models import ResumeVersion
-
-    active_count = (
-        db.query(func.count(ResumeVersion.id))
-        .filter(ResumeVersion.user_id == user.id, ResumeVersion.is_active == True)
-        .scalar()
-        or 0
-    )
-    if active_count >= _MAX_ACTIVE_RESUME_VERSIONS:
-        raise HTTPException(status_code=409, detail="Resume version limit reached")
-
-    label = sanitize_user_input(body.get("label", "")).strip()[:200]
-    resume_text = body.get("resume_text", "").strip()
-    if not label:
-        raise HTTPException(status_code=400, detail="Label is required")
-    if not resume_text or len(resume_text) < 50:
-        raise HTTPException(status_code=400, detail="Resume text too short")
-    if len(resume_text) > _MAX_SAVED_RESUME_CHARS:
-        raise HTTPException(status_code=413, detail="Resume text is too large")
-    resume_structured = _resume_structure_for_storage(
-        resume_text,
-        body.get("resume_structured"),
-    )
-    if len(
-        json.dumps(resume_structured, separators=(",", ":"))
-    ) > _MAX_RESUME_STRUCTURED_BYTES:
-        raise HTTPException(status_code=413, detail="Structured resume is too large")
-
-    is_master = body.get("is_master", False)
-    if is_master:
-        db.query(ResumeVersion).filter(
-            ResumeVersion.user_id == user.id,
-            ResumeVersion.is_master == True,
-        ).update({"is_master": False})
-
-    job_title = ""
-    job_company = ""
-    job_id = body.get("job_id")
-    if job_id:
-        job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
-        if job:
-            job_title = job.title or ""
-            job_company = job.company or ""
-
-    version = ResumeVersion(
-        user_id=user.id,
-        label=label,
-        source=body.get("source", "manual"),
-        resume_text=resume_text,
-        resume_structured=resume_structured,
-        job_id=job_id,
-        job_title=job_title,
-        job_company=job_company,
-        score=body.get("score"),
-        word_count=len(resume_text.split()),
-        is_master=is_master,
-    )
-    db.add(version)
-    db.commit()
-    db.refresh(version)
-
-    return {"id": version.id, "label": version.label, "created_at": version.created_at.isoformat()}
-
-
-def _owned_resume_version(db: Session, user_id: int, version_id: int) -> ResumeVersion:
-    version = (
-        db.query(ResumeVersion)
-        .filter(
-            ResumeVersion.id == version_id,
-            ResumeVersion.user_id == user_id,
-            ResumeVersion.is_active == True,
-        )
-        .first()
-    )
-    if not version:
-        raise HTTPException(status_code=404, detail="Version not found")
-    return version
-
-
-@app.get("/api/resume/versions/{version_id}")
-def get_resume_version(
-    version_id: int,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Load a specific resume version."""
-    version = _owned_resume_version(db, user.id, version_id)
-
-    return {
-        "id": version.id,
-        "label": version.label,
-        "source": version.source,
-        "resume_text": version.resume_text,
-        "resume_structured": version.resume_structured,
-        "job_id": version.job_id,
-        "job_title": version.job_title,
-        "job_company": version.job_company,
-        "score": version.score,
-        "word_count": version.word_count,
-        "is_master": version.is_master,
-        "created_at": version.created_at.isoformat() if version.created_at else "",
-        "updated_at": version.updated_at.isoformat() if version.updated_at else "",
-    }
-
-
-@app.put("/api/resume/versions/{version_id}")
-def update_resume_version(
-    version_id: int,
-    body: dict,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Update label, text, or master status of a resume version."""
-    from models import ResumeVersion
-
-    version = _owned_resume_version(db, user.id, version_id)
-
-    if "label" in body:
-        version.label = sanitize_user_input(body["label"]).strip()[:200]
-    if "resume_text" in body:
-        if len(body["resume_text"]) > _MAX_SAVED_RESUME_CHARS:
-            raise HTTPException(status_code=413, detail="Resume text is too large")
-        version.resume_text = body["resume_text"]
-        version.word_count = len(body["resume_text"].split())
-    if "resume_text" in body or "resume_structured" in body:
-        resume_structured = _resume_structure_for_storage(
-            version.resume_text,
-            body.get("resume_structured"),
-        )
-        if len(json.dumps(resume_structured, separators=(",", ":"))) > _MAX_RESUME_STRUCTURED_BYTES:
-            raise HTTPException(status_code=413, detail="Structured resume is too large")
-        version.resume_structured = resume_structured
-    if "score" in body:
-        version.score = body["score"]
-    if "is_master" in body and body["is_master"]:
-        db.query(ResumeVersion).filter(
-            ResumeVersion.user_id == user.id,
-            ResumeVersion.is_master == True,
-        ).update({"is_master": False})
-        version.is_master = True
-
-    db.commit()
-    return {"id": version.id, "label": version.label, "updated": True}
-
-
-@app.delete("/api/resume/versions/{version_id}")
-def delete_resume_version(
-    version_id: int,
-    user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict:
-    """Soft-delete a resume version."""
-    version = _owned_resume_version(db, user.id, version_id)
-
-    version.is_active = False
-    db.commit()
-    return {"id": version.id, "deleted": True}
-
-
-
-
 def _validate_resume_agent_request(body: dict) -> None:
     session_id = str(body.get("session_id") or "").strip()
     if len(session_id) > app_config.AGENT_MAX_SESSION_ID_CHARS:
@@ -8560,7 +6399,7 @@ def start_tailoring(
         jd_text = job.description or ""
         parsed_jd = job.parsed_jd
     else:
-        jd_text = sanitize_user_input(body.get("job_description", ""))
+        jd_text = sanitize_user_input(body.get("job_description", ""), max_length=10_000)
 
     owner_key = f"user:{user.id}"
     with _account_lifecycle_lock(user.id):

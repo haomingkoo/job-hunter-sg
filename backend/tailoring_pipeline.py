@@ -8,8 +8,6 @@ import re
 import secrets
 import threading
 import time
-from datetime import datetime, timezone
-from typing import Optional
 
 from ai_phrases import clean_ai_phrases
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms

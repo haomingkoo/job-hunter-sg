@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Literal
 
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 import config
-from validation_gates import _extract_numbers, run_all_gates
+from validation_gates import extract_numbers, run_all_gates
 
+from ..assessment_contracts import (
+    TargetAssessmentRequest,
+    TargetSynthesisSubmission,
+    render_target_synthesis,
+    validate_target_synthesis,
+)
 from ..conversation_model import PreferenceUpdatePayload
+from ..fair_hiring import mentions_protected_status
 from ..interface import ConfirmedEvidenceFact, PreferenceUpdate, confirmed_evidence_fact
 from ..resume_edit_evidence import ResumeEditEvidenceRequest
 from . import context
+from .evidence_view import candidate_evidence_view, target_role_view
 
 
 _NO_CONTEXT = {"ok": False, "failure_type": "business", "reason": "No active assessment context."}
@@ -108,6 +115,19 @@ def ask_candidate(questions: list[str]) -> dict:
     becomes citable evidence for later propose_resume_edit calls in this
     thread. This is enforced by the interrupt, not by prompted convention.
     """
+    protected_questions = [question for question in questions if mentions_protected_status(question)]
+    if protected_questions:
+        return {
+            "ok": False,
+            "failure_type": "validation",
+            "reason": (
+                "Do not ask about nationality, citizenship, permanent-resident, residency, "
+                "or immigration status. If the posting genuinely requires legal eligibility, "
+                "ask only whether the candidate is authorised to work in the location or "
+                "requires employer sponsorship."
+            ),
+            "retry": False,
+        }
     return {"ok": True, "questions": list(questions)}
 
 
@@ -138,17 +158,7 @@ def read_candidate_evidence() -> dict:
             ),
             "retry": False,
         }
-    return {
-        "ok": True,
-        "fields": [asdict(field) for field in request.candidate_profile.fields],
-        "candidate_confirmed": [
-            asdict(fact)
-            for fact in (
-                *getattr(request, "confirmed_evidence", ()),
-                *getattr(request, "drafted_confirmed_evidence", ()),
-            )
-        ],
-    }
+    return {"ok": True, **candidate_evidence_view(request)}
 
 
 @tool
@@ -163,11 +173,76 @@ def read_target_job() -> dict:
             "failure_type": "business",
             "reason": "No target job has been selected in this thread yet; read_shortlist first.",
         }
+    evidence = target_role_view(request)
     return {
         "ok": True,
-        "target_job": asdict(request.target_job),
-        "role_profile": asdict(request.role_profile),
+        "target_job": evidence["target_job"],
+        "role_profile": evidence["role_success_profile"],
+        "fair_hiring_note": (
+            "Protected-status preferences are excluded from assessment and must not be "
+            "mentioned or scored. Lawful work-authorisation requirements remain allowed."
+        ),
     }
+
+
+@tool(args_schema=TargetSynthesisSubmission)
+def submit_target_assessment_synthesis(claims: list[dict]) -> dict:
+    """Submit the final candidate-facing assessment as evidence-linked claims.
+
+    Every claim cites role criteria. Strengths also cite linked candidate-profile
+    fields plus their resume evidence, or candidate-confirmed evidence. Do not add
+    market colour, character judgments, hiring probability, or arithmetic derived
+    from dates. A rejected submission can be corrected and submitted again.
+    """
+
+    request = context.current_request()
+    if not isinstance(request, TargetAssessmentRequest):
+        return {**_NO_CONTEXT, "retry": False}
+    missing_specialists = context.missing_required_specialists()
+    if missing_specialists:
+        return {
+            "ok": False,
+            "accepted": False,
+            "retry": True,
+            "failure_type": "validation",
+            "failure_code": "required_specialists_missing",
+            "missing_specialists": list(missing_specialists),
+            "reason": (
+                "Delegate to every missing specialist and wait for each accepted structured "
+                "submission before submitting the synthesis again."
+            ),
+        }
+    submission = TargetSynthesisSubmission(claims=claims)
+    failures = validate_target_synthesis(request, submission)
+    if failures:
+        attempt = context.record_synthesis_validation_failure(failures[0])
+        retry = attempt < config.RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS
+        return {
+            "ok": False,
+            "accepted": False,
+            "retry": retry,
+            "failure_type": "validation",
+            "failure_code": "structured_output_invalid",
+            "validation_code": failures[0],
+            "validation_codes": list(failures),
+            "attempt": attempt,
+            "attempt_limit": config.RECRUITMENT_SYNTHESIS_VALIDATION_ATTEMPTS,
+            "reason": (
+                "Synthesis rejected. Keep each claim close to its cited records, cite only "
+                "known linked IDs, and remove unsupported durations, ranges, percentages, "
+                "scores, money amounts, or speculative market and hiring assertions from the "
+                "named claim. Do not replace a rejected quantity with number words. Correct "
+                "the named claim and submit once more."
+                if retry
+                else "Synthesis validation budget exhausted; do not submit again."
+            ),
+        }
+    rendered = render_target_synthesis(submission)
+    context.store_submitted_synthesis(
+        rendered,
+        [claim.model_dump() for claim in submission.claims],
+    )
+    return {"ok": True, "accepted": True, "claim_count": len(submission.claims)}
 
 
 @tool
@@ -536,7 +611,7 @@ def propose_resume_edit(
     supported_source = "\n".join(
         part for part in (original_text, supporting_evidence) if part
     )
-    new_numbers = _extract_numbers(clean_rewrite) - _extract_numbers(supported_source)
+    new_numbers = extract_numbers(clean_rewrite) - extract_numbers(supported_source)
     if new_numbers:
         return {
             "accepted": False,

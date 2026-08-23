@@ -57,14 +57,13 @@ use another database.
 
 Hosted `/mcp` tools:
 
-- `jobhunter.source_stats`: public job counts and freshness by source.
-- `jobhunter.latest_jobs`: fetch the latest public jobs.
-- `jobhunter.latest_careersgov_jobs`: fetch latest public Careers@Gov jobs.
-- `jobhunter.latest_mycareersfuture_jobs`: fetch latest public MyCareersFuture jobs.
-- `jobhunter.search_jobs`: semantic search over public jobs.
-- `jobhunter.get_job`: fetch one public job.
-- `jobhunter.ats_precompute_status`: check parsed JD, term preview, and embedding readiness.
-- `jobhunter.recommend_skillsfuture_courses`: recommend official MySkillsFuture courses for skill gaps.
+- `jobhunter_latest_jobs`: fetch the latest public jobs.
+- `jobhunter_search_jobs`: semantic search over public jobs.
+- `jobhunter_get_job`: fetch one public job.
+- `jobhunter_recommend_skillsfuture_courses`: recommend official MySkillsFuture courses for skill gaps.
+
+Source freshness and ATS readiness are hosted MCP resources at
+`jobhunter://sources` and `jobhunter://status/ats`; they are not tools.
 
 Local stdio-only tools:
 
@@ -104,25 +103,23 @@ show a rewrite, call validate_bullet_edit or propose_resume_diff.
 For a public jobs-only first pass, ask:
 
 ```text
-Use the jobhunter.latest_jobs MCP tool and show me the newest Singapore roles.
+Use the jobhunter_latest_jobs MCP tool and show me the newest Singapore roles.
 ```
 
 For ATS matching against public jobs, paste a resume and ask:
 
 ```text
-Use jobhunter.ats_precompute_status first. Then call jobhunter.match_resume_to_jobs
-with my pasted resume, show the strongest matches, missing ATS terms, and suggest
-SkillsFuture courses for the recurring gaps.
+Read jobhunter://status/ats first. Then call jobhunter_search_jobs for my target
+role, open the strongest results with jobhunter_get_job, and suggest SkillsFuture
+courses for recurring gaps with jobhunter_recommend_skillsfuture_courses.
 ```
 
 For LinkedIn/profile review, paste the profile text and ask the client to call
 `compare_candidate_profile`. Profile-only details are questions or consistency
 gaps, not resume claims to add.
 
-`jobhunter.match_resume_to_jobs` does not read stored resumes or private
-applications. It uses the pasted text for that tool call, public job rows,
-precomputed `parsed_jd` / `job_terms_preview` where available, and embedding
-similarity for candidate selection.
+The hosted server does not accept resume text. Resume parsing, matching, and
+rewrite validation are capabilities of the local stdio server listed above.
 
 The MCP server does not call SEA-LION or another model. The client-side model does
 the reasoning; this repo owns parsing, ATS scoring, job search, and validation.

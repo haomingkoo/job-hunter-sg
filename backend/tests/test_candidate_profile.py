@@ -10,11 +10,14 @@ from recruitment_team.candidate_profile import (
     CandidateProfileValidationError,
     CandidateProfileTransportError,
     LangChainCandidateProfiler,
+    LangChainCandidateProfilerFactory,
     ScriptedCandidateProfilerFactory,
     _canonicalize_profile_fields,
+    _metadata_validation_code,
     _profile_scopes,
     _validate_submission,
 )
+from recruitment_team.telemetry import RecordedTelemetry
 
 
 def _document():
@@ -245,7 +248,7 @@ def test_candidate_profile_retries_with_original_blocks_failed_output_and_exact_
                 "logical_run_id": run.checkpoint_id,
                 "checkpoint_id": run.checkpoint_id,
                 "stage": "candidate_profile_validation",
-                "validation_code": "field:outcome_close_cycle:quote_not_found",
+                "validation_code": "field:quote_not_found",
             "accepted": False,
             "retry_triggered": True,
         },
@@ -304,6 +307,16 @@ def test_candidate_profile_deterministic_validation(mutate, code):
 
     assert accepted is None
     assert failure == code
+
+
+def test_candidate_profile_observability_code_removes_model_values():
+    private = "field:canary-private-id:unsupported_numbers(314159)|field:other:quote_not_found"
+
+    public = _metadata_validation_code(private)
+
+    assert public == "field:unsupported_numbers|field:quote_not_found"
+    assert "canary-private-id" not in public
+    assert "314159" not in public
 
 
 def test_candidate_profile_does_not_ground_its_support_score_as_a_resume_fact():
@@ -620,7 +633,7 @@ def test_candidate_profile_preserves_validation_feedback_across_transport_resume
     ).profile(document)
 
     assert run.model_call_count == 3
-    assert run.validation_codes == ("field:outcome_close_cycle:quote_not_found",)
+    assert run.validation_codes == ("field:quote_not_found",)
     assert run.input_tokens == 26
     assert run.output_tokens == 10
     assert [event["status"] for event in store.execution_events] == [
@@ -699,7 +712,7 @@ def test_candidate_profile_fails_closed_on_invalid_checkpoint():
     assert caught.value.validation_code == ("checkpoint:experience_01:field:outcome_close_cycle:quote_not_found")
 
 
-def test_candidate_profile_default_model_disables_transport_retries(monkeypatch):
+def test_candidate_profile_default_model_observes_configured_transport_retries(monkeypatch):
     import config
     import resume_agent.models
 
@@ -714,7 +727,38 @@ def test_candidate_profile_default_model_disables_transport_retries(monkeypatch)
 
     LangChainCandidateProfiler()
 
-    assert captured == {
-        "timeout": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
-        "max_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
-    }
+    from recruitment_team.model_transport_observer import ModelTransportObserver
+
+    assert captured["timeout"] == config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS
+    assert captured["max_retries"] == config.RECRUITMENT_MODEL_TRANSPORT_RETRIES
+    assert captured["http_client"] is not None
+    assert len(captured["callbacks"]) == 1
+    assert isinstance(captured["callbacks"][0], ModelTransportObserver)
+
+
+def test_candidate_profile_factory_default_model_observes_transport(monkeypatch):
+    import config
+    import resume_agent.models
+
+    captured = {}
+    model = _ProfileModel([])
+
+    def fake_create_agent_model(**kwargs):
+        captured.update(kwargs)
+        return model
+
+    monkeypatch.setattr(resume_agent.models, "create_agent_model", fake_create_agent_model)
+
+    telemetry = RecordedTelemetry()
+    factory = LangChainCandidateProfilerFactory(telemetry=telemetry)
+
+    from recruitment_team.model_transport_observer import ModelTransportObserver
+
+    assert factory._model is model
+    assert factory._telemetry is telemetry
+    assert captured["timeout"] == config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS
+    assert captured["max_retries"] == config.RECRUITMENT_MODEL_TRANSPORT_RETRIES
+    assert captured["http_client"] is not None
+    assert len(captured["callbacks"]) == 1
+    assert isinstance(captured["callbacks"][0], ModelTransportObserver)
+    assert captured["callbacks"][0]._telemetry is telemetry

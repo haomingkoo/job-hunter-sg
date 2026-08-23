@@ -40,10 +40,8 @@ def test_persona_registry_is_versioned_cited_complete_and_bounded():
 def test_persona_registry_exposes_score_and_field_level_provenance_contract():
     registry = load_persona_pack_registry("v1")
 
-    assert "candidate_profile_field_ids" in registry.output_schema["required"]
-    assert "resume_evidence_ids" in registry.output_schema["required"]
-    assert "strengths" in registry.output_schema["required"]
-    assert "weaknesses" in registry.output_schema["required"]
+    assert "findings" in registry.output_schema["required"]
+    assert "findings" in registry.output_schema["required"]
     assert "score" in registry.output_schema["required"]
     assert "score_reason" in registry.output_schema["required"]
     assert "hiring probability" in registry.output_schema["score_meaning"]

@@ -5,9 +5,11 @@ Pydantic v2 request / response schemas.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+
+from sanitizer import sanitize_url, validate_http_url
 
 
 
@@ -24,11 +26,20 @@ if _raw_domains and _raw_domains != "*":
     ]
 
 
+def _require_accepted_terms(value: bool) -> bool:
+    if not value:
+        raise ValueError("You must accept the Terms of Service and Privacy Notice")
+    return value
+
+
+_AcceptedTerms = Annotated[bool, AfterValidator(_require_accepted_terms)]
+
+
 class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
     name: str = Field(..., min_length=1, max_length=255)
-    accepted_terms: bool = Field(False, description="User accepted Terms of Service and Privacy Notice")
+    accepted_terms: _AcceptedTerms = Field(False, description="User accepted Terms of Service and Privacy Notice")
 
     @field_validator("email")
     @classmethod
@@ -37,13 +48,6 @@ class SignupRequest(BaseModel):
         if _ALLOWED_DOMAINS and domain not in _ALLOWED_DOMAINS:
             allowed = ", ".join(f"@{d}" for d in _ALLOWED_DOMAINS)
             raise ValueError(f"Signup restricted to {allowed} emails")
-        return v
-
-    @field_validator("accepted_terms")
-    @classmethod
-    def accepted_terms_required(cls, v: bool) -> bool:
-        if not v:
-            raise ValueError("You must accept the Terms of Service and Privacy Notice")
         return v
 
 
@@ -64,14 +68,7 @@ class VerifyEmailRequest(BaseModel):
     token: str = Field(..., min_length=20, max_length=300)
     password: str = Field(..., min_length=8, max_length=128)
     name: str = Field(..., min_length=1, max_length=255)
-    accepted_terms: bool = False
-
-    @field_validator("accepted_terms")
-    @classmethod
-    def accepted_terms_required(cls, v: bool) -> bool:
-        if not v:
-            raise ValueError("You must accept the Terms of Service and Privacy Notice")
-        return v
+    accepted_terms: _AcceptedTerms = False
 
 
 class ResendVerificationRequest(BaseModel):
@@ -90,14 +87,7 @@ class DeleteAccountRequest(BaseModel):
 
 class CloudflareRegisterRequest(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
-    accepted_terms: bool = False
-
-    @field_validator("accepted_terms")
-    @classmethod
-    def accepted_terms_required(cls, v: bool) -> bool:
-        if not v:
-            raise ValueError("You must accept the Terms of Service and Privacy Notice")
-        return v
+    accepted_terms: _AcceptedTerms = False
 
 
 class UserOut(BaseModel):
@@ -192,6 +182,8 @@ class TrackedJobCreate(BaseModel):
     scraped_job_id: Optional[int] = None
     resume_version_id: Optional[int] = None
 
+    _validate_source_url = field_validator("source_url")(validate_http_url)
+
 
 class TrackedJobUpdate(BaseModel):
     company: Optional[str] = Field(None, max_length=500)
@@ -205,6 +197,8 @@ class TrackedJobUpdate(BaseModel):
     follow_up_date: Optional[str] = Field(None, max_length=50)
     notes: Optional[str] = Field(None, max_length=5000)
     resume_version_id: Optional[int] = None
+
+    _validate_source_url = field_validator("source_url")(validate_http_url)
 
 
 class TrackedJobOut(BaseModel):
@@ -228,6 +222,11 @@ class TrackedJobOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @field_validator("source_url", mode="before")
+    @classmethod
+    def normalize_source_url(cls, value: object) -> str:
+        return sanitize_url(str(value or ""))
+
 
 class ApplicationWorkspaceCreate(BaseModel):
     company: str = Field(..., min_length=1, max_length=500)
@@ -242,6 +241,8 @@ class ApplicationWorkspaceCreate(BaseModel):
     scraped_job_id: Optional[int] = None
     resume_version_id: Optional[int] = None
     role_metadata: dict[str, Any] = Field(default_factory=dict)
+
+    _validate_source_url = field_validator("source_url")(validate_http_url)
 
 
 class ApplicationWorkspaceOut(BaseModel):
@@ -264,6 +265,11 @@ class ApplicationWorkspaceOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    @field_validator("source_url", mode="before")
+    @classmethod
+    def normalize_source_url(cls, value: object) -> str:
+        return sanitize_url(str(value or ""))
+
 
 class NegotiationEvidence(BaseModel):
     label: str = Field(..., min_length=1, max_length=200)
@@ -271,6 +277,8 @@ class NegotiationEvidence(BaseModel):
     definition: str = Field(..., min_length=1, max_length=500)
     source_url: str = Field("", max_length=2000)
     data_date: str = Field("", max_length=100)
+
+    _validate_source_url = field_validator("source_url")(validate_http_url)
 
 
 class NegotiationRehearsalRequest(BaseModel):

@@ -435,11 +435,6 @@ def _extract_pdf(file_bytes: bytes) -> tuple[str, bool, int, list[dict]]:
     return full_text, possible_multi_column_layout, page_count, layout
 
 
-def extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Extract full text from a PDF file. No truncation."""
-    return _extract_pdf(file_bytes)[0]
-
-
 def _extract_docx(file_bytes: bytes) -> tuple[str, list[dict]]:
     from docx import Document
 
@@ -488,11 +483,6 @@ def _extract_docx(file_bytes: bytes) -> tuple[str, list[dict]]:
     if len(full_text) > MAX_EXTRACTED_CHARS:
         raise ValueError("DOCX contains too much text.")
     return full_text, layout
-
-
-def extract_text_from_docx(file_bytes: bytes) -> str:
-    """Extract full text from a DOCX file. No truncation."""
-    return _extract_docx(file_bytes)[0]
 
 
 def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:

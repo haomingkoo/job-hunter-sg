@@ -946,6 +946,20 @@ describe("RecruitmentTeamPanel", () => {
             }],
           },
           correction: { attempted: true },
+          execution_metrics: {
+            model_call_count: 12,
+            input_tokens: 53021,
+            output_tokens: 7612,
+            latency_ms: 125000,
+            models: ["aisingapore/Gemma-SEA-LION-v4-27B-IT"],
+            validation_codes: ["synthesis:corrected"],
+            transport_retry_count: 2,
+            transport_error_count: 1,
+            transport_by_role: {
+              recruiter: { call_count: 2, retry_count: 1, error_count: 0 },
+              quality_judge: { call_count: 2, retry_count: 1, error_count: 1 },
+            },
+          },
           execution_policy: {
             persona_pack_version: "recruitment-personas-v1",
             specialist_max_concurrency: 5,
@@ -977,11 +991,139 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).toContain("evidence grounding96/100");
     expect(container.textContent).toContain("Deduction · decision usefulness · 8 points");
     expect(container.textContent).toContain("one targeted correction was judged independently");
+    const executionDetails = [...container.querySelectorAll("details")]
+      .find((element) => element.textContent.includes("Execution details"));
+    expect(executionDetails.open).toBe(false);
+    expect(executionDetails.textContent).toContain("Model calls12");
+    expect(executionDetails.textContent).toContain("Run time125 seconds");
+    expect(executionDetails.textContent).toContain("Input tokens53,021");
+    expect(executionDetails.textContent).toContain("Output tokens7,612");
+    expect(executionDetails.textContent).toContain("Transport retries2");
+    expect(executionDetails.textContent).toContain("recruiter: 2 calls, 1 retry");
+    expect(executionDetails.textContent).toContain("quality judge: 2 calls, 1 retry, 1 error");
+    expect(executionDetails.textContent).toContain("aisingapore/Gemma-SEA-LION-v4-27B-IT");
+    expect(executionDetails.textContent).not.toContain("trace");
     // The execution-policy dump (validation attempts, transport retries, "no fallback
     // model") described knobs the runner does not enforce and meant nothing to a
     // candidate, so the panel now states what actually happened instead.
     expect(container.textContent).toContain("1 specialist reviewed this role against your evidence");
     expect(container.textContent).not.toContain("no fallback model");
+  });
+
+  it("keeps pre-judge specialist content private while an assessment is paused", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-paused-assessment");
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-paused-assessment") {
+        return response({
+          thread_id: "thread-paused-assessment",
+          workflow_state: "awaiting_candidate_answer",
+          case_facts: {
+            selected_target: { job_id: 101 },
+            role_success_profile: {
+              criteria: [],
+              candidate_evidence: [],
+              cited_resume_evidence: [],
+              sources: [],
+              source_coverage: { taxonomy_match_quality: "unmatched" },
+            },
+            target_assessment_artifact_id: "assessment-paused",
+          },
+          messages: [],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-paused-assessment/events") {
+        return response([]);
+      }
+      if (path === "/api/recruitment-team/threads/thread-paused-assessment/assessment") {
+        return response({
+          artifact_id: "assessment-paused",
+          status: "paused",
+          specialist_runs: [
+            {
+              persona_id: "recruiter",
+              status: "completed",
+              submission: { summary: "Initial recruiter report.", score: 80, score_reason: "Grounded." },
+            },
+            {
+              persona_id: "recruiter",
+              status: "completed",
+              submission: { summary: "Revisited recruiter report.", score: 82, score_reason: "Grounded." },
+            },
+          ],
+          synthesis: "",
+          judge: null,
+          correction: null,
+          execution_policy: {},
+        });
+      }
+      if (path.endsWith("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+
+    expect(container.textContent).toContain(
+      "Specialist findings remain private until the independent review completes.",
+    );
+    expect(container.textContent).not.toContain("then an independent judge reviewed their verdict");
+    expect(container.textContent).not.toContain("Initial recruiter report.");
+    expect(container.textContent).not.toContain("Revisited recruiter report.");
+  });
+
+  it("shows that a submitted assessment answer is being processed", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-answering");
+    let releaseAnswer;
+    let answerFinished = false;
+    const pendingAnswer = new Promise((resolve) => { releaseAnswer = resolve; });
+    streamRecruitmentCommand.mockImplementation(async () => {
+      await pendingAnswer;
+      answerFinished = true;
+      return { thread_id: "thread-answering", status: "completed" };
+    });
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-answering") {
+        return response({
+          thread_id: "thread-answering",
+          workflow_state: answerFinished ? "assessment_ready" : "awaiting_candidate_answer",
+          case_facts: answerFinished ? {} : { target_assessment_artifact_id: "assessment-paused" },
+          messages: [],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-answering/events") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-answering/assessment") {
+        return response({
+          artifact_id: "assessment-paused",
+          status: "paused",
+          specialist_runs: [],
+          synthesis: "",
+          judge: null,
+          correction: null,
+          execution_policy: {},
+        });
+      }
+      if (path.endsWith("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+    const textarea = container.querySelector("textarea");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")
+        .set.call(textarea, "The synthetic role was full-time in Singapore.");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      textarea.closest("form").dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+
+    expect(textarea.disabled).toBe(true);
+    expect(textarea.value).toBe("");
+    expect(textarea.placeholder).toBe("Continuing the assessment...");
+    expect(container.textContent).toContain("Continuing");
+    expect(container.textContent).not.toContain("Queue message");
+    expect(container.textContent).not.toContain("Waiting on your answer");
+
+    await act(async () => releaseAnswer());
   });
 
   it("hands off a completed target assessment to a resume-agent session", async () => {
@@ -1094,6 +1236,12 @@ describe("RecruitmentTeamPanel", () => {
     localStorage.setItem("jobhunter:recruitment-thread:42", "thread-retry");
     let recovered = false;
     const retryCalls = [];
+    streamRecruitmentCommand.mockImplementation(async (path, body, onActivity) => {
+      retryCalls.push({ path, body });
+      recovered = true;
+      onActivity({ sequence: 3, run_id: "run-retry", event_type: "run", status: "running", team_member: "coordinator", summary: "Retrying turn." });
+      return { run_id: "run-retry", thread_id: "thread-retry", status: "completed" };
+    });
     apiFetch.mockImplementation(async (path, options = {}) => {
       if (path === "/api/resume/versions") {
         return response([{ id: 7, label: "AI resume", is_master: true }]);
@@ -1128,11 +1276,6 @@ describe("RecruitmentTeamPanel", () => {
       if (path === "/api/recruitment-team/threads/thread-retry/proposed-edits") {
         return response(recovered ? [{ id: "edit-1", status: "pending" }] : []);
       }
-      if (path === "/api/recruitment-team/threads/thread-retry/runs/run-retry/retry") {
-        retryCalls.push(options);
-        recovered = true;
-        return response({ run_id: "run-retry", thread_id: "thread-retry", status: "completed" });
-      }
       throw new Error(`Unexpected request: ${path}`);
     });
 
@@ -1150,7 +1293,10 @@ describe("RecruitmentTeamPanel", () => {
         .click();
     });
 
-    expect(retryCalls).toEqual([{ method: "POST" }]);
+    expect(retryCalls).toEqual([{
+      path: "/api/recruitment-team/threads/thread-retry/runs/run-retry/retry/stream",
+      body: {},
+    }]);
     expect(container.textContent).toContain("One edit is ready for review.");
     expect(container.textContent.match(/Tailor this resume\./g)).toHaveLength(1);
     expect(container.textContent).not.toContain("Retry this turn");
@@ -1163,6 +1309,60 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).toContain("One edit is ready for review.");
     expect(container.textContent.match(/Tailor this resume\./g)).toHaveLength(1);
     expect(container.textContent).not.toContain("Retry this turn");
+  });
+
+  it("offers the backend retry path for a failed assessment answer", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-answer-retry");
+    const retryCalls = [];
+    streamRecruitmentCommand.mockImplementation(async (path, body) => {
+      retryCalls.push({ path, body });
+      return { run_id: "run-answer-retry", thread_id: "thread-answer-retry", status: "completed" };
+    });
+    apiFetch.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-answer-retry") {
+        return response({
+          thread_id: "thread-answer-retry",
+          status: "active",
+          workflow_state: "assessment_failed",
+          case_facts: {},
+          messages: [],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-answer-retry/events") {
+        return response([{
+          sequence: 2,
+          run_id: "run-answer-retry",
+          event_type: "run",
+          status: "failed",
+          team_member: "coordinator",
+          summary: "Assessment answer stopped.",
+          detail: {
+            command_type: "answer_assessment_question",
+            retryable: true,
+            recovery_action: "retry_same_run",
+          },
+        }]);
+      }
+      if (path === "/api/recruitment-team/threads/thread-answer-retry/proposed-edits") {
+        return response([]);
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+    expect(container.textContent).toContain("Retry this turn");
+
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent.includes("Retry this turn"))
+        .click();
+    });
+
+    expect(retryCalls).toEqual([{
+      path: "/api/recruitment-team/threads/thread-answer-retry/runs/run-answer-retry/retry/stream",
+      body: {},
+    }]);
   });
 
   it("shows a terminal conversation recovery action without a retry button", async () => {

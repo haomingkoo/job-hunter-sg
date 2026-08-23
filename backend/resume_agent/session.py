@@ -31,6 +31,7 @@ from .personas import iter_persona_worker_runs
 from .prompts import (
     assessment_presentation_violation_snippets,
     assessment_presentation_violations,
+    assessment_structure_violations,
     synthesis_score_context,
 )
 from .tracing import ToolSpanRecorder
@@ -41,6 +42,7 @@ from .tools import bullet_context
 log = logging.getLogger("jobhunter.resume_agent")
 _sessions: dict[str, dict] = {}
 _checkpointer: Any | None = None
+_checkpoint_cleanup_debt: dict[str, str | None] = {}
 _sessions_lock = threading.Lock()
 
 
@@ -108,28 +110,55 @@ def _reduce_worker_scores(findings: list[dict]) -> dict:
     }
 
 
-def _drop_sessions(session_ids: list[str]) -> None:
+def _drop_sessions(session_ids: list[str], *, strict: bool = True) -> None:
     """Drop session metadata and its checkpoint while holding `_sessions_lock`."""
+    failures: list[Exception] = []
     for session_id in session_ids:
-        if _checkpointer is not None:
-            _checkpointer.delete_thread(session_id)
-        _sessions.pop(session_id, None)
+        state = _sessions.get(session_id) or {}
+        owner_key = state.get("_owner_key", _checkpoint_cleanup_debt.get(session_id))
+        try:
+            if _checkpointer is not None:
+                _checkpointer.delete_thread(session_id)
+            _checkpoint_cleanup_debt.pop(session_id, None)
+        except Exception as error:
+            failures.append(error)
+            # Keep the minimum index needed to retry deletion later. This is a
+            # non-public tombstone, not the user's resume/chat state.
+            _checkpoint_cleanup_debt[session_id] = owner_key
+        finally:
+            # Never leave owner-visible private state in memory merely because
+            # its external checkpoint store is unavailable.
+            _sessions.pop(session_id, None)
+    if failures and strict:
+        raise RuntimeError("one or more resume-agent checkpoints could not be purged") from failures[0]
+    if failures:
+        log.warning(
+            "Resume-agent housekeeping removed %d local sessions but could not purge %d checkpoints",
+            len(session_ids),
+            len(failures),
+        )
 
 
 def _cleanup_sessions() -> None:
+    if _checkpoint_cleanup_debt:
+        debt_batch = list(_checkpoint_cleanup_debt)[: app_config.AGENT_CHECKPOINT_CLEANUP_RETRY_BATCH]
+        _drop_sessions(debt_batch, strict=False)
     now = time.time()
     expired = [
         session_id
         for session_id, state in _sessions.items()
         if now - float(state.get("_updated_at") or 0) > app_config.AGENT_SESSION_TTL_SECONDS
     ]
-    _drop_sessions(expired)
+    # TTL/overflow cleanup is opportunistic. A checkpoint outage must not make
+    # an unrelated healthy session unreadable, while explicit privacy purges
+    # below remain strict and fail closed.
+    _drop_sessions(expired, strict=False)
 
     overflow = len(_sessions) - app_config.AGENT_MAX_SESSIONS
     if overflow <= 0:
         return
     oldest = sorted(_sessions, key=lambda sid: float(_sessions[sid].get("_updated_at") or 0))
-    _drop_sessions(oldest[:overflow])
+    _drop_sessions(oldest[:overflow], strict=False)
 
 
 def _public_state(state: dict) -> dict:
@@ -138,6 +167,17 @@ def _public_state(state: dict) -> dict:
         for key, value in state.items()
         if not key.startswith("_") and key != "messages"
     }
+
+
+def _fail_run(state: dict, message: str, *, review_status: str = "error") -> None:
+    """Record a terminal failure before its SSE error is emitted."""
+    state.update({
+        "status": "failed",
+        "review_status": review_status,
+        "error": message,
+        "response": "",
+        "_updated_at": time.time(),
+    })
 
 
 def _state_visible_to_owner(state: dict, owner_key: str | None) -> bool:
@@ -172,6 +212,11 @@ def purge_owner_sessions(owner_key: str) -> None:
             for session_id, state in _sessions.items()
             if state.get("_owner_key") == owner_key
         ]
+        session_ids.extend(
+            session_id
+            for session_id, debt_owner in _checkpoint_cleanup_debt.items()
+            if debt_owner == owner_key and session_id not in session_ids
+        )
         _drop_sessions(session_ids)
 
 
@@ -573,13 +618,17 @@ def _stream_chat_events(
     yield {"event": "session", "session_id": session_id}
 
     if not owner_run_reserved and not reserve_owner_run(owner):
+        conflict_message = "Agent v2 is already running for this user."
+        _fail_run(state, conflict_message)
         yield {
             "event": "error",
             "session_id": session_id,
-            "message": "Agent v2 is already running for this user.",
+            "message": conflict_message,
         }
         yield {"event": "done", "session_id": session_id}
         return
+
+    state.update({"status": "running", "error": "", "response": ""})
 
     try:
         persona_revision = json.dumps(
@@ -661,10 +710,12 @@ def _stream_chat_events(
             )
             state["_persona_revision"] = persona_revision
             if state["review_status"] == "error":
+                public_error = "No independent reviewer completed successfully. Please retry."
+                _fail_run(state, public_error)
                 yield {
                     "event": "error",
                     "session_id": session_id,
-                    "message": "No independent reviewer completed successfully. Please retry.",
+                    "message": public_error,
                 }
                 yield {"event": "done", "session_id": session_id}
                 return
@@ -702,19 +753,41 @@ def _stream_chat_events(
         )
         state["tool_spans"] = [*worker_spans, *synthesis_spans]
         if result.get("stopped"):
+            public_error = (
+                "The reviewers finished, but the final synthesis reached its safety limit. "
+                "Their completed findings are preserved; try a narrower edit request."
+            )
+            _fail_run(state, public_error)
             yield {
                 "event": "error",
                 "session_id": session_id,
-                "message": (
-                    "The reviewers finished, but the final synthesis reached its safety limit. "
-                    "Their completed findings are preserved; try a narrower edit request."
-                ),
+                "message": public_error,
             }
         final_assessment = next((
             str(message.content)
             for message in reversed(result.get("messages", []))
             if isinstance(message, AIMessage) and message.content
         ), "")
+        if not result.get("stopped") and not final_assessment:
+            public_error = (
+                "The reviewers finished, but the final synthesis was empty. "
+                "No assessment or resume changes were published; retry the review."
+            )
+            _fail_run(state, public_error)
+            state["tool_spans"].append({
+                "kind": "validation",
+                "name": "publish_synthesis_gate",
+                "worker": "orchestrator",
+                "phase": "publish_synthesis_gate",
+                "status": "failed",
+                "failure_code": "missing_final_synthesis",
+            })
+            yield {
+                "event": "error",
+                "session_id": session_id,
+                "message": public_error,
+            }
+            result = {"messages": []}
         if final_assessment and not result.get("stopped") and agent is None:
             yield {
                 "event": "progress",
@@ -733,9 +806,10 @@ def _stream_chat_events(
                 *state["tool_spans"],
                 *state["judge_run"].get("tool_spans", []),
             ]
-            initial_presentation_violations = assessment_presentation_violations(
-                final_assessment
-            )
+            initial_presentation_violations = [
+                *assessment_presentation_violations(final_assessment),
+                *assessment_structure_violations(final_assessment),
+            ]
             if (
                 state["judge_assessment"].get("requires_revision")
                 or initial_presentation_violations
@@ -814,22 +888,45 @@ def _stream_chat_events(
                 "session_id": session_id,
                 "judge_run": state["judge_run"],
             }
-            state["presentation_violations"] = assessment_presentation_violations(
-                final_assessment
-            )
+            state["presentation_violations"] = [
+                *assessment_presentation_violations(final_assessment),
+                *assessment_structure_violations(final_assessment),
+            ]
             quality_gate_failed = (
                 state["judge_run"].get("status") != "success"
                 or state["judge_assessment"].get("requires_revision", True)
                 or bool(state["presentation_violations"])
             )
             if quality_gate_failed:
+                failure_code = (
+                    "quality_judge_unavailable"
+                    if state["judge_run"].get("status") != "success"
+                    else "presentation_contract_invalid"
+                    if state["presentation_violations"]
+                    else "quality_revision_unresolved"
+                )
+                public_error = (
+                    "The review was generated, but it did not pass the independent quality "
+                    "gate. No assessment or resume changes were published; retry the review."
+                )
+                state.update({
+                    "status": "failed",
+                    "review_status": "quality_blocked",
+                    "error": public_error,
+                    "response": "",
+                })
+                state["tool_spans"].append({
+                    "kind": "validation",
+                    "name": "publish_quality_gate",
+                    "worker": "quality_judge",
+                    "phase": "publish_quality_gate",
+                    "status": "failed",
+                    "failure_code": failure_code,
+                })
                 yield {
                     "event": "error",
                     "session_id": session_id,
-                    "message": (
-                        "The review was generated, but it did not pass the independent quality "
-                        "gate. No assessment or resume changes were published; retry the review."
-                    ),
+                    "message": public_error,
                 }
                 result = {"messages": []}
         state["pending_diffs"] = _collect_pending_diffs(
@@ -844,28 +941,38 @@ def _stream_chat_events(
         for event in _event_messages(result, session_id):
             if event["event"] == "token":
                 _append_message(state, {"role": "assistant", "content": event["content"]})
+                state.update({
+                    "status": "completed",
+                    "error": "",
+                    "response": event["content"],
+                })
             yield event
     except ResumeAgentConfigurationError as exc:
+        _fail_run(state, str(exc))
         yield {
             "event": "error",
             "session_id": session_id,
             "message": str(exc),
         }
     except APITimeoutError:
+        public_error = (
+            "The review model took too long to respond. No resume changes were applied. "
+            "Try a narrower review request."
+        )
+        _fail_run(state, public_error)
         yield {
             "event": "error",
             "session_id": session_id,
-            "message": (
-                "The review model took too long to respond. No resume changes were applied. "
-                "Try a narrower review request."
-            ),
+            "message": public_error,
         }
     except Exception:
         log.exception("Resume agent run failed for session_id=%s", session_id)
+        public_error = "Agent v2 hit an internal error. Check the backend logs."
+        _fail_run(state, public_error)
         yield {
             "event": "error",
             "session_id": session_id,
-            "message": "Agent v2 hit an internal error. Check the backend logs.",
+            "message": public_error,
         }
     finally:
         if not owner_run_reserved:

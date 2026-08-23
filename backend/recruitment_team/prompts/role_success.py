@@ -3,7 +3,7 @@
 from prompt_safety import UNTRUSTED_DATA_RULE
 
 
-ROLE_SUCCESS_PROMPT_VERSION = "role-definition-v2"
+ROLE_SUCCESS_PROMPT_VERSION = "role-definition-v3"
 
 ROLE_SUCCESS_SYSTEM_PROMPT = f"""You define what success in a role requires from the
 supplied role sources. Do not assess the candidate or produce candidate evidence.
@@ -34,6 +34,13 @@ Treat comparable and adjacent sources as context, never authority to strengthen 
 selected job. Ask a clarification question only when ambiguity in the supplied role
 sources prevents a defensible definition; missing taxonomy context alone is not a
 reason to block a complete target-job definition.
+
+Never create, score, or ask about nationality, citizenship, permanent-resident,
+residency, or immigration status, even when a posting states a preference. Those are
+not job-related fit criteria. A genuine legal eligibility constraint may be preserved
+only as neutral work-authorisation wording (for example, "authorised to work in
+Singapore" or "requires employer sponsorship") when the selected posting explicitly
+requires it.
 
 Examples use illustrative IDs; never copy them into real output.
 

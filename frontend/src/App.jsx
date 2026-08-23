@@ -1,5 +1,13 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import {
+  Suspense,
+  lazy,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useRef,
+} from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Briefcase, Loader2, LogOut, ChevronLeft } from "lucide-react";
 
 import {
@@ -16,16 +24,17 @@ import Nav from "./components/Nav.jsx";
 import AuthModal from "./components/AuthModal.jsx";
 import AuthPrompt from "./components/AuthPrompt.jsx";
 import HomePage from "./components/HomePage.jsx";
-import ScraperTab from "./components/ScraperTab.jsx";
-import PowerTab from "./components/PowerTab.jsx";
-import TrackerTab from "./components/TrackerTab.jsx";
-import AnalyticsTab from "./components/AnalyticsTab.jsx";
-import RemindersTab from "./components/RemindersTab.jsx";
-import AccountTab from "./components/AccountTab.jsx";
-import StoriesTab from "./components/StoriesTab.jsx";
-import ResumeTab from "./components/ResumeTab.jsx";
-import RecruitmentTeamPanel from "./components/RecruitmentTeamPanel.jsx";
-import DocumentsTab from "./components/DocumentsTab.jsx";
+
+const AccountTab = lazy(() => import("./components/AccountTab.jsx"));
+const AnalyticsTab = lazy(() => import("./components/AnalyticsTab.jsx"));
+const DocumentsTab = lazy(() => import("./components/DocumentsTab.jsx"));
+const PowerTab = lazy(() => import("./components/PowerTab.jsx"));
+const RecruitmentTeamPanel = lazy(() => import("./components/RecruitmentTeamPanel.jsx"));
+const RemindersTab = lazy(() => import("./components/RemindersTab.jsx"));
+const ResumeTab = lazy(() => import("./components/ResumeTab.jsx"));
+const ScraperTab = lazy(() => import("./components/ScraperTab.jsx"));
+const StoriesTab = lazy(() => import("./components/StoriesTab.jsx"));
+const TrackerTab = lazy(() => import("./components/TrackerTab.jsx"));
 
 const AUTH_LINK_TOKEN_NAMES = ["reset_token", "verify_token"];
 const APP_TABS = new Set(["team", "jobs", "resume", "documents", "stories", "tracker", "reminders", "analytics", "power", "account"]);
@@ -69,7 +78,23 @@ export function removeAuthLinkTokensFromUrl(names = AUTH_LINK_TOKEN_NAMES) {
   window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
 }
 
+export function tabMotionProps(shouldReduceMotion) {
+  return shouldReduceMotion
+    ? {
+        initial: false,
+        animate: { opacity: 1, y: 0 },
+        transition: { duration: 0 },
+      }
+    : {
+        initial: { opacity: 0, y: 12 },
+        animate: { opacity: 1, y: 0 },
+        exit: { opacity: 0, y: -12 },
+        transition: { duration: 0.25, ease: [0.23, 1, 0.32, 1] },
+      };
+}
+
 export default function JobHunterSG() {
+  const shouldReduceMotion = useReducedMotion();
   const [activeTab, setActiveTab] = useState(readActiveTab);
   const [trackedJobs, setTrackedJobs] = useState([]);
   const [trackedJobsError, setTrackedJobsError] = useState("");
@@ -446,12 +471,17 @@ export default function JobHunterSG() {
           <AnimatePresence mode="wait">
             <motion.div
               key={`${activeTab}:${user?.id ?? "anonymous"}`}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
+              {...tabMotionProps(shouldReduceMotion)}
               className="mx-auto max-w-7xl p-4 sm:p-6"
             >
+              <Suspense
+                fallback={(
+                  <div className="flex min-h-64 items-center justify-center" role="status">
+                    <Loader2 size={28} className="animate-spin text-[#88BDF2]" />
+                    <span className="sr-only">Loading feature</span>
+                  </div>
+                )}
+              >
               {activeTab === "jobs" && (
                 <ScraperTab
                   user={user}
@@ -573,6 +603,7 @@ export default function JobHunterSG() {
                   <AuthPrompt onSignIn={() => setShowAuthModal(true)} featureName="Account Settings" />
                 )
               )}
+              </Suspense>
             </motion.div>
           </AnimatePresence>
         </>

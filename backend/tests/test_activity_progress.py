@@ -10,16 +10,12 @@ from __future__ import annotations
 
 import json
 
-import config
 from langchain_core.messages import AIMessage
 
-from recruitment_team.assessment_contracts import TargetAssessmentProgress
-from recruitment_team.open_agent.runner import OpenAgentTargetAssessmentRunner
-from recruitment_team.open_agent.streaming import MAX_ACTIVITY_TEXT_CHARS, describe_progress
-from recruitment_team.recruitment_team import _trace_attributes
-from recruitment_team.telemetry import RecordedTelemetry
+from recruitment_team.open_agent.streaming import describe_progress
+from recruitment_team.activity_events import public_detail, trace_attributes
 
-from backend.tests.test_open_agent_runner import _ScriptedModel, _judge_call, _request
+from backend.tests.test_open_agent_runner import _ScriptedModel
 
 
 def _call(tool_name: str, args: dict | None = None, team_member: str = "coordinator") -> dict:
@@ -56,12 +52,12 @@ def test_a_persona_is_named_as_the_member_that_ran_the_tool():
     assert summary == "ats called read_target_job."
 
 
-def test_a_search_call_carries_the_query_it_ran():
+def test_a_search_call_never_exposes_the_query_it_ran():
     _, detail = describe_progress(
         _call("search_jobs", {"query": "semiconductor yield analytics engineer"})
     )
 
-    assert detail["query"] == "semiconductor yield analytics engineer"
+    assert "query" not in detail
 
 
 def test_a_call_with_no_query_carries_none():
@@ -70,26 +66,26 @@ def test_a_call_with_no_query_carries_none():
     assert "query" not in detail
 
 
-def test_an_unbounded_query_is_clipped_before_it_reaches_the_panel():
+def test_an_unbounded_query_never_reaches_the_panel():
     _, detail = describe_progress(_call("search_jobs", {"query": "yield " * 200}))
 
-    assert len(detail["query"]) <= MAX_ACTIVITY_TEXT_CHARS
+    assert "query" not in detail
 
 
-def test_persisted_query_is_exact_when_safe_and_redacted_when_it_contains_contact_data():
-    safe = _trace_attributes(
+def test_trace_attributes_never_persist_query_text_even_when_it_looks_safe():
+    safe = trace_attributes(
         _call("search_jobs", {"query": "yield " * 100, "exclude_junior": True}),
         {"tool_name": "search_jobs", "stage": "call"},
     )
-    private = _trace_attributes(
+    private = trace_attributes(
         _call("search_jobs", {"query": "roles for person@example.com"}),
         {"tool_name": "search_jobs", "stage": "call"},
     )
 
-    assert safe["query"] == "yield " * 100
-    assert safe["query_redacted"] is False
-    assert private["query"] == "[redacted: possible contact data]"
-    assert private["query_redacted"] is True
+    assert "query" not in safe
+    assert "query_redacted" not in safe
+    assert "query" not in private
+    assert "query_redacted" not in private
 
 
 def test_a_coordinator_search_result_reports_how_many_postings_came_back():
@@ -130,13 +126,37 @@ def test_a_rejected_repeat_search_reports_why_nothing_came_back():
         )
     )
 
-    assert detail["outcome"] == "nothing returned (identical call no new information)"
+    assert detail["outcome"] == "tool completed without an accepted result"
 
 
 def test_a_failed_search_reports_the_failure_type_when_there_is_no_reason():
     _, detail = describe_progress(_result("search_jobs", {"ok": False, "failure_type": "timeout"}))
 
-    assert detail["outcome"] == "nothing returned (timeout)"
+    assert detail["outcome"] == "tool completed without an accepted result"
+    assert detail["failure_type"] == "timeout"
+
+
+def test_a_failed_tool_result_keeps_only_safe_recovery_metadata():
+    _, detail = describe_progress(
+        _result(
+            "search_jobs",
+            {
+                "ok": False,
+                "failure_type": "validation",
+                "failure_code": "structured_output_invalid",
+                "retryable": True,
+                "recovery_action": "retry_tool",
+                "validation_code": "jobs:missing",
+                "raw_output": "private model content",
+            },
+        )
+    )
+
+    assert detail["failure_code"] == "structured_output_invalid"
+    assert detail["retryable"] is True
+    assert detail["recovery_action"] == "retry_tool"
+    assert detail["validation_code"] == "jobs:missing"
+    assert "raw_output" not in detail
 
 
 def test_read_shortlist_reports_both_lists_rather_than_half_the_truth():
@@ -195,15 +215,16 @@ def test_a_rejected_edit_reports_the_gate_that_rejected_it():
         _result("propose_resume_edit", {"accepted": False, "reason": "Unsupported numeric facts: 40"})
     )
 
-    assert detail["outcome"] == "no edit drafted (Unsupported numeric facts: 40)"
+    assert detail["outcome"] == "no resume edit passed the evidence gate"
 
 
-def test_an_unbounded_rejection_reason_is_clipped():
+def test_an_unbounded_rejection_reason_is_not_exposed():
     _, detail = describe_progress(
         _result("propose_resume_edit", {"accepted": False, "reason": "gate failed. " * 50})
     )
 
-    assert len(detail["outcome"]) <= MAX_ACTIVITY_TEXT_CHARS
+    assert detail["outcome"] == "no resume edit passed the evidence gate"
+    assert "gate failed" not in detail["outcome"]
 
 
 def test_a_model_message_produces_no_activity_row():
@@ -213,10 +234,49 @@ def test_a_model_message_produces_no_activity_row():
     ) is None
 
 
-def test_a_result_with_nothing_countable_produces_no_row_rather_than_an_empty_one():
-    assert describe_progress(_result("read_target_job", {"ok": True, "target_job": {"title": "X"}})) is None
-    assert describe_progress(_result("some_tool", "not json at all")) is None
-    assert describe_progress(_result("some_tool", None)) is None
+def test_a_model_attempt_produces_metadata_only_activity():
+    summary, detail = describe_progress({
+        "kind": "model_attempt",
+        "team_member": "recruiter",
+        "id": "model-step-1",
+        "model": "provider-model",
+        "input_tokens": 123,
+        "output_tokens": 45,
+        "content": "private model output",
+    })
+
+    assert summary == "recruiter completed a model step."
+    assert detail == {"stage": "model", "model_attempt_id": "model-step-1"}
+    assert "provider-model" not in json.dumps(detail)
+    assert "123" not in json.dumps(detail)
+    assert "private model output" not in json.dumps(detail)
+
+
+def test_durable_activity_metadata_drops_pause_and_model_content():
+    public = public_detail(
+        {
+            "stage": "paused",
+            "question": "What confidential project did you lead?",
+            "answer": "The confidential answer",
+            "pause_token": "checkpoint-capability-token",
+            "specialist_runs": [{"summary": "private finding"}],
+            "synthesis": "private synthesis",
+            "proposed_edits": [{"rewrite": "private resume text"}],
+            "input_tokens": 123,
+            "output_tokens": 45,
+            "question_count": 1,
+        },
+    )
+
+    assert public == {"stage": "paused", "question_count": 1}
+
+
+def test_every_tool_result_produces_a_content_free_completion_row():
+    for content in ({"ok": True, "target_job": {"title": "X"}}, "not json at all", None):
+        summary, detail = describe_progress(_result("read_target_job", content))
+        assert summary == "coordinator finished read_target_job."
+        assert detail["outcome"] == "tool completed"
+        assert "title" not in json.dumps(detail)
 
 
 def test_no_posting_text_travels_through_a_result_row():
@@ -240,7 +300,7 @@ def test_no_posting_text_travels_through_a_result_row():
     assert "wafer" not in rendered
 
 
-def test_the_runner_streams_the_query_it_searched_for_and_the_count_that_came_back(monkeypatch):
+def test_the_search_graph_streams_the_count_that_came_back(monkeypatch):
     """End to end through the real graph, not through describe_progress directly.
 
     Before this, the runner published `{"tool_name": ...}` and dropped every
@@ -249,10 +309,11 @@ def test_the_runner_streams_the_query_it_searched_for_and_the_count_that_came_ba
     """
     import resume_agent.models as agent_models
     import resume_agent.tools as agent_tools
+    from resume_agent.agent import create_resume_agent
+    from recruitment_team.open_agent.streaming import iter_progress_events
+    from recruitment_team.tool_call_guard import ToolCallGuardMiddleware
 
     monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
-    monkeypatch.setattr(config, "AGENT_MAX_TOOL_ITERATIONS", 6)
-
     class FakeDb:
         def close(self):
             return None
@@ -269,23 +330,28 @@ def test_the_runner_streams_the_query_it_searched_for_and_the_count_that_came_ba
             "id": "call-1",
         }],
     )
-    runner = OpenAgentTargetAssessmentRunner(
-        model_factory=lambda: _ScriptedModel(responses=[search, AIMessage(content="Done.")]),
-        judge_model_factory=lambda: _ScriptedModel(responses=[_judge_call()]),
-        telemetry=RecordedTelemetry(),
+    graph = create_resume_agent(
+        model=_ScriptedModel(responses=[search, AIMessage(content="Done.")]),
+        tools=[agent_tools.search_jobs],
+        subagents=[],
+        middleware=[ToolCallGuardMiddleware()],
     )
 
+    events = list(iter_progress_events(
+        graph,
+        {"messages": [{"role": "user", "content": "Find matching roles."}]},
+        {"recursion_limit": 12},
+    ))
     progress = [
-        item for item in runner.run(_request()) if isinstance(item, TargetAssessmentProgress)
+        row
+        for event in events
+        if (row := describe_progress(event)) is not None
     ]
-    by_stage = {item.detail.get("stage"): item for item in progress if item.detail.get("tool_name")}
+    by_stage = {detail.get("stage"): (summary, detail) for summary, detail in progress}
 
-    assert by_stage["call"].summary == "coordinator called search_jobs."
-    assert by_stage["call"].detail["query"] == "semiconductor yield analytics engineer"
-    assert by_stage["result"].detail["outcome"] == "0 matching postings"
-    assert by_stage["result"].status == "running", (
-        "a mid-run tool result must not mark the coordinator row as reported"
-    )
+    assert by_stage["call"][0] == "coordinator called search_jobs."
+    assert "query" not in by_stage["call"][1]
+    assert by_stage["result"][1]["outcome"] == "0 matching postings"
 
 
 class _ToolStepModel:
@@ -366,7 +432,7 @@ def test_a_conversational_turn_publishes_one_activity_row_per_tool_step():
         "coordinator called read_shortlist.",
         "coordinator finished read_shortlist.",
     ]
-    assert steps[0].detail["query"] == "semiconductor yield analytics engineer"
+    assert "query" not in steps[0].detail
     assert steps[1].detail["outcome"] == "2 matching postings"
     assert steps[3].detail["outcome"] == "2 found earlier, 0 shortlisted"
 

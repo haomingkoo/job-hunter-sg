@@ -5,7 +5,13 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from main import _analytics_skill_key, _build_bridge_plan, _is_power_gap_noise, _power_job_duplicate_key, _select_power_match_candidates
+from main import (  # noqa: E402
+    _build_bridge_plan,
+    _is_power_gap_noise,
+    _power_job_duplicate_key,
+    _select_power_match_candidates,
+)
+from market_analytics import _analytics_skill_key  # noqa: E402
 
 
 class FakeQuery:

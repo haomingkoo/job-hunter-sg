@@ -3,8 +3,13 @@ FROM python:3.12-slim
 WORKDIR /app
 
 COPY backend/requirements-alerts.txt .
+RUN python -m pip install --no-cache-dir --upgrade pip==26.2.1 setuptools==83.0.0
 RUN pip install --no-cache-dir -r requirements-alerts.txt
 
-COPY backend/ .
+RUN useradd --create-home --uid 10001 --user-group appuser && chown appuser:appuser /app
+
+COPY --chown=appuser:appuser backend/ .
+
+USER appuser
 
 CMD ["python", "send_job_alerts.py"]

@@ -6,7 +6,12 @@ search returns nothing while reporting success.
 """
 
 import secrets
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+
+import numpy as np
 
 
 def _iso(days_ago: int) -> str:
@@ -38,6 +43,34 @@ def _rebuild_ids(db) -> list[int]:
     embedding_service.invalidate_matrix_cache()
     embedding_service._refresh_matrix_if_stale(db)
     return list(embedding_service._job_ids)
+
+
+def test_shared_embedding_model_never_runs_parallel_forward_passes(monkeypatch):
+    import embedding_service
+
+    active = 0
+    peak = 0
+    state_lock = threading.Lock()
+
+    class FakeModel:
+        def encode(self, text, **_kwargs):
+            nonlocal active, peak
+            with state_lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.02)
+            with state_lock:
+                active -= 1
+            count = len(text) if isinstance(text, list) else 1
+            values = np.ones((count, 384))
+            return values if isinstance(text, list) else values[0]
+
+    monkeypatch.setattr(embedding_service, "_model", FakeModel())
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        results = list(executor.map(embedding_service.encode_text, ("a", "b", "c")))
+
+    assert peak == 1
+    assert [len(result) for result in results] == [384, 384, 384]
 
 
 def test_matrix_excludes_jobs_past_the_age_cutoff():

@@ -524,8 +524,6 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
     assert search_call.attributes == {
         "tool_name": "search_jobs",
         "stage": "call",
-        "query": "semiconductor yield analytics engineer",
-        "query_redacted": False,
         "span_id": "call-1",
     }
     assert search_call.parent_id == receipt.run_id
@@ -1058,6 +1056,48 @@ def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(
     )
 
 
+def test_repeated_rejected_tool_results_fail_before_the_global_iteration_cap(monkeypatch):
+    """A model ignoring retry=false cannot burn the whole coordinator budget."""
+    import config
+
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from models import RecruitmentMessage
+    from recruitment_team.activity_publisher import RecordedActivityPublisher
+    from recruitment_team.errors import ConversationUnavailable
+    from recruitment_team.interface import StartThread
+
+    monkeypatch.setattr(config, "COORDINATOR_MAX_CONSECUTIVE_TOOL_REJECTIONS", 2)
+    quote = "I led a platform migration."
+    repeated_call = {"evidence_quotes": [quote]}
+    agent = ScriptedDeepAgent(
+        responses=[
+            tool_call("record_candidate_evidence", repeated_call, "record-1"),
+            tool_call("record_candidate_evidence", repeated_call, "record-2"),
+            tool_call("record_candidate_evidence", repeated_call, "record-3"),
+            submission("This unreachable reply must not be fabricated as success."),
+        ]
+    )
+    publisher = RecordedActivityPublisher()
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+
+    with sessions() as db:
+        with pytest.raises(ConversationUnavailable) as error:
+            _team(db, agent, _RecordingDiscovery([]), publisher).execute(
+                owner_id,
+                StartThread(resume_version_id=resume_id, message=quote),
+                idempotency_key="rejected-tool-loop",
+            )
+
+    assert error.value.failure_code == "attempt_budget_exhausted"
+    assert agent.calls == 3
+    assert agent.consumed == 3
+    assert "retry" in _rendered(agent.requests[2])
+    assert not any(event.status == "completed" for event in publisher.events)
+    with sessions() as db:
+        assert [row.role for row in db.query(RecruitmentMessage).all()] == ["user"]
+
+
 def test_conversation_unavailable_maps_to_503():
     """`_raise_http_error` matches by explicit type and ends in a bare `raise`.
 
@@ -1080,7 +1120,50 @@ def test_conversation_unavailable_maps_to_503():
     assert error.value.status_code == 503
 
 
-def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resumes_it():
+def test_terminal_coordinator_cleanup_failure_is_returned_as_durable_debt(monkeypatch):
+    monkeypatch.setattr(
+        "recruitment_team.coordinator.model._delete_terminal_checkpoint",
+        lambda _run_config: False,
+    )
+    reply = _model(ScriptedDeepAgent(responses=[submission("Ready.")])).respond(
+        [],
+        RESUME_TEXT,
+        (),
+        _context(_RecordingDiscovery([])),
+    )
+
+    assert reply.pause_token == ""
+    assert reply.checkpoint_cleanup_token.startswith("coordinator-")
+
+
+def test_failed_coordinator_turn_carries_cleanup_debt_without_exposing_it(monkeypatch):
+    from recruitment_team.errors import ConversationUnavailable
+
+    monkeypatch.setattr(
+        "recruitment_team.coordinator.model._delete_terminal_checkpoint",
+        lambda _run_config: False,
+    )
+    agent = ScriptedDeepAgent(
+        responses=[
+            tool_call(
+                "ask_candidate",
+                {"questions": ["Are you a Singapore citizen or permanent resident?"]},
+                "protected-question",
+            )
+        ]
+    )
+
+    with pytest.raises(ConversationUnavailable) as caught:
+        _model(agent).respond([], RESUME_TEXT, (), _context(_RecordingDiscovery([])))
+
+    cleanup_token = caught.value.checkpoint_cleanup_token
+    assert cleanup_token.startswith("coordinator-")
+    assert cleanup_token not in str(caught.value)
+
+
+def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resumes_it(
+    monkeypatch,
+):
     """The interrupt, not the prompt, is what stops the next tool.
 
     Turn 1 scripts `ask_candidate` immediately followed by `search_jobs`. If the
@@ -1090,6 +1173,14 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
     from backend.tests.test_recruitment_team_module import _session_factory
     from recruitment_team.activity_publisher import RecordedActivityPublisher
     from recruitment_team.interface import SendMessage, StartThread
+
+    deleted_checkpoints: list[str] = []
+    monkeypatch.setattr(
+        "recruitment_team.coordinator.model._delete_terminal_checkpoint",
+        lambda run_config: deleted_checkpoints.append(
+            run_config["configurable"]["thread_id"]
+        ) or True,
+    )
 
     discovery = _RecordingDiscovery([_search_result([_job(401, "Staff Yield Engineer", "NXP")])])
     agent = ScriptedDeepAgent(
@@ -1133,6 +1224,7 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
     assert paused_snapshot.workflow_state != "awaiting_candidate_answer"
     assert paused_snapshot.case_facts.recommendations == ()
     assert _tool_summaries(first_publisher) == ["coordinator called ask_candidate."]
+    assert deleted_checkpoints == [], "a paused graph must remain resumable"
 
     # A separate session and module instance: the resume rides the durable
     # checkpointer, not a live in-memory graph.
@@ -1167,6 +1259,120 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
     # (streaming.py:44-50). Without skip_tool_call_ids the candidate sees the same
     # question published twice.
     assert _tool_summaries(second_publisher) == ["coordinator called search_jobs."]
+    assert len(deleted_checkpoints) == 1
+    assert deleted_checkpoints[0].startswith(f"coordinator-{first.thread_id}-")
+
+
+def test_conversational_coordinator_rejects_protected_question_after_interrupt(
+    monkeypatch,
+):
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.errors import ConversationUnavailable
+    from recruitment_team.interface import StartThread
+
+    deleted_checkpoints: list[str] = []
+    monkeypatch.setattr(
+        "recruitment_team.coordinator.model._delete_terminal_checkpoint",
+        lambda run_config: deleted_checkpoints.append(
+            run_config["configurable"]["thread_id"]
+        ) or True,
+    )
+    agent = ScriptedDeepAgent(
+        responses=[
+            tool_call(
+                "ask_candidate",
+                {"questions": ["Are you a Singapore citizen or permanent resident?"]},
+                "protected-question",
+            ),
+        ]
+    )
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+
+    with sessions() as db:
+        team = _team(db, agent, _RecordingDiscovery([]))
+        with pytest.raises(ConversationUnavailable) as caught:
+            team.execute(
+                owner_id,
+                StartThread(resume_version_id=resume_id, message="Help me choose."),
+                idempotency_key="protected-question",
+            )
+
+    assert caught.value.failure_type == "safety"
+    assert caught.value.failure_code == "protected_candidate_question"
+    assert caught.value.retryable is False
+    assert len(deleted_checkpoints) == 1
+
+
+def test_conversational_coordinator_allows_work_authorisation_question(monkeypatch):
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.interface import StartThread
+
+    deleted_checkpoints: list[str] = []
+    monkeypatch.setattr(
+        "recruitment_team.coordinator.model._delete_terminal_checkpoint",
+        lambda run_config: deleted_checkpoints.append(
+            run_config["configurable"]["thread_id"]
+        ) or True,
+    )
+    agent = ScriptedDeepAgent(
+        responses=[
+            tool_call(
+                "ask_candidate",
+                {"questions": ["Are you authorised to work in Singapore?"]},
+                "work-authorisation-question",
+            ),
+        ]
+    )
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+
+    with sessions() as db:
+        team = _team(db, agent, _RecordingDiscovery([]))
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Help me choose."),
+            idempotency_key="work-authorisation-question",
+        )
+        snapshot = team.snapshot(owner_id, started.thread_id)
+
+    assert "authorised to work" in snapshot.messages[-1].content
+    assert deleted_checkpoints == []
+
+
+def test_candidate_question_limit_fails_instead_of_pausing_forever(monkeypatch):
+    import config
+
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.errors import ConversationUnavailable
+    from recruitment_team.interface import SendMessage, StartThread
+
+    monkeypatch.setattr(config, "OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS", 1)
+    agent = ScriptedDeepAgent(
+        responses=[
+            tool_call("ask_candidate", {"questions": ["First question?"]}, "call-ask-1"),
+            tool_call("ask_candidate", {"questions": ["Second question?"]}, "call-ask-2"),
+        ]
+    )
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+
+    with sessions() as db:
+        team = _team(db, agent, _RecordingDiscovery([]))
+        first = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Help me choose."),
+            idempotency_key="question-cap-1",  # gitleaks:allow - deterministic test key
+        )
+        with pytest.raises(ConversationUnavailable) as caught:
+            team.execute(
+                owner_id,
+                SendMessage(thread_id=first.thread_id, message="My answer."),
+                idempotency_key="question-cap-2",  # gitleaks:allow - deterministic test key
+            )
+
+    assert caught.value.failure_code == "attempt_budget_exhausted"
+    assert agent.calls == 2
 
 
 def test_a_proposed_edit_reaches_the_pending_table_and_the_rejections_reach_the_model():
@@ -1434,7 +1640,17 @@ def test_the_coordinator_binds_only_the_tools_it_needs():
         model_factory=lambda: ChatOpenAI(model="x", api_key="ph", base_url="http://localhost:1")
     )
 
-    bound = _bound_tool_names(model._build_agent())
+    discovery = _RecordingDiscovery([])
+    unavailable = _bound_tool_names(model._build_agent(_context(discovery)))
+    bound = _bound_tool_names(
+        model._build_agent(
+            _context(
+                discovery,
+                candidate_profile=object(),
+                target_job=_job(901, "Platform Architect", "ACME"),
+            )
+        )
+    )
 
     assert bound == {
         "ask_candidate",
@@ -1448,6 +1664,7 @@ def test_the_coordinator_binds_only_the_tools_it_needs():
         "write_plan",
         "write_shortlist",
     }
+    assert unavailable == bound - {"read_candidate_evidence", "read_target_job"}
     # Deepagents' write_todos is deliberately absent. Live on 2026-08-02 the model wrote the
     # same three-item list eleven times and died on the iteration cap, ignoring an
     # actionable refusal, a prompt rule and a hard guard. The scoped write_plan
@@ -1596,6 +1813,20 @@ def test_an_unsubmitted_reply_cut_off_mid_sentence_is_rejected():
 
     agent = ScriptedDeepAgent(
         responses=[final("The strongest fit is operations leadership because your manager")]
+    )
+
+    with pytest.raises(ConversationUnavailable) as error:
+        _model(agent).respond([], RESUME_TEXT, (), _context(_RecordingDiscovery([])))
+
+    assert error.value.failure_type == "validation"
+    assert error.value.failure_code == "structured_output_invalid"
+
+
+def test_unsubmitted_prose_cannot_claim_a_search_that_never_ran():
+    from recruitment_team.errors import ConversationUnavailable
+
+    agent = ScriptedDeepAgent(
+        responses=[final("I searched the market and found three matching roles.")]
     )
 
     with pytest.raises(ConversationUnavailable) as error:

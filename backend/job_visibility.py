@@ -6,13 +6,46 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 
 from models import ScrapedJob
 
 
 DEFAULT_PUBLIC_JOB_MAX_AGE_DAYS = int(os.environ.get("PUBLIC_JOB_MAX_AGE_DAYS", "60"))
 KNOWN_RETIREMENT_REASONS = ("source_retired", "age_retired")
+UNCLASSIFIED_SECTOR = "Unclassified"
+
+
+def job_corpus_marker(db) -> str:
+    """Stable marker for the currently public job corpus."""
+    corpus_query = db.query(
+        func.count(ScrapedJob.id),
+        func.max(ScrapedJob.id),
+        func.max(ScrapedJob.scraped_at),
+    )
+    count, max_id, max_scraped_at = apply_public_job_visibility(corpus_query).one()
+    return f"{int(count or 0)}:{int(max_id or 0)}:{max_scraped_at or ''}"
+
+
+def sector_filter_condition(selected_sector: str):
+    selected = selected_sector.strip()
+    if selected == UNCLASSIFIED_SECTOR:
+        return or_(ScrapedJob.sector.is_(None), ScrapedJob.sector == "")
+    return ScrapedJob.sector == selected
+
+
+_SSIC_SECTION_LETTER_PREFIX_RE = re.compile(r"^[A-U]\s+(?=[A-Z])")
+
+
+def sector_label(sector: str | None) -> str:
+    cleaned = (sector or "").strip()
+    if not cleaned:
+        return UNCLASSIFIED_SECTOR
+    return _SSIC_SECTION_LETTER_PREFIX_RE.sub("", cleaned) or UNCLASSIFIED_SECTOR
+
+
+def source_label(source: str | None) -> str:
+    return (source or "").strip() or "Unknown"
 
 
 def public_job_cutoff_iso(max_age_days: int | None = None, now: datetime | None = None) -> str:

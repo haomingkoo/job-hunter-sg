@@ -122,7 +122,6 @@ _failure_lock = threading.Lock()
 _last_alert_time = 0
 _ALERT_THRESHOLD = 5
 _ALERT_COOLDOWN = 300         # Don't spam alerts — max once per 5 min
-_ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
 
 
 def _track_failure(error_type: str, detail: str) -> None:
@@ -135,10 +134,8 @@ def _track_failure(error_type: str, detail: str) -> None:
             log.critical(
                 f"[AI ALERT] {_failure_count} consecutive failures! "
                 f"Last error: {error_type} ({detail}). "
-                f"Admin notification pending."
+                "Operator alert emitted to application logs."
             )
-            # TODO: Send actual email/Telegram alert here
-            # For now this logs as CRITICAL which Railway/monitoring will catch
 
 
 def _track_success() -> None:

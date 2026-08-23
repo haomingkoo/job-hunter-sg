@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 import config
 from prompt_safety import unescape_xml_data, xml_data_block
-from validation_gates import _extract_numbers
+from validation_gates import extract_numbers
 
 from .candidate_profile import CandidateProfileField
 from .prompts.role_evidence_assessor import (
@@ -29,6 +29,7 @@ from .role_success import (
     RoleSource,
 )
 from .telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
+from .model_transport_observer import create_observed_agent_model, transport_role
 
 
 @dataclass(frozen=True)
@@ -261,6 +262,11 @@ def _unsupported_numbers(failure: str) -> tuple[str, ...]:
     return _csv_items_from_validation_code(failure, "numeric_claim:unsupported:")
 
 
+def _normalized_numbers(text: str) -> set[str]:
+    """Treat ``10+`` and ``minimum 10`` as the same stated lower bound."""
+    return {value.removesuffix("+") for value in extract_numbers(text)}
+
+
 def _targeted_correction_data(
     request: RoleEvidenceAssessmentRequest,
     failed_payload: dict,
@@ -350,6 +356,22 @@ def _validate_submission(
         criterion_id = str(judgment["criterion_id"]).strip()
         cited_ids = judgment["resume_evidence_ids"]
         profile_field_ids = judgment["candidate_profile_field_ids"]
+        if (
+            judgment["alignment"] == "missing"
+            and not cited_ids
+            and not profile_field_ids
+            and criterion_id in criteria
+        ):
+            # With no candidate citations there is nothing for a model to
+            # summarize. Render this deterministic state from the canonical
+            # criterion so dates, quantities, and inferred deficiencies cannot
+            # leak in through free-form prose.
+            judgment.update({
+                "supported_strength": "No cited candidate evidence establishes this criterion.",
+                "remaining_gap": f"Evidence is still needed for: {criteria[criterion_id].statement}",
+                "evidence_support_score": 0,
+                "score_reason": "No cited candidate evidence establishes this criterion.",
+            })
         unknown_field_ids = sorted(field_id for field_id in profile_field_ids if field_id not in profile_fields)
         if unknown_field_ids:
             return None, f"candidate_profile_field_ids:unknown:{','.join(unknown_field_ids)}:{criterion_id}"
@@ -404,8 +426,10 @@ def _validate_submission(
         # Only that one value is exempt: "2 years short of the requirement" is a
         # claim about the candidate and still has to be grounded.
         # candidate_profile.py:415 exempts the same value for the same reason.
-        own_score = _extract_numbers(str(judgment["evidence_support_score"]))
-        unsupported_numbers = sorted(_extract_numbers(narrative) - _extract_numbers(grounding) - own_score)
+        own_score = _normalized_numbers(str(judgment["evidence_support_score"]))
+        unsupported_numbers = sorted(
+            _normalized_numbers(narrative) - _normalized_numbers(grounding) - own_score
+        )
         if unsupported_numbers:
             return None, f"numeric_claim:unsupported:{','.join(unsupported_numbers)}:{criterion_id}"
     return payload, ""
@@ -424,17 +448,17 @@ class LangChainRoleEvidenceAssessor:
         model=None,
         telemetry: RecruitmentTelemetry | None = None,
     ):
+        self._telemetry = telemetry or OpenTelemetryRecorder()
         if model is None:
-            from resume_agent.models import create_agent_model
-
-            model = create_agent_model(
+            model = create_observed_agent_model(
+                self._telemetry,
+                role="role_evidence",
                 timeout=config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
                 max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
             )
         if not hasattr(model, "bind_tools"):
             raise TypeError("Role evidence assessor model must support bind_tools")
         self._model = model
-        self._telemetry = telemetry or OpenTelemetryRecorder()
 
     def assess(
         self,
@@ -529,7 +553,10 @@ class LangChainRoleEvidenceAssessor:
                         "duration, difference, or fraction derived from real evidence, since it still "
                         "does not appear verbatim in the grounding. Describe that comparison in words "
                         'instead (e.g. "a few years short" rather than naming the computed gap), or '
-                        "state only the underlying numbers that do appear in the grounding.\n\n"
+                        "state only the underlying numbers that do appear in the grounding. When the "
+                        "failed judgment has empty evidence ID lists, do not mention any resume-specific "
+                        "date, duration, count, employer, or project in the corrected narrative. State "
+                        "only that no cited evidence establishes the criterion.\n\n"
                         + xml_data_block(
                             "role_evidence_correction_data",
                             json.dumps(correction_data, ensure_ascii=False, separators=(",", ":")),
@@ -567,10 +594,11 @@ class LangChainRoleEvidenceAssessor:
                 },
             ) as attempt_span:
                 try:
-                    response = self._model.bind_tools(
-                        [tool],
-                        tool_choice=tool.name,
-                    ).invoke(call_messages)
+                    with transport_role("role_evidence"):
+                        response = self._model.bind_tools(
+                            [tool],
+                            tool_choice=tool.name,
+                        ).invoke(call_messages)
                 except BaseException as error:
                     attempt_span.set_attribute("status", "error")
                     attempt_span.set_attribute("error_type", type(error).__name__)

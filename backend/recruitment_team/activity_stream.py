@@ -9,7 +9,7 @@ import time
 from dataclasses import asdict
 from queue import Empty, Queue
 from threading import Thread
-from typing import Iterator
+from typing import Callable, Iterator
 
 from fastapi.encoders import jsonable_encoder
 
@@ -60,6 +60,33 @@ def stream_command(
 ) -> Iterator[str]:
     """Yield committed activity followed by the command receipt or a safe error."""
 
+    yield from _stream_operation(
+        team_factory,
+        lambda team: team.execute(owner_id, command, idempotency_key),
+        operation_name=type(command).__name__,
+        thread_id=getattr(command, "thread_id", None),
+    )
+
+
+def stream_retry(team_factory, owner_id: int, thread_id: str, run_id: str) -> Iterator[str]:
+    """Stream a durable retry through the same activity transport as commands."""
+
+    yield from _stream_operation(
+        team_factory,
+        lambda team: team.retry_conversation_run(owner_id, thread_id, run_id),
+        operation_name="RetryConversationRun",
+        thread_id=thread_id,
+    )
+
+
+def _stream_operation(
+    team_factory,
+    operation: Callable[[RecruitmentTeam], object],
+    *,
+    operation_name: str,
+    thread_id: str | None,
+) -> Iterator[str]:
+
     output: Queue = Queue()
     stream_open = threading.Event()
     stream_lock = threading.Lock()
@@ -71,11 +98,11 @@ def stream_command(
                 output.put((event_name, payload))
 
     def execute() -> None:
-        team: RecruitmentTeam = team_factory(
-            _QueueActivityPublisher(output, stream_open, stream_lock)
-        )
         try:
-            publish("receipt", team.execute(owner_id, command, idempotency_key))
+            team: RecruitmentTeam = team_factory(
+                _QueueActivityPublisher(output, stream_open, stream_lock)
+            )
+            publish("receipt", operation(team))
         except Exception as error:
             # This runs in a background Thread fully decoupled from the SSE
             # client's connection (see the class docstring), so a client that
@@ -84,11 +111,11 @@ def stream_command(
             # invisible server-side, exactly what made a real production
             # incident (a dropped candidate-profile stream) unable to be
             # diagnosed from the logs alone.
-            log.exception(
-                "recruitment-team command failed: owner_id=%s command=%s thread_id=%s",
-                owner_id,
-                type(command).__name__,
-                getattr(command, "thread_id", None),
+            log.error(
+                "recruitment-team command failed: command=%s thread_id=%s error_type=%s",
+                operation_name,
+                thread_id,
+                type(error).__name__,
             )
             # Module errors carry an authored, user-facing message, and the REST
             # routes already return exactly that via _raise_http_error. Streaming

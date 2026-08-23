@@ -15,7 +15,8 @@ flowchart LR
     Jobs --> API[backend/main.py]
     Browser[React frontend] <--> API
 
-    Resume[Resume upload] --> Parse[resume_parser_worker.py]
+    Resume[Resume upload] --> UploadGate[resume_upload.py]
+    UploadGate --> Parse[resume_parser_worker.py]
     Parse --> Canonical[resume_document.py]
     Canonical --> Browser
     Browser -->|save a version| Versions[(resume_versions)]
@@ -54,7 +55,7 @@ that a source is in the nightly crawl.
 
 ### Resumes, scoring, matching, and tailoring
 
-Uploads enter through FastAPI and are parsed in an isolated worker before
+Uploads enter through the bounded `resume_upload.py` boundary and are parsed in an isolated worker before
 `resume_document.py` creates the canonical document. Saving or importing from
 the browser creates a user-owned `ResumeVersion`; parsing alone does not create
 one. `resume_scorer.py` calculates resume quality scores.
@@ -82,16 +83,17 @@ service or blob store.
 candidate profiling, job discovery, specialist work, synthesis, and proposed
 edits. Threads, commands, visible messages, ordered activity, candidate-profile
 artifacts, target assessments, and proposed edits have durable SQLAlchemy
-models. Some concurrency controls, caches, and active execution remain
+models. Specialist work completed before a candidate-question pause is retained
+only as internal resume state; the candidate-facing assessment API and UI expose
+specialist findings and synthesis only after the independent judge completes.
+Some concurrency controls, caches, and active execution remain
 in-process, which is why production is intentionally one web replica and one
 Python worker.
 
-The open-agent runner also uses LangGraph's `SqliteSaver` at
-`OPEN_AGENT_CHECKPOINT_DB_PATH` (default `open_agent_checkpoints.db`). That file
-is separate from PostgreSQL and is not restart-durable when left on an
-ephemeral container filesystem. SQL recruitment rows remain durable, but do not
-claim resumable execution across replacement until this checkpoint path is on
-verified persistent storage or moved to a shared checkpointer.
+The open-agent runner uses LangGraph's PostgreSQL checkpointer whenever
+`DATABASE_URL` is PostgreSQL, so candidate-question pauses survive container
+replacement and can resume on another worker. Local SQLite uses
+`OPEN_AGENT_CHECKPOINT_DB_PATH` (default `open_agent_checkpoints.db`).
 
 ### Deployment and scheduled work
 
@@ -111,7 +113,7 @@ UTC with the smaller alerts image.
 | API to AI provider | Prompts can contain hostile job descriptions or resume text. `prompt_safety.py`, structured contracts, bounded retries, and validation gates constrain output. Never send credentials or unrelated user records. |
 | AI output to user record | Model output is not automatically factual. Validation and explicit accept/reject flows protect candidate claims and resume edits. |
 | User to user | Every user-owned query must include the authenticated owner ID. Foreign keys alone do not enforce tenant isolation. |
-| Process to persistence | PostgreSQL is production-durable; local SQLite is durable only on its host. Module caches, rate limits, active jobs, some locks, and the default open-agent checkpoint file are process/container-local; do not claim restart recovery or scale replicas until those controls move to verified shared storage. |
+| Process to persistence | PostgreSQL stores production records and LangGraph checkpoints; local SQLite is durable only on its host. Module caches, rate limits, active jobs, and some locks remain process-local and must not be presented as cross-replica controls. |
 | Secrets | Secrets are server-side environment variables. They must not enter logs, browser bundles, docs, fixtures, screenshots, or issue comments. `VITE_*` values are public at build time. |
 | Optional MCP | The external MCP surface is disabled without `MCP_API_KEY` and has its own request limit. It is not a privileged bypass around API ownership rules. |
 
@@ -120,6 +122,10 @@ UTC with the smaller alerts image.
 - Data schema: `backend/models.py`
 - Runtime configuration: `backend/config.py`, `.env.example`
 - API composition: `backend/main.py`, `backend/recruitment_team/http_routes.py`
+- Account-owned libraries: `backend/job_alert_preferences.py`,
+  `backend/resume_versions.py`, `backend/story_bank.py`, and their thin route modules
+- Target-assessment execution: `backend/recruitment_team/open_agent/runner.py`,
+  `quality_gate.py`, and `checkpoint_store.py`
 - Source availability: `backend/scraper.py`, `backend/seed_jobs.py`, and the
   [source matrix](sources.md)
 - Deployment topology and schedules: `railway*.toml`, `Dockerfile*`

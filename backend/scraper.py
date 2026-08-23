@@ -253,10 +253,13 @@ class CareersGovScraper:
 
     @staticmethod
     def _build_url(item: dict) -> str:
-        job_id = item.get("jobId", "")
-        posting_no = item.get("postingNo", "")
+        job_id = str(item.get("jobId") or "").strip()
+        posting_no = str(item.get("postingNo") or "").strip()
+        platform = str(item.get("platform") or "").strip().lower()
         if job_id and posting_no:
             return f"https://jobs.careers.gov.sg/jobs/hrp/{job_id}/{posting_no}"
+        if job_id and platform == "greenhouse":
+            return f"https://jobs.careers.gov.sg/jobs/greenhouse/{job_id}?gh_jid={job_id}"
         return ""
 
     @staticmethod
@@ -299,6 +302,8 @@ class CareersGovScraper:
                     f"/jobs/hrp/{job_id}/{posting_no}" if job_id and posting_no else "",
                     f"{job_id}/{posting_no}" if job_id and posting_no else "",
                     f"{job_id}:{posting_no}" if job_id and posting_no else "",
+                    f"/jobs/greenhouse/{job_id}" if job_id else "",
+                    f"/jobs/greenhouse/{job_id}?gh_jid={job_id}" if job_id else "",
                     str(item.get("externalPath") or "").strip(),
                     str(item.get("external_path") or "").strip(),
                     str(item.get("url") or "").strip(),

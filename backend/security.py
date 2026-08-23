@@ -2,11 +2,52 @@
 
 from __future__ import annotations
 
+import ipaddress
+import os
 import threading
 import time
 from collections import deque
 
+from starlette.requests import Request
 from starlette.responses import JSONResponse
+
+
+_TRUST_CLOUDFLARE_IP_HEADER = os.environ.get(
+    "TRUST_CLOUDFLARE_IP_HEADER",
+    "0",
+).strip().lower() in {"1", "true", "yes"}
+
+
+def get_client_ip(request: Request) -> str:
+    """Return the visitor IP at a Cloudflare-only origin, otherwise the peer."""
+    peer_ip = request.client.host if request.client else "unknown"
+    if not _TRUST_CLOUDFLARE_IP_HEADER:
+        return peer_ip
+    try:
+        return ipaddress.ip_address(
+            request.headers.get("cf-connecting-ip", "")
+        ).compressed
+    except ValueError:
+        return peer_ip
+
+
+def contains_like_pattern(value: str) -> str:
+    """Escape SQL LIKE metacharacters for a literal contains query."""
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def split_multi_value_filter(value: str | None) -> list[str]:
+    """Split a comma-delimited filter while preserving first-seen spelling."""
+    seen: set[str] = set()
+    terms: list[str] = []
+    for term in str(value or "").split(","):
+        cleaned = term.strip()
+        key = cleaned.lower()
+        if cleaned and key not in seen:
+            seen.add(key)
+            terms.append(cleaned)
+    return terms
 
 
 class RequestTooLarge(Exception):
@@ -77,10 +118,12 @@ class SecurityHeadersMiddleware:
         "/api/account",
         "/api/admin",
         "/api/ai",
+        "/api/applications",
         "/api/auth",
         "/api/job-alerts",
         "/api/memory",
         "/api/resume",
+        "/api/recruitment-team",
         "/api/search",
         "/api/skillsfuture",
         "/api/stories",
@@ -124,6 +167,11 @@ class SecurityHeadersMiddleware:
                         and path.endswith(("/match", "/parsed"))
                     )
                 ):
+                    headers = [
+                        (name, value)
+                        for name, value in headers
+                        if name.lower() != b"cache-control"
+                    ]
                     headers.append((b"cache-control", b"no-store"))
                 message = {**message, "headers": headers}
             await send(message)

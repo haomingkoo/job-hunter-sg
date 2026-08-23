@@ -9,8 +9,8 @@ python scripts/check_docs.py
 ## GitHub Actions
 
 - Documentation: reject broken local Markdown links or an incomplete authoritative handbook index.
-- Backend: install dependencies, run `pip-audit`, compile, run Ruff critical checks, run the scoped ty baseline, and run both backend test roots.
-- Frontend: install from the lockfile, run Vitest, run `npm audit --audit-level=high`, and build.
+- Backend: install dependencies, run `pip-audit`, compile, run Ruff critical checks, run the scoped ty baseline, run both backend test roots, and build `Dockerfile.alerts`. A PostgreSQL service also exercises schema repair and the shared crawl lease on the production dialect.
+- Frontend: install from the lockfile, run Vitest, run `npm audit --audit-level=high`, build, and then build the actual production `Dockerfile` without pushing it.
 - Secrets: Gitleaks scans pushed history in CI.
 
 ## Pre-commit

@@ -19,6 +19,88 @@ function storedThreadKey(userId) {
 }
 
 
+function formatMetricNumber(value) {
+  return new Intl.NumberFormat("en-SG").format(Number(value) || 0);
+}
+
+
+function metricCount(value, singular) {
+  const count = Number(value) || 0;
+  return `${formatMetricNumber(count)} ${count === 1 ? singular : `${singular}s`}`;
+}
+
+
+function ExecutionDetails({ metrics }) {
+  if (!metrics || Object.keys(metrics).length === 0) return null;
+
+  const roleMetrics = Object.entries(metrics.transport_by_role || {});
+  const models = metrics.models || [];
+  const validationCodes = metrics.validation_codes || [];
+
+  return (
+    <details className="rounded-xl border border-[#DCE7F2] bg-[#FAFCFE] px-3 py-2 text-xs text-[#4A6785]">
+      <summary className="cursor-pointer font-medium text-[#384959] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#88BDF2]">
+        Execution details
+      </summary>
+      <dl className="mt-3 grid gap-x-4 gap-y-2 sm:grid-cols-2">
+        <div>
+          <dt>Model calls</dt>
+          <dd className="font-semibold text-[#384959]">{formatMetricNumber(metrics.model_call_count)}</dd>
+        </div>
+        <div>
+          <dt>Run time</dt>
+          <dd className="font-semibold text-[#384959]">
+            {formatMetricNumber(Math.round((Number(metrics.latency_ms) || 0) / 1000))} seconds
+          </dd>
+        </div>
+        <div>
+          <dt>Input tokens</dt>
+          <dd className="font-semibold text-[#384959]">{formatMetricNumber(metrics.input_tokens)}</dd>
+        </div>
+        <div>
+          <dt>Output tokens</dt>
+          <dd className="font-semibold text-[#384959]">{formatMetricNumber(metrics.output_tokens)}</dd>
+        </div>
+        <div>
+          <dt>Transport retries</dt>
+          <dd className="font-semibold text-[#384959]">{formatMetricNumber(metrics.transport_retry_count)}</dd>
+        </div>
+        <div>
+          <dt>Transport errors</dt>
+          <dd className="font-semibold text-[#384959]">{formatMetricNumber(metrics.transport_error_count)}</dd>
+        </div>
+      </dl>
+      {models.length > 0 && (
+        <p className="mt-3">
+          <span className="font-medium text-[#384959]">Models: </span>
+          {models.join(", ")}
+        </p>
+      )}
+      {roleMetrics.length > 0 && (
+        <div className="mt-3">
+          <p className="font-medium text-[#384959]">Calls by team member</p>
+          <ul className="mt-1 space-y-1">
+            {roleMetrics.map(([role, values]) => (
+              <li key={role}>
+                <span className="capitalize">{role.replaceAll("_", " ")}</span>: {metricCount(values.call_count, "call")}
+                {Number(values.retry_count) > 0 ? `, ${metricCount(values.retry_count, "retry")}` : ""}
+                {Number(values.error_count) > 0 ? `, ${metricCount(values.error_count, "error")}` : ""}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {validationCodes.length > 0 && (
+        <p className="mt-3">
+          <span className="font-medium text-[#384959]">Validation flags: </span>
+          {validationCodes.join(", ")}
+        </p>
+      )}
+    </details>
+  );
+}
+
+
 export default function RecruitmentTeamPanel({
   user,
   setActiveTab,
@@ -63,15 +145,24 @@ export default function RecruitmentTeamPanel({
     [resumeVersionId, resumeVersions],
   );
   const archived = snapshot?.status === "archived";
-  const awaitingAnswer = snapshot?.workflow_state === "awaiting_candidate_answer";
+  const persistedAwaitingAnswer = snapshot?.workflow_state === "awaiting_candidate_answer";
+  const answerResuming = persistedAwaitingAnswer && busy;
+  const awaitingAnswer = persistedAwaitingAnswer && !busy;
   const candidateStudyRunning = snapshot?.case_facts?.candidate_profile_status === "running";
   const candidateProfileReady = snapshot?.case_facts?.candidate_profile_status === "completed";
   const persistedRunActive = !busy && events.at(-1)?.status === "running";
   const latestRunEvent = [...events].reverse().find((item) => item.event_type === "run");
   const failedConversationTurn = latestRunEvent?.status === "failed"
-    && ["start_thread", "send_message"].includes(latestRunEvent.detail?.command_type)
+    && ["start_thread", "send_message", "answer_assessment_question"]
+      .includes(latestRunEvent.detail?.command_type)
     ? latestRunEvent
     : null;
+  const reviewedTargetSpecialistRuns = targetAssessment?.status === "completed"
+    ? (targetAssessment.specialist_runs || [])
+    : [];
+  const targetSpecialistCount = new Set(
+    reviewedTargetSpecialistRuns.map((run) => run.persona_id),
+  ).size;
   const plan = snapshot?.case_facts?.plan || [];
   const recommendations = snapshot?.case_facts?.recommendations || [];
   const shortlistedJobs = snapshot?.case_facts?.shortlisted_jobs || [];
@@ -175,9 +266,10 @@ export default function RecruitmentTeamPanel({
     setBusy(true);
     setError("");
     try {
-      await apiFetch(
-        `/api/recruitment-team/threads/${threadId}/runs/${failedConversationTurn.run_id}/retry`,
-        { method: "POST" },
+      await streamRecruitmentCommand(
+        `/api/recruitment-team/threads/${threadId}/runs/${failedConversationTurn.run_id}/retry/stream`,
+        {},
+        appendActivity,
       );
       await refreshThread(threadId);
     } catch (retryError) {
@@ -575,14 +667,18 @@ export default function RecruitmentTeamPanel({
     event.preventDefault();
     const answer = message.trim();
     if (!threadId || !answer || busy || archived) return undefined;
+    setMessage("");
     return runTurn(
       () => streamRecruitmentCommand(
         `/api/recruitment-team/threads/${threadId}/assessment/answer/stream`,
         { answer, idempotency_key: globalThis.crypto.randomUUID() },
         appendActivity,
       ),
-      { clearMessage: true, refreshOnError: true },
-    );
+      { refreshOnError: true },
+    ).then((completed) => {
+      if (!completed) setMessage(answer);
+      return completed;
+    });
   }
 
   async function handoffToResumeAgent() {
@@ -977,10 +1073,12 @@ export default function RecruitmentTeamPanel({
             <textarea
               value={message}
               onChange={(event) => setMessage(event.target.value)}
-              disabled={archived}
+              disabled={archived || answerResuming}
               rows={2}
               placeholder={
-                awaitingAnswer
+                answerResuming
+                  ? "Continuing the assessment..."
+                  : awaitingAnswer
                   ? "Answer the assessment's question..."
                   : "Describe your target role, constraints, or follow-up..."
               }
@@ -988,11 +1086,11 @@ export default function RecruitmentTeamPanel({
             />
             <button
               type="submit"
-              disabled={!message.trim() || archived}
+              disabled={!message.trim() || archived || answerResuming}
               className="inline-flex h-12 items-center gap-2 rounded-2xl bg-[#384959] px-4 text-sm font-semibold text-white disabled:opacity-40"
             >
               <Send size={15} />
-              {busy ? "Queue message" : awaitingAnswer ? "Send answer" : "Send"}
+              {answerResuming ? "Continuing" : busy ? "Queue message" : awaitingAnswer ? "Send answer" : "Send"}
             </button>
             {!awaitingAnswer && threadId && (
               <button
@@ -1063,13 +1161,6 @@ export default function RecruitmentTeamPanel({
                   <p className="mt-1 text-xs text-[#6A89A7]">
                     {candidateProfile.prompt_version} · {candidateProfile.decomposition_version}
                   </p>
-                  {candidateProfile.execution_policy && (
-                    <p className="mt-1 text-xs text-[#6A89A7]">
-                      {candidateProfile.model_name} · {candidateProfile.execution_policy.model_timeout_seconds}s timeout ·{" "}
-                      {candidateProfile.execution_policy.validation_attempts} validation attempts ·{" "}
-                      {candidateProfile.execution_policy.transport_retries} transport retries
-                    </p>
-                  )}
                 </div>
                 <span className="rounded-full bg-[#f0f5fa] px-2 py-1 text-xs capitalize text-[#384959]">
                   {candidateProfile.status}
@@ -1081,6 +1172,12 @@ export default function RecruitmentTeamPanel({
                   {candidateProfile.error.recovery ? ` ${candidateProfile.error.recovery}` : ""}
                 </div>
               )}
+              {candidateProfile.execution_metrics
+                && Object.keys(candidateProfile.execution_metrics).length > 0 && (
+                  <div className="mt-3">
+                    <ExecutionDetails metrics={candidateProfile.execution_metrics} />
+                  </div>
+                )}
               {candidateProfileFields.length > 0 && (
                 <>
                   <p className="mt-3 text-xs text-[#6A89A7]">
@@ -1430,20 +1527,33 @@ export default function RecruitmentTeamPanel({
                   <div className="rounded-2xl border border-[#DCE7F2] p-4 text-xs">
                     <p className="font-medium capitalize text-[#384959]">{targetAssessment.status.replaceAll("_", " ")}</p>
                     <p className="mt-1 text-[#4A6785]">
-                      {(targetAssessment.specialist_runs || []).length}{" "}
-                      {(targetAssessment.specialist_runs || []).length === 1 ? "specialist" : "specialists"} reviewed
-                      this role against your evidence, then an independent judge reviewed their verdict.
+                      {targetAssessment.status === "completed"
+                        ? `${targetSpecialistCount} ${targetSpecialistCount === 1 ? "specialist" : "specialists"} reviewed this role against your evidence, then an independent judge reviewed their verdict.`
+                        : "Specialist findings remain private until the independent review completes."}
                     </p>
                   </div>
-                  {(targetAssessment.specialist_runs || []).map((run) => (
-                    <SpecialistReport key={run.persona_id} run={run} />
+                  <ExecutionDetails metrics={targetAssessment.execution_metrics} />
+                  {reviewedTargetSpecialistRuns.map((run, index) => (
+                    <SpecialistReport key={`${run.persona_id}-${index}`} run={run} />
                   ))}
-                  {targetAssessment.synthesis && (
+                  {targetAssessment.status === "completed" && targetAssessment.synthesis && (
                     <article className="whitespace-pre-wrap rounded-2xl border border-[#BDDDFC]/60 p-4 text-sm text-[#384959]">
                       {targetAssessment.synthesis}
+                      {(targetAssessment.synthesis_claims || []).length > 0 && (
+                        <div className="mt-4 space-y-2 border-t border-[#EDF3F9] pt-3">
+                          {(targetAssessment.synthesis_claims || []).map((claim, index) => (
+                            <div key={`${claim.kind}-${index}`} className="whitespace-normal text-xs text-[#4A6785]">
+                              <p>{claim.statement}</p>
+                              <p className="mt-1 font-mono text-[10px] text-[#6A89A7]">
+                                {[...(claim.criterion_ids || []), ...(claim.candidate_profile_field_ids || []), ...(claim.resume_evidence_ids || []), ...(claim.candidate_evidence_ids || [])].join(" · ")}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </article>
                   )}
-                  {targetAssessment.judge && (
+                  {targetAssessment.status === "completed" && targetAssessment.judge && (
                     <article className="rounded-2xl border border-[#BDDDFC]/60 p-4">
                       <h3 className="text-sm font-semibold text-[#384959]">Independent quality judge</h3>
                       <p className="mt-2 text-sm text-[#384959]">

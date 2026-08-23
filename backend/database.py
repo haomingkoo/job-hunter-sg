@@ -13,6 +13,13 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 import config as app_config
 
+
+# Stable application-scoped key for PostgreSQL's transaction advisory lock.
+# It serializes create_all plus the legacy repair pass across rolling replicas.
+_SCHEMA_MIGRATION_LOCK_KEY = 0x4A485347
+_ACTIVITY_METADATA_SCRUB_VERSION = "2026-08-23-recruitment-activity-metadata-scrub"
+_DELETION_TOMBSTONE_SCRUB_VERSION = "2026-08-23-recruitment-deletion-tombstone-scrub"
+
 DEFAULT_DATABASE_PATH = Path(__file__).resolve().with_name("jobhunter.db")
 DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DEFAULT_DATABASE_PATH}")
 
@@ -52,16 +59,37 @@ class Base(DeclarativeBase):
 def init_db() -> None:
     """Create all tables that don't exist yet."""
     from models import Base as _  # noqa: F401 — ensure models are imported
-    Base.metadata.create_all(bind=engine)
-    _apply_lightweight_migrations()
+
+    with engine.begin() as connection:
+        _acquire_schema_migration_lock(connection)
+        Base.metadata.create_all(bind=connection)
+        _apply_lightweight_migrations(connection)
 
 
-def _apply_lightweight_migrations() -> None:
+def _acquire_schema_migration_lock(connection) -> None:
+    if getattr(getattr(connection, "dialect", None), "name", "") == "postgresql":
+        connection.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": _SCHEMA_MIGRATION_LOCK_KEY},
+        )
+
+
+def _apply_lightweight_migrations(connection=None) -> None:
     """
     Keep older local databases compatible with the current ORM model.
     This avoids hard failures when new nullable columns are introduced.
+
+    When called directly, inspection and DDL run in one locked transaction.
+    init_db passes its existing transaction so create_all and repair are one
+    serialized operation on PostgreSQL.
     """
-    inspector = inspect(engine)
+    if connection is None:
+        with engine.begin() as migration_connection:
+            _acquire_schema_migration_lock(migration_connection)
+            _apply_lightweight_migrations(migration_connection)
+        return
+
+    inspector = inspect(connection)
     if "scraped_jobs" not in inspector.get_table_names():
         return
 
@@ -170,6 +198,30 @@ def _apply_lightweight_migrations() -> None:
             statements.append("ALTER TABLE job_alert_preferences ADD COLUMN consented_at TIMESTAMP")
         if "unsubscribed_at" not in alert_columns:
             statements.append("ALTER TABLE job_alert_preferences ADD COLUMN unsubscribed_at TIMESTAMP")
+        if "match_cursor_at" not in alert_columns:
+            statements.extend((
+                "ALTER TABLE job_alert_preferences ADD COLUMN match_cursor_at TIMESTAMP",
+                "UPDATE job_alert_preferences SET match_cursor_at = last_run_at "
+                "WHERE match_cursor_at IS NULL",
+            ))
+
+    if "job_alert_deliveries" in inspector.get_table_names():
+        delivery_indexes = {
+            index["name"] for index in inspector.get_indexes("job_alert_deliveries")
+        }
+        if "ux_job_alert_deliveries_user_job" not in delivery_indexes:
+            # Keep the newest state for legacy duplicates before enforcing the
+            # identity already assumed by record_delivery_action().
+            statements.extend((
+                "DELETE FROM job_alert_deliveries WHERE id IN ("
+                "SELECT id FROM ("
+                "SELECT id, ROW_NUMBER() OVER ("
+                "PARTITION BY user_id, scraped_job_id ORDER BY id DESC"
+                ") AS duplicate_rank FROM job_alert_deliveries"
+                ") ranked WHERE duplicate_rank > 1)",
+                "CREATE UNIQUE INDEX ux_job_alert_deliveries_user_job "
+                "ON job_alert_deliveries (user_id, scraped_job_id)",
+            ))
 
     # usage_logs: rate limits and admin metrics should not full-scan forever
     if "usage_logs" in inspector.get_table_names():
@@ -200,6 +252,14 @@ def _apply_lightweight_migrations() -> None:
             statements.append("ALTER TABLE target_assessment_artifacts ADD COLUMN pending_specialist_runs JSON")
         if "pending_synthesis" not in assessment_columns:
             statements.append("ALTER TABLE target_assessment_artifacts ADD COLUMN pending_synthesis TEXT")
+        if "synthesis_claims" not in assessment_columns:
+            statements.append(
+                "ALTER TABLE target_assessment_artifacts ADD COLUMN synthesis_claims JSON NOT NULL DEFAULT '[]'"
+            )
+        if "pending_synthesis_claims" not in assessment_columns:
+            statements.append(
+                "ALTER TABLE target_assessment_artifacts ADD COLUMN pending_synthesis_claims JSON"
+            )
         if "pending_proposed_edits" not in assessment_columns:
             statements.append("ALTER TABLE target_assessment_artifacts ADD COLUMN pending_proposed_edits JSON")
 
@@ -254,7 +314,7 @@ def _apply_lightweight_migrations() -> None:
     # Widen jd_summary_status if it was created as VARCHAR(30) (too short for
     # model names). SQLite's ALTER TABLE has no "change column type"
     # operation -- this only runs against Postgres, which does.
-    if not DATABASE_URL.startswith("sqlite"):
+    if getattr(getattr(connection, "dialect", None), "name", "") != "sqlite":
         summary_status_column = next(
             (column for column in inspector.get_columns("scraped_jobs") if column["name"] == "jd_summary_status"),
             None,
@@ -265,12 +325,53 @@ def _apply_lightweight_migrations() -> None:
         if summary_status_length is not None and summary_status_length < 100:
             statements.append("ALTER TABLE scraped_jobs ALTER COLUMN jd_summary_status TYPE VARCHAR(100)")
 
-    if not statements:
-        return
+    for statement in statements:
+        connection.execute(text(statement))
 
-    with engine.begin() as connection:
-        for statement in statements:
-            connection.execute(text(statement))
+    if "recruitment_activity_events" in inspector.get_table_names():
+        _run_once_migration(
+            connection,
+            _ACTIVITY_METADATA_SCRUB_VERSION,
+            lambda: connection.execute(
+                text(
+                    "UPDATE recruitment_activity_events "
+                    "SET detail = '{}', attributes = '{}'"
+                )
+            ),
+        )
+
+    if "recruitment_thread_deletion_requests" in inspector.get_table_names():
+        _run_once_migration(
+            connection,
+            _DELETION_TOMBSTONE_SCRUB_VERSION,
+            lambda: connection.execute(
+                text(
+                    "UPDATE recruitment_thread_deletion_requests "
+                    "SET status = 'completed', targets = '{}' "
+                    "WHERE status <> 'cleanup_pending'"
+                )
+            ),
+        )
+
+
+def _run_once_migration(connection, version: str, migrate) -> None:
+    """Run one idempotent data repair and record it in the same transaction."""
+    connection.execute(text(
+        "CREATE TABLE IF NOT EXISTS app_schema_migrations ("
+        "version VARCHAR(100) PRIMARY KEY, "
+        "applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+    ))
+    applied = connection.execute(
+        text("SELECT version FROM app_schema_migrations WHERE version = :version"),
+        {"version": version},
+    ).scalar_one_or_none()
+    if applied is not None:
+        return
+    migrate()
+    connection.execute(
+        text("INSERT INTO app_schema_migrations (version) VALUES (:version)"),
+        {"version": version},
+    )
 
 
 def get_db() -> Generator[Session, None, None]:

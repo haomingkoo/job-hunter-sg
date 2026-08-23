@@ -7,7 +7,7 @@ vi.mock("framer-motion", async (importOriginal) => ({
   AnimatePresence: ({ children }) => children,
 }));
 
-import JobHunterSG, { readActiveTab } from "../App.jsx";
+import JobHunterSG, { readActiveTab, tabMotionProps } from "../App.jsx";
 import { AUTH_EXPIRED_EVENT, AUTH_SYNC_KEY } from "../lib/api.js";
 
 function jsonResponse(data, status = 200) {
@@ -20,9 +20,19 @@ function jsonResponse(data, status = 200) {
   };
 }
 
+it("removes tab transitions when the user prefers reduced motion", () => {
+  expect(tabMotionProps(true)).toEqual({
+    initial: false,
+    animate: { opacity: 1, y: 0 },
+    transition: { duration: 0 },
+  });
+  expect(tabMotionProps(false).exit).toEqual({ opacity: 0, y: -12 });
+});
+
 async function flushEffects() {
+  await vi.dynamicImportSettled();
   for (let index = 0; index < 6; index += 1) {
-    await act(async () => Promise.resolve());
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)));
   }
 }
 
@@ -31,7 +41,6 @@ describe("JobHunterSG app shell", () => {
   let root;
 
   beforeEach(() => {
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     localStorage.clear();
     sessionStorage.clear();
     window.history.replaceState({}, "", "/");
@@ -51,7 +60,6 @@ describe("JobHunterSG app shell", () => {
     act(() => root.unmount());
     container.remove();
     delete global.IntersectionObserver;
-    delete globalThis.IS_REACT_ACT_ENVIRONMENT;
     vi.restoreAllMocks();
   });
 
@@ -103,7 +111,9 @@ describe("JobHunterSG app shell", () => {
     });
     await flushEffects();
 
-    expect(container.textContent).toContain("How would you like to start?");
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("How would you like to start?");
+    });
     expect(container.textContent).not.toContain("Find the role that fits you best");
   });
 

@@ -47,3 +47,18 @@ def test_dynamic_skill_build_caps_database_rows(monkeypatch):
 
     assert skill_extractor.build_dynamic_skills(Session()) == {}
     assert seen_limits == [skill_extractor.ANALYTICS_MAX_ROWS]
+
+
+def test_stored_skill_normalization_preserves_caller_length_policy():
+    from skill_extractor import normalize_skill_strings
+
+    long_skill = "x" * 70
+    raw = [" AWS ; Kubernetes ", {"Cloud": "aws|Terraform"}, long_skill]
+
+    assert normalize_skill_strings(raw, max_length=60) == [
+        "AWS",
+        "Kubernetes",
+        "Cloud",
+        "Terraform",
+    ]
+    assert normalize_skill_strings(raw, max_length=80)[-1] == long_skill

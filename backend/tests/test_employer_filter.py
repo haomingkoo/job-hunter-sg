@@ -21,6 +21,8 @@ def test_verified_agencies_and_ea_licence_markers_are_recruiters():
         "ADABA Pte. Ltd.",
         "APBA TG Human Resource Pte. Ltd.",
         "First Konnection Pte. Ltd.",
+        "Raffles Employment Pte. Ltd.",
+        "LH Manpower Service Pte. Ltd.",
     ):
         assert is_recruitment_employer(company)
 
@@ -39,6 +41,10 @@ def test_verified_agencies_and_ea_licence_markers_are_recruiters():
     assert is_recruitment_employer(
         "Opaque Advisory Pte Ltd",
         description="EA No. 26S3529 | EA Personnel No. R1329267",
+    )
+    assert is_recruitment_employer(
+        "MTC Consulting Pte. Ltd.",
+        description="Consultant registration R24124448, agency licence 15C7752.",
     )
 
 
@@ -100,6 +106,11 @@ def test_sql_condition_matches_python_classification():
             "company": "Example Search Pte Ltd",
             "ssic": "",
             "description": "Consultant: (EA License No: 12C3456)",
+        },
+        {
+            "company": "MTC Consulting Pte. Ltd.",
+            "ssic": "",
+            "description": "Consultant registration R24124448, agency licence 15C7752.",
         },
         {
             "company": "Axiom Services Pte Ltd",

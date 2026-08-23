@@ -130,35 +130,15 @@ function TemplatePreview({ templateId }) {
 }
 
 const RESUME_CHAT_STAGE_META = {
+  in_progress: {
+    label: "Guided interview",
+    description: "The coach is gathering the resume details it still needs.",
+    remaining: ["Answer the current question"],
+  },
   contact: {
     label: "Contact details",
     description: "Share your name and the best email, phone, or location details for the header.",
     remaining: ["Name", "Email / phone", "Location"],
-  },
-  summary: {
-    label: "Target role",
-    description: "Tell us what role you want and roughly how many years of experience you have.",
-    remaining: ["Target role", "Years of experience"],
-  },
-  experience_1: {
-    label: "Recent experience",
-    description: "We still need at least one role with concrete achievements before we can draft the resume.",
-    remaining: ["Latest job", "2-3 achievements", "Metrics or scope"],
-  },
-  experience_2: {
-    label: "More experience",
-    description: "Add another role if relevant, or tell the coach you are done with work history.",
-    remaining: ["Another role or 'done'"],
-  },
-  education: {
-    label: "Education",
-    description: "A degree, school, and graduation year are enough to keep moving.",
-    remaining: ["Degree", "School", "Year"],
-  },
-  skills: {
-    label: "Skills",
-    description: "List your tools, strengths, certifications, or domain skills so the draft feels complete.",
-    remaining: ["Skills", "Certifications"],
   },
   done: {
     label: "Ready to draft",

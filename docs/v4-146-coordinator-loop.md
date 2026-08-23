@@ -849,7 +849,7 @@ Stated so the absence is a decision and not an oversight.
   the deterministic UI-button path but no longer applies the removed junior heuristic.
 - **`search_query` is not made required in `_ConversationPayload`.** Slice V2 / #147.
 - **No queued messages.** The per-thread lock still serialises turns. Slice V7.
-- ~~**No live-model validation script.**~~ Built:
-  `backend/scripts/trace_coordinator_turn.py` runs one live turn and writes a full trace
-  to `backend/evals/live-runs/`. It is what found the four defects in revision 3, none of
-  which the unit suite could see.
+- ~~**No live-model validation script.**~~ Built. The original one-turn trace script
+  found four defects in revision 3. It has since been superseded by
+  `backend/scripts/validate_recruitment_team_local.py --output`, which exercises the
+  current end-to-end journey and records content-free activity and transport telemetry.

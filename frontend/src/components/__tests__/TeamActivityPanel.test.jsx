@@ -9,8 +9,8 @@ import TeamActivityPanel from "../TeamActivityPanel.jsx";
  * TOOL_PHRASES, and when it finds no phrase it falls back to stripping the
  * subject, so an unmapped tool renders to a candidate as "Called read_shortlist."
  *
- * A candidate has to be able to read three things off this panel: which tool
- * ran, what it looked for, and what came back.
+ * A candidate can see which tool ran and a content-free outcome. Inputs stay
+ * out of durable activity even when they look harmless.
  */
 
 let sequence = 0;
@@ -80,6 +80,13 @@ describe("TeamActivityPanel tool phrasing", () => {
     expect(text).not.toContain("ConversationReply");
   });
 
+  it("phrases a real specialist delegation", () => {
+    const text = render("task");
+
+    expect(text).toContain("Delegating a specialist review");
+    expect(text).not.toContain("called task");
+  });
+
   it("phrases the wrapped search tool the same as the unwrapped one", () => {
     // The assessment runner binds `guarded_search_jobs`; the coordinator binds
     // `search_jobs`. Keying on one bound name left the other unphrased.
@@ -119,12 +126,13 @@ describe("TeamActivityPanel step content", () => {
     return container.textContent;
   };
 
-  it("shows what a search looked for", () => {
+  it("does not show a search input from legacy activity", () => {
     const text = renderEvents([
       activity("search_jobs", { query: "semiconductor yield analytics engineer" }),
     ]);
 
-    expect(text).toContain("semiconductor yield analytics engineer");
+    expect(text).toContain("Searching current postings");
+    expect(text).not.toContain("semiconductor yield analytics engineer");
   });
 
   it("shows what came back", () => {
@@ -139,17 +147,36 @@ describe("TeamActivityPanel step content", () => {
     expect(text).not.toContain("finished search_jobs");
   });
 
-  it("keeps two searches with different queries as two steps", () => {
-    // The consecutive-duplicate filter used to collapse them, because both
-    // rendered to the same phrase. A re-query after reading the first results is
-    // the behaviour a candidate most needs to see.
+  it("preserves completion when a tool call and result have the same wording", () => {
+    const text = renderEvents([
+      activity("submit_target_specialist_assessment", {}, {
+        event_type: "assessment",
+        team_member: "ats",
+      }),
+      activity("submit_target_specialist_assessment", {}, {
+        event_type: "assessment",
+        status: "completed",
+        team_member: "ats",
+        detail: {
+          tool_name: "submit_target_specialist_assessment",
+          stage: "result",
+        },
+      }),
+    ]);
+
+    expect(text).toContain("1 of 1 reported");
+    expect(text).toContain("Reported");
+  });
+
+  it("collapses repeated content-free search steps", () => {
     const text = renderEvents([
       activity("search_jobs", { query: "computer vision engineer" }),
       activity("search_jobs", { query: "semiconductor yield engineer" }),
     ]);
 
-    expect(text).toContain("computer vision engineer");
-    expect(text).toContain("semiconductor yield engineer");
+    expect(text).not.toContain("computer vision engineer");
+    expect(text).not.toContain("semiconductor yield engineer");
+    expect(text.match(/Searching current postings/g)).toHaveLength(1);
   });
 
   it("keeps completed steps when a later run starts", () => {
@@ -159,9 +186,9 @@ describe("TeamActivityPanel step content", () => {
       activity("search_jobs", { query: "operations manager" }, { run_id: "run-2" }),
     ]);
 
-    expect(text).toContain("manufacturing manager");
+    expect(text).not.toContain("manufacturing manager");
     expect(text).toContain("Writing your reply");
-    expect(text).toContain("operations manager");
+    expect(text).not.toContain("operations manager");
   });
 
   it("promises specialists and a judge only while an assessment is running", () => {
@@ -175,5 +202,145 @@ describe("TeamActivityPanel step content", () => {
       activity("read_target_job", {}, { event_type: "assessment" }),
     ]);
     expect(assessing).toContain("independent judge");
+  });
+
+  it("does not label a failed latest run complete", () => {
+    const text = renderEvents([
+      activity("read_target_job", {}, {
+        status: "failed",
+        summary: "The coordinator reached its bounded execution limit.",
+      }),
+    ], { busy: false });
+
+    expect(text).toContain("Run stopped before completion");
+    expect(text).not.toContain("Run complete");
+  });
+
+  it("does not leave the coordinator working after the judge completes the run", () => {
+    const text = renderEvents([
+      activity("submit_target_assessment_synthesis", {}, {
+        event_type: "assessment",
+        team_member: "coordinator",
+      }),
+      activity("submit_target_assessment_judgment", {}, {
+        event_type: "run",
+        status: "completed",
+        team_member: "quality_judge",
+        summary: "The independent quality judge completed this turn.",
+      }),
+    ], { busy: false });
+
+    expect(text).toContain("Run complete");
+    const coordinator = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Coordinator"));
+    expect(coordinator.textContent).toContain("Reported");
+    expect(coordinator.textContent).not.toContain("Working");
+  });
+
+  it("shows a held-back assessment and names the quality judge", () => {
+    const text = renderEvents([
+      activity("submit_target_assessment_judgment", {}, {
+        event_type: "assessment",
+        status: "quality_blocked",
+        team_member: "quality_judge",
+        summary: "The independent judge held this assessment back from the candidate.",
+      }),
+    ], { busy: false });
+
+    expect(text).toContain("Assessment held back for review");
+    expect(text).toContain("Independent judge");
+    expect(text).toContain("Held back");
+  });
+
+  it("counts only specialist reports from the active assessment", () => {
+    const text = renderEvents([
+      activity("submit_target_specialist_assessment", {}, {
+        run_id: "old-assessment",
+        event_type: "assessment",
+        status: "completed",
+        team_member: "recruiter",
+        summary: "Recruiter submitted its assessment.",
+      }),
+      activity("read_candidate_evidence", {}, {
+        run_id: "active-assessment",
+        event_type: "assessment",
+        status: "completed",
+        team_member: "candidate_profiler",
+        summary: "Candidate profile completed.",
+      }),
+      activity("submit_target_specialist_assessment", {}, {
+        run_id: "active-assessment",
+        event_type: "assessment",
+        status: "running",
+        team_member: "recruiter",
+        summary: "Recruiter revisited the evidence.",
+      }),
+      activity("submit_target_assessment_judgment", {}, {
+        run_id: "active-assessment",
+        event_type: "assessment",
+        status: "running",
+        team_member: "quality_judge",
+        summary: "The independent judge started review.",
+      }),
+    ]);
+
+    expect(text).toContain("0 of 1 reported");
+    expect(text).not.toContain("2 of 3 reported");
+  });
+
+  it("uses durable sequence order when reconnect events arrive out of order", () => {
+    const completed = ["recruiter", "hiring_manager", "ats", "skeptic", "market_researcher"]
+      .map((team_member, index) => activity("submit_target_specialist_assessment", {}, {
+        sequence: 200 + index,
+        run_id: "active-assessment",
+        event_type: "assessment",
+        status: "completed",
+        team_member,
+        summary: `${team_member} submitted its assessment.`,
+      }));
+    const lateOlderEvent = activity("search_jobs", {}, {
+      sequence: 99,
+      run_id: "older-conversation",
+      event_type: "conversation",
+    });
+
+    const text = renderEvents([...completed, lateOlderEvent]);
+
+    expect(text).toContain("5 of 5 reported");
+    expect(text.match(/Reported/g)).toHaveLength(5);
+  });
+
+  it("does not carry an old assessment count into the active conversation", () => {
+    const text = renderEvents([
+      activity("submit_target_specialist_assessment", {}, {
+        run_id: "old-assessment",
+        event_type: "assessment",
+        status: "completed",
+        team_member: "recruiter",
+        summary: "Recruiter submitted its assessment.",
+      }),
+      activity("search_jobs", {}, {
+        run_id: "active-conversation",
+        event_type: "conversation",
+        status: "running",
+      }),
+    ]);
+
+    expect(text).not.toContain("reported");
+  });
+
+  it("names target profiling as role-profiler work", () => {
+    const text = renderEvents([
+      activity("select_target", {}, {
+        event_type: "run",
+        status: "completed",
+        team_member: "role_profiler",
+        summary: "The role profiler completed this turn.",
+      }),
+    ], { busy: false });
+
+    expect(text).toContain("Role profiler");
+    expect(text).toContain("Builds the target role's source-backed success profile");
+    expect(text).toContain("Reported");
   });
 });

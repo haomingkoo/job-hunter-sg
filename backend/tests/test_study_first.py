@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
+import config
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -18,7 +21,12 @@ from recruitment_team.candidate_profile import (
     CandidateProfileRun,
     ScriptedCandidateProfilerFactory,
 )
-from recruitment_team.study import _run_dispatched_study, study_resume_version
+from recruitment_team.study import (
+    dispatch_resume_study,
+    _run_dispatched_study,
+    _study_idempotency_key,
+    study_resume_version,
+)
 from recruitment_team.telemetry import RecordedTelemetry
 from recruitment_team.activity_publisher import IgnoreActivityPublisher, RecordedActivityPublisher
 from recruitment_team.conversation_model import ScriptedConversationModel
@@ -315,6 +323,75 @@ def test_start_thread_dispatches_the_resume_study_after_the_thread_is_durable():
 
         assert dispatched == [(owner_id, resume_id, receipt.thread_id)]
         assert db.query(RecruitmentThread).filter_by(id=receipt.thread_id).one()
+
+
+def test_study_provider_startup_failure_is_durable_and_user_visible():
+    sessions = _sessions()
+    owner_id, resume_id, thread_id = _owner_resume_thread(sessions)
+    publisher = RecordedActivityPublisher()
+
+    def unavailable_provider():
+        raise RuntimeError("private configuration detail")
+
+    worker = dispatch_resume_study(
+        sessions,
+        owner_id=owner_id,
+        resume_version_id=resume_id,
+        thread_id=thread_id,
+        profiler_factory_provider=unavailable_provider,
+        telemetry=RecordedTelemetry(),
+        activity_publisher=publisher,
+    )
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    with sessions() as db:
+        run = db.query(RecruitmentRun).filter_by(thread_id=thread_id).one()
+        thread = db.query(RecruitmentThread).filter_by(id=thread_id).one()
+        event = db.query(RecruitmentActivityEvent).filter_by(run_id=run.id).one()
+        assert run.status == "failed"
+        assert run.error_type == "RuntimeError"
+        assert thread.case_facts["candidate_profile_status"] == "failed"
+        assert event.status == "failed"
+        assert event.detail["failure_code"] == "provider_startup_failed"
+        assert "private configuration detail" not in str(event.detail)
+    assert [event.status for event in publisher.events] == ["failed"]
+
+
+def test_expired_running_study_is_reconciled_and_retried():
+    sessions = _sessions()
+    owner_id, resume_id, thread_id = _owner_resume_thread(sessions)
+    factory = ScriptedCandidateProfilerFactory([_run()], model_name="study-model")
+    stale_run_id = "stale-study-run"
+
+    with sessions() as db:
+        db.add(RecruitmentRun(
+            id=stale_run_id,
+            user_id=owner_id,
+            thread_id=thread_id,
+            idempotency_key=_study_idempotency_key(resume_id, factory.model_name),
+            command_type="study_resume_version",
+            status="running",
+            trace_key="stale-study-trace",
+            created_at=datetime.now(timezone.utc)
+            - timedelta(seconds=config.RECRUITMENT_RUN_LEASE_SECONDS + 1),
+        ))
+        db.commit()
+
+        _run_dispatched_study(
+            db,
+            owner_id=owner_id,
+            resume_version_id=resume_id,
+            thread_id=thread_id,
+            profiler_factory=factory,
+            telemetry=RecordedTelemetry(),
+        )
+
+        run = db.get(RecruitmentRun, stale_run_id)
+        thread = db.get(RecruitmentThread, thread_id)
+        assert run.status == "completed"
+        assert run.error_type is None
+        assert thread.case_facts["candidate_profile_status"] == "completed"
 
 
 def test_streaming_team_routes_background_study_events_to_the_active_publisher():

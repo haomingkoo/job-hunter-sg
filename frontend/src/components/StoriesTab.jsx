@@ -348,6 +348,7 @@ export default function StoriesTab() {
   const [generating, setGenerating] = useState(false);
   const [generatedDrafts, setGeneratedDrafts] = useState(null); // null = not generated, array = review mode
   const [generateError, setGenerateError] = useState("");
+  const [storyError, setStoryError] = useState("");
   const [generationStep, setGenerationStep] = useState(0);
 
   useEffect(() => {
@@ -362,12 +363,13 @@ export default function StoriesTab() {
   }, [generating]);
 
   const fetchStories = useCallback(async () => {
+    setStoryError("");
     try {
       const resp = await apiFetch("/api/stories");
       const data = await resp.json();
       setStories(data);
-    } catch {
-      // silent
+    } catch (error) {
+      setStoryError(error.message || "Could not load your story bank.");
     } finally {
       setLoading(false);
     }
@@ -377,6 +379,7 @@ export default function StoriesTab() {
 
   const handleSave = async (form) => {
     setSaving(true);
+    setStoryError("");
     try {
       if (editing.id) {
         await apiFetch(`/api/stories/${editing.id}`, {
@@ -391,8 +394,8 @@ export default function StoriesTab() {
       }
       await fetchStories();
       setEditing(null);
-    } catch {
-      // TODO: show error
+    } catch (error) {
+      setStoryError(error.message || "Could not save this story.");
     } finally {
       setSaving(false);
     }
@@ -400,12 +403,13 @@ export default function StoriesTab() {
 
   const handleDelete = async (id) => {
     if (!confirm("Delete this story?")) return;
+    setStoryError("");
     try {
       await apiFetch(`/api/stories/${id}`, { method: "DELETE" });
       setStories((prev) => prev.filter((s) => s.id !== id));
       if (editing?.id === id) setEditing(null);
-    } catch {
-      // silent
+    } catch (error) {
+      setStoryError(error.message || "Could not delete this story.");
     }
   };
 
@@ -487,6 +491,16 @@ export default function StoriesTab() {
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6">
+      {storyError && (
+        <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <span>{storyError}</span>
+          {!editing && (
+            <button type="button" onClick={fetchStories} className="shrink-0 font-medium underline">
+              Try again
+            </button>
+          )}
+        </div>
+      )}
       <AnimatePresence mode="wait">
         {editing ? (
           <motion.div

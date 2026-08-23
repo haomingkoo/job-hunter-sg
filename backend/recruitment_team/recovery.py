@@ -33,6 +33,8 @@ _FAILURE_TYPES: dict[str, FailureType] = {
     "rate_limited": "transient",
     "capacity_exceeded": "transient",
     "process_interrupted": "transient",
+    "checkpoint_state_unavailable": "transient",
+    "checkpoint_cleanup_failed": "transient",
     "structured_output_invalid": "validation",
     "semantic_fixable": "validation",
     "information_absent": "validation",
@@ -44,10 +46,12 @@ _FAILURE_TYPES: dict[str, FailureType] = {
     "invalid_configuration": "business",
     "policy_block": "business",
     "attempt_budget_exhausted": "business",
+    "specialist_attempt_budget_exhausted": "business",
     "missing_terminal_result": "business",
     "pause_token_not_found": "business",
     "checkpoint_mismatch": "business",
     "prompt_injection": "safety",
+    "protected_candidate_question": "safety",
     "user_cancelled": "cancelled",
 }
 
@@ -57,6 +61,8 @@ _RETRY_ACTIONS = {
     "rate_limited": "retry_after",
     "capacity_exceeded": "retry_after",
     "process_interrupted": "retry_incomplete_stage",
+    "checkpoint_state_unavailable": "retry_same_run",
+    "checkpoint_cleanup_failed": "retry_same_run",
     "structured_output_invalid": "correct_rejected_output",
     "semantic_fixable": "correct_rejected_output",
 }
@@ -71,10 +77,12 @@ _TERMINAL_ACTIONS = {
     "invalid_configuration": "operator_action",
     "policy_block": "request_user_direction",
     "attempt_budget_exhausted": "start_new_logical_run",
+    "specialist_attempt_budget_exhausted": "start_new_logical_run",
     "missing_terminal_result": "operator_review",
     "pause_token_not_found": "start_new_logical_run",
     "checkpoint_mismatch": "start_new_logical_run",
     "prompt_injection": "operator_review",
+    "protected_candidate_question": "operator_review",
     "user_cancelled": "await_explicit_user_action",
 }
 

@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import update
+from sqlalchemy import and_, or_, update
 from sqlalchemy.orm import Session
 
 import config
@@ -80,10 +80,24 @@ def reconcile_expired_runs(
     """Atomically stop expired running runs; safe for concurrent callers."""
 
     timestamp = now or _utcnow()
+    # Runs written before leases were introduced can have a null lease forever.
+    # A current runtime always assigns a lease before its first commit, so a
+    # null-lease row older than one full lease window is an interrupted legacy
+    # run rather than live work.
+    legacy_cutoff = timestamp - timedelta(seconds=config.RECRUITMENT_RUN_LEASE_SECONDS)
+    interrupted_condition = or_(
+        and_(
+            RecruitmentRun.lease_expires_at.is_not(None),
+            RecruitmentRun.lease_expires_at <= timestamp,
+        ),
+        and_(
+            RecruitmentRun.lease_expires_at.is_(None),
+            RecruitmentRun.created_at <= legacy_cutoff,
+        ),
+    )
     candidates = db.query(RecruitmentRun.id).filter(
         RecruitmentRun.status == "running",
-        RecruitmentRun.lease_expires_at.is_not(None),
-        RecruitmentRun.lease_expires_at <= timestamp,
+        interrupted_condition,
     )
     if thread_id is not None:
         candidates = candidates.filter(RecruitmentRun.thread_id == thread_id)
@@ -95,7 +109,7 @@ def reconcile_expired_runs(
             .where(
                 RecruitmentRun.id == run_id,
                 RecruitmentRun.status == "running",
-                RecruitmentRun.lease_expires_at <= timestamp,
+                interrupted_condition,
             )
             .values(
                 status="failed",

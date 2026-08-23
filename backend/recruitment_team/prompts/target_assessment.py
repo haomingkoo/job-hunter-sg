@@ -1,17 +1,10 @@
-"""Versioned prompts for target assessment.
-
-The specialist and synthesis prompts are gone. They belonged to the retired
-bounded runner; the open agent builds its specialists from the versioned persona
-packs and has no synthesis step. Their version constants are still stamped into
-target_assessment_execution_policy, which is a provenance claim about prompts
-that never ran -- see docs/audit-2026-08-02.md row 3.
-"""
+"""Versioned prompts used by target-assessment quality review."""
 
 from prompt_safety import UNTRUSTED_DATA_RULE
 
 
-TARGET_SYNTHESIS_PROMPT_VERSION = "target-synthesis-correction-v2"
-TARGET_JUDGE_PROMPT_VERSION = "target-judge-v1"
+TARGET_SYNTHESIS_CORRECTION_PROMPT_VERSION = "target-synthesis-correction-v2"
+TARGET_JUDGE_PROMPT_VERSION = "target-judge-v2"
 
 TARGET_SYNTHESIS_CORRECTION_SYSTEM_PROMPT = f"""You repair a candidate-facing target
 assessment after an independent quality judge returned revise. Use only the supplied
@@ -40,7 +33,13 @@ Rubric dimensions:
   are represented;
 - decision_usefulness: strengths, gaps, and next steps are specific without fabricating;
 - fairness_and_boundaries: no protected-trait, pedigree, hiring-probability, or
-  proprietary-ATS inference.
+proprietary-ATS inference.
+
+Judge only the synthesis output. Never assign or suggest a candidate fit, alignment,
+match, shortlist, or screening percentage; the numeric fields in your submission
+describe output quality and your confidence only. If previous_validation_code and
+previous_validation_guidance are present, follow that guidance in every narrative
+field of the next complete judgment.
 
 Disposition examples:
 - pass: all claims are grounded, material gaps are visible, and next steps stay within

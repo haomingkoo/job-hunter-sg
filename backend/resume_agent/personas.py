@@ -8,16 +8,14 @@ import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextvars import copy_context
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import config
-from deepagents.middleware.subagents import SubAgent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from .models import create_agent_model
-from .contracts import TARGET_JOB_PERSONAS
 from .prompts import (
     REVIEWER_CONFIGS,
     build_reviewer_system_prompt,
@@ -97,27 +95,6 @@ _SUBMIT_ASSESSMENT_TOOL = StructuredTool.from_function(
 
 
 _worker_system_prompt = build_reviewer_system_prompt
-
-
-def create_persona_subagents(smart_model: Any | None = None) -> list[SubAgent]:
-    """Return least-privilege persona worker specifications."""
-    model = smart_model or create_agent_model()
-    subagents = []
-    assert tuple(name for name, _description, _prompt in _PERSONAS) == TARGET_JOB_PERSONAS
-    for name, description, prompt in _PERSONAS:
-        subagents.append(
-            cast(
-                SubAgent,
-                {
-                    "name": name,
-                    "description": description,
-                    "system_prompt": _worker_system_prompt(name, prompt),
-                    "tools": [_SUBMIT_ASSESSMENT_TOOL],
-                    "model": model,
-                },
-            )
-        )
-    return subagents
 
 
 def parse_persona_output(raw: str) -> dict:

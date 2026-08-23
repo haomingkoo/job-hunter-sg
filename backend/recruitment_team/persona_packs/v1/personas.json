@@ -34,12 +34,7 @@
     "required": [
       "persona_id",
       "summary",
-      "strengths",
-      "weaknesses",
-      "evidence_gaps",
-      "criterion_ids",
-      "candidate_profile_field_ids",
-      "resume_evidence_ids",
+      "findings",
       "score",
       "score_reason"
     ],

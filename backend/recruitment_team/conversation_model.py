@@ -17,6 +17,7 @@ import config
 from .interface import Message, PreferenceFact, PreferenceUpdate
 from .prompts import CONVERSATION_SYSTEM_PROMPT
 from .telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
+from .model_transport_observer import create_observed_agent_model, transport_role
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle guard, annotations are strings
     from .coordinator.context import ConversationContext
@@ -121,6 +122,9 @@ class ModelReply:
     # holding the pending interrupt. RecruitmentTeam persists it so the next
     # message resumes that graph instead of starting a new one.
     pause_token: str = ""
+    # A terminal graph whose checkpoint deletion failed. The recruitment team
+    # persists this opaque local identifier so later privacy cleanup can retry.
+    checkpoint_cleanup_token: str = ""
 
 
 def paragraph_reply(content: str) -> str:
@@ -189,7 +193,11 @@ def _submission(response: AIMessage) -> tuple[ConversationReply | None, dict, st
     try:
         return ConversationReply.model_validate(calls[0].get("args") or {}), failed, ""
     except ValidationError as error:
-        return None, failed, str(error)
+        locations_and_types = [
+            f"{'.'.join(str(part) for part in item.get('loc') or ('root',))}:{item.get('type') or 'invalid'}"
+            for item in error.errors(include_url=False, include_context=False, include_input=False)
+        ]
+        return None, failed, "schema_validation:" + ",".join(locations_and_types)
 
 
 class LangChainConversationModel:
@@ -201,15 +209,15 @@ class LangChainConversationModel:
         *,
         telemetry: RecruitmentTelemetry | None = None,
     ):
+        self._telemetry = telemetry or OpenTelemetryRecorder()
         if model is None:
-            from resume_agent.models import create_agent_model
-
-            model = create_agent_model(
+            model = create_observed_agent_model(
+                self._telemetry,
+                role="conversation",
                 timeout=config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
                 max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
             )
         self._model = model
-        self._telemetry = telemetry or OpenTelemetryRecorder()
 
     def respond(
         self,
@@ -287,7 +295,8 @@ class LangChainConversationModel:
                     "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
                 },
             ) as span:
-                response = bound_model.invoke(attempt_request)
+                with transport_role("conversation"):
+                    response = bound_model.invoke(attempt_request)
                 usage = getattr(response, "usage_metadata", None) or {}
                 attempt_input_tokens = int(usage.get("input_tokens") or 0)
                 attempt_output_tokens = int(usage.get("output_tokens") or 0)

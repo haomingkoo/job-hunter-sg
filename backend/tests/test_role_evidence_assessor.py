@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from langchain_core.messages import AIMessage
 
@@ -194,7 +196,7 @@ def test_assessor_returns_one_validated_judgment_and_uses_xml_tool_contract():
     run = LangChainRoleEvidenceAssessor(model).assess(_request())
 
     assert run.attempt_count == 1
-    assert run.prompt_version == "role-evidence-assessor-v9"
+    assert run.prompt_version == "role-evidence-assessor-v10"
     assert run.judgments[0].alignment == "partial"
     assert run.judgments[0].evidence_support_score == 55
     data_message = model.requests[0][1].content
@@ -235,7 +237,7 @@ def test_assessor_retries_once_with_original_evidence_failed_output_and_exact_er
     assert attempts[0].attributes == {
         "attempt": 1,
         "max_attempts": role_evidence_attempt_limit(len(_request().criteria)),
-        "prompt_version": "role-evidence-assessor-v9",
+        "prompt_version": "role-evidence-assessor-v10",
         "configured_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
         "correction_scope": "full",
@@ -448,6 +450,60 @@ def test_assessor_rejects_invalid_ids_quotes_and_numbers_without_fallback(change
         "submit_role_evidence_assessment",
         "submit_role_evidence_correction",
     ]
+
+
+def test_assessor_accepts_minimum_number_paraphrased_from_plus_requirement():
+    request = _request()
+    criterion = replace(
+        request.criteria[0],
+        statement="Lead transformation for 10+ years.",
+        source_citations=(
+            RoleCitation(
+                source_id="target_job:7",
+                source_path="description",
+                relevant_excerpt="Lead transformation for 10+ years.",
+            ),
+        ),
+    )
+    judgment = _judgment(
+        remaining_gap="Evidence of a minimum of 10 years leading transformation is not shown."
+    )
+    model = _Model([{"judgments": [judgment]}])
+
+    run = LangChainRoleEvidenceAssessor(model).assess(
+        RoleEvidenceAssessmentRequest(
+            criteria=(criterion,),
+            resume_blocks=request.resume_blocks,
+            role_sources=request.role_sources,
+            candidate_profile_fields=request.candidate_profile_fields,
+            proposed_evidence=request.proposed_evidence,
+        )
+    )
+
+    assert run.validation_codes == ()
+
+
+def test_assessor_renders_uncited_missing_evidence_from_the_canonical_criterion():
+    request = _request()
+    hallucinated = _judgment(
+        alignment="missing",
+        resume_evidence_ids=[],
+        candidate_profile_field_ids=[],
+        supported_strength="The candidate has only 2 years.",
+        remaining_gap="At least 10 years are required.",
+        evidence_support_score=47,
+        score_reason="Dates imply a 2-year history.",
+    )
+    model = _Model([{"judgments": [hallucinated]}])
+
+    run = LangChainRoleEvidenceAssessor(model).assess(request)
+
+    judgment = run.judgments[0]
+    assert judgment.supported_strength == "No cited candidate evidence establishes this criterion."
+    assert judgment.remaining_gap == "Evidence is still needed for: Lead a rollout across 5 markets."
+    assert judgment.evidence_support_score == 0
+    assert judgment.score_reason == "No cited candidate evidence establishes this criterion."
+    assert run.validation_codes == ()
 
 
 def test_assessor_rejects_resume_evidence_not_owned_by_selected_profile_field(monkeypatch):

@@ -6,7 +6,7 @@ import threading
 import time
 
 import recruitment_team.activity_stream as activity_stream
-from recruitment_team.activity_stream import stream_command
+from recruitment_team.activity_stream import stream_command, stream_retry
 from recruitment_team.interface import RunReceipt, SendMessage
 
 
@@ -17,6 +17,11 @@ class _FakeTeam:
         self._receipt = receipt
 
     def execute(self, owner_id, command, idempotency_key):
+        if self._error is not None:
+            raise self._error
+        return self._receipt
+
+    def retry_conversation_run(self, owner_id, thread_id, run_id):
         if self._error is not None:
             raise self._error
         return self._receipt
@@ -33,6 +38,21 @@ def test_stream_command_yields_activity_then_receipt_on_success():
         )
     )
     assert any("event: receipt" in event for event in events)
+
+
+def test_stream_retry_yields_the_durable_retry_receipt():
+    receipt = RunReceipt(run_id="run-1", thread_id="thread-1", status="completed", trace_key="trace-1")
+
+    events = list(
+        stream_retry(
+            lambda activity_publisher: _FakeTeam(activity_publisher, receipt=receipt),
+            owner_id=1,
+            thread_id="thread-1",
+            run_id="run-1",
+        )
+    )
+
+    assert any("event: receipt" in event and '"run_id":"run-1"' in event for event in events)
 
 
 def test_stream_command_logs_the_failure_even_if_the_client_never_finishes_reading():
@@ -79,7 +99,9 @@ def test_stream_command_logs_the_failure_even_if_the_client_never_finishes_readi
 
     assert records, "expected the background worker to log the failure even though nothing kept reading its output"
     assert "thread-disconnect" in records[0].getMessage()
-    assert records[0].exc_info is not None
+    assert records[0].exc_info is None
+    assert "boom" not in records[0].getMessage()
+    assert "owner_id" not in records[0].getMessage()
 
 
 def test_stream_command_emits_configured_safe_heartbeats_during_idle_work(monkeypatch):

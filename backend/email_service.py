@@ -7,13 +7,25 @@ import smtplib
 from email.message import EmailMessage
 
 
+class EmailDeliveryError(RuntimeError):
+    """Safe SMTP failure classification without retaining message content."""
+
+    def __init__(self, stage: str, *, delivery_unknown: bool = False):
+        super().__init__(f"SMTP failed during {stage}")
+        self.stage = stage
+        self.delivery_unknown = delivery_unknown
+
+
 def smtp_configured() -> bool:
-    return bool(
-        os.environ.get("SMTP_HOST")
-        and (os.environ.get("SMTP_USER") or os.environ.get("SMTP_USERNAME"))
-        and (os.environ.get("SMTP_PASS") or os.environ.get("SMTP_PASSWORD"))
-        and (os.environ.get("SMTP_FROM") or os.environ.get("SMTP_FROM_EMAIL"))
-    )
+    host = os.environ.get("SMTP_HOST", "").strip()
+    username = (os.environ.get("SMTP_USER") or os.environ.get("SMTP_USERNAME") or "").strip()
+    password = os.environ.get("SMTP_PASS") or os.environ.get("SMTP_PASSWORD") or ""
+    sender = (os.environ.get("SMTP_FROM") or os.environ.get("SMTP_FROM_EMAIL") or "").strip()
+    try:
+        port = int(os.environ.get("SMTP_PORT", "587") or "587")
+    except ValueError:
+        return False
+    return bool(host and username and password and sender and 1 <= port <= 65535)
 
 
 def email_configured() -> bool:
@@ -60,8 +72,28 @@ def send_email(
     message.add_alternative(html_body, subtype="html")
 
     smtp_cls = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
-    with smtp_cls(host, port, timeout=30) as smtp:
-        if use_tls and not use_ssl:
-            smtp.starttls()
-        smtp.login(username, password)
-        smtp.send_message(message)
+    try:
+        smtp = smtp_cls(host, port, timeout=30)
+    except Exception as exc:
+        raise EmailDeliveryError("connect") from exc
+    try:
+        try:
+            if use_tls and not use_ssl:
+                smtp.starttls()
+            smtp.login(username, password)
+        except Exception as exc:
+            raise EmailDeliveryError("authentication") from exc
+        try:
+            smtp.send_message(message)
+        except Exception as exc:
+            # An exception while awaiting the DATA response cannot establish
+            # whether the server accepted the message.
+            raise EmailDeliveryError("data_response", delivery_unknown=True) from exc
+    except EmailDeliveryError:
+        smtp.close()
+        raise
+    else:
+        try:
+            smtp.quit()
+        except Exception:
+            smtp.close()

@@ -11,18 +11,66 @@ import html
 import hmac
 import os
 import re
+import threading
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import cast
 
-from sqlalchemy import or_
+from sqlalchemy import or_, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, load_only
 
+from account_lifecycle import account_lifecycle_lock, locked_account_storage
 from ats_terms import ATS_ALLOWED_SINGLE_TERMS
 from database import SessionLocal
-from email_service import email_configured, email_provider, send_email, smtp_configured
+from email_service import (
+    EmailDeliveryError,
+    email_configured,
+    email_provider,
+    send_email,
+    smtp_configured,
+)
 from employer_filter import direct_employer_condition, normalize_employer_name
 from models import JobAlertDelivery, JobAlertPreference, ScrapedJob, TrackedJob, User, UserMemory
-from skill_extractor import extract_skill_phrases
+from skill_extractor import extract_skill_phrases, normalize_skill_strings
+
+
+_JOB_ALERT_RUN_LOCK_KEY = 0x4A48414C
+_LOCAL_JOB_ALERT_RUN_LOCK = threading.Lock()
+_ALERT_QUERY_BATCH_SIZE = 400
+
+
+@contextmanager
+def _job_alert_run_lease(db: Session):
+    """Admit one email-sending alert run across workers and replicas."""
+    bind = db.get_bind()
+    if bind.dialect.name == "postgresql":
+        connection = cast(Engine, bind).connect()
+        acquired = False
+        try:
+            acquired = bool(
+                connection.execute(
+                    text("SELECT pg_try_advisory_lock(:key)"),
+                    {"key": _JOB_ALERT_RUN_LOCK_KEY},
+                ).scalar()
+            )
+            yield acquired
+        finally:
+            if acquired:
+                connection.execute(
+                    text("SELECT pg_advisory_unlock(:key)"),
+                    {"key": _JOB_ALERT_RUN_LOCK_KEY},
+                )
+            connection.close()
+        return
+
+    acquired = _LOCAL_JOB_ALERT_RUN_LOCK.acquire(blocking=False)
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            _LOCAL_JOB_ALERT_RUN_LOCK.release()
 
 
 ALERT_SINGLE_TERMS = ATS_ALLOWED_SINGLE_TERMS | {
@@ -212,39 +260,6 @@ def _split_keywords(raw_keywords: str) -> list[str]:
     return keywords[:8]
 
 
-def _normalise_skill_strings(raw_skills) -> list[str]:
-    collected: list[str] = []
-
-    def visit(value) -> None:
-        if isinstance(value, str):
-            for part in re.split(r"[;,|/]", value):
-                cleaned = part.strip()
-                if cleaned:
-                    collected.append(cleaned)
-        elif isinstance(value, list):
-            for item in value:
-                visit(item)
-        elif isinstance(value, dict):
-            for key, item in value.items():
-                visit(key)
-                visit(item)
-
-    visit(raw_skills)
-
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for skill in collected:
-        cleaned = re.sub(r"\s+", " ", skill).strip(" -•\t")
-        lower = cleaned.lower()
-        if not cleaned or len(cleaned) < 2 or len(cleaned) > 80:
-            continue
-        if lower in seen:
-            continue
-        seen.add(lower)
-        deduped.append(cleaned)
-    return deduped
-
-
 def _extract_title_terms(title: str) -> list[str]:
     return [
         word
@@ -272,11 +287,11 @@ def _job_alert_terms(job: ScrapedJob) -> list[str]:
     if isinstance(preview, list) and preview:
         terms = [str(term) for term in preview if str(term or "").strip()]
     else:
-        terms = _normalise_skill_strings(job.skills)
+        terms = normalize_skill_strings(job.skills, max_length=80)
         if not terms and (job.description or "").strip():
             terms = extract_skill_phrases(
                 job.description or "",
-                _normalise_skill_strings(job.skills),
+                normalize_skill_strings(job.skills, max_length=80),
                 use_dynamic_skills=False,
             )
     if not terms:
@@ -401,9 +416,15 @@ def find_alert_matches(
     pref: JobAlertPreference,
     resume_text: str,
     now: datetime | None = None,
+    *,
+    limit: int | None = None,
 ) -> list[AlertMatch]:
     now = now or _utcnow()
-    since = _as_utc(pref.last_run_at) or (now - timedelta(days=1))
+    since = (
+        _as_utc(getattr(pref, "match_cursor_at", None))
+        or _as_utc(pref.last_run_at)
+        or (now - timedelta(days=1))
+    )
     since_iso = since.isoformat()
     keywords = _split_keywords(pref.keywords)
 
@@ -473,7 +494,7 @@ def find_alert_matches(
 
     matches: list[AlertMatch] = []
     seen_keys: set[tuple[str, ...]] = set()
-    for job in query.order_by(ScrapedJob.id.desc()).limit(400).all():
+    for job in query.order_by(ScrapedJob.id.desc()).yield_per(_ALERT_QUERY_BATCH_SIZE):
         if job.id in delivered_ids or job.id in tracked_ids:
             continue
         if _identity_key(job.title, job.company) in tracked_keys:
@@ -488,7 +509,7 @@ def find_alert_matches(
         matches.append(scored)
 
     matches.sort(key=lambda item: (item.score, item.job.id), reverse=True)
-    return matches[: pref.max_jobs]
+    return matches[: (pref.max_jobs if limit is None else limit)]
 
 
 def _job_url(job: ScrapedJob) -> str:
@@ -572,7 +593,88 @@ def render_alert_email(user: User, pref: JobAlertPreference, matches: list[Alert
     return subject, text_body, html_body, unsubscribe_url
 
 
+def _process_due_alert(
+    db: Session,
+    pref: JobAlertPreference,
+    now: datetime,
+    *,
+    dry_run: bool,
+) -> tuple[int, bool] | None:
+    """Process one locked preference; return candidate count and backlog state."""
+    user = db.get(User, pref.user_id)
+    mem = db.query(UserMemory).filter(UserMemory.user_id == pref.user_id).first()
+    resume_text = (mem.resume_text or "").strip() if mem else ""
+    if not user or len(resume_text) < 50:
+        if not dry_run:
+            pref.last_run_at = now
+            pref.match_cursor_at = now
+            pref.updated_at = now
+            db.commit()
+        return None
+
+    ranked_matches = find_alert_matches(
+        db,
+        pref,
+        resume_text,
+        now=now,
+        limit=pref.max_jobs + 1,
+    )
+    has_backlog = len(ranked_matches) > pref.max_jobs
+    matches = ranked_matches[: pref.max_jobs]
+    candidate_count = len(matches)
+    smtp_accepted = False
+    if matches and not dry_run:
+        subject, text_body, html_body, unsubscribe_url = render_alert_email(user, pref, matches)
+        send_email(
+            user.email,
+            subject,
+            text_body,
+            html_body,
+            list_unsubscribe_url=unsubscribe_url,
+        )
+        smtp_accepted = True
+        resume_digest = _resume_hash(resume_text)
+        for match in matches:
+            db.add(
+                JobAlertDelivery(
+                    user_id=user.id,
+                    preference_id=pref.id,
+                    scraped_job_id=match.job.id,
+                    resume_hash=resume_digest,
+                    match_score=match.score,
+                    action="sent",
+                    sent_at=now,
+                )
+            )
+
+    if not dry_run:
+        pref.last_run_at = now
+        if not has_backlog:
+            pref.match_cursor_at = now
+        pref.updated_at = now
+        try:
+            db.commit()
+        except Exception as exc:
+            if smtp_accepted:
+                raise AlertPersistenceAfterAcceptanceError(candidate_count) from exc
+            raise
+    else:
+        db.rollback()
+    return candidate_count, has_backlog
+
+
+class AlertPersistenceAfterAcceptanceError(RuntimeError):
+    """SMTP accepted a digest whose delivery records could not be committed."""
+
+    def __init__(self, job_count: int):
+        super().__init__("SMTP accepted the digest, but persistence failed")
+        self.job_count = job_count
+
+
 def run_job_alerts(dry_run: bool = False, limit_users: int | None = None) -> dict:
+    if limit_users is not None and limit_users < 1:
+        raise ValueError("limit_users must be a positive integer")
+
     stats = {
         "email_configured": email_configured(),
         "email_provider": email_provider(),
@@ -582,8 +684,16 @@ def run_job_alerts(dry_run: bool = False, limit_users: int | None = None) -> dic
         "users_due": 0,
         "emails_sent": 0,
         "jobs_sent": 0,
+        "emails_would_send": 0,
+        "jobs_would_send": 0,
+        "smtp_accepted": 0,
+        "durably_recorded": 0,
+        "persistence_after_acceptance": 0,
+        "delivery_unknown": 0,
+        "users_with_backlog": 0,
         "skipped_no_resume": 0,
         "skipped_not_due": 0,
+        "skipped_overlap": False,
         "errors": [],
     }
     if not dry_run and not stats["email_configured"]:
@@ -592,67 +702,86 @@ def run_job_alerts(dry_run: bool = False, limit_users: int | None = None) -> dic
     now = _utcnow()
     db = SessionLocal()
     try:
-        query = (
-            db.query(JobAlertPreference)
-            .filter(JobAlertPreference.enabled == 1)
-            .order_by(JobAlertPreference.id.asc())
-        )
-        if limit_users:
-            query = query.limit(limit_users)
+        lease = nullcontext(True) if dry_run else _job_alert_run_lease(db)
+        with lease as acquired:
+            if not acquired:
+                stats["skipped_overlap"] = True
+                return stats
 
-        for pref in query.all():
-            stats["users_checked"] += 1
-            if not _preference_due(pref, now):
-                stats["skipped_not_due"] += 1
-                continue
-            stats["users_due"] += 1
-            try:
-                user = db.get(User, pref.user_id)
-                mem = db.query(UserMemory).filter(UserMemory.user_id == pref.user_id).first()
-                resume_text = (mem.resume_text or "").strip() if mem else ""
-                if not user or len(resume_text) < 50:
-                    stats["skipped_no_resume"] += 1
-                    if not dry_run:
-                        pref.last_run_at = now
-                        pref.updated_at = now
-                        db.commit()
-                    continue
+            query = (
+                db.query(JobAlertPreference.id, JobAlertPreference.user_id)
+                .filter(JobAlertPreference.enabled == 1)
+                .order_by(JobAlertPreference.id.asc())
+            )
+            if limit_users is not None:
+                query = query.limit(limit_users)
 
-                matches = find_alert_matches(db, pref, resume_text, now=now)
-                if matches and not dry_run:
-                    subject, text_body, html_body, unsubscribe_url = render_alert_email(user, pref, matches)
-                    send_email(
-                        user.email,
-                        subject,
-                        text_body,
-                        html_body,
-                        list_unsubscribe_url=unsubscribe_url,
-                    )
-                    resume_digest = _resume_hash(resume_text)
-                    for match in matches:
-                        db.add(
-                            JobAlertDelivery(
-                                user_id=user.id,
-                                preference_id=pref.id,
-                                scraped_job_id=match.job.id,
-                                resume_hash=resume_digest,
-                                match_score=match.score,
-                                action="sent",
-                                sent_at=now,
-                            )
+            for preference_id, user_id in query.all():
+                stats["users_checked"] += 1
+                try:
+                    local_guard = nullcontext() if dry_run else account_lifecycle_lock(user_id)
+                    with local_guard:
+                        storage_guard = (
+                            nullcontext()
+                            if dry_run
+                            else locked_account_storage(user_id, db)
                         )
-                    stats["emails_sent"] += 1
-                    stats["jobs_sent"] += len(matches)
-
-                if not dry_run:
-                    pref.last_run_at = now
-                    pref.updated_at = now
-                    db.commit()
-                else:
+                        with storage_guard:
+                            db.expire_all()
+                            pref = db.get(JobAlertPreference, preference_id)
+                            if pref is None or not pref.enabled:
+                                db.rollback()
+                                continue
+                            if not _preference_due(pref, now):
+                                stats["skipped_not_due"] += 1
+                                db.rollback()
+                                continue
+                            stats["users_due"] += 1
+                            outcome = _process_due_alert(
+                                db,
+                                pref,
+                                now,
+                                dry_run=dry_run,
+                            )
+                    if outcome is None:
+                        stats["skipped_no_resume"] += 1
+                    else:
+                        candidate_count, has_backlog = outcome
+                        if has_backlog:
+                            stats["users_with_backlog"] += 1
+                    if outcome is not None and candidate_count:
+                        if dry_run:
+                            stats["emails_would_send"] += 1
+                            stats["jobs_would_send"] += candidate_count
+                            continue
+                        # Keep legacy field names, but count only after the
+                        # delivery records and preference update are durable.
+                        stats["emails_sent"] += 1
+                        stats["jobs_sent"] += candidate_count
+                        stats["smtp_accepted"] += 1
+                        stats["durably_recorded"] += 1
+                except AlertPersistenceAfterAcceptanceError as exc:
                     db.rollback()
-            except Exception as exc:
-                db.rollback()
-                stats["errors"].append({"user_id": pref.user_id, "error": type(exc).__name__})
+                    stats["smtp_accepted"] += 1
+                    stats["persistence_after_acceptance"] += 1
+                    stats["errors"].append({
+                        "user_id": user_id,
+                        "error": type(exc).__name__,
+                        "stage": "persistence_after_acceptance",
+                    })
+                except EmailDeliveryError as exc:
+                    db.rollback()
+                    if exc.delivery_unknown:
+                        stats["delivery_unknown"] += 1
+                    stats["errors"].append({
+                        "user_id": user_id,
+                        "error": type(exc).__name__,
+                        "stage": exc.stage,
+                        "delivery_unknown": exc.delivery_unknown,
+                    })
+                except Exception as exc:
+                    db.rollback()
+                    stats["errors"].append({"user_id": user_id, "error": type(exc).__name__})
     finally:
         db.close()
 

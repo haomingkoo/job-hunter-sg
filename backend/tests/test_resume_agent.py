@@ -4,7 +4,10 @@ import os
 import secrets
 import sys
 import threading
+import time
 from typing import ClassVar
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -56,6 +59,21 @@ def test_model_factory_builds_agent_and_smart_models(monkeypatch):
     assert smart.model_name == config.SEALION_SMART_MODEL
     assert smart.max_tokens >= config.SMART_MIN_MAX_TOKENS
     assert agent.extra_body == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def test_agent_rate_limiters_are_paced_per_captured_api_key():
+    import config
+    import resume_agent.models as agent_models
+
+    agent_models._key_rate_limiters.clear()
+    first = agent_models._rate_limiter_for("first-test-key")
+    same = agent_models._rate_limiter_for("first-test-key")
+    second = agent_models._rate_limiter_for("second-test-key")
+
+    assert first is same
+    assert first is not second
+    assert first._limiter._max == 1
+    assert first._limiter._refill_rate == pytest.approx(config.SEALION_REQ_PER_MIN / 60)
 
 
 def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
@@ -534,6 +552,30 @@ def test_completed_event_stream_is_not_traced_as_an_error(monkeypatch):
     assert span.status.status_code.name == "UNSET"
 
 
+def test_error_event_marks_review_span_failed_without_exporting_message(monkeypatch):
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    import resume_agent.telemetry as telemetry
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    test_tracer = provider.get_tracer("resume-agent-error-events-test")
+    monkeypatch.setattr(telemetry, "tracer", lambda: test_tracer)
+
+    events = list(telemetry.traced_events(iter([
+        {"event": "error", "message": "private provider response"},
+        {"event": "done"},
+    ]), trace_key="safe"))
+
+    assert [event["event"] for event in events] == ["error", "done"]
+    span = exporter.get_finished_spans()[0]
+    assert span.status.status_code.name == "ERROR"
+    assert span.status.description == "stream_error"
+    assert "private provider response" not in repr(span.attributes)
+
+
 def test_quality_judge_scores_the_writeup_with_cited_strengths_and_weaknesses():
     from langchain_core.messages import AIMessage
 
@@ -688,6 +730,25 @@ def test_assessment_presentation_violation_snippets_quotes_matched_text():
     ) == []
 
 
+def test_assessment_structure_contract_requires_all_sections_in_order():
+    from resume_agent.prompts import assessment_structure_violations
+
+    valid = "\n".join([
+        "Summary", "Decision.", "Strengths", "- Evidence", "Weaknesses", "- Gap",
+        "Independent reviewer score", "74/100", "Reasoning", "Calibrated.",
+        "Next actions", "- Confirm impact",
+    ])
+
+    assert assessment_structure_violations(valid) == []
+    assert assessment_structure_violations("Summary\nDecision") == [
+        "missing_section:strengths",
+        "missing_section:weaknesses",
+        "missing_section:independent_reviewer_score",
+        "missing_section:reasoning",
+        "missing_section:next_actions",
+    ]
+
+
 def test_agent_calls_search_jobs_for_role_query():
     from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
     from langchain_core.messages import AIMessage
@@ -785,33 +846,6 @@ def test_propose_edit_rejects_ownership_inflation():
     assert result["accepted"] is False
     assert result["application_status"] == "rejected"
     assert "unsupported" in result["reason"].lower()
-
-
-def test_persona_subagents_have_bounded_shared_tools(monkeypatch):
-    import config
-    import resume_agent.models as agent_models
-    import resume_agent.personas as personas
-
-    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
-
-    subagents = personas.create_persona_subagents()
-
-    from resume_agent.contracts import TARGET_JOB_PERSONAS
-
-    assert len(subagents) == len(TARGET_JOB_PERSONAS)
-    assert {subagent["name"] for subagent in subagents} == {
-        "recruiter",
-        "hiring_manager",
-        "ats",
-        "skeptic",
-        "market_researcher",
-    }
-    for subagent in subagents:
-        assert [tool.name for tool in subagent["tools"]] == ["submit_assessment"]
-        assert subagent["model"].model_name == config.SEALION_AGENT_MODEL
-        assert "Workflow:" in subagent["system_prompt"]
-        assert "Good:" in subagent["system_prompt"]
-        assert "Avoid:" in subagent["system_prompt"]
 
 
 def test_personas_use_supplied_evidence_without_mandatory_research_calls():
@@ -921,9 +955,7 @@ def test_research_worker_can_cite_a_secondary_job_separately_from_primary_eviden
 
 
 def test_persona_reviews_require_canonical_evidence_ids():
-    import json
 
-    from langchain_core.messages import AIMessage
     from resume_document import create_resume_document
     import resume_agent.personas as personas
 
@@ -1038,9 +1070,9 @@ def test_persona_worker_result_is_rejected_when_structured_submission_is_skipped
     assert run["status"] == "error"
     assert run["failure_type"] == "validation"
     assert run["attempted_operation"] == "recruiter resume assessment"
-    assert run["attempt_count"] == 2
+    assert run["attempt_count"] == personas.config.AGENT_PERSONA_VALIDATION_ATTEMPTS
     assert run["partial_results"] == []
-    assert len(run["local_recovery_attempts"]) == 2
+    assert len(run["local_recovery_attempts"]) == run["attempt_count"]
     assert run["remaining_gap"]
     assert run["suggested_alternatives"]
     assert run["retryable"] is True
@@ -1110,9 +1142,7 @@ def test_persona_worker_preserves_findings_when_optional_tool_fails(monkeypatch)
 
 
 def test_persona_review_discards_unknown_evidence_ids():
-    import json
 
-    from langchain_core.messages import AIMessage
     from resume_document import create_resume_document
     import resume_agent.personas as personas
 
@@ -1143,11 +1173,10 @@ def test_persona_review_discards_unknown_evidence_ids():
         persona_names=("recruiter",),
     ))
     assert [run for run in runs if run["status"] in {"success", "partial"}] == []
-    assert model.calls == 2
+    assert model.calls == personas.config.AGENT_PERSONA_VALIDATION_ATTEMPTS
 
 
 def test_persona_review_retries_once_after_fixable_validation_failure():
-    import json
 
     from langchain_core.messages import AIMessage
     from resume_document import create_resume_document
@@ -1188,9 +1217,7 @@ def test_persona_review_retries_once_after_fixable_validation_failure():
 
 
 def test_persona_retry_explains_allowed_target_job_fields():
-    import json
 
-    from langchain_core.messages import AIMessage
     from resume_document import create_resume_document
     import resume_agent.personas as personas
 
@@ -1230,9 +1257,7 @@ def test_persona_retry_explains_allowed_target_job_fields():
 
 
 def test_persona_review_retries_oversized_exact_finding_instead_of_clipping():
-    import json
 
-    from langchain_core.messages import AIMessage
     from resume_document import create_resume_document
     import resume_agent.personas as personas
 
@@ -1295,9 +1320,7 @@ def test_long_source_evidence_is_referenced_and_preview_is_explicit():
 
 
 def test_market_persona_receives_xml_delimited_job_snapshot():
-    import json
 
-    from langchain_core.messages import AIMessage
     from resume_document import create_resume_document
     import resume_agent.personas as personas
 
@@ -1461,7 +1484,19 @@ def test_session_keeps_successful_reviews_when_one_worker_fails(monkeypatch):
             prompt = payload["messages"][0]["content"]
             assert "worker_failures_data" in prompt
             assert "search_failed" in prompt
-            return {"messages": [AIMessage(content="Partial synthesis with clear limitation.")]}
+            return {"messages": [AIMessage(content="""Summary
+Partial synthesis with clear limitation.
+Strengths
+- Relevant evidence is visible.
+Weaknesses
+- Market comparison is unavailable.
+Independent reviewer score
+72/100
+Reasoning
+The available evidence supports a partial review.
+Next actions
+- Retry market research.
+""")]}
 
     completed = {
         "persona": "recruiter",
@@ -1554,7 +1589,19 @@ def test_session_keeps_partial_review_and_discloses_its_gap(monkeypatch):
     class FakeAgent:
         def invoke(self, payload, config=None):
             assert "worker_failures_data" in payload["messages"][0]["content"]
-            return {"messages": [AIMessage(content="Synthesis with disclosed evidence gap.")]}
+            return {"messages": [AIMessage(content="""Summary
+Partial synthesis with a disclosed evidence gap.
+Strengths
+- Delivery ownership is supported.
+Weaknesses
+- Detailed role evidence is incomplete.
+Independent reviewer score
+70/100
+Reasoning
+The available evidence supports a partial review.
+Next actions
+- Retry the detailed evidence lookup.
+""")]}
 
     monkeypatch.setattr(
         agent_session,
@@ -1563,9 +1610,19 @@ def test_session_keeps_partial_review_and_discloses_its_gap(monkeypatch):
     )
     monkeypatch.setattr(agent_session, "create_resume_agent", lambda **_kwargs: FakeAgent())
     monkeypatch.setattr(agent_session, "judge_assessment", lambda *_args, **_kwargs: {
-        "status": "error",
-        "remaining_gap": "Judge unavailable.",
+        "status": "success",
+        "attempt_count": 1,
+        "assessment": {
+            "verdict": "The partial limitation is disclosed.",
+            "requires_revision": False,
+            "strengths": [{"finding": "The evidence boundary is clear.", "source": "final_assessment"}],
+            "weaknesses": [{"finding": "One lookup remains incomplete.", "source": "reviewer:hiring_manager"}],
+            "score": 70,
+            "reasoning": "The synthesis is useful without hiding the evidence gap.",
+            "evidence_gaps": ["Detailed role evidence is incomplete."],
+        },
         "tool_spans": [],
+        "error": None,
     })
 
     events = list(agent_session.stream_chat_events({
@@ -2078,6 +2135,112 @@ def test_account_session_purge_drops_owned_checkpoints(monkeypatch):
     assert agent_session._sessions == {"other": {"_owner_key": "user:2"}}
 
 
+def test_account_session_purge_removes_private_memory_when_checkpoint_delete_fails(monkeypatch):
+    import resume_agent.session as agent_session
+
+    class BrokenCheckpointer:
+        def delete_thread(self, _session_id):
+            raise RuntimeError("checkpoint unavailable")
+
+    monkeypatch.setattr(
+        agent_session,
+        "_sessions",
+        {
+            "owned": {"_owner_key": "user:1"},
+            "other": {"_owner_key": "user:2"},
+        },
+    )
+    monkeypatch.setattr(agent_session, "_checkpointer", BrokenCheckpointer())
+    monkeypatch.setattr(agent_session, "_checkpoint_cleanup_debt", {})
+
+    with pytest.raises(RuntimeError, match="checkpoints could not be purged"):
+        agent_session.purge_owner_sessions("user:1")
+
+    assert agent_session._sessions == {"other": {"_owner_key": "user:2"}}
+    assert agent_session._checkpoint_cleanup_debt == {"owned": "user:1"}
+
+    class RecoveredCheckpointer:
+        def __init__(self):
+            self.deleted = []
+
+        def delete_thread(self, session_id):
+            self.deleted.append(session_id)
+
+    recovered = RecoveredCheckpointer()
+    monkeypatch.setattr(agent_session, "_checkpointer", recovered)
+    agent_session.purge_owner_sessions("user:1")
+    assert recovered.deleted == ["owned"]
+    assert agent_session._checkpoint_cleanup_debt == {}
+
+
+def test_expired_session_checkpoint_failure_does_not_break_healthy_session(monkeypatch):
+    import config as app_config
+    import resume_agent.session as agent_session
+
+    class BrokenCheckpointer:
+        def delete_thread(self, _session_id):
+            raise RuntimeError("checkpoint unavailable")
+
+    now = time.time()
+    healthy = agent_session._new_state("healthy")
+    healthy["_updated_at"] = now
+    expired = agent_session._new_state("expired")
+    expired["_updated_at"] = now - 100
+    monkeypatch.setattr(agent_session, "_sessions", {"expired": expired, "healthy": healthy})
+    monkeypatch.setattr(agent_session, "_checkpointer", BrokenCheckpointer())
+    monkeypatch.setattr(agent_session, "_checkpoint_cleanup_debt", {})
+    monkeypatch.setattr(app_config, "AGENT_SESSION_TTL_SECONDS", 10)
+    monkeypatch.setattr(app_config, "AGENT_MAX_SESSIONS", 10)
+
+    assert agent_session.get_state("healthy")["session_id"] == "healthy"
+    assert set(agent_session._sessions) == {"healthy"}
+    assert agent_session._checkpoint_cleanup_debt == {"expired": None}
+
+    class RecoveredCheckpointer:
+        def __init__(self):
+            self.deleted = []
+
+        def delete_thread(self, session_id):
+            self.deleted.append(session_id)
+
+    recovered = RecoveredCheckpointer()
+    monkeypatch.setattr(agent_session, "_checkpointer", recovered)
+    assert agent_session.get_state("healthy")["session_id"] == "healthy"
+    assert recovered.deleted == ["expired"]
+    assert agent_session._checkpoint_cleanup_debt == {}
+
+
+def test_checkpoint_cleanup_debt_retry_is_bounded_per_session_request(monkeypatch):
+    import config as app_config
+    import resume_agent.session as agent_session
+
+    class BrokenCheckpointer:
+        def __init__(self):
+            self.deleted = []
+
+        def delete_thread(self, session_id):
+            self.deleted.append(session_id)
+            raise RuntimeError("checkpoint unavailable")
+
+    checkpointer = BrokenCheckpointer()
+    healthy = agent_session._new_state("healthy")
+    monkeypatch.setattr(agent_session, "_sessions", {"healthy": healthy})
+    monkeypatch.setattr(agent_session, "_checkpointer", checkpointer)
+    monkeypatch.setattr(
+        agent_session,
+        "_checkpoint_cleanup_debt",
+        {"debt-1": "user:1", "debt-2": "user:2"},
+    )
+    monkeypatch.setattr(app_config, "AGENT_CHECKPOINT_CLEANUP_RETRY_BATCH", 1)
+
+    assert agent_session.get_state("healthy")["session_id"] == "healthy"
+    assert checkpointer.deleted == ["debt-1"]
+    assert agent_session._checkpoint_cleanup_debt == {
+        "debt-1": "user:1",
+        "debt-2": "user:2",
+    }
+
+
 def test_agent_rejects_oversized_draft(monkeypatch):
     import config as app_config
     import resume_agent.session as agent_session
@@ -2140,6 +2303,44 @@ def test_session_surfaces_iteration_cap_instead_of_returning_blank():
 
     error = next(event for event in events if event["event"] == "error")
     assert "safety limit" in error["message"]
+    assert events[-1]["event"] == "done"
+    state = agent_session.get_state(events[0]["session_id"])
+    assert state["status"] == "failed"
+    assert state["review_status"] == "error"
+    assert state["error"] == error["message"]
+    assert state["response"] == ""
+
+
+def test_session_fails_closed_when_synthesis_returns_no_assessment(monkeypatch):
+    import resume_agent.session as agent_session
+
+    class EmptyAgent:
+        def invoke(self, _payload, config=None):
+            return {"messages": []}
+
+    monkeypatch.setattr(
+        agent_session,
+        "_run_quality_judge",
+        lambda *_args, **_kwargs: pytest.fail("an empty synthesis must not reach the judge"),
+    )
+    session_id = "empty-synthesis"
+    events = list(
+        agent_session.stream_chat_events(
+            {
+                "session_id": session_id,
+                "message": "Review this",
+                "resume_text": "EXPERIENCE\n- Built a reliable data platform for public services.",
+            },
+            agent=EmptyAgent(),
+        )
+    )
+
+    error = next(event for event in events if event["event"] == "error")
+    assert "final synthesis was empty" in error["message"]
+    state = agent_session.get_state(session_id)
+    assert state["status"] == "failed"
+    assert state["review_status"] == "error"
+    assert state["response"] == ""
     assert events[-1]["event"] == "done"
 
 
