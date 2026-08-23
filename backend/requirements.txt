@@ -19,7 +19,7 @@ weasyprint==69.0
 torch==2.13.0
 sentence-transformers==5.6.0
 transformers==5.13.1
-deepagents==0.6.12
+deepagents==0.7.8
 langgraph==1.2.6
 langgraph-checkpoint-sqlite==3.1.1
 langgraph-checkpoint-postgres==3.1.1
