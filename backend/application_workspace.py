@@ -15,13 +15,22 @@ from application_research import ResearchPack
 from fastapi import HTTPException, status
 from models import ResumeVersion, ScrapedJob, TrackedJob, User
 from resume_parser import parse_resume
-from sanitizer import sanitize_resume_text, sanitize_user_input
+from sanitizer import sanitize_resume_text, sanitize_url, sanitize_user_input
 from schemas import (
     ApplicationWorkspaceCreate,
     NegotiationRehearsalRequest,
     TrackedJobCreate,
     TrackedJobUpdate,
 )
+
+
+_TRACKED_TEXT_LIMITS = {
+    "company": 500,
+    "role": 500,
+    "source": 200,
+    "job_description": 50_000,
+    "notes": 5_000,
+}
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -86,7 +95,7 @@ def workspace_response(tracked: TrackedJob) -> dict:
         "title": tracked.role,
         "role": tracked.role,
         "job_description": tracked.job_description or "",
-        "source_url": tracked.source_url or "",
+        "source_url": sanitize_url(tracked.source_url or ""),
         "source": tracked.source or "",
         "status": tracked.status,
         "date_applied": tracked.date_applied,
@@ -390,16 +399,19 @@ def _ensure_tracked_job_capacity(db: Session, user: User) -> None:
 def _new_tracked_job(user_id: int, body: TrackedJobCreate) -> TrackedJob:
     return TrackedJob(
         user_id=user_id,
-        company=sanitize_user_input(body.company),
-        role=sanitize_user_input(body.role),
+        company=sanitize_user_input(body.company, max_length=_TRACKED_TEXT_LIMITS["company"]),
+        role=sanitize_user_input(body.role, max_length=_TRACKED_TEXT_LIMITS["role"]),
         date_applied=body.date_applied,
         status=body.status,
-        source=sanitize_user_input(body.source),
-        source_url=sanitize_user_input(body.source_url),
-        job_description=sanitize_user_input(body.job_description),
+        source=sanitize_user_input(body.source, max_length=_TRACKED_TEXT_LIMITS["source"]),
+        source_url=sanitize_url(body.source_url),
+        job_description=sanitize_user_input(
+            body.job_description,
+            max_length=_TRACKED_TEXT_LIMITS["job_description"],
+        ),
         role_metadata=body.role_metadata,
         follow_up_date=body.follow_up_date,
-        notes=sanitize_user_input(body.notes),
+        notes=sanitize_user_input(body.notes, max_length=_TRACKED_TEXT_LIMITS["notes"]),
         scraped_job_id=body.scraped_job_id,
         resume_version_id=body.resume_version_id,
         stage_history=[
@@ -497,11 +509,17 @@ def ensure_recruitment_application(
     # Preserve user-authored fields on an existing record and only fill missing
     # source evidence or resume linkage from the recruitment thread.
     if not tracked.source_url:
-        tracked.source_url = sanitize_user_input(body.source_url)
+        tracked.source_url = sanitize_url(body.source_url)
     if not tracked.job_description:
-        tracked.job_description = sanitize_user_input(body.job_description)
+        tracked.job_description = sanitize_user_input(
+            body.job_description,
+            max_length=_TRACKED_TEXT_LIMITS["job_description"],
+        )
     if not tracked.source:
-        tracked.source = sanitize_user_input(body.source)
+        tracked.source = sanitize_user_input(
+            body.source,
+            max_length=_TRACKED_TEXT_LIMITS["source"],
+        )
     if tracked.resume_version_id is None:
         tracked.resume_version_id = body.resume_version_id
     db.flush()
@@ -513,10 +531,11 @@ def update_tracked_job(db: Session, user: User, job_id: int, body: TrackedJobUpd
     updates = body.model_dump(exclude_unset=True)
     ensure_resume_version_owner(db, user.id, updates.get("resume_version_id"))
     previous_status = tracked.status
-    sanitize_fields = ("company", "role", "source", "source_url", "job_description", "notes")
     for key, val in updates.items():
-        if key in sanitize_fields and isinstance(val, str):
-            val = sanitize_user_input(val)
+        if key == "source_url" and isinstance(val, str):
+            val = sanitize_url(val)
+        elif key in _TRACKED_TEXT_LIMITS and isinstance(val, str):
+            val = sanitize_user_input(val, max_length=_TRACKED_TEXT_LIMITS[key])
         setattr(tracked, key, val)
 
     next_status = updates.get("status")
@@ -630,7 +649,7 @@ def rehearse_negotiation(
             "label": item.label,
             "value": item.value,
             "definition": item.definition,
-            "source_url": item.source_url,
+            "source_url": sanitize_url(item.source_url),
             "source_type": "self_reported_user_supplied",
             "data_date": item.data_date,
             "provided_at": datetime.now(timezone.utc).isoformat(),
@@ -646,7 +665,7 @@ def rehearse_negotiation(
             "basic_wage": item.get("basic_wage"),
             "gross_wage": item.get("gross_wage"),
             "definition": item.get("definition") or item.get("period") or "",
-            "source_url": item.get("source_url") or "",
+            "source_url": sanitize_url(item.get("source_url") or ""),
             "source_type": item.get("source_type") or "",
             "data_date": item.get("data_date") or "",
         }
@@ -656,7 +675,7 @@ def rehearse_negotiation(
     coaching = coach({
         "company": tracked.company,
         "role": tracked.role,
-        "scenario": sanitize_user_input(body.scenario),
+        "scenario": sanitize_user_input(body.scenario, max_length=2_000),
         "priorities": priorities,
         "anchor_options": [
             {
@@ -675,7 +694,7 @@ def rehearse_negotiation(
         ],
     })
     round_item = {
-        "scenario": sanitize_user_input(body.scenario),
+        "scenario": sanitize_user_input(body.scenario, max_length=2_000),
         "coach_response": {
             **coaching,
             "anchor_options": cited_anchors,
@@ -780,7 +799,7 @@ def run_agent_review(
             "company": tracked.company,
             "title": tracked.role,
             "job_description": tracked.job_description or "",
-            "source_url": tracked.source_url or "",
+            "source_url": sanitize_url(tracked.source_url or ""),
         },
         "recommendations": recommendations,
         "pending_diffs": agent_state.get("pending_diffs", []),

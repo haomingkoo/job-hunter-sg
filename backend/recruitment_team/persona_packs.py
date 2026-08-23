@@ -143,7 +143,7 @@ def _parse_registry(payload: dict, version: str) -> PersonaPackRegistry:
     if not isinstance(output_schema, dict):
         raise ValueError("Recruitment persona output schema is required")
     required = _nonempty_strings(output_schema.get("required"), "output_schema.required")
-    if "score_reason" not in required or "candidate_profile_field_ids" not in required:
+    if "score_reason" not in required or "findings" not in required:
         raise ValueError("Recruitment persona output schema lacks evidence and score fields")
     if not str(output_schema.get("score_meaning") or "").strip():
         raise ValueError("Recruitment persona score meaning is required")

@@ -351,7 +351,7 @@ def _add_spacing(doc: Document, space: Pt = Pt(6)) -> None:
     """Add vertical spacing between entries."""
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(0)
-    p.paragraph_format.space_after = Pt(0)
+    p.paragraph_format.space_after = space
     p.style.font.size = Pt(2)
     # Make it a tiny empty paragraph for spacing
     run = p.add_run("")

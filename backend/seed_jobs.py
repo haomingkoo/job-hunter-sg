@@ -29,7 +29,8 @@ from sqlalchemy import or_
 sys.path.insert(0, os.path.dirname(__file__))
 
 from database import init_db, SessionLocal
-from job_precompute import apply_job_precomputes
+from crawl_lease import job_crawl_lease
+from job_precompute import apply_job_precomputes, posted_sort_iso as _posted_sort_iso
 from job_store import find_existing_scraped_job
 from models import ScrapedJob
 from sanitizer import sanitize_job
@@ -84,11 +85,6 @@ log = logging.getLogger("seed")
 
 MCF_MIN_HEALTHY_JOBS = 5000
 CAREERSGOV_MIN_HEALTHY_JOBS = 500
-
-
-def _posted_sort_iso(posted_date: str, scraped_at: str = "") -> str:
-    from main import _parse_job_posted_at
-    return _parse_job_posted_at(posted_date, scraped_at).isoformat()
 
 
 def _crawl_semantic_key(job) -> str:
@@ -267,7 +263,7 @@ def crawl_all_jobs() -> dict:
     FULL CRAWL — paginate through ALL jobs from MCF and CareersGov.
     MCF: ~12,000 jobs (pages of 100)
     CareersGov: ~3,000 jobs (pages of 20)
-    Takes ~15-20 minutes total.
+    Runtime depends on upstream pagination and can take multiple hours.
     """
     init_db()
     db = SessionLocal()
@@ -543,7 +539,7 @@ def crawl_all_jobs() -> dict:
     return stats
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Pre-populate job database")
     parser.add_argument(
         "--keywords", "-k",
@@ -566,15 +562,19 @@ def main():
     )
     parser.add_argument(
         "--full", action="store_true",
-        help="FULL CRAWL — paginate ALL jobs from MCF + CareersGov (~15-20 min, ~15,000 jobs)",
+        help="FULL CRAWL — paginate all jobs from MCF + CareersGov (can take multiple hours)",
     )
 
     args = parser.parse_args()
 
     if args.full:
         log.info("Starting FULL CRAWL of all SG job portals...")
-        crawl_all_jobs()
-        return
+        with job_crawl_lease() as acquired:
+            if not acquired:
+                log.error("Another job crawl already owns the shared crawl lease")
+                return 2
+            stats = crawl_all_jobs()
+        return 1 if stats.get("errors") else 0
 
     keywords = DEFAULT_KEYWORDS
     if args.keywords:
@@ -585,8 +585,13 @@ def main():
     sources = [s.strip() for s in args.sources.split(",")] if args.sources else None
 
     log.info(f"Seeding {len(keywords)} keywords from {sources or 'all'} sources...")
-    seed_jobs(keywords, sources=sources, limit_per_source=args.limit)
+    with job_crawl_lease() as acquired:
+        if not acquired:
+            log.error("Another job crawl already owns the shared crawl lease")
+            return 2
+        stats = seed_jobs(keywords, sources=sources, limit_per_source=args.limit)
+    return 1 if stats.get("errors") else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

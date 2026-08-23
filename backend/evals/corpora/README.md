@@ -19,3 +19,34 @@ JSON objects.
 
 The command prints only case IDs, role families, and artifact hashes. It never
 prints artifact contents or paths.
+
+Require nonzero, schema-valid label coverage before a regression run:
+
+```bash
+python backend/scripts/check_semantic_corpus_labels.py \
+  --manifest backend/evals/corpora/synthetic-v1/manifest.json \
+  --corpus-dir backend/evals/corpora/synthetic-v1 \
+  --minimum-labelled-cases 1 \
+  --minimum-labels 2
+```
+
+This coverage gate does not score model quality. The checked-in labels describe
+candidate-evidence alignment fields. A target-assessment quality regression also
+requires case-aligned reference labels for specialist findings, synthesis claims,
+judge disposition, and the expected evidence citations; those artifacts are not
+currently checked in.
+
+CI also runs the privacy-safe label-coverage gate:
+
+```bash
+python backend/scripts/check_semantic_corpus_labels.py \
+  --manifest backend/evals/corpora/synthetic-v1/manifest.json \
+  --corpus-dir backend/evals/corpora/synthetic-v1 \
+  --minimum-labelled-cases 1 \
+  --minimum-labels 2
+```
+
+This proves only that a non-empty, hash-pinned label contract is available. It
+does not score model quality. A quality regression gate still requires
+case-aligned reference outputs covering all five specialists, synthesis, and
+the independent judge.

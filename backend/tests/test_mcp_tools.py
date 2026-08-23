@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 
@@ -162,6 +163,30 @@ def test_get_job_does_not_return_hidden_job(monkeypatch):
     assert data["found"] is False
     assert data["job"] is None
     assert data["job_id"] == 7
+
+
+def test_get_job_hides_internal_exception_text(monkeypatch):
+    import mcp_tools
+
+    class FakeDb:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(mcp_tools, "SessionLocal", FakeDb)
+    monkeypatch.setattr(
+        mcp_tools,
+        "_get_public_job",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("postgresql://secret-user:secret-password@internal-host/jobs")  # pragma: allowlist secret
+        ),
+    )
+
+    data = json.loads(mcp_tools.get_job(7))
+
+    assert data["ok"] is False
+    assert data["error"]["code"] == "get_job_failed"
+    assert data["error"]["message"] == "Job lookup temporarily unavailable."
+    assert "secret" not in json.dumps(data)
 
 
 def test_latest_jobs_returns_compact_public_jobs(monkeypatch):
@@ -387,10 +412,48 @@ def test_mcp_server_imports():
     assert mcp_server.mcp is not None
 
 
-def test_public_mcp_imports():
-    import mcp_public
+def test_local_mcp_direct_registrations_preserve_tool_metadata():
+    import mcp_server
 
-    assert mcp_public.mcp is not None
+    tools = {tool.name: tool for tool in asyncio.run(mcp_server.mcp.list_tools())}
+    expected = {
+        "parse_resume": (
+            "Parse resume text into sections, stats, and stable bullet IDs.", "resume_text", "resume_text",
+        ),
+        "score_resume": (
+            "Score a resume with optional job-specific ATS blending.",
+            "job_description,job_id,resume_text", "resume_text",
+        ),
+        "extract_skills": ("Extract ATS-style skill phrases from text.", "text", "text"),
+        "compare_candidate_profile": (
+            "Compare resume and LinkedIn/profile text for consistency gaps.",
+            "profile_context,resume_text", "profile_context,resume_text",
+        ),
+        "validate_bullet_edit": (
+            "Validate one proposed bullet rewrite and return gates plus final text.",
+            "job_description,original,required_keywords,rewrite", "original,rewrite",
+        ),
+        "propose_resume_diff": (
+            "Validate a rewrite against a resume bullet ID.",
+            "bullet_id,job_description,required_keywords,resume_text,rewrite", "bullet_id,resume_text,rewrite",
+        ),
+    }
+
+    for name, (description, properties, required) in expected.items():
+        tool = tools[name]
+        assert tool.description == description
+        assert tool.inputSchema["title"] == f"{name}Arguments"
+        assert ",".join(sorted(tool.inputSchema["properties"])) == properties
+        assert ",".join(sorted(tool.inputSchema.get("required", []))) == required
+
+
+def test_public_mcp_import_is_side_effect_free():
+    import mcp_public
+    from mcp.server.fastmcp.server import Settings as FastMCPSettings
+
+    assert not hasattr(mcp_public, "mcp")
+    assert mcp_public.create_mcp() is not mcp_public.create_mcp()
+    assert FastMCPSettings.__pydantic_complete__ is True
 
 
 def test_streamable_http_mcp_initializes():
@@ -410,7 +473,8 @@ def test_streamable_http_mcp_initializes():
         },
     }
 
-    with TestClient(mcp_public.mcp.streamable_http_app()) as client:
+    server = mcp_public.create_mcp()
+    with TestClient(server.streamable_http_app()) as client:
         response = client.post(
             "/",
             headers={
@@ -497,7 +561,7 @@ def test_public_surface_uses_all_four_primitives_and_no_dotted_names():
     import mcp_public
 
     async def _surface():
-        server = mcp_public.mcp
+        server = mcp_public.create_mcp()
         return (
             [t.name for t in await server.list_tools()],
             [str(r.uri) for r in await server.list_resources()],
@@ -522,7 +586,7 @@ def test_every_public_resource_declares_a_mime_type():
 
     import mcp_public
 
-    resources = asyncio.run(mcp_public.mcp.list_resources())
+    resources = asyncio.run(mcp_public.create_mcp().list_resources())
 
     assert resources
     assert all(r.mimeType == "application/json" for r in resources)

@@ -56,7 +56,6 @@ describe("ScraperTab cover-letter persistence", () => {
   let root;
 
   beforeEach(() => {
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
     sessionStorage.setItem("jh_resume_text", "Built reliable Python and AI systems for production teams. ".repeat(3));
     container = document.createElement("div");
@@ -68,7 +67,6 @@ describe("ScraperTab cover-letter persistence", () => {
     act(() => root.unmount());
     container.remove();
     sessionStorage.clear();
-    delete globalThis.IS_REACT_ACT_ENVIRONMENT;
   });
 
   it("truthfully reports an untracked generated letter as not saved", async () => {

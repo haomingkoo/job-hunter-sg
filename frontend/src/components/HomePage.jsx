@@ -64,8 +64,18 @@ function Counter({ target, suffix = "" }) {
   return <span ref={ref}>{value.toLocaleString()}{suffix}</span>;
 }
 
+export function parsePublicJobStats(payload) {
+  const total = Number(payload?.total);
+  const sources = payload?.filter_meta?.sources;
+  if (!Number.isSafeInteger(total) || total < 0 || !Array.isArray(sources)) return null;
+  return {
+    jobCount: total,
+    sourceCount: sources.filter((source) => Number(source?.count) > 0).length,
+  };
+}
+
 export default function HomePage({ onNavigate }) {
-  const [jobCount, setJobCount] = useState(null);
+  const [jobStats, setJobStats] = useState({ status: "loading", jobCount: null, sourceCount: null });
   const heroRef = useRef(null);
   const { scrollYProgress } = useScroll({ target: heroRef, offset: ["start start", "end start"] });
   const heroOpacity = useTransform(scrollYProgress, [0, 0.8], [1, 0]);
@@ -77,14 +87,20 @@ export default function HomePage({ onNavigate }) {
       try {
         const r = await apiFetch("/api/jobs?page=1&per_page=1");
         const d = await r.json();
-        if (!c && d.total) setJobCount(d.total);
-      } catch { /* */ }
+        const parsed = parsePublicJobStats(d);
+        if (!c) {
+          setJobStats(parsed ? { status: "available", ...parsed } : { status: "unavailable", jobCount: null, sourceCount: null });
+        }
+      } catch {
+        if (!c) setJobStats({ status: "unavailable", jobCount: null, sourceCount: null });
+      }
     })();
     return () => { c = true; };
   }, []);
 
-  const count = jobCount != null ? jobCount.toLocaleString() : null;
-  const countNum = jobCount || 72000;
+  const count = jobStats.status === "available" && jobStats.jobCount > 0
+    ? jobStats.jobCount.toLocaleString()
+    : null;
 
   return (
     <div className="relative font-body w-full overflow-x-hidden bg-[#f0f4f8]">
@@ -294,7 +310,7 @@ export default function HomePage({ onNavigate }) {
                   <span className="text-[13px] font-bold text-[#384959]">{c.num}</span>
                 </div>
                 <h3 className="mt-5 text-xl font-bold text-[#384959]">{c.label}</h3>
-                <p className="mt-2 flex-1 text-[13px] leading-relaxed text-[#6A89A7]">{c.desc.replace("{count}", count || "thousands of")}</p>
+                <p className="mt-2 flex-1 text-[13px] leading-relaxed text-[#6A89A7]">{c.desc.replace("{count}+", count ? `${count}+` : "live")}</p>
                 <span className="mt-5 inline-flex items-center gap-1.5 rounded-full bg-[#384959] px-4 py-2 text-xs font-semibold text-white transition-colors group-hover:bg-[#88BDF2] group-hover:text-[#1f2831]">
                   Get started <ArrowRight size={12} className="transition-transform group-hover:translate-x-1" />
                 </span>
@@ -316,7 +332,7 @@ export default function HomePage({ onNavigate }) {
               <div className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[#BDDDFC]/30 text-[13px] font-bold text-[#384959]">1</div>
               <h3 className="font-display mt-4 text-[1.5rem] text-[#384959]">Explore what's out there</h3>
               <p className="mt-3 text-[15px] leading-relaxed text-[#6A89A7]">
-                Browse {count ? `${count}+` : "thousands of"} roles across Singapore's top job portals. Every listing shows what employers actually care about.
+                Browse {count ? `${count}+ roles` : "live roles"} from Singapore's public job sources. Every listing shows what employers actually care about.
               </p>
               <motion.button
                 type="button" onClick={() => onNavigate("jobs")}
@@ -487,13 +503,15 @@ export default function HomePage({ onNavigate }) {
             className="grid grid-cols-2 gap-8 sm:grid-cols-4"
           >
             {[
-              { v: countNum, s: "+", l: "Job Listings" },
-              { v: 5, s: "", l: "Job Sources" },
-              { v: 1500, s: "+", l: "Skills Tracked" },
-              { v: 24, s: "h", l: "Data Refresh" },
+              { v: jobStats.jobCount, s: "+", text: "Unavailable", l: "Active Listings" },
+              { v: jobStats.sourceCount, s: "", text: "Unavailable", l: "Active Sources" },
+              { v: null, s: "", text: "Singapore", l: "Market Focus" },
+              { v: null, s: "", text: "Nightly", l: "Data Refresh" },
             ].map((s, i) => (
               <motion.div key={s.l} variants={fadeUp} custom={i} className="text-center">
-                <div className="font-display text-[2rem] text-[#384959] sm:text-[2.5rem]"><Counter target={s.v} suffix={s.s} /></div>
+                <div className="font-display text-[2rem] text-[#384959] sm:text-[2.5rem]">
+                  {Number.isSafeInteger(s.v) ? <Counter target={s.v} suffix={s.s} /> : s.text}
+                </div>
                 <div className="mt-1 text-[12px] font-medium text-[#6A89A7]">{s.l}</div>
               </motion.div>
             ))}
@@ -535,7 +553,7 @@ export default function HomePage({ onNavigate }) {
             Your dream role is<br />closer than you think
           </motion.h2>
           <motion.p variants={fadeUp} custom={1} className="mt-4 text-[15px] text-[#6A89A7]">
-            Thousands of Singapore professionals have taken the first step. Your turn.
+            Search current roles, test your fit, and keep every resume claim grounded in your own evidence.
           </motion.p>
           <motion.div variants={fadeUp} custom={2} className="mt-10 flex flex-wrap items-center justify-center gap-4">
             <motion.button

@@ -18,6 +18,14 @@ _PRESENTATION_RULES = (
     ),
     ("future_offer", re.compile(r"\bI can (?:propose|provide|rewrite)\b", re.IGNORECASE)),
 )
+_REQUIRED_ASSESSMENT_SECTIONS = (
+    "Summary",
+    "Strengths",
+    "Weaknesses",
+    "Independent reviewer score",
+    "Reasoning",
+    "Next actions",
+)
 
 
 def assessment_presentation_violations(text: str) -> list[str]:
@@ -34,6 +42,24 @@ def assessment_presentation_violation_snippets(text: str) -> list[tuple[str, str
         if match:
             matches.append((name, match.group(0).strip()))
     return matches
+
+
+def assessment_structure_violations(text: str) -> list[str]:
+    """Validate required headings and their order without model judgment."""
+    positions: list[int] = []
+    violations: list[str] = []
+    for section in _REQUIRED_ASSESSMENT_SECTIONS:
+        match = re.search(
+            rf"(?im)^\s{{0,3}}(?:#{{1,6}}\s*)?{re.escape(section)}\s*:?\s*$",
+            text or "",
+        )
+        if match is None:
+            violations.append(f"missing_section:{section.lower().replace(' ', '_')}")
+        else:
+            positions.append(match.start())
+    if not violations and positions != sorted(positions):
+        violations.append("section_order")
+    return violations
 
 
 FAIRNESS_AND_ANTI_FABRICATION_GUARDRAILS = f"""Guardrails:

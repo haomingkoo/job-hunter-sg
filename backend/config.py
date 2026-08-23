@@ -93,6 +93,25 @@ SEALION_DISABLE_THINKING_MODELS: tuple[str, ...] = _csv_env(
 SMART_MIN_MAX_TOKENS: int = _int_env("SMART_MIN_MAX_TOKENS", 6000)
 
 AGENT_MAX_TOOL_ITERATIONS: int = _positive_int_env("AGENT_MAX_TOOL_ITERATIONS", 20)
+# The parent coordinates evidence reads, five task subgraphs, synthesis, one
+# candidate pause, and the resumed turn. DeepAgents charges nested subgraph
+# super-steps to this parent limit even though each specialist also has its own
+# cap below. A live five-persona run exhausted 60 after all reports were accepted
+# but before synthesis; 120 preserves a finite parent bound while covering the
+# configured specialist correction budgets and the resumed coordinator work.
+TARGET_ASSESSMENT_MAX_TOOL_ITERATIONS: int = _positive_int_env(
+    "TARGET_ASSESSMENT_MAX_TOOL_ITERATIONS",
+    120,
+)
+# A delegated specialist owns a separate LangGraph execution. Bind its budget
+# explicitly so a looping persona cannot consume the framework default (9,999
+# graph steps) while the parent assessment still appears healthy. Two evidence
+# reads plus a submission and two bounded corrections require up to five tool
+# rounds; the measured DeepAgents overhead is about five plus four per round.
+TARGET_SPECIALIST_MAX_TOOL_ITERATIONS: int = _positive_int_env(
+    "TARGET_SPECIALIST_MAX_TOOL_ITERATIONS",
+    28,
+)
 OPEN_AGENT_MAX_PROPOSED_EDITS: int = _positive_int_env("OPEN_AGENT_MAX_PROPOSED_EDITS", 8)
 # Each ask_candidate call pauses the whole graph, and the guardrails only reject a
 # materially identical repeat, so without a cap a run can keep asking and never
@@ -109,9 +128,16 @@ OPEN_AGENT_CHECKPOINT_DB_PATH: str = os.getenv("OPEN_AGENT_CHECKPOINT_DB_PATH", 
 # assessment. A LangGraph recursion_limit counts super-steps, not tool calls:
 # measured at 5 steps plus 4 per call, so 45 buys ten tool calls.
 COORDINATOR_MAX_TOOL_ITERATIONS: int = _positive_int_env("COORDINATOR_MAX_TOOL_ITERATIONS", 45)
+# A tool can reject a malformed or duplicate call once and let the model recover.
+# Repeated rejection of the same tool means the loop is not making progress and
+# should fail before consuming the much larger graph recursion budget.
+COORDINATOR_MAX_CONSECUTIVE_TOOL_REJECTIONS: int = _positive_int_env(
+    "COORDINATOR_MAX_CONSECUTIVE_TOOL_REJECTIONS",
+    2,
+)
 AGENT_PERSONA_VALIDATION_ATTEMPTS: int = _positive_int_env(
     "AGENT_PERSONA_VALIDATION_ATTEMPTS",
-    2,
+    3,
 )
 AGENT_JUDGE_VALIDATION_ATTEMPTS: int = _positive_int_env(
     "AGENT_JUDGE_VALIDATION_ATTEMPTS",
@@ -181,7 +207,7 @@ ROLE_DEFINITION_VALIDATION_ATTEMPTS: int = _positive_int_env(
 )
 ROLE_EVIDENCE_VALIDATION_ATTEMPTS: int = _positive_int_env(
     "ROLE_EVIDENCE_VALIDATION_ATTEMPTS",
-    12,
+    2,
 )
 RECRUITMENT_PERSONA_PACK_VERSION: str = os.getenv(
     "RECRUITMENT_PERSONA_PACK_VERSION",
@@ -200,6 +226,10 @@ RECRUITMENT_MAX_CONCURRENT_SPECIALISTS: int = _positive_int_env(
 AGENT_CHAT_HISTORY_LIMIT: int = _positive_int_env("AGENT_CHAT_HISTORY_LIMIT", 20)
 AGENT_SESSION_TTL_SECONDS: int = _positive_int_env("AGENT_SESSION_TTL_SECONDS", 3600)
 AGENT_MAX_SESSIONS: int = _positive_int_env("AGENT_MAX_SESSIONS", 200)
+AGENT_CHECKPOINT_CLEANUP_RETRY_BATCH: int = _positive_int_env(
+    "AGENT_CHECKPOINT_CLEANUP_RETRY_BATCH",
+    10,
+)
 AGENT_MAX_DRAFT_CHARS: int = _positive_int_env("AGENT_MAX_DRAFT_CHARS", 50000)
 AGENT_MAX_PROFILE_CONTEXT_CHARS: int = _positive_int_env("AGENT_MAX_PROFILE_CONTEXT_CHARS", 12000)
 AGENT_MAX_SESSION_ID_CHARS: int = _positive_int_env("AGENT_MAX_SESSION_ID_CHARS", 200)
@@ -221,7 +251,10 @@ WORKSPACE_AGENT_REVIEW_DEFAULT_ROLES: tuple[str, ...] = _csv_env(
 RECRUITMENT_RETENTION_NOTICE: dict[str, str] = {
     "live_data": "Deleted immediately from the live application database.",
     "backups": "Infrastructure backups follow the provider retention policy and may expire later.",
-    "telemetry": "Trace and semantic-evaluation deletion is requested at the same time; provider-side removal may not be immediate.",
+    "telemetry": (
+        "Only content-free operational metadata is exported; it follows the telemetry "
+        "provider retention policy and contains no prompts, resumes, job text, or model output."
+    ),
 }
 
 # Conservative per-key request budget; override only to match provider limits.

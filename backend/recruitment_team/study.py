@@ -10,13 +10,7 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from models import (
-    CandidateProfileArtifact,
-    RecruitmentActivityEvent,
-    RecruitmentRun,
-    RecruitmentThread,
-    ResumeVersion,
-)
+from models import CandidateProfileArtifact, RecruitmentRun, RecruitmentThread, ResumeVersion
 from resume_document import SCHEMA_VERSION, create_resume_document
 
 from .candidate_profile import (
@@ -34,6 +28,7 @@ from .prompts import CANDIDATE_PROFILE_PROMPT_VERSION
 from .candidate_profile import CANDIDATE_PROFILE_DECOMPOSITION_VERSION
 from .telemetry import RecruitmentTelemetry
 from .activity_publisher import ActivityPublisher
+from . import activity_events
 
 
 log = logging.getLogger("jobhunter.recruitment_team.study")
@@ -150,26 +145,20 @@ def _record_event(
     detail: dict | None = None,
     activity_publisher: ActivityPublisher | None = None,
 ) -> None:
-    from .recruitment_team import RecruitmentTeam, _reserve_event_sequence, _thread_lock
-
-    with _thread_lock(thread.id):
-        sequence = _reserve_event_sequence(db, thread.id)
-        event = RecruitmentActivityEvent(
-            thread_id=thread.id,
-            run_id=run.id,
-            sequence=sequence,
+    with activity_events.thread_lock(thread.id):
+        event = activity_events.create_record(
+            db,
+            thread=thread,
+            run=run,
             event_type="candidate_profile",
             status=status,
             team_member="candidate_profiler",
-            attempt=1,
-            trace_key=run.trace_key,
             summary=summary,
-            detail=detail or {},
+            detail=detail,
         )
-        db.add(event)
         db.commit()
         if activity_publisher is not None:
-            activity_publisher.publish(RecruitmentTeam._activity(event))
+            activity_publisher.publish(activity_events.to_activity_event(event))
 
 
 def dispatch_resume_study(
@@ -186,9 +175,24 @@ def dispatch_resume_study(
 
     def work() -> None:
         try:
-            profiler_factory = profiler_factory_provider()
             db_context = session_factory()
             with db_context as db:
+                try:
+                    profiler_factory = profiler_factory_provider()
+                except Exception as error:
+                    log.exception(
+                        "automatic candidate study provider could not start for resume %s",
+                        resume_version_id,
+                    )
+                    _record_study_startup_failure(
+                        db,
+                        owner_id=owner_id,
+                        resume_version_id=resume_version_id,
+                        thread_id=thread_id,
+                        error=error,
+                        activity_publisher=activity_publisher,
+                    )
+                    return
                 _run_dispatched_study(
                     db,
                     owner_id=owner_id,
@@ -206,6 +210,54 @@ def dispatch_resume_study(
     return worker
 
 
+def _record_study_startup_failure(
+    db: Session,
+    *,
+    owner_id: int,
+    resume_version_id: int,
+    thread_id: str,
+    error: Exception,
+    activity_publisher: ActivityPublisher | None,
+) -> None:
+    """Make provider/configuration startup failures durable and user-visible."""
+    thread = db.query(RecruitmentThread).filter_by(id=thread_id, user_id=owner_id).one()
+    key = f"study-startup:{resume_version_id}:{CANDIDATE_PROFILE_PROMPT_VERSION}"
+    run = db.query(RecruitmentRun).filter_by(user_id=owner_id, idempotency_key=key).first()
+    if run is None:
+        run_id = str(uuid.uuid4())
+        run = RecruitmentRun(
+            id=run_id,
+            user_id=owner_id,
+            thread_id=thread.id,
+            idempotency_key=key,
+            command_type="study_resume_version",
+            status="failed",
+            trace_key=hashlib.sha256(run_id.encode()).hexdigest()[:32],
+        )
+        db.add(run)
+    run.status = "failed"
+    run.error_type = type(error).__name__
+    facts = dict(thread.case_facts or {})
+    facts["candidate_profile_status"] = "failed"
+    thread.case_facts = facts
+    db.commit()
+    _record_event(
+        db,
+        thread=thread,
+        run=run,
+        status="failed",
+        summary="The candidate profiler could not start the resume study.",
+        detail={
+            "failure_type": "configuration",
+            "failure_code": "provider_startup_failed",
+            "error_type": type(error).__name__,
+            "retryable": True,
+            "recovery_action": "retry_incomplete_stage",
+        },
+        activity_publisher=activity_publisher,
+    )
+
+
 def _run_dispatched_study(
     db: Session,
     *,
@@ -216,7 +268,11 @@ def _run_dispatched_study(
     telemetry: RecruitmentTelemetry,
     activity_publisher: ActivityPublisher | None = None,
 ) -> None:
+    from .run_lease import reconcile_expired_runs
+
     thread = db.query(RecruitmentThread).filter_by(id=thread_id, user_id=owner_id).one()
+    reconcile_expired_runs(db, thread_id=thread_id)
+    db.commit()
     cached = _completed_artifact(
         db,
         owner_id=owner_id,
@@ -245,6 +301,11 @@ def _run_dispatched_study(
         db.commit()
     elif run.status in {"running", "completed"}:
         return
+    else:
+        run.status = "running"
+        run.error_type = None
+        run.result = None
+        db.commit()
 
     facts = dict(thread.case_facts or {})
     facts["candidate_profile_status"] = "running"

@@ -5,17 +5,44 @@ from __future__ import annotations
 from typing import Any, Sequence
 
 import config as app_config
-from deepagents.middleware.subagents import SubAgent
+from deepagents import (
+    GeneralPurposeSubagentProfile,
+    HarnessProfile,
+    register_harness_profile,
+)
+from deepagents.middleware.subagents import CompiledSubAgent, SubAgent
 from langgraph.errors import GraphRecursionError
 
 from .models import create_agent_model
 from .prompts import ORCHESTRATOR_SYSTEM_PROMPT
 
 
+# DeepAgents otherwise adds a general-purpose agent plus planning, filesystem,
+# and shell tools to every graph. Job Hunter supplies its own named personas and
+# domain tools; exposing the unrelated defaults makes the runtime interface wider
+# than the declared execution policy and distracts the model with unusable tools.
+register_harness_profile(
+    "openai",
+    HarnessProfile(
+        excluded_tools=frozenset({
+            "write_todos",
+            "ls",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "glob",
+            "grep",
+            "execute",
+        }),
+        general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
+    ),
+)
+
+
 def create_resume_agent(
     *,
     tools: Sequence[Any],
-    subagents: Sequence[SubAgent],
+    subagents: Sequence[SubAgent | CompiledSubAgent],
     model: Any | None = None,
     checkpointer: Any | None = None,
     interrupt_on: dict[str, Any] | None = None,

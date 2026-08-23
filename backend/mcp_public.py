@@ -5,9 +5,15 @@ tool names even though the protocol permits them.
 """
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.server import Settings as FastMCPSettings
 from mcp.types import ToolAnnotations
 
 import mcp_tools as tools
+
+
+# MCP v1 leaves this generic model incomplete after import. Rebuilding through
+# Pydantic's public hook prevents settings fields from being silently skipped.
+FastMCPSettings.model_rebuild()
 
 
 READONLY_DB = ToolAnnotations(
@@ -169,6 +175,3 @@ def create_mcp() -> FastMCP:
         description="Find what a target role keeps asking for, subtract what the candidate has, and recommend courses for the rest.",
     )(close_a_skill_gap)
     return server
-
-
-mcp = create_mcp()

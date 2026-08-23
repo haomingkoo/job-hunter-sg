@@ -90,11 +90,11 @@ class TestSkillExtractor:
 
     def test_resume_skill_matching(self):
         """Should correctly match/miss skills against resume text."""
-        from skill_extractor import match_resume_skills
+        from skill_extractor import match_resume_skills_with_context
 
         resume = "Led machine learning projects and managed cross-functional teams."
         jd_skills = ["machine learning", "project management", "data analysis"]
-        result = match_resume_skills(resume, jd_skills)
+        result = match_resume_skills_with_context(resume, jd_skills)
 
         matched_skills = [m["skill"] for m in result["matched"]]
         missing_skills = [m["skill"] for m in result["missing"]]
@@ -103,9 +103,9 @@ class TestSkillExtractor:
         assert result["match_percent"] > 0
 
     def test_resume_matching_empty_skills(self):
-        from skill_extractor import match_resume_skills
+        from skill_extractor import match_resume_skills_with_context
 
-        result = match_resume_skills("some resume text", [])
+        result = match_resume_skills_with_context("some resume text", [])
         assert result["matched"] == []
         assert result["missing"] == []
 
@@ -267,6 +267,25 @@ class TestSkillExtractor:
         assert "Build pipelines." in detail["jobDescription"]
         assert "- Own data quality" in detail["jobDescription"]
         assert "Python and SQL" in detail["jobDescription"]
+
+    def test_careersgov_greenhouse_jobs_have_actionable_urls(self):
+        from scraper import CareersGovScraper
+
+        item = {
+            "jobId": "4004028201",
+            "postingNo": "",
+            "platform": "greenhouse",
+        }
+
+        assert CareersGovScraper._build_url(item) == (
+            "https://jobs.careers.gov.sg/jobs/greenhouse/4004028201"
+            "?gh_jid=4004028201"
+        )
+
+    def test_careersgov_unknown_platform_without_posting_number_stays_non_actionable(self):
+        from scraper import CareersGovScraper
+
+        assert CareersGovScraper._build_url({"jobId": "123", "platform": "unknown"}) == ""
 
     def test_ats_terms_exclude_benefits_bullets_but_keep_real_skills(self):
         from ats_terms import build_job_ats_terms
@@ -776,10 +795,10 @@ class TestAPIEndpoints:
         assert "jobs" in data or isinstance(data, list)
 
     def test_parse_job_posted_at_prefers_newer_relative_dates(self):
-        from main import _parse_job_posted_at
+        from job_precompute import parse_job_posted_at
 
-        recent = _parse_job_posted_at("Posted 4 Days Ago")
-        stale = _parse_job_posted_at("Posted 30+ Days Ago")
+        recent = parse_job_posted_at("Posted 4 Days Ago")
+        stale = parse_job_posted_at("Posted 30+ Days Ago")
         assert recent > stale
 
     def test_trending_skills_endpoint(self, client):
@@ -787,10 +806,72 @@ class TestAPIEndpoints:
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
-    def test_analytics_trends_endpoint(self, client):
-        from main import _ANALYTICS_CACHE_LOCK, _analytics_query_cache, _clear_analytics_cache
+    def test_embedding_backfill_reports_failure_instead_of_done(self, monkeypatch):
+        import database
+        import main
 
-        _clear_analytics_cache()
+        class ImmediateThread:
+            def __init__(self, *, target, **_kwargs):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        monkeypatch.setattr(main, "_require_admin", lambda _authorization: None)
+        monkeypatch.setattr(main.threading, "Thread", ImmediateThread)
+        monkeypatch.setattr(
+            database,
+            "SessionLocal",
+            lambda: (_ for _ in ()).throw(RuntimeError("database unavailable")),
+        )
+
+        response = main.admin_backfill_embeddings({}, authorization="test")
+
+        assert response["status"] == "started"
+        assert main._embedding_backfill_progress == {
+            "running": False,
+            "done": 0,
+            "total": 0,
+            "phase": "failed",
+            "error_code": "embedding_backfill_failed",
+            "error_type": "RuntimeError",
+        }
+
+        class EmptyQuery:
+            def filter(self, *_args):
+                return self
+
+            def count(self):
+                return 0
+
+            def order_by(self, *_args):
+                return self
+
+            def limit(self, _limit):
+                return self
+
+            def all(self):
+                return []
+
+        class EmptySession:
+            def query(self, _model):
+                return EmptyQuery()
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr(database, "SessionLocal", EmptySession)
+
+        main.admin_backfill_embeddings({}, authorization="test")
+
+        assert main._embedding_backfill_progress["phase"] == "done"
+        assert main._embedding_backfill_progress["error_code"] == ""
+        assert main._embedding_backfill_progress["error_type"] == ""
+
+    def test_analytics_trends_endpoint(self, client):
+        from market_analytics import invalidate
+
+        invalidate()
         resp = client.get("/api/analytics/trends?weeks=4")
         assert resp.status_code == 200
         data = resp.json()
@@ -799,8 +880,6 @@ class TestAPIEndpoints:
         assert "recent_ats_terms" in data
         second = client.get("/api/analytics/trends?weeks=4")
         assert second.json() == data
-        with _ANALYTICS_CACHE_LOCK:
-            assert any(key[0] == "trends" and key[-1] == 4 for key in _analytics_query_cache)
 
     def test_resume_score_requires_text(self, client):
         resp = client.post("/api/resume/score", json={

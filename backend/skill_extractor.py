@@ -278,6 +278,38 @@ def _normalize_skill(raw: str) -> str:
     return re.sub(r"\s+", " ", raw.strip().lower())
 
 
+def normalize_skill_strings(raw_skills, *, max_length: int) -> list[str]:
+    """Flatten, clean, and case-insensitively deduplicate stored skill values."""
+    collected: list[str] = []
+
+    def visit(value) -> None:
+        if isinstance(value, str):
+            for part in re.split(r"[;,|/]", value):
+                cleaned = part.strip()
+                if cleaned:
+                    collected.append(cleaned)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                visit(key)
+                visit(item)
+
+    visit(raw_skills)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for skill in collected:
+        cleaned = re.sub(r"\s+", " ", skill).strip(" -•\t")
+        lower = cleaned.lower()
+        if not cleaned or len(cleaned) < 2 or len(cleaned) > max_length or lower in seen:
+            continue
+        seen.add(lower)
+        deduped.append(cleaned)
+    return deduped
+
+
 def _find_known_skills_in_text(text_lower: str) -> list[str]:
     """Scan text for all known multi-word skill phrases.
 
@@ -393,20 +425,6 @@ def extract_skill_phrases(
     unique.sort(key=_relevance)
 
     return unique
-
-
-
-def match_resume_skills(
-    resume_text: str,
-    jd_skills: list[str],
-) -> dict:
-    """Compare resume text with job-description skill phrases."""
-    return match_resume_skills_with_context(
-        resume_text=resume_text,
-        jd_skills=jd_skills,
-        jd_text="",
-    )
-
 
 def match_resume_skills_with_context(
     resume_text: str,

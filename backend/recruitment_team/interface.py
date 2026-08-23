@@ -183,6 +183,7 @@ class TargetAssessmentArtifactSnapshot:
     status: str
     specialist_runs: tuple[dict, ...]
     synthesis: str
+    synthesis_claims: tuple[dict, ...]
     judge: dict | None
     correction: dict | None
     error: dict | None

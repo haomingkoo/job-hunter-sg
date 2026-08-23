@@ -19,9 +19,9 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 load_dotenv(BACKEND_DIR / ".env")
 
-from database import Base  # noqa: E402
+from database import Base, init_db  # noqa: E402
 import config  # noqa: E402
-from models import ResumeVersion, User  # noqa: E402
+from models import RecruitmentRun, ResumeVersion, User  # noqa: E402
 from recruitment_team import (  # noqa: E402
     EvidenceAssessedRoleSuccessProfiler,
     DeepAgentConversationModel,
@@ -44,6 +44,7 @@ from recruitment_team.errors import (  # noqa: E402
     TargetAssessmentUnavailable,
 )
 from recruitment_team.interface import (  # noqa: E402
+    AnswerAssessmentQuestion,
     AssessTargetJob,
     BuildCandidateProfile,
     SearchJobs,
@@ -52,6 +53,10 @@ from recruitment_team.interface import (  # noqa: E402
     StartThread,
 )
 from recruitment_team.telemetry import RecordedTelemetry  # noqa: E402
+from recruitment_team.model_transport_observer import (  # noqa: E402
+    ModelTransportObserver,
+    observed_http_client,
+)
 from recruitment_team.open_agent.runner import OpenAgentTargetAssessmentRunner  # noqa: E402
 from resume_agent.models import create_agent_model  # noqa: E402
 from resume_parser import parse_resume_isolated  # noqa: E402
@@ -67,15 +72,8 @@ GovTech | AI Project Lead | Jan 2022 - Present
 - Coordinated engineers, policy users, and QA reviewers across rollout
 """
 
-DEFAULT_INITIAL_MESSAGE = (
-    "Study my resume and build an evidence-backed candidate profile. Suggest plausible "
-    "role families as hypotheses, then ask one decision-useful question."
-)
-DEFAULT_FOLLOW_UP_MESSAGE = (
-    "Keep the analysis broad. Distinguish direct evidence, transferable strengths, "
-    "and gaps. Do not assume a role, location, seniority, or salary preference that "
-    "I have not stated."
-)
+DEFAULT_INITIAL_MESSAGE = "Find roles for me."
+DEFAULT_FOLLOW_UP_MESSAGE = "Keep it broad and in Singapore."
 
 
 def _session_factory():
@@ -245,6 +243,14 @@ def main() -> int:
         help="Explicit second-turn scenario input.",
     )
     parser.add_argument(
+        "--assessment-answer",
+        default=(
+            "I have no additional evidence beyond my resume. Treat every unanswered "
+            "requirement as a gap and finish the assessment without inferring experience."
+        ),
+        help="Evidence-bounded answer used to resume every target-assessment pause.",
+    )
+    parser.add_argument(
         "--output",
         default="",
         help="Optional path for the complete JSON report.",
@@ -258,6 +264,10 @@ def main() -> int:
         parser.error("--target-assessment-resume-attempts must be zero or greater")
     if args.max_output_tokens <= 0:
         parser.error("--max-output-tokens must be greater than zero")
+    # The journey uses the application's shared job corpus through
+    # LangChainJobDiscovery. Keep that schema at the same revision production
+    # applies on startup before asking an agent to search it.
+    init_db()
     resume_text, resume_label, parse_report, resume_document = _resume_input(args.resume_pdf)
     imported_profile_run = (
         _candidate_profile_run_from_report(args.candidate_profile_report, resume_document)
@@ -269,18 +279,32 @@ def main() -> int:
     telemetry = RecordedTelemetry()
     activity = RecordedActivityPublisher()
 
-    def live_model(model_name: str):
+    def live_model(model_name: str, *, callbacks=None, http_client=None):
         return create_agent_model(
             model=model_name,
             max_completion_tokens=args.max_output_tokens,
             timeout=config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
             max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
+            callbacks=callbacks,
+            http_client=http_client,
+        )
+
+    transport_observers = {
+        role: ModelTransportObserver(telemetry, role=role)
+        for role in ("coordinator", "role_definition", "role_evidence")
+    }
+
+    def observed_live_model(model_name: str, role: str):
+        return live_model(
+            model_name,
+            callbacks=[transport_observers[role]],
+            http_client=observed_http_client(),
         )
 
     # The adapter production actually serves. Validating the retired single-shot
     # path would report green on code that no longer handles a single chat turn.
     model = DeepAgentConversationModel(
-        model_factory=lambda: live_model(args.conversation_model),
+        model_factory=lambda: observed_live_model(args.conversation_model, "coordinator"),
         telemetry=telemetry,
     )
 
@@ -319,11 +343,11 @@ def main() -> int:
             LangChainJobDiscovery(),
             EvidenceAssessedRoleSuccessProfiler(
                 LangChainRoleDefinitionGenerator(
-                    model=live_model(args.role_definition_model),
+                    model=observed_live_model(args.role_definition_model, "role_definition"),
                     telemetry=telemetry,
                 ),
                 LangChainRoleEvidenceAssessor(
-                    model=live_model(args.role_evidence_model),
+                    model=observed_live_model(args.role_evidence_model, "role_evidence"),
                     telemetry=telemetry,
                 ),
             ),
@@ -331,7 +355,11 @@ def main() -> int:
             activity,
             candidate_profiler_factory,
             OpenAgentTargetAssessmentRunner(
-                model_factory=lambda: live_model(args.assessment_model),
+                model_factory=lambda: live_model(
+                    args.assessment_model,
+                    callbacks=[transport_observers["coordinator"]],
+                    http_client=observed_http_client(),
+                ),
                 telemetry=telemetry,
             ),
         )
@@ -349,17 +377,56 @@ def main() -> int:
         journey_error = None
         attempted_target = None
         thread_id = ""
+        assessment_answer_rounds = 0
 
         def execute_phase(phase, command, idempotency_key):
             phase_started = time.perf_counter()
             print(json.dumps({"phase": phase, "status": "running"}), file=sys.stderr, flush=True)
-            expected_message_roles.append("user")
+            # Explicit SearchJobs is an interface action, not a chat message;
+            # RecruitmentTeam deliberately persists only its assistant result.
+            if not isinstance(command, SearchJobs):
+                expected_message_roles.append("user")
             try:
                 receipt = team.execute(
                     owner_id,
                     command,
                     idempotency_key=idempotency_key,
                 )
+            except BaseException as error:
+                print(
+                    json.dumps(
+                        {
+                            "phase": phase,
+                            "status": "failed",
+                            "error_type": type(error).__name__,
+                            "elapsed_ms": round((time.perf_counter() - phase_started) * 1000),
+                        }
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                raise
+            print(
+                json.dumps(
+                    {
+                        "phase": phase,
+                        "status": "completed",
+                        "elapsed_ms": round((time.perf_counter() - phase_started) * 1000),
+                        "trace_key": receipt.trace_key,
+                    }
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            expected_message_roles.append("assistant")
+            receipts.append(receipt)
+            return receipt
+
+        def retry_phase(phase, run_id):
+            phase_started = time.perf_counter()
+            print(json.dumps({"phase": phase, "status": "running"}), file=sys.stderr, flush=True)
+            try:
+                receipt = team.retry_conversation_run(owner_id, thread_id, run_id)
             except BaseException as error:
                 print(
                     json.dumps(
@@ -479,6 +546,57 @@ def main() -> int:
                     if not error.retryable or target_assessment_resume_count >= args.target_assessment_resume_attempts:
                         raise
                     target_assessment_resume_count += 1
+            for answer_round in range(1, config.OPEN_AGENT_MAX_CANDIDATE_QUESTION_ROUNDS + 1):
+                current_assessment = team.target_assessment(owner_id, thread_id)
+                if current_assessment is None or current_assessment.status != "paused":
+                    break
+                assessment_answer_rounds = answer_round
+                answer_resume_count = 0
+                answer_idempotency_key = f"v3-local-target-assessment-answer-{answer_round}"
+                answer_run_id = ""
+                while True:
+                    phase = (
+                        f"target_assessment_answer_{answer_round}"
+                        if answer_resume_count == 0
+                        else f"target_assessment_answer_{answer_round}_resume_{answer_resume_count}"
+                    )
+                    try:
+                        if answer_run_id:
+                            retry_phase(phase, answer_run_id)
+                        else:
+                            execute_phase(
+                                phase,
+                                AnswerAssessmentQuestion(
+                                    thread_id=thread_id,
+                                    answer=args.assessment_answer,
+                                ),
+                                answer_idempotency_key,
+                            )
+                        break
+                    except TargetAssessmentUnavailable as error:
+                        if (
+                            not error.retryable
+                            or answer_resume_count >= args.target_assessment_resume_attempts
+                        ):
+                            raise
+                        if not answer_run_id:
+                            answer_run_id = (
+                                db.query(RecruitmentRun.id)
+                                .filter(
+                                    RecruitmentRun.user_id == owner_id,
+                                    RecruitmentRun.idempotency_key == answer_idempotency_key,
+                                )
+                                .scalar()
+                                or ""
+                            )
+                            if not answer_run_id:
+                                raise RuntimeError(
+                                    "Failed assessment answer had no durable run to retry."
+                                ) from error
+                        answer_resume_count += 1
+            current_assessment = team.target_assessment(owner_id, thread_id)
+            if current_assessment is not None and current_assessment.status == "paused":
+                raise RuntimeError("Target assessment remained paused after its question budget.")
         except Exception as error:
             cause = error
             validation_code = None
@@ -533,25 +651,33 @@ def main() -> int:
         assert target_assessment_artifact.execution_policy["content_truncation"] is False
         expected_specialists = set(target_assessment_artifact.execution_policy["specialists"])
         observed_specialists = {run["persona_id"] for run in target_assessment_artifact.specialist_runs}
-        # The open-agent orchestrator decides which personas to consult and how
-        # many times, so a live run is no longer guaranteed to touch every
-        # registered persona -- only that whichever it did consult are real.
         assert observed_specialists <= expected_specialists
-        if target_assessment_artifact.status == "paused":
-            # A genuinely autonomous run: the orchestrator decided to call
-            # ask_candidate instead of completing. This is a real, legitimate
-            # terminal state (Tasks 10-11), not a failure -- synthesis stays
-            # withheld and the judge never runs, since there is nothing
-            # approved yet to judge.
-            assert snapshot.workflow_state == "awaiting_candidate_answer"
-            assert not target_assessment_artifact.synthesis.strip()
-            assert target_assessment_artifact.judge is None
-        else:
-            assert target_assessment_artifact.status == "completed"
-            assert target_assessment_artifact.synthesis.strip()
-            assert target_assessment_artifact.judge
-            assert target_assessment_artifact.judge["strengths"]
-            assert target_assessment_artifact.judge["score_reason"]
+        transport_metrics = target_assessment_artifact.execution_metrics
+        assert transport_metrics["transport_call_count"] > 0
+        assert transport_metrics["transport_attempt_count"] >= transport_metrics["transport_call_count"]
+        assert transport_metrics["transport_retry_count"] >= 0
+        assert "coordinator" in transport_metrics["transport_by_role"]
+        assert target_assessment_artifact.status == "completed"
+        # Completion is only valid after every required specialist has
+        # produced an accepted structured submission and the resumed synthesis
+        # has passed the independent judge.
+        assert observed_specialists == expected_specialists
+        required_assessment_roles = {
+            "coordinator",
+            "target_assessment_judge",
+            *(f"specialist:{persona_id}" for persona_id in expected_specialists),
+        }
+        for role in required_assessment_roles:
+            role_metrics = transport_metrics["transport_by_role"][role]
+            assert role_metrics["call_count"] > 0
+            assert role_metrics["attempt_count"] >= role_metrics["call_count"]
+            assert role_metrics["latency_ms"] > 0
+            assert role_metrics["input_tokens"] + role_metrics["output_tokens"] > 0
+            assert role_metrics["models"]
+        assert target_assessment_artifact.synthesis.strip()
+        assert target_assessment_artifact.judge
+        assert target_assessment_artifact.judge["strengths"]
+        assert target_assessment_artifact.judge["score_reason"]
     assert all(receipt.thread_id == thread_id for receipt in receipts)
     assert len({receipt.trace_key for receipt in receipts}) == len(receipts)
     if journey_error is None:
@@ -567,18 +693,24 @@ def main() -> int:
         assert all(span.name == "command" for span in non_success_spans)
         total_resumes = candidate_profile_resume_count + role_profile_resume_count + target_assessment_resume_count
         assert len(non_success_spans) <= total_resumes
-        if imported_profile_run is None:
+        profile_metrics = candidate_profile_artifact.execution_metrics or {}
+        if int(profile_metrics.get("model_call_count") or 0) > 0:
             assert any(span.name == "candidate_profile.model_attempt" for span in telemetry.spans)
         else:
             assert not any(span.name == "candidate_profile.model_attempt" for span in telemetry.spans)
+            assert int(profile_metrics.get("checkpoint_hit_count") or 0) > 0
         assert any(span.name == "role_definition.model_attempt" for span in telemetry.spans)
         assert any(span.name == "role_evidence_assessment.model_attempt" for span in telemetry.spans)
-        # Specialists now run as delegated subagents (streamed, not invoked via
-        # invoke_structured), so only the mandatory fresh judge call still
-        # produces its own telemetry span -- except on a paused run, where the
-        # judge never runs at all (nothing approved yet to judge).
-        if target_assessment_artifact.status != "paused":
-            assert any(span.name == "open_agent_assessment.judge_attempt" for span in telemetry.spans)
+        # Specialists run as delegated subagents; the mandatory fresh judge
+        # call still produces its own telemetry span after any pause resumes.
+        assert any(span.name == "open_agent_assessment.judge_attempt" for span in telemetry.spans)
+        assert any(span.name == "model_transport" for span in telemetry.spans)
+        observed_transport_roles = {
+            str(span.attributes.get("role") or "")
+            for span in telemetry.spans
+            if span.name == "model_transport"
+        }
+        assert {"coordinator", "role_definition", "role_evidence"} <= observed_transport_roles
         forbidden_span_content = (resume_text, args.initial_message, args.follow_up_message)
         assert not any(
             secret and secret in str(value)
@@ -597,6 +729,8 @@ def main() -> int:
         "scenario": {
             "initial_message": args.initial_message,
             "follow_up_message": args.follow_up_message,
+            "assessment_answer": args.assessment_answer,
+            "assessment_answer_rounds": assessment_answer_rounds,
             "search_query": args.search_query,
             "candidate_profile_resume_attempts": args.candidate_profile_resume_attempts,
             "role_profile_resume_attempts": args.role_profile_resume_attempts,

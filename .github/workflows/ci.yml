@@ -20,6 +20,21 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TEST_DATABASE_URL: sqlite:///./ci_test.db
+      POSTGRES_MIGRATION_TEST_URL: postgresql://postgres:postgres@localhost:5432/job_hunter_test # pragma: allowlist secret
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres # pragma: allowlist secret
+          POSTGRES_DB: job_hunter_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d job_hunter_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -44,6 +59,14 @@ jobs:
       - name: Compile backend
         run: python -m compileall -q backend
 
+      - name: Validate semantic corpus label coverage
+        run: >-
+          python backend/scripts/check_semantic_corpus_labels.py
+          --manifest backend/evals/corpora/synthetic-v1/manifest.json
+          --corpus-dir backend/evals/corpora/synthetic-v1
+          --minimum-labelled-cases 1
+          --minimum-labels 2
+
       - name: Ruff critical checks
         run: ruff check backend tests
 
@@ -52,6 +75,9 @@ jobs:
 
       - name: Backend tests
         run: PYTHONPATH=backend python -m pytest backend/tests tests -q
+
+      - name: Build scheduled alert image
+        run: docker build --file Dockerfile.alerts --tag job-hunter-sg-alerts-ci:${{ github.sha }} .
 
   frontend-build:
     name: Frontend tests and build
@@ -82,6 +108,9 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Build production web image
+        run: docker build --file Dockerfile --tag job-hunter-sg-web-ci:${{ github.sha }} .
 
   secret-scan:
     name: Secret scan

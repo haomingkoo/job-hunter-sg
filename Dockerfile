@@ -20,8 +20,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir torch==2.12.1 --index-url https://download.pytorch.org/whl/cpu
+RUN python -m pip install --no-cache-dir --upgrade pip==26.2.1
+RUN pip install --no-cache-dir torch==2.13.0 --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
+# Torch pins an old setuptools release, but the application does not need the
+# packaging tool at runtime. Remove that vulnerable build-only surface.
+RUN python -m pip uninstall -y setuptools
 
 RUN useradd --create-home --uid 10001 --user-group appuser && chown appuser:appuser /app
 ENV HOME=/home/appuser

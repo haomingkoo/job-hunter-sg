@@ -43,6 +43,13 @@ The scheduled services are defined in version control:
 | Full crawl | `railway.seed.toml` | `0 22 * * *` | 06:00 daily | Clear its Railway Cron Schedule |
 | Job alerts | `railway.alerts.toml` | `0 23 * * *` | 07:00 daily | Clear its Railway Cron Schedule |
 
+Each live scheduled service must show this repository, the released commit, and
+the matching config file in Railway. A trigger-only curl service is not equivalent
+to the full-crawl service because the admin endpoint returns as soon as it starts
+the background task. Rotate any credential that has ever appeared literally in
+deployment metadata; service commands may reference Railway variables but must
+never embed their values.
+
 After each release, record each scheduled service's configured schedule,
 latest successful execution time, latest deployment status, and any failure or
 still-running state from its Railway deployment history. Railway skips a cron
@@ -57,7 +64,8 @@ The gates prove different things and must not be collapsed into one green tick:
 2. Required pull-request checks validate the reviewed commit.
 3. Railway **Wait for CI** decides whether that commit may deploy.
 4. `Production acceptance` polls production for the GitHub SHA, database
-   connectivity, the public jobs feed, the SPA shell and its hashed JavaScript
+   connectivity, a non-empty and recently scraped public corpus from both maintained
+   sources, the SPA shell and its hashed JavaScript
    asset, `robots.txt`, `sitemap.xml`, and `llms.txt`. Its JSON output is the
    public receipt. Rendering the `#jobs` SPA route remains part of browser
    acceptance; an HTTP client cannot observe a URL fragment.
@@ -80,12 +88,13 @@ run and pull request in that comment:
 ```text
 Release SHA: <full SHA>
 Recorded at: <UTC timestamp>
-| Service | Repo schedule | Live Railway schedule | Latest execution/deployment ID | Status | Finished at | Failure detail | Kill switch checked |
-| Full crawl | 0 22 * * * | <live value> | <ID> | <SUCCESS/FAILED/ACTIVE> | <UTC or n/a> | <none or summary> | <clear Cron Schedule verified> |
-| Job alerts | 0 23 * * * | <live value> | <ID> | <SUCCESS/FAILED/ACTIVE> | <UTC or n/a> | <none or summary> | <clear Cron Schedule verified> |
+| Service | Live repo commit/config | Repo schedule | Live Railway schedule | Latest execution/deployment ID | Status | Finished at | Failure detail | Kill switch checked |
+| Full crawl | <SHA / railway.seed.toml> | 0 22 * * * | <live value> | <ID> | <SUCCESS/FAILED/ACTIVE> | <UTC or n/a> | <none or summary> | <clear Cron Schedule verified> |
+| Job alerts | <SHA / railway.alerts.toml> | 0 23 * * * | <live value> | <ID> | <SUCCESS/FAILED/ACTIVE> | <UTC or n/a> | <none or summary> | <clear Cron Schedule verified> |
 ```
 
-The repository supplies only the expected schedules above. The live schedule,
+The repository supplies only the expected schedules and commands above. The live service source,
+commit and config file, schedule,
 execution IDs, timestamps, and failure state must come from Railway during
 acceptance; do not copy placeholders into a completed receipt.
 

@@ -1,2 +1,4 @@
-# Test-fixture generation only; never installed in the production image.
+# Test-only dependencies; never installed in the production image.
 reportlab==4.4.10
+pytest==9.1.1
+python-dotenv==1.2.3

@@ -17,7 +17,6 @@ describe("DocumentsTab", () => {
   let root;
 
   beforeEach(() => {
-    globalThis.IS_REACT_ACT_ENVIRONMENT = true;
     vi.clearAllMocks();
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -50,7 +49,6 @@ describe("DocumentsTab", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
-    delete globalThis.IS_REACT_ACT_ENVIRONMENT;
   });
 
   it("searches, reopens resumes, and copies and downloads cover letters", async () => {

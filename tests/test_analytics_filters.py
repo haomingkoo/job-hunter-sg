@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from main import (  # noqa: E402
+from market_analytics import (  # noqa: E402
     _analytics_agency_subset_options,
     _analytics_company_filter_condition,
     _analytics_company_label,

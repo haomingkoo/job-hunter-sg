@@ -64,6 +64,12 @@ RECRUITER_COMPANY_ALIASES = (
     "placement professionals",
     "bgc group",
     "ethos search",
+    "employment pte",
+    "employment services",
+    "manpower service",
+    "manpower services",
+    "manpower consultant",
+    "manpower consultancy",
 )
 
 RECRUITER_SSIC_KEYWORDS = (
@@ -95,6 +101,11 @@ RECRUITER_DESCRIPTION_SQL_PATTERN = (
     r")\b"
 )
 
+# Singapore employment-agency licence numbers are often printed without an
+# explicit "EA Licence" label, for example ``15C7752``.
+EA_LICENCE_NUMBER_PATTERN = r"(^|[^a-z0-9])\d{2}[cs]\d{4}([^a-z0-9]|$)"
+_EA_LICENCE_NUMBER_RE = re.compile(EA_LICENCE_NUMBER_PATTERN, re.IGNORECASE)
+
 
 def normalize_employer_name(name: str) -> str:
     text = (name or "").lower().replace("&", " and ")
@@ -122,7 +133,10 @@ def is_recruitment_employer(
         return True
     if any(keyword in ssic for keyword in RECRUITER_SSIC_KEYWORDS):
         return True
-    return any(_contains_phrase(job_description, marker) for marker in RECRUITER_DESCRIPTION_MARKERS)
+    return any(
+        _contains_phrase(job_description, marker)
+        for marker in RECRUITER_DESCRIPTION_MARKERS
+    ) or bool(_EA_LICENCE_NUMBER_RE.search(job_description))
 
 
 def _sql_phrase_condition(lowered_column, phrase: str):
@@ -149,5 +163,8 @@ def direct_employer_condition(
         description_lower = func.lower(func.coalesce(description_column, ""))
         recruiter_conditions.append(
             description_lower.regexp_match(RECRUITER_DESCRIPTION_SQL_PATTERN)
+        )
+        recruiter_conditions.append(
+            description_lower.regexp_match(EA_LICENCE_NUMBER_PATTERN)
         )
     return ~or_(*recruiter_conditions)

@@ -13,10 +13,8 @@ import re
 from typing import Any
 
 from resume_scorer import (
-    ACTION_VERBS,
     AVOIDED_PHRASES,
     _METRIC_RE,
-    _NORMALIZED_SECTION_KEYS,
     _clean_line,
     _iter_resume_lines,
     _section_key,

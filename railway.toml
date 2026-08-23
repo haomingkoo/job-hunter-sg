@@ -8,3 +8,9 @@ healthcheckPath = "/api/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
+
+# Resume-review and tailoring sessions are intentionally process-local. Keep
+# the web service single-replica until those workflows move to shared durable
+# state; account deletion relies on this deployment invariant.
+[deploy.multiRegionConfig.asia-southeast1-eqsg3a]
+numReplicas = 1

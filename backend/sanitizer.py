@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import html
 import re
+from urllib.parse import urlsplit
 
 
 _TAG_RE = re.compile(r"<[^>]+>", re.DOTALL)
@@ -24,6 +25,7 @@ _EVENT_HANDLER_RE = re.compile(
 )
 _INLINE_WHITESPACE_RE = re.compile(r"[^\S\n]+")
 _MULTI_NEWLINE_RE = re.compile(r"\n{3,}")
+_URL_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f\u200b\u200c\u200d\ufeff]")
 
 MAX_USER_INPUT_LEN = 1000
 
@@ -42,14 +44,42 @@ def sanitize_html(text: str) -> str:
 
 
 def sanitize_url(url: str) -> str:
-    """Only allow http:// and https:// URLs. Block javascript:, data:, etc."""
+    """Return a normalized HTTP(S) URL or an empty string for unsafe input."""
     if not url:
         return ""
-    # Strip whitespace and ASCII control characters; remove zero-width unicode chars
-    url = re.sub(r"[\x00-\x1f\x7f\u200b\u200c\u200d\ufeff]", "", url).strip()
-    if url.lower().startswith(("http://", "https://")):
-        return url
-    return ""
+    candidate = str(url)
+    if not candidate.strip():
+        return ""
+    if _URL_CONTROL_RE.search(candidate):
+        return ""
+    candidate = candidate.strip()
+    if any(character.isspace() for character in candidate):
+        return ""
+    try:
+        parsed = urlsplit(candidate)
+        hostname = parsed.hostname
+        port = parsed.port
+    except (TypeError, ValueError):
+        return ""
+    if parsed.scheme.lower() not in {"http", "https"} or not hostname:
+        return ""
+    if parsed.username is not None or parsed.password is not None:
+        return ""
+    # Accessing parsed.port above rejects malformed and out-of-range ports.
+    del port
+    return candidate
+
+
+def validate_http_url(url: str | None) -> str | None:
+    """Validate a stored optional URL while preserving blank and ``None`` values."""
+    if url is None:
+        return None
+    if not str(url).strip():
+        return ""
+    normalized = sanitize_url(url)
+    if not normalized:
+        raise ValueError("must be blank or a valid HTTP(S) URL")
+    return normalized
 
 
 def sanitize_job(job_dict: dict) -> dict:
@@ -108,9 +138,9 @@ def sanitize_resume_text(text: str) -> str:
     return text.strip()
 
 
-def sanitize_user_input(text: str) -> str:
-    """Strip HTML, trim whitespace, limit length for user-supplied text."""
+def sanitize_user_input(text: str, *, max_length: int = MAX_USER_INPUT_LEN) -> str:
+    """Strip HTML and enforce the caller's declared storage limit."""
     if not text:
         return ""
     cleaned = sanitize_html(text)
-    return cleaned[:MAX_USER_INPUT_LEN]
+    return cleaned[:max_length]

@@ -1,6 +1,8 @@
 # V3 Recruitment Team — Open-Ended Deep Agent Design
 
-Status: design approved by user, pending write-up review before implementation planning.
+Status: historical pre-implementation design snapshot, superseded by the shipped
+`backend/recruitment_team/open_agent/runner.py` and `open_agent/subagents.py` flow.
+Proposed paths and symbols below intentionally reflect the repository at design time.
 
 ## Motivation
 
@@ -12,8 +14,8 @@ correction pass. Every model call across the entire `recruitment_team` module us
 chooses which tool to call, or whether to call one at all.
 
 This was not an evolution of this codebase's existing agent work. `backend/resume_agent/agent.py`
-wraps `deepagents.create_deep_agent()`, and its defaults (`ORCHESTRATOR_TOOLS`,
-`create_persona_subagents()`) describe a real, multi-tool orchestrator with genuine
+wraps `deepagents.create_deep_agent()`, and the repo then contained an unshipped
+`create_persona_subagents()` prototype describing a multi-tool orchestrator with genuine
 LangGraph iteration (a recursion limit, not a single forced call). V3's `recruitment_team`
 module does not import `deepagents` or `langgraph` at all — it is a separate, from-scratch,
 fully bounded system built alongside a working deep agent, not on top of it.
@@ -152,8 +154,8 @@ bound to this agent instance:
 
 The existing 5 recruitment personas (`recruitment_team/persona_packs/v1/personas.json`,
 loaded the same way `target_assessment.py` already loads them) become `SubAgent`
-entries the orchestrator can freely delegate to, mirroring
-`resume_agent.personas.create_persona_subagents()`. Each persona subagent keeps its
+entries the orchestrator can freely delegate to, following the shape explored by the
+former unshipped `resume_agent.personas.create_persona_subagents()` prototype. Each persona subagent keeps its
 existing internal contract: one schema-enforced submission per invocation
 (`tool_choice=<persona submission tool>`), matching the measured, working pattern
 from the classic pipeline. What changes is *whether and how often the orchestrator

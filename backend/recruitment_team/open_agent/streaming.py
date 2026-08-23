@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Mapping
 from typing import Any, Iterator
 
 
@@ -15,6 +17,7 @@ def iter_progress_events(
 ) -> Iterator[dict]:
     """Yield normalized tool and message events, skipping replayed calls."""
     active_persona_by_namespace: dict[tuple, str] = {}
+    model_attempts_by_member: dict[str, int] = {}
     pending_skip_ids = set(skip_tool_call_ids or ())
 
     for namespace, chunk in agent.stream(
@@ -29,10 +32,13 @@ def iter_progress_events(
                 response_metadata = getattr(message, "response_metadata", None) or {}
                 model_name = str(response_metadata.get("model_name") or response_metadata.get("model") or "")
                 if usage or model_name:
+                    team_member = active_persona_by_namespace.get(namespace, persona_name or "coordinator")
+                    model_attempts_by_member[team_member] = model_attempts_by_member.get(team_member, 0) + 1
                     yield {
                         "kind": "model_attempt",
-                        "team_member": active_persona_by_namespace.get(namespace, persona_name or "coordinator"),
+                        "team_member": team_member,
                         "id": getattr(message, "id", None),
+                        "attempt": model_attempts_by_member[team_member],
                         "model": model_name,
                         "input_tokens": int(usage.get("input_tokens") or 0),
                         "output_tokens": int(usage.get("output_tokens") or 0),
@@ -74,18 +80,17 @@ def iter_progress_events(
                     }
 
 
-# Text long enough to fill the activity panel is text the candidate cannot read
-# anyway. Gate messages and discovery failure reasons have no length bound.
-MAX_ACTIVITY_TEXT_CHARS = 120
-
-
-def _clip(text: str) -> str:
-    text = text.strip()
-    return text if len(text) <= MAX_ACTIVITY_TEXT_CHARS else text[: MAX_ACTIVITY_TEXT_CHARS - 1] + "…"
-
-
 def describe_progress(event: dict) -> tuple[str, dict] | None:
     """Build safe candidate-facing progress from one normalized event."""
+    if event.get("kind") == "model_attempt":
+        team_member = event.get("team_member") or "coordinator"
+        detail = {"stage": "model"}
+        if isinstance(event.get("attempt"), int):
+            detail["attempt"] = event["attempt"]
+        if event.get("id"):
+            detail["model_attempt_id"] = event["id"]
+        return f"{team_member} completed a model step.", detail
+
     tool_name = event.get("tool_name")
     if not tool_name:
         return None
@@ -95,9 +100,6 @@ def describe_progress(event: dict) -> tuple[str, dict] | None:
         # `{member} called {tool}.` is the shape TeamActivityPanel's humanize()
         # parses, and the shape the #146 activity assertions pin.
         detail = {"tool_name": tool_name, "stage": "call"}
-        query = (event.get("args") or {}).get("query")
-        if isinstance(query, str) and query.strip():
-            detail["query"] = _clip(query)
         if event.get("id"):
             detail["tool_call_id"] = event["id"]
         return f"{team_member} called {tool_name}.", detail
@@ -106,10 +108,21 @@ def describe_progress(event: dict) -> tuple[str, dict] | None:
         outcome = _outcome(tool_name, event.get("content"))
         if outcome is None:
             return None
-        detail = {"tool_name": tool_name, "stage": "result", "outcome": _clip(outcome)}
+        detail = {"tool_name": tool_name, "stage": "result", "outcome": outcome}
         if event.get("id"):
             detail["tool_call_id"] = event["id"]
         payload = _payload(event.get("content"))
+        if isinstance(payload, dict) and payload.get("ok") is False:
+            for key in (
+                "failure_code",
+                "failure_type",
+                "retryable",
+                "recovery_action",
+                "validation_code",
+            ):
+                value = payload.get(key)
+                if isinstance(value, (str, bool, int, float)):
+                    detail[key] = value
         found = _postings_found(payload) if isinstance(payload, dict) else None
         if found is not None:
             detail["result_count"] = found
@@ -125,11 +138,10 @@ def _outcome(tool_name: str, content: Any) -> str | None:
     """Summarize a useful tool result without exposing raw content."""
     payload = _payload(content)
     if not isinstance(payload, dict):
-        return None
+        return "tool completed"
 
     if payload.get("ok") is False:
-        reason = payload.get("reason") or payload.get("failure_type") or "unavailable"
-        return f"nothing returned ({str(reason).replace('_', ' ')})"
+        return "tool completed without an accepted result"
 
     # read_shortlist is the only tool that reports both lists, and reporting one
     # of them would be a half-truth.
@@ -159,9 +171,9 @@ def _outcome(tool_name: str, content: Any) -> str | None:
     if tool_name == "propose_resume_edit" and payload.get("accepted") is True:
         return "one resume edit drafted, waiting on your approval"
     if tool_name == "propose_resume_edit" and payload.get("accepted") is False:
-        return f"no edit drafted ({payload.get('reason') or 'rejected'})"
+        return "no resume edit passed the evidence gate"
 
-    return None
+    return "tool completed"
 
 
 def _payload(content: Any) -> Any:
@@ -172,6 +184,14 @@ def _payload(content: Any) -> Any:
         except json.JSONDecodeError:
             return None
     return payload
+
+
+def rejected_tool_result(event: dict) -> bool:
+    """Whether a normalized tool result explicitly forbids another attempt."""
+    if event.get("kind") != "tool_result":
+        return False
+    payload = _payload(event.get("content"))
+    return isinstance(payload, dict) and payload.get("retry") is False
 
 
 def _postings_found(payload: dict) -> int | None:
@@ -189,12 +209,44 @@ def _postings_found(payload: dict) -> int | None:
     return None
 
 
+def _question_strings(value: Any) -> Iterator[str]:
+    """Recover question text without rendering model-produced containers."""
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return
+        if text[:1] in {"[", "{"}:
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                quoted_values = []
+                for match in re.finditer(r'"(?:\\.|[^"\\])*"', text):
+                    try:
+                        decoded = json.loads(match.group(0)).strip()
+                    except (json.JSONDecodeError, AttributeError):
+                        continue
+                    if decoded:
+                        quoted_values.append(decoded)
+                if quoted_values:
+                    yield from quoted_values
+                    return
+            else:
+                yield from _question_strings(parsed)
+                return
+        yield text
+        return
+    if isinstance(value, Mapping):
+        for nested in value.values():
+            yield from _question_strings(nested)
+        return
+    if isinstance(value, (list, tuple)):
+        for nested in value:
+            yield from _question_strings(nested)
+
+
 def format_questions(args: dict) -> str:
-    """One pause can carry several questions, so render them as one message."""
-    questions = args.get("questions")
-    if isinstance(questions, str):
-        questions = [questions]
-    questions = [str(item).strip() for item in (questions or []) if str(item).strip()]
+    """One pause can carry several questions, rendered as clean text."""
+    questions = list(dict.fromkeys(_question_strings(args.get("questions"))))
     if not questions:
         return ""
     if len(questions) == 1:

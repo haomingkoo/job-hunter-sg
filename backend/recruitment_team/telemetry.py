@@ -15,6 +15,8 @@ from opentelemetry.trace import Status, StatusCode
 class TelemetryOperation(Protocol):
     def set_attribute(self, name: str, value: str | int | float | bool) -> None: ...
 
+    def mark_error(self, error_type: str) -> None: ...
+
 
 class RecruitmentTelemetry(Protocol):
     def operation(
@@ -30,6 +32,9 @@ class OpenTelemetryOperation:
 
     def set_attribute(self, name: str, value: str | int | float | bool) -> None:
         self._span.set_attribute(f"recruitment_team.{name}", value)
+
+    def mark_error(self, error_type: str) -> None:
+        self._span.set_status(Status(StatusCode.ERROR, error_type))
 
 
 class OpenTelemetryRecorder:
@@ -66,6 +71,10 @@ class RecordedSpan:
     def set_attribute(self, name: str, value: str | int | float | bool) -> None:
         self.attributes[name] = value
 
+    def mark_error(self, error_type: str) -> None:
+        self.status = "error"
+        self.error_type = error_type
+
 
 class RecordedTelemetry:
     """In-memory adapter for asserting the production operation tree."""
@@ -96,7 +105,8 @@ class RecordedTelemetry:
             span.error_type = type(error).__name__
             raise
         else:
-            span.status = "success"
+            if span.status == "running":
+                span.status = "success"
         finally:
             span.duration_ms = (time.perf_counter() - started_at) * 1000
             self._active.pop()

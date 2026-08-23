@@ -562,6 +562,7 @@ class TargetAssessmentArtifact(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False)
     specialist_runs: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     synthesis: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    synthesis_claims: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     judge: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     correction: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -574,6 +575,7 @@ class TargetAssessmentArtifact(Base):
     # are ever served.
     pending_specialist_runs: Mapped[list | None] = mapped_column(JSON, nullable=True)
     pending_synthesis: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pending_synthesis_claims: Mapped[list | None] = mapped_column(JSON, nullable=True)
     pending_proposed_edits: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
@@ -671,6 +673,7 @@ class JobAlertPreference(Base):
     keywords: Mapped[str] = mapped_column(Text, default="", nullable=False)
     max_jobs: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    match_cursor_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     consented_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
@@ -698,7 +701,12 @@ class JobAlertDelivery(Base):
     dismissed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (
-        Index("ix_job_alert_deliveries_lookup", "user_id", "scraped_job_id"),
+        Index(
+            "ux_job_alert_deliveries_user_job",
+            "user_id",
+            "scraped_job_id",
+            unique=True,
+        ),
         Index("ix_job_alert_deliveries_action", "user_id", "action"),
     )
 

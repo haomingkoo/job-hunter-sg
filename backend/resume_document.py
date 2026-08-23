@@ -479,9 +479,9 @@ def apply_resume_patch(document: dict[str, Any], patch: dict[str, Any]) -> dict[
     if "\n" in replacement or "\r" in replacement:
         raise ResumePatchError("A replacement must stay within one resume block.")
 
-    from validation_gates import _extract_numbers
+    from validation_gates import extract_numbers
 
-    new_numbers = _extract_numbers(replacement) - _extract_numbers(str(block.get("text") or ""))
+    new_numbers = extract_numbers(replacement) - extract_numbers(str(block.get("text") or ""))
     if new_numbers:
         raise ResumePatchError(f"Unsupported numeric facts: {', '.join(sorted(new_numbers))}")
 

@@ -9,7 +9,7 @@ environment. Confirm the target before any command that changes state.
 | Service | Configuration | Command | Schedule/health |
 |---|---|---|---|
 | Web | `railway.toml`, `Dockerfile` | `python main.py` | Continuous; `/api/health` |
-| Full job crawl | `railway.seed.toml`, `Dockerfile` | `python seed_jobs.py --full` | Daily 22:00 UTC |
+| Full job crawl | `railway.seed.toml`, `Dockerfile` | `python seed_jobs.py --full` | Daily 22:00 UTC; non-zero on an incomplete crawl |
 | Matched alerts | `railway.alerts.toml`, `Dockerfile.alerts` | `python send_job_alerts.py` | Daily 23:00 UTC |
 
 Keep the web service at one replica and one Python worker. Active-run
@@ -64,6 +64,13 @@ were retired after completion. Diagnose in this order:
 4. The read-only freshness query above.
 5. A public `/api/jobs?source=...` request and a rendered Jobs filter check.
 
+The scheduled service must be linked to this repository's `main` branch with
+`railway.seed.toml` as its config file. A separate container that only calls the
+admin endpoint is not an execution receipt: that endpoint starts a background
+thread and returns before the crawl finishes. The CLI and admin endpoint share a
+PostgreSQL advisory lock, so an overlapping trigger is rejected rather than
+running a second crawl.
+
 Do not manually hide/delete rows after an incomplete crawl. Fix or retry the
 source; the crawler deliberately preserves the prior corpus on partial failure.
 
@@ -80,9 +87,23 @@ cd backend
 Inside the Railway image, where the backend is the working directory, use
 `python send_job_alerts.py --dry-run`.
 
-The dry run must not send mail or write delivery history. For a real run, treat
-a missing email configuration or any non-zero `errors` count as failure even if
-the process started successfully.
+The dry run must not send mail or write delivery history. Its
+`emails_would_send` and `jobs_would_send` fields report eligible work; the
+legacy `emails_sent` and `jobs_sent` fields stay at zero.
+
+For a real run, `smtp_accepted` means the SMTP server accepted a message,
+whereas `durably_recorded` (and the legacy `emails_sent`) means the matching
+delivery history was also committed. A non-zero
+`persistence_after_acceptance` value is an ambiguous-delivery incident: SMTP
+accepted the digest but local persistence failed, so a later retry can
+duplicate it. `delivery_unknown` means the DATA response was unavailable, so
+acceptance itself cannot be determined. SMTP cannot prove inbox delivery or
+exactly-once behavior. Treat a missing email configuration, any non-zero
+`errors` count, or either ambiguous-delivery counter as a failed run requiring
+investigation.
+
+Use `--limit-users N` for a bounded live run. The value must be positive;
+zero is rejected rather than interpreted as unlimited.
 
 ## Deployment receipt
 

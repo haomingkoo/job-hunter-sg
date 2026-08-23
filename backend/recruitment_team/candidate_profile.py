@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 import config
 from prompt_safety import xml_data_block
-from validation_gates import _extract_numbers
+from validation_gates import extract_numbers
 
 from .prompts import (
     CANDIDATE_PROFILE_PROMPT_VERSION,
@@ -28,6 +28,11 @@ from .prompts import (
 )
 from .recovery import classify_exception
 from .telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
+from .model_transport_observer import (
+    collect_transport_metrics,
+    create_observed_agent_model,
+    transport_role,
+)
 
 
 ProfileCategory = Literal[
@@ -471,16 +476,29 @@ def _validate_submission(
         if quote_not_found:
             validation_codes.append(f"field:{field_id}:quote_not_found")
 
-        supported_numbers = _extract_numbers(" ".join(cited_texts))
+        supported_numbers = extract_numbers(" ".join(cited_texts))
         # Ground candidate facts, not the model's confidence metadata. The score
         # reason may legitimately explain its own numeric support score (for
         # example, "score is 90"); that number is not a resume claim.
-        claimed_numbers = _extract_numbers(item["statement"])
+        claimed_numbers = extract_numbers(item["statement"])
         unsupported = sorted(claimed_numbers - supported_numbers)
         if unsupported:
             validation_codes.append(f"field:{field_id}:unsupported_numbers({','.join(unsupported)})")
 
     return (None, "|".join(validation_codes)) if validation_codes else (payload, "")
+
+
+def _metadata_validation_code(code: str) -> str:
+    """Reduce correction detail to bounded, content-free observability codes."""
+    public_codes: list[str] = []
+    for item in code.split("|"):
+        parts = item.split(":", 2)
+        if len(parts) == 3 and parts[0] == "field":
+            reason = parts[2].split("(", 1)[0]
+            item = f"field:{reason}"
+        if item and item not in public_codes:
+            public_codes.append(item)
+    return "|".join(public_codes)
 
 
 def _build_profile(
@@ -583,17 +601,17 @@ class LangChainCandidateProfiler:
         checkpoint_store: CandidateProfileCheckpointStore | None = None,
         progress_publisher: CandidateProfileProgressPublisher | None = None,
     ):
+        self._telemetry = telemetry or OpenTelemetryRecorder()
         if model is None:
-            from resume_agent.models import create_agent_model
-
-            model = create_agent_model(
+            model = create_observed_agent_model(
+                self._telemetry,
+                role="candidate_profile",
                 timeout=config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
                 max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
             )
         if not hasattr(model, "bind_tools"):
             raise TypeError("Candidate profile model must support bind_tools")
         self._model = model
-        self._telemetry = telemetry or OpenTelemetryRecorder()
         self._checkpoint_store = checkpoint_store
         self._progress_publisher = progress_publisher
         self._configured_model_name = str(
@@ -885,9 +903,16 @@ class LangChainCandidateProfiler:
                         },
                     ) as attempt_span:
                         try:
-                            response = bound_model.invoke(attempt_request)
+                            with collect_transport_metrics() as transport_metrics:
+                                with transport_role("candidate_profile"):
+                                    response = bound_model.invoke(attempt_request)
                         except Exception as error:
                             decision = classify_exception(error, attempts_remaining=False)
+                            transport_summary = getattr(
+                                error,
+                                "recruitment_transport_metrics",
+                                {},
+                            )
                             self._record_execution_event(
                                 checkpoint_id,
                                 {
@@ -903,6 +928,7 @@ class LangChainCandidateProfiler:
                                     "failure_code": decision.failure_code,
                                     "retryable": decision.retryable,
                                     "recovery_action": decision.recovery_action,
+                                    **transport_summary,
                                 },
                             )
                             progress("failure", scope, attempt=attempt)
@@ -919,6 +945,7 @@ class LangChainCandidateProfiler:
                                 input_tokens=input_tokens or None,
                                 output_tokens=output_tokens or None,
                             ) from error
+                        transport_summary = transport_metrics.summary()
                         usage = getattr(response, "usage_metadata", None) or {}
                         response_model_name = getattr(response, "response_metadata", {}).get("model_name")
                         if response_model_name:
@@ -947,7 +974,8 @@ class LangChainCandidateProfiler:
                         payload = submitted_payload
                         if submitted_payload is not None:
                             payload, failure = _validate_submission(submitted_payload, scope_blocks)
-                        validation_span.set_attribute("validation_code", failure)
+                        public_failure = _metadata_validation_code(failure)
+                        validation_span.set_attribute("validation_code", public_failure)
                         validation_span.set_attribute("accepted", payload is not None)
                         validation_span.set_attribute(
                             "retry_triggered",
@@ -965,7 +993,8 @@ class LangChainCandidateProfiler:
                             "input_tokens": int(usage.get("input_tokens") or 0),
                             "output_tokens": int(usage.get("output_tokens") or 0),
                             "latency_ms": (time.perf_counter() - attempt_started) * 1000,
-                            "validation_code": failure,
+                            "validation_code": public_failure,
+                            **transport_summary,
                         },
                     )
                     if failure:
@@ -1052,15 +1081,15 @@ class LangChainCandidateProfilerFactory:
         *,
         telemetry: RecruitmentTelemetry | None = None,
     ):
+        self._telemetry = telemetry or OpenTelemetryRecorder()
         if model is None:
-            from resume_agent.models import create_agent_model
-
-            model = create_agent_model(
+            model = create_observed_agent_model(
+                self._telemetry,
+                role="candidate_profile",
                 timeout=config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
                 max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
             )
         self._model = model
-        self._telemetry = telemetry or OpenTelemetryRecorder()
         self.model_name = str(getattr(model, "model_name", "") or getattr(model, "model", "") or type(model).__name__)
 
     def create(

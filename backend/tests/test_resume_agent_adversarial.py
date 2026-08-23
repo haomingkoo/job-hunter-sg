@@ -253,6 +253,30 @@ def test_judge_retry_contains_original_evidence_failed_output_and_error_code():
     assert "missing_tool_call" in model.prompts[1]
 
 
+def test_deterministic_structure_contract_overrides_false_positive_judge_block():
+    from resume_agent.judge import _reconcile_deterministic_structure
+
+    assessment = "\n".join([
+        "Summary", "Decision.", "Strengths", "- Evidence", "Weaknesses", "- Gap",
+        "Independent reviewer score", "74/100", "Reasoning", "Calibrated.",
+        "Next actions", "- Confirm impact",
+    ])
+    parsed = {
+        "requires_revision": True,
+        "weaknesses": [{
+            "finding": "The aggregate score leaks internal scoring mechanics.",
+            "category": "required_structure",
+            "severity": "blocking",
+        }],
+    }
+
+    reconciled = _reconcile_deterministic_structure(parsed, assessment)
+
+    assert reconciled["requires_revision"] is False
+    assert reconciled["weaknesses"][0]["severity"] == "non_blocking"
+    assert reconciled["deterministic_contract_corrections"] == 1
+
+
 def test_synthesis_is_revised_and_rechecked_when_judge_finds_evidence_error(monkeypatch):
     import resume_agent.session as agent_session
 
@@ -271,11 +295,37 @@ def test_synthesis_is_revised_and_rechecked_when_judge_finds_evidence_error(monk
             "suggested_actions": [],
         },
     }
+    initial_assessment = """Summary
+All reviewers found missing metrics.
+Strengths
+- Delivery is visible.
+Weaknesses
+- Outcomes are not quantified.
+Independent reviewer score
+70/100
+Reasoning
+The claim overstates agreement.
+Next actions
+- Clarify the outcome.
+"""
+    revised_assessment = """Summary
+One reviewer found missing metrics.
+Strengths
+- Delivery is visible.
+Weaknesses
+- Outcomes are not quantified.
+Independent reviewer score
+70/100
+Reasoning
+The evidence is limited.
+Next actions
+- Clarify the outcome.
+"""
     synthesis_results = iter([
-        ({"messages": [AIMessage(content="All reviewers found missing metrics.")]}, [
+        ({"messages": [AIMessage(content=initial_assessment)]}, [
             {"kind": "llm", "worker": "orchestrator", "phase": "orchestrator", "status": "success"}
         ]),
-        ({"messages": [AIMessage(content="One reviewer found missing metrics.")]}, [
+        ({"messages": [AIMessage(content=revised_assessment)]}, [
             {"kind": "llm", "worker": "orchestrator", "phase": "orchestrator_revision", "status": "success"}
         ]),
     ])
@@ -319,7 +369,7 @@ def test_synthesis_is_revised_and_rechecked_when_judge_finds_evidence_error(monk
     }, owner_key="judge-revision-owner"))
     state = agent_session.get_state("judge-revision-loop", owner_key="judge-revision-owner")
 
-    assert any(event.get("content") == "One reviewer found missing metrics." for event in events)
+    assert any(event.get("content") == revised_assessment for event in events)
     assert state["synthesis_revision"]["attempted"] is True
     assert state["synthesis_revision"]["resolved"] is True
     assert state["judge_assessment"]["requires_revision"] is False
@@ -443,11 +493,16 @@ def test_failed_quality_judge_prevents_assessment_publication(monkeypatch):
         "message": "Review this resume.",
         "resume_text": "EXPERIENCE\n- Led delivery",
     }, owner_key="judge-failure-owner"))
+    state = agent_session.get_state("judge-failure-gate", owner_key="judge-failure-owner")
 
     assert any(event.get("event") == "judge_error" for event in events)
     assert any(event.get("event") == "error" for event in events)
     assert not any(event.get("event") == "token" for event in events)
     assert events[-1]["event"] == "done"
+    assert state["status"] == "failed"
+    assert state["review_status"] == "quality_blocked"
+    assert state["response"] == ""
+    assert state["tool_spans"][-1]["failure_code"] == "quality_judge_unavailable"
 
 
 def test_background_run_fails_when_every_independent_reviewer_fails(monkeypatch):

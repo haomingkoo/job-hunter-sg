@@ -124,6 +124,42 @@ def test_application_workspace_stores_job_context_and_append_only_history():
     ]
 
 
+def test_workspace_does_not_silently_truncate_schema_valid_text_fields():
+    from database import init_db
+    from main import app
+
+    init_db()
+    client = TestClient(app)
+    headers = _signup(client)
+    long_description = "D" * 5_000
+    long_notes = "N" * 3_000
+
+    created = client.post(
+        "/api/applications/workspaces",
+        json={
+            "company": "Evidence Employer",
+            "title": "AI Engineer",
+            "job_description": long_description,
+            "notes": long_notes,
+        },
+        headers=headers,
+    )
+
+    assert created.status_code == 201
+    assert created.json()["job_description"] == long_description
+    assert created.json()["notes"] == long_notes
+
+    replacement_description = "R" * 6_000
+    updated = client.put(
+        f"/api/tracked/{created.json()['id']}",
+        json={"job_description": replacement_description},
+        headers=headers,
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["job_description"] == replacement_description
+
+
 def test_cover_letter_persists_exact_resume_provenance_and_latest_candidate_edits(monkeypatch):
     from database import init_db
     import main
@@ -1066,13 +1102,18 @@ def test_private_negotiation_rehearsal_is_repeatable_and_never_invents_walk_away
 
     monkeypatch.setattr("main.coach_negotiation", fake_coach)
 
+    long_scenario = (
+        "The recruiter says the base is fixed but bonus may move. "
+        + "The candidate asks for evidence and keeps the discussion grounded. " * 20
+    )
+    assert 1_000 < len(long_scenario) < 2_000
     first = client.post(
         path,
         headers=headers,
         json={
             "priorities": ["Role scope", "Base salary"],
             "walk_away_point": "Private candidate threshold",
-            "scenario": "The recruiter says the base is fixed but bonus may move.",
+            "scenario": long_scenario,
             "authorized_evidence": [
                 {
                     "label": "Written offer",
@@ -1100,6 +1141,7 @@ def test_private_negotiation_rehearsal_is_repeatable_and_never_invents_walk_away
     assert negotiation["rounds"][0]["coach_response"]["trade_offs"]
     assert negotiation["rounds"][0]["coach_response"]["concessions"]
     assert "base is fixed" in negotiation["rounds"][0]["coach_response"]["opening"]
+    assert negotiation["rounds"][0]["scenario"] == long_scenario.strip()
 
     second = client.post(
         path,

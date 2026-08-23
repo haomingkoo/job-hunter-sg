@@ -86,6 +86,8 @@ def traced_events(events: Iterator[dict], **attributes) -> Iterator[dict]:
                     event = next(events)
                 except StopIteration:
                     break
+            if event.get("event") == "error":
+                span.set_status(Status(StatusCode.ERROR, "stream_error"))
             yield event
     except BaseException as exc:
         span.set_status(Status(StatusCode.ERROR, type(exc).__name__))

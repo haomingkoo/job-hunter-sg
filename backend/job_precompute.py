@@ -5,8 +5,76 @@ Precomputed job metadata used to keep request-time filters cheap.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timedelta, timezone
 
 from company_taxonomy import apply_company_taxonomy
+
+
+def parse_job_posted_at(posted_date: str, scraped_at: str = "") -> datetime:
+    """Normalize supported source date formats into an aware UTC timestamp."""
+    raw = str(posted_date or "").strip()
+    lowered = raw.lower()
+    now = datetime.now(timezone.utc)
+
+    if lowered:
+        if "today" in lowered:
+            return now
+        if "yesterday" in lowered:
+            return now - timedelta(days=1)
+
+        relative_patterns = (
+            (r"(\d+)\s*\+?\s*hour", "hours"),
+            (r"(\d+)\s*\+?\s*day", "days"),
+            (r"(\d+)\s*\+?\s*week", "weeks"),
+            (r"(\d+)\s*\+?\s*month", "months"),
+        )
+        for pattern, unit in relative_patterns:
+            match = re.search(pattern, lowered)
+            if not match:
+                continue
+            amount = int(match.group(1))
+            if unit == "months":
+                return now - timedelta(days=amount * 30)
+            return now - timedelta(**{unit: amount})
+
+        normalized = raw.replace("Z", "+00:00")
+        for candidate in (normalized, normalized.split("T")[0]):
+            try:
+                parsed = datetime.fromisoformat(candidate)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.astimezone(timezone.utc)
+            except ValueError:
+                pass
+
+        formats = (
+            "%d %b %Y",
+            "%d %B %Y",
+            "%b %d, %Y",
+            "%B %d, %Y",
+            "%Y/%m/%d",
+            "%d/%m/%Y",
+        )
+        for date_format in formats:
+            try:
+                return datetime.strptime(raw, date_format).replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+
+    if scraped_at:
+        try:
+            parsed = datetime.fromisoformat(scraped_at.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            pass
+
+    return datetime.fromtimestamp(0, tz=timezone.utc)
+
+
+def posted_sort_iso(posted_date: str, scraped_at: str = "") -> str:
+    return parse_job_posted_at(posted_date, scraped_at).isoformat()
 
 
 SECTOR_KEYWORDS: dict[str, list[str]] = {

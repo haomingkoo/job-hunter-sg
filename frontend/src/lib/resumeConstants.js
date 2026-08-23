@@ -205,9 +205,6 @@ export const NUS_RESUME_BENCHMARKS = [
   },
 ];
 
-export const RESUME_HEADINGS = new Set(sharedConfig.section_headings);
-export const RESUME_SECTION_KEY_MAP = sharedConfig.section_key_map;
-
 export const RESUME_ACTION_VERBS = new Set([
   "achieved", "administered", "advanced", "analyzed", "analysed", "architected",
   "assembled", "assessed", "automated", "built", "calculated",

@@ -182,6 +182,8 @@ def test_live_sealion_agent_calls_search_jobs_for_role_research(monkeypatch):
             self.source = "live-smoke"
             self.jd_summary = "Agentic product role for AI workflow delivery."
             self.skills = ["AI product", "Python", "stakeholder management"]
+            self.seniority = "Mid"
+            self.salary_floor = 8_000
 
     jobs = [
         Job(1, "Senior AI Product Manager", "GovTech"),

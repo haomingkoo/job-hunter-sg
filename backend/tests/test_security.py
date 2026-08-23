@@ -18,6 +18,27 @@ from starlette.responses import Response
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
+@pytest.mark.parametrize(
+    ("schema", "payload"),
+    [
+        ("SignupRequest", {"email": "candidate@example.com", "password": "Password1!", "name": "Candidate"}),  # pragma: allowlist secret
+        ("VerifyEmailRequest", {"token": "t" * 20, "password": "Password1!", "name": "Candidate"}),  # pragma: allowlist secret
+        ("CloudflareRegisterRequest", {"name": "Candidate"}),
+    ],
+)
+def test_terms_acceptance_schemas_share_the_same_validation(schema, payload):
+    from pydantic import ValidationError
+
+    import schemas
+
+    model = getattr(schemas, schema)
+    if schema == "SignupRequest" and schemas._ALLOWED_DOMAINS:
+        payload = {**payload, "email": f"candidate@{schemas._ALLOWED_DOMAINS[0]}"}
+    with pytest.raises(ValidationError, match="You must accept the Terms of Service and Privacy Notice"):
+        model(**payload, accepted_terms=False)
+    assert model(**payload, accepted_terms=True).accepted_terms is True
+
+
 def _http_scope(*, headers: list[tuple[bytes, bytes]] | None = None) -> dict:
     return {
         "type": "http",
@@ -160,21 +181,21 @@ def test_fixed_window_rate_limiter_bounds_identity_keys():
 
 
 def test_client_ip_uses_cloudflare_header_only_when_explicitly_trusted(monkeypatch):
-    import main
+    import security
 
     request = Request(
         _http_scope(headers=[(b"cf-connecting-ip", b"203.0.113.8")])
     )
-    monkeypatch.setattr(main, "_TRUST_CLOUDFLARE_IP_HEADER", False)
-    assert main._get_client_ip(request) == "127.0.0.1"
+    monkeypatch.setattr(security, "_TRUST_CLOUDFLARE_IP_HEADER", False)
+    assert security.get_client_ip(request) == "127.0.0.1"
 
-    monkeypatch.setattr(main, "_TRUST_CLOUDFLARE_IP_HEADER", True)
-    assert main._get_client_ip(request) == "203.0.113.8"
+    monkeypatch.setattr(security, "_TRUST_CLOUDFLARE_IP_HEADER", True)
+    assert security.get_client_ip(request) == "203.0.113.8"
 
     invalid = Request(
         _http_scope(headers=[(b"cf-connecting-ip", b"not-an-ip")])
     )
-    assert main._get_client_ip(invalid) == "127.0.0.1"
+    assert security.get_client_ip(invalid) == "127.0.0.1"
 
 
 def test_security_headers_harden_private_responses():
@@ -208,11 +229,13 @@ def test_security_headers_wrap_spa_fallback():
     "path",
     [
         "/api/ai/coach",
+        "/api/applications/workspaces",
         "/api/jobs/42/match",
         "/api/jobs/42/parsed",
         "/api/jobs/power-match",
         "/api/jobs/recommended",
         "/api/memory",
+        "/api/recruitment-team/threads/thread-1",
         "/api/search",
         "/api/skillsfuture/recommend",
         "/api/usage",
@@ -246,6 +269,102 @@ def test_security_headers_leave_public_job_responses_cacheable():
     assert b"cache-control" not in dict(responses[0]["headers"])
 
 
+def test_security_headers_replace_weaker_private_cache_directive():
+    from security import SecurityHeadersMiddleware
+
+    async def ok(_scope, _receive, send) -> None:
+        await send({
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"cache-control", b"no-cache")],
+        })
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    scope = _http_scope()
+    scope["path"] = "/api/recruitment-team/runs/run-1/stream"
+    responses = asyncio.run(_run_asgi(SecurityHeadersMiddleware(ok), scope))
+    cache_headers = [
+        value
+        for name, value in responses[0]["headers"]
+        if name.lower() == b"cache-control"
+    ]
+
+    assert cache_headers == [b"no-store"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "javascript:alert(document.domain)",
+        "data:text/html,<script>alert(1)</script>",
+        "https://example.com/jobs/1\nX-Injected: true",
+        "https://user:secret@example.com/jobs/1",  # pragma: allowlist secret
+    ],
+)
+def test_stored_url_schemas_reject_unsafe_values(value):
+    from pydantic import ValidationError
+    from schemas import ApplicationWorkspaceCreate, NegotiationEvidence, TrackedJobCreate, TrackedJobUpdate
+
+    constructors = (
+        lambda: TrackedJobCreate(company="Example", role="Engineer", source_url=value),
+        lambda: TrackedJobUpdate(source_url=value),
+        lambda: ApplicationWorkspaceCreate(
+            company="Example",
+            title="Engineer",
+            job_description="Build reliable systems.",
+            source_url=value,
+        ),
+        lambda: NegotiationEvidence(
+            label="Written offer",
+            value="$9,000",
+            definition="Monthly base",
+            source_url=value,
+        ),
+    )
+
+    for construct in constructors:
+        with pytest.raises(ValidationError):
+            construct()
+
+
+def test_stored_url_schemas_preserve_blank_and_normalize_http_urls():
+    from schemas import NegotiationEvidence, TrackedJobCreate, TrackedJobUpdate
+
+    assert TrackedJobCreate(company="Example", role="Engineer").source_url == ""
+    assert TrackedJobUpdate(source_url=None).source_url is None
+    evidence = NegotiationEvidence(
+        label="Written offer",
+        value="$9,000",
+        definition="Monthly base",
+        source_url="  HTTPS://example.com/offer?id=1  ",
+    )
+
+    assert evidence.source_url == "HTTPS://example.com/offer?id=1"
+
+
+@pytest.mark.parametrize(
+    ("request_type", "field_name", "base"),
+    [
+        ("StartThreadRequest", "message", {"resume_version_id": 1}),
+        ("SendMessageRequest", "message", {}),
+        ("AnswerAssessmentQuestionRequest", "answer", {}),
+    ],
+)
+def test_recruitment_requests_bound_user_messages(request_type, field_name, base):
+    from pydantic import ValidationError
+    from recruitment_team import http_routes
+
+    model = getattr(http_routes, request_type)
+    payload = {
+        **base,
+        field_name: "x" * (http_routes.RECRUITMENT_MESSAGE_MAX_CHARS + 1),
+        "idempotency_key": "test",
+    }
+
+    with pytest.raises(ValidationError):
+        model(**payload)
+
+
 def test_cloudflare_mode_rejects_unsafe_requests_without_a_trusted_origin(
     monkeypatch,
 ):
@@ -272,14 +391,18 @@ def test_cloudflare_mode_rejects_unsafe_requests_without_a_trusted_origin(
 
 
 def test_docx_zip_bomb_is_rejected_before_parsing():
-    from resume_parser import extract_text_from_docx
+    from resume_parser import parse_resume
 
     archive_bytes = BytesIO()
     with zipfile.ZipFile(archive_bytes, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("word/document.xml", b"A" * (2 * 1024 * 1024))
 
     with pytest.raises(ValueError, match="compression ratio is unsafe"):
-        extract_text_from_docx(archive_bytes.getvalue())
+        parse_resume(
+            "resume.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            archive_bytes.getvalue(),
+        )
 
 
 def test_resume_upload_rejects_more_than_five_megabytes():
@@ -307,6 +430,7 @@ def test_resume_upload_rejects_more_than_five_megabytes():
 
 def test_resume_upload_parsing_runs_off_the_event_loop(monkeypatch):
     import main
+    import resume_upload
 
     caller_thread = threading.get_ident()
     parser_threads: list[int] = []
@@ -328,7 +452,7 @@ def test_resume_upload_parsing_runs_off_the_event_loop(monkeypatch):
         def commit(self) -> None:
             pass
 
-    monkeypatch.setattr(main, "parse_resume_isolated", fake_parse_resume)
+    monkeypatch.setattr(resume_upload, "parse_resume_isolated", fake_parse_resume)
     upload = UploadFile(
         file=BytesIO(b"small-pdf"),
         filename="resume.pdf",
@@ -350,8 +474,9 @@ def test_resume_upload_parsing_runs_off_the_event_loop(monkeypatch):
 
 def test_resume_upload_rejects_when_parser_capacity_is_full(monkeypatch):
     import main
+    import resume_upload
 
-    monkeypatch.setattr(main, "_RESUME_PARSE_SLOTS", threading.BoundedSemaphore(0))
+    monkeypatch.setattr(resume_upload, "_RESUME_PARSE_SLOTS", threading.BoundedSemaphore(0))
     upload = UploadFile(
         file=BytesIO(b"small-pdf"),
         filename="resume.pdf",
@@ -398,7 +523,8 @@ def test_auth_email_links_keep_tokens_out_of_query_strings(monkeypatch):
 def test_job_search_bounds_expensive_public_queries():
     from fastapi.testclient import TestClient
 
-    from main import _contains_like_pattern, app
+    from main import app
+    from security import contains_like_pattern
 
     client = TestClient(app)
 
@@ -408,7 +534,7 @@ def test_job_search_bounds_expensive_public_queries():
         "/api/jobs",
         params=[("location", f"location-{index}") for index in range(21)],
     ).status_code == 422
-    assert _contains_like_pattern("%_") == r"%\%\_%"
+    assert contains_like_pattern("%_") == r"%\%\_%"
 
 
 def test_unused_live_skills_proxy_is_not_public():
@@ -668,7 +794,8 @@ def test_unsubscribe_link_requires_confirmation_before_mutating(monkeypatch):
 
 
 def test_story_usage_storage_is_bounded_per_account(monkeypatch):
-    import main
+    import story_bank
+    from story_routes import record_story_usage
     from database import SessionLocal
     from models import InterviewStory, StoryUsage, User
 
@@ -689,9 +816,9 @@ def test_story_usage_storage_is_bounded_per_account(monkeypatch):
         user_id = user.id
         story_id = story.id
 
-        monkeypatch.setattr(main, "_MAX_STORY_USAGES", 1)
+        monkeypatch.setattr(story_bank, "MAX_STORY_USAGES", 1)
         with pytest.raises(HTTPException) as exc_info:
-            main.record_story_usage(story_id, {}, user, db)
+            record_story_usage(story_id, {}, user, db)
 
         assert exc_info.value.status_code == 409
         assert db.query(StoryUsage).filter(StoryUsage.user_id == user_id).count() == 1
@@ -709,6 +836,7 @@ def test_saved_resume_and_story_counts_are_bounded():
     from fastapi.testclient import TestClient
 
     import main
+    from story_bank import MAX_ACTIVE_STORIES
     from auth import get_current_user, hash_password
     from database import SessionLocal
     from models import InterviewStory, ResumeVersion, User
@@ -734,7 +862,7 @@ def test_saved_resume_and_story_counts_are_bounded():
         )
         db.add_all(
             InterviewStory(user_id=user.id, title=f"Story {index}")
-            for index in range(main._MAX_ACTIVE_STORIES)
+            for index in range(MAX_ACTIVE_STORIES)
         )
         db.commit()
 

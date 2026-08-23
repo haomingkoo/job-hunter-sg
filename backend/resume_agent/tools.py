@@ -227,7 +227,7 @@ def propose_edit(bullet_id: str, rewrite: str) -> dict:
     and is never applied or described as accepted by the user; rejection means
     the worker should recommend clarification instead.
     """
-    from validation_gates import _extract_numbers, validate_and_fix
+    from validation_gates import extract_numbers, validate_and_fix
 
     bullets = _current_bullets.get()
     original = bullets.get(bullet_id)
@@ -242,7 +242,7 @@ def propose_edit(bullet_id: str, rewrite: str) -> dict:
         }
 
     clean_rewrite = (rewrite or "").strip()
-    new_numbers = _extract_numbers(clean_rewrite) - _extract_numbers(original)
+    new_numbers = extract_numbers(clean_rewrite) - extract_numbers(original)
     if new_numbers:
         return {
             "accepted": False,

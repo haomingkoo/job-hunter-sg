@@ -16,12 +16,18 @@ from recruitment_team.recovery import (
 
 def test_failure_taxonomy_is_deterministic_and_budget_aware():
     retry = classify_failure("transport_timeout", attempts_remaining=True)
+    checkpoint_retry = classify_failure("checkpoint_state_unavailable", attempts_remaining=True)
     exhausted = classify_failure("transport_timeout", attempts_remaining=False)
     absent = classify_failure("information_absent", attempts_remaining=True)
 
     assert (retry.failure_type, retry.retryable, retry.recovery_action) == (
         "transient", True, "retry_incomplete_stage",
     )
+    assert (
+        checkpoint_retry.failure_type,
+        checkpoint_retry.retryable,
+        checkpoint_retry.recovery_action,
+    ) == ("transient", True, "retry_same_run")
     assert (exhausted.failure_type, exhausted.retryable, exhausted.recovery_action) == (
         "transient", False, "attempt_budget_exhausted",
     )
@@ -71,6 +77,7 @@ def test_exception_fault_classes_are_stable_and_fail_closed(
         ("output_truncated", "start_smaller_explicit_run"),
         ("prompt_injection", "operator_review"),
         ("attempt_budget_exhausted", "start_new_logical_run"),
+        ("specialist_attempt_budget_exhausted", "start_new_logical_run"),
     ],
 )
 def test_terminal_faults_never_retry(failure_code, recovery_action):

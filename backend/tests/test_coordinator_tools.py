@@ -1061,7 +1061,7 @@ def test_a_rewrite_drafted_in_a_turn_reaches_the_pending_table_and_stays_pending
         from models import ProposedResumeEdit, ResumeVersion
 
         stored = db.query(ResumeVersion).filter(ResumeVersion.id == resume_id).one()
-        edit_row = db.query(ProposedResumeEdit).filter(
+        db.query(ProposedResumeEdit).filter(
             ProposedResumeEdit.thread_id == receipt.thread_id
         ).one()
         assert stored.resume_text == resume_text

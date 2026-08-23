@@ -16,7 +16,12 @@ import config
 from prompt_safety import xml_data_block
 
 from .models import create_smart_model
-from .prompts import JUDGE_WEAKNESS_CATEGORIES, build_judge_system_prompt
+from .prompts import (
+    JUDGE_WEAKNESS_CATEGORIES,
+    assessment_presentation_violations,
+    assessment_structure_violations,
+    build_judge_system_prompt,
+)
 from .tracing import ToolSpanRecorder
 
 
@@ -149,6 +154,27 @@ def _model_failure(exc: Exception) -> tuple[str, bool]:
     if name in {"APIConnectionError", "InternalServerError"}:
         return "unavailable", True
     return "model", False
+
+
+def _reconcile_deterministic_structure(parsed: dict, final_assessment: str) -> dict:
+    """Let code, not a probabilistic judge, decide the output contract."""
+    violations = [
+        *assessment_presentation_violations(final_assessment),
+        *assessment_structure_violations(final_assessment),
+    ]
+    if violations:
+        return parsed
+    corrected = 0
+    for weakness in parsed["weaknesses"]:
+        if weakness.get("category") == "required_structure" and weakness.get("severity") == "blocking":
+            weakness["severity"] = "non_blocking"
+            corrected += 1
+    parsed["requires_revision"] = any(
+        item["severity"] == "blocking" for item in parsed["weaknesses"]
+    )
+    if corrected:
+        parsed["deterministic_contract_corrections"] = corrected
+    return parsed
 
 
 def judge_assessment(
@@ -305,6 +331,7 @@ def judge_assessment(
             failure_type, retryable = _model_failure(exc)
         spans.extend(recorder.spans)
         if parsed:
+            parsed = _reconcile_deterministic_structure(parsed, final_assessment)
             parsed["duration_ms"] = round((time.perf_counter() - started_at) * 1000)
             parsed["trace_id"] = trace_id
             for item in [*parsed["strengths"], *parsed["weaknesses"]]:

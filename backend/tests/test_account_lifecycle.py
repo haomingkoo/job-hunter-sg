@@ -11,21 +11,32 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 import main
+from account_lifecycle import purge_recruitment_checkpoints
 from auth import CLOUDFLARE_PASSWORD_SENTINEL
 from database import SessionLocal
 from models import (
+    CandidateProfileArtifact,
     EmailVerificationToken,
     InterviewStory,
     JobAlertDelivery,
     JobAlertPreference,
     PasswordResetToken,
     PowerMatchSnapshot,
+    ProposedResumeEdit,
+    RecruitmentActivityEvent,
+    RecruitmentMessage,
+    RecruitmentRun,
+    RecruitmentThread,
+    RecruitmentThreadDeletionRequest,
     ResumeVersion,
+    RoleProfileArtifact,
     ScrapedJob,
     StoryUsage,
     TailoredResume,
+    TargetAssessmentArtifact,
     TrackedJob,
     UsageLog,
     User,
@@ -52,6 +63,33 @@ def verification_mail(monkeypatch) -> list[str]:
         lambda _user, token: tokens.append(token),
     )
     return tokens
+
+
+def test_postgres_checkpoint_cleanup_uses_the_account_transaction():
+    statements = []
+
+    class Database:
+        def get_bind(self):
+            return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+        def execute(self, statement, parameters):
+            statements.append((str(statement), parameters))
+
+    purge_recruitment_checkpoints(("thread-a", "thread-b"), Database())
+
+    assert [statement for statement, _parameters in statements] == [
+        "DELETE FROM checkpoints WHERE thread_id = :thread_id",
+        "DELETE FROM checkpoint_blobs WHERE thread_id = :thread_id",
+        "DELETE FROM checkpoint_writes WHERE thread_id = :thread_id",
+    ] * 2
+    assert [parameters["thread_id"] for _statement, parameters in statements] == [
+        "thread-a",
+        "thread-a",
+        "thread-a",
+        "thread-b",
+        "thread-b",
+        "thread-b",
+    ]
 
 
 def _signup(client: TestClient, tokens: list[str]) -> tuple[str, str, str]:
@@ -120,6 +158,58 @@ def test_signup_requires_single_use_email_verification(
     assert client.get(
         "/api/auth/me", headers={"Authorization": f"Bearer {bearer}"}
     ).status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("delivery_unknown", "token_retained"),
+    ((False, False), (True, True)),
+)
+def test_signup_retains_verification_token_only_when_smtp_delivery_is_unknown(
+    client: TestClient,
+    monkeypatch,
+    delivery_unknown: bool,
+    token_retained: bool,
+) -> None:
+    from email_service import EmailDeliveryError
+
+    email = f"smtp_state_{secrets.token_hex(6)}@aisg.sg"
+    issued_tokens: list[str] = []
+    monkeypatch.setattr(main, "email_configured", lambda: True)
+
+    def fail_delivery(_user, token: str) -> None:
+        issued_tokens.append(token)
+        raise EmailDeliveryError("data_response", delivery_unknown=delivery_unknown)
+
+    monkeypatch.setattr(main, "_send_verification_email", fail_delivery)
+    response = client.post(
+        "/api/auth/signup",
+        json={
+            "email": email,
+            "password": "StartingPassword123!",  # pragma: allowlist secret
+            "name": "SMTP State Test",
+            "accepted_terms": True,
+        },
+    )
+
+    assert response.status_code == 503
+    with SessionLocal() as db:
+        stored_tokens = (
+            db.query(EmailVerificationToken)
+            .join(User, User.id == EmailVerificationToken.user_id)
+            .filter(User.email == email)
+            .all()
+        )
+    assert bool(stored_tokens) is token_retained
+    if token_retained:
+        assert client.post(
+            "/api/auth/verify-email",
+            json={
+                "token": issued_tokens[0],
+                "password": "StartingPassword123!",  # pragma: allowlist secret
+                "name": "SMTP State Test",
+                "accepted_terms": True,
+            },
+        ).status_code == 200
 
 
 def test_expired_and_unknown_verification_links_are_rejected(
@@ -614,6 +704,77 @@ def test_cloudflare_registration_is_explicit(client: TestClient) -> None:
         assert user.email_verified_at is not None
         db.delete(user)
         db.commit()
+
+
+def test_cloudflare_registration_recovers_when_a_concurrent_request_wins() -> None:
+    email = f"cf_race_{secrets.token_hex(6)}@aisg.sg"
+    winner = SimpleNamespace(
+        email=email,
+        password_hash=CLOUDFLARE_PASSWORD_SENTINEL,
+        name="Concurrent Cloudflare User",
+        email_verified_at=None,
+        terms_accepted_at=None,
+        privacy_accepted_at=None,
+        last_login=None,
+    )
+
+    class Query:
+        def __init__(self, database):
+            self.database = database
+
+        def filter(self, *_criteria):
+            return self
+
+        def first(self):
+            return winner if self.database.rolled_back else None
+
+    class Database:
+        def __init__(self):
+            self.commit_calls = 0
+            self.rolled_back = False
+
+        def query(self, _model):
+            return Query(self)
+
+        def add(self, _model):
+            pass
+
+        def commit(self):
+            self.commit_calls += 1
+            if self.commit_calls == 1:
+                raise IntegrityError("insert user", {}, RuntimeError("duplicate email"))
+
+        def rollback(self):
+            self.rolled_back = True
+
+        def refresh(self, _model):
+            pass
+
+    db = Database()
+    result = main.register_cloudflare_account(
+        main.CloudflareRegisterRequest(name="Updated Name", accepted_terms=True),
+        email,
+        db,
+    )
+
+    assert result is winner
+    assert winner.name == "Updated Name"
+    assert winner.email_verified_at is not None
+    assert winner.terms_accepted_at is not None
+    assert winner.privacy_accepted_at is not None
+    assert db.commit_calls == 2
+
+    winner.password_hash = "existing-password-hash"  # pragma: allowlist secret
+    password_winner_db = Database()
+    with pytest.raises(HTTPException) as caught:
+        main.register_cloudflare_account(
+            main.CloudflareRegisterRequest(name="Must Not Take Over", accepted_terms=True),
+            email,
+            password_winner_db,
+        )
+    assert caught.value.status_code == 409
+    assert caught.value.detail == "Email already registered with password"
+    assert password_winner_db.rolled_back is True
 
 
 def test_cloudflare_registration_records_consent_for_a_legacy_sentinel_account(
@@ -1170,6 +1331,7 @@ def test_concurrent_tailoring_result_fetch_saves_one_resume_version() -> None:
 def test_account_deletion_removes_every_owned_row_but_retains_jobs(
     client: TestClient,
     verification_mail: list[str],
+    monkeypatch,
 ) -> None:
     email, password, verification_token = _signup(client, verification_mail)
     bearer = _verify(client, verification_token, password)
@@ -1192,8 +1354,108 @@ def test_account_deletion_removes_every_owned_row_but_retains_jobs(
         db.flush()
         other_user_id = other_user.id
         job_id = job.id
+        thread_id = f"thread-{secrets.token_hex(8)}"
+        run_id = f"run-{secrets.token_hex(8)}"
+        candidate_profile_id = f"profile-{secrets.token_hex(8)}"
+        thread = RecruitmentThread(
+            id=thread_id,
+            user_id=user_id,
+            resume_version_id=resume.id,
+            case_facts={
+                "coordinator_pause_token": "account-coordinator-checkpoint",
+                "coordinator_cleanup_token": "account-coordinator-cleanup",
+                "target_assessment_pause_token": "account-assessment-checkpoint",
+                "target_assessment_cleanup_token": "account-cleanup-checkpoint",
+            },
+        )
+        run = RecruitmentRun(
+            id=run_id,
+            user_id=user_id,
+            thread_id=thread_id,
+            idempotency_key=f"account-{secrets.token_hex(8)}",
+            command_type="send_message",
+            status="completed",
+            trace_key=secrets.token_hex(16),
+        )
+        candidate_profile = CandidateProfileArtifact(
+            id=candidate_profile_id,
+            user_id=user_id,
+            resume_version_id=resume.id,
+            checkpoint_id=secrets.token_hex(16),
+            prompt_version="account-test",
+            decomposition_version="account-test",
+            model_name="scripted",
+            execution_policy={},
+            status="completed",
+            scopes={},
+        )
+        db.add(thread)
+        db.flush()
+        db.add_all([run, candidate_profile])
+        db.flush()
         db.add_all(
             [
+                RecruitmentMessage(
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    role="user",
+                    content="Private recruitment message",
+                ),
+                RecruitmentActivityEvent(
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    sequence=1,
+                    event_type="run",
+                    status="completed",
+                    team_member="coordinator",
+                    trace_key=secrets.token_hex(16),
+                    summary="Private activity summary",
+                ),
+                RoleProfileArtifact(
+                    id=f"role-{secrets.token_hex(8)}",
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    resume_version_id=resume.id,
+                    target_job_id=job.id,
+                    fingerprint=secrets.token_hex(16),
+                    identity={},
+                    status="completed",
+                ),
+                TargetAssessmentArtifact(
+                    id=f"assessment-{secrets.token_hex(8)}",
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    resume_version_id=resume.id,
+                    candidate_profile_artifact_id=candidate_profile_id,
+                    target_job_id=job.id,
+                    target_snapshot_sha256="a" * 64,
+                    status="completed",
+                    specialist_runs=[],
+                    synthesis="Private assessment",
+                    execution_policy={},
+                ),
+                ProposedResumeEdit(
+                    id=f"edit-{secrets.token_hex(8)}",
+                    user_id=user_id,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    resume_version_id=resume.id,
+                    block_id="block-1",
+                    original="Private original",
+                    rewrite="Private rewrite",
+                    document_revision=secrets.token_hex(16),
+                ),
+                RecruitmentThreadDeletionRequest(
+                    id=f"deletion-{secrets.token_hex(8)}",
+                    user_id=user_id,
+                    thread_id="already-deleted-thread",
+                    idempotency_key=f"deletion-{secrets.token_hex(8)}",
+                    status="requested",
+                    targets={},
+                    result={},
+                ),
                 StoryUsage(story_id=story.id, user_id=user_id),
                 JobAlertDelivery(
                     user_id=user_id,
@@ -1234,6 +1496,15 @@ def test_account_deletion_removes_every_owned_row_but_retains_jobs(
         )
         db.commit()
 
+    purged_checkpoints: list[str] = []
+
+    def purge_recruitment_checkpoints(tokens: tuple[str, ...], _db) -> None:
+        with SessionLocal() as uncommitted_db:
+            assert uncommitted_db.get(User, user_id) is not None
+        purged_checkpoints.extend(tokens)
+
+    monkeypatch.setattr(main, "_purge_recruitment_checkpoints", purge_recruitment_checkpoints)
+
     main._power_match_cache[user_id] = {"private": True}
     from resume_agent import session as agent_session
     from tailoring_pipeline import PipelineState, _active_pipelines
@@ -1267,6 +1538,13 @@ def test_account_deletion_removes_every_owned_row_but_retains_jobs(
     with SessionLocal() as db:
         assert db.get(User, user_id) is None
         for model in (
+            CandidateProfileArtifact,
+            ProposedResumeEdit,
+            RecruitmentRun,
+            RecruitmentThread,
+            RecruitmentThreadDeletionRequest,
+            RoleProfileArtifact,
+            TargetAssessmentArtifact,
             StoryUsage,
             JobAlertDelivery,
             TrackedJob,
@@ -1280,6 +1558,13 @@ def test_account_deletion_removes_every_owned_row_but_retains_jobs(
             UserMemory,
         ):
             assert db.query(model).filter(model.user_id == user_id).count() == 0
+        assert db.query(RecruitmentMessage).filter(RecruitmentMessage.thread_id == thread_id).count() == 0
+        assert (
+            db.query(RecruitmentActivityEvent)
+            .filter(RecruitmentActivityEvent.thread_id == thread_id)
+            .count()
+            == 0
+        )
         assert db.query(UsageLog).filter(UsageLog.user_id == user_id).count() == 0
         assert db.get(ScrapedJob, job_id) is not None
         assert db.get(User, other_user_id) is not None
@@ -1287,3 +1572,150 @@ def test_account_deletion_removes_every_owned_row_but_retains_jobs(
     assert user_id not in main._power_match_cache
     assert "completed-agent" not in agent_session._sessions
     assert "completed-pipeline" not in _active_pipelines
+    assert set(purged_checkpoints) == {
+        "account-coordinator-checkpoint",
+        "account-coordinator-cleanup",
+        "account-cleanup-checkpoint",
+        "account-assessment-checkpoint",
+    }
+
+
+def test_account_deletion_rolls_back_when_checkpoint_cleanup_fails(
+    client: TestClient,
+    verification_mail: list[str],
+    monkeypatch,
+) -> None:
+    email, password, verification_token = _signup(client, verification_mail)
+    bearer = _verify(client, verification_token, password)
+
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == email).one()
+        resume = ResumeVersion(user_id=user.id, label="Master")
+        db.add(resume)
+        db.flush()
+        thread = RecruitmentThread(
+            id=f"thread-{secrets.token_hex(8)}",
+            user_id=user.id,
+            resume_version_id=resume.id,
+            case_facts={"coordinator_pause_token": "checkpoint-that-cannot-be-deleted"},
+        )
+        db.add(thread)
+        db.commit()
+        user_id = user.id
+        thread_id = thread.id
+
+    def fail_checkpoint_cleanup(_tokens: tuple[str, ...], _db) -> None:
+        raise RuntimeError("checkpoint store unavailable")
+
+    monkeypatch.setattr(main, "_purge_recruitment_checkpoints", fail_checkpoint_cleanup)
+
+    with pytest.raises(RuntimeError, match="checkpoint store unavailable"):
+        client.request(
+            "DELETE",
+            "/api/account",
+            headers={"Authorization": f"Bearer {bearer}"},
+            json={"confirm_email": email, "current_password": password},
+        )
+
+    with SessionLocal() as db:
+        assert db.get(User, user_id) is not None
+        assert db.get(RecruitmentThread, thread_id) is not None
+
+
+def test_account_deletion_does_not_claim_success_when_ephemeral_purge_fails(
+    client: TestClient,
+    verification_mail: list[str],
+    monkeypatch,
+) -> None:
+    import resume_agent.session as agent_session
+
+    email, password, verification_token = _signup(client, verification_mail)
+    bearer = _verify(client, verification_token, password)
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == email).one()
+        resume = ResumeVersion(user_id=user.id, label="Master")
+        db.add(resume)
+        db.flush()
+        thread = RecruitmentThread(
+            id=f"thread-{secrets.token_hex(8)}",
+            user_id=user.id,
+            resume_version_id=resume.id,
+            case_facts={"coordinator_pause_token": "checkpoint-must-remain"},
+        )
+        db.add(thread)
+        db.commit()
+        user_id = user.id
+        thread_id = thread.id
+
+    purged_checkpoint_batches: list[tuple[str, ...]] = []
+
+    def record_checkpoint_purge(tokens: tuple[str, ...], _db) -> None:
+        purged_checkpoint_batches.append(tokens)
+
+    def fail_ephemeral_purge(_owner_key: str) -> None:
+        raise RuntimeError("ephemeral checkpoint unavailable")
+
+    monkeypatch.setattr(agent_session, "purge_owner_sessions", fail_ephemeral_purge)
+    monkeypatch.setattr(main, "_purge_recruitment_checkpoints", record_checkpoint_purge)
+
+    with pytest.raises(RuntimeError, match="ephemeral checkpoint unavailable"):
+        client.request(
+            "DELETE",
+            "/api/account",
+            headers={"Authorization": f"Bearer {bearer}"},
+            json={"confirm_email": email, "current_password": password},
+        )
+
+    with SessionLocal() as db:
+        assert db.get(User, user_id) is not None
+        assert db.get(RecruitmentThread, thread_id) is not None
+    assert purged_checkpoint_batches == []
+
+
+def test_account_deletion_refuses_an_active_leased_recruitment_run(
+    client: TestClient,
+    verification_mail: list[str],
+) -> None:
+    email, password, verification_token = _signup(client, verification_mail)
+    bearer = _verify(client, verification_token, password)
+
+    with SessionLocal() as db:
+        user = db.query(User).filter(User.email == email).one()
+        resume = ResumeVersion(user_id=user.id, label="Master")
+        db.add(resume)
+        db.flush()
+        thread = RecruitmentThread(
+            id=f"thread-{secrets.token_hex(8)}",
+            user_id=user.id,
+            resume_version_id=resume.id,
+        )
+        db.add(thread)
+        db.flush()
+        run = RecruitmentRun(
+            id=f"run-{secrets.token_hex(8)}",
+            user_id=user.id,
+            thread_id=thread.id,
+            idempotency_key=f"active-{secrets.token_hex(8)}",
+            command_type="assess_target_job",
+            status="running",
+            trace_key=secrets.token_hex(16),
+            lease_owner="account-test-worker",
+            lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        )
+        db.add(run)
+        db.commit()
+        user_id = user.id
+        run_id = run.id
+
+    response = client.request(
+        "DELETE",
+        "/api/account",
+        headers={"Authorization": f"Bearer {bearer}"},
+        json={"confirm_email": email, "current_password": password},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Wait for the active AI session to finish before deleting your account"
+    with SessionLocal() as db:
+        assert db.get(User, user_id) is not None
+        assert db.get(RecruitmentRun, run_id) is not None

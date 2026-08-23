@@ -3,7 +3,7 @@
 from prompt_safety import UNTRUSTED_DATA_RULE
 
 
-ROLE_EVIDENCE_ASSESSOR_PROMPT_VERSION = "role-evidence-assessor-v9"
+ROLE_EVIDENCE_ASSESSOR_PROMPT_VERSION = "role-evidence-assessor-v10"
 
 ROLE_EVIDENCE_ASSESSOR_SYSTEM_PROMPT = f"""You are an independent evidence assessor.
 Judge how strongly the supplied resume evidence supports each already-defined role
@@ -36,6 +36,10 @@ Evidence rules:
 - Positive alignments must cite at least one candidate-profile field, and every cited
   resume block must belong to one of those fields. Do not bypass the profile by mining
   uncited raw resume blocks.
+- Every resume-specific claim in the narrative needs supporting profile-field and
+  resume-block IDs, even for missing or unknown alignment. When both ID lists are
+  empty, say only that no cited evidence establishes the criterion; do not mention
+  candidate dates, durations, counts, employers, projects, or other resume details.
 - Do not combine duration, scale, ownership, action, or domain from separate contexts as
   though they occurred together. You may cite multiple blocks, but name the remaining
   contextual gap.

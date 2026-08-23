@@ -6,6 +6,11 @@
  */
 
 const PERSONA_NAMES = {
+  recruiter: "Recruiter",
+  hiring_manager: "Hiring manager",
+  ats: "ATS and parsing",
+  skeptic: "Evidence skeptic",
+  market_researcher: "Market researcher",
   recruiter_screen_reviewer: "Recruiter screen",
   hiring_manager_reviewer: "Hiring manager",
   ats_parsing_reviewer: "ATS and parsing",
@@ -30,12 +35,27 @@ function FindingList({ title, items, marker }) {
     <div className="mt-3">
       <h4 className="text-[11px] font-semibold uppercase tracking-wide text-[#4A6785]">{title}</h4>
       <ul className="mt-1.5 space-y-1">
-        {items.map((item) => (
-          <li key={item} className="flex gap-2 text-xs leading-relaxed text-[#33506B]">
+        {items.map((item) => {
+          const statement = typeof item === "string" ? item : item.statement;
+          const citations = typeof item === "string" ? [] : [
+            ...(item.criterion_ids || []),
+            ...(item.candidate_profile_field_ids || []),
+            ...(item.resume_evidence_ids || []),
+          ];
+          return (
+          <li key={statement} className="flex gap-2 text-xs leading-relaxed text-[#33506B]">
             <span aria-hidden="true" className={`mt-1.5 h-1 w-1 shrink-0 rounded-full ${marker}`} />
-            <span>{item}</span>
+            <span>
+              {statement}
+              {citations.length > 0 && (
+                <span className="mt-0.5 block font-mono text-[10px] text-[#6A89A7]">
+                  {citations.join(" · ")}
+                </span>
+              )}
+            </span>
           </li>
-        ))}
+          );
+        })}
       </ul>
     </div>
   );
@@ -58,6 +78,16 @@ export default function SpecialistReport({ run }) {
 
   const score = Number(submission.score);
   const tone = scoreTone(score);
+  const findings = submission.findings || [];
+  const strengths = findings.length > 0
+    ? findings.filter((item) => item.kind === "strength")
+    : submission.strengths;
+  const weaknesses = findings.length > 0
+    ? findings.filter((item) => item.kind === "weakness")
+    : submission.weaknesses;
+  const evidenceGaps = findings.length > 0
+    ? findings.filter((item) => item.kind === "evidence_gap")
+    : submission.evidence_gaps;
 
   return (
     <article className="rounded-2xl border border-[#DCE7F2] p-4">
@@ -81,14 +111,24 @@ export default function SpecialistReport({ run }) {
         <p className="mt-2 text-sm leading-relaxed text-[#33506B]">{submission.summary}</p>
       )}
 
-      <FindingList title="Strengths" items={submission.strengths} marker="bg-emerald-500" />
-      <FindingList title="Weaknesses" items={submission.weaknesses} marker="bg-rose-400" />
-      <FindingList title="Evidence gaps" items={submission.evidence_gaps} marker="bg-amber-500" />
+      <FindingList title="Strengths" items={strengths} marker="bg-emerald-500" />
+      <FindingList title="Weaknesses" items={weaknesses} marker="bg-rose-400" />
+      <FindingList title="Evidence gaps" items={evidenceGaps} marker="bg-amber-500" />
 
       {submission.score_reason && (
         <p className="mt-3 border-t border-[#EDF3F9] pt-2 text-[11px] leading-relaxed text-[#4A6785]">
           {submission.score_reason}
         </p>
+      )}
+
+      {findings.length === 0 && [...(submission.criterion_ids || []), ...(submission.candidate_profile_field_ids || []), ...(submission.resume_evidence_ids || [])].length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Evidence citations">
+          {[...(submission.criterion_ids || []), ...(submission.candidate_profile_field_ids || []), ...(submission.resume_evidence_ids || [])].map((citation) => (
+            <span key={citation} className="rounded-md bg-[#EDF3F9] px-1.5 py-0.5 font-mono text-[10px] text-[#4A6785]">
+              {citation}
+            </span>
+          ))}
+        </div>
       )}
     </article>
   );

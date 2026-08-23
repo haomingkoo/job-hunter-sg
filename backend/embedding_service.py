@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
 _model: SentenceTransformer | None = None
 _model_lock = threading.Lock()
+_encode_lock = threading.Lock()
 _MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 
@@ -38,14 +39,19 @@ def _get_model() -> SentenceTransformer:
 def encode_text(text: str) -> list[float]:
     """Encode a single text string into a 384-dim normalized vector."""
     model = _get_model()
-    vector = model.encode(text, normalize_embeddings=True)
+    # Agent graphs can dispatch several tool calls from one turn in parallel.
+    # Serialize the shared native model's forward pass; database work remains
+    # concurrent and a whole batch still runs as one inference call.
+    with _encode_lock:
+        vector = model.encode(text, normalize_embeddings=True)
     return vector.tolist()
 
 
 def encode_texts(texts: list[str], batch_size: int = 32) -> list[list[float]]:
     """Encode multiple texts into 384-dim normalized vectors."""
     model = _get_model()
-    vectors = model.encode(texts, batch_size=batch_size, normalize_embeddings=True)
+    with _encode_lock:
+        vectors = model.encode(texts, batch_size=batch_size, normalize_embeddings=True)
     return vectors.tolist()
 
 

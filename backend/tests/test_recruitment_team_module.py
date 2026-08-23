@@ -436,6 +436,7 @@ def test_public_http_adapter_uses_the_same_module_journey():
         )
         assert second.status_code == 200
         assert second.headers["content-type"].startswith("text/event-stream")
+        assert second.headers["cache-control"] == "no-store"
         streamed_events = [block.splitlines()[0] for block in second.text.strip().split("\n\n")]
         assert streamed_events == [
             "event: activity",
@@ -448,6 +449,7 @@ def test_public_http_adapter_uses_the_same_module_journey():
             json={"idempotency_key": "http-profile"},
         )
         assert profiled.status_code == 200
+        assert profiled.headers["cache-control"] == "no-store"
         assert [block.splitlines()[0] for block in profiled.text.strip().split("\n\n")] == [
             "event: activity",
             "event: activity",
@@ -556,6 +558,43 @@ def test_retrying_the_same_idempotency_key_after_a_failure_succeeds():
         assert len(runs) == 1
         assert runs[0].status == "completed"
         assert runs[0].error_type is None
+
+
+def test_coordinator_cleanup_debt_is_persisted_for_later_privacy_cleanup():
+    from models import RecruitmentThread
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.conversation_model import ModelReply
+    from recruitment_team.interface import StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    model = ScriptedConversationModel([
+        ModelReply(
+            content="Ready.",
+            model_name="scripted",
+            checkpoint_cleanup_token="coordinator-cleanup-debt",
+        )
+    ])
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            model,
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        receipt = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Start my search."),
+            idempotency_key="coordinator-cleanup-debt",
+        )
+        stored = db.query(RecruitmentThread).filter_by(id=receipt.thread_id).one()
+
+    assert stored.case_facts["coordinator_cleanup_token"] == "coordinator-cleanup-debt"
 
 
 def test_retry_records_workflow_resume_when_production_autoflush_is_disabled():
@@ -930,7 +969,7 @@ def test_duplicate_refreshes_run_status_after_taking_the_thread_lock(monkeypatch
     from recruitment_team.interface import StartThread
     from recruitment_team.recovery import classify_failure
     from recruitment_team.telemetry import RecordedTelemetry
-    import recruitment_team.recruitment_team as module
+    import recruitment_team.activity_events as activity_events
 
     class FailingModel:
         def __init__(self):
@@ -974,7 +1013,7 @@ def test_duplicate_refreshes_run_status_after_taking_the_thread_lock(monkeypatch
             def __exit__(self, *_args):
                 return False
 
-        monkeypatch.setattr(module, "_thread_lock", lambda _thread_id: CompletingLock())
+        monkeypatch.setattr(activity_events, "thread_lock", lambda _thread_id: CompletingLock())
         replay = team.execute(owner_id, command, "lock-refresh")
 
         db.refresh(failed)
@@ -1511,6 +1550,27 @@ def test_conversation_model_retries_invalid_preference_quote_with_exact_failure(
     }
 
 
+def test_conversation_schema_validation_code_never_contains_rejected_content():
+    from langchain_core.messages import AIMessage
+
+    from recruitment_team.conversation_model import _submission
+
+    private_content = "PRIVATE CANDIDATE DETAIL WITHOUT TERMINATOR"
+    _payload, _failed, validation_code = _submission(
+        AIMessage(
+            content="",
+            tool_calls=[{
+                "name": "submit_recruitment_conversation",
+                "args": {"reply": private_content, "preference_updates": []},
+                "id": "invalid-private-reply",
+            }],
+        )
+    )
+
+    assert validation_code == "schema_validation:reply:value_error"
+    assert private_content not in validation_code
+
+
 def test_conversation_model_has_no_free_text_fallback():
     from langchain_core.messages import AIMessage
 
@@ -1821,6 +1881,16 @@ def test_search_shortlist_and_target_are_source_backed_and_durable():
 
         assert replay.run_id == searched.run_id
         assert discovery.search_count == 2
+
+    target_completion = next(
+        event
+        for event in activity.events
+        if event.run_id != searched.run_id
+        and event.status == "completed"
+        and event.detail.get("operation") == "select_target"
+    )
+    assert target_completion.team_member == "role_profiler"
+    assert target_completion.summary == "The role profiler completed this turn."
 
     with sessions() as db:
         restored = RecruitmentTeam(
@@ -2505,6 +2575,82 @@ def test_quality_blocked_target_assessment_is_durable_and_withholds_synthesis():
     assert all(message.content != "Unsupported draft" for message in snapshot.messages)
 
 
+def test_terminal_provider_failure_persists_transport_metrics(monkeypatch):
+    import httpx
+    import openai._base_client as openai_base_client
+    import resume_agent.models as agent_models
+
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.errors import TargetAssessmentUnavailable
+    from recruitment_team.interface import (
+        AssessTargetJob,
+        BuildCandidateProfile,
+        SearchJobs,
+        SelectTargetJob,
+        StartThread,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+    import recruitment_team.model_transport_observer as transport_observer
+    from recruitment_team.model_transport_observer import observe_transport_request
+    from recruitment_team.open_agent import runner as open_agent_runner
+
+    def fail(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("private provider response", request=request)
+
+    transport_client = httpx.Client(
+        transport=httpx.MockTransport(fail),
+        event_hooks={"request": [observe_transport_request]},
+    )
+    monkeypatch.setattr(openai_base_client.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(agent_models.ai_service, "SEALION_BASE_URL", "https://secret.invalid/v1")
+    monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "secret-api-key")
+    monkeypatch.setattr(agent_models.ai_service._limiter, "acquire", lambda **_kwargs: True)
+    monkeypatch.setattr(transport_observer, "_SHARED_HTTP_CLIENT", transport_client)
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery([JobSearchResult("agent systems", (job,), 1, 1, False, False)])
+
+    try:
+        with sessions() as db:
+            team = RecruitmentTeam(
+                db,
+                ScriptedConversationModel(["Ready."]),
+                discovery,
+                _role_profiler([_role_profile_run(job.job_id)]),
+                RecordedTelemetry(),
+                IgnoreActivityPublisher(),
+                ScriptedCandidateProfilerFactory([_candidate_profile_run()]),
+                open_agent_runner.OpenAgentTargetAssessmentRunner(telemetry=RecordedTelemetry()),
+            )
+            started = team.execute(
+                owner_id,
+                StartThread(resume_version_id=resume_id, message="Find a role."),
+                "transport-failure-start",
+            )
+            team.execute(owner_id, BuildCandidateProfile(started.thread_id), "transport-failure-profile")
+            team.execute(owner_id, SearchJobs(started.thread_id, "agent systems"), "transport-failure-search")
+            team.execute(owner_id, SelectTargetJob(started.thread_id, job.job_id), "transport-failure-select")
+
+            with pytest.raises(TargetAssessmentUnavailable):
+                team.execute(owner_id, AssessTargetJob(started.thread_id), "transport-failure-assess")
+            artifact = team.target_assessment(owner_id, started.thread_id)
+    finally:
+        transport_client.close()
+
+    assert artifact is not None
+    assert artifact.status == "failed"
+    assert artifact.execution_metrics["transport_attempt_count"] == 3
+    assert artifact.execution_metrics["transport_retry_count"] == 2
+    assert artifact.execution_metrics["transport_error_count"] == 1
+    assert artifact.execution_metrics["transport_by_role"]["coordinator"]["error_count"] == 1
+    assert "private provider response" not in json.dumps(artifact.execution_metrics)
+
+
 def test_quality_blocked_open_agent_assessment_withholds_stored_synthesis():
     """Regression guard: a quality-blocked run must never persist its synthesis
     or its specialist_runs, even when the underlying result carries real,
@@ -2765,7 +2911,7 @@ def test_paused_target_assessment_does_not_raise_and_awaits_the_candidate():
 
 
 def test_answering_the_assessment_question_resumes_and_completes_it():
-    from models import TargetAssessmentArtifact
+    from models import RecruitmentThread, TargetAssessmentArtifact
     from recruitment_team import RecruitmentTeam, ScriptedConversationModel
     from recruitment_team.activity_publisher import IgnoreActivityPublisher
     from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
@@ -2823,6 +2969,14 @@ def test_answering_the_assessment_question_resumes_and_completes_it():
                 status="completed",
                 specialist_runs=({"persona_id": "recruiter", "status": "completed", "submission": {}},),
                 synthesis="Consulted the recruiter; candidate confirmed the team size.",
+                synthesis_claims=({
+                    "kind": "strength",
+                    "statement": "Candidate confirmed the team size.",
+                    "criterion_ids": ["criterion-1"],
+                    "candidate_profile_field_ids": [],
+                    "resume_evidence_ids": [],
+                    "candidate_evidence_ids": ["candidate-evidence-1"],
+                },),
                 judge={"disposition": "pass", "score": 90},
                 correction=None,
                 error=None,
@@ -2840,6 +2994,7 @@ def test_answering_the_assessment_question_resumes_and_completes_it():
                     "attempts": [{"stage": "judge", "status": "success"}],
                     "terminal_status": "completed",
                 },
+                checkpoint_cleanup_token="cleanup-debt-token",
             ),
         ],
     )
@@ -2874,6 +3029,7 @@ def test_answering_the_assessment_question_resumes_and_completes_it():
         artifact = team.target_assessment(owner_id, started.thread_id)
         snapshot = team.snapshot(owner_id, started.thread_id)
         row = db.query(TargetAssessmentArtifact).filter(TargetAssessmentArtifact.id == artifact.artifact_id).one()
+        stored_thread = db.query(RecruitmentThread).filter_by(id=started.thread_id).one()
 
     assert runner.resume_calls[0][0] == "pause-token-abc"
     assert runner.resume_calls[0][1].startswith("Led a team of 12 engineers.\n\n[System:")
@@ -2883,6 +3039,9 @@ def test_answering_the_assessment_question_resumes_and_completes_it():
     assert snapshot.case_facts.target_assessment_status == "completed"
     assert artifact.status == "completed"
     assert artifact.synthesis == "Consulted the recruiter; candidate confirmed the team size."
+    assert artifact.synthesis_claims[0]["criterion_ids"] == ["criterion-1"]
+    assert row.synthesis_claims == list(artifact.synthesis_claims)
+    assert stored_thread.case_facts["target_assessment_cleanup_token"] == "cleanup-debt-token"
     assert artifact.execution_metrics["model_call_count"] == 3
     assert artifact.execution_metrics["input_tokens"] == 60
     assert artifact.execution_metrics["output_tokens"] == 15
@@ -2895,6 +3054,365 @@ def test_answering_the_assessment_question_resumes_and_completes_it():
     assert row.pending_specialist_runs is None
     assert row.pending_synthesis is None
     assert row.pending_proposed_edits is None
+
+
+def test_failed_assessment_answer_retries_the_same_durable_answer_and_checkpoint():
+    from models import RecruitmentMessage, RecruitmentRun
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.assessment_contracts import (
+        ScriptedTargetAssessmentRunner,
+        TargetAssessmentProgress,
+        TargetAssessmentResult,
+        target_assessment_execution_policy,
+    )
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.errors import TargetAssessmentUnavailable
+    from recruitment_team.interface import (
+        AnswerAssessmentQuestion,
+        AssessTargetJob,
+        BuildCandidateProfile,
+        SearchJobs,
+        SelectTargetJob,
+        StartThread,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    class TimeoutThenCompleteRunner(ScriptedTargetAssessmentRunner):
+        def resume(self, *args, **kwargs):
+            self.resume_calls.append((args[0], args[1]))
+            self.resume_call_args.append({"pause_token": args[0], "answer": args[1]})
+            if len(self.resume_calls) == 1:
+                raise TimeoutError("provider timed out")
+            yield TargetAssessmentResult(
+                status="completed",
+                specialist_runs=(),
+                synthesis="The assessment resumed from the original answer.",
+                judge={"disposition": "pass", "score": 90},
+                correction=None,
+                error=None,
+                execution_policy=target_assessment_execution_policy(),
+            )
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery(
+        [JobSearchResult("agent systems", (job,), 1, 1, False, False)]
+    )
+    runner = TimeoutThenCompleteRunner(
+        [
+            TargetAssessmentProgress(
+                team_member="coordinator",
+                status="paused",
+                summary="Run paused: waiting on the candidate to answer a question.",
+                detail={
+                    "question": "How large was the team you led?",
+                    "pause_token": "retry-answer-token",
+                    "ask_candidate_call_id": "retry-answer-call",
+                    "specialist_runs": [],
+                    "synthesis": "",
+                    "proposed_edits": [],
+                },
+            )
+        ]
+    )
+    answer = "Led a team of 12 engineers."
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            discovery,
+            _role_profiler([_role_profile_run(job.job_id)]),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([_candidate_profile_run()]),
+            runner,
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "retry-answer-start",
+        )
+        team.execute(owner_id, BuildCandidateProfile(started.thread_id), "retry-answer-profile")
+        team.execute(owner_id, SearchJobs(started.thread_id, "agent systems"), "retry-answer-search")
+        team.execute(owner_id, SelectTargetJob(started.thread_id, job.job_id), "retry-answer-select")
+        team.execute(owner_id, AssessTargetJob(started.thread_id), "retry-answer-assess")
+
+        try:
+            team.execute(
+                owner_id,
+                AnswerAssessmentQuestion(started.thread_id, answer),
+                "retry-answer-run",
+            )
+            assert False, "expected the first answer attempt to fail"
+        except TargetAssessmentUnavailable as error:
+            assert error.retryable is True
+
+        failed = db.query(RecruitmentRun).filter_by(idempotency_key="retry-answer-run").one()
+        assert team.snapshot(owner_id, started.thread_id).workflow_state == "assessment_failed"
+
+        recovered = team.retry_conversation_run(owner_id, started.thread_id, failed.id)
+        duplicate = team.retry_conversation_run(owner_id, started.thread_id, failed.id)
+        snapshot = team.snapshot(owner_id, started.thread_id)
+
+        assert duplicate == recovered
+        assert recovered.run_id == failed.id
+        assert snapshot.workflow_state == "assessment_ready"
+        assert [call[1].split("\n\n[System:", 1)[0] for call in runner.resume_calls] == [answer, answer]
+        assert len(snapshot.case_facts.confirmed_evidence) == 1
+        assert db.query(RecruitmentRun).filter_by(id=failed.id).count() == 1
+        assert db.query(RecruitmentMessage).filter_by(run_id=failed.id, role="user").count() == 1
+        assert db.query(RecruitmentMessage).filter_by(run_id=failed.id, role="assistant").count() == 1
+        assert failed.attempt_ledger["stages"]["answer_assessment_question"]["workflow_resume"][
+            "used"
+        ] == 1
+
+
+def test_terminal_assessment_answer_validation_does_not_advertise_a_deleted_checkpoint():
+    from models import RecruitmentRun
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.assessment_contracts import (
+        ScriptedTargetAssessmentRunner,
+        TargetAssessmentProgress,
+        TargetAssessmentResult,
+        target_assessment_execution_policy,
+    )
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.errors import ServiceUnavailable, TargetAssessmentUnavailable
+    from recruitment_team.interface import (
+        AnswerAssessmentQuestion,
+        AssessTargetJob,
+        BuildCandidateProfile,
+        SearchJobs,
+        SelectTargetJob,
+        StartThread,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery(
+        [JobSearchResult("agent systems", (job,), 1, 1, False, False)]
+    )
+    runner = ScriptedTargetAssessmentRunner(
+        [
+            TargetAssessmentProgress(
+                team_member="coordinator",
+                status="paused",
+                summary="Run paused: waiting on the candidate to answer a question.",
+                detail={
+                    "question": "What evidence can you add?",
+                    "pause_token": "terminal-answer-token",
+                    "ask_candidate_call_id": "terminal-answer-call",
+                    "specialist_runs": [],
+                    "synthesis": "",
+                    "proposed_edits": [],
+                },
+            )
+        ],
+        resume_updates=[
+            TargetAssessmentResult(
+                status="failed",
+                specialist_runs=(),
+                synthesis="",
+                judge=None,
+                correction=None,
+                error={
+                    "failure_type": "validation",
+                    "failure_code": "structured_output_invalid",
+                    "retryable": False,
+                    "recovery_action": "attempt_budget_exhausted",
+                    "validation_codes": ["synthesis:empty"],
+                },
+                execution_policy=target_assessment_execution_policy(),
+            )
+        ],
+    )
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            discovery,
+            _role_profiler([_role_profile_run(job.job_id)]),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([_candidate_profile_run()]),
+            runner,
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "terminal-answer-start",
+        )
+        team.execute(owner_id, BuildCandidateProfile(started.thread_id), "terminal-answer-profile")
+        team.execute(owner_id, SearchJobs(started.thread_id, "agent systems"), "terminal-answer-search")
+        team.execute(owner_id, SelectTargetJob(started.thread_id, job.job_id), "terminal-answer-select")
+        team.execute(owner_id, AssessTargetJob(started.thread_id), "terminal-answer-assess")
+
+        with pytest.raises(TargetAssessmentUnavailable) as raised:
+            team.execute(
+                owner_id,
+                AnswerAssessmentQuestion(started.thread_id, "No additional evidence."),
+                "terminal-answer-run",
+            )
+        failed = db.query(RecruitmentRun).filter_by(
+            idempotency_key="terminal-answer-run"
+        ).one()
+
+        assert raised.value.retryable is False
+        assert failed.attempt_ledger["last_decision"]["retryable"] is False
+        with pytest.raises(ServiceUnavailable, match="cannot be resumed safely"):
+            team.retry_conversation_run(owner_id, started.thread_id, failed.id)
+
+
+@pytest.mark.parametrize(
+    ("checkpoint_failures", "retry_completes"),
+    [(1, True), (2, False)],
+)
+def test_checkpoint_read_failure_retains_pause_only_while_same_run_retry_is_possible(
+    checkpoint_failures,
+    retry_completes,
+):
+    from models import RecruitmentRun, RecruitmentThread, TargetAssessmentArtifact
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.assessment_contracts import (
+        ScriptedTargetAssessmentRunner,
+        TargetAssessmentProgress,
+        TargetAssessmentResult,
+        target_assessment_execution_policy,
+    )
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.errors import TargetAssessmentUnavailable
+    from recruitment_team.interface import (
+        AnswerAssessmentQuestion,
+        AssessTargetJob,
+        BuildCandidateProfile,
+        SearchJobs,
+        SelectTargetJob,
+        StartThread,
+    )
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    class CheckpointFailureRunner(ScriptedTargetAssessmentRunner):
+        def resume(self, *args, **kwargs):
+            self.resume_calls.append((args[0], args[1]))
+            if len(self.resume_calls) <= checkpoint_failures:
+                yield TargetAssessmentProgress(
+                    team_member="coordinator",
+                    status="failed",
+                    summary="The durable checkpoint could not be read.",
+                    detail={
+                        "failure_type": "transient",
+                        "failure_code": "checkpoint_state_unavailable",
+                        "retryable": True,
+                        "recovery_action": "retry_same_run",
+                    },
+                )
+                yield TargetAssessmentResult(
+                    status="failed",
+                    specialist_runs=(),
+                    synthesis="",
+                    judge=None,
+                    correction=None,
+                    error={
+                        "failure_type": "transient",
+                        "failure_code": "checkpoint_state_unavailable",
+                        "error_type": "CheckpointStateUnavailable",
+                        "retryable": True,
+                        "recovery_action": "retry_same_run",
+                    },
+                    execution_policy=target_assessment_execution_policy(),
+                )
+                return
+            yield TargetAssessmentResult(
+                status="completed",
+                specialist_runs=(),
+                synthesis="The assessment resumed from its durable checkpoint.",
+                judge={"disposition": "pass", "score": 90},
+                correction=None,
+                error=None,
+                execution_policy=target_assessment_execution_policy(),
+            )
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    runner = CheckpointFailureRunner(
+        [
+            TargetAssessmentProgress(
+                team_member="coordinator",
+                status="paused",
+                summary="Waiting for the candidate.",
+                detail={
+                    "question": "How large was the team you led?",
+                    "pause_token": "checkpoint-read-token",
+                    "ask_candidate_call_id": "checkpoint-read-call",
+                    "specialist_runs": [],
+                    "synthesis": "",
+                    "proposed_edits": [],
+                },
+            )
+        ]
+    )
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            ScriptedDiscovery([JobSearchResult("agent systems", (job,), 1, 1, False, False)]),
+            _role_profiler([_role_profile_run(job.job_id)]),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([_candidate_profile_run()]),
+            runner,
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "checkpoint-read-start",
+        )
+        team.execute(owner_id, BuildCandidateProfile(started.thread_id), "checkpoint-read-profile")
+        team.execute(owner_id, SearchJobs(started.thread_id, "agent systems"), "checkpoint-read-search")
+        team.execute(owner_id, SelectTargetJob(started.thread_id, job.job_id), "checkpoint-read-select")
+        team.execute(owner_id, AssessTargetJob(started.thread_id), "checkpoint-read-assess")
+
+        with pytest.raises(TargetAssessmentUnavailable) as first_failure:
+            team.execute(
+                owner_id,
+                AnswerAssessmentQuestion(started.thread_id, "Led 12 engineers."),
+                "checkpoint-read-answer",
+            )
+        assert first_failure.value.retryable is True
+        failed_run = db.query(RecruitmentRun).filter_by(
+            idempotency_key="checkpoint-read-answer"
+        ).one()
+        artifact = db.query(TargetAssessmentArtifact).filter_by(thread_id=started.thread_id).one()
+        thread = db.get(RecruitmentThread, started.thread_id)
+        assert thread.case_facts["target_assessment_pause_token"] == "checkpoint-read-token"
+        assert artifact.pending_specialist_runs is not None
+
+        if retry_completes:
+            team.retry_conversation_run(owner_id, started.thread_id, failed_run.id)
+            assert team.snapshot(owner_id, started.thread_id).workflow_state == "assessment_ready"
+        else:
+            with pytest.raises(TargetAssessmentUnavailable) as terminal_failure:
+                team.retry_conversation_run(owner_id, started.thread_id, failed_run.id)
+            assert terminal_failure.value.retryable is False
+            terminal_snapshot = team.snapshot(owner_id, started.thread_id)
+            assert terminal_snapshot.workflow_state == "assessment_failed"
+            db.refresh(thread)
+            assert "target_assessment_pause_token" not in thread.case_facts
+            db.refresh(artifact)
+            assert artifact.pending_specialist_runs is None
 
 
 def test_answering_without_a_pending_question_is_rejected():
@@ -3111,7 +3629,7 @@ def test_role_definition_retries_with_original_input_failed_output_and_exact_cod
     assert attempts[0].attributes == {
         "attempt": 1,
         "max_attempts": config.ROLE_DEFINITION_VALIDATION_ATTEMPTS,
-        "prompt_version": "role-definition-v2",
+        "prompt_version": "role-definition-v3",
         "configured_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
         "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
         "model": "definition-test-model",
@@ -3223,6 +3741,57 @@ def test_role_definition_does_not_block_on_missing_taxonomy_context():
     assert run.validation_codes == ()
     assert run.profile.source_coverage.taxonomy_match_quality == "unmatched"
     assert run.profile.clarification_question is None
+
+
+def test_role_definition_rejects_protected_status_as_criterion_or_question():
+    from dataclasses import replace
+
+    from recruitment_team.role_success import LangChainRoleDefinitionGenerator
+
+    protected_posting = "Singapore Citizens or Permanent Residents preferred."
+    target = replace(
+        _job_snapshot(),
+        description=(
+            "Design source-backed agentic AI systems and evaluation workflows. "
+            f"{protected_posting}"
+        ),
+    )
+    protected_criterion = _role_definition_submission(source_excerpt=protected_posting)
+    protected_criterion["criteria"][0]["statement"] = protected_posting
+    protected_question = _role_definition_submission(
+        question="Are you a Singaporean or Singapore Permanent Resident?"
+    )
+    model = _RoleDefinitionModel([
+        protected_criterion,
+        _role_definition_submission(),
+        protected_question,
+        _role_definition_submission(),
+    ])
+
+    criterion_run = LangChainRoleDefinitionGenerator(model).define(target, ())
+    question_run = LangChainRoleDefinitionGenerator(model).define(_job_snapshot(), ())
+
+    assert criterion_run.validation_codes == (
+        "criterion:build_reliable_agents:protected_status",
+    )
+    assert question_run.validation_codes == ("clarification_question:protected_status",)
+    assert all("Singaporean" not in (run.profile.clarification_question or "") for run in (criterion_run, question_run))
+
+
+def test_role_definition_allows_explicit_work_authorisation_constraint():
+    from dataclasses import replace
+
+    from recruitment_team.role_success import LangChainRoleDefinitionGenerator
+
+    requirement = "Must be authorised to work in Singapore without employer sponsorship."
+    target = replace(_job_snapshot(), description=requirement)
+    payload = _role_definition_submission(source_excerpt=requirement, question=None)
+    payload["criteria"][0]["statement"] = requirement
+
+    run = LangChainRoleDefinitionGenerator(_RoleDefinitionModel([payload])).define(target, ())
+
+    assert run.validation_codes == ()
+    assert run.profile.criteria[0].statement == requirement
 
 
 def test_role_definition_does_not_apply_alignment_or_technology_semantic_gates():
@@ -3358,6 +3927,37 @@ def test_http_role_profiler_wires_one_telemetry_recorder_to_both_stages(monkeypa
 
     assert profiler._definition_generator._telemetry is telemetry
     assert profiler._evidence_assessor._telemetry is telemetry
+
+
+@pytest.mark.parametrize(
+    "dependency_name, factory_name",
+    [
+        ("get_conversation_model", "DeepAgentConversationModel"),
+        ("get_role_success_profiler", "LangChainRoleDefinitionGenerator"),
+        ("get_candidate_profiler_factory", "LangChainCandidateProfilerFactory"),
+    ],
+)
+def test_model_dependencies_report_missing_configuration_as_safe_503(
+    monkeypatch,
+    dependency_name,
+    factory_name,
+):
+    from fastapi import HTTPException
+
+    import recruitment_team.http_routes as routes
+    from recruitment_team.telemetry import RecordedTelemetry
+    from resume_agent.models import ResumeAgentConfigurationError
+
+    def missing_configuration(*_args, **_kwargs):
+        raise ResumeAgentConfigurationError("secret provider detail")
+
+    monkeypatch.setattr(routes, factory_name, missing_configuration)
+
+    with pytest.raises(HTTPException) as raised:
+        getattr(routes, dependency_name)(RecordedTelemetry())
+
+    assert raised.value.status_code == 503
+    assert raised.value.detail == "AI service is not configured."
 
 
 def test_candidate_profile_command_persists_reusable_artifact_across_restart():
@@ -3976,7 +4576,7 @@ def test_handoff_endpoint_rejects_an_incomplete_target_assessment():
     assert handoff.status_code == 409
 
 
-def _http_paused_assessment_setup():
+def _http_paused_assessment_setup(*, fail_first_answer: bool = False):
     """Shared setup for the answer-endpoint HTTP tests below: real FastAPI
     app, real dependency overrides, a thread walked through profile/search/
     select, and a runner scripted to pause on the very first assessment
@@ -4012,8 +4612,7 @@ def _http_paused_assessment_setup():
         [JobSearchResult("agent systems", (job,), 1, 1, False, False)],
         jobs_by_id={job.job_id: job},
     )
-    runner = ScriptedTargetAssessmentRunner(
-        [
+    pause_updates = [
             TargetAssessmentProgress(
                 team_member="coordinator",
                 status="paused",
@@ -4027,17 +4626,31 @@ def _http_paused_assessment_setup():
                     "proposed_edits": [],
                 },
             ),
-        ],
+        ]
+    resume_updates = [
+        TargetAssessmentResult(
+            status="completed",
+            specialist_runs=({"persona_id": "recruiter", "status": "completed", "submission": {}},),
+            synthesis="Answered and completed via HTTP.",
+            judge={"disposition": "pass", "score": 90},
+            correction=None,
+            error=None,
+            execution_policy=target_assessment_execution_policy(),
+        ),
+    ]
+
+    class HttpRunner(ScriptedTargetAssessmentRunner):
+        def resume(self, *args, **kwargs):
+            if fail_first_answer and not self.resume_calls:
+                self.resume_calls.append((args[0], args[1]))
+                self.resume_call_args.append({"pause_token": args[0], "answer": args[1]})
+                raise TimeoutError("provider timed out")
+            yield from super().resume(*args, **kwargs)
+
+    runner = HttpRunner(
+        pause_updates,
         resume_updates=[
-            TargetAssessmentResult(
-                status="completed",
-                specialist_runs=({"persona_id": "recruiter", "status": "completed", "submission": {}},),
-                synthesis="Answered and completed via HTTP.",
-                judge={"disposition": "pass", "score": 90},
-                correction=None,
-                error=None,
-                execution_policy=target_assessment_execution_policy(),
-            ),
+            *resume_updates,
         ],
     )
     telemetry = RecordedTelemetry()
@@ -4130,6 +4743,40 @@ def test_public_http_answer_endpoint_resumes_a_paused_assessment_to_completion()
         assert runner.resume_calls[0][1].startswith("Led a team of 12 engineers.\n\n[System:")
         assert "evidence ID candidate_" in runner.resume_calls[0][1]
         assert runner.resume_call_args[0]["ask_candidate_call_id"] == "http-call-1"
+    finally:
+        cleanup()
+
+
+def test_public_http_retry_reuses_a_failed_assessment_answer_run():
+    client, thread_id, runner, cleanup = _http_paused_assessment_setup(
+        fail_first_answer=True
+    )
+    answer = "Led a team of 12 engineers."
+    try:
+        failed = client.post(
+            f"/api/recruitment-team/threads/{thread_id}/assessment/answer",
+            json={"answer": answer, "idempotency_key": "http-answer-retry"},
+        )
+        assert failed.status_code == 503
+
+        events = client.get(f"/api/recruitment-team/threads/{thread_id}/events").json()
+        failed_event = next(
+            item
+            for item in reversed(events)
+            if item["status"] == "failed"
+            and item["detail"].get("command_type") == "answer_assessment_question"
+        )
+        recovered = client.post(
+            f"/api/recruitment-team/threads/{thread_id}/runs/{failed_event['run_id']}/retry"
+        )
+
+        assert recovered.status_code == 200
+        assert recovered.json()["run_id"] == failed_event["run_id"]
+        snapshot = client.get(f"/api/recruitment-team/threads/{thread_id}").json()
+        assert snapshot["workflow_state"] == "assessment_ready"
+        assert [message["content"] for message in snapshot["messages"]].count(answer) == 1
+        assert len(snapshot["case_facts"]["confirmed_evidence"]) == 1
+        assert len(runner.resume_calls) == 2
     finally:
         cleanup()
 
@@ -4399,6 +5046,7 @@ def test_answering_with_an_empty_synthesis_result_fails_closed_not_silently_comp
         artifact = team.target_assessment(owner_id, started.thread_id)
         assert artifact.status == "failed"
         assert artifact.error["error_type"] == "EmptySynthesis"
+        assert team.snapshot(owner_id, started.thread_id).workflow_state == "assessment_failed"
         failed_run = db.query(RecruitmentRun).filter_by(
             idempotency_key="empty-synth-answer"
         ).one()
@@ -4456,8 +5104,8 @@ def test_receipt_reports_the_workflow_state_the_run_actually_ended_in():
         )
 
 
-def test_a_paused_assessment_still_shows_what_specialists_reported():
-    """Pausing is the normal HITL state. Verdicts already given must stay visible."""
+def test_a_paused_assessment_keeps_pre_judge_specialist_work_private():
+    """Pending specialist work is resumable state, not a candidate-facing result."""
     import uuid
 
     from models import CandidateProfileArtifact, RecruitmentThread, TargetAssessmentArtifact
@@ -4508,10 +5156,9 @@ def test_a_paused_assessment_still_shows_what_specialists_reported():
         snapshot = team.target_assessment(owner_id, started.thread_id)
 
         assert snapshot.status == "paused"
-        assert len(snapshot.specialist_runs) == 1, (
-            "a paused run hid the verdicts its specialists had already submitted"
-        )
-        assert snapshot.specialist_runs[0]["submission"]["score"] == 71
+        assert snapshot.specialist_runs == ()
+        persisted = db.get(TargetAssessmentArtifact, artifact_id)
+        assert persisted.pending_specialist_runs == verdicts
 
 
 def test_autopilot_searches_without_the_candidate_typing_a_query():
@@ -4790,6 +5437,7 @@ def test_thread_delete_cascades_live_records_preserves_request_and_replays():
         facts.update({
             "coordinator_pause_token": "checkpoint-coordinator",
             "target_assessment_pause_token": "checkpoint-assessment",
+            "target_assessment_cleanup_token": "checkpoint-cleanup",
         })
         thread.case_facts = facts
 
@@ -4850,9 +5498,13 @@ def test_thread_delete_cascades_live_records_preserves_request_and_replays():
 
         assert result == replayed
         assert result["status"] == "deleted"
-        assert result["trace_deletion_requests"] == 1
-        assert result["evaluation_deletion_requests"] == 1
-        assert set(deleted_checkpoints) == {"checkpoint-coordinator", "checkpoint-assessment"}
+        assert result["deletion_request_status"] == "completed"
+        assert result["provider_deletion_required"] is False
+        assert set(deleted_checkpoints) == {
+            "checkpoint-coordinator",
+            "checkpoint-assessment",
+            "checkpoint-cleanup",
+        }
         for model in (
             RecruitmentThread,
             RecruitmentMessage,
@@ -4864,17 +5516,124 @@ def test_thread_delete_cascades_live_records_preserves_request_and_replays():
             assert db.query(model).count() == 0
         assert db.query(CandidateProfileArtifact).count() == 1
         request = db.query(RecruitmentThreadDeletionRequest).one()
-        assert request.status == "requested"
+        assert request.status == "completed"
+        assert request.targets == {}
         assert request.result == result
         assert len(telemetry.spans) > 0
         deletion_span = telemetry.spans[-1]
         assert deletion_span.name == "delete_thread"
         assert deletion_span.attributes == {
             "owner_type": "user",
-            "trace_request_count": 1,
-            "evaluation_request_count": 1,
+            "local_run_count": 1,
+            "local_evaluation_count": 1,
+            "provider_deletion_required": False,
         }
         assert "Private" not in str(deletion_span.attributes)
+
+
+def test_thread_delete_does_not_remove_checkpoint_before_database_commit(monkeypatch):
+    from models import RecruitmentThread
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.interface import StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    deleted_checkpoints = []
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["First reply."]),
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Keep this recoverable."),
+            idempotency_key="delete-order-start",
+        )
+        thread = db.get(RecruitmentThread, started.thread_id)
+        thread.case_facts = {**thread.case_facts, "coordinator_pause_token": "checkpoint-live"}
+        db.commit()
+
+        def fail_commit():
+            raise RuntimeError("database commit failed")
+
+        monkeypatch.setattr(db, "commit", fail_commit)
+        with pytest.raises(RuntimeError, match="database commit failed"):
+            team.delete_thread(
+                owner_id,
+                started.thread_id,
+                "delete-order-request",
+                delete_checkpoints=deleted_checkpoints.append,
+            )
+        db.rollback()
+
+        assert deleted_checkpoints == []
+        assert db.get(RecruitmentThread, started.thread_id) is not None
+
+
+def test_thread_delete_retries_pending_checkpoint_cleanup():
+    from models import RecruitmentThread, RecruitmentThreadDeletionRequest
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.errors import ServiceUnavailable
+    from recruitment_team.interface import StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["First reply."]),
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Delete safely."),
+            idempotency_key="delete-retry-start",
+        )
+        thread = db.get(RecruitmentThread, started.thread_id)
+        thread.case_facts = {**thread.case_facts, "coordinator_pause_token": "checkpoint-pending"}
+        db.commit()
+
+        def fail_cleanup(_token):
+            raise OSError("checkpoint store unavailable")
+
+        with pytest.raises(ServiceUnavailable) as raised:
+            team.delete_thread(
+                owner_id,
+                started.thread_id,
+                "delete-retry-request",
+                delete_checkpoints=fail_cleanup,
+            )
+
+        assert raised.value.failure_code == "checkpoint_cleanup_failed"
+        assert raised.value.retryable is True
+        assert db.get(RecruitmentThread, started.thread_id) is None
+        request = db.query(RecruitmentThreadDeletionRequest).one()
+        assert request.status == "cleanup_pending"
+        assert request.targets == {"checkpoint_tokens": ["checkpoint-pending"]}
+
+        deleted_checkpoints = []
+        result = team.delete_thread(
+            owner_id,
+            started.thread_id,
+            "delete-retry-request",
+            delete_checkpoints=deleted_checkpoints.append,
+        )
+
+        assert deleted_checkpoints == ["checkpoint-pending"]
+        assert result["deletion_request_status"] == "completed"
+        assert request.status == "completed"
+        assert request.targets == {}
 
 
 def test_thread_lifecycle_http_contract_needs_no_model(monkeypatch):

@@ -36,7 +36,12 @@ def _sessions(tmp_path):
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-def _running_run(sessions, *, expires_at: datetime) -> tuple[int, str, str]:
+def _running_run(
+    sessions,
+    *,
+    expires_at: datetime | None,
+    created_at: datetime | None = None,
+) -> tuple[int, str, str]:
     with sessions() as db:
         user = User(email="lease@example.com", password_hash="test-only", name="Candidate")
         db.add(user)
@@ -67,6 +72,7 @@ def _running_run(sessions, *, expires_at: datetime) -> tuple[int, str, str]:
             attempt_ledger={"logical_run_id": "run-lease", "stages": {}},
             lease_owner="worker-a",
             lease_expires_at=expires_at,
+            created_at=created_at or datetime.now(timezone.utc),
         )
         db.add(thread)
         db.flush()
@@ -168,6 +174,39 @@ def test_reconciliation_ignores_live_and_terminal_runs_and_checks_owner(tmp_path
         db.commit()
         assert reconcile_expired_runs(db, now=now) == 0
         assert db.get(RecruitmentRun, run_id).error_type == "existing_failure"
+
+
+def test_reconciliation_recovers_only_stale_legacy_null_lease_runs(tmp_path, monkeypatch):
+    import config
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(config, "RECRUITMENT_RUN_LEASE_SECONDS", 600)
+
+    stale_path = tmp_path / "stale"
+    stale_path.mkdir()
+    stale_sessions = _sessions(stale_path)
+    _, _, stale_run_id = _running_run(
+        stale_sessions,
+        expires_at=None,
+        created_at=now - timedelta(seconds=601),
+    )
+    with stale_sessions() as db:
+        assert reconcile_expired_runs(db, now=now) == 1
+        stale_run = db.get(RecruitmentRun, stale_run_id)
+        assert stale_run.status == "failed"
+        assert stale_run.error_type == "process_interrupted"
+
+    recent_path = tmp_path / "recent"
+    recent_path.mkdir()
+    recent_sessions = _sessions(recent_path)
+    _, _, recent_run_id = _running_run(
+        recent_sessions,
+        expires_at=None,
+        created_at=now - timedelta(seconds=599),
+    )
+    with recent_sessions() as db:
+        assert reconcile_expired_runs(db, now=now) == 0
+        assert db.get(RecruitmentRun, recent_run_id).status == "running"
 
 
 def test_hidden_conversation_model_attempts_renew_between_sequential_calls(tmp_path, monkeypatch):

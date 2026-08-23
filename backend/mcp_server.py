@@ -4,33 +4,18 @@ import config
 import mcp_tools as tools
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.server import Settings as FastMCPSettings
 
 
+FastMCPSettings.model_rebuild()
 mcp = FastMCP("Job Hunter SG", host="0.0.0.0", streamable_http_path="/")
 
-
-@mcp.tool()
-def parse_resume(resume_text: str) -> str:
-    """Parse resume text into sections, stats, and stable bullet IDs."""
-    return tools.parse_resume(resume_text)
-
-
-@mcp.tool()
-def score_resume(resume_text: str, job_description: str = "", job_id: int | None = None) -> str:
-    """Score a resume with optional job-specific ATS blending."""
-    return tools.score_resume(resume_text, job_description, job_id)
-
-
-@mcp.tool()
-def extract_skills(text: str) -> str:
-    """Extract ATS-style skill phrases from text."""
-    return tools.extract_skills(text)
-
-
-@mcp.tool()
-def compare_candidate_profile(resume_text: str, profile_context: str) -> str:
-    """Compare resume and LinkedIn/profile text for consistency gaps."""
-    return tools.compare_candidate_profile(resume_text, profile_context)
+mcp.tool()(tools.parse_resume)
+mcp.tool()(tools.score_resume)
+mcp.tool()(tools.extract_skills)
+mcp.tool(
+    description="Compare resume and LinkedIn/profile text for consistency gaps.",
+)(tools.compare_candidate_profile)
 
 
 @mcp.tool(name="jobhunter_get_job")
@@ -70,34 +55,8 @@ def jobhunter_match_resume_to_jobs(resume_text: str, limit: int = 10) -> str:
     """Rank public jobs against pasted resume text without storing it."""
     return tools.match_resume_to_jobs(resume_text, limit)
 
-
-@mcp.tool()
-def validate_bullet_edit(
-    original: str,
-    rewrite: str,
-    job_description: str = "",
-    required_keywords: list[str] | None = None,
-) -> str:
-    """Validate one proposed bullet rewrite and return gates plus final text."""
-    return tools.validate_bullet_edit(original, rewrite, job_description, required_keywords)
-
-
-@mcp.tool()
-def propose_resume_diff(
-    resume_text: str,
-    bullet_id: str,
-    rewrite: str,
-    job_description: str = "",
-    required_keywords: list[str] | None = None,
-) -> str:
-    """Validate a rewrite against a resume bullet ID."""
-    return tools.propose_resume_diff(
-        resume_text,
-        bullet_id,
-        rewrite,
-        job_description,
-        required_keywords,
-    )
+mcp.tool()(tools.validate_bullet_edit)
+mcp.tool()(tools.propose_resume_diff)
 
 
 @mcp.resource(

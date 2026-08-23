@@ -255,7 +255,6 @@ def _split_inline_heading_line(line: str) -> list[str]:
     if not stripped:
         return [""]
 
-    lower = stripped.lower()
     for heading in _INLINE_HEADINGS:
         pattern = re.compile(
             rf"^({re.escape(heading)})(?:\s*[:|]\s*|\s+[-–—]\s+)(.+)$",
@@ -900,11 +899,8 @@ class ResumeScorer:
 
         role_fit_items: list[dict] = []
         impact_score = dimensions.get("impact", {}).get("score", 0)
-        impact_max = dimensions.get("impact", {}).get("max", 40)
         comp_score = dimensions.get("competencies", {}).get("score", 0)
-        comp_max = dimensions.get("competencies", {}).get("max", 30)
         pres_score = dimensions.get("presentation", {}).get("score", 0)
-        pres_max = dimensions.get("presentation", {}).get("max", 30)
 
         if impact_score > 30:
             role_fit_items.append({

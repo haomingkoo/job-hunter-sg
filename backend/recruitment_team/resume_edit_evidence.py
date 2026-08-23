@@ -14,6 +14,7 @@ import config
 from prompt_safety import UNTRUSTED_DATA_RULE, xml_data_block
 
 from .telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
+from .model_transport_observer import create_observed_agent_model, transport_role
 
 
 RESUME_EDIT_EVIDENCE_PROMPT_VERSION = "resume-edit-evidence-v1"
@@ -89,9 +90,9 @@ class LangChainResumeEditEvidenceValidator:
 
     def _bound_model(self):
         if self._model is None:
-            from resume_agent.models import create_agent_model
-
-            self._model = create_agent_model(
+            self._model = create_observed_agent_model(
+                self._telemetry,
+                role="resume_edit_evidence",
                 timeout=config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
                 max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
                 model=config.COORDINATOR_MODEL,
@@ -123,7 +124,8 @@ class LangChainResumeEditEvidenceValidator:
             {"prompt_version": RESUME_EDIT_EVIDENCE_PROMPT_VERSION},
         ) as span:
             try:
-                response = self._bound_model().invoke(messages)
+                with transport_role("resume_edit_evidence"):
+                    response = self._bound_model().invoke(messages)
             except Exception as error:
                 span.set_attribute("status", "error")
                 span.set_attribute("error_type", type(error).__name__)
