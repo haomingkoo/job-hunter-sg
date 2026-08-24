@@ -191,9 +191,23 @@ class _RecordingDiscovery:
         self._inner = ScriptedDiscovery(list(results))
         self.calls: list[dict] = []
 
-    def search_jobs(self, query: str):
-        self.calls.append({"query": query})
-        return self._inner.search_jobs(query)
+    def search_jobs(
+        self,
+        query: str,
+        *,
+        company: str = "",
+        direct_employers_only: bool = True,
+    ):
+        self.calls.append({
+            "query": query,
+            "company": company,
+            "direct_employers_only": direct_employers_only,
+        })
+        return self._inner.search_jobs(
+            query,
+            company=company,
+            direct_employers_only=direct_employers_only,
+        )
 
     def get_job(self, job_id: int):
         return self._inner.get_job(job_id)
@@ -481,7 +495,11 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
 
     # The search really ran, through the port, with the parameter the agent chose.
     assert discovery.calls == [
-        {"query": "semiconductor yield analytics engineer"}
+        {
+            "query": "semiconductor yield analytics engineer",
+            "company": "",
+            "direct_employers_only": True,
+        }
     ]
 
     # The results landed in the thread, in the shape _known_job resolves against.

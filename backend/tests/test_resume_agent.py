@@ -116,7 +116,7 @@ def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
     monkeypatch.setattr(
         agent_tools,
         "find_similar_jobs",
-        lambda _vector, _db, top_k: [
+        lambda _vector, _db, top_k, eligible_job_ids=None: [
             (job_id, 1.0 - (job_id / 100))
             for job_id in range(1, top_k + 3)
         ],
@@ -163,6 +163,83 @@ def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
     assert result["truncated"] is True
     assert result["original_result_count"] > result["retained_result_count"]
     assert "description" not in result["results"][0]
+
+
+def test_search_jobs_applies_company_and_direct_employer_constraints_before_ranking(monkeypatch):
+    from datetime import datetime, timezone
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from models import ScrapedJob
+    import resume_agent.tools as agent_tools
+
+    engine = create_engine("sqlite://")
+    ScrapedJob.__table__.create(engine)
+    sessions = sessionmaker(bind=engine)
+    now = datetime.now(timezone.utc).isoformat()
+    jobs = [
+        ScrapedJob(
+            id=1,
+            title="Senior Quality Manager",
+            company="MICRON SEMICONDUCTOR ASIA OPERATIONS PTE. LTD.",
+            description="Lead deviation management and quality transformation.",
+            url="https://example.test/1",
+            source="test",
+            dedup_key="constraint-1",
+            posted_at_sort=now,
+        ),
+        ScrapedJob(
+            id=2,
+            title="Quality Manager",
+            company="ECOMICRON SYSTEMS PTE. LTD.",
+            description="Lead manufacturing quality.",
+            url="https://example.test/2",
+            source="test",
+            dedup_key="constraint-2",
+            posted_at_sort=now,
+        ),
+        ScrapedJob(
+            id=3,
+            title="Quality Manager",
+            company="MICRON TALENT SEARCH PTE. LTD.",
+            description="EA Licence No: 12C3456.",
+            url="https://example.test/3",
+            source="test",
+            dedup_key="constraint-3",
+            posted_at_sort=now,
+        ),
+    ]
+    with sessions() as db:
+        db.add_all(jobs)
+        db.commit()
+
+    captured_eligible_ids = []
+
+    def fake_similarity(_vector, _db, top_k, *, eligible_job_ids=None):
+        captured_eligible_ids.append(set(eligible_job_ids or ()))
+        return [(job_id, 0.9) for job_id in sorted(eligible_job_ids or ())][:top_k]
+
+    monkeypatch.setattr(agent_tools, "SessionLocal", sessions)
+    monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
+    monkeypatch.setattr(agent_tools, "find_similar_jobs", fake_similarity)
+
+    direct = agent_tools.search_jobs.invoke({
+        "query": "quality transformation",
+        "company": "Micron",
+        "direct_employers_only": True,
+    })
+    agency_opt_in = agent_tools.search_jobs.invoke({
+        "query": "quality transformation",
+        "company": "Micron",
+        "direct_employers_only": False,
+    })
+
+    assert captured_eligible_ids == [{1}, {1, 3}]
+    assert [job["id"] for job in direct["results"]] == [1]
+    assert [job["id"] for job in agency_opt_in["results"]] == [1, 3]
+    assert direct["eligible_candidate_count"] == 1
+    assert agency_opt_in["eligible_candidate_count"] == 2
 
 
 def test_job_dedup_preserves_posting_and_salary_variants():
@@ -283,6 +360,8 @@ def test_search_jobs_empty_results_are_explicit(monkeypatch):
     assert result["empty"] is True
     assert result["count"] == 0
     assert result["result_count"] == 0
+    assert result["candidate_count"] == 0
+    assert result["visible_candidate_count"] == 0
     assert result["results"] == []
 
 

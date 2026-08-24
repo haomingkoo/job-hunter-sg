@@ -123,3 +123,57 @@ def test_expired_corpus_does_not_starve_the_ranking():
         assert not set(expired) & set(matched_ids)
     finally:
         db.close()
+
+
+def test_eligible_jobs_are_filtered_before_top_k():
+    import embedding_service
+    from database import SessionLocal
+
+    query_vector = [1.0] + [0.0] * 383
+    db = SessionLocal()
+    try:
+        higher_scoring = _add_job(db, _iso(1))
+        eligible = _add_job(db, _iso(1))
+        higher_scoring.embedding_vector = query_vector
+        eligible.embedding_vector = [0.2, 0.98] + [0.0] * 382
+        db.commit()
+
+        embedding_service.invalidate_matrix_cache()
+        matches = embedding_service.find_similar_jobs(
+            query_vector,
+            db,
+            top_k=1,
+            eligible_job_ids={eligible.id},
+        )
+
+        assert [job_id for job_id, _score in matches] == [eligible.id]
+        assert higher_scoring.id not in {job_id for job_id, _score in matches}
+    finally:
+        db.close()
+
+
+def test_persisted_embedding_generation_invalidates_another_process_cache():
+    import embedding_service
+    from database import SessionLocal
+    from models import UsageLog
+
+    db = SessionLocal()
+    try:
+        first = _add_job(db, _iso(1))
+        assert first.id in _rebuild_ids(db)
+
+        second = _add_job(db, _iso(1))
+        embedding_service._refresh_matrix_if_stale(db)
+        assert second.id not in embedding_service._job_ids
+
+        db.add(UsageLog(
+            user_id=None,
+            action="job_embedding_refresh",
+            detail="processed=1",
+        ))
+        db.commit()
+        embedding_service._refresh_matrix_if_stale(db)
+
+        assert second.id in embedding_service._job_ids
+    finally:
+        db.close()

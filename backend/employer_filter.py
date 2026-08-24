@@ -34,6 +34,7 @@ RECRUITER_COMPANY_KEYWORDS = (
     "flintex",
     "ambition group",
     "search personnel",
+    "searchasia",
     "avaron",
     "envirodynamics",
     "royal org",
@@ -168,3 +169,10 @@ def direct_employer_condition(
             description_lower.regexp_match(EA_LICENCE_NUMBER_PATTERN)
         )
     return ~or_(*recruiter_conditions)
+
+
+def company_name_matches(company: str, requested_company: str) -> bool:
+    """Match a requested employer on whole normalized words, not substrings."""
+    company_name = normalize_employer_name(company)
+    requested_name = normalize_employer_name(requested_company)
+    return bool(requested_name) and _contains_phrase(company_name, requested_name)

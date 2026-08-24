@@ -8,6 +8,7 @@ from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 import config
+from employer_filter import company_name_matches, is_recruitment_employer
 from validation_gates import extract_numbers, run_all_gates
 
 from ..assessment_contracts import (
@@ -445,6 +446,35 @@ def write_shortlist(matches: list[_RankedMatch]) -> dict:
             "known_job_ids": list(known_jobs),
         }
 
+    latest_search = conversation.search_results[-1] if conversation.search_results else None
+    if latest_search is not None:
+        latest_job_ids = {job.job_id for job in latest_search.jobs}
+        ineligible = [
+            job_id
+            for job_id in job_ids
+            if job_id not in latest_job_ids
+            or (
+                latest_search.company
+                and not company_name_matches(known_jobs[job_id].company, latest_search.company)
+            )
+            or (
+                latest_search.direct_employers_only
+                and is_recruitment_employer(
+                    known_jobs[job_id].company,
+                    description=known_jobs[job_id].description,
+                )
+            )
+        ]
+        if ineligible:
+            return {
+                "accepted": False,
+                "reason": (
+                    "The shortlist includes jobs outside the latest employer constraints. "
+                    "Use only jobs returned by the constrained search."
+                ),
+                "ineligible_job_ids": ineligible,
+            }
+
     blocks = (conversation.resume_document or {}).get("blocks") or []
     resume_text = "\n".join(str(block.get("text") or "") for block in blocks)
     for match in parsed:
@@ -488,7 +518,11 @@ def write_shortlist(matches: list[_RankedMatch]) -> dict:
 
 
 @tool
-def search_jobs(query: str) -> dict:
+def search_jobs(
+    query: str,
+    company: str = "",
+    direct_employers_only: bool = True,
+) -> dict:
     """Search the current internal Singapore job corpus by role or responsibility.
 
     Write `query` positively, in the words a posting would use: the search
@@ -497,8 +531,12 @@ def search_jobs(query: str) -> dict:
     better phrase if they are wrong. Results land on the candidate's shortlist,
     so they see what you found.
 
-    Seniority labels and salary context are facts in each result. Judge them
-    together; do not assume an employer's self-reported level is reliable.
+    By default results come from direct employers, not recruitment agencies.
+    Pass `company` when the candidate names a target employer; matching uses
+    whole normalized words. Set `direct_employers_only=False` only when the
+    candidate wants agency-listed roles. Seniority labels and salary context
+    are facts in each result. Judge them together; do not assume an employer's
+    self-reported level is reliable.
     """
     from ..coordinator.context import current_conversation
 
@@ -506,7 +544,11 @@ def search_jobs(query: str) -> dict:
     if conversation is None:
         return dict(_NO_CONVERSATION)
 
-    result = conversation.discovery.search_jobs(query)
+    result = conversation.discovery.search_jobs(
+        query,
+        company=company,
+        direct_employers_only=direct_employers_only,
+    )
     # Every result is recorded, failures included, so the turn's search history
     # stays observable. Which of them may change the thread is decided when the
     # sink is drained, not here.
@@ -531,6 +573,9 @@ def search_jobs(query: str) -> dict:
         "query": result.query,
         "valid_empty": result.valid_empty,
         "truncated": result.truncated,
+        "candidate_count": result.candidate_count,
+        "eligible_candidate_count": result.eligible_candidate_count,
+        "visible_candidate_count": result.visible_candidate_count,
         "jobs": [_posting(job) for job in result.jobs],
     }
 

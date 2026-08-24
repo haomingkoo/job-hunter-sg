@@ -169,6 +169,7 @@ def search_jobs_result(
     detail: bool = False,
     candidate_count: int | None = None,
     visible_candidate_count: int | None = None,
+    eligible_candidate_count: int | None = None,
 ) -> dict:
     original_count = len(jobs) if visible_candidate_count is None else visible_candidate_count
     retained = jobs[:limit]
@@ -183,6 +184,7 @@ def search_jobs_result(
         "count": len(retained),
         "result_count": len(retained),
         "candidate_count": candidate_count,
+        "eligible_candidate_count": eligible_candidate_count,
         "visible_candidate_count": original_count,
         "deduplicated_result_count": len(jobs),
         "duplicate_count": max(0, original_count - len(jobs)),

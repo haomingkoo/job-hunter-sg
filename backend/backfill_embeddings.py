@@ -14,13 +14,14 @@ import time
 
 from database import SessionLocal
 from embedding_service import build_job_embed_text, encode_texts
-from models import ScrapedJob
+from job_visibility import apply_public_job_visibility
+from models import ScrapedJob, UsageLog
 
 
 def backfill(force: bool = False, limit: int | None = None) -> None:
     db = SessionLocal()
     try:
-        query = db.query(ScrapedJob)
+        query = apply_public_job_visibility(db.query(ScrapedJob))
         if not force:
             query = query.filter(ScrapedJob.embedding_vector.is_(None))
 
@@ -74,6 +75,12 @@ def backfill(force: bool = False, limit: int | None = None) -> None:
             )
 
         elapsed = time.time() - t0
+        db.add(UsageLog(
+            user_id=None,
+            action="job_embedding_refresh",
+            detail=f"processed={processed}",
+        ))
+        db.commit()
         print(f"Done. {processed} jobs embedded in {elapsed:.1f}s.")
 
     finally:

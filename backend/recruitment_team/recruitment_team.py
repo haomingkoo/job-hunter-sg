@@ -1386,7 +1386,11 @@ class RecruitmentTeam:
             },
         ) as search_span:
             search_span.set_attribute("query_derived", not command.query.strip())
-            result = self._discovery.search_jobs(resolved_query)
+            result = self._discovery.search_jobs(
+                resolved_query,
+                company=command.company,
+                direct_employers_only=command.direct_employers_only,
+            )
             search_span.set_attribute("valid_empty", result.valid_empty)
             search_span.set_attribute("result_count", len(result.jobs))
             search_span.set_attribute("truncated", result.truncated)

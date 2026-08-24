@@ -78,6 +78,8 @@ class SearchJobsRequest(BaseModel):
     """Omit query to search from what the candidate has already said."""
 
     query: str = Field(default="", max_length=SEARCH_QUERY_MAX_CHARS)
+    company: str = Field(default="", max_length=SEARCH_QUERY_MAX_CHARS)
+    direct_employers_only: bool = True
     idempotency_key: str = Field(min_length=1, max_length=IDEMPOTENCY_KEY_MAX_CHARS)
 
 
@@ -658,7 +660,12 @@ def search_thread_jobs(
     return _execute_command(
         _team(db, conversation_model, discovery, role_profiler, telemetry),
         user.id,
-        SearchJobs(thread_id=thread_id, query=body.query),
+        SearchJobs(
+            thread_id=thread_id,
+            query=body.query,
+            company=body.company,
+            direct_employers_only=body.direct_employers_only,
+        ),
         body.idempotency_key,
     )
 
@@ -677,7 +684,12 @@ def stream_search_thread_jobs(
     return _stream_command_response(
         _streaming_team_factory(db, conversation_model, discovery, role_profiler, telemetry),
         user.id,
-        SearchJobs(thread_id=thread_id, query=body.query),
+        SearchJobs(
+            thread_id=thread_id,
+            query=body.query,
+            company=body.company,
+            direct_employers_only=body.direct_employers_only,
+        ),
         body.idempotency_key,
     )
 

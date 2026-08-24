@@ -131,10 +131,20 @@ class _RecordingDiscovery:
         self._results = list(results)
         self.calls: list[dict] = []
 
-    def search_jobs(self, query: str):
+    def search_jobs(
+        self,
+        query: str,
+        *,
+        company: str = "",
+        direct_employers_only: bool = True,
+    ):
         from recruitment_team.discovery import JobSearchResult
 
-        self.calls.append({"query": query})
+        self.calls.append({
+            "query": query,
+            "company": company,
+            "direct_employers_only": direct_employers_only,
+        })
         assert self._results, "the loop searched more times than the test scripted"
         result = self._results.pop(0)
         return JobSearchResult(
@@ -500,17 +510,113 @@ def test_search_jobs_goes_through_the_port_without_a_hidden_level_filter():
     with assessment_context(context, initial_edits=context.proposed_edits):
         result = search_jobs.invoke({"query": "staff yield engineer"})
 
-    assert discovery.calls == [{"query": "staff yield engineer"}]
+    assert discovery.calls == [{
+        "query": "staff yield engineer",
+        "company": "",
+        "direct_employers_only": True,
+    }]
     assert result["ok"] is True
     assert result["valid_empty"] is False
     assert [job["company"] for job in result["jobs"]] == ["NXP"]
     assert len(context.search_results) == 1
 
 
-def test_search_jobs_exposes_no_hidden_level_filter():
+def test_search_jobs_exposes_explicit_employer_constraints():
     from recruitment_team.open_agent.tools import search_jobs
 
-    assert set(search_jobs.args_schema.model_json_schema()["properties"]) == {"query"}
+    assert set(search_jobs.args_schema.model_json_schema()["properties"]) == {
+        "query",
+        "company",
+        "direct_employers_only",
+    }
+
+
+def test_search_jobs_forwards_named_company_and_agency_choice():
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import search_jobs
+
+    discovery = _RecordingDiscovery([_search_result([])])
+    context = _context(discovery)
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        search_jobs.invoke({
+            "query": "quality transformation",
+            "company": "Micron",
+            "direct_employers_only": False,
+        })
+
+    assert discovery.calls == [{
+        "query": "quality transformation",
+        "company": "Micron",
+        "direct_employers_only": False,
+    }]
+
+
+def test_write_shortlist_rejects_stale_jobs_outside_latest_company_constraint():
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import search_jobs, write_shortlist
+
+    stale = _job(201, "Quality Manager", "EnviroDynamics")
+    micron = _job(202, "Senior Quality Manager", "Micron Semiconductor")
+    discovery = _RecordingDiscovery([
+        _search_result([stale]),
+        _search_result([micron]),
+    ])
+    match = _ranked_match(stale.job_id)
+    context = _context(
+        discovery,
+        resume_document={"blocks": [{"text": match["matched"][0]["resume_quote"]}]},
+    )
+
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        search_jobs.invoke({"query": "quality manager"})
+        search_jobs.invoke({
+            "query": "quality transformation",
+            "company": "Micron",
+            "direct_employers_only": True,
+        })
+        result = write_shortlist.invoke({"matches": [match]})
+
+    assert result["accepted"] is False
+    assert result["ineligible_job_ids"] == [stale.job_id]
+
+
+def test_write_shortlist_rejects_agency_job_from_direct_employer_search():
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import search_jobs, write_shortlist
+
+    agency = _job(201, "Senior Customer Quality Engineer", "SearchAsia Consulting")
+    match = _ranked_match(agency.job_id)
+    context = _context(
+        _RecordingDiscovery([_search_result([agency])]),
+        resume_document={"blocks": [{"text": match["matched"][0]["resume_quote"]}]},
+    )
+
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        search_jobs.invoke({"query": "customer quality", "direct_employers_only": True})
+        result = write_shortlist.invoke({"matches": [match]})
+
+    assert result["accepted"] is False
+    assert result["ineligible_job_ids"] == [agency.job_id]
+
+
+def test_write_shortlist_does_not_reuse_an_older_search_after_latest_empty():
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import search_jobs, write_shortlist
+
+    older = _job(201, "Senior Quality Manager", "Micron Semiconductor")
+    match = _ranked_match(older.job_id)
+    context = _context(
+        _RecordingDiscovery([_search_result([older]), _search_result([])]),
+        resume_document={"blocks": [{"text": match["matched"][0]["resume_quote"]}]},
+    )
+
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        search_jobs.invoke({"query": "quality manager", "company": "Micron"})
+        search_jobs.invoke({"query": "quality director", "company": "Micron"})
+        result = write_shortlist.invoke({"matches": [match]})
+
+    assert result["accepted"] is False
+    assert result["ineligible_job_ids"] == [older.job_id]
 
 
 def test_write_shortlist_accepts_only_known_jobs_with_verbatim_resume_quotes():
@@ -647,7 +753,11 @@ def test_a_search_run_inside_a_turn_reaches_the_thread_and_survives_a_shortlist_
         )
 
     assert discovery.calls == [
-        {"query": "semiconductor yield analytics"}
+        {
+            "query": "semiconductor yield analytics",
+            "company": "",
+            "direct_employers_only": True,
+        }
     ]
     assert [job.job_id for job in snapshot.case_facts.recommendations] == [501]
     assert snapshot.case_facts.recommendations[0].company == "Micron"

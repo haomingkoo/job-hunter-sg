@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -83,16 +84,30 @@ _job_matrix: np.ndarray | None = None
 _job_ids: list[int] = []
 _matrix_lock = threading.Lock()
 _matrix_ts: float = 0.0
-_MATRIX_TTL = 86400  # 24 hours — scrapes call invalidate_matrix_cache() on new data
+_MATRIX_TTL = timedelta(days=1).total_seconds()
+_matrix_generation_id: int | None = None
+
+
+def _embedding_generation_id(db_session: Session) -> int | None:
+    from models import UsageLog
+
+    row = (
+        db_session.query(UsageLog.id)
+        .filter(UsageLog.action == "job_embedding_refresh")
+        .order_by(UsageLog.id.desc())
+        .first()
+    )
+    return int(row[0]) if row else None
 
 
 def invalidate_matrix_cache() -> None:
     """Force rebuild on next similarity search."""
-    global _job_matrix, _job_ids, _matrix_ts
+    global _job_matrix, _job_ids, _matrix_ts, _matrix_generation_id
     with _matrix_lock:
         _job_matrix = None
         _job_ids = []
         _matrix_ts = 0.0
+        _matrix_generation_id = None
 
 
 def is_similarity_matrix_ready() -> bool:
@@ -107,13 +122,22 @@ def is_similarity_matrix_ready() -> bool:
 
 def _refresh_matrix_if_stale(db_session: Session) -> None:
     """Refresh the matrix from currently searchable jobs when stale."""
-    global _job_matrix, _job_ids, _matrix_ts
+    global _job_matrix, _job_ids, _matrix_ts, _matrix_generation_id
     now = time.monotonic()
-    if _job_matrix is not None and (now - _matrix_ts) < _MATRIX_TTL:
+    generation_id = _embedding_generation_id(db_session)
+    if (
+        _job_matrix is not None
+        and generation_id == _matrix_generation_id
+        and (now - _matrix_ts) < _MATRIX_TTL
+    ):
         return
 
     with _matrix_lock:
-        if _job_matrix is not None and (time.monotonic() - _matrix_ts) < _MATRIX_TTL:
+        if (
+            _job_matrix is not None
+            and generation_id == _matrix_generation_id
+            and (time.monotonic() - _matrix_ts) < _MATRIX_TTL
+        ):
             return
 
         from job_visibility import apply_public_job_visibility
@@ -140,6 +164,7 @@ def _refresh_matrix_if_stale(db_session: Session) -> None:
 
         if not vectors:
             _matrix_ts = time.monotonic()
+            _matrix_generation_id = generation_id
             return
 
         matrix = np.array(vectors, dtype=np.float32)
@@ -147,12 +172,15 @@ def _refresh_matrix_if_stale(db_session: Session) -> None:
         _job_ids = ids
         _job_matrix = matrix
         _matrix_ts = time.monotonic()
+        _matrix_generation_id = generation_id
 
 
 def find_similar_jobs(
     query_vector: list[float],
     db_session: Session,
     top_k: int = 50,
+    *,
+    eligible_job_ids: set[int] | None = None,
 ) -> list[tuple[int, float]]:
     """Return (job_id, cosine_similarity) pairs, highest similarity first.
 
@@ -172,12 +200,28 @@ def find_similar_jobs(
     # Cosine similarity via dot product (vectors are normalized)
     similarities = (_job_matrix @ query.T).flatten()
 
-    k = min(top_k, len(similarities))
-    top_indices = np.argpartition(similarities, -k)[-k:]
-    top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]
+    if eligible_job_ids is not None:
+        eligible_indices = np.fromiter(
+            (
+                index
+                for index, job_id in enumerate(_job_ids)
+                if job_id in eligible_job_ids
+            ),
+            dtype=np.int64,
+        )
+        if len(eligible_indices) == 0:
+            return []
+        candidate_similarities = similarities[eligible_indices]
+    else:
+        eligible_indices = np.arange(len(_job_ids))
+        candidate_similarities = similarities
+
+    k = min(top_k, len(candidate_similarities))
+    top_indices = np.argpartition(candidate_similarities, -k)[-k:]
+    top_indices = top_indices[np.argsort(candidate_similarities[top_indices])[::-1]]
 
     return [
-        (_job_ids[idx], float(similarities[idx]))
+        (_job_ids[int(eligible_indices[idx])], float(candidate_similarities[idx]))
         for idx in top_indices
-        if similarities[idx] > 0
+        if candidate_similarities[idx] > 0
     ]

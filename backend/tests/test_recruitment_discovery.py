@@ -89,3 +89,42 @@ def test_discovery_reports_when_a_result_can_no_longer_be_enriched(monkeypatch):
 
     assert result["fact_context_status"] == "source_row_unavailable"
     assert "salary_context" not in result
+
+
+def test_production_discovery_forwards_explicit_employer_constraints(monkeypatch):
+    import resume_agent.tools as agent_tools
+    import recruitment_team.discovery as discovery_module
+
+    captured = {}
+
+    def fake_invoke(payload):
+        captured.update(payload)
+        return {
+            "ok": True,
+            "results": [],
+            "candidate_count": 7,
+            "eligible_candidate_count": 63,
+            "visible_candidate_count": 7,
+            "truncated": False,
+        }
+
+    monkeypatch.setattr(
+        agent_tools.search_jobs.__class__,
+        "invoke",
+        lambda _tool, payload, **_kwargs: fake_invoke(payload),
+    )
+    result = discovery_module.LangChainJobDiscovery().search_jobs(
+        "semiconductor quality transformation",
+        company="Micron",
+        direct_employers_only=True,
+    )
+
+    assert captured == {
+        "query": "semiconductor quality transformation",
+        "detail": True,
+        "company": "Micron",
+        "direct_employers_only": True,
+    }
+    assert result.eligible_candidate_count == 63
+    assert result.candidate_count == 7
+    assert result.visible_candidate_count == 7

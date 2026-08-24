@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from bisect import bisect_right
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from statistics import median
 from typing import Protocol
 
@@ -136,10 +136,19 @@ class JobSearchResult:
     valid_empty: bool
     failure_type: str | None = None
     failure_code: str | None = None
+    eligible_candidate_count: int | None = None
+    company: str = ""
+    direct_employers_only: bool = True
 
 
 class DiscoveryPort(Protocol):
-    def search_jobs(self, query: str) -> JobSearchResult: ...
+    def search_jobs(
+        self,
+        query: str,
+        *,
+        company: str = "",
+        direct_employers_only: bool = True,
+    ) -> JobSearchResult: ...
 
     def get_job(self, job_id: int) -> JobSnapshot | None: ...
 
@@ -236,11 +245,22 @@ def _enrich_job_facts(payloads: list[dict]) -> list[dict]:
 class LangChainJobDiscovery:
     """Production adapter that reuses the existing constrained LangChain tools."""
 
-    def search_jobs(self, query: str) -> JobSearchResult:
+    def search_jobs(
+        self,
+        query: str,
+        *,
+        company: str = "",
+        direct_employers_only: bool = True,
+    ) -> JobSearchResult:
         from resume_agent.tools import search_jobs
 
         result = search_jobs.invoke(
-            {"query": query, "detail": True}
+            {
+                "query": query,
+                "detail": True,
+                "company": company,
+                "direct_employers_only": direct_employers_only,
+            }
         )
         if not result.get("ok"):
             failure_code = normalize_failure_code(str(result.get("failure_type") or ""))
@@ -254,6 +274,8 @@ class LangChainJobDiscovery:
                 valid_empty=False,
                 failure_type=decision.failure_type,
                 failure_code=decision.failure_code,
+                company=company,
+                direct_employers_only=direct_employers_only,
             )
         jobs = tuple(
             JobSnapshot.from_payload(item)
@@ -266,6 +288,9 @@ class LangChainJobDiscovery:
             visible_candidate_count=result.get("visible_candidate_count"),
             truncated=bool(result.get("truncated")),
             valid_empty=not jobs,
+            eligible_candidate_count=result.get("eligible_candidate_count"),
+            company=company,
+            direct_employers_only=direct_employers_only,
         )
 
     def get_job(self, job_id: int) -> JobSnapshot | None:
@@ -293,10 +318,21 @@ class ScriptedDiscovery:
         self._jobs_by_id = dict(jobs_by_id or {})
         self.search_count = 0
 
-    def search_jobs(self, query: str) -> JobSearchResult:
+    def search_jobs(
+        self,
+        query: str,
+        *,
+        company: str = "",
+        direct_employers_only: bool = True,
+    ) -> JobSearchResult:
         self.search_count += 1
         result = next(self._searches)
-        return JobSearchResult(query=query, **{key: value for key, value in result.__dict__.items() if key != "query"})
+        return replace(
+            result,
+            query=query,
+            company=company,
+            direct_employers_only=direct_employers_only,
+        )
 
     def get_job(self, job_id: int) -> JobSnapshot | None:
         return self._jobs_by_id.get(job_id)
