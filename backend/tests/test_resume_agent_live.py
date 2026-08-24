@@ -4,6 +4,7 @@ import importlib
 import json
 import os
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,8 @@ pytestmark = pytest.mark.skipif(
     os.getenv("RUN_LIVE_SEALION") != "1",
     reason="Set RUN_LIVE_SEALION=1 plus SEALION_API or sealion_api in the environment or backend/.env.",
 )
+
+EMPLOYER_INTENT_LIVE_REPEATS = int(os.getenv("LIVE_PROMPT_EVAL_REPEATS", "3"))
 
 
 def _reload_live_agent_modules():
@@ -241,4 +244,130 @@ def test_live_sealion_agent_calls_search_jobs_for_role_research(monkeypatch):
     assert any(
         span["name"] == "search_jobs" and span["status"] == "success"
         for span in recorder.spans
+    )
+
+
+@pytest.mark.parametrize("repeat", range(EMPLOYER_INTENT_LIVE_REPEATS))
+def test_live_recruitment_coordinator_preserves_named_employer_intent(repeat):
+    """Prompt eval: a named employer must survive intent-to-tool translation."""
+    import ai_service
+    from backend.tests.fakes import AllowingEditEvidenceValidator
+    from recruitment_team.coordinator.context import ConversationContext
+    from recruitment_team.coordinator.model import DeepAgentConversationModel
+    from recruitment_team.discovery import JobSearchResult, JobSnapshot, JobSource
+    from recruitment_team.interface import Message
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    if not ai_service._get_api_key():
+        pytest.fail("RUN_LIVE_SEALION=1 requires a configured SEA-LION API key.")
+
+    source = JobSource(
+        source="prompt-eval",
+        url="https://example.test/micron-quality",
+        source_posting_id="prompt-eval-micron",
+        posted_date="2026-08-20",
+        closing_date="",
+        scraped_at="2026-08-24",
+        availability="current",
+        snapshot_sha256="prompt-eval",
+    )
+    micron_job = JobSnapshot(
+        job_id=1,
+        title="Senior Manager, FE Central PQE (Deviation Management)",
+        company="MICRON SEMICONDUCTOR ASIA OPERATIONS PTE. LTD.",
+        location="Singapore",
+        salary="$10,000 - $18,000",
+        employment_type="Full Time",
+        seniority="Manager",
+        description=(
+            "Lead global semiconductor deviation management, quality transformation, "
+            "yield improvement, analytics, and technical teams."
+        ),
+        skills=("Quality Management", "Semiconductor Fabrication", "Transformation Programme"),
+        similarity_score=0.9,
+        source=source,
+    )
+
+    class RecordingDiscovery:
+        def __init__(self):
+            self.calls = []
+
+        def search_jobs(
+            self,
+            query: str,
+            *,
+            company: str = "",
+            direct_employers_only: bool = True,
+        ):
+            self.calls.append({
+                "query": query,
+                "company": company,
+                "direct_employers_only": direct_employers_only,
+            })
+            jobs = (micron_job,) if company.casefold() == "micron" and direct_employers_only else ()
+            return JobSearchResult(
+                query=query,
+                jobs=jobs,
+                candidate_count=len(jobs),
+                visible_candidate_count=len(jobs),
+                truncated=False,
+                valid_empty=not jobs,
+                eligible_candidate_count=len(jobs),
+                company=company,
+                direct_employers_only=direct_employers_only,
+            )
+
+        def get_job(self, job_id: int):
+            return micron_job if job_id == micron_job.job_id else None
+
+    discovery = RecordingDiscovery()
+    telemetry = RecordedTelemetry()
+    thread_id = f"live-employer-intent-{repeat}-{secrets.token_hex(4)}"
+    context = ConversationContext(
+        thread_id=thread_id,
+        trace_key=f"trace-{thread_id}",
+        candidate_profile=None,
+        role_profile=None,
+        target_job=None,
+        resume_document={
+            "blocks": [{
+                "id": "b_experience",
+                "text": (
+                    "Led multi-site semiconductor quality transformation, deviation "
+                    "management, yield improvement, and analytics across four regions."
+                ),
+            }],
+        },
+        latest_search_query="",
+        recommendations=(),
+        shortlisted_jobs=(),
+        preferences=(),
+        published_matches=(),
+        discovery=discovery,
+        edit_evidence_validator=AllowingEditEvidenceValidator(),
+        latest_user_message="micron",
+        latest_user_message_id=1,
+        latest_user_run_id=thread_id,
+    )
+    model = DeepAgentConversationModel(telemetry=telemetry)
+    model.respond(
+        [Message(1, "user", "micron", thread_id, datetime.now(timezone.utc))],
+        context.resume_document["blocks"][0]["text"],
+        context=context,
+    )
+
+    assert discovery.calls
+    assert all(call["company"].casefold() == "micron" for call in discovery.calls)
+    assert all(call["direct_employers_only"] is True for call in discovery.calls)
+    assert any(
+        update.field == "company"
+        and update.value.casefold() == "micron"
+        and update.evidence_quote == "micron"
+        for update in context.drafted_preferences
+    )
+    assert any(
+        span.name == "model_transport"
+        and span.status == "success"
+        and span.attributes.get("role") == "coordinator"
+        for span in telemetry.spans
     )

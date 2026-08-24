@@ -102,6 +102,10 @@ def describe_progress(event: dict) -> tuple[str, dict] | None:
         detail = {"tool_name": tool_name, "stage": "call"}
         if event.get("id"):
             detail["tool_call_id"] = event["id"]
+        if tool_name == "search_jobs" and isinstance(event.get("args"), dict):
+            args = event["args"]
+            detail["company_filter_applied"] = bool(str(args.get("company") or "").strip())
+            detail["direct_employers_only"] = args.get("direct_employers_only", True) is True
         return f"{team_member} called {tool_name}.", detail
 
     if event.get("kind") == "tool_result":
@@ -126,6 +130,16 @@ def describe_progress(event: dict) -> tuple[str, dict] | None:
         found = _postings_found(payload) if isinstance(payload, dict) else None
         if found is not None:
             detail["result_count"] = found
+        if tool_name == "search_jobs" and isinstance(payload, dict):
+            for key in (
+                "candidate_count",
+                "eligible_candidate_count",
+                "visible_candidate_count",
+                "truncated",
+            ):
+                value = payload.get(key)
+                if isinstance(value, (bool, int)):
+                    detail[key] = value
         return (
             f"{team_member} finished {tool_name}.",
             detail,

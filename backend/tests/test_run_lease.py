@@ -41,6 +41,7 @@ def _running_run(
     *,
     expires_at: datetime | None,
     created_at: datetime | None = None,
+    command_type: str = "send_message",
 ) -> tuple[int, str, str]:
     with sessions() as db:
         user = User(email="lease@example.com", password_hash="test-only", name="Candidate")
@@ -58,7 +59,10 @@ def _running_run(
             id="thread-lease",
             user_id=user.id,
             resume_version_id=resume.id,
-            case_facts={"partial_marker": "preserve-me"},
+            case_facts={
+                "partial_marker": "preserve-me",
+                "candidate_profile_status": "running",
+            },
             next_event_sequence=2,
         )
         run = RecruitmentRun(
@@ -66,7 +70,7 @@ def _running_run(
             user_id=user.id,
             thread_id=thread.id,
             idempotency_key="lease-key",
-            command_type="send_message",
+            command_type=command_type,
             status="running",
             trace_key="a" * 64,
             attempt_ledger={"logical_run_id": "run-lease", "stages": {}},
@@ -148,6 +152,29 @@ def test_two_reconcilers_create_one_retryable_interruption(tmp_path):
         assert [message.role for message in messages] == ["user"]
         assert thread.user_id == owner_id
         assert thread.case_facts["partial_marker"] == "preserve-me"
+
+
+def test_interrupted_profile_run_terminates_the_profile_worker_state(tmp_path):
+    now = datetime.now(timezone.utc)
+    sessions = _sessions(tmp_path)
+    _, thread_id, run_id = _running_run(
+        sessions,
+        expires_at=now - timedelta(seconds=1),
+        command_type="study_resume_version",
+    )
+
+    with sessions() as db:
+        assert reconcile_expired_runs(db, now=now) == 1
+        event = (
+            db.query(RecruitmentActivityEvent)
+            .filter_by(run_id=run_id, status="failed")
+            .one()
+        )
+        thread = db.get(RecruitmentThread, thread_id)
+
+        assert event.team_member == "candidate_profiler"
+        assert "candidate profiler stopped" in event.summary
+        assert thread.case_facts["candidate_profile_status"] == "failed"
 
 
 def test_reconciliation_ignores_live_and_terminal_runs_and_checks_owner(tmp_path):

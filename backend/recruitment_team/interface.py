@@ -32,6 +32,8 @@ class BuildCandidateProfile:
 class SearchJobs:
     thread_id: str
     query: str
+    company: str = ""
+    direct_employers_only: bool = True
 
 
 @dataclass(frozen=True)
@@ -78,7 +80,15 @@ Command = (
 )
 
 
-PreferenceField = Literal["role", "location", "seniority", "salary", "constraints"]
+PreferenceField = Literal[
+    "role",
+    "location",
+    "seniority",
+    "salary",
+    "company",
+    "employer_type",
+    "constraints",
+]
 
 
 @dataclass(frozen=True)

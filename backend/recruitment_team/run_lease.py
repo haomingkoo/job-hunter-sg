@@ -15,6 +15,12 @@ from models import RecruitmentActivityEvent, RecruitmentRun, RecruitmentThread
 from .recovery import classify_failure
 
 
+CANDIDATE_PROFILE_COMMAND_TYPES = frozenset({
+    "build_candidate_profile",
+    "study_resume_version",
+})
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -138,6 +144,16 @@ def reconcile_expired_runs(
             "retryable": True,
             "recovery_action": "retry_incomplete_stage",
         }
+        team_member = (
+            "candidate_profiler"
+            if row.command_type in CANDIDATE_PROFILE_COMMAND_TYPES
+            else "coordinator"
+        )
+        if row.command_type in CANDIDATE_PROFILE_COMMAND_TYPES:
+            thread = db.get(RecruitmentThread, row.thread_id)
+            facts = dict(thread.case_facts or {})
+            facts["candidate_profile_status"] = "failed"
+            thread.case_facts = facts
         db.execute(
             update(RecruitmentRun)
             .where(RecruitmentRun.id == row.id)
@@ -156,10 +172,10 @@ def reconcile_expired_runs(
             sequence=int(next_value) - 1,
             event_type="run",
             status="failed",
-            team_member="coordinator",
+            team_member=team_member,
             attempt=1,
             trace_key=row.trace_key,
-            summary="This turn stopped because its worker was interrupted.",
+            summary=f"The {team_member.replace('_', ' ')} stopped because its worker was interrupted.",
             detail=detail,
             parent_id=row.id,
             attributes=detail,

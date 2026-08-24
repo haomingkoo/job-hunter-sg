@@ -60,6 +60,21 @@ def test_a_search_call_never_exposes_the_query_it_ran():
     assert "query" not in detail
 
 
+def test_a_search_call_exposes_constraints_without_company_text():
+    _, detail = describe_progress(_call(
+        "search_jobs",
+        {
+            "query": "quality transformation",
+            "company": "Micron",
+            "direct_employers_only": True,
+        },
+    ))
+
+    assert detail["company_filter_applied"] is True
+    assert detail["direct_employers_only"] is True
+    assert "company" not in detail
+
+
 def test_a_call_with_no_query_carries_none():
     _, detail = describe_progress(_call("propose_resume_edit", {"block_id": "b1", "rewrite": "x"}))
 
@@ -101,6 +116,23 @@ def test_a_coordinator_search_result_reports_how_many_postings_came_back():
         "tool_call_id": "call-1",
         "result_count": 2,
     }
+
+
+def test_a_search_result_exposes_safe_candidate_funnel_counts():
+    _, detail = describe_progress(_result("search_jobs", {
+        "ok": True,
+        "jobs": [{"job_id": 1}],
+        "candidate_count": 7,
+        "eligible_candidate_count": 63,
+        "visible_candidate_count": 7,
+        "truncated": True,
+    }))
+
+    assert detail["result_count"] == 1
+    assert detail["candidate_count"] == 7
+    assert detail["eligible_candidate_count"] == 63
+    assert detail["visible_candidate_count"] == 7
+    assert detail["truncated"] is True
 
 
 def test_the_assessment_search_result_shape_reports_the_same_count():

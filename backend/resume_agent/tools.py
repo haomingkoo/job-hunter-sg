@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+import re
 from typing import Any
 
 import agent_tool_contract as contract
 import config
 from database import SessionLocal
 from embedding_service import encode_text, find_similar_jobs
+from employer_filter import company_name_matches, direct_employer_condition
 from job_visibility import apply_public_job_visibility, is_junior_posting
 from langchain_core.tools import tool
 from models import ScrapedJob
@@ -45,8 +47,14 @@ def bullet_context(bullets: dict[str, str]):
 
 
 @tool
-def search_jobs(query: str, n: int | None = None, detail: bool = False,
-                exclude_junior: bool = False) -> dict:
+def search_jobs(
+    query: str,
+    n: int | None = None,
+    detail: bool = False,
+    exclude_junior: bool = False,
+    company: str = "",
+    direct_employers_only: bool = False,
+) -> dict:
     """Search the current internal Singapore job corpus by role or responsibility.
 
     Use this to compare a resume with similar active postings, not to make broad
@@ -55,6 +63,8 @@ def search_jobs(query: str, n: int | None = None, detail: bool = False,
     IDs and source fields that may be cited; an empty result is valid.
     `exclude_junior` drops traineeships and entry-level postings, which
     similarity alone cannot tell apart from senior work in the same field.
+    `company` constrains results to that named employer on whole normalized
+    words. `direct_employers_only` excludes recruitment agencies.
     """
     clean_query = (query or "").strip()
     if not clean_query:
@@ -69,14 +79,49 @@ def search_jobs(query: str, n: int | None = None, detail: bool = False,
     db = None
     try:
         db = SessionLocal()
+        clean_company = (company or "").strip()
+        eligible_job_ids = None
+        if clean_company or direct_employers_only:
+            eligible_query = apply_public_job_visibility(
+                db.query(ScrapedJob.id, ScrapedJob.company)
+            )
+            if direct_employers_only:
+                eligible_query = eligible_query.filter(
+                    direct_employer_condition(
+                        ScrapedJob.company,
+                        ScrapedJob.company_ssic_description,
+                        ScrapedJob.description,
+                    )
+                )
+            if clean_company:
+                first_word = next(iter(re.findall(r"[a-z0-9]+", clean_company.casefold())), "")
+                eligible_query = eligible_query.filter(
+                    ScrapedJob.company.ilike(f"%{first_word}%")
+                )
+            eligible_job_ids = {
+                job_id
+                for job_id, employer in eligible_query.all()
+                if not clean_company or company_name_matches(employer, clean_company)
+            }
         query_vector = encode_text(clean_query)
         similar = find_similar_jobs(
             query_vector,
             db,
             top_k=max(limit * config.AGENT_SEARCH_CANDIDATE_MULTIPLIER, limit),
+            eligible_job_ids=eligible_job_ids,
         )
         if not similar:
-            return contract.search_jobs_result(clean_query, limit, [], detail=detail)
+            return contract.search_jobs_result(
+                clean_query,
+                limit,
+                [],
+                detail=detail,
+                candidate_count=0,
+                eligible_candidate_count=(
+                    len(eligible_job_ids) if eligible_job_ids is not None else None
+                ),
+                visible_candidate_count=0,
+            )
 
         scores = {job_id: score for job_id, score in similar}
         jobs = (
@@ -107,6 +152,9 @@ def search_jobs(query: str, n: int | None = None, detail: bool = False,
             deduplicated,
             detail=detail,
             candidate_count=len(similar),
+            eligible_candidate_count=(
+                len(eligible_job_ids) if eligible_job_ids is not None else None
+            ),
             visible_candidate_count=len(results),
         )
     except Exception as exc:

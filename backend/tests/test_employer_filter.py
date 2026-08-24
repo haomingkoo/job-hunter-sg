@@ -1,6 +1,13 @@
 from sqlalchemy import Column, MetaData, String, Table, create_engine, select
 
-from employer_filter import direct_employer_condition, is_recruitment_employer
+from employer_filter import company_name_matches, direct_employer_condition, is_recruitment_employer
+
+
+def test_company_name_matching_uses_normalized_whole_words():
+    assert company_name_matches("MICRON SEMICONDUCTOR ASIA OPERATIONS PTE. LTD.", "Micron")
+    assert company_name_matches("ST Engineering Electronics", "ST Engineering")
+    assert not company_name_matches("ECOMICRON SYSTEMS", "Micron")
+    assert not company_name_matches("Micron", "")
 
 
 def test_verified_agencies_and_ea_licence_markers_are_recruiters():
@@ -21,6 +28,7 @@ def test_verified_agencies_and_ea_licence_markers_are_recruiters():
         "ADABA Pte. Ltd.",
         "APBA TG Human Resource Pte. Ltd.",
         "First Konnection Pte. Ltd.",
+        "SearchAsia Consulting Pte. Ltd.",
         "Raffles Employment Pte. Ltd.",
         "LH Manpower Service Pte. Ltd.",
     ):

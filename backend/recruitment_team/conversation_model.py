@@ -24,12 +24,21 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle guard, annotations are stri
 
 
 class PreferenceUpdatePayload(BaseModel):
-    field: Literal["role", "location", "seniority", "salary", "constraints"] = Field(
+    field: Literal[
+        "role",
+        "location",
+        "seniority",
+        "salary",
+        "company",
+        "employer_type",
+        "constraints",
+    ] = Field(
         description=(
             "Use seniority for the desired level or career track. Use constraints for "
             "independent requirements or exclusions that must coexist with that target; "
             "for example, 'not entry level' is a constraint while 'senior individual "
-            "contributor' is seniority."
+            "contributor' is seniority. Use company for a named target employer and "
+            "employer_type for a direct-employer or recruitment-agency preference."
         )
     )
     value: str = Field(min_length=1)

@@ -3,6 +3,6 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "python seed_jobs.py --full"
+startCommand = "python seed_jobs.py --full && python backfill_embeddings.py"
 cronSchedule = "0 22 * * *"
 restartPolicyType = "never"
