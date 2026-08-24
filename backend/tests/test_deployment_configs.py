@@ -31,7 +31,7 @@ def test_full_crawl_service_runs_the_versioned_cli_to_completion():
         "dockerfilePath": "Dockerfile",
     }
     assert config["deploy"] == {
-        "startCommand": "python seed_jobs.py --full",
+        "startCommand": "python seed_jobs.py --full && python backfill_embeddings.py",
         "cronSchedule": "0 22 * * *",
         "restartPolicyType": "never",
     }
