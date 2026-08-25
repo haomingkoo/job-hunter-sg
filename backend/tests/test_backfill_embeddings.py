@@ -117,6 +117,55 @@ def test_backfill_stamps_matching_legacy_vector_without_rewriting_it(monkeypatch
         assert len(embedded.embedding_input_sha256) == 64
 
 
+def test_backfill_does_not_rewrite_platform_float_noise(monkeypatch):
+    import embedding_service
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+    with sessions() as db:
+        job = _job(1, days_ago=1)
+        job.embedding_vector = [0.3] * 384
+        db.add(job)
+        db.commit()
+        monkeypatch.setattr(
+            embedding_service,
+            "encode_texts",
+            lambda texts, batch_size: [[0.3000001] * 384 for _text in texts],
+        )
+
+        result = embedding_service.refresh_job_embeddings(db)
+
+        assert result["vector_rewrites"] == 0
+        assert db.get(ScrapedJob, 1).embedding_vector == [0.3] * 384
+
+
+def test_backfill_rewrites_a_malformed_vector(monkeypatch):
+    import embedding_service
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    sessions = sessionmaker(bind=engine)
+    with sessions() as db:
+        broadcastable = _job(1, days_ago=1)
+        broadcastable.embedding_vector = [0.3]
+        non_broadcastable = _job(2, days_ago=1)
+        non_broadcastable.embedding_vector = [0.3] * 383
+        db.add_all([broadcastable, non_broadcastable])
+        db.commit()
+        monkeypatch.setattr(
+            embedding_service,
+            "encode_texts",
+            lambda texts, batch_size: [[0.3] * 384 for _text in texts],
+        )
+
+        result = embedding_service.refresh_job_embeddings(db)
+
+        assert result["vector_rewrites"] == 2
+        assert db.get(ScrapedJob, 1).embedding_vector == [0.3] * 384
+        assert db.get(ScrapedJob, 2).embedding_vector == [0.3] * 384
+
+
 def test_limited_backfill_does_not_publish_false_readiness(monkeypatch):
     import embedding_service
 

@@ -131,7 +131,11 @@ def embedding_is_current(job) -> bool:
 
 def stamp_job_embedding(job, vector: list[float]) -> bool:
     """Store proven provenance, returning whether vector bytes need rewriting."""
-    vector_changed = job.embedding_vector != vector
+    vector_changed = (
+        job.embedding_vector is None
+        or len(job.embedding_vector) != len(vector)
+        or not np.allclose(job.embedding_vector, vector)
+    )
     if vector_changed:
         job.embedding_vector = vector
     job.embedding_input_sha256 = job_embedding_input_sha256(
