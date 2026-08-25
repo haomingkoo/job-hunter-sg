@@ -28,7 +28,12 @@ export default defineRailway(() => {
   });
   const jobHunterSg = service("job-hunter-sg", {
     source: repository,
+    build: { builder: "DOCKERFILE", dockerfilePath: "Dockerfile" },
+    start: "python main.py",
     replicas: { "asia-southeast1-eqsg3a": 1 },
+    healthcheck: "/api/health",
+    healthcheckTimeout: 300,
+    deploy: { restartPolicyType: "ON_FAILURE", restartPolicyMaxRetries: 3 },
     domains: ["job.kooexperience.com", "jobhunter.kooexperience.com"],
     env: {
       ACCOUNT_AI_PER_DAY: preserve(),

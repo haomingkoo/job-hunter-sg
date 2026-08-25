@@ -83,7 +83,7 @@ The website and MCP both read `scraped_jobs`. New jobs should enter through the
 protected seed path, not through MCP:
 
 - Manual refresh: call `POST /api/admin/seed` with `Authorization: Bearer $ADMIN_API_KEY`.
-- Full crawl cron: deploy `railway.seed.toml`, which runs `python seed_jobs.py --full`.
+- Full crawl cron: `.railway/railway.ts` runs the dedicated crawler image to completion.
 - Extra API sources: set `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, and/or `JOOBLE_API_KEY`,
   then run `python seed_jobs.py --sources adzuna,jooble --limit 50`.
 - The current source status and authorization requirements are maintained in

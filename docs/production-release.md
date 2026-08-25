@@ -32,7 +32,7 @@ and enable **Wait for CI**. Railway then holds a deployment while the push
 workflow runs, skips it when a workflow fails, and proceeds only when all push
 workflows succeed.
 
-The web service uses `railway.toml`. Railway provides
+The services are defined in `.railway/railway.ts`. Railway provides
 `RAILWAY_GIT_COMMIT_SHA`; `/api/health` publishes it as `commit`. No secret or
 user-provided version variable is required.
 
@@ -40,8 +40,8 @@ The scheduled services are defined in version control:
 
 | Service | Config | UTC schedule | Singapore time | Kill switch |
 | --- | --- | --- | --- | --- |
-| Full crawl | `railway.seed.toml` | `0 22 * * *` | 06:00 daily | Clear its Railway Cron Schedule |
-| Job alerts | `railway.alerts.toml` | `0 23 * * *` | 07:00 daily | Clear its Railway Cron Schedule |
+| Full crawl | `.railway/railway.ts` | `0 22 * * *` | 06:00 daily | Clear its Railway Cron Schedule |
+| Job alerts | `.railway/railway.ts` | `0 23 * * *` | 07:00 daily | Clear its Railway Cron Schedule |
 
 Each live scheduled service must show this repository, the released commit, and
 the matching config file in Railway. A trigger-only curl service is not equivalent
@@ -89,8 +89,8 @@ run and pull request in that comment:
 Release SHA: <full SHA>
 Recorded at: <UTC timestamp>
 | Service | Live repo commit/config | Repo schedule | Live Railway schedule | Latest execution/deployment ID | Status | Finished at | Failure detail | Kill switch checked |
-| Full crawl | <SHA / railway.seed.toml> | 0 22 * * * | <live value> | <ID> | <SUCCESS/FAILED/ACTIVE> | <UTC or n/a> | <none or summary> | <clear Cron Schedule verified> |
-| Job alerts | <SHA / railway.alerts.toml> | 0 23 * * * | <live value> | <ID> | <SUCCESS/FAILED/ACTIVE> | <UTC or n/a> | <none or summary> | <clear Cron Schedule verified> |
+| Full crawl | <SHA / .railway/railway.ts> | 0 22 * * * | <live value> | <ID> | <SUCCESS/FAILED/ACTIVE> | <UTC or n/a> | <none or summary> | <clear Cron Schedule verified> |
+| Job alerts | <SHA / .railway/railway.ts> | 0 23 * * * | <live value> | <ID> | <SUCCESS/FAILED/ACTIVE> | <UTC or n/a> | <none or summary> | <clear Cron Schedule verified> |
 ```
 
 The repository supplies only the expected schedules and commands above. The live service source,
