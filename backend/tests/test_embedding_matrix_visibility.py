@@ -152,6 +152,36 @@ def test_eligible_jobs_are_filtered_before_top_k():
         db.close()
 
 
+def test_small_eligible_set_does_not_load_the_global_matrix(monkeypatch):
+    import embedding_service
+    from database import SessionLocal
+
+    query_vector = [1.0] + [0.0] * 383
+    db = SessionLocal()
+    try:
+        eligible = _add_job(db, _iso(1))
+        other = _add_job(db, _iso(1))
+        eligible.embedding_vector = query_vector
+        other.embedding_vector = query_vector
+        db.commit()
+
+        def fail_global_load(_db):
+            raise AssertionError("global matrix loaded")
+
+        monkeypatch.setattr(embedding_service, "_refresh_matrix_if_stale", fail_global_load)
+
+        matches = embedding_service.find_similar_jobs_for_ids(
+            query_vector,
+            db,
+            {eligible.id},
+            top_k=1,
+        )
+
+        assert [job_id for job_id, _score in matches] == [eligible.id]
+    finally:
+        db.close()
+
+
 def test_persisted_embedding_generation_invalidates_another_process_cache():
     import embedding_service
     from database import SessionLocal

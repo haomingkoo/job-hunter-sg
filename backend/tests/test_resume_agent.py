@@ -216,13 +216,13 @@ def test_search_jobs_applies_company_and_direct_employer_constraints_before_rank
 
     captured_eligible_ids = []
 
-    def fake_similarity(_vector, _db, top_k, *, eligible_job_ids=None):
+    def fake_similarity(_vector, _db, eligible_job_ids, top_k):
         captured_eligible_ids.append(set(eligible_job_ids or ()))
         return [(job_id, 0.9) for job_id in sorted(eligible_job_ids or ())][:top_k]
 
     monkeypatch.setattr(agent_tools, "SessionLocal", sessions)
     monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
-    monkeypatch.setattr(agent_tools, "find_similar_jobs", fake_similarity)
+    monkeypatch.setattr(agent_tools, "find_similar_jobs_for_ids", fake_similarity)
 
     direct = agent_tools.search_jobs.invoke({
         "query": "quality transformation",
