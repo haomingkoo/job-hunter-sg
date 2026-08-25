@@ -26,10 +26,9 @@ roles, generate cover letters, and track applications.
   Careers@Gov.
 - MCP tools require an MCP-capable client or a connected app/connector. Normal
   web search can cite this page but cannot call the MCP tools directly.
-- Public tools: jobhunter.source_stats, jobhunter.latest_jobs,
-  jobhunter.latest_careersgov_jobs, jobhunter.latest_mycareersfuture_jobs,
-  jobhunter.search_jobs, jobhunter.get_job, jobhunter.ats_precompute_status,
-  jobhunter.recommend_skillsfuture_courses.
+- Public tools: jobhunter_latest_jobs, jobhunter_search_jobs, jobhunter_get_job, jobhunter_recommend_skillsfuture_courses.
+- Public resources: jobhunter://sources, jobhunter://status/ats, and
+  jobhunter://job/{job_id}.
 
 ## Capabilities
 

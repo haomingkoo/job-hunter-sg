@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
+
+from embedding_service import EMBEDDING_MODEL_NAME, EMBEDDING_MODEL_REVISION
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,3 +41,13 @@ def test_full_crawl_service_runs_the_versioned_cli_to_completion():
     assert "TRANSFORMERS_OFFLINE=1" in dockerfile
     assert 'dockerfilePath: "Dockerfile.crawler"' in infrastructure
     assert 'cronSchedule: "0 22 * * *"' in infrastructure
+
+
+def test_images_and_ranking_gate_pin_the_runtime_embedding_model():
+    expected = f"SentenceTransformer('{EMBEDDING_MODEL_NAME}', revision='{EMBEDDING_MODEL_REVISION}')"
+    assert expected in (ROOT / "Dockerfile").read_text()
+    assert expected in (ROOT / "Dockerfile.crawler").read_text()
+
+    manifest = json.loads((ROOT / "backend/evals/job-ranking-v1.json").read_text())
+    assert manifest["model"] == EMBEDDING_MODEL_NAME
+    assert manifest["model_revision"] == EMBEDDING_MODEL_REVISION

@@ -49,6 +49,7 @@ tmp/
 !shared/resume-classification.json
 !backend/recruitment_team/persona_packs/**/*.json
 !backend/evals/corpora/synthetic-v1/cases/*/*.json
+!backend/evals/job-ranking-v1.json
 backend/evals/corpora/private/
 backend/evals/live-runs/
 backend/data/*.xlsx

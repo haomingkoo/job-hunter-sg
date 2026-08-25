@@ -284,15 +284,6 @@ def match_resume_to_jobs(resume_text: str, limit: int = 10) -> str:
     db = SessionLocal()
     try:
         matches = find_similar_jobs(encode_text(clean_resume), db, top_k=candidate_limit)
-        if not matches:
-            fallback_jobs = (
-                apply_public_job_visibility(db.query(ScrapedJob))
-                .filter(ScrapedJob.job_terms_preview.isnot(None))
-                .order_by(ScrapedJob.posted_at_sort.desc(), ScrapedJob.id.desc())
-                .limit(candidate_limit)
-                .all()
-            )
-            matches = [(job.id, 0.0) for job in fallback_jobs]
         recommendations = []
         for job_id, similarity in matches:
             job = _get_public_job(db, job_id)

@@ -36,7 +36,86 @@ pytestmark = pytest.mark.skipif(
     reason="Set RUN_LIVE_SEALION=1 plus SEALION_API or sealion_api in the environment or backend/.env.",
 )
 
-EMPLOYER_INTENT_LIVE_REPEATS = int(os.getenv("LIVE_PROMPT_EVAL_REPEATS", "3"))
+LIVE_PROMPT_EVAL_REPEATS = int(os.getenv("LIVE_PROMPT_EVAL_REPEATS", "3"))
+
+
+def _prompt_eval_source(posting_id: str, url: str):
+    from recruitment_team.discovery import JobSource
+
+    return JobSource(
+        source="prompt-eval",
+        url=url,
+        source_posting_id=posting_id,
+        posted_date="2026-08-20",
+        closing_date="",
+        scraped_at="2026-08-24",
+        availability="current",
+        snapshot_sha256="prompt-eval",
+    )
+
+
+def _prompt_eval_discovery(jobs, *, company: str = ""):
+    from recruitment_team.discovery import JobSearchResult
+
+    class RecordingDiscovery:
+        def __init__(self):
+            self.calls = []
+
+        def search_jobs(
+            self,
+            query: str,
+            *,
+            company: str = "",
+            direct_employers_only: bool = True,
+        ):
+            self.calls.append({
+                "query": query,
+                "company": company,
+                "direct_employers_only": direct_employers_only,
+            })
+            company_matches = company.casefold() == expected_company.casefold()
+            visible = jobs if direct_employers_only and company_matches else ()
+            return JobSearchResult(
+                query=query,
+                jobs=visible,
+                candidate_count=len(visible),
+                visible_candidate_count=len(visible),
+                truncated=False,
+                valid_empty=not visible,
+                eligible_candidate_count=len(visible),
+                company=company,
+                direct_employers_only=direct_employers_only,
+            )
+
+        def get_job(self, job_id: int):
+            return next((item for item in jobs if item.job_id == job_id), None)
+
+    expected_company = company
+    return RecordingDiscovery()
+
+
+def _prompt_eval_context(thread_id, discovery, resume_text, message):
+    from backend.tests.fakes import AllowingEditEvidenceValidator
+    from recruitment_team.coordinator.context import ConversationContext
+
+    return ConversationContext(
+        thread_id=thread_id,
+        trace_key=f"trace-{thread_id}",
+        candidate_profile=None,
+        role_profile=None,
+        target_job=None,
+        resume_document={"blocks": [{"id": "b_experience", "text": resume_text}]},
+        latest_search_query="",
+        recommendations=(),
+        shortlisted_jobs=(),
+        preferences=(),
+        published_matches=(),
+        discovery=discovery,
+        edit_evidence_validator=AllowingEditEvidenceValidator(),
+        latest_user_message=message,
+        latest_user_message_id=1,
+        latest_user_run_id=thread_id,
+    )
 
 
 def _reload_live_agent_modules():
@@ -247,30 +326,19 @@ def test_live_sealion_agent_calls_search_jobs_for_role_research(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("repeat", range(EMPLOYER_INTENT_LIVE_REPEATS))
+@pytest.mark.parametrize("repeat", range(LIVE_PROMPT_EVAL_REPEATS))
 def test_live_recruitment_coordinator_preserves_named_employer_intent(repeat):
     """Prompt eval: a named employer must survive intent-to-tool translation."""
     import ai_service
-    from backend.tests.fakes import AllowingEditEvidenceValidator
-    from recruitment_team.coordinator.context import ConversationContext
     from recruitment_team.coordinator.model import DeepAgentConversationModel
-    from recruitment_team.discovery import JobSearchResult, JobSnapshot, JobSource
+    from recruitment_team.discovery import JobSnapshot
     from recruitment_team.interface import Message
     from recruitment_team.telemetry import RecordedTelemetry
 
     if not ai_service._get_api_key():
         pytest.fail("RUN_LIVE_SEALION=1 requires a configured SEA-LION API key.")
 
-    source = JobSource(
-        source="prompt-eval",
-        url="https://example.test/micron-quality",
-        source_posting_id="prompt-eval-micron",
-        posted_date="2026-08-20",
-        closing_date="",
-        scraped_at="2026-08-24",
-        availability="current",
-        snapshot_sha256="prompt-eval",
-    )
+    source = _prompt_eval_source("prompt-eval-micron", "https://example.test/micron-quality")
     micron_job = JobSnapshot(
         job_id=1,
         title="Senior Manager, FE Central PQE (Deviation Management)",
@@ -288,75 +356,23 @@ def test_live_recruitment_coordinator_preserves_named_employer_intent(repeat):
         source=source,
     )
 
-    class RecordingDiscovery:
-        def __init__(self):
-            self.calls = []
-
-        def search_jobs(
-            self,
-            query: str,
-            *,
-            company: str = "",
-            direct_employers_only: bool = True,
-        ):
-            self.calls.append({
-                "query": query,
-                "company": company,
-                "direct_employers_only": direct_employers_only,
-            })
-            jobs = (micron_job,) if company.casefold() == "micron" and direct_employers_only else ()
-            return JobSearchResult(
-                query=query,
-                jobs=jobs,
-                candidate_count=len(jobs),
-                visible_candidate_count=len(jobs),
-                truncated=False,
-                valid_empty=not jobs,
-                eligible_candidate_count=len(jobs),
-                company=company,
-                direct_employers_only=direct_employers_only,
-            )
-
-        def get_job(self, job_id: int):
-            return micron_job if job_id == micron_job.job_id else None
-
-    discovery = RecordingDiscovery()
+    discovery = _prompt_eval_discovery((micron_job,), company="micron")
     telemetry = RecordedTelemetry()
     thread_id = f"live-employer-intent-{repeat}-{secrets.token_hex(4)}"
-    context = ConversationContext(
-        thread_id=thread_id,
-        trace_key=f"trace-{thread_id}",
-        candidate_profile=None,
-        role_profile=None,
-        target_job=None,
-        resume_document={
-            "blocks": [{
-                "id": "b_experience",
-                "text": (
-                    "Led multi-site semiconductor quality transformation, deviation "
-                    "management, yield improvement, and analytics across four regions."
-                ),
-            }],
-        },
-        latest_search_query="",
-        recommendations=(),
-        shortlisted_jobs=(),
-        preferences=(),
-        published_matches=(),
-        discovery=discovery,
-        edit_evidence_validator=AllowingEditEvidenceValidator(),
-        latest_user_message="micron",
-        latest_user_message_id=1,
-        latest_user_run_id=thread_id,
+    resume_text = (
+        "Led multi-site semiconductor quality transformation, deviation management, "
+        "yield improvement, and analytics across four regions."
     )
+    context = _prompt_eval_context(thread_id, discovery, resume_text, "micron")
     model = DeepAgentConversationModel(telemetry=telemetry)
-    model.respond(
+    reply = model.respond(
         [Message(1, "user", "micron", thread_id, datetime.now(timezone.utc))],
-        context.resume_document["blocks"][0]["text"],
+        resume_text,
         context=context,
     )
 
     assert discovery.calls
+    assert not reply.checkpoint_cleanup_token
     assert all(call["company"].casefold() == "micron" for call in discovery.calls)
     assert all(call["direct_employers_only"] is True for call in discovery.calls)
     assert any(
@@ -369,5 +385,132 @@ def test_live_recruitment_coordinator_preserves_named_employer_intent(repeat):
         span.name == "model_transport"
         and span.status == "success"
         and span.attributes.get("role") == "coordinator"
+        for span in telemetry.spans
+    )
+    assert any(
+        span.name == "checkpoint_cleanup"
+        and span.status == "success"
+        and span.attributes.get("cleanup_succeeded") is True
+        for span in telemetry.spans
+    )
+
+
+@pytest.mark.parametrize("repeat", range(LIVE_PROMPT_EVAL_REPEATS))
+def test_live_recruitment_coordinator_keeps_general_search_employer_neutral_and_ranks_fit(
+    repeat,
+):
+    """Prompt eval: general discovery must not invent a company constraint."""
+    import ai_service
+    from recruitment_team.coordinator.model import DeepAgentConversationModel
+    from recruitment_team.discovery import JobSnapshot
+    from recruitment_team.interface import Message
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    if not ai_service._get_api_key():
+        pytest.fail("RUN_LIVE_SEALION=1 requires a configured SEA-LION API key.")
+
+    source = _prompt_eval_source("prompt-eval-general", "https://example.test/job")
+
+    def job(job_id, title, company, description, skills, seniority):
+        return JobSnapshot(
+            job_id=job_id,
+            title=title,
+            company=company,
+            location="Singapore",
+            salary="$8,000 - $12,000",
+            employment_type="Full Time",
+            seniority=seniority,
+            description=description,
+            skills=tuple(skills),
+            similarity_score=0.8,
+            source=source,
+            salary_context={
+                "basis": "synthetic prompt evaluation",
+                "sample_count": 4,
+                "median_salary_floor": 8_000,
+                "posting_salary_floor": 8_000,
+                "posting_floor_percentile": 50.0,
+            },
+        )
+
+    jobs = (
+        job(
+            11,
+            "Senior Manufacturing Transformation Manager",
+            "Atlas Semiconductor Pte Ltd",
+            "Lead multi-site semiconductor manufacturing transformation, quality governance, yield improvement and engineering teams.",
+            ("semiconductor manufacturing", "quality", "yield", "change management"),
+            "Manager",
+        ),
+        job(
+            12,
+            "Quality Systems Manager",
+            "Lumina Microelectronics Pte Ltd",
+            "Own QMS, CAPA, ISO 9001, 8D and FMEA across manufacturing sites.",
+            ("QMS", "CAPA", "ISO 9001", "8D", "FMEA"),
+            "Manager",
+        ),
+        job(
+            13,
+            "Semiconductor Sales Manager",
+            "Commercial Components Pte Ltd",
+            "Own regional sales targets, accounts and distributor relationships.",
+            ("sales", "account management"),
+            "Manager",
+        ),
+        job(
+            14,
+            "Junior Laboratory Technician",
+            "Atlas Semiconductor Pte Ltd",
+            "Prepare samples and perform routine measurements under supervision.",
+            ("sample preparation",),
+            "Fresh/entry level",
+        ),
+    )
+
+    resume_text = (
+        "Led multi-site semiconductor manufacturing and quality transformation across "
+        "four regions, improving yield and mentoring 12 engineers in 8D and 5 Why."
+    )
+    discovery = _prompt_eval_discovery(jobs)
+    telemetry = RecordedTelemetry()
+    thread_id = f"live-general-match-{repeat}-{secrets.token_hex(4)}"
+    context = _prompt_eval_context(
+        thread_id,
+        discovery,
+        resume_text,
+        "Find roles for me.",
+    )
+
+    reply = DeepAgentConversationModel(telemetry=telemetry).respond(
+        [Message(1, "user", "Find roles for me.", thread_id, datetime.now(timezone.utc))],
+        resume_text,
+        context=context,
+    )
+
+    assert discovery.calls
+    assert not reply.checkpoint_cleanup_token
+    assert all(call["company"] == "" for call in discovery.calls)
+    assert all(call["direct_employers_only"] is True for call in discovery.calls)
+    assert any(
+        term in " ".join(call["query"] for call in discovery.calls).casefold()
+        for term in ("semiconductor", "manufacturing", "quality", "yield")
+    )
+    assert context.drafted_matches
+    published_ids = [match["job_id"] for match in context.drafted_matches]
+    assert published_ids[0] == 11
+    assert 13 not in published_ids
+    assert 14 not in published_ids
+    assert any(
+        span.name == "model_transport"
+        and span.status == "success"
+        and span.attributes.get("role") == "coordinator"
+        and span.attributes.get("model")
+        for span in telemetry.spans
+    )
+    assert any(
+        span.name == "checkpoint_cleanup"
+        and span.status == "success"
+        and span.attributes.get("cleanup_succeeded") is True
         for span in telemetry.spans
     )

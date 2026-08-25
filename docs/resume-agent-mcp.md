@@ -71,9 +71,11 @@ Local stdio-only tools:
 - `score_resume`: resume score, optionally blended with a DB job.
 - `extract_skills`: ATS-style skill phrases.
 - `compare_candidate_profile`: compare resume and LinkedIn/profile text for consistency gaps.
-- `jobhunter.match_resume_to_jobs`: rank public jobs against pasted resume text without storing it.
-- `search_jobs`: semantic search over the internal jobs DB.
-- `get_job`: fetch one DB job.
+- `jobhunter_match_resume_to_jobs`: rank public jobs against pasted resume text without storing it.
+- `jobhunter_search_jobs`: semantic search over the internal jobs DB.
+- `jobhunter_get_job`: fetch one DB job.
+- `jobhunter_latest_jobs`: fetch the latest jobs, optionally by source.
+- `jobhunter_recommend_skillsfuture_courses`: recommend official MySkillsFuture courses for skill gaps.
 - `validate_bullet_edit`: run anti-fabrication gates for one rewrite.
 - `propose_resume_diff`: validate a rewrite against a resume bullet ID.
 

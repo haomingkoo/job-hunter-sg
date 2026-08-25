@@ -29,7 +29,7 @@ RUN python -m pip uninstall -y setuptools
 
 RUN useradd --create-home --uid 10001 --user-group appuser && chown appuser:appuser /app
 ENV HOME=/home/appuser
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')" && \
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', revision='1110a243fdf4706b3f48f1d95db1a4f5529b4d41')" && \
     chown -R appuser:appuser /home/appuser
 ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1

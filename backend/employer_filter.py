@@ -60,6 +60,8 @@ RECRUITER_COMPANY_ALIASES = (
     "search avenue",
     "oaktree consulting",
     "direct search asia",
+    "asia search",
+    "kerry consulting",
     "aisearch",
     "starsearch",
     "placement professionals",
@@ -141,12 +143,9 @@ def is_recruitment_employer(
 
 
 def _sql_phrase_condition(lowered_column, phrase: str):
-    return or_(
-        lowered_column == phrase,
-        lowered_column.like(f"{phrase} %"),
-        lowered_column.like(f"% {phrase}"),
-        lowered_column.like(f"% {phrase} %"),
-    )
+    words = re.findall(r"[a-z0-9]+", phrase.casefold())
+    pattern = r"(^|[^a-z0-9])" + r"[^a-z0-9]+".join(map(re.escape, words))
+    return lowered_column.regexp_match(pattern + r"([^a-z0-9]|$)")
 
 
 def direct_employer_condition(

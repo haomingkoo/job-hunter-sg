@@ -1,5 +1,6 @@
 import asyncio
 import json
+from pathlib import Path
 
 
 def test_parse_resume_returns_bullet_ids():
@@ -406,6 +407,28 @@ def test_match_resume_to_jobs_uses_ats_terms_without_storing_resume(monkeypatch)
     assert "resume_text" not in json.dumps(data)
 
 
+def test_match_resume_to_jobs_returns_an_explicit_empty_result_without_newest_fallback(
+    monkeypatch,
+):
+    import mcp_tools
+
+    class FakeDb:
+        def close(self):
+            pass
+
+        def query(self, *_args):
+            raise AssertionError("an empty semantic result must not query newest jobs")
+
+    monkeypatch.setattr(mcp_tools, "SessionLocal", FakeDb)
+    monkeypatch.setattr(mcp_tools, "encode_text", lambda _text: [0.1, 0.2])
+    monkeypatch.setattr(mcp_tools, "find_similar_jobs", lambda *_args, **_kwargs: [])
+
+    data = json.loads(mcp_tools.match_resume_to_jobs("Built Python services", limit=2))
+
+    assert data["candidate_jobs_checked"] == 0
+    assert data["jobs"] == []
+
+
 def test_mcp_server_imports():
     import mcp_server
 
@@ -578,6 +601,23 @@ def test_public_surface_uses_all_four_primitives_and_no_dotted_names():
     assert "jobhunter://sources" in resources
     assert "jobhunter://job/{job_id}" in templates
     assert len(prompts) >= 2
+
+
+def test_public_llms_inventory_matches_registered_public_tools():
+    import mcp_public
+
+    tool_names = {
+        tool.name
+        for tool in asyncio.run(mcp_public.create_mcp().list_tools())
+    }
+    llms_text = (Path(__file__).resolve().parents[2] / "frontend/public/llms.txt").read_text()
+
+    inventory = next(
+        line.removeprefix("- Public tools: ").rstrip(".").split(", ")
+        for line in llms_text.splitlines()
+        if line.startswith("- Public tools: ")
+    )
+    assert set(inventory) == tool_names
 
 
 def test_every_public_resource_declares_a_mime_type():
