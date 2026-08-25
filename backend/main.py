@@ -343,7 +343,10 @@ async def lifespan(_application: FastAPI):
         try:
             missing_count = (
                 db_sort.query(func.count(ScrapedJob.id))
-                .filter(or_(ScrapedJob.posted_at_sort.is_(None), ScrapedJob.posted_at_sort == ""))
+                .filter(
+                    ScrapedJob.hidden == 0,
+                    or_(ScrapedJob.posted_at_sort.is_(None), ScrapedJob.posted_at_sort == ""),
+                )
                 .scalar() or 0
             )
             if missing_count > 0:
@@ -354,7 +357,13 @@ async def lifespan(_application: FastAPI):
                 while True:
                     batch = (
                         db_sort.query(ScrapedJob)
-                        .filter(or_(ScrapedJob.posted_at_sort.is_(None), ScrapedJob.posted_at_sort == ""))
+                        .filter(
+                            ScrapedJob.hidden == 0,
+                            or_(
+                                ScrapedJob.posted_at_sort.is_(None),
+                                ScrapedJob.posted_at_sort == "",
+                            ),
+                        )
                         .limit(batch_size)
                         .all()
                     )
@@ -2932,7 +2941,12 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
     if not marker_exists:
         last_id = 0
         while True:
-            done, last_id = _precompute_batch(db, ScrapedJob.id > last_id, batch_size)
+            done, last_id = _precompute_batch(
+                db,
+                ScrapedJob.id > last_id,
+                batch_size,
+                public_only=True,
+            )
             if not done:
                 break
             total_done += done

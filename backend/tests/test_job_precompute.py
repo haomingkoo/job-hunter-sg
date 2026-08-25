@@ -138,6 +138,25 @@ def test_incremental_precompute_backfill_skips_retired_jobs():
         db.close()
 
 
+def test_new_precompute_marker_backfills_only_public_jobs(monkeypatch):
+    from unittest.mock import MagicMock
+
+    import main
+
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
+    scopes = []
+
+    def record_scope(_db, _filter_clause, _batch_size, *, public_only=False):
+        scopes.append(public_only)
+        return 0, 0
+
+    monkeypatch.setattr(main, "_precompute_batch", record_scope)
+
+    assert main._backfill_job_precomputes(db) == 0
+    assert scopes == [True]
+
+
 def test_mutated_listing_refreshes_every_derived_search_field():
     from main import _refresh_job_precomputes
     from models import ScrapedJob

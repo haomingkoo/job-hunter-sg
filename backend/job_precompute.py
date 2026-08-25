@@ -298,6 +298,7 @@ def rollup_company_promotional_scores(db) -> dict:
     from sqlalchemy import case, func
 
     from jd_analyzer import PROMOTIONAL_THRESHOLD
+    from job_visibility import apply_public_job_visibility
 
     from models import ScrapedJob
 
@@ -306,7 +307,9 @@ def rollup_company_promotional_scores(db) -> dict:
     )
     total = func.count(ScrapedJob.id)
     rows = (
-        db.query(ScrapedJob.company, total.label("total"), flagged.label("flagged"))
+        apply_public_job_visibility(
+            db.query(ScrapedJob.company, total.label("total"), flagged.label("flagged"))
+        )
         .filter(ScrapedJob.company != "")
         .group_by(ScrapedJob.company)
         .having(total >= config.COMPANY_PROMOTIONAL_MIN_POSTS)
@@ -323,13 +326,13 @@ def rollup_company_promotional_scores(db) -> dict:
         if total_count and (flagged_count or 0) / total_count >= config.COMPANY_PROMOTIONAL_RATIO
     }
 
-    db.query(ScrapedJob).filter(ScrapedJob.company_promotional_score != 0).update(
-        {ScrapedJob.company_promotional_score: 0}, synchronize_session=False
-    )
+    apply_public_job_visibility(db.query(ScrapedJob)).filter(
+        ScrapedJob.company_promotional_score != 0
+    ).update({ScrapedJob.company_promotional_score: 0}, synchronize_session=False)
     for company, score in tainted.items():
-        db.query(ScrapedJob).filter(ScrapedJob.company == company).update(
-            {ScrapedJob.company_promotional_score: score}, synchronize_session=False
-        )
+        apply_public_job_visibility(db.query(ScrapedJob)).filter(
+            ScrapedJob.company == company
+        ).update({ScrapedJob.company_promotional_score: score}, synchronize_session=False)
     db.commit()
     return {"companies": len(tainted), "scores": tainted}
 

@@ -1,5 +1,8 @@
 
 
+from datetime import datetime, timezone
+
+
 def test_promotional_signal_catches_the_mlm_title_shape():
     """Emoji and hashtags in a title are the tell; a real employer does not use them."""
     from jd_analyzer import detect_promotional_spam
@@ -61,12 +64,14 @@ def test_company_rollup_needs_a_ratio_not_a_count():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine)()
+    now = datetime.now(timezone.utc).isoformat()
 
-    def add(company, score, n, offset):
+    def add(company, score, n, offset, **extra):
         for i in range(n):
             db.add(ScrapedJob(
                 title=f"{company} {i}", company=company, source="s",
                 dedup_key=f"{company}-{offset}-{i}", promotional_score=score,
+                posted_at_sort=now, **extra,
             ))
 
     # A real agency: many postings, a few bad titles. Must NOT be tainted.
@@ -75,11 +80,13 @@ def test_company_rollup_needs_a_ratio_not_a_count():
     # An outfit: most postings promotional, plus quiet ones hiding among them.
     add("TINY ORG", 55, 8, 2)
     add("TINY ORG", 0, 2, 3)
+    add("TINY ORG", 0, 1, 4, hidden=1, company_promotional_score=77)
     db.commit()
 
     result = rollup_company_promotional_scores(db)
 
     assert "TINY ORG" in result["scores"]
+    assert result["scores"]["TINY ORG"] == 80
     assert "BIG AGENCY" not in result["scores"], "a 6%-flagged agency was tainted"
 
     quiet = db.query(ScrapedJob).filter(
@@ -89,6 +96,8 @@ def test_company_rollup_needs_a_ratio_not_a_count():
 
     untouched = db.query(ScrapedJob).filter(ScrapedJob.company == "BIG AGENCY").first()
     assert untouched.company_promotional_score == 0
+    retired = db.query(ScrapedJob).filter(ScrapedJob.hidden == 1).one()
+    assert retired.company_promotional_score == 77
 
 
 def test_a_qualifying_company_always_scores_high_enough_to_demote():
@@ -106,10 +115,11 @@ def test_a_qualifying_company_always_scores_high_enough_to_demote():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     db = sessionmaker(bind=engine)()
+    now = datetime.now(timezone.utc).isoformat()
     for i in range(10):
         db.add(ScrapedJob(
             title=f"t{i}", company="EDGE ORG", source="s", dedup_key=f"e{i}",
-            promotional_score=55 if i < 4 else 0,
+            promotional_score=55 if i < 4 else 0, posted_at_sort=now,
         ))
     db.commit()
 
