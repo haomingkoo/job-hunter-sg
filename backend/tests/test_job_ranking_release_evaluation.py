@@ -23,9 +23,9 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_release_v3_protocol_is_bound_to_canonical_harnesses_and_baseline() -> None:
+def test_release_v4_protocol_is_bound_to_canonical_harnesses_and_baseline() -> None:
     backend = Path(__file__).resolve().parents[1]
-    protocol = json.loads((backend / "evals/job-ranking-release-v3.protocol.json").read_text())
+    protocol = json.loads((backend / "evals/job-ranking-release-v4.protocol.json").read_text())
 
     assert protocol["evaluation_harness"]["capture_sha256"] == _sha256(backend / "scripts/capture_job_ranking_arm.py")
     assert protocol["evaluation_harness"]["pool_and_scoring_sha256"] == _sha256(
@@ -163,6 +163,22 @@ def test_company_gate_uses_normalized_whole_words() -> None:
     assert not release_evaluation._company_name_matches("Ecomicron Labs", "Micron")
 
 
+def test_literal_title_and_company_constraints_are_mechanical() -> None:
+    case = {"company": "Micron", "title_phrase": "manager"}
+    assert release_evaluation._mechanical_ineligibility_reasons(
+        case,
+        {"company": "Micron Semiconductor", "title": "Manufacturing Manager"},
+    ) == []
+    assert release_evaluation._mechanical_ineligibility_reasons(
+        case,
+        {"company": "Micron Semiconductor", "title": "Manufacturing Director"},
+    ) == ["title_phrase_mismatch"]
+    assert release_evaluation._mechanical_ineligibility_reasons(
+        case,
+        {"company": "Ecomicron Labs", "title": "Manufacturing Director"},
+    ) == ["company_phrase_mismatch", "title_phrase_mismatch"]
+
+
 def test_candidate_capture_exercises_direct_unknown_and_structured_intermediary_policy(monkeypatch):
     from scripts import capture_job_ranking_arm as capture
 
@@ -253,7 +269,7 @@ def test_score_release_uses_median_majority_and_precommitted_gates(
                         {
                             "item_id": items["Agency Pte Ltd"],
                             "relevance": 0,
-                            "eligible": False,
+                            "eligible": True,
                             "seniority_fit": False,
                         },
                     ],
@@ -278,6 +294,10 @@ def test_score_release_uses_median_majority_and_precommitted_gates(
     assert report["cases"][0]["candidate"]["ndcg_at_k"] == 1.0
     assert report["cases"][0]["released"]["ndcg_at_k"] < 1.0
     assert report["disagreement_count"] == 1
+    assert len(report["mechanical_constraint_overrides"]) == 1
+    assert report["cases"][0]["released"]["hard_constraint_violations"] == [
+        items["Agency Pte Ltd"]
+    ]
 
 
 def test_score_release_rejects_incomplete_judgment(tmp_path: Path) -> None:
