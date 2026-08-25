@@ -8,9 +8,9 @@ environment. Confirm the target before any command that changes state.
 
 | Service | Configuration | Command | Schedule/health |
 |---|---|---|---|
-| Web | `railway.toml`, `Dockerfile` | `python main.py` | Continuous; `/api/health` |
-| Full job crawl | `railway.seed.toml`, `Dockerfile` | `python seed_jobs.py --full` | Daily 22:00 UTC; non-zero on an incomplete crawl |
-| Matched alerts | `railway.alerts.toml`, `Dockerfile.alerts` | `python send_job_alerts.py` | Daily 23:00 UTC |
+| Web | `.railway/railway.ts`, `Dockerfile` | `python main.py` | Continuous; `/api/health` |
+| Full job crawl | `.railway/railway.ts`, `Dockerfile.crawler` | crawl, then embedding backfill | Daily 22:00 UTC; non-zero on incomplete work |
+| Matched alerts | `.railway/railway.ts`, `Dockerfile.alerts` | `python send_job_alerts.py` | Daily 23:00 UTC |
 
 Keep the web service at one replica and one Python worker. Active-run
 coordination, caches, and rate limiting are not all shared across processes.
@@ -64,8 +64,8 @@ were retired after completion. Diagnose in this order:
 4. The read-only freshness query above.
 5. A public `/api/jobs?source=...` request and a rendered Jobs filter check.
 
-The scheduled service must be linked to this repository's `main` branch with
-`railway.seed.toml` as its config file. A separate container that only calls the
+The scheduled service must be linked to this repository's `main` branch and use
+the crawler image defined in `.railway/railway.ts`. A separate container that only calls the
 admin endpoint is not an execution receipt: that endpoint starts a background
 thread and returns before the crawl finishes. The CLI and admin endpoint share a
 PostgreSQL advisory lock, so an overlapping trigger is rejected rather than

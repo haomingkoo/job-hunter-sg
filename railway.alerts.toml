@@ -1,8 +1,0 @@
-[build]
-builder = "dockerfile"
-dockerfilePath = "Dockerfile.alerts"
-
-[deploy]
-startCommand = "python send_job_alerts.py"
-cronSchedule = "0 23 * * *"
-restartPolicyType = "never"

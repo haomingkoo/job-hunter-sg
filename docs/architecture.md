@@ -36,8 +36,8 @@ flowchart LR
     Coordinator --> Runs[(threads, runs, messages, events, artifacts)]
     Coordinator --> Models[External AI providers]
 
-    SeedCron[railway.seed.toml] --> Crawl
-    AlertCron[railway.alerts.toml] --> Alerts[send_job_alerts.py]
+    SeedCron[Railway crawler schedule] --> Crawl
+    AlertCron[Railway alerts schedule] --> Alerts[send_job_alerts.py]
     Alerts --> Mail[SMTP]
 ```
 
@@ -99,9 +99,8 @@ replacement and can resume on another worker. Local SQLite uses
 
 The root `Dockerfile` builds Vite assets, copies them into FastAPI's `static`
 directory, installs the Python application, and runs `backend/main.py` as one
-container. `railway.toml` checks `/api/health`. `railway.seed.toml` runs the full
-crawl at 22:00 UTC. `railway.alerts.toml` runs opt-in alert delivery at 23:00
-UTC with the smaller alerts image.
+container. `.railway/railway.ts` defines the web health check, the completion-owning
+crawl and embedding job at 22:00 UTC, and opt-in alert delivery at 23:00 UTC.
 
 ## Trust boundaries
 

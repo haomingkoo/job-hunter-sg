@@ -17,8 +17,9 @@ job-hunter-sg/
 │   ├── package.json
 │   └── ...
 ├── Dockerfile            ← Builds frontend, then serves it from FastAPI
-├── railway.toml          ← Main Railway service
-├── railway.alerts.toml   ← Scheduled alert worker
+├── Dockerfile.crawler    ← Scheduled crawl and embedding worker
+├── Dockerfile.alerts     ← Scheduled alert worker
+├── .railway/railway.ts   ← All Railway services and schedules
 ├── .env.example          ← Environment variable reference
 └── DEPLOY.md             ← This file
 ```
@@ -73,7 +74,7 @@ connect its GitHub repository to a new Railway project through the dashboard.
 Set the variables documented in [`.env.example`](.env.example) only after
 confirming the intended Railway target.
 
-Railway uses `railway.toml`, which points at the root `Dockerfile`. The image
+Railway infrastructure is defined once in `.railway/railway.ts`. The web image
 builds the Vite frontend, copies `frontend/dist` into `backend/static`, and runs
 FastAPI as one service.
 

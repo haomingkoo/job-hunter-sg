@@ -1,7 +1,0 @@
-[build]
-builder = "dockerfile"
-dockerfilePath = "Dockerfile.crawler"
-
-[deploy]
-cronSchedule = "0 22 * * *"
-restartPolicyType = "never"
