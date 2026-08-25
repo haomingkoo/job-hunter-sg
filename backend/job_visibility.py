@@ -157,36 +157,26 @@ _JUNIOR_TITLE = re.compile(
 )
 
 
-# Employers self-report seniority and often get it wrong: the corpus holds
-# "Non-executive" roles paying $18,000. Junior tiers sit at a $3,600-3,800 p90
-# and Executive at $5,000, so pay at or above this contradicts a junior label
-# outright, and the pay is the more honest signal.
-JUNIOR_LABEL_SALARY_CEILING = 5000
-
-
 def is_junior_posting(
     seniority: str | None,
     title: str | None,
     salary_floor: int | float | None = None,
 ) -> bool:
-    """True when a posting is genuinely pitched below an experienced hire.
+    """Return explicit source or title evidence that a posting is junior.
 
-    Salary overrules the label. Dropping a $12,500 project manager because its
-    employer ticked "Non-executive" costs the candidate more than showing it.
+    ``salary_floor`` remains accepted because callers share one job-classifier
+    signature, but salary must not silently reverse an explicit eligibility
+    constraint.
     """
-    looks_junior = (
+    del salary_floor
+    return (
         (seniority or "").strip().lower() in JUNIOR_SENIORITY_LABELS
         or bool(_JUNIOR_TITLE.search(title or ""))
     )
-    if not looks_junior:
-        return False
-    if salary_floor and salary_floor >= JUNIOR_LABEL_SALARY_CEILING:
-        return False
-    return True
 
 
 def experienced_hire_prefilter_condition(seniority_column, salary_floor_column):
     """Portable SQL prefilter; Python verifies title evidence after loading."""
+    del salary_floor_column
     seniority = func.lower(func.coalesce(seniority_column, ""))
-    contradicted_by_pay = func.coalesce(salary_floor_column, 0) >= JUNIOR_LABEL_SALARY_CEILING
-    return or_(~seniority.in_(JUNIOR_SENIORITY_LABELS), contradicted_by_pay)
+    return ~seniority.in_(JUNIOR_SENIORITY_LABELS)

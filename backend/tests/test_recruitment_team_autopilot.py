@@ -87,12 +87,11 @@ def test_exclusions_never_reach_the_query_when_the_model_offers_none():
     assert query == "AI engineer"
 
 
-def test_salary_overrules_a_mislabelled_junior_posting():
-    """Employers self-report seniority; the corpus holds $18,000 "Non-executive" roles."""
+def test_salary_does_not_override_an_explicit_junior_constraint():
     from job_visibility import is_junior_posting
 
-    assert is_junior_posting("Non-executive", "IT Project Manager (Banking)", 10500) is False
-    assert is_junior_posting("Fresh/entry level", "Full-Stack AI Engineer", 5200) is False
+    assert is_junior_posting("Non-executive", "IT Project Manager (Banking)", 10500) is True
+    assert is_junior_posting("Fresh/entry level", "Full-Stack AI Engineer", 5200) is True
 
 
 def test_a_genuine_internship_is_still_excluded():
