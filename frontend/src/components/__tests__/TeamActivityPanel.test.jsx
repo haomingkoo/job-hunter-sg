@@ -207,6 +207,7 @@ describe("TeamActivityPanel step content", () => {
   it("does not label a failed latest run complete", () => {
     const text = renderEvents([
       activity("read_target_job", {}, {
+        event_type: "run",
         status: "failed",
         summary: "The coordinator reached its bounded execution limit.",
       }),
@@ -216,7 +217,7 @@ describe("TeamActivityPanel step content", () => {
     expect(text).not.toContain("Run complete");
   });
 
-  it("stops every stale working row when the latest run fails", () => {
+  it("stops stale working rows from the failed run", () => {
     renderEvents([
       activity("read_candidate_evidence", {}, {
         team_member: "candidate_profiler",
@@ -225,6 +226,7 @@ describe("TeamActivityPanel step content", () => {
       activity("search_jobs", {}, { team_member: "coordinator" }),
       activity("search_jobs", {}, {
         sequence: 3,
+        event_type: "run",
         status: "failed",
         team_member: "coordinator",
         summary: "The coordinator stopped before completion.",
@@ -235,6 +237,199 @@ describe("TeamActivityPanel step content", () => {
       .find((button) => button.textContent.includes("Candidate profiler"));
     expect(profiler.textContent).toContain("Stopped");
     expect(profiler.textContent).not.toContain("Working");
+  });
+
+  it("keeps a separate profiler run working when the foreground run fails", () => {
+    const text = renderEvents([
+      activity("read_candidate_evidence", {}, {
+        run_id: "profile-run",
+        team_member: "candidate_profiler",
+        summary: "The candidate profiler is studying this resume.",
+      }),
+      activity("search_jobs", {}, {
+        sequence: 2,
+        run_id: "foreground-run",
+        team_member: "coordinator",
+      }),
+      activity("search_jobs", {}, {
+        sequence: 3,
+        run_id: "foreground-run",
+        event_type: "run",
+        status: "failed",
+        team_member: "coordinator",
+        summary: "The coordinator stopped before completion.",
+      }),
+    ], { busy: false });
+
+    expect(text).toContain("Candidate profiler is working");
+    const profiler = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Candidate profiler"));
+    expect(profiler.textContent).toContain("Working");
+    expect(profiler.textContent).not.toContain("Stopped");
+  });
+
+  it("reconciles an older terminal run after a newer background run starts", () => {
+    renderEvents([
+      activity("submit_target_assessment_synthesis", {}, {
+        sequence: 1,
+        run_id: "assessment-run",
+        event_type: "assessment",
+        team_member: "coordinator",
+      }),
+      activity("submit_target_assessment_judgment", {}, {
+        sequence: 2,
+        run_id: "assessment-run",
+        event_type: "run",
+        status: "completed",
+        team_member: "quality_judge",
+      }),
+      activity("read_candidate_evidence", {}, {
+        sequence: 3,
+        run_id: "profile-run",
+        event_type: "candidate_profile",
+        team_member: "candidate_profiler",
+      }),
+    ], { busy: false });
+
+    const coordinator = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Coordinator"));
+    expect(coordinator.textContent).toContain("Reported");
+    expect(coordinator.textContent).not.toContain("Working");
+  });
+
+  it("keeps an older same-member run visible while it is genuinely active", () => {
+    renderEvents([
+      activity("read_candidate_evidence", {}, {
+        sequence: 1,
+        run_id: "background-profile",
+        event_type: "candidate_profile",
+        team_member: "candidate_profiler",
+      }),
+      activity("read_candidate_evidence", {}, {
+        sequence: 2,
+        run_id: "foreground-profile",
+        event_type: "run",
+        status: "running",
+        team_member: "candidate_profiler",
+      }),
+      activity("read_candidate_evidence", {}, {
+        sequence: 3,
+        run_id: "foreground-profile",
+        event_type: "run",
+        status: "completed",
+        team_member: "candidate_profiler",
+      }),
+    ], { busy: false });
+
+    const profiler = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Candidate profiler"));
+    expect(profiler.textContent).toContain("Working");
+    expect(profiler.textContent).not.toContain("Reported");
+  });
+
+  it("keeps a newer same-member run visible when the older run finishes", () => {
+    renderEvents([
+      activity("read_candidate_evidence", {}, {
+        sequence: 1,
+        run_id: "background-profile",
+        event_type: "candidate_profile",
+        team_member: "candidate_profiler",
+        summary: "The candidate profiler is studying this resume.",
+      }),
+      activity("read_candidate_evidence", {}, {
+        sequence: 2,
+        run_id: "foreground-profile",
+        event_type: "run",
+        status: "running",
+        team_member: "candidate_profiler",
+        summary: "The candidate profiler is studying this resume.",
+      }),
+      activity("read_candidate_evidence", {}, {
+        sequence: 3,
+        run_id: "background-profile",
+        event_type: "candidate_profile",
+        status: "completed",
+        team_member: "candidate_profiler",
+      }),
+    ], { busy: false });
+
+    const profiler = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Candidate profiler"));
+    expect(profiler.textContent).toContain("Working");
+    expect(profiler.textContent).not.toContain("Reported");
+  });
+
+  it("shows the highest-sequence live step across active same-member runs", () => {
+    const text = renderEvents([
+      activity("read_candidate_evidence", {}, {
+        sequence: 1,
+        run_id: "profile-a",
+        event_type: "candidate_profile",
+        team_member: "candidate_profiler",
+      }),
+      activity("read_candidate_evidence", {}, {
+        sequence: 2,
+        run_id: "profile-b",
+        event_type: "candidate_profile",
+        team_member: "candidate_profiler",
+      }),
+      activity("candidate_profile_progress", {}, {
+        sequence: 3,
+        run_id: "profile-a",
+        event_type: "candidate_profile",
+        team_member: "candidate_profiler",
+        summary: "candidate_profiler resumed the older study.",
+      }),
+    ], { busy: false });
+
+    expect(text).toContain("Resumed the older study.");
+  });
+
+  it("uses the latest lifecycle event when a failed run is retried", () => {
+    const text = renderEvents([
+      activity("search_jobs", {}, { event_type: "run" }),
+      activity("search_jobs", {}, { event_type: "run", status: "failed" }),
+      activity("search_jobs", {}, { event_type: "run", status: "running" }),
+    ], { busy: true });
+
+    expect(text).toContain("Coordinator is working");
+    expect(text).not.toContain("Run stopped before completion");
+    const coordinator = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Coordinator"));
+    expect(coordinator.textContent).toContain("Working");
+  });
+
+  it("shows completion when a failed run succeeds on retry", () => {
+    const text = renderEvents([
+      activity("search_jobs", {}, { event_type: "run" }),
+      activity("search_jobs", {}, { event_type: "run", status: "failed" }),
+      activity("search_jobs", {}, { event_type: "run", status: "running" }),
+      activity("search_jobs", {}, { event_type: "run", status: "completed" }),
+    ], { busy: false });
+
+    expect(text).toContain("Run complete");
+    expect(text).not.toContain("Run stopped before completion");
+  });
+
+  it("keeps paused work out of a terminal reported state", () => {
+    const text = renderEvents([
+      activity("read_target_job", {}, {
+        event_type: "assessment",
+        team_member: "role_profiler",
+      }),
+      activity("ask_candidate", {}, {
+        event_type: "run",
+        status: "completed",
+        team_member: "coordinator",
+        detail: { reply_mode: "paused" },
+      }),
+    ], { busy: false, awaitingAnswer: true });
+
+    expect(text).toContain("Waiting on your answer");
+    const roleProfiler = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Role profiler"));
+    expect(roleProfiler.textContent).toContain("Waiting on you");
+    expect(roleProfiler.textContent).not.toContain("Reported");
   });
 
   it("does not leave the coordinator working after the judge completes the run", () => {
@@ -258,19 +453,30 @@ describe("TeamActivityPanel step content", () => {
     expect(coordinator.textContent).not.toContain("Working");
   });
 
-  it("shows a held-back assessment and names the quality judge", () => {
+  it("preserves held-back status through the terminal failure wrapper", () => {
     const text = renderEvents([
+      activity("submit_target_assessment_synthesis", {}, {
+        event_type: "assessment",
+        team_member: "coordinator",
+      }),
       activity("submit_target_assessment_judgment", {}, {
         event_type: "assessment",
         status: "quality_blocked",
         team_member: "quality_judge",
-        summary: "The independent judge held this assessment back from the candidate.",
+      }),
+      activity("submit_target_assessment_judgment", {}, {
+        event_type: "run",
+        status: "failed",
+        team_member: "coordinator",
+        detail: { failure_code: "quality_gate_blocked" },
       }),
     ], { busy: false });
 
     expect(text).toContain("Assessment held back for review");
-    expect(text).toContain("Independent judge");
-    expect(text).toContain("Held back");
+    expect(text).not.toContain("Run stopped before completion");
+    const coordinator = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Coordinator"));
+    expect(coordinator.textContent).toContain("Held back");
   });
 
   it("counts only specialist reports from the active assessment", () => {
