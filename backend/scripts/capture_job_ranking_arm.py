@@ -38,7 +38,8 @@ def _load_json(path: Path) -> dict[str, Any]:
 def _load_corpus(path: Path, expected_hash: str, expected_count: int) -> list[dict]:
     if _sha256_file(path) != expected_hash:
         raise ValueError("corpus SHA-256 mismatch")
-    jobs = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    with path.open(encoding="utf-8") as lines:
+        jobs = [json.loads(line) for line in lines if line.strip()]
     if len(jobs) != expected_count or any(not isinstance(job, dict) for job in jobs):
         raise ValueError("corpus shape does not match the protocol")
     return jobs

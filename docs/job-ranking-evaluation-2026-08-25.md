@@ -16,8 +16,6 @@ prove the others.
 
 The frozen corpus SHA-256 is
 `bfee51bf22c0d6dc2010efb10edd7d72de3a90c238895ecdedd4cbad31a5bfa4`.
-The post-hoc development manifest SHA-256 is
-`e5e7acf5ccf426bd257b02d007f8d0d9997f1ae960e6d008d977b5efdf183ded`.
 The corpus is not checked into Git because it is 213 MB; the hashes bind the
 local evaluation artifacts used for this report.
 
@@ -55,13 +53,11 @@ candidate evidence, not a private resume.
 
 ## What this proves—and does not prove
 
-This is a real frozen-corpus development replay, but it does not yet prove a
-ranking improvement. It reproduces the Micron retrieval observation and checks
-constraint mechanics on source-backed postings. It is not a
-released-SHA-versus-candidate backtest: both diagnostic arms use the current
-encoder and ranker, and the judgments were written after observing the
-development pools. The machine-readable receipt therefore returns
-`release_qualified: false`.
+The exploratory replay does not prove a ranking improvement. It reproduces the
+Micron retrieval observation and checks constraint mechanics on source-backed
+postings, but its judgments were written after observing its pools. Its
+superseded approximate comparator has therefore been deleted instead of being
+kept as a second release-like path.
 
 A release claim still requires a precommitted query set, arm-blinded pooled
 judgments, captured outputs from the released checkout, and the candidate

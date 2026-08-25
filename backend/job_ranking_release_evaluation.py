@@ -354,17 +354,18 @@ def score_release(
             for (case_id, _), label in judgments.items()
         )
     ]
-    micron_violations = next(
-        report["candidate"]["company_constraint_violations"]
-        for report in reports
-        if report["case_id"] == "heldout-explicit-micron"
-    )
+    company_violations = [
+        item_id
+        for case, report in zip(protocol["cases"], reports)
+        if str(case.get("company") or "").strip()
+        for item_id in report["candidate"]["company_constraint_violations"]
+    ]
     non_inferior = all(report["ndcg_delta"] >= 0 for report in reports)
     improved = any(report["ndcg_delta"] > 0 for report in reports)
     gates = {
         "no_candidate_hard_constraint_violations": candidate_violations == 0,
         "no_candidate_empty_case_with_relevant_work": not empty_with_work,
-        "explicit_micron_only_returns_micron": not micron_violations,
+        "named_company_searches_only_return_that_company": not company_violations,
         "candidate_non_inferior_every_case": non_inferior,
         "candidate_improves_at_least_one_case": improved,
     }

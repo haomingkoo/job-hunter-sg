@@ -33,16 +33,6 @@ cd backend
 .venv/bin/python -m scripts.evaluate_job_ranking
 ```
 
-The full frozen-corpus command is a development diagnostic, not a CI or release
-gate. Its manifest must hash-bind a public-only JSONL export and label every
-returned job. It always reports `release_qualified: false` because it does not
-execute a released checkout:
-
-```bash
-cd backend
-.venv/bin/python -m scripts.compare_job_ranking /path/to/manifest.json
-```
-
 A ranking release requires the hash-bound protocol under `backend/evals`, arm
 captures from clean exact-SHA checkouts, and three complete arm-blinded judgment
 files. `evaluate_job_ranking_release prepare` creates a judge-visible union pool
