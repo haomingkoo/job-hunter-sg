@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 
+from ats_terms import build_job_ats_terms, match_resume_against_job_terms
 from shared_classification import SHARED_KEY_MAP, classify_section_heading
 
 
@@ -847,20 +848,15 @@ class ResumeScorer:
         if not job_description.strip():
             return {"matched": [], "missing": [], "score_percent": 0}
 
-        try:
-            from ats_terms import build_job_ats_terms, match_resume_against_job_terms
-
-            jd_terms = build_job_ats_terms(job_description)
-            if not jd_terms:
-                return {"matched": [], "missing": [], "score_percent": 0}
-            result = match_resume_against_job_terms(text, jd_terms, jd_text=job_description)
-            return {
-                "matched": result.get("matched", []),
-                "missing": result.get("missing", []),
-                "score_percent": result.get("match_percent", 0),
-            }
-        except Exception:
+        jd_terms = build_job_ats_terms(job_description)
+        if not jd_terms:
             return {"matched": [], "missing": [], "score_percent": 0}
+        result = match_resume_against_job_terms(text, jd_terms, jd_text=job_description)
+        return {
+            "matched": result.get("matched", []),
+            "missing": result.get("missing", []),
+            "score_percent": result.get("match_percent", 0),
+        }
 
 
     @staticmethod

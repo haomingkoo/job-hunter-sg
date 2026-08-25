@@ -993,8 +993,20 @@ def test_runner_rejects_a_materially_identical_repeated_search_jobs_call(monkeyp
     monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
     monkeypatch.setattr(agent_tools, "find_similar_jobs", _spy_find_similar_jobs)
 
-    search_args = {"query": "backend engineer", "n": None, "detail": False}
-    different_args = {"query": "platform engineer", "n": None, "detail": False}
+    search_args = {
+        "query": "backend engineer",
+        "n": None,
+        "detail": False,
+        # This test isolates duplicate-call guarding; its FakeDb deliberately
+        # has no query interface for eligibility filtering.
+        "singapore_only": False,
+    }
+    different_args = {
+        "query": "platform engineer",
+        "n": None,
+        "detail": False,
+        "singapore_only": False,
+    }
     first_call = AIMessage(
         content="", tool_calls=[{"name": "search_jobs", "args": search_args, "id": "call-1"}]
     )

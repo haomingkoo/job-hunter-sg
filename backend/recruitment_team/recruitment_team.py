@@ -825,6 +825,7 @@ class RecruitmentTeam:
                             "correction_scope",
                             "partial_artifact_id",
                             "alternatives",
+                            "tool_name",
                         }
                     })
                 self._persist_recovery_decision(thread, command_type, failure_detail)
@@ -843,6 +844,7 @@ class RecruitmentTeam:
                         "correction_scope",
                         "partial_artifact_id",
                         "alternatives",
+                        "tool_name",
                     )
                     if key in failure_detail
                 }
@@ -875,6 +877,10 @@ class RecruitmentTeam:
                 raise
 
             self._renew_run_lease(run)
+            completion_detail = {
+                **completion_detail,
+                "reply_mode": reply.reply_mode,
+            }
             if command_type in {"start_thread", "send_message"}:
                 self._record_run_attempt(
                     run,
@@ -924,6 +930,7 @@ class RecruitmentTeam:
                 # after it resumed would otherwise report the later state.
                 "workflow_state": thread.workflow_state or "",
                 "transport_metrics": command_transport_metrics,
+                "reply_mode": reply.reply_mode,
             }
             completed_event = self._event(
                 thread,
@@ -938,7 +945,7 @@ class RecruitmentTeam:
                 attributes={
                     key: value
                     for key, value in completion_detail.items()
-                    if key in {"model", "input_tokens", "output_tokens"}
+                    if key in {"model", "input_tokens", "output_tokens", "reply_mode"}
                 },
             )
             thread.updated_at = _utcnow()
@@ -1390,6 +1397,9 @@ class RecruitmentTeam:
                 resolved_query,
                 company=command.company,
                 direct_employers_only=command.direct_employers_only,
+                exclude_junior=command.exclude_junior,
+                singapore_only=command.singapore_only,
+                title_phrase=command.title_phrase,
             )
             search_span.set_attribute("valid_empty", result.valid_empty)
             search_span.set_attribute("result_count", len(result.jobs))
@@ -2220,6 +2230,7 @@ class RecruitmentTeam:
                 return ModelReply(
                     content=pending_question,
                     model_name="open-agent-recruitment-team",
+                    reply_mode="paused",
                 ), {}
             artifact.status = "failed"
             artifact.error = {

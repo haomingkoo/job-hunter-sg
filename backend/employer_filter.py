@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 
 
 RECRUITER_COMPANY_KEYWORDS = (
@@ -52,6 +52,7 @@ RECRUITER_COMPANY_KEYWORDS = (
     "adaba",
     "apba tg human resource",
     "first konnection",
+    "one search consulting",
 )
 
 RECRUITER_COMPANY_ALIASES = (
@@ -101,13 +102,29 @@ RECRUITER_DESCRIPTION_SQL_PATTERN = (
     r"ea\s*[/|:]?\s*(?:licen[cs]e|no|personnel|registration|reg(?:istration)?\s*no)"
     r"|eapersonnel"
     r"|employment\s+agency\s*\(?\s*licen[cs]e"
-    r")\b"
+    r")([^a-z0-9]|$)"
 )
 
 # Singapore employment-agency licence numbers are often printed without an
 # explicit "EA Licence" label, for example ``15C7752``.
 EA_LICENCE_NUMBER_PATTERN = r"(^|[^a-z0-9])\d{2}[cs]\d{4}([^a-z0-9]|$)"
 _EA_LICENCE_NUMBER_RE = re.compile(EA_LICENCE_NUMBER_PATTERN, re.IGNORECASE)
+
+# Some agencies omit their licence from the posting and describe an unnamed
+# client in the third person. This is evidence that the named poster is not the
+# employing company; ordinary references to a direct employer's customers do
+# not match these forms.
+ANONYMOUS_CLIENT_DESCRIPTION_PATTERN = (
+    r"(^|[^a-z])(?:"
+    r"(?:our\s+client|the\s+hiring\s+company)\s+(?:is|are|seeks?|requires?)"
+    r"|(?:we\s+are\s+)?hiring\s+on\s+behalf\s+of"
+    r"|an?\s+(?:well[-\s]+)?established\b[^.!?\n]*\bis\s+(?:looking|seeking)"
+    r")([^a-z]|$)"
+)
+_ANONYMOUS_CLIENT_DESCRIPTION_RE = re.compile(
+    ANONYMOUS_CLIENT_DESCRIPTION_PATTERN,
+    re.IGNORECASE,
+)
 
 
 def normalize_employer_name(name: str) -> str:
@@ -139,7 +156,23 @@ def is_recruitment_employer(
     return any(
         _contains_phrase(job_description, marker)
         for marker in RECRUITER_DESCRIPTION_MARKERS
-    ) or bool(_EA_LICENCE_NUMBER_RE.search(job_description))
+    ) or bool(
+        _EA_LICENCE_NUMBER_RE.search(job_description)
+        or _ANONYMOUS_CLIENT_DESCRIPTION_RE.search(description or "")
+    )
+
+
+def is_direct_employer(
+    company: str,
+    ssic_description: str = "",
+    description: str = "",
+) -> bool:
+    """Require an identified employer with no recruitment-agency evidence."""
+    return bool(normalize_employer_name(company)) and not is_recruitment_employer(
+        company,
+        ssic_description,
+        description,
+    )
 
 
 def _sql_phrase_condition(lowered_column, phrase: str):
@@ -153,8 +186,12 @@ def direct_employer_condition(
     ssic_description_column=None,
     description_column=None,
 ):
-    company_lower = func.lower(company_column)
+    company_lower = func.lower(func.coalesce(company_column, ""))
     recruiter_conditions = [company_lower.like(f"%{keyword}%") for keyword in RECRUITER_COMPANY_KEYWORDS]
+    recruiter_conditions.extend(
+        _sql_phrase_condition(company_lower, keyword)
+        for keyword in RECRUITER_COMPANY_KEYWORDS
+    )
     recruiter_conditions.extend(_sql_phrase_condition(company_lower, alias) for alias in RECRUITER_COMPANY_ALIASES)
     if ssic_description_column is not None:
         ssic_lower = func.lower(func.coalesce(ssic_description_column, ""))
@@ -167,7 +204,10 @@ def direct_employer_condition(
         recruiter_conditions.append(
             description_lower.regexp_match(EA_LICENCE_NUMBER_PATTERN)
         )
-    return ~or_(*recruiter_conditions)
+        recruiter_conditions.append(
+            description_lower.regexp_match(ANONYMOUS_CLIENT_DESCRIPTION_PATTERN)
+        )
+    return and_(func.trim(company_lower) != "", ~or_(*recruiter_conditions))
 
 
 def company_name_matches(company: str, requested_company: str) -> bool:

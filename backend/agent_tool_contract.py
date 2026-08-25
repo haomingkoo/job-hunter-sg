@@ -52,6 +52,14 @@ def limit_jobs(requested: int | None) -> int:
     return min(value, config.AGENT_SEARCH_JOBS_LIMIT)
 
 
+def semantic_candidate_limit(result_limit: int) -> int:
+    """Expand one bounded result request using the shared search policy."""
+    return max(
+        result_limit * config.AGENT_SEARCH_CANDIDATE_MULTIPLIER,
+        result_limit,
+    )
+
+
 def skills_list(skills: Any) -> list[str]:
     if isinstance(skills, list):
         return [str(skill) for skill in skills if skill]
@@ -190,7 +198,7 @@ def search_jobs_result(
         "duplicate_count": max(0, original_count - len(jobs)),
         "original_result_count": original_count,
         "retained_result_count": len(retained),
-        "truncated": original_count > len(retained),
+        "truncated": len(jobs) > len(retained),
         "empty": len(retained) == 0,
         "results": retained,
         "detail_available": not detail,

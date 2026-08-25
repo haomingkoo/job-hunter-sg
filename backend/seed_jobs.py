@@ -28,28 +28,21 @@ from sqlalchemy import or_
 # Setup path so imports work
 sys.path.insert(0, os.path.dirname(__file__))
 
+from ats_terms import build_job_ats_terms
 from database import init_db, SessionLocal
 from crawl_lease import job_crawl_lease
+from embedding_service import invalidate_job_embedding_if_stale
 from job_precompute import apply_job_precomputes, posted_sort_iso as _posted_sort_iso
 from job_store import find_existing_scraped_job
+from jd_preparser import preparse_job_description
 from models import ScrapedJob
 from sanitizer import sanitize_job
 from scraper import JobAggregator
 
-try:
-    from jd_preparser import preparse_job_description
-except ImportError:
-    preparse_job_description = None
-
-try:
-    from ats_terms import build_job_ats_terms
-except ImportError:
-    build_job_ats_terms = None
-
 
 def _build_term_preview(job_row: ScrapedJob, db) -> None:
     """Compute and cache job_terms_preview at scrape time."""
-    if not build_job_ats_terms or not (job_row.description or "").strip():
+    if not (job_row.description or "").strip():
         return
     if job_row.job_terms_preview:
         return
@@ -206,7 +199,8 @@ def seed_jobs(
                     for key, val in clean.items():
                         if key != "id":
                             setattr(existing, key, val)
-                    if preparse_job_description and not existing.parsed_jd:
+                    invalidate_job_embedding_if_stale(existing)
+                    if not existing.parsed_jd:
                         existing.parsed_jd = preparse_job_description(
                             existing.description or "",
                             skills=existing.skills if isinstance(existing.skills, list) else [],
@@ -216,11 +210,10 @@ def seed_jobs(
                 else:
                     job_row = ScrapedJob(**clean)
                     # Pre-parse JD at insert time
-                    if preparse_job_description:
-                        job_row.parsed_jd = preparse_job_description(
-                            clean.get("description", ""),
-                            skills=clean.get("skills", []),
-                        )
+                    job_row.parsed_jd = preparse_job_description(
+                        clean.get("description", ""),
+                        skills=clean.get("skills", []),
+                    )
                     db.add(job_row)
                     db.flush()  # get ID assigned for term preview
                     _build_term_preview(job_row, db)
@@ -349,6 +342,7 @@ def crawl_all_jobs() -> dict:
                             for key, val in clean.items():
                                 if key != "id":
                                     setattr(existing, key, val)
+                            invalidate_job_embedding_if_stale(existing)
                             existing.hidden = 0
                             existing.retirement_reason = ""
                             existing.retired_at = ""
@@ -470,7 +464,7 @@ def crawl_all_jobs() -> dict:
                     )
                     apply_job_precomputes(clean)
 
-                    if preparse_job_description and clean.get("description"):
+                    if clean.get("description"):
                         clean["parsed_jd"] = preparse_job_description(
                             clean["description"], job_title=clean.get("title", "")
                         )
@@ -481,6 +475,7 @@ def crawl_all_jobs() -> dict:
                         for key, val in clean.items():
                             if key != "id":
                                 setattr(existing, key, val)
+                        invalidate_job_embedding_if_stale(existing)
                         existing.hidden = 0
                         existing.retirement_reason = ""
                         existing.retired_at = ""

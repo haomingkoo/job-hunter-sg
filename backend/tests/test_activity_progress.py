@@ -358,7 +358,14 @@ def test_the_search_graph_streams_the_count_that_came_back(monkeypatch):
         content="",
         tool_calls=[{
             "name": "search_jobs",
-            "args": {"query": "semiconductor yield analytics engineer", "n": None, "detail": False},
+            "args": {
+                "query": "semiconductor yield analytics engineer",
+                "n": None,
+                "detail": False,
+                # This test isolates event streaming; its FakeDb deliberately
+                # has no query interface for eligibility filtering.
+                "singapore_only": False,
+            },
             "id": "call-1",
         }],
     )

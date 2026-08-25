@@ -80,6 +80,9 @@ class SearchJobsRequest(BaseModel):
     query: str = Field(default="", max_length=SEARCH_QUERY_MAX_CHARS)
     company: str = Field(default="", max_length=SEARCH_QUERY_MAX_CHARS)
     direct_employers_only: bool = True
+    exclude_junior: bool = False
+    singapore_only: bool = True
+    title_phrase: str = Field(default="", max_length=SEARCH_QUERY_MAX_CHARS)
     idempotency_key: str = Field(min_length=1, max_length=IDEMPOTENCY_KEY_MAX_CHARS)
 
 
@@ -665,6 +668,9 @@ def search_thread_jobs(
             query=body.query,
             company=body.company,
             direct_employers_only=body.direct_employers_only,
+            exclude_junior=body.exclude_junior,
+            singapore_only=body.singapore_only,
+            title_phrase=body.title_phrase,
         ),
         body.idempotency_key,
     )
@@ -689,6 +695,9 @@ def stream_search_thread_jobs(
             query=body.query,
             company=body.company,
             direct_employers_only=body.direct_employers_only,
+            exclude_junior=body.exclude_junior,
+            singapore_only=body.singapore_only,
+            title_phrase=body.title_phrase,
         ),
         body.idempotency_key,
     )

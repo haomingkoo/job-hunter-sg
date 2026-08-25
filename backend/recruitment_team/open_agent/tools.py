@@ -522,6 +522,9 @@ def search_jobs(
     query: str,
     company: str = "",
     direct_employers_only: bool = True,
+    exclude_junior: bool = False,
+    singapore_only: bool = True,
+    title_phrase: str = "",
 ) -> dict:
     """Search the current internal Singapore job corpus by role or responsibility.
 
@@ -534,9 +537,13 @@ def search_jobs(
     By default results come from direct employers, not recruitment agencies.
     Pass `company` when the candidate names a target employer; matching uses
     whole normalized words. Set `direct_employers_only=False` only when the
-    candidate wants agency-listed roles. Seniority labels and salary context
-    are facts in each result. Judge them together; do not assume an employer's
-    self-reported level is reliable.
+    candidate wants agency-listed roles. Set `exclude_junior=True` when the
+    candidate's stated target or evidence clearly rules out entry-level work.
+    Seniority labels and salary context are facts in each result. Judge them
+    together; do not assume an employer's self-reported level is reliable.
+    Keep `singapore_only=True` unless the candidate explicitly asks for overseas roles.
+    Pass `title_phrase="manager"` when the candidate explicitly targets manager-level
+    titles and engineer-level retrieval would crowd those roles out.
     """
     from ..coordinator.context import current_conversation
 
@@ -548,6 +555,9 @@ def search_jobs(
         query,
         company=company,
         direct_employers_only=direct_employers_only,
+        exclude_junior=exclude_junior,
+        singapore_only=singapore_only,
+        title_phrase=title_phrase,
     )
     # Every result is recorded, failures included, so the turn's search history
     # stays observable. Which of them may change the thread is decided when the

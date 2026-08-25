@@ -1,6 +1,11 @@
 from sqlalchemy import Column, MetaData, String, Table, create_engine, select
 
-from employer_filter import company_name_matches, direct_employer_condition, is_recruitment_employer
+from employer_filter import (
+    company_name_matches,
+    direct_employer_condition,
+    is_direct_employer,
+    is_recruitment_employer,
+)
 
 
 def test_company_name_matching_uses_normalized_whole_words():
@@ -32,6 +37,8 @@ def test_verified_agencies_and_ea_licence_markers_are_recruiters():
         "APBA TG Human Resource Pte. Ltd.",
         "First Konnection Pte. Ltd.",
         "SearchAsia Consulting Pte. Ltd.",
+        "One Search Consulting Pte. Ltd.",
+        "GMP-TECHNOLOGIES (S) PTE LTD",
         "Raffles Employment Pte. Ltd.",
         "LH Manpower Service Pte. Ltd.",
     ):
@@ -57,6 +64,17 @@ def test_verified_agencies_and_ea_licence_markers_are_recruiters():
         "MTC Consulting Pte. Ltd.",
         description="Consultant registration R24124448, agency licence 15C7752.",
     )
+    assert is_recruitment_employer(
+        "Example Solutions Pte. Ltd.",
+        description=(
+            "An established semiconductor component distributor is looking for "
+            "a Sales Manager to lead its regional team."
+        ),
+    )
+    assert is_recruitment_employer(
+        "Example Advisory Pte. Ltd.",
+        description="Our client is a global manufacturer seeking a Quality Manager.",
+    )
 
 
 def test_alias_and_description_checks_avoid_nearby_false_positives():
@@ -66,6 +84,7 @@ def test_alias_and_description_checks_avoid_nearby_false_positives():
         "Example Software Pte Ltd",
         description="Manage software licence renewals for the EA platform.",
     )
+    assert not is_direct_employer("")
     assert not is_recruitment_employer(
         "Example Shipping Pte Ltd",
         description="A valid sea licence is required.",
@@ -73,6 +92,14 @@ def test_alias_and_description_checks_avoid_nearby_false_positives():
     assert not is_recruitment_employer(
         "Example Marine Pte Ltd",
         description="SEA personnel coordinate vessel operations.",
+    )
+    assert not is_recruitment_employer(
+        "Established Components Pte Ltd",
+        description="We are an established manufacturer looking for a Quality Manager.",
+    )
+    assert not is_recruitment_employer(
+        "Example Electronics Pte Ltd",
+        description="Build durable relationships because our clients require quality.",
     )
 
 
@@ -144,6 +171,16 @@ def test_sql_condition_matches_python_classification():
             "description": "Registered employment agency (license #12S5884).",
         },
         {
+            "company": "Example Solutions Pte Ltd",
+            "ssic": "",
+            "description": "An established semiconductor distributor is looking for a Sales Manager.",
+        },
+        {
+            "company": "Example Advisory Pte Ltd",
+            "ssic": "",
+            "description": "Our client is a global manufacturer seeking a Quality Manager.",
+        },
+        {
             "company": "Example Software Pte Ltd",
             "ssic": "Software publishing",
             "description": "Manage software licence renewals for the EA platform.",
@@ -163,6 +200,21 @@ def test_sql_condition_matches_python_classification():
             "ssic": None,
             "description": None,
         },
+        {
+            "company": "Established Components Pte Ltd",
+            "ssic": "Manufacturing",
+            "description": "We are an established manufacturer looking for a Quality Manager.",
+        },
+        {
+            "company": "GMP-TECHNOLOGIES (S) PTE LTD",
+            "ssic": "",
+            "description": "Quality role.",
+        },
+        {
+            "company": None,
+            "ssic": "",
+            "description": "Unknown employer role.",
+        },
     ]
     with engine.begin() as connection:
         connection.execute(employers.insert(), rows)
@@ -181,7 +233,7 @@ def test_sql_condition_matches_python_classification():
     expected_direct = {
         row["company"]
         for row in rows
-        if not is_recruitment_employer(
+        if is_direct_employer(
             row["company"],
             row["ssic"],
             row["description"],

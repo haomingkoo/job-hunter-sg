@@ -89,6 +89,9 @@ class ScrapedJob(Base):
     company_ssic_code: Mapped[str] = mapped_column(String(10), default="")
     company_ssic_description: Mapped[str] = mapped_column(String(300), default="")
     company_ssic_source: Mapped[str] = mapped_column(String(30), default="")
+    # -1 means the derived employer classification has not been computed yet.
+    # Search fails explicitly instead of treating unknown rows as direct.
+    direct_employer: Mapped[int] = mapped_column(Integer, default=-1, nullable=False)
     skills_flat: Mapped[str] = mapped_column(Text, default="")
     scraped_at: Mapped[str] = mapped_column(String(50), default="")
     posted_at_sort: Mapped[str] = mapped_column(String(50), default="")
@@ -110,6 +113,8 @@ class ScrapedJob(Base):
 
     # RAG embedding vector (384-dim, all-MiniLM-L6-v2)
     embedding_vector: Mapped[list | None] = mapped_column(JSON, nullable=True, default=None)
+    embedding_input_sha256: Mapped[str] = mapped_column(String(64), default="")
+    embedding_model_identity: Mapped[str] = mapped_column(String(300), default="")
 
     # Hash of the listing's visible content. dedup_key, source_posting_id and url all
     # identify a *posting*, and a repost gets fresh values for all three, so identical

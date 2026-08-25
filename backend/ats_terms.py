@@ -8,16 +8,10 @@ tailoring validation without drifting.
 
 from __future__ import annotations
 
-import logging
 import re
 
 from skill_extractor import extract_skill_phrases, match_resume_skills_with_context
-
-log = logging.getLogger("jobhunter.ats_terms")
-
-# Lazy-load taxonomy to avoid circular imports
-_taxonomy_loaded = False
-_classify_tier = None
+from skills_taxonomy import classify_skill_tier
 
 _SKILL_ACRONYMS = {
     "ai", "ml", "bi", "hr", "it", "ux", "ui", "qa", "pm", "sql",
@@ -58,18 +52,6 @@ def job_term_labels(terms: list[dict], limit: int = 8) -> list[str]:
             break
     return labels
 
-
-def _ensure_taxonomy() -> None:
-    global _taxonomy_loaded, _classify_tier
-    if _taxonomy_loaded:
-        return
-    try:
-        from skills_taxonomy import classify_skill_tier
-        _classify_tier = classify_skill_tier
-    except ImportError:
-        log.warning("skills_taxonomy not available, tier classification disabled")
-        _classify_tier = None
-    _taxonomy_loaded = True
 
 ATS_ALLOWED_SINGLE_TERMS: set[str] = {
     "python", "sql", "excel", "tableau", "powerbi", "aws", "azure", "gcp",
@@ -406,8 +388,7 @@ def _is_noise_term(term: str, context: str = "") -> bool:
         return True
 
     # Tier 1 known skills are NEVER noise - taxonomy overrides blocklist
-    _ensure_taxonomy()
-    if _classify_tier is not None and _classify_tier(lowered) == 1:
+    if classify_skill_tier(lowered) == 1:
         return False
 
     if lowered in ATS_DISPLAY_EXCLUDE:
@@ -613,14 +594,10 @@ def build_job_ats_terms(
         ),
     )
     # Classify each term by taxonomy tier
-    _ensure_taxonomy()
     final: list[dict] = []
     for item in ordered:
         row = {k: v for k, v in item.items() if k != "_priority"}
-        if _classify_tier is not None:
-            row["tier"] = _classify_tier(row["skill"])
-        else:
-            row["tier"] = 0  # unknown (taxonomy not loaded)
+        row["tier"] = classify_skill_tier(row["skill"])
         final.append(row)
 
     if limit is not None:

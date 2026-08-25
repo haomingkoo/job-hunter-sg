@@ -2832,6 +2832,7 @@ def test_completed_target_assessment_persists_its_proposed_resume_edits():
 
 
 def test_paused_target_assessment_does_not_raise_and_awaits_the_candidate():
+    from models import RecruitmentRun
     from recruitment_team import RecruitmentTeam, ScriptedConversationModel
     from recruitment_team.activity_publisher import IgnoreActivityPublisher
     from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
@@ -2859,7 +2860,19 @@ def test_paused_target_assessment_does_not_raise_and_awaits_the_candidate():
                 team_member="coordinator",
                 status="paused",
                 summary="Run paused: waiting on the candidate to answer a question.",
-                detail={"question": "How large was the team you led?"},
+                detail={
+                    "question": "How large was the team you led?",
+                    "execution_metrics": {
+                        "transport_call_count": 1,
+                        "transport_token_usage_available": False,
+                        "transport_by_role": {
+                            "specialist:recruiter": {
+                                "call_count": 1,
+                                "token_usage_available": False,
+                            }
+                        },
+                    },
+                },
             ),
         ]
     )
@@ -2890,12 +2903,18 @@ def test_paused_target_assessment_does_not_raise_and_awaits_the_candidate():
         artifact = team.target_assessment(owner_id, started.thread_id)
         snapshot = team.snapshot(owner_id, started.thread_id)
         events = team.events(owner_id, started.thread_id, 0)
+        persisted_run = db.get(RecruitmentRun, paused_receipt.run_id)
 
     assert snapshot.workflow_state == "awaiting_candidate_answer"
     assert snapshot.case_facts.target_assessment_status == "paused"
     assert snapshot.messages[-1].content == "How large was the team you led?"
     assert artifact is not None
     assert artifact.status == "paused"
+    assert artifact.execution_metrics["transport_token_usage_available"] is False
+    assert artifact.execution_metrics["transport_by_role"]["specialist:recruiter"][
+        "token_usage_available"
+    ] is False
+    assert persisted_run.result["reply_mode"] == "paused"
 
     # The judge never ran for a paused turn -- the terminal "run completed"
     # event for this command must not credit it. Regression guard for a bug
@@ -2908,6 +2927,8 @@ def test_paused_target_assessment_does_not_raise_and_awaits_the_candidate():
     )
     assert run_completed_event.team_member == "coordinator"
     assert run_completed_event.summary == "The coordinator completed this turn."
+    assert run_completed_event.detail["reply_mode"] == "paused"
+    assert run_completed_event.attributes["reply_mode"] == "paused"
 
 
 def test_answering_the_assessment_question_resumes_and_completes_it():

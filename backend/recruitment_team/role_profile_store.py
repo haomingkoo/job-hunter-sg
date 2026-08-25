@@ -27,6 +27,8 @@ _PUBLIC_VALIDATION_CODES = {
     "missing_tool_call",
     "output_truncated:length",
     "schema_validation",
+    "search_result_unavailable",
+    "unverified_tool_claim",
 }
 _PUBLIC_CRITERION_FAILURES = {
     "invalid_role_citation_path",

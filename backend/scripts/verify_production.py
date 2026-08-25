@@ -49,6 +49,21 @@ def verify_once(base_url: str, expected_sha: str) -> dict:
     if health.get("status") != "ok" or health.get("db") != "connected":
         raise RuntimeError(f"unhealthy API/database response: {health!r}")
 
+    search_readiness = json.loads(_get(base_url, "/api/job-search/readiness"))
+    if search_readiness.get("commit") != expected_sha:
+        raise RuntimeError("job-search readiness came from a different commit")
+    if not search_readiness.get("ready"):
+        raise RuntimeError(f"job-search indexes are not ready: {search_readiness!r}")
+    searchable_jobs = search_readiness.get("searchable_jobs")
+    if not isinstance(searchable_jobs, int) or searchable_jobs <= 0:
+        raise RuntimeError("job-search readiness has no searchable jobs")
+    if search_readiness.get("current_embeddings") != searchable_jobs:
+        raise RuntimeError("job-search embedding provenance is incomplete")
+    if search_readiness.get("content_provenance_verified") is not True:
+        raise RuntimeError("job-search embedding content provenance is unverified")
+    if search_readiness.get("classified_employers") != searchable_jobs:
+        raise RuntimeError("job-search employer classification is incomplete")
+
     jobs_path = "/api/jobs?per_page=1&sort=newest"
     jobs = json.loads(_get(base_url, jobs_path))
     if not isinstance(jobs.get("jobs"), list) or not isinstance(jobs.get("total"), int):
@@ -142,9 +157,18 @@ def verify_once(base_url: str, expected_sha: str) -> dict:
         "database": "connected",
         "public_jobs": jobs["total"],
         "public_job_sources": source_counts,
+        "job_search_readiness": search_readiness,
         "source_freshness": source_freshness,
         "asset_path": asset_path,
-        "checked_paths": ["/api/health", jobs_path, *freshness_paths, "/", asset_path, *checks],
+        "checked_paths": [
+            "/api/health",
+            "/api/job-search/readiness",
+            jobs_path,
+            *freshness_paths,
+            "/",
+            asset_path,
+            *checks,
+        ],
     }
 
 

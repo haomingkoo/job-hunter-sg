@@ -123,7 +123,11 @@ def test_search_jobs_returns_results_capped_at_config_limit(monkeypatch):
     )
 
     result = agent_tools.search_jobs.invoke(
-        {"query": "data engineer", "n": config.AGENT_SEARCH_JOBS_LIMIT + 20}
+        {
+            "query": "data engineer",
+            "n": config.AGENT_SEARCH_JOBS_LIMIT + 20,
+            "singapore_only": False,
+        }
     )
 
     assert result["ok"] is True
@@ -183,31 +187,37 @@ def test_search_jobs_applies_company_and_direct_employer_constraints_before_rank
             id=1,
             title="Senior Quality Manager",
             company="MICRON SEMICONDUCTOR ASIA OPERATIONS PTE. LTD.",
-            description="Lead deviation management and quality transformation.",
+                description="Lead deviation management and quality transformation.",
+                location="Singapore",
             url="https://example.test/1",
             source="test",
-            dedup_key="constraint-1",
-            posted_at_sort=now,
+                dedup_key="constraint-1",
+                posted_at_sort=now,
+                direct_employer=1,
         ),
         ScrapedJob(
             id=2,
             title="Quality Manager",
             company="ECOMICRON SYSTEMS PTE. LTD.",
-            description="Lead manufacturing quality.",
+                description="Lead manufacturing quality.",
+                location="Singapore",
             url="https://example.test/2",
             source="test",
-            dedup_key="constraint-2",
-            posted_at_sort=now,
+                dedup_key="constraint-2",
+                posted_at_sort=now,
+                direct_employer=1,
         ),
         ScrapedJob(
             id=3,
             title="Quality Manager",
             company="MICRON TALENT SEARCH PTE. LTD.",
-            description="EA Licence No: 12C3456.",
+                description="EA Licence No: 12C3456.",
+                location="Singapore",
             url="https://example.test/3",
             source="test",
-            dedup_key="constraint-3",
-            posted_at_sort=now,
+                dedup_key="constraint-3",
+                posted_at_sort=now,
+                direct_employer=0,
         ),
     ]
     with sessions() as db:
@@ -238,12 +248,25 @@ def test_search_jobs_applies_company_and_direct_employer_constraints_before_rank
     assert captured_eligible_ids == [{1}, {1, 3}]
     assert [job["id"] for job in direct["results"]] == [1]
     assert [job["id"] for job in agency_opt_in["results"]] == [1, 3]
+
+    with sessions() as db:
+        db.query(ScrapedJob).filter(ScrapedJob.id == 2).update({
+            ScrapedJob.direct_employer: -1,
+        })
+        db.commit()
+    rebuilding = agent_tools.search_jobs.invoke({
+        "query": "quality transformation",
+        "direct_employers_only": True,
+    })
+    assert rebuilding["ok"] is False
+    assert rebuilding["error"]["code"] == "employer_index_unavailable"
+    assert rebuilding["retryable"] is True
     assert direct["eligible_candidate_count"] == 1
     assert agency_opt_in["eligible_candidate_count"] == 2
 
 
 def test_job_dedup_preserves_posting_and_salary_variants():
-    from agent_tool_contract import deduplicate_job_payloads
+    from agent_tool_contract import deduplicate_job_payloads, search_jobs_result
 
     postings = [{
         "id": job_id,
@@ -279,6 +302,17 @@ def test_job_dedup_preserves_posting_and_salary_variants():
         "$14,000 - $17,000",
         "$11,000 - $14,000",
     ]
+    result = search_jobs_result(
+        "principal ai engineer",
+        3,
+        deduplicated,
+        visible_candidate_count=len(postings),
+    )
+    assert result["visible_candidate_count"] == 3
+    assert result["deduplicated_result_count"] == 1
+    assert result["duplicate_count"] == 2
+    assert result["retained_result_count"] == 1
+    assert result["truncated"] is False
 
 
 def test_job_dedup_keeps_same_title_at_same_company_when_descriptions_differ():
@@ -334,7 +368,11 @@ def test_search_jobs_detail_expands_job_payload(monkeypatch):
     monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
     monkeypatch.setattr(agent_tools, "find_similar_jobs", lambda *_args, **_kwargs: [(7, 0.9)])
 
-    result = agent_tools.search_jobs.invoke({"query": "ai engineer", "detail": True})
+    result = agent_tools.search_jobs.invoke({
+        "query": "ai engineer",
+        "detail": True,
+        "singapore_only": False,
+    })
 
     assert result["detail"] is True
     assert result["results"][0]["description"] == "Build agentic AI workflows for public services."
@@ -352,7 +390,7 @@ def test_search_jobs_empty_results_are_explicit(monkeypatch):
     monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
     monkeypatch.setattr(agent_tools, "find_similar_jobs", lambda *_args, **_kwargs: [])
 
-    result = agent_tools.search_jobs.invoke({"query": "rare role"})
+    result = agent_tools.search_jobs.invoke({"query": "rare role", "singapore_only": False})
 
     assert result["ok"] is True
     assert result["status"] == "success"
@@ -379,7 +417,10 @@ def test_search_jobs_errors_are_structured(monkeypatch):
     monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
     monkeypatch.setattr(agent_tools, "find_similar_jobs", broken_search)
 
-    result = agent_tools.search_jobs.invoke({"query": "data engineer"})
+    result = agent_tools.search_jobs.invoke({
+        "query": "data engineer",
+        "singapore_only": False,
+    })
 
     assert result["ok"] is False
     assert result["status"] == "error"
@@ -390,6 +431,35 @@ def test_search_jobs_errors_are_structured(monkeypatch):
     assert result["failure_type"] == "unavailable"
     assert result["retryable"] is True
     assert result["error"]["message"] == "The internal job search source was unavailable."
+
+
+def test_search_jobs_reports_a_rebuilding_embedding_index(monkeypatch):
+    import resume_agent.tools as agent_tools
+
+    class FakeDb:
+        def close(self):
+            return None
+
+    def rebuilding(*_args, **_kwargs):
+        raise agent_tools.EmbeddingIndexUnavailable("coverage is 0/10")
+
+    monkeypatch.setattr(agent_tools, "SessionLocal", lambda: FakeDb())
+    monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
+    monkeypatch.setattr(agent_tools, "find_similar_jobs", rebuilding)
+
+    result = agent_tools.search_jobs.invoke({
+        "query": "data engineer",
+        "singapore_only": False,
+    })
+
+    assert result["ok"] is False
+    assert result["query_executed"] is False
+    assert result["error"]["code"] == "embedding_index_unavailable"
+    assert result["failure_type"] == "unavailable"
+    assert result["retryable"] is True
+    assert result["error"]["message"] == (
+        "The job matching index is rebuilding. Please retry shortly."
+    )
 
 
 def test_get_job_returns_visible_detail(monkeypatch):

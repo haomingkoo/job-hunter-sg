@@ -124,6 +124,9 @@ def test_production_discovery_forwards_explicit_employer_constraints(monkeypatch
         "detail": True,
         "company": "Micron",
         "direct_employers_only": True,
+        "exclude_junior": False,
+        "singapore_only": True,
+        "title_phrase": "",
     }
     assert result.eligible_candidate_count == 63
     assert result.candidate_count == 7

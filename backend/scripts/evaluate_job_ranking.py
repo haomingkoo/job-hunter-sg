@@ -47,6 +47,8 @@ def _validate_case(case: dict) -> None:
         for candidate in candidates
     ):
         raise ValueError(f"{case['case_id']}: relevance must be a nonnegative integer")
+    if not any(candidate["relevance"] > 0 for candidate in candidates):
+        raise ValueError(f"{case['case_id']}: at least one candidate must be relevant")
     if any(len(pair) != 2 for pair in case.get("pairwise_preferences") or []):
         raise ValueError(f"{case['case_id']}: pairwise preferences need two job IDs")
     known = set(ids)
@@ -54,11 +56,21 @@ def _validate_case(case: dict) -> None:
     referenced.update(job_id for pair in case.get("pairwise_preferences") or [] for job_id in pair)
     if not referenced <= known:
         raise ValueError(f"{case['case_id']}: expectation references an unknown candidate")
+    overlap = set(case.get("required_in_top_k") or []) & set(
+        case.get("forbidden_in_results") or []
+    )
+    if overlap:
+        raise ValueError(f"{case['case_id']}: required and forbidden candidates overlap")
 
 
 def evaluate_case(case: dict, ranked_ids: list[int]) -> dict:
     """Evaluate human-authored invariants and report NDCG without a magic threshold."""
     _validate_case(case)
+    known_ids = {candidate["id"] for candidate in case["candidates"]}
+    if len(ranked_ids) != len(set(ranked_ids)):
+        raise ValueError(f"{case['case_id']}: ranked job IDs must be unique")
+    if not set(ranked_ids) <= known_ids:
+        raise ValueError(f"{case['case_id']}: ranked results contain an unknown candidate")
     top_k = int(case["top_k"])
     ranked = ranked_ids[:top_k]
     positions = {job_id: index for index, job_id in enumerate(ranked)}
@@ -103,8 +115,14 @@ def run(manifest_path: Path) -> dict:
         or manifest.get("model_revision") != EMBEDDING_MODEL_REVISION
     ):
         raise ValueError("ranking manifest model identity does not match the runtime encoder")
+    cases = manifest.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise ValueError("ranking manifest requires at least one case")
+    case_ids = [case.get("case_id") for case in cases if isinstance(case, dict)]
+    if len(case_ids) != len(cases) or len(case_ids) != len(set(case_ids)):
+        raise ValueError("ranking manifest case IDs must be unique")
     reports = []
-    for case in manifest.get("cases") or []:
+    for case in cases:
         eligible = [
             candidate
             for candidate in case["candidates"]

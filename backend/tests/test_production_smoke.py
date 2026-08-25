@@ -17,6 +17,7 @@ class _ProductionHandler(BaseHTTPRequestHandler):
     empty_corpus = False
     missing_source = ""
     stale_source = ""
+    search_ready = True
     responses = {
         "/": (
             "text/html",
@@ -33,6 +34,15 @@ class _ProductionHandler(BaseHTTPRequestHandler):
             content_type, body = "application/json", json.dumps(
                 {"status": "ok", "db": "connected", "commit": self.commit}
             )
+        elif self.path == "/api/job-search/readiness":
+            content_type, body = "application/json", json.dumps({
+                "ready": self.search_ready,
+                "searchable_jobs": 6,
+                "current_embeddings": 6 if self.search_ready else 5,
+                "classified_employers": 6,
+                "content_provenance_verified": self.search_ready,
+                "commit": self.commit,
+            })
         elif urlsplit(self.path).path == "/api/jobs":
             query = parse_qs(urlsplit(self.path).query)
             source = query.get("source", [""])[0]
@@ -78,6 +88,7 @@ def production_url():
     _ProductionHandler.empty_corpus = False
     _ProductionHandler.missing_source = ""
     _ProductionHandler.stale_source = ""
+    _ProductionHandler.search_ready = True
     server = ThreadingHTTPServer(("127.0.0.1", 0), _ProductionHandler)
     thread = threading.Thread(target=server.serve_forever)
     thread.start()
@@ -100,6 +111,7 @@ def test_production_smoke_records_exact_commit_and_public_surfaces(production_ur
         "MyCareersFuture": 3,
         "Careers@Gov": 3,
     }
+    assert receipt["job_search_readiness"]["ready"] is True
     assert set(receipt["source_freshness"]) == {"MyCareersFuture", "Careers@Gov"}
     assert receipt["asset_path"] == "/assets/index-abc123.js"
 
@@ -137,4 +149,11 @@ def test_production_smoke_rejects_stale_source_rows(production_url):
     _ProductionHandler.stale_source = "Careers@Gov"
 
     with pytest.raises(RuntimeError, match="latest public row is stale"):
+        verify_once(production_url, COMMIT)
+
+
+def test_production_smoke_rejects_incomplete_search_indexes(production_url):
+    _ProductionHandler.search_ready = False
+
+    with pytest.raises(RuntimeError, match="job-search indexes are not ready"):
         verify_once(production_url, COMMIT)

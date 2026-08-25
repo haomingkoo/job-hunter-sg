@@ -139,6 +139,9 @@ class JobSearchResult:
     eligible_candidate_count: int | None = None
     company: str = ""
     direct_employers_only: bool = True
+    exclude_junior: bool = False
+    singapore_only: bool = True
+    title_phrase: str = ""
 
 
 class DiscoveryPort(Protocol):
@@ -148,6 +151,9 @@ class DiscoveryPort(Protocol):
         *,
         company: str = "",
         direct_employers_only: bool = True,
+        exclude_junior: bool = False,
+        singapore_only: bool = True,
+        title_phrase: str = "",
     ) -> JobSearchResult: ...
 
     def get_job(self, job_id: int) -> JobSnapshot | None: ...
@@ -251,6 +257,9 @@ class LangChainJobDiscovery:
         *,
         company: str = "",
         direct_employers_only: bool = True,
+        exclude_junior: bool = False,
+        singapore_only: bool = True,
+        title_phrase: str = "",
     ) -> JobSearchResult:
         from resume_agent.tools import search_jobs
 
@@ -260,6 +269,9 @@ class LangChainJobDiscovery:
                 "detail": True,
                 "company": company,
                 "direct_employers_only": direct_employers_only,
+                "exclude_junior": exclude_junior,
+                "singapore_only": singapore_only,
+                "title_phrase": title_phrase,
             }
         )
         if not result.get("ok"):
@@ -276,6 +288,9 @@ class LangChainJobDiscovery:
                 failure_code=decision.failure_code,
                 company=company,
                 direct_employers_only=direct_employers_only,
+                exclude_junior=exclude_junior,
+                singapore_only=singapore_only,
+                title_phrase=title_phrase,
             )
         jobs = tuple(
             JobSnapshot.from_payload(item)
@@ -291,6 +306,9 @@ class LangChainJobDiscovery:
             eligible_candidate_count=result.get("eligible_candidate_count"),
             company=company,
             direct_employers_only=direct_employers_only,
+            exclude_junior=exclude_junior,
+            singapore_only=singapore_only,
+            title_phrase=title_phrase,
         )
 
     def get_job(self, job_id: int) -> JobSnapshot | None:
@@ -324,6 +342,9 @@ class ScriptedDiscovery:
         *,
         company: str = "",
         direct_employers_only: bool = True,
+        exclude_junior: bool = False,
+        singapore_only: bool = True,
+        title_phrase: str = "",
     ) -> JobSearchResult:
         self.search_count += 1
         result = next(self._searches)
@@ -332,6 +353,9 @@ class ScriptedDiscovery:
             query=query,
             company=company,
             direct_employers_only=direct_employers_only,
+            exclude_junior=exclude_junior,
+            singapore_only=singapore_only,
+            title_phrase=title_phrase,
         )
 
     def get_job(self, job_id: int) -> JobSnapshot | None:

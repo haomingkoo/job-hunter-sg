@@ -36,8 +36,8 @@ class TransportMetricsCollector:
     """Run-local, content-free transport totals suitable for durable metrics."""
 
     def __init__(self) -> None:
-        self._records: list[dict[str, str | int | float]] = []
-        self._semantic_attempts: list[dict[str, str | int | float]] = []
+        self._records: list[dict[str, str | int | float | bool]] = []
+        self._semantic_attempts: list[dict[str, str | int | float | bool]] = []
         self._lock = threading.Lock()
 
     def record(
@@ -48,9 +48,10 @@ class TransportMetricsCollector:
         outcome: str,
         input_tokens: int = 0,
         output_tokens: int = 0,
+        token_usage_available: bool = False,
         latency_ms: float = 0,
         model: str = "",
-        semantic_attempt: dict[str, str | int | float] | None = None,
+        semantic_attempt: dict[str, str | int | float | bool] | None = None,
     ) -> None:
         with self._lock:
             self._records.append({
@@ -59,6 +60,7 @@ class TransportMetricsCollector:
                 "outcome": outcome,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
+                "token_usage_available": token_usage_available,
                 "latency_ms": latency_ms,
                 "model": model,
             })
@@ -81,6 +83,7 @@ class TransportMetricsCollector:
                     "error_count": 0,
                     "input_tokens": 0,
                     "output_tokens": 0,
+                    "token_usage_available": True,
                     "latency_ms": 0.0,
                     "models": [],
                 },
@@ -92,6 +95,10 @@ class TransportMetricsCollector:
             role_totals["error_count"] += int(record["outcome"] == "error")
             role_totals["input_tokens"] += int(record["input_tokens"])
             role_totals["output_tokens"] += int(record["output_tokens"])
+            role_totals["token_usage_available"] = bool(
+                role_totals["token_usage_available"]
+                and record["token_usage_available"]
+            )
             role_totals["latency_ms"] += float(record["latency_ms"])
             model = str(record["model"])
             if model and model not in role_totals["models"]:
@@ -108,6 +115,9 @@ class TransportMetricsCollector:
             "transport_error_count": sum(item["outcome"] == "error" for item in records),
             "transport_input_tokens": sum(int(item["input_tokens"]) for item in records),
             "transport_output_tokens": sum(int(item["output_tokens"]) for item in records),
+            "transport_token_usage_available": bool(records) and all(
+                bool(item["token_usage_available"]) for item in records
+            ),
             "transport_latency_ms": round(
                 sum(float(item["latency_ms"]) for item in records),
                 3,
@@ -292,11 +302,12 @@ class ModelTransportObserver(BaseCallbackHandler):
         if error_type:
             attributes["error_type"] = error_type
         attributes["role"] = call.role
-        input_tokens, output_tokens, model = _response_usage(response)
+        input_tokens, output_tokens, model, token_usage_available = _response_usage(response)
         model = model or call.model_hint
         latency_ms = round(max(0.0, (time.perf_counter() - call.started_at) * 1000), 3)
         attributes["input_tokens"] = input_tokens
         attributes["output_tokens"] = output_tokens
+        attributes["token_usage_available"] = token_usage_available
         attributes["latency_ms"] = latency_ms
         if model:
             attributes["model"] = model
@@ -310,6 +321,7 @@ class ModelTransportObserver(BaseCallbackHandler):
                     "model": model,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
+                    "token_usage_available": token_usage_available,
                     "latency_ms": latency_ms,
                     "attempt_count": 1,
                     "status": outcome,
@@ -322,6 +334,7 @@ class ModelTransportObserver(BaseCallbackHandler):
                 outcome=outcome,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                token_usage_available=token_usage_available,
                 latency_ms=latency_ms,
                 model=model,
                 semantic_attempt=semantic_attempt,
@@ -331,7 +344,7 @@ class ModelTransportObserver(BaseCallbackHandler):
                 operation.mark_error(error_type)
 
 
-def _response_usage(response: Any | None) -> tuple[int, int, str]:
+def _response_usage(response: Any | None) -> tuple[int, int, str, bool]:
     """Extract safe usage metadata from a LangChain LLM result."""
     message = None
     generations = getattr(response, "generations", None) or []
@@ -341,10 +354,18 @@ def _response_usage(response: Any | None) -> tuple[int, int, str]:
     metadata = getattr(message, "response_metadata", None) or {}
     llm_output = getattr(response, "llm_output", None) or {}
     token_usage = llm_output.get("token_usage") or {}
+    usage_available = (
+        "input_tokens" in usage
+        and "output_tokens" in usage
+    ) or (
+        "prompt_tokens" in token_usage
+        and "completion_tokens" in token_usage
+    )
     return (
         int(usage.get("input_tokens") or token_usage.get("prompt_tokens") or 0),
         int(usage.get("output_tokens") or token_usage.get("completion_tokens") or 0),
         str(metadata.get("model_name") or metadata.get("model") or llm_output.get("model_name") or ""),
+        usage_available,
     )
 
 

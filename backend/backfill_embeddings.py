@@ -13,75 +13,41 @@ import argparse
 import time
 
 from database import SessionLocal
-from embedding_service import build_job_embed_text, encode_texts
-from job_visibility import apply_public_job_visibility
-from models import ScrapedJob, UsageLog
+from embedding_service import (
+    EMBEDDING_MODEL_IDENTITY,
+    refresh_job_embeddings,
+)
 
 
 def backfill(force: bool = False, limit: int | None = None) -> None:
     db = SessionLocal()
     try:
-        query = apply_public_job_visibility(db.query(ScrapedJob))
-        if not force:
-            query = query.filter(ScrapedJob.embedding_vector.is_(None))
+        started_at = time.time()
 
-        total = query.count()
-        if limit:
-            total = min(total, limit)
-        if total == 0:
+        def report(state: dict[str, int | bool]) -> None:
+            elapsed = time.time() - started_at
+            refreshed = int(state["refreshed"])
+            rate = refreshed / elapsed if elapsed > 0 else 0
+            print(
+                f"  scanned={state['scanned']}/{state['searchable']} "
+                f"refreshed={refreshed} rewrites={state['vector_rewrites']} "
+                f"({rate:.1f} refreshes/sec)"
+            )
+
+        result = refresh_job_embeddings(
+            db,
+            force=force,
+            limit=limit,
+            on_progress=report,
+        )
+        if result["searchable"] == 0:
             print("No jobs to backfill.")
             return
-
-        print(f"Backfilling embeddings for {total} jobs...")
-
-        batch_size = 32
-        processed = 0
-        t0 = time.time()
-
-        last_id = 0
-        while processed < total:
-            batch = (
-                query
-                .filter(ScrapedJob.id > last_id)
-                .order_by(ScrapedJob.id.asc())
-                .limit(min(batch_size, total - processed))
-                .all()
-            )
-            if not batch:
-                break
-            texts = [
-                build_job_embed_text(
-                    job.title,
-                    job.description,
-                    job.skills if isinstance(job.skills, list) else [],
-                )
-                for job in batch
-            ]
-            vectors = encode_texts(texts, batch_size=batch_size)
-
-            for job, vec in zip(batch, vectors):
-                job.embedding_vector = vec
-
-            db.commit()
-            processed += len(batch)
-            last_id = batch[-1].id
-            db.expunge_all()
-            elapsed = time.time() - t0
-            rate = processed / elapsed if elapsed > 0 else 0
-            print(
-                f"  [{processed}/{total}] "
-                f"{processed * 100 // total}% "
-                f"({rate:.1f} jobs/sec)"
-            )
-
-        elapsed = time.time() - t0
-        db.add(UsageLog(
-            user_id=None,
-            action="job_embedding_refresh",
-            detail=f"processed={processed}",
-        ))
-        db.commit()
-        print(f"Done. {processed} jobs embedded in {elapsed:.1f}s.")
+        print(
+            f"Done. Scanned {result['scanned']}; refreshed {result['refreshed']}; "
+            f"rewrote {result['vector_rewrites']} vectors in "
+            f"{time.time() - started_at:.1f}s using {EMBEDDING_MODEL_IDENTITY}."
+        )
 
     finally:
         db.close()

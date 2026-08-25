@@ -14,7 +14,6 @@ from sqlalchemy.orm import Session, load_only
 
 import config as app_config
 from database import get_db
-from employer_filter import direct_employer_condition
 from job_precompute import salary_bounds_from_text as _salary_bounds_from_text
 from job_visibility import (
     job_corpus_marker as _job_corpus_marker,
@@ -482,13 +481,7 @@ def _apply_market_filters(
     if agency_subset:
         query = query.filter(_analytics_agency_subset_condition(agency_subset))
     if direct_employers_only:
-        query = query.filter(
-            direct_employer_condition(
-                ScrapedJob.company,
-                ScrapedJob.company_ssic_description,
-                ScrapedJob.description,
-            )
-        )
+        query = query.filter(ScrapedJob.direct_employer == 1)
     return query
 
 def _agency_term_matches(text: str, term: str) -> bool:

@@ -14,6 +14,27 @@ from models import ScrapedJob
 DEFAULT_PUBLIC_JOB_MAX_AGE_DAYS = int(os.environ.get("PUBLIC_JOB_MAX_AGE_DAYS", "60"))
 KNOWN_RETIREMENT_REASONS = ("source_retired", "age_retired")
 UNCLASSIFIED_SECTOR = "Unclassified"
+SINGAPORE_JOB_LOCATIONS = frozenset({
+    "singapore",
+    "central",
+    "islandwide",
+    "west",
+    "north",
+    "east",
+    "north-east",
+})
+# Some source rows claim a Singapore region while the title states the actual
+# overseas work site. These are the unambiguous overseas place names currently
+# observed in that title pattern; ordinary mentions of overseas customers or
+# travel in descriptions are deliberately ignored.
+_OVERSEAS_TITLE_LOCATION = re.compile(
+    r"\b(?:based|located|stationed)\s+in\s+(?:"
+    r"indonesia|hong\s+kong|bangkok|kuala\s+lumpur|kl|malaysia|batam|jb|"
+    r"china|shanghai|vietnam|thailand|india|south\s+korea|korea|philippines|"
+    r"taiwan|cyprus|saudi\s+arabia|united\s+arab\s+emirates|uae|myanmar"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def job_corpus_marker(db) -> str:
@@ -56,15 +77,23 @@ def public_job_cutoff_iso(max_age_days: int | None = None, now: datetime | None 
     return (ref - timedelta(days=days)).isoformat()
 
 
-def apply_public_job_visibility(query, include_old: bool = False):
+def apply_public_job_visibility(
+    query,
+    include_old: bool = False,
+    *,
+    now: datetime | None = None,
+):
     query = query.filter(ScrapedJob.hidden == 0)
     if include_old:
         return query
-    today = datetime.now(timezone.utc).date().isoformat()
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    today = reference.date().isoformat()
     return query.filter(
         ScrapedJob.posted_at_sort.isnot(None),
         ScrapedJob.posted_at_sort != "",
-        ScrapedJob.posted_at_sort >= public_job_cutoff_iso(),
+        ScrapedJob.posted_at_sort >= public_job_cutoff_iso(now=reference),
         or_(
             ScrapedJob.closing_date.is_(None),
             ScrapedJob.closing_date == "",
@@ -92,6 +121,28 @@ def apply_expired_job_visibility(query):
     )
 
 
+def is_singapore_job_location(location: str | None, title: str | None = None) -> bool:
+    """Return whether structured and explicit title evidence point to Singapore."""
+    return (
+        (location or "").strip().casefold() in SINGAPORE_JOB_LOCATIONS
+        and not _OVERSEAS_TITLE_LOCATION.search(title or "")
+    )
+
+
+def singapore_job_prefilter_condition(location_column):
+    """Portable SQL prefilter; Python verifies title evidence after loading."""
+    return func.lower(func.trim(func.coalesce(location_column, ""))).in_(
+        SINGAPORE_JOB_LOCATIONS
+    )
+
+
+def job_title_matches(title: str | None, phrase: str | None) -> bool:
+    """Match a caller-supplied title phrase on normalized whole words."""
+    wanted = " ".join(re.findall(r"[a-z0-9]+", (phrase or "").casefold()))
+    actual = " ".join(re.findall(r"[a-z0-9]+", (title or "").casefold()))
+    return bool(wanted) and f" {wanted} " in f" {actual} "
+
+
 # MyCareersFuture and Careers@Gov seniority labels, grouped so a candidate can be
 # kept away from tiers below their own. 42% of the live corpus sits in the junior
 # tier, which is why an experienced candidate otherwise gets shown traineeships.
@@ -104,13 +155,11 @@ _JUNIOR_TITLE = re.compile(
     r"\b(intern|internship|trainee|traineeship|apprentice|fresh\s*grad\w*|entry[-\s]?level)\b",
     re.IGNORECASE,
 )
-
-
-# Employers self-report seniority and often get it wrong: the corpus holds
-# "Non-executive" roles paying $18,000. Junior tiers sit at a $3,600-3,800 p90
-# and Executive at $5,000, so pay at or above this contradicts a junior label
-# outright, and the pay is the more honest signal.
-JUNIOR_LABEL_SALARY_CEILING = 5000
+EXPERIENCED_TITLE_PATTERN = (
+    r"(^|[^a-z])(?:assistant\s+manager|manager|senior|staff|lead|principal|"
+    r"director|head|vice\s+president)([^a-z]|$)"
+)
+_EXPERIENCED_TITLE = re.compile(EXPERIENCED_TITLE_PATTERN, re.IGNORECASE)
 
 
 def is_junior_posting(
@@ -118,17 +167,26 @@ def is_junior_posting(
     title: str | None,
     salary_floor: int | float | None = None,
 ) -> bool:
-    """True when a posting is genuinely pitched below an experienced hire.
+    """Return explicit source or title evidence that a posting is junior.
 
-    Salary overrules the label. Dropping a $12,500 project manager because its
-    employer ticked "Non-executive" costs the candidate more than showing it.
+    ``salary_floor`` remains accepted because callers share one job-classifier
+    signature, but salary must not silently reverse an explicit eligibility
+    constraint.
     """
-    looks_junior = (
-        (seniority or "").strip().lower() in JUNIOR_SENIORITY_LABELS
-        or bool(_JUNIOR_TITLE.search(title or ""))
+    del salary_floor
+    level = (seniority or "").strip().lower()
+    if level in JUNIOR_SENIORITY_LABELS or _JUNIOR_TITLE.search(title or ""):
+        return True
+    return level == "executive" and not _EXPERIENCED_TITLE.search(title or "")
+
+
+def experienced_hire_prefilter_condition(seniority_column, title_column):
+    """Portable SQL prefilter; Python verifies title evidence after loading."""
+    seniority = func.lower(func.coalesce(seniority_column, ""))
+    experienced_title = func.lower(func.coalesce(title_column, "")).regexp_match(
+        EXPERIENCED_TITLE_PATTERN
     )
-    if not looks_junior:
-        return False
-    if salary_floor and salary_floor >= JUNIOR_LABEL_SALARY_CEILING:
-        return False
-    return True
+    return and_(
+        ~seniority.in_(JUNIOR_SENIORITY_LABELS),
+        or_(seniority != "executive", experienced_title),
+    )

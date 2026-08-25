@@ -9,11 +9,11 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Callable, ContextManager, Iterable
 
-import config
 from auth import get_account_limits
 from application_research import ResearchPack
 from fastapi import HTTPException, status
 from models import ResumeVersion, ScrapedJob, TrackedJob, User
+from resume_agent.contracts import TARGET_JOB_PERSONAS
 from resume_parser import parse_resume
 from sanitizer import sanitize_resume_text, sanitize_url, sanitize_user_input
 from schemas import (
@@ -51,6 +51,9 @@ WORKSPACE_DRAFT_STATUS = "draft"
 MAX_TRACKED_STAGE_EVENTS = 200
 MAX_RECRUITMENT_PIPELINE_EVENTS = 50
 MAX_NEGOTIATION_ROUNDS = 20
+MIN_AGENT_DRAFT_CHARS = 50
+MAX_AGENT_DRAFT_LABEL_ROLE_CHARS = 80
+SUBMITTED_ARTIFACT_TOKEN_BYTES = 12
 
 APPLICATION_OUTCOME_GROUPS = {
     "submitted": {"applied"},
@@ -265,7 +268,7 @@ def _workspace_debate_summary(agent_state: dict, recommendations: list[str], tra
         if isinstance(item, dict) and item.get("persona")
     ]
     return {
-        "roles": saved.get("roles") or persona_roles or list(config.WORKSPACE_AGENT_REVIEW_DEFAULT_ROLES),
+        "roles": saved.get("roles") or persona_roles or list(TARGET_JOB_PERSONAS),
         "key_disagreements": saved.get("key_disagreements") or saved.get("disagreements") or [],
         "final_recommendation": saved.get("final_recommendation")
         or saved.get("recommendation")
@@ -300,12 +303,12 @@ def _save_tailored_draft(
     agent_state: dict,
 ) -> dict | None:
     draft_text = build_tailored_draft_text(source_text, agent_state)
-    if len(draft_text) < config.WORKSPACE_AGENT_DRAFT_MIN_CHARS:
+    if len(draft_text) < MIN_AGENT_DRAFT_CHARS:
         return None
 
     version = ResumeVersion(
         user_id=user_id,
-        label=f"Agent draft for {tracked.role[:config.WORKSPACE_AGENT_DRAFT_LABEL_ROLE_CHARS]}",
+        label=f"Agent draft for {tracked.role[:MAX_AGENT_DRAFT_LABEL_ROLE_CHARS]}",
         source=WORKSPACE_RESUME_SOURCE_AGENT_REVIEW,
         resume_text=draft_text,
         job_id=tracked.scraped_job_id,
@@ -852,7 +855,7 @@ def save_submitted_resume(
     now = datetime.now(timezone.utc)
     clean_filename = sanitize_user_input(filename or "resume")
     artifact = {
-        "artifact_id": secrets.token_urlsafe(config.WORKSPACE_SUBMITTED_ARTIFACT_TOKEN_BYTES),
+        "artifact_id": secrets.token_urlsafe(SUBMITTED_ARTIFACT_TOKEN_BYTES),
         "filename": clean_filename,
         "content_type": content_type or "",
         "file_type": parsed.get("file_type", ""),
