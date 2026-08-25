@@ -26,6 +26,10 @@ _encode_lock = threading.Lock()
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_MODEL_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
 EMBEDDING_MODEL_IDENTITY = f"{EMBEDDING_MODEL_NAME}@{EMBEDDING_MODEL_REVISION}"
+EMBEDDING_DIMENSION = 384
+EMBEDDING_DEFAULT_BATCH_SIZE = 32
+EMBEDDING_MAX_BATCH_SIZE = 256
+EMBEDDING_REFRESH_PAGE_SIZE = 500
 
 
 class EmbeddingIndexUnavailable(RuntimeError):
@@ -129,15 +133,36 @@ def embedding_is_current(job) -> bool:
     )
 
 
+def _canonical_embedding_vector(vector: list[float]) -> np.ndarray:
+    try:
+        current = np.asarray(vector, dtype=np.float32)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("embedding output must be a numeric vector") from exc
+    if current.shape != (EMBEDDING_DIMENSION,) or not np.isfinite(current).all():
+        raise ValueError("embedding output must be a finite non-zero vector")
+    current_norm = np.linalg.norm(current.astype(np.float64))
+    if not np.isfinite(current_norm) or not np.isclose(current_norm, 1.0):
+        raise ValueError("embedding output must be a finite non-zero vector")
+    return current
+
+
 def stamp_job_embedding(job, vector: list[float]) -> bool:
     """Store proven provenance, returning whether vector bytes need rewriting."""
-    vector_changed = (
-        job.embedding_vector is None
-        or len(job.embedding_vector) != len(vector)
-        or not np.allclose(job.embedding_vector, vector)
-    )
+    current = _canonical_embedding_vector(vector)
+
+    vector_changed = True
+    if job.embedding_vector is not None:
+        try:
+            stored = np.asarray(job.embedding_vector, dtype=np.float32)
+            vector_changed = not (
+                stored.shape == current.shape
+                and np.isfinite(stored).all()
+                and np.array_equal(stored, current)
+            )
+        except (TypeError, ValueError):
+            pass
     if vector_changed:
-        job.embedding_vector = vector
+        job.embedding_vector = current.tolist()
     job.embedding_input_sha256 = job_embedding_input_sha256(
         job.title or "",
         job.description or "",
@@ -216,9 +241,10 @@ def refresh_job_embeddings(
     db_session: Session,
     *,
     force: bool = False,
+    missing_only: bool = False,
     limit: int | None = None,
-    batch_size: int = 32,
-    page_size: int = 500,
+    batch_size: int = EMBEDDING_DEFAULT_BATCH_SIZE,
+    page_size: int = EMBEDDING_REFRESH_PAGE_SIZE,
     on_progress: Callable[[dict[str, int | bool]], None] | None = None,
 ) -> dict[str, int | bool]:
     """Refresh public-job vectors and publish one cross-process generation."""
@@ -230,7 +256,10 @@ def refresh_job_embeddings(
     scanned = 0
     refreshed = 0
     vector_rewrites = 0
+    unresolved = 0
     deferred_due_to_limit = False
+    if force and missing_only:
+        raise ValueError("force and missing_only cannot be combined")
     last_id = 0
     while True:
         page = (
@@ -243,7 +272,12 @@ def refresh_job_embeddings(
             break
         last_id = page[-1].id
         scanned += len(page)
-        batch = [job for job in page if force or not embedding_is_current(job)]
+        stale = [job for job in page if force or not embedding_is_current(job)]
+        if missing_only:
+            batch = [job for job in stale if job.embedding_vector is None]
+            unresolved += len(stale) - len(batch)
+        else:
+            batch = stale
         if limit is not None:
             remaining = max(0, limit - refreshed)
             deferred_due_to_limit = deferred_due_to_limit or len(batch) > remaining
@@ -256,6 +290,12 @@ def refresh_job_embeddings(
                 ],
                 batch_size=batch_size,
             )
+            if len(vectors) != len(batch):
+                raise ValueError("embedding encoder returned an unexpected vector count")
+            vectors = [
+                _canonical_embedding_vector(vector).tolist()
+                for vector in vectors
+            ]
             vector_rewrites += sum(
                 stamp_job_embedding(job, vector)
                 for job, vector in zip(batch, vectors)
@@ -268,21 +308,31 @@ def refresh_job_embeddings(
             "scanned": scanned,
             "refreshed": refreshed,
             "vector_rewrites": vector_rewrites,
-            "complete": scanned == searchable and not deferred_due_to_limit,
+            "unresolved": unresolved,
+            "complete": (
+                scanned == searchable
+                and not deferred_due_to_limit
+                and unresolved == 0
+            ),
         }
         if on_progress is not None:
             on_progress(state)
         if limit is not None and refreshed >= limit:
             break
 
-    complete = scanned == searchable and not deferred_due_to_limit
+    complete = (
+        scanned == searchable
+        and not deferred_due_to_limit
+        and unresolved == 0
+    )
     if refreshed:
         db_session.add(UsageLog(
             user_id=None,
             action="job_embedding_refresh",
             detail=(
                 f"scanned={scanned};refreshed={refreshed};"
-                f"vector_rewrites={vector_rewrites};complete={int(complete)};"
+                f"vector_rewrites={vector_rewrites};unresolved={unresolved};"
+                f"complete={int(complete)};"
                 f"model={EMBEDDING_MODEL_IDENTITY}"
             ),
         ))
@@ -301,6 +351,7 @@ def refresh_job_embeddings(
         "scanned": scanned,
         "refreshed": refreshed,
         "vector_rewrites": vector_rewrites,
+        "unresolved": unresolved,
         "complete": complete,
     }
 

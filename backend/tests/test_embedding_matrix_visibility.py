@@ -32,7 +32,7 @@ def _add_job(db, posted_at_sort: str, hidden: int = 0):
         dedup_key=f"test-{tag}",
         posted_at_sort=posted_at_sort,
         hidden=hidden,
-        embedding_vector=[0.1] * 384,
+        embedding_vector=[1.0] + [0.0] * 383,
         embedding_input_sha256=embedding_service.job_embedding_input_sha256(
             f"role-{tag}",
             "",
@@ -282,7 +282,7 @@ def test_careersgov_term_refresh_invalidates_changed_embedding(monkeypatch):
         skills=["quality"],
         dedup_key="careersgov-refresh",
     )
-    embedding_service.stamp_job_embedding(job, [0.1] * 384)
+    embedding_service.stamp_job_embedding(job, [1.0] + [0.0] * 383)
     monkeypatch.setattr(main, "_build_canonical_job_terms", lambda *_args: [])
     monkeypatch.setattr(main, "_has_rich_job_terms", lambda _terms: False)
     monkeypatch.setattr(

@@ -1778,6 +1778,7 @@ def admin_backfill_enrichment(
 
 
 _embedding_backfill_progress: dict = {"running": False, "done": 0, "total": 0, "phase": "idle"}
+_embedding_backfill_lock = threading.Lock()
 
 @app.post("/api/admin/rollup-company-promotional")
 def admin_rollup_company_promotional(
@@ -1826,30 +1827,57 @@ def admin_backfill_embeddings(
     body: dict | None = None,
     authorization: Optional[str] = Header(None),
 ) -> dict:
-    """Trigger embedding backfill for all jobs. Protected by ADMIN_API_KEY."""
+    """Trigger one bounded embedding-backfill batch. Protected by ADMIN_API_KEY."""
     _require_admin(authorization)
 
-    if _embedding_backfill_progress.get("running"):
-        return {"status": "already_running", **_embedding_backfill_progress}
+    payload = body or {}
+    force = payload.get("force", False)
+    if not isinstance(force, bool):
+        raise HTTPException(status_code=400, detail="force must be a boolean")
+    from embedding_service import (
+        EMBEDDING_DEFAULT_BATCH_SIZE,
+        EMBEDDING_MAX_BATCH_SIZE,
+        EMBEDDING_REFRESH_PAGE_SIZE,
+    )
 
-    force = (body or {}).get("force", False)
-    try:
-        batch_size = int((body or {}).get("batch_size", 64))
-    except (TypeError, ValueError):
-        batch_size = 64
-    batch_size = max(1, min(batch_size, 256))
+    raw_batch_size = payload.get("batch_size", EMBEDDING_DEFAULT_BATCH_SIZE)
+    if isinstance(raw_batch_size, bool) or not isinstance(raw_batch_size, int):
+        raise HTTPException(status_code=400, detail="batch_size must be an integer")
+    batch_size = raw_batch_size
+    if not 1 <= batch_size <= EMBEDDING_MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"batch_size must be between 1 and {EMBEDDING_MAX_BATCH_SIZE}",
+        )
 
-    def run_backfill() -> None:
+    raw_limit = payload.get("limit", EMBEDDING_REFRESH_PAGE_SIZE)
+    if isinstance(raw_limit, bool) or not isinstance(raw_limit, int):
+        raise HTTPException(status_code=400, detail="limit must be an integer")
+    limit = raw_limit
+    if not 1 <= limit <= EMBEDDING_REFRESH_PAGE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"limit must be between 1 and {EMBEDDING_REFRESH_PAGE_SIZE}",
+        )
+
+    with _embedding_backfill_lock:
+        if _embedding_backfill_progress.get("running"):
+            return {"status": "already_running", **_embedding_backfill_progress}
         _embedding_backfill_progress.update(
             running=True,
             done=0,
             refreshed=0,
             vector_rewrites=0,
+            unresolved=0,
             total=0,
             phase="embedding",
+            complete=False,
+            limit=limit,
             error_code="",
             error_type="",
         )
+
+    def run_backfill() -> None:
         try:
             from embedding_service import refresh_job_embeddings
             from database import SessionLocal
@@ -1862,6 +1890,8 @@ def admin_backfill_embeddings(
                         done=int(state["scanned"]),
                         refreshed=int(state["refreshed"]),
                         vector_rewrites=int(state["vector_rewrites"]),
+                        unresolved=int(state["unresolved"]),
+                        complete=bool(state["complete"]),
                     )
                     log.info(
                         "[EmbedBackfill] scanned=%s/%s refreshed=%s rewrites=%s",
@@ -1874,8 +1904,9 @@ def admin_backfill_embeddings(
                 result = refresh_job_embeddings(
                     db,
                     force=force,
+                    limit=limit,
                     batch_size=batch_size,
-                    page_size=max(batch_size, 500),
+                    page_size=EMBEDDING_REFRESH_PAGE_SIZE,
                     on_progress=report,
                 )
                 report(result)
@@ -1889,12 +1920,25 @@ def admin_backfill_embeddings(
                 error_type=type(e).__name__,
             )
         else:
-            _embedding_backfill_progress["phase"] = "done"
+            _embedding_backfill_progress["phase"] = (
+                "done" if _embedding_backfill_progress["complete"] else "paused"
+            )
         finally:
-            _embedding_backfill_progress["running"] = False
+            with _embedding_backfill_lock:
+                _embedding_backfill_progress["running"] = False
 
-    threading.Thread(target=run_backfill, daemon=True).start()
-    return {"status": "started", "force": force}
+    try:
+        threading.Thread(target=run_backfill, daemon=True).start()
+    except Exception as exc:
+        with _embedding_backfill_lock:
+            _embedding_backfill_progress.update(
+                running=False,
+                phase="failed",
+                error_code="embedding_backfill_start_failed",
+                error_type=type(exc).__name__,
+            )
+        raise
+    return {"status": "started", "force": force, "limit": limit}
 
 
 @app.get("/api/admin/backfill-embeddings/status")
@@ -1903,7 +1947,8 @@ def admin_backfill_embeddings_status(
 ) -> dict:
     """Check embedding backfill progress."""
     _require_admin(authorization)
-    return dict(_embedding_backfill_progress)
+    with _embedding_backfill_lock:
+        return dict(_embedding_backfill_progress)
 
 
 @app.post("/api/admin/rebuild-skills-taxonomy")
