@@ -147,7 +147,7 @@ def job_title_matches(title: str | None, phrase: str | None) -> bool:
 # kept away from tiers below their own. 42% of the live corpus sits in the junior
 # tier, which is why an experienced candidate otherwise gets shown traineeships.
 JUNIOR_SENIORITY_LABELS = frozenset({
-    "fresh/entry level", "entry level", "junior executive", "executive", "non-executive",
+    "fresh/entry level", "entry level", "junior executive", "non-executive",
     "intern", "internship", "traineeship", "student",
 })
 # Titles carry it even when the seniority column does not.
@@ -155,6 +155,11 @@ _JUNIOR_TITLE = re.compile(
     r"\b(intern|internship|trainee|traineeship|apprentice|fresh\s*grad\w*|entry[-\s]?level)\b",
     re.IGNORECASE,
 )
+EXPERIENCED_TITLE_PATTERN = (
+    r"(^|[^a-z])(?:assistant\s+manager|manager|senior|staff|lead|principal|"
+    r"director|head|vice\s+president)([^a-z]|$)"
+)
+_EXPERIENCED_TITLE = re.compile(EXPERIENCED_TITLE_PATTERN, re.IGNORECASE)
 
 
 def is_junior_posting(
@@ -169,14 +174,19 @@ def is_junior_posting(
     constraint.
     """
     del salary_floor
-    return (
-        (seniority or "").strip().lower() in JUNIOR_SENIORITY_LABELS
-        or bool(_JUNIOR_TITLE.search(title or ""))
-    )
+    level = (seniority or "").strip().lower()
+    if level in JUNIOR_SENIORITY_LABELS or _JUNIOR_TITLE.search(title or ""):
+        return True
+    return level == "executive" and not _EXPERIENCED_TITLE.search(title or "")
 
 
-def experienced_hire_prefilter_condition(seniority_column, salary_floor_column):
+def experienced_hire_prefilter_condition(seniority_column, title_column):
     """Portable SQL prefilter; Python verifies title evidence after loading."""
-    del salary_floor_column
     seniority = func.lower(func.coalesce(seniority_column, ""))
-    return ~seniority.in_(JUNIOR_SENIORITY_LABELS)
+    experienced_title = func.lower(func.coalesce(title_column, "")).regexp_match(
+        EXPERIENCED_TITLE_PATTERN
+    )
+    return and_(
+        ~seniority.in_(JUNIOR_SENIORITY_LABELS),
+        or_(seniority != "executive", experienced_title),
+    )

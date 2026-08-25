@@ -141,7 +141,7 @@ def search_jobs(
             if exclude_junior:
                 eligible_query = eligible_query.filter(experienced_hire_prefilter_condition(
                     ScrapedJob.seniority,
-                    ScrapedJob.salary_floor,
+                    ScrapedJob.title,
                 ))
             if singapore_only:
                 eligible_query = eligible_query.filter(

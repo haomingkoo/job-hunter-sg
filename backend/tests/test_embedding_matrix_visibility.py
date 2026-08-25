@@ -312,6 +312,7 @@ def test_experienced_hire_sql_prefilter_plus_python_matches_classification():
         ("Professional", "Graduate Trainee", 0),
         ("Non-executive", "Project Manager", 12_500),
         ("Executive", "Process Engineer", 6_000),
+        ("Executive", "Assistant Quality Manager", 4_500),
         ("Senior Executive", "Staff Engineer", 6_000),
         ("Manager", "Quality Manager", 3_500),
     ]
@@ -333,7 +334,7 @@ def test_experienced_hire_sql_prefilter_plus_python_matches_classification():
                 ScrapedJob.id.in_([job.id for job in jobs]),
                 experienced_hire_prefilter_condition(
                     ScrapedJob.seniority,
-                    ScrapedJob.salary_floor,
+                    ScrapedJob.title,
                 ),
             )
         }
