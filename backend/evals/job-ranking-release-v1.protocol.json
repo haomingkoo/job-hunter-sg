@@ -9,7 +9,11 @@
   },
   "encoder": {
     "model": "sentence-transformers/all-MiniLM-L6-v2",
-    "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+    "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "frozen_matrix_sha256": "962735c4dba398a345ba58b6d3ee1c122bf576f239a8212d4a7fcabda557df1b",
+    "frozen_matrix_shape": [81031, 384],
+    "frozen_matrix_dtype": "float32",
+    "derivation": "The encoder was run over build_job_embed_text for each corpus row in JSONL order"
   },
   "candidate_profile": {
     "scope": "synthetic evaluation persona; not a private resume",
