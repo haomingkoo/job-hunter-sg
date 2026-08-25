@@ -110,6 +110,22 @@ RECRUITER_DESCRIPTION_SQL_PATTERN = (
 EA_LICENCE_NUMBER_PATTERN = r"(^|[^a-z0-9])\d{2}[cs]\d{4}([^a-z0-9]|$)"
 _EA_LICENCE_NUMBER_RE = re.compile(EA_LICENCE_NUMBER_PATTERN, re.IGNORECASE)
 
+# Some agencies omit their licence from the posting and describe an unnamed
+# client in the third person. This is evidence that the named poster is not the
+# employing company; ordinary references to a direct employer's customers do
+# not match these forms.
+ANONYMOUS_CLIENT_DESCRIPTION_PATTERN = (
+    r"(^|[^a-z])(?:"
+    r"(?:our\s+client|the\s+hiring\s+company)\s+(?:is|are|seeks?|requires?)"
+    r"|(?:we\s+are\s+)?hiring\s+on\s+behalf\s+of"
+    r"|an?\s+(?:well[-\s]+)?established\b[^.!?\n]*\bis\s+(?:looking|seeking)"
+    r")([^a-z]|$)"
+)
+_ANONYMOUS_CLIENT_DESCRIPTION_RE = re.compile(
+    ANONYMOUS_CLIENT_DESCRIPTION_PATTERN,
+    re.IGNORECASE,
+)
+
 
 def normalize_employer_name(name: str) -> str:
     text = (name or "").lower().replace("&", " and ")
@@ -140,7 +156,10 @@ def is_recruitment_employer(
     return any(
         _contains_phrase(job_description, marker)
         for marker in RECRUITER_DESCRIPTION_MARKERS
-    ) or bool(_EA_LICENCE_NUMBER_RE.search(job_description))
+    ) or bool(
+        _EA_LICENCE_NUMBER_RE.search(job_description)
+        or _ANONYMOUS_CLIENT_DESCRIPTION_RE.search(description or "")
+    )
 
 
 def is_direct_employer(
@@ -184,6 +203,9 @@ def direct_employer_condition(
         )
         recruiter_conditions.append(
             description_lower.regexp_match(EA_LICENCE_NUMBER_PATTERN)
+        )
+        recruiter_conditions.append(
+            description_lower.regexp_match(ANONYMOUS_CLIENT_DESCRIPTION_PATTERN)
         )
     return and_(func.trim(company_lower) != "", ~or_(*recruiter_conditions))
 

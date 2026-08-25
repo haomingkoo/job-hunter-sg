@@ -147,7 +147,7 @@ def job_title_matches(title: str | None, phrase: str | None) -> bool:
 # kept away from tiers below their own. 42% of the live corpus sits in the junior
 # tier, which is why an experienced candidate otherwise gets shown traineeships.
 JUNIOR_SENIORITY_LABELS = frozenset({
-    "fresh/entry level", "entry level", "junior executive", "non-executive",
+    "fresh/entry level", "entry level", "junior executive", "executive", "non-executive",
     "intern", "internship", "traineeship", "student",
 })
 # Titles carry it even when the seniority column does not.

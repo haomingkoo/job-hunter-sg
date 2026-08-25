@@ -311,6 +311,8 @@ def test_experienced_hire_sql_prefilter_plus_python_matches_classification():
         ("Manager", "Production Manager", 0),
         ("Professional", "Graduate Trainee", 0),
         ("Non-executive", "Project Manager", 12_500),
+        ("Executive", "Process Engineer", 6_000),
+        ("Senior Executive", "Staff Engineer", 6_000),
         ("Manager", "Quality Manager", 3_500),
     ]
     db = SessionLocal()

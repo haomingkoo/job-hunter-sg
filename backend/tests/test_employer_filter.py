@@ -64,6 +64,17 @@ def test_verified_agencies_and_ea_licence_markers_are_recruiters():
         "MTC Consulting Pte. Ltd.",
         description="Consultant registration R24124448, agency licence 15C7752.",
     )
+    assert is_recruitment_employer(
+        "Example Solutions Pte. Ltd.",
+        description=(
+            "An established semiconductor component distributor is looking for "
+            "a Sales Manager to lead its regional team."
+        ),
+    )
+    assert is_recruitment_employer(
+        "Example Advisory Pte. Ltd.",
+        description="Our client is a global manufacturer seeking a Quality Manager.",
+    )
 
 
 def test_alias_and_description_checks_avoid_nearby_false_positives():
@@ -81,6 +92,14 @@ def test_alias_and_description_checks_avoid_nearby_false_positives():
     assert not is_recruitment_employer(
         "Example Marine Pte Ltd",
         description="SEA personnel coordinate vessel operations.",
+    )
+    assert not is_recruitment_employer(
+        "Established Components Pte Ltd",
+        description="We are an established manufacturer looking for a Quality Manager.",
+    )
+    assert not is_recruitment_employer(
+        "Example Electronics Pte Ltd",
+        description="Build durable relationships because our clients require quality.",
     )
 
 
@@ -152,6 +171,16 @@ def test_sql_condition_matches_python_classification():
             "description": "Registered employment agency (license #12S5884).",
         },
         {
+            "company": "Example Solutions Pte Ltd",
+            "ssic": "",
+            "description": "An established semiconductor distributor is looking for a Sales Manager.",
+        },
+        {
+            "company": "Example Advisory Pte Ltd",
+            "ssic": "",
+            "description": "Our client is a global manufacturer seeking a Quality Manager.",
+        },
+        {
             "company": "Example Software Pte Ltd",
             "ssic": "Software publishing",
             "description": "Manage software licence renewals for the EA platform.",
@@ -170,6 +199,11 @@ def test_sql_condition_matches_python_classification():
             "company": "Direct Employer Pte Ltd",
             "ssic": None,
             "description": None,
+        },
+        {
+            "company": "Established Components Pte Ltd",
+            "ssic": "Manufacturing",
+            "description": "We are an established manufacturer looking for a Quality Manager.",
         },
         {
             "company": "GMP-TECHNOLOGIES (S) PTE LTD",
