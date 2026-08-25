@@ -21,7 +21,8 @@ if TYPE_CHECKING:
 _model: SentenceTransformer | None = None
 _model_lock = threading.Lock()
 _encode_lock = threading.Lock()
-_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
 
 
 def _get_model() -> SentenceTransformer:
@@ -33,7 +34,10 @@ def _get_model() -> SentenceTransformer:
         if _model is not None:
             return _model
         from sentence_transformers import SentenceTransformer
-        _model = SentenceTransformer(_MODEL_NAME)
+        _model = SentenceTransformer(
+            EMBEDDING_MODEL_NAME,
+            revision=EMBEDDING_MODEL_REVISION,
+        )
         return _model
 
 
@@ -208,10 +212,10 @@ def find_similar_jobs(
         candidate_ids = _job_ids
         candidate_matrix = _job_matrix
 
-    return _rank_matrix(query_vector, candidate_ids, candidate_matrix, top_k)
+    return rank_embedding_matrix(query_vector, candidate_ids, candidate_matrix, top_k)
 
 
-def _rank_matrix(
+def rank_embedding_matrix(
     query_vector: list[float],
     job_ids: list[int],
     matrix: np.ndarray,
@@ -258,7 +262,7 @@ def find_similar_jobs_for_ids(
     if not vectors:
         return []
 
-    return _rank_matrix(
+    return rank_embedding_matrix(
         query_vector,
         ids,
         np.array(vectors, dtype=np.float32),

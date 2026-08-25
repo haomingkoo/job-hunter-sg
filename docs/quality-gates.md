@@ -22,6 +22,17 @@ criteria. Keep the check close to the changed behavior.
 - Agent-facing tools should return capped, minimal, structured results with
   explicit empty states. Add detail expansion only when needed.
 
+The semantic retrieval backtest is mandatory in CI inside the offline crawler
+image and opt-in for local development because it loads the pinned embedding
+model and revision. It uses synthetic job text and human-authored ordering/constraint
+invariants; NDCG is reported for diagnosis but no unexplained score threshold
+controls the gate.
+
+```bash
+cd backend
+.venv/bin/python -m scripts.evaluate_job_ranking
+```
+
 ## Research Outputs
 
 Research artifacts must save:

@@ -17,6 +17,9 @@ def test_verified_agencies_and_ea_licence_markers_are_recruiters():
         "Search Avenue Pte Ltd",
         "Oaktree Consulting",
         "Direct Search Asia Pte. Ltd.",
+        "Asia Search Pte. Ltd.",
+        "Asia-Search Pte. Ltd.",
+        "Kerry Consulting Pte. Ltd.",
         "AISEARCH PTE. LTD.",
         "Starsearch",
         "Placement Professionals",
@@ -89,6 +92,21 @@ def test_sql_condition_matches_python_classification():
             "company": "Direct Search Asia Pte. Ltd.",
             "ssic": "",
             "description": "Technology role.",
+        },
+        {
+            "company": "Asia Search Pte. Ltd.",
+            "ssic": "",
+            "description": "Semiconductor role.",
+        },
+        {
+            "company": "Asia-Search Pte. Ltd.",
+            "ssic": "",
+            "description": "Semiconductor role.",
+        },
+        {
+            "company": "Kerry Consulting Pte. Ltd.",
+            "ssic": "",
+            "description": "Production role.",
         },
         {
             "company": "J&L Apex Advisory Pte. Ltd.",

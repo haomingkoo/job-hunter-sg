@@ -1,0 +1,58 @@
+{
+  "dataset_version": "job-ranking-v1",
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "model_revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+  "cases": [
+    {
+      "case_id": "semiconductor-manufacturing-general",
+      "query": "senior semiconductor manufacturing transformation quality systems yield improvement multi-site leadership",
+      "direct_employers_only": true,
+      "company": "",
+      "top_k": 5,
+      "candidates": [
+        {"id": 101, "title": "Senior Manufacturing Transformation Manager", "company": "Atlas Semiconductor Pte Ltd", "description": "Lead multi-site fab transformation, production governance, yield improvement, change management and engineering teams.", "skills": ["semiconductor manufacturing", "yield", "change management", "leadership"], "relevance": 3},
+        {"id": 102, "title": "Quality Systems Manager", "company": "Lumina Microelectronics Pte Ltd", "description": "Own semiconductor QMS, CAPA, ISO 9001, 8D and FMEA across manufacturing sites.", "skills": ["QMS", "CAPA", "ISO 9001", "8D", "FMEA"], "relevance": 3},
+        {"id": 103, "title": "Production Manager", "company": "Silicon Foundry Pte Ltd", "description": "Manage shift production, output, equipment utilization, process control and yield in a semiconductor fab.", "skills": ["production", "yield", "process control"], "relevance": 2},
+        {"id": 104, "title": "Senior Customer Quality Engineer", "company": "Asia Search Pte Ltd", "description": "Agency-listed semiconductor customer quality role covering complaints, SPC and 8D.", "skills": ["customer quality", "SPC", "8D"], "relevance": 1},
+        {"id": 105, "title": "Restaurant Operations Manager", "company": "Good Food Pte Ltd", "description": "Run restaurant service, food safety, staffing and daily outlet operations.", "skills": ["food service", "staffing"], "relevance": 0},
+        {"id": 106, "title": "Junior Laboratory Technician", "company": "Atlas Semiconductor Pte Ltd", "description": "Perform routine sample preparation and laboratory measurements under supervision.", "skills": ["sample preparation"], "relevance": 0}
+      ],
+      "required_in_top_k": [101, 102],
+      "forbidden_in_results": [104],
+      "pairwise_preferences": [[101, 105], [102, 105], [103, 106]]
+    },
+    {
+      "case_id": "explicit-micron-company",
+      "query": "semiconductor manufacturing quality transformation manager",
+      "direct_employers_only": true,
+      "company": "Micron",
+      "top_k": 5,
+      "candidates": [
+        {"id": 201, "title": "Senior Manager, Manufacturing Quality", "company": "Micron Semiconductor Asia Operations Pte Ltd", "description": "Lead fab quality systems, deviation management, manufacturing transformation and engineering teams.", "skills": ["quality systems", "manufacturing", "deviation management"], "relevance": 3},
+        {"id": 202, "title": "Manufacturing Excellence Manager", "company": "Micron Technology Pte Ltd", "description": "Drive operational excellence, yield improvement and cross-site semiconductor programs.", "skills": ["operational excellence", "yield", "program leadership"], "relevance": 3},
+        {"id": 203, "title": "Equipment Technician", "company": "Micron Technology Pte Ltd", "description": "Maintain production equipment and execute preventive maintenance on shift.", "skills": ["equipment maintenance"], "relevance": 0},
+        {"id": 204, "title": "Senior Quality Manager", "company": "Other Semiconductor Pte Ltd", "description": "Own semiconductor quality systems and manufacturing transformation.", "skills": ["quality systems", "manufacturing"], "relevance": 0},
+        {"id": 205, "title": "Micron Product Sales Manager", "company": "Ecomicron Systems Pte Ltd", "description": "Sell industrial measurement products to regional accounts.", "skills": ["sales"], "relevance": 0}
+      ],
+      "required_in_top_k": [201, 202],
+      "forbidden_in_results": [204, 205],
+      "pairwise_preferences": [[201, 203], [202, 203]]
+    },
+    {
+      "case_id": "agency-opt-in",
+      "query": "semiconductor quality systems manager ISO 9001 CAPA 8D",
+      "direct_employers_only": false,
+      "company": "",
+      "top_k": 4,
+      "candidates": [
+        {"id": 301, "title": "Quality Systems Manager", "company": "Direct Chipmaker Pte Ltd", "description": "Own ISO 9001 QMS, CAPA and 8D for semiconductor manufacturing.", "skills": ["ISO 9001", "QMS", "CAPA", "8D"], "relevance": 3},
+        {"id": 302, "title": "Assistant Quality Manager", "company": "GMP Technologies (S) Pte Ltd", "description": "Agency-listed semiconductor equipment quality role using ISO 9001, CAPA, FMEA and 8D.", "skills": ["ISO 9001", "CAPA", "FMEA", "8D"], "relevance": 2},
+        {"id": 303, "title": "Quality Inspector", "company": "Direct Components Pte Ltd", "description": "Inspect incoming components and record defects under supervision.", "skills": ["inspection"], "relevance": 0},
+        {"id": 304, "title": "Marketing Manager", "company": "GMP Technologies (S) Pte Ltd", "description": "Plan campaigns, events and digital marketing programs.", "skills": ["marketing"], "relevance": 0}
+      ],
+      "required_in_top_k": [301, 302],
+      "forbidden_in_results": [],
+      "pairwise_preferences": [[301, 303], [302, 304]]
+    }
+  ]
+}

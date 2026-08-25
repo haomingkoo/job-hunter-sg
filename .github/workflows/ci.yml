@@ -79,6 +79,15 @@ jobs:
       - name: Build scheduled alert image
         run: docker build --file Dockerfile.alerts --tag job-hunter-sg-alerts-ci:${{ github.sha }} .
 
+      - name: Build scheduled crawler image
+        run: docker build --file Dockerfile.crawler --tag job-hunter-sg-crawler-ci:${{ github.sha }} .
+
+      - name: Run semantic job-ranking regression
+        run: >-
+          docker run --rm --entrypoint python
+          job-hunter-sg-crawler-ci:${{ github.sha }}
+          -m scripts.evaluate_job_ranking
+
   frontend-build:
     name: Frontend tests and build
     runs-on: ubuntu-latest
