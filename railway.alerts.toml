@@ -1,0 +1,2 @@
+# Compatibility stub for Railway's legacy service config-file pointer.
+# All alert-worker settings live in .railway/railway.ts.
