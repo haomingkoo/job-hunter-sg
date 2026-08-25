@@ -265,6 +265,107 @@ def test_search_jobs_applies_company_and_direct_employer_constraints_before_rank
     assert agency_opt_in["eligible_candidate_count"] == 2
 
 
+def test_search_jobs_excludes_explicit_overseas_worksite_in_description(monkeypatch):
+    from datetime import datetime, timezone
+
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+
+    from models import ScrapedJob
+    import resume_agent.tools as agent_tools
+
+    engine = create_engine("sqlite://")
+    ScrapedJob.__table__.create(engine)
+    sessions = sessionmaker(bind=engine)
+    now = datetime.now(timezone.utc).isoformat()
+    with sessions() as db:
+        db.add_all([
+            ScrapedJob(
+                id=1,
+                title="Head of Legal, Malaysia",
+                company="Example",
+                description="Lead the legal team.",
+                location="Singapore",
+                url="https://example.test/1",
+                source="test",
+                dedup_key="worksite-1",
+                posted_at_sort=now,
+            ),
+            ScrapedJob(
+                id=2,
+                title="Head of Legal",
+                company="Example",
+                description="This role is based in Malaysia.",
+                location="Singapore",
+                url="https://example.test/2",
+                source="test",
+                dedup_key="worksite-2",
+                posted_at_sort=now,
+            ),
+            ScrapedJob(
+                id=3,
+                title="Head of Legal",
+                company="Example",
+                description="Travel to Malaysia to support customers there.",
+                location="Singapore",
+                url="https://example.test/3",
+                source="test",
+                dedup_key="worksite-3",
+                posted_at_sort=now,
+            ),
+            ScrapedJob(
+                id=4,
+                title="Head of Legal",
+                company="Example",
+                description="Working Location: Kuala Lumpur",
+                location="Singapore",
+                url="https://example.test/4",
+                source="test",
+                dedup_key="worksite-4",
+                posted_at_sort=now,
+            ),
+            ScrapedJob(
+                id=5,
+                title="Head of Legal",
+                company="Example",
+                description="Work Location: Shanghai, China",
+                location="Singapore",
+                url="https://example.test/5",
+                source="test",
+                dedup_key="worksite-5",
+                posted_at_sort=now,
+            ),
+        ])
+        db.commit()
+
+    captured_eligible_ids = []
+
+    def fake_similarity(_vector, _db, eligible_job_ids, top_k):
+        captured_eligible_ids.append(set(eligible_job_ids or ()))
+        return [(job_id, 0.9) for job_id in sorted(eligible_job_ids or ())][:top_k]
+
+    monkeypatch.setattr(agent_tools, "SessionLocal", sessions)
+    monkeypatch.setattr(agent_tools, "encode_text", lambda _query: [0.1, 0.2])
+    monkeypatch.setattr(agent_tools, "find_similar_jobs_for_ids", fake_similarity)
+
+    selected_statements = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def record_selects(_conn, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            selected_statements.append(statement)
+
+    result = agent_tools.search_jobs.invoke({
+        "query": "legal leadership",
+        "company": "Example",
+    })
+
+    assert captured_eligible_ids == [{3}]
+    assert [job["id"] for job in result["results"]] == [3]
+    initial_projection = selected_statements[0].split("FROM", 1)[0]
+    assert "description" not in initial_projection.casefold()
+
+
 def test_job_dedup_preserves_posting_and_salary_variants():
     from agent_tool_contract import deduplicate_job_payloads, search_jobs_result
 

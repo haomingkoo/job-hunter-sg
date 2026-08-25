@@ -1669,6 +1669,7 @@ def test_the_coordinator_binds_only_the_tools_it_needs():
     from langchain_openai import ChatOpenAI
 
     from recruitment_team.coordinator.model import DeepAgentConversationModel
+    from recruitment_team.prompts import COORDINATOR_SYSTEM_PROMPT
 
     model = DeepAgentConversationModel(
         model_factory=lambda: ChatOpenAI(model="x", api_key="ph", base_url="http://localhost:1")
@@ -1706,6 +1707,10 @@ def test_the_coordinator_binds_only_the_tools_it_needs():
     assert "write_todos" not in bound
     for inherited in ("execute", "edit_file", "write_file", "glob", "grep", "ls", "task"):
         assert inherited not in bound
+    normalized_prompt = " ".join(COORDINATOR_SYSTEM_PROMPT.split()).casefold()
+    assert "which tools are useful" in normalized_prompt
+    assert "which tools and specialists are useful" not in normalized_prompt
+    assert "delegate" not in normalized_prompt
 
 
 def test_the_coordinator_model_is_built_explicitly(monkeypatch):

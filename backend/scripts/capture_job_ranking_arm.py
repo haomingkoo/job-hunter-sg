@@ -95,7 +95,7 @@ def _eligible(
     if title_phrase and not visibility.job_title_matches(title, title_phrase):
         return False
     if case.get("singapore_only", True) and not visibility.is_singapore_job_location(
-        str(job.get("location") or ""), title
+        str(job.get("location") or ""), title, description
     ):
         return False
     return not case.get("exclude_junior", False) or not visibility.is_junior_posting(

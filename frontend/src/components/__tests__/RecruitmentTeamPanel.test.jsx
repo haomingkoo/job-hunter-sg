@@ -2,7 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import RecruitmentTeamPanel from "../RecruitmentTeamPanel.jsx";
+import RecruitmentTeamPanel, { ExecutionDetails } from "../RecruitmentTeamPanel.jsx";
 import { apiFetch } from "../../lib/api.js";
 import { streamRecruitmentCommand } from "../../lib/recruitmentTeamApi.js";
 
@@ -29,6 +29,28 @@ describe("RecruitmentTeamPanel", () => {
     act(() => root.unmount());
     vi.useRealTimers();
     container.remove();
+  });
+
+  it("separates workflow-reported and transport-observed execution usage", async () => {
+    await act(async () => root.render(<ExecutionDetails metrics={{
+      model_call_count: 2,
+      reported_model_call_count: 2,
+      transport_call_count: 1,
+      input_tokens: 3300,
+      reported_input_tokens: 3300,
+      transport_input_tokens: 1300,
+      output_tokens: 1300,
+      reported_output_tokens: 1300,
+      transport_output_tokens: 500,
+    }} />));
+
+    expect(container.textContent).toContain("Workflow-reported calls2");
+    expect(container.textContent).toContain("Transport-observed calls1");
+    expect(container.textContent).toContain("Workflow-reported input tokens3,300");
+    expect(container.textContent).toContain("Transport-observed input tokens1,300");
+    expect(container.textContent).toContain("Workflow-reported output tokens1,300");
+    expect(container.textContent).toContain("Transport-observed output tokens500");
+    expect(container.textContent).not.toContain("Model calls");
   });
 
   it("starts and continues one persisted recruitment conversation", async () => {
@@ -995,6 +1017,8 @@ describe("RecruitmentTeamPanel", () => {
       .find((element) => element.textContent.includes("Execution details"));
     expect(executionDetails.open).toBe(false);
     expect(executionDetails.textContent).toContain("Model calls12");
+    expect(executionDetails.textContent).not.toContain("Workflow-reported calls");
+    expect(executionDetails.textContent).not.toContain("Transport-observed calls");
     expect(executionDetails.textContent).toContain("Run time125 seconds");
     expect(executionDetails.textContent).toContain("Input tokens53,021");
     expect(executionDetails.textContent).toContain("Output tokens7,612");

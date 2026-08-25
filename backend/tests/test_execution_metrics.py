@@ -182,3 +182,28 @@ def test_merge_marks_token_usage_unavailable_when_any_nonempty_stage_lacks_it():
 
     assert merged["transport_token_usage_available"] is False
     assert merged["transport_by_role"]["coordinator"]["token_usage_available"] is False
+
+
+def test_merge_keeps_partial_transport_totals_separate_from_reported_totals():
+    merged = merge_execution_metrics({}, {
+        "model_call_count": 2,
+        "reported_model_call_count": 2,
+        "input_tokens": 33,
+        "output_tokens": 13,
+        "reported_input_tokens": 33,
+        "reported_output_tokens": 13,
+        "transport_call_count": 1,
+        "transport_input_tokens": 13,
+        "transport_output_tokens": 5,
+        "transport_token_usage_available": True,
+    })
+
+    assert merged["reported_model_call_count"] == 2
+    assert merged["transport_call_count"] == 1
+    assert merged["model_call_count"] == 2
+    assert merged["reported_input_tokens"] == 33
+    assert merged["reported_output_tokens"] == 13
+    assert merged["transport_input_tokens"] == 13
+    assert merged["transport_output_tokens"] == 5
+    assert merged["input_tokens"] == 33
+    assert merged["output_tokens"] == 13

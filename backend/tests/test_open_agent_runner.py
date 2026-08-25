@@ -158,8 +158,13 @@ def test_target_metrics_include_nested_resume_edit_validator_attempt(monkeypatch
     )
 
     assert metrics["model_call_count"] == 2
+    assert metrics["reported_model_call_count"] == 2
     assert metrics["input_tokens"] == 33
     assert metrics["output_tokens"] == 13
+    assert metrics["reported_input_tokens"] == 33
+    assert metrics["reported_output_tokens"] == 13
+    assert metrics["transport_input_tokens"] == 33
+    assert metrics["transport_output_tokens"] == 13
     assert metrics["models"] == ["coordinator-model", "evidence-model"]
     assert metrics["transport_latency_ms"] == 42.5
     assert metrics["transport_by_role"]["coordinator"]["input_tokens"] == 20
@@ -171,6 +176,49 @@ def test_target_metrics_include_nested_resume_edit_validator_attempt(monkeypatch
         "resume_edit_evidence:validator-call-1",
     ]
     assert "nested_model_attempts" not in metrics
+
+
+def test_target_metrics_do_not_promote_partial_transport_totals(monkeypatch):
+    monkeypatch.setattr(
+        "recruitment_team.open_agent.runner.current_transport_metrics",
+        lambda: {
+            "transport_call_count": 1,
+            "transport_input_tokens": 13,
+            "transport_output_tokens": 5,
+            "transport_token_usage_available": True,
+            "nested_model_attempts": [{
+                "attempt_id": "resume_edit_evidence:validator-call-1",
+                "stage": "resume_edit_evidence",
+                "team_member": "resume_edit_evidence",
+                "input_tokens": 13,
+                "output_tokens": 5,
+                "attempt_count": 1,
+                "status": "success",
+            }],
+        },
+    )
+
+    metrics = _target_execution_metrics(
+        _request(),
+        [{
+            "attempt_id": "coordinator-call-1",
+            "input_tokens": 20,
+            "output_tokens": 8,
+        }],
+        (),
+        10,
+        "completed",
+    )
+
+    assert metrics["reported_model_call_count"] == 2
+    assert metrics["transport_call_count"] == 1
+    assert metrics["model_call_count"] == 2
+    assert metrics["reported_input_tokens"] == 33
+    assert metrics["reported_output_tokens"] == 13
+    assert metrics["transport_input_tokens"] == 13
+    assert metrics["transport_output_tokens"] == 5
+    assert metrics["input_tokens"] == 33
+    assert metrics["output_tokens"] == 13
 
 
 def _judge_call(call_id: str = "judge-call-1", disposition: str = "pass") -> AIMessage:

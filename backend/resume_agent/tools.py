@@ -22,6 +22,7 @@ from job_visibility import (
     is_junior_posting,
     is_singapore_job_location,
     job_title_matches,
+    overseas_worksite_description_prefilter_condition,
     singapore_job_prefilter_condition,
 )
 from langchain_core.tools import tool
@@ -153,12 +154,33 @@ def search_jobs(
                 in eligible_query.all()
                 if (not clean_company or company_name_matches(employer, clean_company))
                 and (not clean_title_phrase or job_title_matches(title, clean_title_phrase))
-                and (not singapore_only or is_singapore_job_location(location, title))
+                and (
+                    not singapore_only
+                    or is_singapore_job_location(location, title)
+                )
                 and (
                     not exclude_junior
                     or not is_junior_posting(seniority, title)
                 )
             }
+            if singapore_only and eligible_job_ids:
+                suspect_descriptions = apply_public_job_visibility(
+                    db.query(ScrapedJob.id, ScrapedJob.description)
+                ).filter(
+                    singapore_job_prefilter_condition(ScrapedJob.location),
+                    overseas_worksite_description_prefilter_condition(
+                        ScrapedJob.description
+                    ),
+                )
+                eligible_job_ids.difference_update(
+                    job_id
+                    for job_id, description in suspect_descriptions.all()
+                    if job_id in eligible_job_ids
+                    and not is_singapore_job_location(
+                        "Singapore",
+                        description=description,
+                    )
+                )
         query_vector = encode_text(clean_query)
         candidate_limit = contract.semantic_candidate_limit(limit)
         if clean_company:

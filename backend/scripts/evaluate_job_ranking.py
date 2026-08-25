@@ -1,4 +1,4 @@
-"""Run the versioned, privacy-safe semantic job-ranking backtest."""
+"""Run the versioned, privacy-safe synthetic semantic job-ranking regression."""
 
 from __future__ import annotations
 

@@ -406,6 +406,29 @@ def test_singapore_sql_prefilter_plus_python_matches_classification():
         db.close()
 
 
+@pytest.mark.parametrize(
+    ("title", "description", "expected"),
+    (
+        ("Head of Legal, Malaysia", "Lead the legal team.", False),
+        ("Head of Legal", "This role is based in Malaysia.", False),
+        ("Head of Legal", "Working Location: Kuala Lumpur", False),
+        ("Head of Legal", "Work Location: Shanghai, China", False),
+        ("Head of Legal", "Office Location: Johor Bahru", False),
+        ("Head of Legal", "Travel to Malaysia to support customers.", True),
+        ("Head of Legal", "Support customers based in Malaysia.", True),
+        ("Malaysia Regional Legal Lead", "The worksite is in Singapore.", True),
+    ),
+)
+def test_singapore_location_requires_explicit_singapore_worksite_evidence(
+    title,
+    description,
+    expected,
+):
+    from job_visibility import is_singapore_job_location
+
+    assert is_singapore_job_location("Singapore", title, description) is expected
+
+
 def test_persisted_embedding_generation_invalidates_another_process_cache():
     import embedding_service
     from database import SessionLocal

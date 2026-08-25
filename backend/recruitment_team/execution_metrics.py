@@ -115,6 +115,56 @@ def merge_execution_metrics(current: dict | None, update: dict | None) -> dict:
         for source in (current, update)
         if int(source.get("transport_call_count") or 0) > 0
     ]
+    reported_model_call_count = (
+        sum(int(item.get("attempt_count") or 1) for item in attempts)
+        if attempts_are_identifiable
+        else sum(
+            int(source.get("reported_model_call_count", source.get("model_call_count", 0)) or 0)
+            for source in (current, update)
+        )
+    )
+    reported_input_tokens = (
+        sum(int(item.get("input_tokens") or 0) for item in attempts)
+        if attempts_are_identifiable
+        else sum(
+            int(source.get("reported_input_tokens", source.get("input_tokens", 0)) or 0)
+            for source in (current, update)
+        )
+    )
+    reported_output_tokens = (
+        sum(int(item.get("output_tokens") or 0) for item in attempts)
+        if attempts_are_identifiable
+        else sum(
+            int(source.get("reported_output_tokens", source.get("output_tokens", 0)) or 0)
+            for source in (current, update)
+        )
+    )
+    transport_call_count = sum(
+        int(source.get("transport_call_count") or 0) for source in (current, update)
+    )
+    transport_input_tokens = sum(
+        int(source.get("transport_input_tokens") or 0) for source in (current, update)
+    )
+    transport_output_tokens = sum(
+        int(source.get("transport_output_tokens") or 0) for source in (current, update)
+    )
+    transport_token_usage_available = bool(transport_sources) and all(
+        source.get("transport_token_usage_available") is True
+        for source in transport_sources
+    )
+    expose_separate_observations = any(
+        any(
+            key in source
+            for key in (
+                "reported_model_call_count",
+                "reported_input_tokens",
+                "reported_output_tokens",
+                "transport_input_tokens",
+                "transport_output_tokens",
+            )
+        )
+        for source in (current, update)
+    )
     return {
         "logical_run_id": str(current.get("logical_run_id") or update.get("logical_run_id") or ""),
         "trace_key": str(current.get("trace_key") or update.get("trace_key") or ""),
@@ -123,23 +173,11 @@ def merge_execution_metrics(current: dict | None, update: dict | None) -> dict:
             update.get("command_trace_key") or current.get("command_trace_key") or ""
         ),
         "stage": str(update.get("stage") or current.get("stage") or ""),
-        "model_call_count": (
-            sum(int(item.get("attempt_count") or 1) for item in attempts)
-            if attempts_are_identifiable
-            else int(current.get("model_call_count") or 0) + int(update.get("model_call_count") or 0)
-        ),
+        "model_call_count": reported_model_call_count,
         "checkpoint_hit_count": int(current.get("checkpoint_hit_count") or 0)
         + int(update.get("checkpoint_hit_count") or 0),
-        "input_tokens": (
-            sum(int(item.get("input_tokens") or 0) for item in attempts)
-            if attempts_are_identifiable
-            else int(current.get("input_tokens") or 0) + int(update.get("input_tokens") or 0)
-        ),
-        "output_tokens": (
-            sum(int(item.get("output_tokens") or 0) for item in attempts)
-            if attempts_are_identifiable
-            else int(current.get("output_tokens") or 0) + int(update.get("output_tokens") or 0)
-        ),
+        "input_tokens": reported_input_tokens,
+        "output_tokens": reported_output_tokens,
         "latency_ms": round(
             float(current.get("latency_ms") or 0) + float(update.get("latency_ms") or 0),
             3,
@@ -153,18 +191,14 @@ def merge_execution_metrics(current: dict | None, update: dict | None) -> dict:
         "semantic_outcomes": semantic_outcomes,
         "semantic_by_role": summarize_semantic_outcomes(semantic_outcomes),
         "terminal_status": str(update.get("terminal_status") or current.get("terminal_status") or ""),
-        "transport_call_count": int(current.get("transport_call_count") or 0)
-        + int(update.get("transport_call_count") or 0),
+        "transport_call_count": transport_call_count,
         "transport_attempt_count": int(current.get("transport_attempt_count") or 0)
         + int(update.get("transport_attempt_count") or 0),
         "transport_retry_count": int(current.get("transport_retry_count") or 0)
         + int(update.get("transport_retry_count") or 0),
         "transport_error_count": int(current.get("transport_error_count") or 0)
         + int(update.get("transport_error_count") or 0),
-        "transport_token_usage_available": bool(transport_sources) and all(
-            source.get("transport_token_usage_available") is True
-            for source in transport_sources
-        ),
+        "transport_token_usage_available": transport_token_usage_available,
         "transport_latency_ms": round(
             float(current.get("transport_latency_ms") or 0)
             + float(update.get("transport_latency_ms") or 0),
@@ -175,6 +209,13 @@ def merge_execution_metrics(current: dict | None, update: dict | None) -> dict:
             *(update.get("transport_models") or []),
         ])),
         "transport_by_role": transport_by_role,
+        **({
+            "reported_model_call_count": reported_model_call_count,
+            "reported_input_tokens": reported_input_tokens,
+            "reported_output_tokens": reported_output_tokens,
+            "transport_input_tokens": transport_input_tokens,
+            "transport_output_tokens": transport_output_tokens,
+        } if expose_separate_observations else {}),
     }
 
 
