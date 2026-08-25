@@ -14,6 +14,8 @@ environment. Confirm the target before any command that changes state.
 
 Keep the web service at one replica and one Python worker. Active-run
 coordination, caches, and rate limiting are not all shared across processes.
+The empty `railway*.toml` files are compatibility stubs for legacy provider-side
+config-file pointers. Operational values belong only in `.railway/railway.ts`.
 
 ## Routine health
 

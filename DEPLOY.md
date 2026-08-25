@@ -76,7 +76,8 @@ confirming the intended Railway target.
 
 Railway infrastructure is defined once in `.railway/railway.ts`. The web image
 builds the Vite frontend, copies `frontend/dist` into `backend/static`, and runs
-FastAPI as one service.
+FastAPI as one service. The empty `railway*.toml` compatibility stubs satisfy
+legacy provider-side config-file pointers; they must not contain service settings.
 
 Keep the web service at exactly one Railway replica and one Python worker. Agent,
 tailoring, rate-limit, and account-deletion coordination is intentionally

@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_legacy_railway_config_paths_are_empty_compatibility_stubs():
+    for filename in ("railway.toml", "railway.seed.toml", "railway.alerts.toml"):
+        assert tomllib.loads((ROOT / filename).read_text()) == {}
 
 
 def test_web_service_keeps_process_local_workflows_on_one_worker_and_replica():
