@@ -62,6 +62,8 @@ class JobSnapshot:
     job_terms_preview: tuple[str, ...] = ()
     salary_context: dict | None = None
     fact_context_status: str = "unavailable"
+    employer_relationship: str | None = None
+    employer_relationship_evidence: str = ""
 
     @classmethod
     def from_payload(cls, payload: dict) -> "JobSnapshot":
@@ -109,20 +111,18 @@ class JobSnapshot:
             source=source_from(payload),
             posting_variants=variants,
             sector=str(payload.get("sector") or ""),
-            parsed_jd=(
-                payload.get("parsed_jd")
-                if isinstance(payload.get("parsed_jd"), dict)
-                else None
-            ),
-            job_terms_preview=tuple(
-                str(term) for term in payload.get("job_terms_preview") or []
-            ),
-            salary_context=(
-                payload.get("salary_context")
-                if isinstance(payload.get("salary_context"), dict)
-                else None
-            ),
+            parsed_jd=(payload.get("parsed_jd") if isinstance(payload.get("parsed_jd"), dict) else None),
+            job_terms_preview=tuple(str(term) for term in payload.get("job_terms_preview") or []),
+            salary_context=(payload.get("salary_context") if isinstance(payload.get("salary_context"), dict) else None),
             fact_context_status=str(payload.get("fact_context_status") or "unavailable"),
+            employer_relationship=(
+                str(payload["employer_relationship"])
+                if payload.get("employer_relationship") is not None
+                else None
+            ),
+            employer_relationship_evidence=str(
+                payload.get("employer_relationship_evidence") or ""
+            ),
         )
 
 
@@ -173,11 +173,7 @@ def _enrich_job_facts(payloads: list[dict]) -> list[dict]:
         return [dict(item) for item in payloads]
 
     with SessionLocal() as db:
-        jobs = (
-            apply_public_job_visibility(db.query(ScrapedJob))
-            .filter(ScrapedJob.id.in_(job_ids))
-            .all()
-        )
+        jobs = apply_public_job_visibility(db.query(ScrapedJob)).filter(ScrapedJob.id.in_(job_ids)).all()
         jobs_by_id = {job.id: job for job in jobs}
         pairs = {
             ((job.sector or "").strip(), (job.seniority or "").strip())
@@ -187,8 +183,7 @@ def _enrich_job_facts(payloads: list[dict]) -> list[dict]:
         salary_groups: dict[tuple[str, str], list[int]] = {pair: [] for pair in pairs}
         if pairs:
             conditions = [
-                and_(ScrapedJob.sector == sector, ScrapedJob.seniority == seniority)
-                for sector, seniority in pairs
+                and_(ScrapedJob.sector == sector, ScrapedJob.seniority == seniority) for sector, seniority in pairs
             ]
             salary_rows = (
                 apply_public_job_visibility(
@@ -213,20 +208,18 @@ def _enrich_job_facts(payloads: list[dict]) -> list[dict]:
             enriched.append(item)
             continue
         parsed_jd = job.parsed_jd if isinstance(job.parsed_jd, dict) else {}
-        item.update({
-            "fact_context_status": "available",
-            "sector": job.sector or "",
-            "parsed_jd": {
-                field: parsed_jd[field]
-                for field in JOB_REASONING_REQUIREMENT_FIELDS
-                if field in parsed_jd
-            },
-            "job_terms_preview": (
-                [str(term) for term in job.job_terms_preview]
-                if isinstance(job.job_terms_preview, list)
-                else []
-            ),
-        })
+        item.update(
+            {
+                "fact_context_status": "available",
+                "sector": job.sector or "",
+                "parsed_jd": {
+                    field: parsed_jd[field] for field in JOB_REASONING_REQUIREMENT_FIELDS if field in parsed_jd
+                },
+                "job_terms_preview": (
+                    [str(term) for term in job.job_terms_preview] if isinstance(job.job_terms_preview, list) else []
+                ),
+            }
+        )
         pair = ((job.sector or "").strip(), (job.seniority or "").strip())
         group = sorted(salary_groups.get(pair, []))
         if group:
@@ -239,9 +232,7 @@ def _enrich_job_facts(payloads: list[dict]) -> list[dict]:
                 "median_salary_floor": median(group),
                 "posting_salary_floor": salary_floor or None,
                 "posting_floor_percentile": (
-                    round(100 * bisect_right(group, salary_floor) / len(group), 1)
-                    if salary_floor
-                    else None
+                    round(100 * bisect_right(group, salary_floor) / len(group), 1) if salary_floor else None
                 ),
             }
         enriched.append(item)
@@ -275,7 +266,8 @@ class LangChainJobDiscovery:
             }
         )
         if not result.get("ok"):
-            failure_code = normalize_failure_code(str(result.get("failure_type") or ""))
+            error = result.get("error") if isinstance(result.get("error"), dict) else {}
+            failure_code = normalize_failure_code(str(error.get("code") or result.get("failure_type") or ""))
             decision = classify_failure(failure_code, attempts_remaining=False)
             return JobSearchResult(
                 query=query,
@@ -292,10 +284,7 @@ class LangChainJobDiscovery:
                 singapore_only=singapore_only,
                 title_phrase=title_phrase,
             )
-        jobs = tuple(
-            JobSnapshot.from_payload(item)
-            for item in _enrich_job_facts(result["results"])
-        )
+        jobs = tuple(JobSnapshot.from_payload(item) for item in _enrich_job_facts(result["results"]))
         return JobSearchResult(
             query=query,
             jobs=jobs,

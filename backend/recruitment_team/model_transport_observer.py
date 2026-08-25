@@ -43,6 +43,7 @@ class TransportMetricsCollector:
     def record(
         self,
         *,
+        observation_id: str,
         role: str,
         attempts: int,
         outcome: str,
@@ -55,6 +56,7 @@ class TransportMetricsCollector:
     ) -> None:
         with self._lock:
             self._records.append({
+                "observation_id": observation_id,
                 "role": role,
                 "attempts": attempts,
                 "outcome": outcome,
@@ -109,6 +111,7 @@ class TransportMetricsCollector:
             str(item["model"]) for item in records if str(item["model"])
         ))
         summary: dict[str, Any] = {
+            "transport_observations": records,
             "transport_call_count": len(records),
             "transport_attempt_count": sum(int(item["attempts"]) for item in records),
             "transport_retry_count": sum(max(0, int(item["attempts"]) - 1) for item in records),
@@ -329,6 +332,7 @@ class ModelTransportObserver(BaseCallbackHandler):
                 if error_type:
                     semantic_attempt["error_type"] = error_type
             call.collector.record(
+                observation_id=str(run_id),
                 role=call.role,
                 attempts=call.attempts,
                 outcome=outcome,

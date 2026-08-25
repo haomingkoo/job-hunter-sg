@@ -341,69 +341,74 @@ def test_experienced_hire_sql_prefilter_plus_python_matches_classification():
         sql_ids = {
             job.id
             for job in jobs
-            if job.id in prefiltered_ids
-            and not is_junior_posting(job.seniority, job.title, job.salary_floor)
+            if job.id in prefiltered_ids and not is_junior_posting(job.seniority, job.title, job.salary_floor)
         }
-        python_ids = {
-            job.id for job in jobs
-            if not is_junior_posting(job.seniority, job.title, job.salary_floor)
-        }
+        python_ids = {job.id for job in jobs if not is_junior_posting(job.seniority, job.title, job.salary_floor)}
 
         assert sql_ids == python_ids
     finally:
         db.close()
 
 
-def test_singapore_sql_prefilter_plus_python_matches_classification():
-    import embedding_service
-    from database import SessionLocal
-    from job_visibility import (
-        is_singapore_job_location,
-        singapore_job_prefilter_condition,
-    )
-    from models import ScrapedJob
+@pytest.mark.parametrize(
+    ("title", "description", "expected"),
+    (
+        ("Head of Legal, Malaysia", "Lead the legal team.", False),
+        ("Head of Legal", "This role is based in Malaysia.", False),
+        ("Head of Legal", "Working Location: Kuala Lumpur", False),
+        ("Head of Legal", "Work Location: Shanghai, China", False),
+        ("Head of Legal", "Office Location: Johor Bahru", False),
+        ("Head of Legal", "Travel to Malaysia to support customers.", True),
+        ("Head of Legal", "Support customers based in Malaysia.", True),
+        ("Malaysia Regional Legal Lead", "The worksite is in Singapore.", True),
+    ),
+)
+def test_singapore_location_requires_explicit_singapore_worksite_evidence(
+    title,
+    description,
+    expected,
+):
+    from job_visibility import is_singapore_job_location
 
-    db = SessionLocal()
-    try:
-        jobs = []
-        cases = (
-            ("Singapore", "Quality Manager"),
-            ("Central", "Quality Manager"),
-            ("North-East", "Quality Manager"),
-            ("Indonesia", "Quality Manager"),
-            ("Islandwide", "Quality Manager (Based in Batam)"),
-            ("", "Quality Manager"),
+    assert (
+        is_singapore_job_location(
+            "Singapore",
+            title,
+            description,
+            "singapore",
         )
-        for location, title in cases:
-            job = _add_job(db, _iso(1))
-            job.location = location
-            job.title = title
-            embedding_service.stamp_job_embedding(job, job.embedding_vector)
-            jobs.append(job)
-        db.commit()
+        is expected
+    )
 
-        prefiltered_ids = {
-            job_id
-            for (job_id,) in db.query(ScrapedJob.id).filter(
-                ScrapedJob.id.in_([job.id for job in jobs]),
-                singapore_job_prefilter_condition(ScrapedJob.location),
-            )
-        }
-        sql_ids = {
-            job.id
-            for job in jobs
-            if job.id in prefiltered_ids
-            and is_singapore_job_location(job.location, job.title)
-        }
-        python_ids = {
-            job.id
-            for job in jobs
-            if is_singapore_job_location(job.location, job.title)
-        }
 
-        assert sql_ids == python_ids
-    finally:
-        db.close()
+@pytest.mark.parametrize(
+    ("location", "title", "description", "scope", "expected"),
+    (
+        ("BOAT QUAY", "Engineer", "", "singapore", True),
+        ("NGEE ANN CITY", "Engineer", "", "singapore", True),
+        ("SHENTON HOUSE", "Engineer", "", "singapore", True),
+        ("Malaysia", "Engineer", "Location: Singapore", "singapore", False),
+        ("Singapore", "Engineer", "Location: Shanghai, China", "singapore", False),
+        ("Singapore", "Engineer", "Primary Location: Hong Kong", "singapore", False),
+        ("Singapore", "Engineer", "The successful candidate will be based in Malaysia", "singapore", False),
+        ("Singapore", "Engineer", "You will be based in Kuala Lumpur", "singapore", False),
+        ("", "Engineer", "Location: Singapore", "unknown", False),
+        ("Remote", "Engineer - Singapore", "", "unknown", False),
+        ("Remote", "Engineer", "", "unknown", False),
+        ("Unmapped Building Name", "Engineer", "", "singapore", True),
+        ("Unmapped Building Name", "Engineer", "", "unknown", False),
+    ),
+)
+def test_singapore_worksite_policy_handles_structured_and_explicit_evidence(
+    location,
+    title,
+    description,
+    scope,
+    expected,
+):
+    from job_visibility import is_singapore_job_location
+
+    assert is_singapore_job_location(location, title, description, scope) is expected
 
 
 def test_persisted_embedding_generation_invalidates_another_process_cache():
@@ -420,11 +425,13 @@ def test_persisted_embedding_generation_invalidates_another_process_cache():
         embedding_service._refresh_matrix_if_stale(db)
         assert second.id not in embedding_service._job_ids
 
-        db.add(UsageLog(
-            user_id=None,
-            action="job_embedding_refresh",
-            detail="processed=1",
-        ))
+        db.add(
+            UsageLog(
+                user_id=None,
+                action="job_embedding_refresh",
+                detail="processed=1",
+            )
+        )
         db.commit()
         embedding_service._refresh_matrix_if_stale(db)
 

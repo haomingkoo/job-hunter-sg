@@ -8,7 +8,6 @@ from typing import Any
 import config
 
 
-
 SEARCH_JOBS_TOOL = "search_jobs"
 GET_JOB_TOOL = "get_job"
 
@@ -19,6 +18,8 @@ SEARCH_RESULT_FIELDS = (
     "company",
     "location",
     "source",
+    "employer_relationship",
+    "employer_relationship_evidence",
     "score",
     "jd_summary",
     "skills",
@@ -90,6 +91,8 @@ def job_payload(
         "company": job.company,
         "location": getattr(job, "location", ""),
         "source": getattr(job, "source", ""),
+        "employer_relationship": getattr(job, "employer_relationship", None),
+        "employer_relationship_evidence": (getattr(job, "employer_relationship_evidence", "") or ""),
         "score": score,
         "jd_summary": getattr(job, "jd_summary", "") or "",
         "skills": skills_list(getattr(job, "skills", [])),
@@ -105,9 +108,7 @@ def job_payload(
         "salary": getattr(job, "salary", ""),
         "url": getattr(job, "url", ""),
         "description": getattr(job, "description", "") or "",
-        "parsed_jd": (
-            job.parsed_jd if isinstance(getattr(job, "parsed_jd", None), dict) else {}
-        ),
+        "parsed_jd": (job.parsed_jd if isinstance(getattr(job, "parsed_jd", None), dict) else {}),
     }
     fields = JOB_DETAIL_FIELDS if detail else SEARCH_RESULT_FIELDS
     if not include_parsed:
@@ -202,9 +203,7 @@ def search_jobs_result(
         "empty": len(retained) == 0,
         "results": retained,
         "detail_available": not detail,
-        "detail_request": None
-        if detail
-        else "Call search_jobs with detail=true, or get_job with the id.",
+        "detail_request": None if detail else "Call search_jobs with detail=true, or get_job with the id.",
     }
 
 
@@ -271,11 +270,7 @@ def tool_error(
         "query_executed": False,
         "results": None,
         "failure_type": failure_type,
-        "retryable": (
-            failure_type in {"timeout", "rate_limit", "unavailable"}
-            if retryable is None
-            else retryable
-        ),
+        "retryable": (failure_type in {"timeout", "rate_limit", "unavailable"} if retryable is None else retryable),
         "error": {
             "code": code,
             "message": message,

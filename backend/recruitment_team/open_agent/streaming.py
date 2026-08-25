@@ -20,9 +20,7 @@ def iter_progress_events(
     model_attempts_by_member: dict[str, int] = {}
     pending_skip_ids = set(skip_tool_call_ids or ())
 
-    for namespace, chunk in agent.stream(
-        payload, config=run_config, stream_mode="updates", subgraphs=True
-    ):
+    for namespace, chunk in agent.stream(payload, config=run_config, stream_mode="updates", subgraphs=True):
         for node_update in (chunk or {}).values():
             if not isinstance(node_update, dict):
                 continue
@@ -208,7 +206,9 @@ def rejected_tool_result(event: dict) -> bool:
     if event.get("kind") != "tool_result":
         return False
     payload = _payload(event.get("content"))
-    return isinstance(payload, dict) and payload.get("retry") is False
+    return isinstance(payload, dict) and (
+        payload.get("retry") is False or (payload.get("ok") is False and payload.get("retryable") is False)
+    )
 
 
 def _postings_found(payload: dict) -> int | None:

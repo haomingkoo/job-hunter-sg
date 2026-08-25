@@ -810,13 +810,13 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               : "border-[#BDDDFC]/30 bg-white text-[#384959] hover:bg-[#f0f4f8]"
           }`}
         >
-          <span>Direct employers only</span>
+          <span>Hide known recruiters</span>
           <span className={`h-5 w-9 rounded-full p-0.5 transition ${directEmployersOnly ? "bg-emerald-600" : "bg-[#BDDDFC]"}`}>
             <span className={`block h-4 w-4 rounded-full bg-white transition-transform ${directEmployersOnly ? "translate-x-4" : "translate-x-0"}`} />
           </span>
         </button>
         <p className="mt-1.5 text-[11px] leading-tight text-[#6A89A7]">
-          Hides recruitment and staffing firms so results focus on companies hiring directly.
+          Verified direct and unverified employers remain eligible.
         </p>
       </div>
 

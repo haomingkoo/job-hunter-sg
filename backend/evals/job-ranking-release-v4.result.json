@@ -1,0 +1,46 @@
+{
+  "result_version": "job-ranking-release-v4-result",
+  "evaluated_at": "2026-08-25T19:55:35Z",
+  "evaluation_kind": "arm-blinded frozen-corpus release evaluation; not a historical backtest",
+  "protocol_sha256": "1dba14614a3caaf83d024238dbb9046d87d1dfba4e8997394c0c3b05c794376e",
+  "released_implementation_sha": "6a76ab3878126bf8a3b9dce51263bf270d8ffdba",
+  "candidate_implementation_sha": "60c5149483ac0c1f12868279455a6c6f4a94126c",
+  "artifact_sha256": {
+    "released_receipt": "bc0acdc1aa9ca624606d57e33b30b3727a436912425ea4d06440a42536b207f4",
+    "candidate_receipt": "6b70db1e784698d3fdb485c8b020402a2ce5c8e9928a4a3289620552982db5be",
+    "blinded_pool": "815c5757f9d14be61ede89688b6441ec3653be951533b5650388376d72fd503b",
+    "private_mapping": "558a6a8b2c19643f9064d0dbf6934b77f667c272d5a4356599dd34b9cf1b50dd",
+    "judgment_delta": "cf345a0172ce91dda8a001b7c40d78a7d0667810c4e2ae071fddd294a8ac2f55",
+    "judgment_epsilon": "8a5a2ec9512fc5a3f367047effa7690db575bbae8bd7462ac91fa7d49c14e5a2",
+    "judgment_zeta": "3d73be83ecf4a828f18f1169ebd836ca65e0a7c8b284f2b71e8cac52f560363f",
+    "score": "e2a29a9709d035270af4681e1f348f461df984703ad65fdec5c205b6169b4cd3"
+  },
+  "promotion_passed": true,
+  "gates": {
+    "candidate_non_inferior_every_case": true,
+    "candidate_improves_at_least_one_case": true,
+    "no_candidate_hard_constraint_violations": true,
+    "no_candidate_empty_case_with_relevant_work": true,
+    "named_company_searches_only_return_that_company": true
+  },
+  "rater_count": 3,
+  "disagreement_count": 24,
+  "mechanical_constraint_override_count": 0,
+  "cases": [
+    {"case_id": "heldout-leadership-rich", "released_ndcg_at_k": 0.8421, "candidate_ndcg_at_k": 0.9908, "delta": 0.1487, "candidate_seniority_errors": 1},
+    {"case_id": "heldout-quality-short", "released_ndcg_at_k": 0.6167, "candidate_ndcg_at_k": 0.71, "delta": 0.0933, "candidate_seniority_errors": 0},
+    {"case_id": "heldout-production-operations", "released_ndcg_at_k": 0.9316, "candidate_ndcg_at_k": 0.9316, "delta": 0.0, "candidate_seniority_errors": 0},
+    {"case_id": "heldout-quality-systems", "released_ndcg_at_k": 0.0384, "candidate_ndcg_at_k": 0.6361, "delta": 0.5977, "candidate_seniority_errors": 1},
+    {"case_id": "heldout-transformation-no-title-lock", "released_ndcg_at_k": 1.0, "candidate_ndcg_at_k": 1.0, "delta": 0.0, "candidate_seniority_errors": 0},
+    {"case_id": "heldout-explicit-micron", "released_ndcg_at_k": 0.9468, "candidate_ndcg_at_k": 1.0, "delta": 0.0532, "candidate_seniority_errors": 4},
+    {"case_id": "heldout-agency-opt-in", "released_ndcg_at_k": 0.7793, "candidate_ndcg_at_k": 0.8114, "delta": 0.0321, "candidate_seniority_errors": 0},
+    {"case_id": "heldout-overseas-opt-in", "released_ndcg_at_k": 0.5, "candidate_ndcg_at_k": 0.6309, "delta": 0.1309, "candidate_seniority_errors": 1}
+  ],
+  "limitations": [
+    "The evaluation replays one frozen current corpus and has no historical outcomes, so it is not a backtest.",
+    "The explicit Micron case returned four relevant company-constrained roles, but all four were judged seniority stretches for the synthetic profile.",
+    "The three raters disagreed on at least one label for 24 of 48 pooled items; scoring uses the precommitted median and majority rules.",
+    "The v3 run failed its non-inferiority gate because two raters treated a Director title as eligible for a literal manager title constraint. V4 was a disclosed protocol correction that enforces literal company and title constraints mechanically before fresh blinded judgments."
+  ],
+  "superseded_v3_score_sha256": "1a7cac80bc7f2b09028663766c79e761155292e25039a81984e72afb759dddf0"
+}

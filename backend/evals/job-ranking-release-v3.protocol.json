@@ -1,0 +1,170 @@
+{
+  "protocol_version": "job-ranking-release-v3",
+  "purpose": "Arm-blinded released-versus-candidate ranking release evaluation for experienced semiconductor job matching",
+  "released_commit": "6a76ab3878126bf8a3b9dce51263bf270d8ffdba",
+  "work_location_classifier": {
+    "version": "work-location-scope-v1",
+    "legacy_frozen_derivation": "For candidate-policy replay only, an explicit Singapore location or a nonempty non-generic legacy MyCareersFuture location is provisional Singapore source evidence; explicit overseas structured or posting evidence overrides it. Runtime queries require persisted scope."
+  },
+  "employer_relationship_classifier": {
+    "version": "employer-relationship-v1",
+    "frozen_derivation": "The frozen export includes source, agency, company SSIC description and source fields, company, and posting text. This corpus has no nonempty SSIC codes or descriptions, so SSIC precedence is covered by the canonical classifier regression rather than claimed as corpus evidence. Unknown must not be reported as verified direct."
+  },
+  "corpus": {
+    "as_of": "2026-08-25T19:17:00.694144+00:00",
+    "sha256": "1598f23d892aafb63d010492c45bf1ad7699b3afd0983abb99f70ece71cad45b",
+    "job_count": 81031,
+    "matrix_reuse_proof": "All row keys and the title, description, and skills embedding inputs are byte-equivalent to the prior 81,031-row frozen corpus in identical order.",
+    "employer_relationship_receipt": {
+      "direct": 1192,
+      "unknown": 48634,
+      "intermediary": 31205,
+      "released_default_eligible": 49826,
+      "candidate_default_eligible": 49826,
+      "nonempty_agency": 1192,
+      "nonempty_ssic_code": 0
+    }
+  },
+  "encoder": {
+    "model": "sentence-transformers/all-MiniLM-L6-v2",
+    "revision": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    "frozen_matrix_sha256": "962735c4dba398a345ba58b6d3ee1c122bf576f239a8212d4a7fcabda557df1b",
+    "frozen_matrix_shape": [
+      81031,
+      384
+    ],
+    "frozen_matrix_dtype": "float32",
+    "derivation": "The encoder was run over build_job_embed_text for each corpus row in JSONL order"
+  },
+  "evaluation_harness": {
+    "capture_sha256": "87333ff5e441e67f8b4b9cf1d9aeb338005cee6e41c1f3b4e74211efa939232c",
+    "pool_and_scoring_sha256": "ad7ea20ff3b67e62ae0c596c10d30279442934f5ca6bb23f1ab817ec3f4c8a1f"
+  },
+  "candidate_profile": {
+    "scope": "synthetic evaluation persona; not a private resume",
+    "experience": "Seven years in semiconductor manufacturing, quality, and transformation, including about two and a half years at manager level",
+    "evidence": [
+      "Multi-site manufacturing and quality transformation across several regions",
+      "QMS, ISO 9001, CAPA, MRB, 8D, FMEA, SPC, yield improvement, and change management",
+      "Mentored a team of engineers and coordinated engineering, operations, and supplier stakeholders"
+    ],
+    "unverified": [
+      "Five or more years of formal people management",
+      "Direct ownership of a production department headcount",
+      "Customer quality ownership",
+      "R&D quality ownership"
+    ],
+    "preferences": [
+      "Singapore work location by default",
+      "Exclude employers with known intermediary evidence by default; unverified employers remain eligible",
+      "Manager-level work",
+      "Established semiconductor employers are preferred when role fit is otherwise comparable"
+    ]
+  },
+  "judging": {
+    "arm_blinded": true,
+    "pooling": "Union of released and candidate top-k results, deduplicated before anonymization",
+    "relevance_scale": {
+      "0": "Wrong function, level, location, or unsupported career direction",
+      "1": "Weak or highly stretched fit",
+      "2": "Plausible fit with a material gap",
+      "3": "Strong evidence-supported fit"
+    },
+    "eligibility": "Evaluate the case's explicit direct-employer, Singapore, company, title, and junior constraints independently of semantic relevance",
+    "seniority_fit": "False when the role is clearly junior or requires materially more formal management scope than the profile supports",
+    "raters": 3,
+    "adjudication": "Use the median relevance and majority vote for boolean labels; report disagreement rather than hiding it"
+  },
+  "promotion_rule": {
+    "hard_gates": [
+      "No candidate hard-constraint violations",
+      "No candidate empty case when the judged pool contains eligible relevant work",
+      "Every candidate top-k result has a blinded judgment",
+      "Every named-company search returns only eligible roles from that company"
+    ],
+    "primary_metric": "NDCG@k from the median blinded relevance judgment, with ineligible jobs receiving zero relevance",
+    "comparison": "Candidate NDCG@k must be greater than or equal to the released arm on every case and strictly greater on at least one case; no aggregate threshold or cross-case averaging",
+    "reported_diagnostics": [
+      "Recall@k over eligible relevant jobs in the judged pool",
+      "Hard-constraint violations",
+      "Seniority-fit errors",
+      "Empty result cases",
+      "Per-item rater disagreement"
+    ]
+  },
+  "cases": [
+    {
+      "case_id": "heldout-leadership-rich",
+      "query": "semiconductor manufacturing operations transformation quality leadership yield improvement",
+      "direct_employers_only": true,
+      "exclude_junior": true,
+      "singapore_only": true,
+      "title_phrase": "manager",
+      "top_k": 5
+    },
+    {
+      "case_id": "heldout-quality-short",
+      "query": "semiconductor quality manager",
+      "direct_employers_only": true,
+      "exclude_junior": true,
+      "singapore_only": true,
+      "title_phrase": "manager",
+      "top_k": 5
+    },
+    {
+      "case_id": "heldout-production-operations",
+      "query": "semiconductor production operations manager yield continuous improvement",
+      "direct_employers_only": true,
+      "exclude_junior": true,
+      "singapore_only": true,
+      "title_phrase": "manager",
+      "top_k": 5
+    },
+    {
+      "case_id": "heldout-quality-systems",
+      "query": "quality systems QMS ISO 9001 CAPA MRB 8D FMEA semiconductor manager",
+      "direct_employers_only": true,
+      "exclude_junior": true,
+      "singapore_only": true,
+      "title_phrase": "manager",
+      "top_k": 5
+    },
+    {
+      "case_id": "heldout-transformation-no-title-lock",
+      "query": "semiconductor manufacturing transformation change management SPC yield",
+      "direct_employers_only": true,
+      "exclude_junior": true,
+      "singapore_only": true,
+      "title_phrase": "",
+      "top_k": 5
+    },
+    {
+      "case_id": "heldout-explicit-micron",
+      "query": "semiconductor manufacturing quality transformation manager",
+      "company": "Micron",
+      "direct_employers_only": true,
+      "exclude_junior": true,
+      "singapore_only": true,
+      "title_phrase": "manager",
+      "top_k": 5
+    },
+    {
+      "case_id": "heldout-agency-opt-in",
+      "query": "semiconductor quality systems manager",
+      "direct_employers_only": false,
+      "exclude_junior": true,
+      "singapore_only": true,
+      "title_phrase": "manager",
+      "top_k": 5
+    },
+    {
+      "case_id": "heldout-overseas-opt-in",
+      "query": "semiconductor manufacturing manager based in Batam",
+      "direct_employers_only": true,
+      "exclude_junior": true,
+      "singapore_only": false,
+      "title_phrase": "manager",
+      "top_k": 5
+    }
+  ]
+}

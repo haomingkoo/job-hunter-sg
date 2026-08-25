@@ -5,10 +5,22 @@ from pathlib import Path
 
 import pytest
 
+import scripts.evaluate_job_ranking as ranking_evaluation
 from scripts.evaluate_job_ranking import evaluate_case, run
 
 
 MANIFEST = Path(__file__).resolve().parents[1] / "evals/job-ranking-v1.json"
+QUALITY_GATES = Path(__file__).resolve().parents[2] / "docs/quality-gates.md"
+
+
+def test_synthetic_ranking_check_is_not_described_as_an_outcome_backtest():
+    documentation = QUALITY_GATES.read_text().casefold()
+    module_description = (ranking_evaluation.__doc__ or "").casefold()
+
+    assert "synthetic semantic job-ranking regression" in documentation
+    assert "synthetic semantic job-ranking regression" in module_description
+    assert "backtest" not in documentation
+    assert "backtest" not in module_description
 
 
 def test_ranking_manifest_has_valid_privacy_safe_expectations():

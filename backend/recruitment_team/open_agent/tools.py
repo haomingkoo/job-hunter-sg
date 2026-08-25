@@ -98,6 +98,8 @@ def _posting(job) -> dict:
         "ats_terms": list(job.job_terms_preview),
         "salary_context": job.salary_context,
         "fact_context_status": job.fact_context_status,
+        "employer_relationship": job.employer_relationship,
+        "employer_relationship_evidence": job.employer_relationship_evidence,
     }
 
 
@@ -271,9 +273,7 @@ def read_shortlist() -> dict:
         "latest_search_query": latest_query,
         "recommendations": [_posting(job) for job in recommendations],
         "shortlisted_jobs": [_posting(job) for job in conversation.shortlisted_jobs],
-        "selected_target_job_id": (
-            conversation.target_job.job_id if conversation.target_job else None
-        ),
+        "selected_target_job_id": (conversation.target_job.job_id if conversation.target_job else None),
         "candidate_profile_available": conversation.candidate_profile is not None,
         "published_matches": (
             list(conversation.drafted_matches)
@@ -360,10 +360,7 @@ def record_candidate_evidence(evidence_quotes: list[str]) -> dict:
             "reason": "Every candidate-evidence quote must occur exactly in the latest message.",
             "invalid_quotes": invalid,
         }
-    known = {
-        fact.evidence_id
-        for fact in (*conversation.confirmed_evidence, *conversation.drafted_confirmed_evidence)
-    }
+    known = {fact.evidence_id for fact in (*conversation.confirmed_evidence, *conversation.drafted_confirmed_evidence)}
     recorded: list[ConfirmedEvidenceFact] = []
     for quote in quotes:
         fact = confirmed_evidence_fact(
@@ -428,9 +425,7 @@ def write_shortlist(matches: list[_RankedMatch]) -> dict:
     if conversation is None:
         return dict(_NO_CONVERSATION)
     _, recommendations = merged_recommendations(conversation)
-    known_jobs = {
-        job.job_id: job for job in (*recommendations, *conversation.shortlisted_jobs)
-    }
+    known_jobs = {job.job_id: job for job in (*recommendations, *conversation.shortlisted_jobs)}
     parsed = [_RankedMatch.model_validate(match) for match in matches]
     job_ids = [match.job_id for match in parsed]
     if len(job_ids) != len(set(job_ids)):
@@ -453,10 +448,7 @@ def write_shortlist(matches: list[_RankedMatch]) -> dict:
             job_id
             for job_id in job_ids
             if job_id not in latest_job_ids
-            or (
-                latest_search.company
-                and not company_name_matches(known_jobs[job_id].company, latest_search.company)
-            )
+            or (latest_search.company and not company_name_matches(known_jobs[job_id].company, latest_search.company))
             or (
                 latest_search.direct_employers_only
                 and is_recruitment_employer(
@@ -503,8 +495,7 @@ def write_shortlist(matches: list[_RankedMatch]) -> dict:
                 "reason": f"Job {match.job_id} states no salary; do not infer one.",
             }
         if (
-            match.pay_position
-            in {"above_peer_median", "near_peer_median", "below_peer_median"}
+            match.pay_position in {"above_peer_median", "near_peer_median", "below_peer_median"}
             and job.salary_context is None
         ):
             return {
@@ -534,11 +525,15 @@ def search_jobs(
     better phrase if they are wrong. Results land on the candidate's shortlist,
     so they see what you found.
 
-    By default results come from direct employers, not recruitment agencies.
-    Pass `company` when the candidate names a target employer; matching uses
-    whole normalized words. Set `direct_employers_only=False` only when the
-    candidate wants agency-listed roles. Set `exclude_junior=True` when the
-    candidate's stated target or evidence clearly rules out entry-level work.
+    `direct_employers_only` is retained as a compatibility field. When true,
+    it excludes postings with known recruitment-agency or other intermediary
+    evidence. Employer relationships without that evidence remain unverified
+    and may be included, so do not call the results verified direct-employer
+    postings. Pass `company` when the candidate names a target employer;
+    matching uses whole normalized words. Set `direct_employers_only=False`
+    only when the candidate wants agency-listed roles. Set
+    `exclude_junior=True` when the candidate's stated target or evidence
+    clearly rules out entry-level work.
     Seniority labels and salary context are facts in each result. Judge them
     together; do not assume an employer's self-reported level is reliable.
     Keep `singapore_only=True` unless the candidate explicitly asks for overseas roles.
@@ -575,6 +570,7 @@ def search_jobs(
             "failure_type": decision.failure_type,
             "failure_code": decision.failure_code,
             "retryable": decision.retryable,
+            "retry": decision.retryable,
             "recovery_action": decision.recovery_action,
             "query": result.query,
         }
@@ -644,28 +640,24 @@ def propose_resume_edit(
         field.field_id: "\n".join((field.statement, *field.evidence_quotes))
         for field in getattr(request.candidate_profile, "fields", ())
     }
-    available_evidence.update({
-        fact.evidence_id: fact.evidence_quote
-        for fact in (
-            *getattr(request, "confirmed_evidence", ()),
-            *getattr(request, "drafted_confirmed_evidence", ()),
-        )
-    })
-    unknown_evidence_ids = [
-        evidence_id for evidence_id in requested_ids if evidence_id not in available_evidence
-    ]
+    available_evidence.update(
+        {
+            fact.evidence_id: fact.evidence_quote
+            for fact in (
+                *getattr(request, "confirmed_evidence", ()),
+                *getattr(request, "drafted_confirmed_evidence", ()),
+            )
+        }
+    )
+    unknown_evidence_ids = [evidence_id for evidence_id in requested_ids if evidence_id not in available_evidence]
     if unknown_evidence_ids:
         return {
             "accepted": False,
             "reason": f"Unknown candidate evidence IDs: {', '.join(unknown_evidence_ids)}",
             "block_id": block_id,
         }
-    supporting_evidence = "\n".join(
-        available_evidence[evidence_id] for evidence_id in requested_ids
-    )
-    supported_source = "\n".join(
-        part for part in (original_text, supporting_evidence) if part
-    )
+    supporting_evidence = "\n".join(available_evidence[evidence_id] for evidence_id in requested_ids)
+    supported_source = "\n".join(part for part in (original_text, supporting_evidence) if part)
     new_numbers = extract_numbers(clean_rewrite) - extract_numbers(supported_source)
     if new_numbers:
         return {
@@ -700,21 +692,27 @@ def propose_resume_edit(
         return {
             "accepted": False,
             "reason": (
-                f"{detail}. Remove the unsupported claims or cite candidate evidence "
-                "that directly establishes them."
+                f"{detail}. Remove the unsupported claims or cite candidate evidence that directly establishes them."
             ),
             "failure_code": evidence_result.failure_code or "unsupported_claims",
             "block_id": block_id,
         }
 
-    edits.append({
+    edits.append(
+        {
+            "block_id": block_id,
+            "section_key": block.get("section_key", ""),
+            "entry_id": block.get("entry_id", ""),
+            "original": original_text,
+            "rewrite": clean_rewrite,
+            "document_revision": document.get("revision"),
+            "evidence_ids": requested_ids,
+            "status": "pending",
+        }
+    )
+    return {
+        "accepted": True,
+        "application_status": "pending_user_review",
         "block_id": block_id,
-        "section_key": block.get("section_key", ""),
-        "entry_id": block.get("entry_id", ""),
-        "original": original_text,
         "rewrite": clean_rewrite,
-        "document_revision": document.get("revision"),
-        "evidence_ids": requested_ids,
-        "status": "pending",
-    })
-    return {"accepted": True, "application_status": "pending_user_review", "block_id": block_id, "rewrite": clean_rewrite}
+    }

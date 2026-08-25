@@ -197,10 +197,28 @@ def _dcg(values: list[int]) -> float:
 
 def _company_name_matches(company: str, requested_company: str) -> bool:
     """Mirror production's normalized whole-phrase company constraint."""
-    normalize = lambda value: " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
-    actual = normalize(company)
-    requested = normalize(requested_company)
+    return _normalized_phrase_matches(company, requested_company)
+
+
+def _normalized_phrase_matches(value: str, phrase: str) -> bool:
+    normalize = lambda text: " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
+    actual = normalize(value)
+    requested = normalize(phrase)
     return bool(requested) and f" {requested} " in f" {actual} "
+
+
+def _mechanical_ineligibility_reasons(case: dict[str, Any], item: dict[str, Any]) -> list[str]:
+    """Enforce literal constraints that must not depend on rater interpretation."""
+    reasons = []
+    company = str(case.get("company") or "")
+    if company and not _company_name_matches(str(item.get("company") or ""), company):
+        reasons.append("company_phrase_mismatch")
+    title_phrase = str(case.get("title_phrase") or "")
+    if title_phrase and not _normalized_phrase_matches(
+        str(item.get("title") or ""), title_phrase
+    ):
+        reasons.append("title_phrase_mismatch")
+    return reasons
 
 
 def _aggregate_judgments(
@@ -302,7 +320,7 @@ def score_release(
     if pool.get("protocol_sha256") != protocol_hash or mapping.get("protocol_sha256") != protocol_hash:
         raise ReleaseEvaluationError("pool or mapping has the wrong protocol")
     pool_hash = _sha256_file(pool_path)
-    judgments, disagreements = _aggregate_judgments(
+    submitted_judgments, disagreements = _aggregate_judgments(
         pool, pool_hash, [Path(path).resolve() for path in judgment_paths]
     )
     pool_items = {
@@ -310,6 +328,25 @@ def score_release(
         for case in pool["cases"]
         for item in case["items"]
     }
+    judgments = {}
+    mechanical_constraint_overrides = []
+    for case in protocol["cases"]:
+        case_id = case["case_id"]
+        pool_case = next(
+            value for value in pool["cases"] if value["case_id"] == case_id
+        )
+        for item in pool_case["items"]:
+            key = (case_id, item["item_id"])
+            label = dict(submitted_judgments[key])
+            reasons = _mechanical_ineligibility_reasons(case, item)
+            if reasons and label["eligible"]:
+                mechanical_constraint_overrides.append({
+                    "case_id": case_id,
+                    "item_id": item["item_id"],
+                    "reasons": reasons,
+                })
+            label["eligible"] = bool(label["eligible"] and not reasons)
+            judgments[key] = label
     reports = []
     for case, mapped in zip(protocol["cases"], mapping["cases"]):
         case_id = case["case_id"]
@@ -406,6 +443,7 @@ def score_release(
         "rater_count": len(judgment_paths),
         "disagreement_count": len(disagreements),
         "disagreements": disagreements,
+        "mechanical_constraint_overrides": mechanical_constraint_overrides,
         "cases": reports,
         "gates": gates,
         "promotion_passed": all(gates.values()),

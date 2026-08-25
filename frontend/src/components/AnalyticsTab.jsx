@@ -269,7 +269,7 @@ export default function AnalyticsTab() {
     titleFilter,
     companyFilter,
     selectedAgencySubset?.label,
-    directEmployersOnly ? "Direct employers" : "",
+    directEmployersOnly ? "Hide known recruiters" : "",
   ].filter(Boolean);
   const salary = data?.salary_insights || {};
   const freshness = data?.freshness || {};
@@ -397,21 +397,26 @@ export default function AnalyticsTab() {
               </div>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="inline-flex overflow-hidden rounded-lg border border-[#BDDDFC]/40 bg-[#f0f4f8] p-0.5 text-xs font-medium">
-                <button
-                  type="button"
-                  onClick={() => setDirectEmployersOnly(false)}
-                  className={`rounded-md px-2.5 py-1.5 transition ${!directEmployersOnly ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7] hover:text-[#384959]"}`}
-                >
-                  All orgs
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDirectEmployersOnly(true)}
-                  className={`rounded-md px-2.5 py-1.5 transition ${directEmployersOnly ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7] hover:text-[#384959]"}`}
-                >
-                  Direct employers
-                </button>
+              <div>
+                <div className="inline-flex overflow-hidden rounded-lg border border-[#BDDDFC]/40 bg-[#f0f4f8] p-0.5 text-xs font-medium">
+                  <button
+                    type="button"
+                    onClick={() => setDirectEmployersOnly(false)}
+                    className={`rounded-md px-2.5 py-1.5 transition ${!directEmployersOnly ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7] hover:text-[#384959]"}`}
+                  >
+                    All orgs
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDirectEmployersOnly(true)}
+                    className={`rounded-md px-2.5 py-1.5 transition ${directEmployersOnly ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7] hover:text-[#384959]"}`}
+                  >
+                    Hide known recruiters
+                  </button>
+                </div>
+                <p className="mt-1 text-[11px] text-[#6A89A7]">
+                  Verified direct and unverified employers remain eligible.
+                </p>
               </div>
               {(sourceFilter || sectorFilter || titleFilter || companyFilter || agencySubset || directEmployersOnly) && (
                 <button
@@ -625,7 +630,7 @@ export default function AnalyticsTab() {
                 Hiring Org Snapshot
               </div>
               <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
-                Top ministries, agencies, and companies in this view. Use direct-employer mode to remove recruitment firms from this snapshot.
+                Top ministries, agencies, and companies in this view. Hide known recruiters to remove recognized recruitment firms from this snapshot; unverified employers remain eligible.
               </div>
             </div>
             <div className="text-[11px] text-[#6A89A7]">

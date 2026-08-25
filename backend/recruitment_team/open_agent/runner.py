@@ -239,9 +239,6 @@ def _target_execution_metrics(
     reported_model_calls = sum(int(item.get("attempt_count") or 1) for item in attempts)
     reported_input_tokens = sum(int(item.get("input_tokens") or 0) for item in attempts)
     reported_output_tokens = sum(int(item.get("output_tokens") or 0) for item in attempts)
-    transport_model_calls = int(transport_metrics.get("transport_call_count") or 0)
-    transport_input_tokens = int(transport_metrics.pop("transport_input_tokens", 0) or 0)
-    transport_output_tokens = int(transport_metrics.pop("transport_output_tokens", 0) or 0)
     models = list(dict.fromkeys([
         *(str(item.get("model") or "") for item in attempts if item.get("model")),
         *(str(model) for model in transport_metrics.get("transport_models") or [] if model),
@@ -251,10 +248,13 @@ def _target_execution_metrics(
         "logical_run_id": request.trace_key,
         "trace_key": request.trace_key,
         "stage": "target_assessment",
-        "model_call_count": transport_model_calls or reported_model_calls,
+        "model_call_count": reported_model_calls,
+        "reported_model_call_count": reported_model_calls,
         "checkpoint_hit_count": checkpoint_hit_count,
-        "input_tokens": transport_input_tokens or reported_input_tokens,
-        "output_tokens": transport_output_tokens or reported_output_tokens,
+        "input_tokens": reported_input_tokens,
+        "output_tokens": reported_output_tokens,
+        "reported_input_tokens": reported_input_tokens,
+        "reported_output_tokens": reported_output_tokens,
         "latency_ms": round(latency_ms, 3),
         "validation_codes": [str(item["validation_code"]) for item in attempts if item.get("validation_code")],
         "models": models,

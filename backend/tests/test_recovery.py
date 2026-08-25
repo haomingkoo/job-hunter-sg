@@ -21,7 +21,9 @@ def test_failure_taxonomy_is_deterministic_and_budget_aware():
     absent = classify_failure("information_absent", attempts_remaining=True)
 
     assert (retry.failure_type, retry.retryable, retry.recovery_action) == (
-        "transient", True, "retry_incomplete_stage",
+        "transient",
+        True,
+        "retry_incomplete_stage",
     )
     assert (
         checkpoint_retry.failure_type,
@@ -29,10 +31,14 @@ def test_failure_taxonomy_is_deterministic_and_budget_aware():
         checkpoint_retry.recovery_action,
     ) == ("transient", True, "retry_same_run")
     assert (exhausted.failure_type, exhausted.retryable, exhausted.recovery_action) == (
-        "transient", False, "attempt_budget_exhausted",
+        "transient",
+        False,
+        "attempt_budget_exhausted",
     )
     assert (absent.failure_type, absent.retryable, absent.recovery_action) == (
-        "validation", False, "ask_candidate",
+        "validation",
+        False,
+        "ask_candidate",
     )
 
 
@@ -41,10 +47,14 @@ def test_unknown_and_permission_failures_fail_closed():
     permission = classify_exception(type("PermissionDeniedError", (Exception,), {})())
 
     assert (unknown.failure_type, unknown.failure_code, unknown.retryable) == (
-        "business", "unclassified_failure", False,
+        "business",
+        "unclassified_failure",
+        False,
     )
     assert (permission.failure_type, permission.failure_code, permission.retryable) == (
-        "permission", "permission_denied", False,
+        "permission",
+        "permission_denied",
+        False,
     )
 
 
@@ -78,6 +88,7 @@ def test_exception_fault_classes_are_stable_and_fail_closed(
         ("prompt_injection", "operator_review"),
         ("attempt_budget_exhausted", "start_new_logical_run"),
         ("specialist_attempt_budget_exhausted", "start_new_logical_run"),
+        ("employer_index_unavailable", "wait_for_index_repair"),
     ],
 )
 def test_terminal_faults_never_retry(failure_code, recovery_action):
@@ -175,6 +186,4 @@ def test_execution_events_feed_one_idempotent_transport_and_semantic_ledger():
     assert stage["transport"]["used"] == 2
     assert stage["semantic"]["used"] == 2
     assert stage["semantic"]["exhausted"] is True
-    assert stage["semantic"]["attempts"][0]["validation_code"] == (
-        "field:outcome:quote_not_found"
-    )
+    assert stage["semantic"]["attempts"][0]["validation_code"] == ("field:outcome:quote_not_found")

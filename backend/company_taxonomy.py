@@ -38,9 +38,7 @@ LIVE_LOOKUP_ENABLED = os.environ.get("ACRA_LIVE_LOOKUP", "").strip().lower() in 
     "yes",
     "on",
 }
-LIVE_LOOKUP_MIN_INTERVAL_SECONDS = float(
-    os.environ.get("ACRA_LIVE_LOOKUP_MIN_INTERVAL_SECONDS", "2.6")
-)
+LIVE_LOOKUP_MIN_INTERVAL_SECONDS = float(os.environ.get("ACRA_LIVE_LOOKUP_MIN_INTERVAL_SECONDS", "2.6"))
 LIVE_LOOKUP_MAX_ATTEMPTS = int(os.environ.get("ACRA_LIVE_LOOKUP_MAX_ATTEMPTS", "3"))
 LIVE_LOOKUP_RETRY_SECONDS = float(os.environ.get("ACRA_LIVE_LOOKUP_RETRY_SECONDS", "12"))
 
@@ -145,9 +143,7 @@ def _load_company_cache() -> dict[str, dict[str, str]]:
             with CACHE_PATH.open("r", encoding="utf-8") as fh:
                 raw = json.load(fh)
             _COMPANY_CACHE = {
-                normalize_company_name(key): value
-                for key, value in raw.items()
-                if isinstance(value, dict)
+                normalize_company_name(key): value for key, value in raw.items() if isinstance(value, dict)
             }
         except Exception as exc:
             log.warning("Failed to load company SSIC cache: %s", type(exc).__name__)
@@ -276,10 +272,7 @@ def _lookup_acra_live(company_name: str) -> CompanyTaxonomyMatch | None:
     if resp is None:
         return None
     records = resp.json().get("result", {}).get("records", [])
-    viable = [
-        record for record in records
-        if _valid_ssic_value(record.get("primary_ssic_code"))
-    ]
+    viable = [record for record in records if _valid_ssic_value(record.get("primary_ssic_code"))]
     if not viable:
         return None
     best = max(viable, key=lambda record: _score_record(record, target_key))
@@ -332,7 +325,7 @@ def apply_company_taxonomy(job_data: dict) -> dict:
     """Populate company_ssic_* and prefer official SSIC section for sector."""
     existing_code = _valid_ssic_value(job_data.get("company_ssic_code"))
     existing_source = str(job_data.get("company_ssic_source") or "").strip().lower()
-    if existing_code and existing_source == "acra":
+    if existing_code and existing_source in {"acra", "mcf_posted_company"}:
         section = ssic_section_from_code(existing_code)
         if section:
             job_data["sector"] = section
@@ -351,7 +344,5 @@ def apply_company_taxonomy(job_data: dict) -> dict:
     job_data["company_ssic_code"] = ""
     job_data["company_ssic_description"] = ""
     inferred_sector = str(job_data.get("sector") or "").strip()
-    job_data["company_ssic_source"] = (
-        "inferred" if inferred_sector and inferred_sector != "Other" else "unavailable"
-    )
+    job_data["company_ssic_source"] = "inferred" if inferred_sector and inferred_sector != "Other" else "unavailable"
     return job_data

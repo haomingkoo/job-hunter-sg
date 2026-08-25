@@ -2,7 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import RecruitmentTeamPanel from "../RecruitmentTeamPanel.jsx";
+import RecruitmentTeamPanel, { ExecutionDetails } from "../RecruitmentTeamPanel.jsx";
 import { apiFetch } from "../../lib/api.js";
 import { streamRecruitmentCommand } from "../../lib/recruitmentTeamApi.js";
 
@@ -29,6 +29,84 @@ describe("RecruitmentTeamPanel", () => {
     act(() => root.unmount());
     vi.useRealTimers();
     container.remove();
+  });
+
+  it("separates workflow-reported and transport-observed execution usage", async () => {
+    await act(async () => root.render(<ExecutionDetails metrics={{
+      model_call_count: 2,
+      reported_model_call_count: 2,
+      transport_call_count: 1,
+      input_tokens: 3300,
+      reported_input_tokens: 3300,
+      transport_input_tokens: 1300,
+      output_tokens: 1300,
+      reported_output_tokens: 1300,
+      transport_output_tokens: 500,
+      transport_token_usage_available: true,
+    }} />));
+
+    expect(container.textContent).toContain("Workflow-reported calls2");
+    expect(container.textContent).toContain("Transport-observed calls1");
+    expect(container.textContent).toContain("Workflow-reported input tokens3,300");
+    expect(container.textContent).toContain("Transport-observed input tokens1,300");
+    expect(container.textContent).toContain("Workflow-reported output tokens1,300");
+    expect(container.textContent).toContain("Transport-observed output tokens500");
+    expect(container.textContent).not.toContain("Model calls");
+  });
+
+  it.each([false, undefined])(
+    "does not present unavailable transport tokens as totals (%s)",
+    async (availability) => {
+      const metrics = {
+        reported_model_call_count: 2,
+        transport_call_count: 1,
+        reported_input_tokens: 3300,
+        transport_input_tokens: 1300,
+        reported_output_tokens: 1300,
+        transport_output_tokens: 500,
+      };
+      if (availability !== undefined) {
+        metrics.transport_token_usage_available = availability;
+      }
+
+      await act(async () => root.render(<ExecutionDetails metrics={metrics} />));
+
+      expect(container.textContent).toContain("Transport-observed input tokensUnavailable");
+      expect(container.textContent).toContain("Transport-observed output tokensUnavailable");
+      expect(container.textContent).not.toContain("Transport-observed input tokens1,300");
+      expect(container.textContent).not.toContain("Transport-observed output tokens500");
+    },
+  );
+
+  it("does not present missing legacy transport counters as observed zeroes", async () => {
+    await act(async () => root.render(<ExecutionDetails metrics={{
+      reported_model_call_count: 2,
+      reported_input_tokens: 3300,
+      reported_output_tokens: 1300,
+    }} />));
+
+    expect(container.textContent).toContain("Transport-observed callsUnavailable");
+    expect(container.textContent).toContain("Transport retriesUnavailable");
+    expect(container.textContent).toContain("Transport errorsUnavailable");
+    expect(container.textContent).not.toContain("Transport retries0");
+    expect(container.textContent).not.toContain("Transport errors0");
+  });
+
+  it("distinguishes an explicitly observed zero from unavailable transport data", async () => {
+    await act(async () => root.render(<ExecutionDetails metrics={{
+      reported_model_call_count: 1,
+      reported_input_tokens: 10,
+      reported_output_tokens: 3,
+      transport_call_count: 0,
+      transport_retry_count: 0,
+      transport_error_count: 0,
+      transport_token_usage_available: false,
+    }} />));
+
+    expect(container.textContent).toContain("Transport-observed calls0");
+    expect(container.textContent).toContain("Transport retries0");
+    expect(container.textContent).toContain("Transport errors0");
+    expect(container.textContent).toContain("Transport-observed input tokensUnavailable");
   });
 
   it("starts and continues one persisted recruitment conversation", async () => {
@@ -995,6 +1073,8 @@ describe("RecruitmentTeamPanel", () => {
       .find((element) => element.textContent.includes("Execution details"));
     expect(executionDetails.open).toBe(false);
     expect(executionDetails.textContent).toContain("Model calls12");
+    expect(executionDetails.textContent).not.toContain("Workflow-reported calls");
+    expect(executionDetails.textContent).not.toContain("Transport-observed calls");
     expect(executionDetails.textContent).toContain("Run time125 seconds");
     expect(executionDetails.textContent).toContain("Input tokens53,021");
     expect(executionDetails.textContent).toContain("Output tokens7,612");

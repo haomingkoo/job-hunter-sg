@@ -14,7 +14,11 @@ import agent_tool_contract as contract
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms
 from database import SessionLocal
 from embedding_service import encode_text, find_similar_jobs, get_job_search_readiness
-from job_visibility import apply_public_job_visibility
+from job_visibility import (
+    WORK_LOCATION_SINGAPORE,
+    apply_public_job_visibility,
+    singapore_public_job_ids,
+)
 from job_precompute import display_salary
 from models import ScrapedJob
 from resume_scorer import ResumeScorer
@@ -180,10 +184,12 @@ def search_jobs(query: str, limit: int | None = None, detail: bool = False) -> s
     db = None
     try:
         db = SessionLocal()
+        eligible_job_ids = singapore_public_job_ids(db)
         matches = find_similar_jobs(
             encode_text(clean_query),
             db,
             top_k=contract.semantic_candidate_limit(capped),
+            eligible_job_ids=eligible_job_ids,
         )
         jobs = []
         for job_id, similarity in matches:
@@ -217,7 +223,9 @@ def latest_jobs(limit: int = 10, source: str | None = None) -> str:
     """Return the latest public jobs from the internal jobs DB."""
     db = SessionLocal()
     try:
-        query = apply_public_job_visibility(db.query(ScrapedJob))
+        query = apply_public_job_visibility(db.query(ScrapedJob)).filter(
+            ScrapedJob.work_location_scope == WORK_LOCATION_SINGAPORE
+        )
         if source:
             query = query.filter(ScrapedJob.source == source)
         jobs = query.order_by(

@@ -4,7 +4,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from models import ScrapedJob
-from recruitment_team.discovery import _enrich_job_facts
+from recruitment_team.discovery import JobSnapshot, _enrich_job_facts
+from recruitment_team.open_agent.tools import _posting
 
 
 def _job(job_id: int, salary_floor: int, *, salary: str | None = None) -> ScrapedJob:
@@ -91,6 +92,23 @@ def test_discovery_reports_when_a_result_can_no_longer_be_enriched(monkeypatch):
     assert "salary_context" not in result
 
 
+def test_employer_relationship_survives_discovery_and_coordinator_adapter():
+    snapshot = JobSnapshot.from_payload(
+        {
+            "id": 7,
+            "title": "Quality Manager",
+            "company": "Singapore Public Service",
+            "employer_relationship": "direct",
+            "employer_relationship_evidence": "careers_gov_official",
+        }
+    )
+
+    assert snapshot.employer_relationship == "direct"
+    assert snapshot.employer_relationship_evidence == "careers_gov_official"
+    assert _posting(snapshot)["employer_relationship"] == "direct"
+    assert _posting(snapshot)["employer_relationship_evidence"] == "careers_gov_official"
+
+
 def test_production_discovery_forwards_explicit_employer_constraints(monkeypatch):
     import resume_agent.tools as agent_tools
     import recruitment_team.discovery as discovery_module
@@ -131,3 +149,27 @@ def test_production_discovery_forwards_explicit_employer_constraints(monkeypatch
     assert result.eligible_candidate_count == 63
     assert result.candidate_count == 7
     assert result.visible_candidate_count == 7
+
+
+def test_production_discovery_preserves_specific_index_failure_code(monkeypatch):
+    import resume_agent.tools as agent_tools
+    import recruitment_team.discovery as discovery_module
+
+    monkeypatch.setattr(
+        agent_tools.search_jobs.__class__,
+        "invoke",
+        lambda _tool, _payload, **_kwargs: {
+            "ok": False,
+            "failure_type": "unavailable",
+            "retryable": True,
+            "error": {
+                "code": "employer_index_unavailable",
+                "message": "The employer index is rebuilding.",
+            },
+        },
+    )
+
+    result = discovery_module.LangChainJobDiscovery().search_jobs("quality manager")
+
+    assert result.failure_type == "business"
+    assert result.failure_code == "employer_index_unavailable"

@@ -92,10 +92,12 @@ def test_search_jobs_caps_and_shapes_results(monkeypatch):
 
     monkeypatch.setattr(mcp_tools, "SessionLocal", lambda: FakeDb())
     monkeypatch.setattr(mcp_tools, "encode_text", lambda query: [0.1, 0.2])
+    monkeypatch.setattr(mcp_tools, "singapore_public_job_ids", lambda _db: {7})
 
-    def fake_find_similar_jobs(vector, db, top_k):
+    def fake_find_similar_jobs(vector, db, top_k, *, eligible_job_ids):
         assert vector == [0.1, 0.2]
         assert top_k == config.AGENT_SEARCH_JOBS_LIMIT * 10
+        assert eligible_job_ids == {7}
         return [(7, 0.98765)]
 
     monkeypatch.setattr(mcp_tools, "find_similar_jobs", fake_find_similar_jobs)
@@ -128,6 +130,7 @@ def test_mcp_search_jobs_empty_and_error_are_structured(monkeypatch):
 
     monkeypatch.setattr(mcp_tools, "SessionLocal", lambda: FakeDb())
     monkeypatch.setattr(mcp_tools, "encode_text", lambda query: [0.1, 0.2])
+    monkeypatch.setattr(mcp_tools, "singapore_public_job_ids", lambda _db: set())
     monkeypatch.setattr(mcp_tools, "find_similar_jobs", lambda *_args, **_kwargs: [])
 
     empty = json.loads(mcp_tools.search_jobs("missing role"))
@@ -169,6 +172,7 @@ def test_mcp_ats_status_uses_provenance_aware_embedding_readiness(monkeypatch):
             return None
 
     monkeypatch.setattr(mcp_tools, "SessionLocal", FakeDb)
+    monkeypatch.setattr(mcp_tools, "singapore_public_job_ids", lambda _db, source=None: {7})
     monkeypatch.setattr(mcp_tools, "apply_public_job_visibility", lambda _query: visible)
     monkeypatch.setattr(
         mcp_tools,
@@ -199,6 +203,7 @@ def test_get_job_does_not_return_hidden_job(monkeypatch):
             pass
 
     monkeypatch.setattr(mcp_tools, "SessionLocal", FakeDb)
+    monkeypatch.setattr(mcp_tools, "singapore_public_job_ids", lambda _db, source=None: set())
     monkeypatch.setattr(mcp_tools, "_get_public_job", lambda db, job_id, include_old=False: None)
 
     data = json.loads(mcp_tools.get_job(7))
@@ -274,6 +279,11 @@ def test_latest_jobs_returns_compact_public_jobs(monkeypatch):
             pass
 
     monkeypatch.setattr(mcp_tools, "SessionLocal", FakeDb)
+    monkeypatch.setattr(
+        mcp_tools,
+        "singapore_public_job_ids",
+        lambda _db, source=None: {7},
+    )
 
     data = json.loads(mcp_tools.latest_jobs(limit=5))
 
@@ -311,7 +321,6 @@ def test_latest_jobs_filters_by_source(monkeypatch):
             pass
 
     monkeypatch.setattr(mcp_tools, "SessionLocal", FakeDb)
-
     unfiltered = json.loads(mcp_tools.latest_jobs(limit=3))
     baseline = seen["filters"]
     filtered = json.loads(mcp_tools.latest_jobs(limit=3, source="Careers@Gov"))
@@ -319,6 +328,92 @@ def test_latest_jobs_filters_by_source(monkeypatch):
     assert unfiltered["jobs"] == []
     assert filtered["jobs"] == []
     assert seen["filters"] > baseline, "source did not add a filter"
+
+
+def test_mcp_search_and_latest_share_singapore_worksite_policy(monkeypatch):
+    from datetime import datetime, timezone
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    import mcp_tools
+    from models import ScrapedJob
+
+    engine = create_engine("sqlite://")
+    ScrapedJob.__table__.create(engine)
+    sessions = sessionmaker(bind=engine)
+    now = datetime.now(timezone.utc).isoformat()
+    with sessions() as db:
+        db.add_all(
+            [
+                ScrapedJob(
+                    id=1,
+                    title="Data Engineer",
+                    company="Example",
+                    description="Build data products in Singapore.",
+                    location="NGEE ANN CITY",
+                    work_location_scope="singapore",
+                    source="MyCareersFuture",
+                    url="https://example.test/1",
+                    dedup_key="mcp-worksite-1",
+                    posted_at_sort=now,
+                ),
+                ScrapedJob(
+                    id=2,
+                    title="Data Engineer",
+                    company="Example",
+                    description="Location: Shanghai, China (relocation support provided).",
+                    location="Singapore",
+                    work_location_scope="overseas",
+                    source="MyCareersFuture",
+                    url="https://example.test/2",
+                    dedup_key="mcp-worksite-2",
+                    posted_at_sort=now,
+                ),
+                ScrapedJob(
+                    id=3,
+                    title="Data Engineer",
+                    company="Example",
+                    description="Location: Singapore.",
+                    location="",
+                    work_location_scope="unknown",
+                    source="MyCareersFuture",
+                    url="https://example.test/3",
+                    dedup_key="mcp-worksite-3",
+                    posted_at_sort=now,
+                ),
+                ScrapedJob(
+                    id=4,
+                    title="Data Engineer",
+                    company="Example",
+                    description="Work remotely.",
+                    location="Remote",
+                    work_location_scope="unknown",
+                    source="MyCareersFuture",
+                    url="https://example.test/4",
+                    dedup_key="mcp-worksite-4",
+                    posted_at_sort=now,
+                ),
+            ]
+        )
+        db.commit()
+
+    observed_ids = []
+
+    def fake_similarity(_vector, _db, top_k, *, eligible_job_ids):
+        observed_ids.append(set(eligible_job_ids))
+        return [(job_id, 0.9) for job_id in sorted(eligible_job_ids)][:top_k]
+
+    monkeypatch.setattr(mcp_tools, "SessionLocal", sessions)
+    monkeypatch.setattr(mcp_tools, "encode_text", lambda _query: [0.1, 0.2])
+    monkeypatch.setattr(mcp_tools, "find_similar_jobs", fake_similarity)
+
+    searched = json.loads(mcp_tools.search_jobs("data engineering"))
+    latest = json.loads(mcp_tools.latest_jobs(limit=10))
+
+    assert observed_ids == [{1}]
+    assert {job["id"] for job in searched["results"]} == {1}
+    assert {job["id"] for job in latest["jobs"]} == {1}
 
 
 def test_source_stats_returns_counts_by_source(monkeypatch):
@@ -486,24 +581,30 @@ def test_local_mcp_direct_registrations_preserve_tool_metadata():
     tools = {tool.name: tool for tool in asyncio.run(mcp_server.mcp.list_tools())}
     expected = {
         "parse_resume": (
-            "Parse resume text into sections, stats, and stable bullet IDs.", "resume_text", "resume_text",
+            "Parse resume text into sections, stats, and stable bullet IDs.",
+            "resume_text",
+            "resume_text",
         ),
         "score_resume": (
             "Score a resume with optional job-specific ATS blending.",
-            "job_description,job_id,resume_text", "resume_text",
+            "job_description,job_id,resume_text",
+            "resume_text",
         ),
         "extract_skills": ("Extract ATS-style skill phrases from text.", "text", "text"),
         "compare_candidate_profile": (
             "Compare resume and LinkedIn/profile text for consistency gaps.",
-            "profile_context,resume_text", "profile_context,resume_text",
+            "profile_context,resume_text",
+            "profile_context,resume_text",
         ),
         "validate_bullet_edit": (
             "Validate one proposed bullet rewrite and return gates plus final text.",
-            "job_description,original,required_keywords,rewrite", "original,rewrite",
+            "job_description,original,required_keywords,rewrite",
+            "original,rewrite",
         ),
         "propose_resume_diff": (
             "Validate a rewrite against a resume bullet ID.",
-            "bullet_id,job_description,required_keywords,resume_text,rewrite", "bullet_id,resume_text,rewrite",
+            "bullet_id,job_description,required_keywords,resume_text,rewrite",
+            "bullet_id,resume_text,rewrite",
         ),
     }
 
@@ -651,10 +752,7 @@ def test_public_surface_uses_all_four_primitives_and_no_dotted_names():
 def test_public_llms_inventory_matches_registered_public_tools():
     import mcp_public
 
-    tool_names = {
-        tool.name
-        for tool in asyncio.run(mcp_public.create_mcp().list_tools())
-    }
+    tool_names = {tool.name for tool in asyncio.run(mcp_public.create_mcp().list_tools())}
     llms_text = (Path(__file__).resolve().parents[2] / "frontend/public/llms.txt").read_text()
 
     inventory = next(

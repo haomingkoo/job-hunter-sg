@@ -555,12 +555,20 @@ def test_candidate_profile_reuses_only_revalidated_scope_checkpoints():
     first = LangChainCandidateProfiler(_ProfileModel([payload]), checkpoint_store=store).profile(document)
     second_model = _ProfileModel([])
     second = LangChainCandidateProfiler(second_model, checkpoint_store=store).profile(document)
+    third_model = _ProfileModel([])
+    third = LangChainCandidateProfiler(third_model, checkpoint_store=store).profile(document)
 
     assert first.model_call_count == 1
     assert second.model_call_count == 1
     assert second.checkpoint_hit_count == 1
+    assert third.checkpoint_hit_count == 2
     assert second.profile == first.profile
     assert second_model.requests == []
+    assert third_model.requests == []
+    assert all(event.get("attempt_id") for event in store.execution_events)
+    assert len({event["attempt_id"] for event in store.execution_events}) == len(
+        store.execution_events
+    )
 
 
 def test_candidate_profile_preserves_validation_feedback_across_transport_resume():

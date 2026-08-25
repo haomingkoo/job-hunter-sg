@@ -14,27 +14,65 @@ from models import ScrapedJob
 DEFAULT_PUBLIC_JOB_MAX_AGE_DAYS = int(os.environ.get("PUBLIC_JOB_MAX_AGE_DAYS", "60"))
 KNOWN_RETIREMENT_REASONS = ("source_retired", "age_retired")
 UNCLASSIFIED_SECTOR = "Unclassified"
-SINGAPORE_JOB_LOCATIONS = frozenset({
-    "singapore",
-    "central",
-    "islandwide",
-    "west",
-    "north",
-    "east",
-    "north-east",
-})
-# Some source rows claim a Singapore region while the title states the actual
-# overseas work site. These are the unambiguous overseas place names currently
-# observed in that title pattern; ordinary mentions of overseas customers or
-# travel in descriptions are deliberately ignored.
-_OVERSEAS_TITLE_LOCATION = re.compile(
-    r"\b(?:based|located|stationed)\s+in\s+(?:"
-    r"indonesia|hong\s+kong|bangkok|kuala\s+lumpur|kl|malaysia|batam|jb|"
-    r"china|shanghai|vietnam|thailand|india|south\s+korea|korea|philippines|"
-    r"taiwan|cyprus|saudi\s+arabia|united\s+arab\s+emirates|uae|myanmar"
-    r")\b",
+# Some source rows claim a Singapore region while the posting states the actual
+# overseas work site. Keep this deliberately narrower than a place-name search:
+# travel, customer, and regional-responsibility mentions are not worksite evidence.
+_OVERSEAS_PLACES = (
+    "indonesia", "hong kong", "bangkok", "kuala lumpur", "kl", "malaysia",
+    "batam", "johor bahru", "jb", "china", "shanghai", "vietnam",
+    "thailand", "india", "south korea", "korea", "philippines", "taiwan",
+    "cyprus", "saudi arabia", "united arab emirates", "uae", "myanmar",
+    "japan", "tokyo", "australia", "sydney", "melbourne", "new zealand",
+    "united states", "usa", "united kingdom", "london", "canada", "dubai",
+)
+_OVERSEAS_PLACE = "(?:" + "|".join(
+    re.escape(place).replace(r"\ ", r"\s+") for place in _OVERSEAS_PLACES
+) + ")"
+_OVERSEAS_TITLE_WORKSITE = re.compile(
+    rf"(?:\b(?:based|located|stationed)\s+in\s+{_OVERSEAS_PLACE}\b|"
+    rf"(?:[,|/]|[-–—])\s*{_OVERSEAS_PLACE}\s*$)",
     re.IGNORECASE,
 )
+_OVERSEAS_DESCRIPTION_WORKSITE = re.compile(
+    rf"(?:\b(?:(?:(?:this|the)\s+)?(?:role|position|job)|"
+    rf"(?:the\s+)?(?:successful\s+)?(?:candidate|applicant)|incumbent|you)\s+"
+    rf"(?:(?:is|will\s+be|would\s+be|shall\s+be|to\s+be)\s+)?"
+    rf"(?:based|located|stationed)\s+(?:in|at|out\s+of)\s+"
+    rf"{_OVERSEAS_PLACE}\b|"
+    rf"\b(?:(?:primary|work|working|job|office|worksite)\s+)?location\s*:\s*"
+    rf"{_OVERSEAS_PLACE}\b)",
+    re.IGNORECASE,
+)
+_OVERSEAS_STRUCTURED_LOCATION = re.compile(rf"\b{_OVERSEAS_PLACE}\b", re.IGNORECASE)
+WORK_LOCATION_SINGAPORE = "singapore"
+WORK_LOCATION_OVERSEAS = "overseas"
+WORK_LOCATION_UNKNOWN = "unknown"
+WORK_LOCATION_SCOPES = frozenset({
+    WORK_LOCATION_SINGAPORE,
+    WORK_LOCATION_OVERSEAS,
+    WORK_LOCATION_UNKNOWN,
+})
+WORK_LOCATION_CLASSIFIER_VERSION = "work-location-scope-v1"
+
+
+def resolve_work_location_scope(
+    scope: str | None,
+    location: str | None,
+    title: str | None = None,
+    description: str | None = None,
+) -> str:
+    """Normalize source evidence, with explicit overseas posting text overriding it."""
+    structured = " ".join((location or "").split()).casefold()
+    if (
+        _OVERSEAS_STRUCTURED_LOCATION.search(structured)
+        or _OVERSEAS_TITLE_WORKSITE.search(title or "")
+        or _OVERSEAS_DESCRIPTION_WORKSITE.search(description or "")
+    ):
+        return WORK_LOCATION_OVERSEAS
+    normalized = (scope or "").strip().casefold()
+    if normalized in (WORK_LOCATION_SINGAPORE, WORK_LOCATION_OVERSEAS):
+        return normalized
+    return WORK_LOCATION_UNKNOWN
 
 
 def job_corpus_marker(db) -> str:
@@ -121,19 +159,38 @@ def apply_expired_job_visibility(query):
     )
 
 
-def is_singapore_job_location(location: str | None, title: str | None = None) -> bool:
-    """Return whether structured and explicit title evidence point to Singapore."""
-    return (
-        (location or "").strip().casefold() in SINGAPORE_JOB_LOCATIONS
-        and not _OVERSEAS_TITLE_LOCATION.search(title or "")
-    )
+def is_singapore_job_location(
+    location: str | None,
+    title: str | None = None,
+    description: str | None = None,
+    work_location_scope: str | None = None,
+) -> bool:
+    """Return whether persisted scope survives explicit posting evidence."""
+    return resolve_work_location_scope(
+        work_location_scope,
+        location,
+        title,
+        description,
+    ) == WORK_LOCATION_SINGAPORE
 
 
-def singapore_job_prefilter_condition(location_column):
-    """Portable SQL prefilter; Python verifies title evidence after loading."""
-    return func.lower(func.trim(func.coalesce(location_column, ""))).in_(
-        SINGAPORE_JOB_LOCATIONS
+def singapore_public_job_ids(db, *, source: str | None = None) -> set[int]:
+    """Return shared Singapore-policy IDs for public search and latest-job surfaces."""
+    query = apply_public_job_visibility(db.query(
+        ScrapedJob.id,
+        ScrapedJob.title,
+        ScrapedJob.location,
+        ScrapedJob.work_location_scope,
+    )).filter(
+        ScrapedJob.work_location_scope == WORK_LOCATION_SINGAPORE
     )
+    if source:
+        query = query.filter(ScrapedJob.source == source)
+    return {
+        job_id
+        for job_id, title, location, scope in query.all()
+        if is_singapore_job_location(location, title, work_location_scope=scope)
+    }
 
 
 def job_title_matches(title: str | None, phrase: str | None) -> bool:

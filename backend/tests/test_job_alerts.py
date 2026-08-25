@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 import job_alerts
 from database import Base
 from job_alerts import AlertMatch, find_alert_matches
-from models import JobAlertDelivery, JobAlertPreference, ScrapedJob, User, UserMemory
+from employer_filter import EMPLOYER_RELATIONSHIP_PRECOMPUTE_MARKER
+from models import JobAlertDelivery, JobAlertPreference, ScrapedJob, UsageLog, User, UserMemory
 
 
 def test_local_job_alert_run_lease_rejects_overlap_and_releases():
@@ -105,8 +106,10 @@ def test_job_alert_commit_failure_does_not_report_a_durable_send(monkeypatch, tm
         job = ScrapedJob(
             title="Platform Engineer",
             company="Example Employer",
-            dedup_key="alert-commit-failure",
-            direct_employer=1,
+                dedup_key="alert-commit-failure",
+                direct_employer=1,
+                employer_relationship="unknown",
+                employer_relationship_evidence="legacy_no_relationship_signal",
         )
         seed.add(job)
         seed.flush()
@@ -115,6 +118,7 @@ def test_job_alert_commit_failure_does_not_report_a_durable_send(monkeypatch, tm
             JobAlertPreference(
                 user_id=user.id,
                 enabled=True,
+                direct_employers_only=False,
                 last_run_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
             ),
         ])
@@ -214,6 +218,71 @@ def test_direct_employer_alert_does_not_advance_while_index_is_incomplete(
     engine.dispose()
 
 
+def test_expired_unclassified_row_neither_blocks_nor_enters_direct_alerts(monkeypatch):
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 25, tzinfo=timezone.utc)
+    with Session(engine) as db:
+        user = User(email="closed@example.test", password_hash="unused", name="Closed")
+        db.add(user)
+        db.flush()
+        db.add_all(
+            [
+                UserMemory(user_id=user.id, resume_text="Experienced quality manager " * 4),
+                JobAlertPreference(
+                    user_id=user.id,
+                    enabled=True,
+                    direct_employers_only=True,
+                    last_run_at=now - timedelta(days=2),
+                ),
+                ScrapedJob(
+                    title="Current Quality Manager",
+                    company="Micron",
+                    dedup_key="current-classified-alert-job",
+                    posted_at_sort=now.isoformat(),
+                    scraped_at=now.isoformat(),
+                    employer_relationship="unknown",
+                    employer_relationship_evidence="mcf_no_relationship_signal",
+                ),
+                ScrapedJob(
+                    title="Closed Legacy Manager",
+                    company="Legacy Employer",
+                    dedup_key="closed-unclassified-alert-job",
+                    posted_at_sort=(now - timedelta(days=90)).isoformat(),
+                    scraped_at=(now - timedelta(days=90)).isoformat(),
+                ),
+                UsageLog(
+                    action="job_precompute",
+                    detail=EMPLOYER_RELATIONSHIP_PRECOMPUTE_MARKER,
+                ),
+            ]
+        )
+        db.commit()
+        preference = db.query(JobAlertPreference).filter_by(user_id=user.id).one()
+        monkeypatch.setattr(job_alerts, "extract_resume_alert_skills", lambda _resume: [])
+        monkeypatch.setattr(
+            job_alerts,
+            "score_job_for_alert",
+            lambda _resume, _skills, job: AlertMatch(
+                job=job,
+                score=90,
+                matched_skills=[],
+                missing_skills=[],
+                why="Regression fixture",
+            ),
+        )
+
+        matches = find_alert_matches(
+            db,
+            preference,
+            "Experienced quality manager " * 4,
+            now=now,
+        )
+
+        assert [match.job.title for match in matches] == ["Current Quality Manager"]
+        assert job_alerts._process_due_alert(db, preference, now, dry_run=True) == (1, False)
+
+
 def test_find_alert_matches_ranks_all_bounded_candidates_before_limiting(monkeypatch):
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
@@ -225,12 +294,14 @@ def test_find_alert_matches_ranks_all_bounded_candidates_before_limiting(monkeyp
             company="Direct Employer",
             dedup_key="high-match",
             scraped_at=now.isoformat(),
+            posted_at_sort=now.isoformat(),
         )
         low_match = ScrapedJob(
             title="Low match",
             company="Another Direct Employer",
             dedup_key="low-match",
             scraped_at=now.isoformat(),
+            posted_at_sort=now.isoformat(),
         )
         db.add_all([high_match, low_match])
         db.commit()
@@ -292,6 +363,7 @@ def test_alert_overflow_drains_on_schedule_without_losing_matches(
                 company="Direct Employer",
                 dedup_key=f"backlog-{index}",
                 scraped_at=now.isoformat(),
+                posted_at_sort=now.isoformat(),
             )
             for index in (1, 2)
         ]
@@ -371,7 +443,12 @@ def test_dry_run_reports_candidates_without_mutating_delivery_state(monkeypatch,
         db.flush()
         db.add_all([
             UserMemory(user_id=user.id, resume_text="Experienced platform engineer " * 4),
-            JobAlertPreference(user_id=user.id, enabled=True, last_run_at=now - timedelta(days=2)),
+            JobAlertPreference(
+                user_id=user.id,
+                enabled=True,
+                direct_employers_only=False,
+                last_run_at=now - timedelta(days=2),
+            ),
         ])
         db.commit()
         user_id = user.id

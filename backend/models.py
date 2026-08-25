@@ -70,6 +70,8 @@ class ScrapedJob(Base):
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     company: Mapped[str] = mapped_column(String(500), nullable=False)
     location: Mapped[str] = mapped_column(String(500), default="")
+    work_location_scope: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False, index=True)
+    work_location_scope_source: Mapped[str] = mapped_column(String(40), default="unknown", nullable=False)
     salary: Mapped[str] = mapped_column(String(200), default="")
     salary_floor: Mapped[int] = mapped_column(Integer, default=0)
     source: Mapped[str] = mapped_column(String(200), default="")
@@ -90,8 +92,13 @@ class ScrapedJob(Base):
     company_ssic_description: Mapped[str] = mapped_column(String(300), default="")
     company_ssic_source: Mapped[str] = mapped_column(String(30), default="")
     # -1 means the derived employer classification has not been computed yet.
-    # Search fails explicitly instead of treating unknown rows as direct.
+    # Deprecated compatibility field: 0 means known intermediary; 1 means
+    # eligible under the historical "hide known recruiters" behavior.
     direct_employer: Mapped[int] = mapped_column(Integer, default=-1, nullable=False)
+    # NULL is migration state. Classified rows use direct/intermediary/unknown;
+    # unknown is a real evidence state and remains eligible by default.
+    employer_relationship: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+    employer_relationship_evidence: Mapped[str] = mapped_column(String(50), default="", nullable=False)
     skills_flat: Mapped[str] = mapped_column(Text, default="")
     scraped_at: Mapped[str] = mapped_column(String(50), default="")
     posted_at_sort: Mapped[str] = mapped_column(String(50), default="")
@@ -613,9 +620,7 @@ class ProposedResumeEdit(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
 
-    __table_args__ = (
-        Index("ix_proposed_resume_edit_thread", "user_id", "thread_id", "status"),
-    )
+    __table_args__ = (Index("ix_proposed_resume_edit_thread", "user_id", "thread_id", "status"),)
 
 
 class InterviewStory(Base):

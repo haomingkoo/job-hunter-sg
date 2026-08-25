@@ -102,6 +102,11 @@ describe("ScraperTab persisted Power Match scores", () => {
     await renderScraper(root);
 
     expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("Hide known recruiters");
+    expect(container.textContent).toContain(
+      "Verified direct and unverified employers remain eligible.",
+    );
+    expect(container.textContent).not.toContain("Direct employers only");
     expect(apiFetch).toHaveBeenCalledWith(
       "/api/jobs?page=1&per_page=20&sort=balanced",
       expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),

@@ -54,7 +54,13 @@ from auth import (
 )
 from database import SessionLocal, get_db, init_db
 from email_service import EmailDeliveryError, email_configured, send_email
-from employer_filter import is_recruitment_employer
+from employer_filter import (
+    EMPLOYER_RELATIONSHIP_PRECOMPUTE_MARKER,
+    employer_relationship_eligibility_condition,
+    employer_relationship_rank,
+    employer_relationship_unclassified_condition,
+    get_employer_relationship_readiness,
+)
 from job_precompute import (
     apply_job_precomputes as _apply_job_precomputes,
     display_salary as _display_salary,
@@ -268,6 +274,7 @@ def _clear_analytics_cache() -> None:
         _filter_meta_ts = 0.0
         _filter_meta_marker = ""
 
+
 _power_match_cache: dict[int, dict] = {}
 _POWER_MATCH_CACHE_TTL = 600  # 10 minutes
 _POWER_MATCH_SNAPSHOT_TTL_SECONDS = 86400  # 24 hours
@@ -316,6 +323,7 @@ async def lifespan(_application: FastAPI):
     init_db()
     log.info("[STARTUP] Database initialized")
     from database import SessionLocal
+
     # Retire jobs older than 30 days (run in background to not block health check).
     # Keep rows because user-owned records can reference them.
     def _startup_maintenance() -> None:
@@ -347,7 +355,8 @@ async def lifespan(_application: FastAPI):
                     ScrapedJob.hidden == 0,
                     or_(ScrapedJob.posted_at_sort.is_(None), ScrapedJob.posted_at_sort == ""),
                 )
-                .scalar() or 0
+                .scalar()
+                or 0
             )
             if missing_count > 0:
                 log.info(f"[STARTUP] Backfilling posted_at_sort for {missing_count} jobs...")
@@ -427,10 +436,7 @@ async def lifespan(_application: FastAPI):
     # lifespan needs a fresh server (including repeated TestClient lifespans).
     jobhunter_mcp = create_public_mcp()
     mcp_http_app = jobhunter_mcp.streamable_http_app()
-    mcp_root_route = next(
-        route for route in mcp_http_app.routes
-        if getattr(route, "path", None) == "/"
-    )
+    mcp_root_route = next(route for route in mcp_http_app.routes if getattr(route, "path", None) == "/")
     _mcp_exact_proxy.target = mcp_root_route.endpoint
     _mcp_mount_proxy.target = mcp_http_app
 
@@ -469,15 +475,14 @@ app.include_router(story_router)
 
 
 allowed_origins = [
-    o.strip() for o in os.environ.get(
-        "ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"
-    ).split(",") if o.strip()
+    o.strip()
+    for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+    if o.strip()
 ]
 # SECURITY: Block wildcard CORS in production
 if _is_production and "*" in allowed_origins:
     raise RuntimeError(
-        "ALLOWED_ORIGINS must not be '*' in production. "
-        "Set it to your frontend URL (e.g. https://jobhuntersg.com)."
+        "ALLOWED_ORIGINS must not be '*' in production. Set it to your frontend URL (e.g. https://jobhuntersg.com)."
     )
 app.add_middleware(
     CORSMiddleware,
@@ -516,62 +521,212 @@ aggregator = JobAggregator()
 _scorer = ResumeScorer()
 
 POWER_SKILL_TERMS = {
-    "python", "sql", "excel", "tableau", "power bi", "aws", "azure", "gcp",
-    "docker", "kubernetes", "terraform", "linux", "react", "typescript",
-    "javascript", "java", "node.js", "node", "golang", "rust", "git",
-    "ci/cd", "agile", "scrum", "project management", "stakeholder management",
-    "roadmap", "analytics", "data analysis", "machine learning", "ai",
-    "communication", "leadership", "change management", "quality", "spc",
-    "six sigma", "manufacturing", "semulator3d", "jira", "salesforce",
-    "figma", "product management", "program management", "root cause analysis",
-    "semiconductor", "process integration", "process control", "yield engineering",
-    "yield optimization", "yield ramp", "lithography", "metrology",
-    "wafer fabrication", "fab operations", "product engineering operations",
-    "front end operations", "quality systems", "eqms", "feol", "beol",
-    "doe", "design of experiments", "virtual doe", "equipment engineering",
-    "wet process development", "defect metrology", "hbm3e", "lpddr5x",
+    "python",
+    "sql",
+    "excel",
+    "tableau",
+    "power bi",
+    "aws",
+    "azure",
+    "gcp",
+    "docker",
+    "kubernetes",
+    "terraform",
+    "linux",
+    "react",
+    "typescript",
+    "javascript",
+    "java",
+    "node.js",
+    "node",
+    "golang",
+    "rust",
+    "git",
+    "ci/cd",
+    "agile",
+    "scrum",
+    "project management",
+    "stakeholder management",
+    "roadmap",
+    "analytics",
+    "data analysis",
+    "machine learning",
+    "ai",
+    "communication",
+    "leadership",
+    "change management",
+    "quality",
+    "spc",
+    "six sigma",
+    "manufacturing",
+    "semulator3d",
+    "jira",
+    "salesforce",
+    "figma",
+    "product management",
+    "program management",
+    "root cause analysis",
+    "semiconductor",
+    "process integration",
+    "process control",
+    "yield engineering",
+    "yield optimization",
+    "yield ramp",
+    "lithography",
+    "metrology",
+    "wafer fabrication",
+    "fab operations",
+    "product engineering operations",
+    "front end operations",
+    "quality systems",
+    "eqms",
+    "feol",
+    "beol",
+    "doe",
+    "design of experiments",
+    "virtual doe",
+    "equipment engineering",
+    "wet process development",
+    "defect metrology",
+    "hbm3e",
+    "lpddr5x",
 }
 
 POWER_ALLOWED_SINGLE_SKILLS = {
-    "python", "sql", "excel", "tableau", "aws", "azure", "gcp", "docker",
-    "kubernetes", "terraform", "linux", "react", "typescript", "javascript",
-    "java", "node", "golang", "rust", "git", "agile", "scrum", "analytics",
-    "ai", "leadership", "quality", "spc", "jira", "manufacturing",
-    "semiconductor", "lithography", "metrology", "yield", "automation",
-    "reliability", "validation", "integration", "eqms", "feol", "beol",
-    "doe", "semulator3d", "hbm3e", "lpddr5x",
+    "python",
+    "sql",
+    "excel",
+    "tableau",
+    "aws",
+    "azure",
+    "gcp",
+    "docker",
+    "kubernetes",
+    "terraform",
+    "linux",
+    "react",
+    "typescript",
+    "javascript",
+    "java",
+    "node",
+    "golang",
+    "rust",
+    "git",
+    "agile",
+    "scrum",
+    "analytics",
+    "ai",
+    "leadership",
+    "quality",
+    "spc",
+    "jira",
+    "manufacturing",
+    "semiconductor",
+    "lithography",
+    "metrology",
+    "yield",
+    "automation",
+    "reliability",
+    "validation",
+    "integration",
+    "eqms",
+    "feol",
+    "beol",
+    "doe",
+    "semulator3d",
+    "hbm3e",
+    "lpddr5x",
 }
 
 POWER_NOISE_SKILLS = {
-    "professional experience", "professional summary", "core skills",
-    "core competencies", "technical skills", "additional information",
-    "certification", "certifications", "education", "languages",
-    "personal", "professional learning communities", "exit interviews",
-    "loan processing", "medical study", "subject matter expert",
+    "professional experience",
+    "professional summary",
+    "core skills",
+    "core competencies",
+    "technical skills",
+    "additional information",
+    "certification",
+    "certifications",
+    "education",
+    "languages",
+    "personal",
+    "professional learning communities",
+    "exit interviews",
+    "loan processing",
+    "medical study",
+    "subject matter expert",
     "certifications & technical upskilling",
 }
 
 POWER_GENERIC_SINGLE_SKILLS = {
-    "experience", "professional", "organization", "performance", "development",
-    "transformation", "documentation", "collaboration", "validation",
-    "automation", "leadership", "engineering", "integration",
+    "experience",
+    "professional",
+    "organization",
+    "performance",
+    "development",
+    "transformation",
+    "documentation",
+    "collaboration",
+    "validation",
+    "automation",
+    "leadership",
+    "engineering",
+    "integration",
 }
 
 POWER_DISPLAY_SINGLE_SKILLS = {
-    "python", "sql", "excel", "tableau", "aws", "azure", "gcp", "docker",
-    "kubernetes", "react", "typescript", "javascript", "java", "agile",
-    "analytics", "ai", "spc", "jira", "semiconductor", "lithography",
-    "metrology", "eqms", "doe", "semulator3d", "hbm3e", "lpddr5x",
-    "feol", "beol",
+    "python",
+    "sql",
+    "excel",
+    "tableau",
+    "aws",
+    "azure",
+    "gcp",
+    "docker",
+    "kubernetes",
+    "react",
+    "typescript",
+    "javascript",
+    "java",
+    "agile",
+    "analytics",
+    "ai",
+    "spc",
+    "jira",
+    "semiconductor",
+    "lithography",
+    "metrology",
+    "eqms",
+    "doe",
+    "semulator3d",
+    "hbm3e",
+    "lpddr5x",
+    "feol",
+    "beol",
 }
 
 POWER_DISPLAY_EXCLUDE = POWER_NOISE_SKILLS | {
-    "professional experience", "professional summary", "technical skills",
-    "core skills", "core competencies", "additional information",
-    "standardized documentation", "documentation", "organization",
-    "performance", "development", "transformation", "integration",
-    "automation", "leadership", "reliability", "engineering", "validation",
-    "collaboration", "certifications", "professional",
+    "professional experience",
+    "professional summary",
+    "technical skills",
+    "core skills",
+    "core competencies",
+    "additional information",
+    "standardized documentation",
+    "documentation",
+    "organization",
+    "performance",
+    "development",
+    "transformation",
+    "integration",
+    "automation",
+    "leadership",
+    "reliability",
+    "engineering",
+    "validation",
+    "collaboration",
+    "certifications",
+    "professional",
 }
 
 POWER_GAP_EXCLUDE = POWER_DISPLAY_EXCLUDE | {
@@ -603,29 +758,86 @@ POWER_GAP_EXCLUDE = POWER_DISPLAY_EXCLUDE | {
 }
 
 SEMICONDUCTOR_DOMAIN_TERMS = {
-    "semiconductor", "process integration", "process control",
-    "yield engineering", "yield optimization", "yield ramp", "lithography",
-    "metrology", "wafer fabrication", "fab operations", "product engineering operations",
-    "front end operations", "quality systems", "eqms", "spc", "root cause analysis",
-    "design of experiments", "virtual doe", "equipment engineering",
-    "wet process development", "defect metrology", "feol", "beol",
-    "semulator3d", "hbm3e", "lpddr5x",
+    "semiconductor",
+    "process integration",
+    "process control",
+    "yield engineering",
+    "yield optimization",
+    "yield ramp",
+    "lithography",
+    "metrology",
+    "wafer fabrication",
+    "fab operations",
+    "product engineering operations",
+    "front end operations",
+    "quality systems",
+    "eqms",
+    "spc",
+    "root cause analysis",
+    "design of experiments",
+    "virtual doe",
+    "equipment engineering",
+    "wet process development",
+    "defect metrology",
+    "feol",
+    "beol",
+    "semulator3d",
+    "hbm3e",
+    "lpddr5x",
 }
 
 SEMICONDUCTOR_HARD_TERMS = {
-    "semiconductor", "semiconductor manufacturing", "process integration",
-    "process control", "yield engineering", "yield optimization", "yield ramp",
-    "lithography", "metrology", "wafer fabrication", "fab operations",
-    "product engineering operations", "front end operations", "quality systems",
-    "eqms", "root cause analysis", "design of experiments", "virtual doe",
-    "equipment engineering", "wet process development", "defect metrology",
-    "feol", "beol", "semulator3d", "hbm3e", "lpddr5x",
+    "semiconductor",
+    "semiconductor manufacturing",
+    "process integration",
+    "process control",
+    "yield engineering",
+    "yield optimization",
+    "yield ramp",
+    "lithography",
+    "metrology",
+    "wafer fabrication",
+    "fab operations",
+    "product engineering operations",
+    "front end operations",
+    "quality systems",
+    "eqms",
+    "root cause analysis",
+    "design of experiments",
+    "virtual doe",
+    "equipment engineering",
+    "wet process development",
+    "defect metrology",
+    "feol",
+    "beol",
+    "semulator3d",
+    "hbm3e",
+    "lpddr5x",
 }
 
 POWER_ROLE_STOPWORDS = {
-    "the", "and", "for", "with", "from", "lead", "senior", "junior", "staff",
-    "principal", "manager", "engineer", "executive", "associate", "specialist",
-    "analyst", "intern", "contract", "full", "time", "part", "level",
+    "the",
+    "and",
+    "for",
+    "with",
+    "from",
+    "lead",
+    "senior",
+    "junior",
+    "staff",
+    "principal",
+    "manager",
+    "engineer",
+    "executive",
+    "associate",
+    "specialist",
+    "analyst",
+    "intern",
+    "contract",
+    "full",
+    "time",
+    "part",
+    "level",
 }
 
 POWER_BRIDGE_LIBRARY = [
@@ -646,7 +858,16 @@ POWER_BRIDGE_LIBRARY = [
     },
     {
         "title": "Product & delivery bridge",
-        "keywords": {"product management", "program management", "project management", "roadmap", "stakeholder management", "agile", "scrum", "jira"},
+        "keywords": {
+            "product management",
+            "program management",
+            "project management",
+            "roadmap",
+            "stakeholder management",
+            "agile",
+            "scrum",
+            "jira",
+        },
         "suggestion": "Bridge this with delivery case studies, roadmap artifacts, and examples that show prioritisation, cross-functional work, and measurable outcomes.",
     },
     {
@@ -676,7 +897,10 @@ def _is_power_surface_noise(skill: str) -> bool:
         return True
     if lower in POWER_DISPLAY_EXCLUDE:
         return True
-    if re.fullmatch(r"(professional|work|core|technical|additional|selected)\s+(experience|summary|skills?|competencies|information|projects?)", lower):
+    if re.fullmatch(
+        r"(professional|work|core|technical|additional|selected)\s+(experience|summary|skills?|competencies|information|projects?)",
+        lower,
+    ):
         return True
     if len(lower.split()) == 1 and lower not in POWER_DISPLAY_SINGLE_SKILLS:
         return True
@@ -770,10 +994,7 @@ def _build_canonical_job_terms(job: ScrapedJob, db: Session | None = None) -> li
         db_session=db,
     )
 
-    return [
-        term for term in terms
-        if not _is_power_skill_noise(term.get("skill", ""))
-    ]
+    return [term for term in terms if not _is_power_skill_noise(term.get("skill", ""))]
 
 
 def _count_domain_hits(terms: list[str], domain_terms: set[str]) -> int:
@@ -801,6 +1022,7 @@ def _persist_resume_to_memory(user: Optional[User], db: Session, resume_text: st
     _power_match_cache.pop(user.id, None)
     try:
         from embedding_service import encode_text
+
         mem.resume_embedding = encode_text(resume_text[:3000])
     except Exception:
         pass
@@ -911,6 +1133,8 @@ def _refresh_job_precomputes(job: ScrapedJob) -> None:
         "salary": job.salary or "",
         "skills": job.skills,
         "description": job.description or "",
+        "source": job.source or "",
+        "agency": job.agency or "",
         "sector": job.sector or "",
         "company_ssic_code": job.company_ssic_code or "",
         "company_ssic_description": job.company_ssic_description or "",
@@ -922,17 +1146,21 @@ def _refresh_job_precomputes(job: ScrapedJob) -> None:
     job.company_ssic_description = str(data.get("company_ssic_description") or "")
     job.company_ssic_source = str(data.get("company_ssic_source") or "")
     job.direct_employer = int(data["direct_employer"])
+    job.employer_relationship = str(data["employer_relationship"])
+    job.employer_relationship_evidence = str(data["employer_relationship_evidence"])
     job.salary_floor = int(data["salary_floor"])
     job.skills_flat = str(data["skills_flat"])
     job.promotional_score = int(data["promotional_score"])
-    job.content_hash = compute_content_hash({
-        "company": job.company,
-        "title": job.title,
-        "location": job.location,
-        "salary": job.salary,
-        "employment_type": job.employment_type,
-        "description": job.description,
-    })
+    job.content_hash = compute_content_hash(
+        {
+            "company": job.company,
+            "title": job.title,
+            "location": job.location,
+            "salary": job.salary,
+            "employment_type": job.employment_type,
+            "description": job.description,
+        }
+    )
 
 
 def _refresh_careersgov_terms_if_weak(job: ScrapedJob, db: Session) -> bool:
@@ -962,6 +1190,7 @@ def _refresh_careersgov_terms_if_weak(job: ScrapedJob, db: Session) -> bool:
         _refresh_job_precomputes(job)
         _compute_and_cache_term_preview(job, db)
         from embedding_service import invalidate_job_embedding_if_stale
+
         invalidate_job_embedding_if_stale(job)
     return changed
 
@@ -1017,6 +1246,7 @@ def _enrich_careersgov_job(job: ScrapedJob, db: Session) -> bool:
         _compute_and_cache_term_preview(job, db)
     if updated:
         from embedding_service import invalidate_job_embedding_if_stale
+
         invalidate_job_embedding_if_stale(job)
     return updated
 
@@ -1077,20 +1307,24 @@ def _select_power_match_candidates(
             ScrapedJob.scraped_at,
             ScrapedJob.closing_date,
             ScrapedJob.company_ssic_description,
+            ScrapedJob.employer_relationship,
+            ScrapedJob.employer_relationship_evidence,
             ScrapedJob.job_terms_preview,
             ScrapedJob.skills_flat,
         )
     )
     base_query = apply_public_job_visibility(base_query)
     if direct_employers_only:
-        base_query = base_query.filter(ScrapedJob.direct_employer == 1)
-    hard_resume_terms = [
-        skill for skill in resume_skills
-        if skill.lower() in SEMICONDUCTOR_HARD_TERMS
-    ]
+        base_query = base_query.filter(
+            employer_relationship_eligibility_condition(
+                ScrapedJob.employer_relationship,
+                ScrapedJob.employer_relationship_evidence,
+                ScrapedJob.company,
+            )
+        )
+    hard_resume_terms = [skill for skill in resume_skills if skill.lower() in SEMICONDUCTOR_HARD_TERMS]
     prioritized_terms = hard_resume_terms[:8] + [
-        skill for skill in resume_skills[:12]
-        if skill.lower() not in {term.lower() for term in hard_resume_terms[:8]}
+        skill for skill in resume_skills[:12] if skill.lower() not in {term.lower() for term in hard_resume_terms[:8]}
     ]
     lower_resume = resume_text.lower()
     for term in SEMICONDUCTOR_HARD_TERMS:
@@ -1099,10 +1333,7 @@ def _select_power_match_candidates(
         if len(prioritized_terms) >= 16:
             break
 
-    prioritized_terms = [
-        term for term in prioritized_terms
-        if term and not _is_power_skill_noise(term)
-    ]
+    prioritized_terms = [term for term in prioritized_terms if term and not _is_power_skill_noise(term)]
 
     if not prioritized_terms:
         return []
@@ -1118,13 +1349,7 @@ def _select_power_match_candidates(
             ]
         )
 
-    matched_jobs = (
-        base_query
-        .filter(or_(*conditions))
-        .order_by(ScrapedJob.id.desc())
-        .limit(limit)
-        .all()
-    )
+    matched_jobs = base_query.filter(or_(*conditions)).order_by(ScrapedJob.id.desc()).limit(limit).all()
 
     return matched_jobs
 
@@ -1223,7 +1448,9 @@ def _power_match_readiness(
 ) -> tuple[dict, dict | None]:
     """Read an exact current snapshot without scoring or consuming quota."""
     resume_text, resume_hash, corpus_marker = _power_match_identity(
-        db, user.id, direct_employers_only,
+        db,
+        user.id,
+        direct_employers_only,
     )
     base = {
         "direct_employers_only": direct_employers_only,
@@ -1231,12 +1458,15 @@ def _power_match_readiness(
         "generate_action": "Generate Power Match scores",
     }
     if len(resume_text) < 50:
-        return ({
-            **base,
-            "status": "not_ready",
-            "reason": "resume_missing",
-            "message": "Save a resume before generating Browse scores.",
-        }, None)
+        return (
+            {
+                **base,
+                "status": "not_ready",
+                "reason": "resume_missing",
+                "message": "Save a resume before generating Browse scores.",
+            },
+            None,
+        )
 
     now = time.monotonic()
     cached = _power_match_cache.get(user.id)
@@ -1248,14 +1478,17 @@ def _power_match_readiness(
         and cached.get("limit") == limit
     ):
         snapshot = cached["data"]
-        return ({
-            **base,
-            "status": "ready",
-            "reason": "ready",
-            "message": "Browse scores are ready for this resume and job corpus.",
-            "generate_action": "Refresh Power Match scores",
-            "score_count": len(snapshot.get("recommendations", [])),
-        }, snapshot)
+        return (
+            {
+                **base,
+                "status": "ready",
+                "reason": "ready",
+                "message": "Browse scores are ready for this resume and job corpus.",
+                "generate_action": "Refresh Power Match scores",
+                "score_count": len(snapshot.get("recommendations", [])),
+            },
+            snapshot,
+        )
 
     snapshot = _load_power_match_snapshot(
         db=db,
@@ -1272,14 +1505,17 @@ def _power_match_readiness(
             "corpus_marker": corpus_marker,
             "limit": limit,
         }
-        return ({
-            **base,
-            "status": "ready",
-            "reason": "ready",
-            "message": "Browse scores are ready for this resume and job corpus.",
-            "generate_action": "Refresh Power Match scores",
-            "score_count": len(snapshot.get("recommendations", [])),
-        }, snapshot)
+        return (
+            {
+                **base,
+                "status": "ready",
+                "reason": "ready",
+                "message": "Browse scores are ready for this resume and job corpus.",
+                "generate_action": "Refresh Power Match scores",
+                "score_count": len(snapshot.get("recommendations", [])),
+            },
+            snapshot,
+        )
 
     latest = (
         db.query(PowerMatchSnapshot)
@@ -1301,7 +1537,11 @@ def _power_match_readiness(
         )
         latest_base, _, latest_mode = latest.corpus_marker.rpartition(":direct=")
         current_base, _, current_mode = corpus_marker.rpartition(":direct=")
-        if expired or not isinstance(latest.result, dict) or latest.result.get("result_version") != _POWER_MATCH_RESULT_VERSION:
+        if (
+            expired
+            or not isinstance(latest.result, dict)
+            or latest.result.get("result_version") != _POWER_MATCH_RESULT_VERSION
+        ):
             reason, message = "snapshot_stale", "Saved Browse scores are stale. Generate them again."
         elif latest.resume_hash != resume_hash:
             reason, message = "resume_changed", "Your resume changed. Generate Browse scores again."
@@ -1310,12 +1550,15 @@ def _power_match_readiness(
         elif latest_base != current_base:
             reason, message = "corpus_changed", "The active job corpus changed. Generate Browse scores again."
 
-    return ({
-        **base,
-        "status": "not_ready",
-        "reason": reason,
-        "message": message,
-    }, None)
+    return (
+        {
+            **base,
+            "status": "not_ready",
+            "reason": reason,
+            "message": message,
+        },
+        None,
+    )
 
 
 def _power_resume_source_meta(db: Session, user_id: int, resume_text: str) -> dict:
@@ -1365,10 +1608,7 @@ def _power_resume_source_meta(db: Session, user_id: int, resume_text: str) -> di
 
 
 def _extract_title_terms(title: str) -> list[str]:
-    return [
-        word for word in re.findall(r"[a-zA-Z][a-zA-Z+#.]{2,}", title.lower())
-        if word not in POWER_ROLE_STOPWORDS
-    ]
+    return [word for word in re.findall(r"[a-zA-Z][a-zA-Z+#.]{2,}", title.lower()) if word not in POWER_ROLE_STOPWORDS]
 
 
 def _infer_resume_level(resume_text: str) -> int:
@@ -1393,11 +1633,17 @@ def _infer_resume_level(resume_text: str) -> int:
 
 def _infer_job_level(job: ScrapedJob) -> int:
     combined = f"{job.seniority or ''} {job.title or ''}".lower()
-    if any(term in combined for term in {"vice president", "vp", "director", "head of", "general manager", "senior management"}):
+    if any(
+        term in combined
+        for term in {"vice president", "vp", "director", "head of", "general manager", "senior management"}
+    ):
         return 5
     if any(term in combined for term in {"senior manager", "manager", "principal", "lead"}):
         return 4
-    if any(term in combined for term in {"senior executive", "staff", "professional", "engineer", "analyst", "specialist", "executive"}):
+    if any(
+        term in combined
+        for term in {"senior executive", "staff", "professional", "engineer", "analyst", "specialist", "executive"}
+    ):
         return 3
     if any(term in combined for term in {"junior", "associate", "technician", "entry", "fresh", "non-executive"}):
         return 2
@@ -1416,14 +1662,8 @@ def _build_bridge_plan(missing_skills: list[str]) -> list[dict]:
         for path in POWER_BRIDGE_LIBRARY:
             if any(
                 keyword == lower_skill
-                or (
-                    " " in keyword
-                    and re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", lower_skill)
-                )
-                or (
-                    " " not in keyword
-                    and keyword in skill_tokens
-                )
+                or (" " in keyword and re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", lower_skill))
+                or (" " not in keyword and keyword in skill_tokens)
                 for keyword in path["keywords"]
             ):
                 matched_path = path
@@ -1433,21 +1673,24 @@ def _build_bridge_plan(missing_skills: list[str]) -> list[dict]:
             if matched_path["title"] in seen_titles:
                 continue
             seen_titles.add(matched_path["title"])
-            plans.append({
-                "skill": skill,
-                "pathway": matched_path["title"],
-                "suggestion": matched_path["suggestion"],
-            })
+            plans.append(
+                {
+                    "skill": skill,
+                    "pathway": matched_path["title"],
+                    "suggestion": matched_path["suggestion"],
+                }
+            )
         else:
-            plans.append({
-                "skill": skill,
-                "pathway": "Role-specific bridging",
-                "suggestion": f"Bridge {skill} with one short course, one practice project, and one credible resume bullet before prioritising similar roles.",
-            })
+            plans.append(
+                {
+                    "skill": skill,
+                    "pathway": "Role-specific bridging",
+                    "suggestion": f"Bridge {skill} with one short course, one practice project, and one credible resume bullet before prioritising similar roles.",
+                }
+            )
         if len(plans) >= 3:
             break
     return plans
-
 
 
 _ADMIN_API_KEY = os.environ.get("ADMIN_API_KEY", "")
@@ -1513,6 +1756,7 @@ def admin_seed_jobs(
     from seed_jobs import seed_jobs, crawl_all_jobs
 
     if body.get("full"):
+
         def run_full_crawl():
             crawl_all_jobs()
             _clear_analytics_cache()
@@ -1568,27 +1812,30 @@ def admin_backfill_status(
     _require_admin(authorization)
 
     from database import SessionLocal as _SessionLocal
+
     db = _SessionLocal()
     try:
         total = db.query(func.count(ScrapedJob.id)).scalar()
-        has_desc = db.query(func.count(ScrapedJob.id)).filter(
-            ScrapedJob.description != "", ScrapedJob.description.isnot(None)
-        ).scalar()
-        has_parsed = db.query(func.count(ScrapedJob.id)).filter(
-            ScrapedJob.parsed_jd.isnot(None)
-        ).scalar()
-        has_preview = db.query(func.count(ScrapedJob.id)).filter(
-            ScrapedJob.job_terms_preview.isnot(None)
-        ).scalar()
-        has_summary = db.query(func.count(ScrapedJob.id)).filter(
-            ScrapedJob.jd_summary != "", ScrapedJob.jd_summary.isnot(None)
-        ).scalar()
-        summary_failed = db.query(func.count(ScrapedJob.id)).filter(
-            ScrapedJob.jd_summary_status.in_(["failed", "unavailable"])
-        ).scalar()
-        summary_generating = db.query(func.count(ScrapedJob.id)).filter(
-            ScrapedJob.jd_summary_status == "generating"
-        ).scalar()
+        has_desc = (
+            db.query(func.count(ScrapedJob.id))
+            .filter(ScrapedJob.description != "", ScrapedJob.description.isnot(None))
+            .scalar()
+        )
+        has_parsed = db.query(func.count(ScrapedJob.id)).filter(ScrapedJob.parsed_jd.isnot(None)).scalar()
+        has_preview = db.query(func.count(ScrapedJob.id)).filter(ScrapedJob.job_terms_preview.isnot(None)).scalar()
+        has_summary = (
+            db.query(func.count(ScrapedJob.id))
+            .filter(ScrapedJob.jd_summary != "", ScrapedJob.jd_summary.isnot(None))
+            .scalar()
+        )
+        summary_failed = (
+            db.query(func.count(ScrapedJob.id))
+            .filter(ScrapedJob.jd_summary_status.in_(["failed", "unavailable"]))
+            .scalar()
+        )
+        summary_generating = (
+            db.query(func.count(ScrapedJob.id)).filter(ScrapedJob.jd_summary_status == "generating").scalar()
+        )
     finally:
         db.close()
 
@@ -1627,11 +1874,7 @@ def admin_jd_analysis(
 
     db = SessionLocal()
     try:
-        jobs_with_analysis = (
-            db.query(ScrapedJob)
-            .filter(ScrapedJob.parsed_jd.isnot(None))
-            .all()
-        )
+        jobs_with_analysis = db.query(ScrapedJob).filter(ScrapedJob.parsed_jd.isnot(None)).all()
 
         flagged: list[dict] = []
         quality_scores: list[int] = []
@@ -1653,12 +1896,14 @@ def admin_jd_analysis(
             if ch:
                 if ch not in content_hashes:
                     content_hashes[ch] = []
-                content_hashes[ch].append({
-                    "id": job.id,
-                    "title": job.title,
-                    "company": job.company,
-                    "agency": job.agency or "",
-                })
+                content_hashes[ch].append(
+                    {
+                        "id": job.id,
+                        "title": job.title,
+                        "company": job.company,
+                        "agency": job.agency or "",
+                    }
+                )
 
             has_injection = analysis.get("has_injection", False)
             has_red_flags = analysis.get("has_red_flags", False)
@@ -1678,16 +1923,18 @@ def admin_jd_analysis(
                 should_include = True
 
             if should_include and len(flagged) < limit:
-                flagged.append({
-                    "id": job.id,
-                    "title": job.title,
-                    "company": job.company,
-                    "agency": job.agency or "",
-                    "source": job.source,
-                    "quality_score": score,
-                    "injection_findings": analysis.get("prompt_injection", []),
-                    "red_flags": analysis.get("red_flags", []),
-                })
+                flagged.append(
+                    {
+                        "id": job.id,
+                        "title": job.title,
+                        "company": job.company,
+                        "agency": job.agency or "",
+                        "source": job.source,
+                        "quality_score": score,
+                        "injection_findings": analysis.get("prompt_injection", []),
+                        "red_flags": analysis.get("red_flags", []),
+                    }
+                )
 
         duplicates = [
             {"content_hash": h, "count": len(jobs), "jobs": jobs[:5]}
@@ -1750,9 +1997,13 @@ def admin_backfill_enrichment(
             running=True,
             phase="preview",
             started_at=datetime.now(timezone.utc).isoformat(),
-            preview_done=0, preview_total=0,
-            summary_done=0, summary_failed=0, summary_total=0,
-            rate_per_min=0.0, eta_minutes=0.0,
+            preview_done=0,
+            preview_total=0,
+            summary_done=0,
+            summary_failed=0,
+            summary_total=0,
+            rate_per_min=0.0,
+            eta_minutes=0.0,
         )
         try:
             backfill_previews(
@@ -1779,6 +2030,7 @@ def admin_backfill_enrichment(
 
 _embedding_backfill_progress: dict = {"running": False, "done": 0, "total": 0, "phase": "idle"}
 _embedding_backfill_lock = threading.Lock()
+
 
 @app.post("/api/admin/rollup-company-promotional")
 def admin_rollup_company_promotional(
@@ -1884,6 +2136,7 @@ def admin_backfill_embeddings(
 
             db = SessionLocal()
             try:
+
                 def report(state: dict[str, int | bool]) -> None:
                     _embedding_backfill_progress.update(
                         total=int(state["searchable"]),
@@ -1920,9 +2173,7 @@ def admin_backfill_embeddings(
                 error_type=type(e).__name__,
             )
         else:
-            _embedding_backfill_progress["phase"] = (
-                "done" if _embedding_backfill_progress["complete"] else "paused"
-            )
+            _embedding_backfill_progress["phase"] = "done" if _embedding_backfill_progress["complete"] else "paused"
         finally:
             with _embedding_backfill_lock:
                 _embedding_backfill_progress["running"] = False
@@ -2075,8 +2326,6 @@ def terms() -> Response:
     return Response(content=render_terms_html(contact_line), media_type="text/html")
 
 
-
-
 def _require_password_auth() -> None:
     if not password_auth_enabled():
         raise HTTPException(status_code=404, detail="Password authentication is disabled")
@@ -2162,12 +2411,8 @@ def register_cloudflare_account(
     return user
 
 
-_VERIFICATION_MESSAGE = {
-    "message": "Check your email to verify your account before signing in."
-}
-_VERIFICATION_RESEND_MESSAGE = {
-    "message": "If that account is awaiting verification, we sent a new link."
-}
+_VERIFICATION_MESSAGE = {"message": "Check your email to verify your account before signing in."}
+_VERIFICATION_RESEND_MESSAGE = {"message": "If that account is awaiting verification, we sent a new link."}
 _VERIFICATION_EXPIRY_HOURS = 24
 _VERIFICATION_RESEND_COOLDOWN_MINUTES = 5
 
@@ -2208,9 +2453,7 @@ def _verification_token_is_due(user_id: int, db: Session) -> bool:
         return True
     if latest_created_at.tzinfo is None:
         latest_created_at = latest_created_at.replace(tzinfo=timezone.utc)
-    cutoff = datetime.now(timezone.utc) - timedelta(
-        minutes=_VERIFICATION_RESEND_COOLDOWN_MINUTES
-    )
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=_VERIFICATION_RESEND_COOLDOWN_MINUTES)
     return latest_created_at <= cutoff
 
 
@@ -2233,7 +2476,7 @@ def _send_verification_email(user: User, verification_token: str) -> None:
         f'<p style="color:#4b6478;">Hi {html.escape(user.name)}, finish creating your account. '
         "This link expires in 24 hours.</p>"
         f'<a href="{html.escape(verification_url)}" style="display:inline-block;margin-top:12px;'
-        'background:#384959;color:white;text-decoration:none;border-radius:8px;padding:10px 14px;'
+        "background:#384959;color:white;text-decoration:none;border-radius:8px;padding:10px 14px;"
         'font-size:14px;font-weight:700;">Verify email</a>'
         '<p style="color:#6b7280;font-size:13px;margin-top:20px;">'
         "If you did not create this account, you can ignore this email."
@@ -2284,9 +2527,7 @@ def signup(request: Request, body: SignupRequest, db: Session = Depends(get_db))
         _send_verification_email(user, verification_token)
     except Exception as exc:
         log.warning("Verification email failed for user_id=%s: %s", user.id, type(exc).__name__)
-        delivery_unknown = (
-            isinstance(exc, EmailDeliveryError) and exc.delivery_unknown
-        )
+        delivery_unknown = isinstance(exc, EmailDeliveryError) and exc.delivery_unknown
         if not delivery_unknown:
             db.query(EmailVerificationToken).filter(
                 EmailVerificationToken.token_hash == _auth_token_hash(verification_token)
@@ -2303,9 +2544,7 @@ def resend_verification(
     db: Session = Depends(get_db),
 ) -> dict:
     _require_password_auth()
-    if not _PUBLIC_RATE_LIMITER.allow(
-        f"resend-verification:{_get_client_ip(request)}", limit=10, window_seconds=3600
-    ):
+    if not _PUBLIC_RATE_LIMITER.allow(f"resend-verification:{_get_client_ip(request)}", limit=10, window_seconds=3600):
         return _VERIFICATION_RESEND_MESSAGE
     email = str(body.email).strip().lower()
     email_hash = hashlib.sha256(email.encode()).hexdigest()[:16]
@@ -2393,11 +2632,7 @@ def verify_email(
             verification.used_at = now
             db.commit()
             raise HTTPException(status_code=400, detail="Verification link is invalid or expired")
-        if (
-            not user
-            or user.password_hash == CLOUDFLARE_PASSWORD_SENTINEL
-            or user.email_verified_at is not None
-        ):
+        if not user or user.password_hash == CLOUDFLARE_PASSWORD_SENTINEL or user.email_verified_at is not None:
             raise HTTPException(
                 status_code=400,
                 detail="Verification link is invalid or expired",
@@ -2416,9 +2651,7 @@ def verify_email(
         return {"token": create_token(user.id, user.token_version), "user": user}
 
 
-_PASSWORD_RESET_MESSAGE = {
-    "message": "If that email is registered, we sent a password reset link."
-}
+_PASSWORD_RESET_MESSAGE = {"message": "If that email is registered, we sent a password reset link."}
 _PASSWORD_RESET_EXPIRY_MINUTES = 60
 _PASSWORD_RESET_RESEND_COOLDOWN_MINUTES = 5
 
@@ -2454,9 +2687,7 @@ def _password_reset_token_is_due(user_id: int, db: Session) -> bool:
         return True
     if latest_created_at.tzinfo is None:
         latest_created_at = latest_created_at.replace(tzinfo=timezone.utc)
-    cutoff = datetime.now(timezone.utc) - timedelta(
-        minutes=_PASSWORD_RESET_RESEND_COOLDOWN_MINUTES
-    )
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=_PASSWORD_RESET_RESEND_COOLDOWN_MINUTES)
     return latest_created_at <= cutoff
 
 
@@ -2471,16 +2702,16 @@ def _send_password_reset_email(user: User, reset_token: str) -> None:
         "If you did not request this, you can ignore this email."
     )
     html_body = (
-        "<div style=\"font-family:Inter,Arial,sans-serif;background:#f6f9fc;padding:24px;color:#243447;\">"
-        "<div style=\"max-width:560px;margin:0 auto;background:white;border:1px solid #dbe7f3;"
-        "border-radius:12px;padding:24px;\">"
-        f"<h1 style=\"font-size:20px;margin:0 0 8px;\">Reset your password</h1>"
-        f"<p style=\"color:#4b6478;\">Hi {html.escape(user.name)}, use this secure link to reset your "
+        '<div style="font-family:Inter,Arial,sans-serif;background:#f6f9fc;padding:24px;color:#243447;">'
+        '<div style="max-width:560px;margin:0 auto;background:white;border:1px solid #dbe7f3;'
+        'border-radius:12px;padding:24px;">'
+        f'<h1 style="font-size:20px;margin:0 0 8px;">Reset your password</h1>'
+        f'<p style="color:#4b6478;">Hi {html.escape(user.name)}, use this secure link to reset your '
         "Job Hunter SG password. It expires in 60 minutes.</p>"
-        f"<a href=\"{html.escape(reset_url)}\" style=\"display:inline-block;margin-top:12px;"
+        f'<a href="{html.escape(reset_url)}" style="display:inline-block;margin-top:12px;'
         "background:#384959;color:white;text-decoration:none;border-radius:8px;padding:10px 14px;"
-        "font-size:14px;font-weight:700;\">Reset password</a>"
-        "<p style=\"color:#6b7280;font-size:13px;margin-top:20px;\">"
+        'font-size:14px;font-weight:700;">Reset password</a>'
+        '<p style="color:#6b7280;font-size:13px;margin-top:20px;">'
         "If you did not request this, you can ignore this email."
         "</p></div></div>"
     )
@@ -2494,9 +2725,7 @@ def forgot_password(
     db: Session = Depends(get_db),
 ) -> dict:
     _require_password_auth()
-    if not _PUBLIC_RATE_LIMITER.allow(
-        f"forgot-password:{_get_client_ip(request)}", limit=10, window_seconds=3600
-    ):
+    if not _PUBLIC_RATE_LIMITER.allow(f"forgot-password:{_get_client_ip(request)}", limit=10, window_seconds=3600):
         return _PASSWORD_RESET_MESSAGE
     email = str(body.email).strip().lower()
     email_hash = hashlib.sha256(email.encode()).hexdigest()[:16]
@@ -2560,16 +2789,12 @@ def reset_password(
     db: Session = Depends(get_db),
 ) -> dict:
     _require_password_auth()
-    if not _PUBLIC_RATE_LIMITER.allow(
-        f"reset-password:{_get_client_ip(request)}", limit=10, window_seconds=3600
-    ):
+    if not _PUBLIC_RATE_LIMITER.allow(f"reset-password:{_get_client_ip(request)}", limit=10, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many reset attempts")
     validate_password(body.password)
     now = datetime.now(timezone.utc)
     reset = (
-        db.query(PasswordResetToken)
-        .filter(PasswordResetToken.token_hash == _password_reset_hash(body.token))
-        .first()
+        db.query(PasswordResetToken).filter(PasswordResetToken.token_hash == _password_reset_hash(body.token)).first()
     )
     if not reset or reset.used_at is not None:
         raise HTTPException(status_code=400, detail="Reset link is invalid or expired")
@@ -2616,9 +2841,7 @@ def login(
     db: Session = Depends(get_db),
 ) -> dict:
     _require_password_auth()
-    if not _PUBLIC_RATE_LIMITER.allow(
-        f"login:{_get_client_ip(request)}", limit=20, window_seconds=900
-    ):
+    if not _PUBLIC_RATE_LIMITER.allow(f"login:{_get_client_ip(request)}", limit=20, window_seconds=900):
         raise HTTPException(status_code=429, detail="Too many login attempts")
     email = str(body.email).strip().lower()
     email_hash = hashlib.sha256(email.encode()).hexdigest()[:16]
@@ -2681,9 +2904,8 @@ def change_password(
     with _locked_credential_user(user.id, db) as locked_user:
         if not locked_user or locked_user.token_version != authenticated_version:
             raise HTTPException(status_code=401, detail="Session expired")
-        if (
-            locked_user.password_hash == CLOUDFLARE_PASSWORD_SENTINEL
-            or not verify_password(body.current_password, locked_user.password_hash)
+        if locked_user.password_hash == CLOUDFLARE_PASSWORD_SENTINEL or not verify_password(
+            body.current_password, locked_user.password_hash
         ):
             raise HTTPException(status_code=400, detail="Current password is incorrect")
         locked_user.password_hash = hash_password(body.new_password)
@@ -2773,7 +2995,6 @@ def delete_account(
     return response
 
 
-
 @app.post("/api/search", response_model=SearchResponse)
 def search_jobs(
     q: str = Query(..., min_length=1, max_length=200, description="Search keyword"),
@@ -2834,14 +3055,11 @@ def search_jobs(
             contributes_to_analytics = bool(existing.job_terms_preview)
             for key, val in clean.items():
                 if key not in ("id",):
-                    if (
-                        contributes_to_analytics
-                        and key in analytics_fields
-                        and getattr(existing, key, None) != val
-                    ):
+                    if contributes_to_analytics and key in analytics_fields and getattr(existing, key, None) != val:
                         analytics_dirty = True
                     setattr(existing, key, val)
             from embedding_service import invalidate_job_embedding_if_stale
+
             embedding_cache_dirty |= invalidate_job_embedding_if_stale(existing)
             db.flush()
             clean["id"] = existing.id
@@ -2858,11 +3076,14 @@ def search_jobs(
                     encode_text,
                     stamp_job_embedding,
                 )
-                vector = encode_text(build_job_embed_text(
-                    clean.get("title", ""),
-                    clean.get("description", ""),
-                    clean.get("skills", []),
-                ))
+
+                vector = encode_text(
+                    build_job_embed_text(
+                        clean.get("title", ""),
+                        clean.get("description", ""),
+                        clean.get("skills", []),
+                    )
+                )
                 stamp_job_embedding(new_job, vector)
                 embedding_cache_dirty = True
             except Exception as error:
@@ -2877,6 +3098,7 @@ def search_jobs(
     db.commit()
     if embedding_cache_dirty:
         from embedding_service import invalidate_matrix_cache
+
         invalidate_matrix_cache()
     if analytics_dirty:
         _clear_analytics_cache()
@@ -2907,13 +3129,14 @@ def trending_skills(
     ):
         raise HTTPException(status_code=429, detail="Too many analytics requests")
     from skill_extractor import get_trending_skills
+
     return get_trending_skills(db, limit=limit)
 
 
 # Bumped when apply_job_precomputes gains a field. The marker gates a one-time
 # full pass; without a bump, existing rows never get the new column, and a
 # default of 0 is indistinguishable from "not yet computed".
-_JOB_PRECOMPUTE_MARKER = "sector_ssic_promotional_v2"
+_JOB_PRECOMPUTE_MARKER = EMPLOYER_RELATIONSHIP_PRECOMPUTE_MARKER
 
 
 _PRECOMPUTE_LOAD_ONLY = (
@@ -2924,12 +3147,16 @@ _PRECOMPUTE_LOAD_ONLY = (
     ScrapedJob.employment_type,
     ScrapedJob.skills,
     ScrapedJob.description,
+    ScrapedJob.source,
+    ScrapedJob.agency,
     ScrapedJob.company,
     ScrapedJob.sector,
     ScrapedJob.company_ssic_code,
     ScrapedJob.company_ssic_description,
     ScrapedJob.company_ssic_source,
     ScrapedJob.direct_employer,
+    ScrapedJob.employer_relationship,
+    ScrapedJob.employer_relationship_evidence,
     ScrapedJob.salary_floor,
     ScrapedJob.skills_flat,
     ScrapedJob.content_hash,
@@ -2945,19 +3172,10 @@ def _precompute_batch(
     public_only: bool = False,
 ) -> tuple[int, int]:
     """Recompute precomputed fields for one batch; returns (rows done, highest id)."""
-    query = (
-        db.query(ScrapedJob)
-        .options(load_only(*_PRECOMPUTE_LOAD_ONLY))
-        .filter(filter_clause)
-    )
+    query = db.query(ScrapedJob).options(load_only(*_PRECOMPUTE_LOAD_ONLY)).filter(filter_clause)
     if public_only:
         query = apply_public_job_visibility(query)
-    jobs = (
-        query
-        .order_by(ScrapedJob.id.asc())
-        .limit(batch_size)
-        .all()
-    )
+    jobs = query.order_by(ScrapedJob.id.asc()).limit(batch_size).all()
     last_id = 0
     for job in jobs:
         last_id = max(last_id, job.id)
@@ -3010,6 +3228,10 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
         ScrapedJob.salary_floor.is_(None),
         ScrapedJob.skills_flat.is_(None),
         ScrapedJob.direct_employer < 0,
+        employer_relationship_unclassified_condition(
+            ScrapedJob.employer_relationship,
+            ScrapedJob.employer_relationship_evidence,
+        ),
     )
     while True:
         # Derived search fields only gate the public corpus. Updating hundreds of
@@ -3028,8 +3250,6 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
             log.info("[STARTUP] Precomputed job fields for %s jobs", total_done)
 
     return total_done
-
-
 
 
 def _bounded_filter_terms(
@@ -3089,6 +3309,7 @@ def _effective_promotional_score():
     own = func.coalesce(ScrapedJob.promotional_score, 0)
     company = func.coalesce(ScrapedJob.company_promotional_score, 0)
     return case((own >= company, own), else_=company)
+
 
 # Columns the job list renders. Kept as a constant because the balanced sort
 # re-fetches its page by id and must load exactly the same set.
@@ -3168,6 +3389,14 @@ def list_cached_jobs(
             detail="Sign in and generate Power Match scores before filtering by score",
             headers={"Cache-Control": "no-store"},
         )
+    if direct_employers_only and not get_employer_relationship_readiness(db)["ready"]:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "employer_index_unavailable",
+                "message": "The employer classification index is rebuilding. Please retry shortly.",
+            },
+        )
 
     power_match_state = None
     score_by_job_id: dict[int, dict] = {}
@@ -3183,9 +3412,7 @@ def list_cached_jobs(
             score_by_job_id = {
                 int(item["job"]["id"]): item
                 for item in snapshot.get("recommendations", [])
-                if isinstance(item, dict)
-                and isinstance(item.get("job"), dict)
-                and item["job"].get("id") is not None
+                if isinstance(item, dict) and isinstance(item.get("job"), dict) and item["job"].get("id") is not None
             }
         if min_match_score is not None and not snapshot:
             raise HTTPException(
@@ -3195,11 +3422,7 @@ def list_cached_jobs(
             )
 
     query = db.query(ScrapedJob).options(load_only(*_JOB_LIST_COLUMNS))
-    query = (
-        apply_expired_job_visibility(query)
-        if view == "expired"
-        else apply_public_job_visibility(query)
-    )
+    query = apply_expired_job_visibility(query) if view == "expired" else apply_public_job_visibility(query)
     if min_match_score is not None:
         eligible_ids = [
             job_id
@@ -3298,11 +3521,15 @@ def list_cached_jobs(
     if sector:
         query = query.filter(_sector_filter_condition(sector))
     if direct_employers_only:
-        query = query.filter(ScrapedJob.direct_employer == 1)
-    if exclude_promotional:
         query = query.filter(
-            _effective_promotional_score() < PROMOTIONAL_THRESHOLD
+            employer_relationship_eligibility_condition(
+                ScrapedJob.employer_relationship,
+                ScrapedJob.employer_relationship_evidence,
+                ScrapedJob.company,
+            )
         )
+    if exclude_promotional:
+        query = query.filter(_effective_promotional_score() < PROMOTIONAL_THRESHOLD)
     if min_salary is not None:
         query = query.filter(
             or_(
@@ -3349,11 +3576,7 @@ def list_cached_jobs(
         # 4th and later postings rather than dropping them: the first pages get
         # variety, `total` still counts every match, and nothing becomes
         # unreachable. `sort=newest` still returns raw chronological order.
-        company_rank = (
-            func.row_number()
-            .over(partition_by=ScrapedJob.company, order_by=ordering)
-            .label("company_rank")
-        )
+        company_rank = func.row_number().over(partition_by=ScrapedJob.company, order_by=ordering).label("company_rank")
         # Rank over the sort keys alone. Selecting whole rows here would drag
         # every column, embedding_vector included, through the window sort.
         ranked = query.with_entities(
@@ -3366,33 +3589,18 @@ def list_cached_jobs(
 
         balanced_ordering = []
         if min_salary is not None:
-            balanced_ordering.append(
-                case((ranked.c.job_salary_floor >= min_salary, 0), else_=1)
-            )
+            balanced_ordering.append(case((ranked.c.job_salary_floor >= min_salary, 0), else_=1))
         # Demoted, not dropped: the company cap cannot reach these because many
         # separate outfits each post a few listings rather than one posting many.
-        balanced_ordering.append(
-            case((ranked.c.job_promotional < PROMOTIONAL_THRESHOLD, 0), else_=1)
-        )
-        balanced_ordering.append(
-            case((ranked.c.company_rank <= app_config.JOBS_MAX_PER_COMPANY, 0), else_=1)
-        )
-        balanced_ordering.extend(
-            [ranked.c.job_posted_at_sort.desc(), ranked.c.job_id.desc()]
-        )
+        balanced_ordering.append(case((ranked.c.job_promotional < PROMOTIONAL_THRESHOLD, 0), else_=1))
+        balanced_ordering.append(case((ranked.c.company_rank <= app_config.JOBS_MAX_PER_COMPANY, 0), else_=1))
+        balanced_ordering.extend([ranked.c.job_posted_at_sort.desc(), ranked.c.job_id.desc()])
 
         page_ids = [
             row[0]
-            for row in db.query(ranked.c.job_id)
-            .order_by(*balanced_ordering)
-            .offset(offset)
-            .limit(per_page)
-            .all()
+            for row in db.query(ranked.c.job_id).order_by(*balanced_ordering).offset(offset).limit(per_page).all()
         ]
-        by_id = {
-            job.id: job
-            for job in query.filter(ScrapedJob.id.in_(page_ids))
-        }
+        by_id = {job.id: job for job in query.filter(ScrapedJob.id.in_(page_ids))}
         jobs = [by_id[job_id] for job_id in page_ids if job_id in by_id]
     else:
         jobs = query.order_by(*ordering).offset(offset).limit(per_page).all()
@@ -3411,11 +3619,7 @@ def list_cached_jobs(
         ):
             filter_meta = _filter_meta_cache
         else:
-            selected_visibility = (
-                apply_expired_job_visibility
-                if view == "expired"
-                else apply_public_job_visibility
-            )
+            selected_visibility = apply_expired_job_visibility if view == "expired" else apply_public_job_visibility
             source_counts = (
                 selected_visibility(db.query(ScrapedJob.source, func.count()))
                 .filter(ScrapedJob.source != "")
@@ -3479,23 +3683,37 @@ def list_cached_jobs(
     result = {
         "jobs": [
             {
-                "id": j.id, "title": j.title, "company": j.company,
-                "location": j.location, "salary": _display_salary(j.salary), "source": j.source,
-                "url": j.url, "posted_date": j.posted_date,
-                "employment_type": j.employment_type, "seniority": j.seniority,
-                "description": j.description, "skills": j.skills or [],
+                "id": j.id,
+                "title": j.title,
+                "company": j.company,
+                "location": j.location,
+                "salary": _display_salary(j.salary),
+                "source": j.source,
+                "url": j.url,
+                "posted_date": j.posted_date,
+                "employment_type": j.employment_type,
+                "seniority": j.seniority,
+                "description": j.description,
+                "skills": j.skills or [],
                 "job_terms_preview": j.job_terms_preview or [],
                 "job_terms_preview_ready": j.job_terms_preview is not None,
                 "jd_summary": j.jd_summary or "",
                 "jd_summary_status": j.jd_summary_status or "",
-                "experience_years": (j.parsed_jd or {}).get("experience_years", "") if isinstance(j.parsed_jd, dict) else "",
-                "agency": j.agency, "scraped_at": j.scraped_at,
+                "experience_years": (j.parsed_jd or {}).get("experience_years", "")
+                if isinstance(j.parsed_jd, dict)
+                else "",
+                "agency": j.agency,
+                "scraped_at": j.scraped_at,
+                "employer_relationship": j.employer_relationship,
+                "employer_relationship_evidence": (j.employer_relationship_evidence or ""),
                 "last_seen": j.scraped_at or "",
                 "retired_at": j.retired_at or "",
                 "archive_reason": (
                     j.retirement_reason
                     if j.retirement_reason in {"source_retired", "age_retired"}
-                    else "closing_date" if view == "expired" else ""
+                    else "closing_date"
+                    if view == "expired"
+                    else ""
                 ),
                 "source_posting_id": j.source_posting_id or "",
                 "openings": int(j.openings or 1),
@@ -3506,10 +3724,14 @@ def list_cached_jobs(
                 "company_ssic_source": j.company_ssic_source or "",
                 "archetype": (j.parsed_jd or {}).get("archetype", "") if isinstance(j.parsed_jd, dict) else "",
                 "promotional_score": int(j.promotional_score or 0),
-                **({
-                    "power_match_score": score_by_job_id[j.id]["suitability_score"],
-                    "power_match_label": score_by_job_id[j.id]["suitability_label"],
-                } if j.id in score_by_job_id else {}),
+                **(
+                    {
+                        "power_match_score": score_by_job_id[j.id]["suitability_score"],
+                        "power_match_label": score_by_job_id[j.id]["suitability_label"],
+                    }
+                    if j.id in score_by_job_id
+                    else {}
+                ),
             }
             for j in jobs
         ],
@@ -3532,24 +3754,35 @@ def get_similar_jobs(
     db: Session = Depends(get_db),
 ) -> list[ScrapedJob]:
     """Find similar jobs based on title keywords and skills overlap."""
-    job = (
-        apply_public_job_visibility(db.query(ScrapedJob))
-        .filter(ScrapedJob.id == job_id)
-        .first()
-    )
+    job = apply_public_job_visibility(db.query(ScrapedJob)).filter(ScrapedJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    filler = {"senior", "junior", "lead", "staff", "principal", "intern", "contract", "the", "a", "an", "at", "in", "for", "and", "or"}
-    title_words = [w.lower() for w in re.sub(r"[^a-zA-Z\s]", "", job.title).split() if w.lower() not in filler and len(w) > 2]
+    filler = {
+        "senior",
+        "junior",
+        "lead",
+        "staff",
+        "principal",
+        "intern",
+        "contract",
+        "the",
+        "a",
+        "an",
+        "at",
+        "in",
+        "for",
+        "and",
+        "or",
+    }
+    title_words = [
+        w.lower() for w in re.sub(r"[^a-zA-Z\s]", "", job.title).split() if w.lower() not in filler and len(w) > 2
+    ]
 
     if not title_words:
         return []
 
-    conditions = [
-        ScrapedJob.title.ilike(_contains_like_pattern(word), escape="\\")
-        for word in title_words[:3]
-    ]
+    conditions = [ScrapedJob.title.ilike(_contains_like_pattern(word), escape="\\") for word in title_words[:3]]
     similar = (
         apply_public_job_visibility(db.query(ScrapedJob))
         .filter(ScrapedJob.id != job_id, or_(*conditions))
@@ -3663,10 +3896,7 @@ def get_power_match(
     now = time.monotonic()
     # Sweep expired entries to bound cache growth (unbounded before — grew one
     # entry per user forever, only overwritten on cache hit).
-    expired_uids = [
-        uid for uid, entry in _power_match_cache.items()
-        if now - entry["_ts"] >= _POWER_MATCH_CACHE_TTL
-    ]
+    expired_uids = [uid for uid, entry in _power_match_cache.items() if now - entry["_ts"] >= _POWER_MATCH_CACHE_TTL]
     for uid in expired_uids:
         _power_match_cache.pop(uid, None)
 
@@ -3798,11 +4028,11 @@ def get_power_match(
             if not job_skills:
                 job_skills = _extract_title_terms(job.title)
         matched_skills = [
-            skill for skill in job_skills
-            if skill.lower() in resume_skill_lookup or skill.lower() in lower_resume
+            skill for skill in job_skills if skill.lower() in resume_skill_lookup or skill.lower() in lower_resume
         ]
         missing_skills = [
-            skill for skill in job_skills
+            skill
+            for skill in job_skills
             if skill.lower() not in resume_skill_lookup and skill.lower() not in lower_resume
         ]
         title_terms = _extract_title_terms(job.title)
@@ -3819,10 +4049,14 @@ def get_power_match(
 
         skill_score = (len(matched_skills) / max(3, min(len(job_skills), 8))) * 72 if job_skills else 0
         title_score = min(18, len(title_hits) * 6)
-        description_bonus = min(
-            10,
-            sum(1 for skill in matched_skills[:4] if skill.lower() in (job.description or "").lower()) * 3,
-        ) if matched_skills else 0
+        description_bonus = (
+            min(
+                10,
+                sum(1 for skill in matched_skills[:4] if skill.lower() in (job.description or "").lower()) * 3,
+            )
+            if matched_skills
+            else 0
+        )
         domain_bonus = 0
         domain_penalty = 0
         level_bonus = 0
@@ -3866,13 +4100,6 @@ def get_power_match(
         )
         if low_level_role:
             suitability_score = min(suitability_score, 48)
-        if not direct_employers_only and is_recruitment_employer(
-            job.company,
-            getattr(job, "company_ssic_description", "") or "",
-            getattr(job, "description", "") or "",
-        ):
-            suitability_score = max(0, suitability_score - 6)
-
         if suitability_score < 18:
             continue
 
@@ -3899,37 +4126,42 @@ def get_power_match(
         surfaced_matched_skills = _surface_power_skills(matched_skills, limit=6)
         surfaced_missing_skills = _surface_power_gaps(missing_skills, limit=6)
 
-        recommendations.append({
-            "_dedupe_key": _power_job_duplicate_key(job),
-            "job": {
-                "id": job.id,
-                "title": job.title,
-                "company": job.company,
-                "location": job.location,
-                "salary": _display_salary(job.salary),
-                "source": job.source,
-                "url": job.url,
-                "posted_date": job.posted_date,
-                "employment_type": job.employment_type,
-                "seniority": job.seniority,
-                "description": job.description,
-                "skills": job.skills or [],
-                "agency": job.agency,
-                "scraped_at": job.scraped_at,
-                "closing_date": getattr(job, "closing_date", "") or "",
-            },
-            "suitability_score": suitability_score,
-            "suitability_label": suitability_label,
-            "semantic_score": round(semantic_sim * 100),
-            "matched_skills": surfaced_matched_skills,
-            "missing_skills": surfaced_missing_skills,
-            "why": why,
-            "bridge_plan": _build_bridge_plan(surfaced_missing_skills or missing_skills),
-        })
+        recommendations.append(
+            {
+                "_dedupe_key": _power_job_duplicate_key(job),
+                "job": {
+                    "id": job.id,
+                    "title": job.title,
+                    "company": job.company,
+                    "location": job.location,
+                    "salary": _display_salary(job.salary),
+                    "source": job.source,
+                    "url": job.url,
+                    "posted_date": job.posted_date,
+                    "employment_type": job.employment_type,
+                    "seniority": job.seniority,
+                    "description": job.description,
+                    "skills": job.skills or [],
+                    "agency": job.agency,
+                    "employer_relationship": job.employer_relationship,
+                    "employer_relationship_evidence": (job.employer_relationship_evidence or ""),
+                    "scraped_at": job.scraped_at,
+                    "closing_date": getattr(job, "closing_date", "") or "",
+                },
+                "suitability_score": suitability_score,
+                "suitability_label": suitability_label,
+                "semantic_score": round(semantic_sim * 100),
+                "matched_skills": surfaced_matched_skills,
+                "missing_skills": surfaced_missing_skills,
+                "why": why,
+                "bridge_plan": _build_bridge_plan(surfaced_missing_skills or missing_skills),
+            }
+        )
 
     recommendations.sort(
         key=lambda item: (
             item["suitability_score"],
+            employer_relationship_rank(item["job"].get("employer_relationship")),
             len(item["matched_skills"]),
             item["job"]["id"],
         ),
@@ -3948,11 +4180,7 @@ def get_power_match(
             break
     recommendations = deduped_recommendations
 
-    top_gap_counts = Counter(
-        skill
-        for item in recommendations
-        for skill in item["missing_skills"][:3]
-    )
+    top_gap_counts = Counter(skill for item in recommendations for skill in item["missing_skills"][:3])
     top_gaps = [
         {"skill": skill, "count": count}
         for skill, count in top_gap_counts.most_common(8)
@@ -4041,11 +4269,7 @@ def recommend_skillsfuture_courses(
 
 @app.get("/api/jobs/{job_id}", response_model=JobOut)
 def get_cached_job(job_id: int, db: Session = Depends(get_db)) -> ScrapedJob:
-    job = (
-        apply_public_job_visibility(db.query(ScrapedJob))
-        .filter(ScrapedJob.id == job_id)
-        .first()
-    )
+    job = apply_public_job_visibility(db.query(ScrapedJob)).filter(ScrapedJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
@@ -4092,13 +4316,7 @@ def match_resume_to_job(
 
 @app.get("/api/sources")
 def list_sources() -> dict:
-    return {
-        "sources": [
-            {"key": k, "name": v[0]}
-            for k, v in aggregator.SOURCE_MAP.items()
-        ]
-    }
-
+    return {"sources": [{"key": k, "name": v[0]} for k, v in aggregator.SOURCE_MAP.items()]}
 
 
 @app.get("/api/tracked", response_model=list[TrackedJobOut])
@@ -4106,12 +4324,7 @@ def list_tracked(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[TrackedJob]:
-    return (
-        db.query(TrackedJob)
-        .filter(TrackedJob.user_id == user.id)
-        .order_by(TrackedJob.created_at.desc())
-        .all()
-    )
+    return db.query(TrackedJob).filter(TrackedJob.user_id == user.id).order_by(TrackedJob.created_at.desc()).all()
 
 
 @app.get("/api/applications/outcomes")
@@ -4132,9 +4345,7 @@ def create_tracked(
         db,
         user,
         body,
-        on_tracked=lambda tracked: record_delivery_action(
-            db, user.id, tracked.scraped_job_id, "tracked"
-        ),
+        on_tracked=lambda tracked: record_delivery_action(db, user.id, tracked.scraped_job_id, "tracked"),
         storage_lock=lambda: _locked_account_storage(user.id, db),
     )
 
@@ -4159,9 +4370,7 @@ def create_application_workspace(
         db,
         user,
         body,
-        on_tracked=lambda tracked: record_delivery_action(
-            db, user.id, tracked.scraped_job_id, "tracked"
-        ),
+        on_tracked=lambda tracked: record_delivery_action(db, user.id, tracked.scraped_job_id, "tracked"),
         storage_lock=lambda: _locked_account_storage(user.id, db),
     )
 
@@ -4280,11 +4489,7 @@ def delete_tracked(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    tracked = (
-        db.query(TrackedJob)
-        .filter(TrackedJob.id == job_id, TrackedJob.user_id == user.id)
-        .first()
-    )
+    tracked = db.query(TrackedJob).filter(TrackedJob.id == job_id, TrackedJob.user_id == user.id).first()
     if not tracked:
         raise HTTPException(status_code=404, detail="Tracked job not found")
     db.delete(tracked)
@@ -4297,12 +4502,7 @@ def export_tracked(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
-    jobs = (
-        db.query(TrackedJob)
-        .filter(TrackedJob.user_id == user.id)
-        .order_by(TrackedJob.created_at.desc())
-        .all()
-    )
+    jobs = db.query(TrackedJob).filter(TrackedJob.user_id == user.id).order_by(TrackedJob.created_at.desc()).all()
 
     def _csv_safe(val: str) -> str:
         """Prefix formula-triggering characters to prevent CSV injection in Excel."""
@@ -4312,16 +4512,29 @@ def export_tracked(
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow([
-        "Company", "Role", "Date Applied", "Status",
-        "Source", "Follow Up Date", "Notes",
-    ])
+    writer.writerow(
+        [
+            "Company",
+            "Role",
+            "Date Applied",
+            "Status",
+            "Source",
+            "Follow Up Date",
+            "Notes",
+        ]
+    )
     for j in jobs:
-        writer.writerow([
-            _csv_safe(j.company), _csv_safe(j.role), j.date_applied or "",
-            j.status, _csv_safe(j.source), j.follow_up_date or "",
-            _csv_safe(j.notes),
-        ])
+        writer.writerow(
+            [
+                _csv_safe(j.company),
+                _csv_safe(j.role),
+                j.date_applied or "",
+                j.status,
+                _csv_safe(j.source),
+                j.follow_up_date or "",
+                _csv_safe(j.notes),
+            ]
+        )
 
     buf.seek(0)
     return StreamingResponse(
@@ -4329,7 +4542,6 @@ def export_tracked(
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=tracked_jobs.csv"},
     )
-
 
 
 @app.post("/api/stories/generate")
@@ -4489,7 +4701,6 @@ def generate_stories_from_resume(
     }
 
 
-
 @app.post("/api/resume/score")
 def score_resume(
     request: Request,
@@ -4536,6 +4747,7 @@ def score_resume(
     template_sections: list[str] | None = None
     if body.template_id:
         from resume_templates import get_template_sections
+
         template_sections = get_template_sections(body.template_id)
 
     result = _scorer.analyze(
@@ -4588,8 +4800,6 @@ def score_resume(
     return result
 
 
-
-
 @app.get("/api/memory")
 def get_memory(
     user: User = Depends(get_current_user),
@@ -4628,9 +4838,15 @@ def update_memory(
         db.add(mem)
 
     editable = (
-        "target_roles", "target_companies", "career_goals", "strengths",
-        "areas_to_improve", "preferred_industry", "years_experience",
-        "education_level", "coaching_notes",
+        "target_roles",
+        "target_companies",
+        "career_goals",
+        "strengths",
+        "areas_to_improve",
+        "preferred_industry",
+        "years_experience",
+        "education_level",
+        "coaching_notes",
     )
     for field in editable:
         if field in body:
@@ -4764,16 +4980,12 @@ def ai_rewrite_bullet(
     bullet = sanitize_user_input(body.bullet)
     job_title = sanitize_user_input(body.job_title)
     job_description = (
-        sanitize_user_input(body.job_description, max_length=10_000)
-        if hasattr(body, "job_description")
-        else ""
+        sanitize_user_input(body.job_description, max_length=10_000) if hasattr(body, "job_description") else ""
     )
     used_verbs = sanitize_user_input(body.used_verbs) if hasattr(body, "used_verbs") else ""
     rewrite_focus = sanitize_user_input(body.rewrite_focus) if hasattr(body, "rewrite_focus") else ""
     focused_feedback = (
-        sanitize_user_input(body.focused_feedback, max_length=2_000)
-        if hasattr(body, "focused_feedback")
-        else ""
+        sanitize_user_input(body.focused_feedback, max_length=2_000) if hasattr(body, "focused_feedback") else ""
     )
 
     # Structured JD context: parsed skills, never the raw blob.
@@ -4813,7 +5025,12 @@ def ai_rewrite_bullet(
                 detail="AI service unavailable. Try again shortly.",
             )
         if result == []:
-            return {"original": bullet, "options": [], "no_change": True, "message": "This bullet is already strong -- no changes needed."}
+            return {
+                "original": bullet,
+                "options": [],
+                "no_change": True,
+                "message": "This bullet is already strong -- no changes needed.",
+            }
 
         validated_options = []
         for option in result:
@@ -4827,14 +5044,16 @@ def ai_rewrite_bullet(
             # If critical gate reverted to original, skip this option
             if final_text == bullet:
                 continue
-            validated_options.append({
-                "text": final_text,
-                "gates": [
-                    {"gate": g.gate_name, "passed": g.passed, "message": g.message}
-                    for g in gate_results
-                    if not g.passed or g.auto_fixed
-                ],
-            })
+            validated_options.append(
+                {
+                    "text": final_text,
+                    "gates": [
+                        {"gate": g.gate_name, "passed": g.passed, "message": g.message}
+                        for g in gate_results
+                        if not g.passed or g.auto_fixed
+                    ],
+                }
+            )
 
         if validated_options:
             break
@@ -4950,9 +5169,7 @@ Return ONLY the summary text, nothing else."""
         skills = parsed_jd.get("required_skills", [])[:8]
         exp = parsed_jd.get("experience_years", "")
         if skills:
-            user_msg += xml_data_block(
-                "required_skills_data", json.dumps(skills, ensure_ascii=False)
-            ) + "\n"
+            user_msg += xml_data_block("required_skills_data", json.dumps(skills, ensure_ascii=False)) + "\n"
         if exp:
             user_msg += xml_data_block("job_experience_requirement_data", exp) + "\n"
     if jd_text and not parsed_jd:
@@ -4968,7 +5185,8 @@ Return ONLY the summary text, nothing else."""
         retry_note = (
             "\n\nRETRY: The previous draft changed a numeric claim. Preserve every "
             "metric's original qualifier, status, and meaning."
-            if attempt else ""
+            if attempt
+            else ""
         )
         content = _call_sealion(
             messages=[
@@ -5027,9 +5245,13 @@ def generate_cover_letter(
     jd_context = ""
 
     if body.job_id and tracked_context is None:
-        target_job = db.query(ScrapedJob).filter(
-            ScrapedJob.id == body.job_id,
-        ).first()
+        target_job = (
+            db.query(ScrapedJob)
+            .filter(
+                ScrapedJob.id == body.job_id,
+            )
+            .first()
+        )
         if target_job:
             job_title = job_title or target_job.title or ""
             job_company = job_company or target_job.company or ""
@@ -5046,8 +5268,7 @@ def generate_cover_letter(
                     parts.append(f"Preferred: {', '.join(pref)}")
                 if resp_list:
                     parts.append(
-                        "Key responsibilities: "
-                        + "; ".join(resp_list),
+                        "Key responsibilities: " + "; ".join(resp_list),
                     )
                 if exp:
                     parts.append(f"Experience level: {exp}")
@@ -5086,9 +5307,7 @@ Return ONLY the cover letter text. No subject lines, no labels, no markdown form
     if jd_context:
         user_msg += xml_data_block("job_requirements_data", jd_context) + "\n"
     elif job_description:
-        user_msg += xml_data_block(
-            "job_description_data", job_description, 1500
-        ) + "\n"
+        user_msg += xml_data_block("job_description_data", job_description, 1500) + "\n"
     if body.user_direction:
         user_msg += "\n" + xml_data_block("user_request", body.user_direction) + "\n"
 
@@ -5099,7 +5318,8 @@ Return ONLY the cover letter text. No subject lines, no labels, no markdown form
         retry_note = (
             "\n\nRETRY: The previous draft changed a numeric claim. Preserve every "
             "metric's original qualifier, status, and meaning."
-            if attempt else ""
+            if attempt
+            else ""
         )
         content = _call_sealion(
             messages=[
@@ -5111,10 +5331,7 @@ Return ONLY the cover letter text. No subject lines, no labels, no markdown form
             temperature=0.4,
         )
         cover_letter = (content or "").strip().strip('"')
-        if (
-            len(cover_letter) >= 100
-            and numeric_metric_claims_verifiable(resume_text, cover_letter)
-        ):
+        if len(cover_letter) >= 100 and numeric_metric_claims_verifiable(resume_text, cover_letter):
             break
     else:
         raise HTTPException(
@@ -5184,11 +5401,13 @@ def generate_application_pack(
             if _enrich_careersgov_job(target_job, db):
                 db.commit()
                 from embedding_service import invalidate_matrix_cache
+
                 invalidate_matrix_cache()
                 _clear_analytics_cache()
         elif target_job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(target_job, db):
             db.commit()
             from embedding_service import invalidate_matrix_cache
+
             invalidate_matrix_cache()
             _clear_analytics_cache()
 
@@ -5370,7 +5589,6 @@ def resume_chat_step(
             "ready_to_generate": True,
         }
 
-
     system_prompt = (
         "You are a friendly, expert resume coach helping someone build their resume "
         "from scratch through a conversation. Ask questions ONE AT A TIME in this order:\n\n"
@@ -5398,7 +5616,7 @@ def resume_chat_step(
         "- When you have at least: name, 1 job with achievements, and education, "
         "write ONE short wrap-up message (1-2 sentences MAX — do NOT recap or list everything back), "
         "then end with [READY] on its own line. "
-        "Example wrap-up: \"Perfect, I have everything I need! Tap Generate My Resume below to create your draft.\" "
+        'Example wrap-up: "Perfect, I have everything I need! Tap Generate My Resume below to create your draft." '
         "Do NOT summarise the user's details back to them — that wastes tokens and confuses users.\n"
         "- Do NOT generate the resume. Just gather information.\n"
         "- Be encouraging and professional.\n"
@@ -5446,8 +5664,6 @@ def resume_chat_step(
     }
 
 
-
-
 @app.post("/api/resume/upload")
 async def upload_resume(
     request: Request,
@@ -5465,16 +5681,21 @@ async def upload_resume(
     result = (await parse_uploaded_resume(file)).parsed_resume
 
     parse_quality = result.get("parse_quality", {})
-    db.add(UsageLog(
-        user_id=user.id if user else None,
-        action="resume_upload",
-        detail=json.dumps({
-            "file_type": result["file_type"],
-            "word_count": result["word_count"],
-            "line_count": result["line_count"],
-            "parse_quality": parse_quality,
-        }, separators=(",", ":")),
-    ))
+    db.add(
+        UsageLog(
+            user_id=user.id if user else None,
+            action="resume_upload",
+            detail=json.dumps(
+                {
+                    "file_type": result["file_type"],
+                    "word_count": result["word_count"],
+                    "line_count": result["line_count"],
+                    "parse_quality": parse_quality,
+                },
+                separators=(",", ":"),
+            ),
+        )
+    )
     if user:
         _consume_ai_credit(user, db, "resume_embedding")
     _persist_resume_to_memory(user, db, result["text"])
@@ -5593,8 +5814,8 @@ Return a JSON array:
             "total_bullets": len(suggestions),
             "keep": keep_count,
             "improve": improve_count,
-            "message": f"{keep_count} bullets are strong. {improve_count} can be improved."
-        }
+            "message": f"{keep_count} bullets are strong. {improve_count} can be improved.",
+        },
     }
 
 
@@ -5671,11 +5892,13 @@ def download_resume(
         len(docx_bytes),
     )
 
-    db.add(UsageLog(
-        user_id=user.id if user else None,
-        action="resume_download",
-        detail=f"template:{template_id}",
-    ))
+    db.add(
+        UsageLog(
+            user_id=user.id if user else None,
+            action="resume_download",
+            detail=f"template:{template_id}",
+        )
+    )
     db.commit()
 
     safe_name = re.sub(r"[^a-zA-Z0-9]", "_", name)[:30] if name else "resume"
@@ -5725,6 +5948,7 @@ def download_resume_pdf(
 
     try:
         import weasyprint
+
         pdf_bytes = weasyprint.HTML(string=html).write_pdf()
     except ImportError as e:
         log.exception("weasyprint import failed; missing system deps: %s", e)
@@ -5733,11 +5957,13 @@ def download_resume_pdf(
         log.exception("PDF generation failed: %s", e)
         raise HTTPException(status_code=500, detail="PDF generation failed")
 
-    db.add(UsageLog(
-        user_id=user.id if user else None,
-        action="resume_download_pdf",
-        detail=f"template:{template_id}",
-    ))
+    db.add(
+        UsageLog(
+            user_id=user.id if user else None,
+            action="resume_download_pdf",
+            detail=f"template:{template_id}",
+        )
+    )
     db.commit()
 
     safe_name = re.sub(r"[^a-zA-Z0-9]", "_", name)[:30] if name else "resume"
@@ -5752,6 +5978,7 @@ def download_resume_pdf(
 def _parse_sections_for_pdf(text: str) -> list[dict]:
     """Parse resume text into sections for HTML rendering."""
     from resume_templates import _group_export_lines, _parse_sections, normalize_for_ats
+
     text = normalize_for_ats(text)
     raw = _parse_sections(text)
     result = []
@@ -5764,17 +5991,26 @@ def _parse_sections_for_pdf(text: str) -> list[dict]:
 
 
 def _build_resume_html(
-    name: str, contact: str, sections: list[dict], template_id: str,
+    name: str,
+    contact: str,
+    sections: list[dict],
+    template_id: str,
 ) -> str:
     """Build an A4-formatted HTML resume for PDF conversion."""
     import html as html_mod
+
     _n = html_mod.escape
 
     section_labels = {
-        "summary": "Professional Summary", "experience": "Professional Experience",
-        "education": "Education", "skills": "Skills", "certifications": "Certifications",
-        "projects": "Projects", "activities": "Activities & Leadership",
-        "languages": "Languages", "awards": "Awards",
+        "summary": "Professional Summary",
+        "experience": "Professional Experience",
+        "education": "Education",
+        "skills": "Skills",
+        "certifications": "Certifications",
+        "projects": "Projects",
+        "activities": "Activities & Leadership",
+        "languages": "Languages",
+        "awards": "Awards",
     }
 
     date_re = re.compile(
@@ -5787,15 +6023,13 @@ def _build_resume_html(
     for sec in sections:
         key = sec["key"]
         label = section_labels.get(key, key.replace("_", " ").title())
-        body_parts.append(f'<h2>{_n(label.upper())}</h2>')
+        body_parts.append(f"<h2>{_n(label.upper())}</h2>")
         for line in sec["lines"]:
             if line.startswith(("-", "*", "\u2022", "\u2013")) or re.match(r"^\d+\.", line):
                 text = re.sub(r"^[-*\u2022\u2013]\s*", "", line)
                 text = re.sub(r"^\d+\.\s*", "", text)
                 body_parts.append(f"<li>{_n(text)}</li>")
-            elif key in ("experience", "education", "projects") and (
-                date_re.search(line) or sep_re.search(line)
-            ):
+            elif key in ("experience", "education", "projects") and (date_re.search(line) or sep_re.search(line)):
                 parts = sep_re.split(line)
                 if len(parts) >= 2:
                     body_parts.append(
@@ -5829,7 +6063,7 @@ ul {{ padding-left: 18pt; margin: 0; }}
 </head>
 <body>
 <h1>{_n(name)}</h1>
-{f'<div class="contact">{_n(contact)}</div>' if contact else ''}
+{f'<div class="contact">{_n(contact)}</div>' if contact else ""}
 {body_html}
 </body>
 </html>"""
@@ -5839,7 +6073,6 @@ ul {{ padding-left: 18pt; margin: 0; }}
 def get_templates() -> list[dict]:
     """List available resume templates."""
     return list_templates()
-
 
 
 @app.post("/api/contact", status_code=201)
@@ -5857,11 +6090,7 @@ def contact(
         raise HTTPException(status_code=429, detail="Too many messages. Please try again later.")
     if str(body.email).strip().lower() != user.email.strip().lower():
         raise HTTPException(status_code=400, detail="Use the email address on your account")
-    contact_email = (
-        os.environ.get("CONTACT_EMAIL")
-        or os.environ.get("ADMIN_EMAIL")
-        or ""
-    ).strip()
+    contact_email = (os.environ.get("CONTACT_EMAIL") or os.environ.get("ADMIN_EMAIL") or "").strip()
     if not contact_email or not email_configured():
         raise HTTPException(status_code=503, detail="Contact email is temporarily unavailable")
 
@@ -5934,15 +6163,9 @@ def get_admin_metrics(
         return counts
 
     total_users = _scalar(db.query(func.count(User.id)))
-    signups_today = _scalar(
-        db.query(func.count(User.id)).filter(User.created_at >= today_start)
-    )
-    signups_7d = _scalar(
-        db.query(func.count(User.id)).filter(User.created_at >= since_7d)
-    )
-    signups_30d = _scalar(
-        db.query(func.count(User.id)).filter(User.created_at >= since_30d)
-    )
+    signups_today = _scalar(db.query(func.count(User.id)).filter(User.created_at >= today_start))
+    signups_7d = _scalar(db.query(func.count(User.id)).filter(User.created_at >= since_7d))
+    signups_30d = _scalar(db.query(func.count(User.id)).filter(User.created_at >= since_30d))
 
     usage_user_ids_7d = {
         user_id
@@ -5956,11 +6179,7 @@ def get_admin_metrics(
     }
     login_user_ids_7d = {
         user_id
-        for (user_id,) in (
-            db.query(User.id)
-            .filter(User.last_login.isnot(None), User.last_login >= since_7d)
-            .all()
-        )
+        for (user_id,) in (db.query(User.id).filter(User.last_login.isnot(None), User.last_login >= since_7d).all())
     }
     usage_user_ids_30d = {
         user_id
@@ -5974,16 +6193,10 @@ def get_admin_metrics(
     }
     login_user_ids_30d = {
         user_id
-        for (user_id,) in (
-            db.query(User.id)
-            .filter(User.last_login.isnot(None), User.last_login >= since_30d)
-            .all()
-        )
+        for (user_id,) in (db.query(User.id).filter(User.last_login.isnot(None), User.last_login >= since_30d).all())
     }
 
-    total_saved_resumes = _scalar(
-        db.query(func.count(ResumeVersion.id)).filter(ResumeVersion.is_active == True)
-    )
+    total_saved_resumes = _scalar(db.query(func.count(ResumeVersion.id)).filter(ResumeVersion.is_active == True))
     saved_resumes_7d = _scalar(
         db.query(func.count(ResumeVersion.id)).filter(
             ResumeVersion.is_active == True,
@@ -5991,25 +6204,15 @@ def get_admin_metrics(
         )
     )
     tailored_resumes_total = _scalar(db.query(func.count(TailoredResume.id)))
-    tailored_resumes_7d = _scalar(
-        db.query(func.count(TailoredResume.id)).filter(TailoredResume.created_at >= since_7d)
-    )
+    tailored_resumes_7d = _scalar(db.query(func.count(TailoredResume.id)).filter(TailoredResume.created_at >= since_7d))
     tracked_jobs_total = _scalar(db.query(func.count(TrackedJob.id)))
-    tracked_jobs_7d = _scalar(
-        db.query(func.count(TrackedJob.id)).filter(TrackedJob.created_at >= since_7d)
-    )
+    tracked_jobs_7d = _scalar(db.query(func.count(TrackedJob.id)).filter(TrackedJob.created_at >= since_7d))
 
     users_with_saved_resume = _scalar(
-        db.query(func.count(func.distinct(ResumeVersion.user_id))).filter(
-            ResumeVersion.is_active == True
-        )
+        db.query(func.count(func.distinct(ResumeVersion.user_id))).filter(ResumeVersion.is_active == True)
     )
-    users_with_tailored_resume = _scalar(
-        db.query(func.count(func.distinct(TailoredResume.user_id)))
-    )
-    users_with_tracked_jobs = _scalar(
-        db.query(func.count(func.distinct(TrackedJob.user_id)))
-    )
+    users_with_tailored_resume = _scalar(db.query(func.count(func.distinct(TailoredResume.user_id))))
+    users_with_tracked_jobs = _scalar(db.query(func.count(func.distinct(TrackedJob.user_id))))
 
     searches_today = _scalar(
         db.query(func.count(UsageLog.id)).filter(
@@ -6103,9 +6306,7 @@ def get_admin_metrics(
         )
     )
 
-    signup_counts = _bucket_recent(
-        db.query(User.created_at).filter(User.created_at >= since_14d).all()
-    )
+    signup_counts = _bucket_recent(db.query(User.created_at).filter(User.created_at >= since_14d).all())
     resume_save_counts = _bucket_recent(
         db.query(ResumeVersion.created_at)
         .filter(ResumeVersion.is_active == True, ResumeVersion.created_at >= since_14d)
@@ -6163,10 +6364,7 @@ def get_admin_metrics(
             "file_types": dict(parse_file_types),
             "avg_score": round(sum(parse_scores) / len(parse_scores), 1) if parse_scores else None,
             "avg_word_count": round(sum(parse_word_counts) / len(parse_word_counts)) if parse_word_counts else None,
-            "top_warnings": [
-                {"warning": warning, "count": count}
-                for warning, count in parse_warnings.most_common(5)
-            ],
+            "top_warnings": [{"warning": warning, "count": count} for warning, count in parse_warnings.most_common(5)],
         },
         "funnel": {
             "users_with_saved_resume": users_with_saved_resume,
@@ -6182,9 +6380,7 @@ def get_usage(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
-    today_start = datetime.now(timezone.utc).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     searches_today = (
         db.query(func.count(UsageLog.id))
         .filter(
@@ -6195,12 +6391,7 @@ def get_usage(
         .scalar()
         or 0
     )
-    tracked_count = (
-        db.query(func.count(TrackedJob.id))
-        .filter(TrackedJob.user_id == user.id)
-        .scalar()
-        or 0
-    )
+    tracked_count = db.query(func.count(TrackedJob.id)).filter(TrackedJob.user_id == user.id).scalar() or 0
     ai_today = (
         db.query(func.count(UsageLog.id))
         .filter(
@@ -6222,8 +6413,6 @@ def get_usage(
         "tracked_limit": limits["max_tracked_jobs"],
         "can_export": limits["can_export"],
     }
-
-
 
 
 def _validate_resume_agent_request(body: dict) -> None:
@@ -6480,8 +6669,6 @@ def dismiss_resume_agent_diff(
         raise HTTPException(status_code=404, detail="Pending resume edit not found") from None
 
 
-
-
 @app.post("/api/resume/tailor")
 def start_tailoring(
     body: dict,
@@ -6601,11 +6788,7 @@ def get_tailoring_result(
                 )
                 if tr:
                     job_id = tr.job_id
-                    job = (
-                        db.query(ScrapedJob).filter(ScrapedJob.id == tr.job_id).first()
-                        if tr.job_id
-                        else None
-                    )
+                    job = db.query(ScrapedJob).filter(ScrapedJob.id == tr.job_id).first() if tr.job_id else None
                     if job:
                         job_title = job.title or ""
                         job_company = job.company or ""
@@ -6625,11 +6808,7 @@ def get_tailoring_result(
                     and 50 <= len(tailored_text) <= _MAX_SAVED_RESUME_CHARS
                 ):
                     score_after = result.get("score", {}).get("after")
-                    label = (
-                        f"Tailored for {job_title[:40]}"
-                        if job_title
-                        else f"Tailored {session_id[:8]}"
-                    )
+                    label = f"Tailored for {job_title[:40]}" if job_title else f"Tailored {session_id[:8]}"
                     version = ResumeVersion(
                         user_id=user.id,
                         label=label,
@@ -6842,9 +7021,7 @@ if _static_dir.is_dir():
         if path.startswith("/assets/"):
             # Missing hashed assets must stay 404. Returning index.html here
             # produces a MIME error and lets CDNs cache HTML under a JS URL.
-            response.headers["Cache-Control"] = _frontend_cache_control(
-                path, response.status_code
-            )
+            response.headers["Cache-Control"] = _frontend_cache_control(path, response.status_code)
             return response
         if (
             response.status_code == 404
@@ -6857,9 +7034,7 @@ if _static_dir.is_dir():
                 headers={"Cache-Control": "no-store"},
             )
         if not path.startswith(("/api", "/docs", "/openapi")):
-            response.headers["Cache-Control"] = _frontend_cache_control(
-                path, response.status_code
-            )
+            response.headers["Cache-Control"] = _frontend_cache_control(path, response.status_code)
         return response
 
     app.mount("/", StaticFiles(directory=str(_static_dir)), name="static")

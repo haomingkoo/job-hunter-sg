@@ -35,6 +35,7 @@ _FAILURE_TYPES: dict[str, FailureType] = {
     "process_interrupted": "transient",
     "checkpoint_state_unavailable": "transient",
     "checkpoint_cleanup_failed": "transient",
+    "employer_index_unavailable": "business",
     "structured_output_invalid": "validation",
     "semantic_fixable": "validation",
     "information_absent": "validation",
@@ -84,6 +85,7 @@ _TERMINAL_ACTIONS = {
     "prompt_injection": "operator_review",
     "protected_candidate_question": "operator_review",
     "user_cancelled": "await_explicit_user_action",
+    "employer_index_unavailable": "wait_for_index_repair",
 }
 
 _LEGACY_FAILURE_CODES = {
@@ -258,11 +260,7 @@ def merge_execution_attempts(
                 "transport",
                 transport_limit,
             )
-            decision = (
-                classify_failure(failure_code, attempts_remaining=transport_remaining)
-                if failure_code
-                else None
-            )
+            decision = classify_failure(failure_code, attempts_remaining=transport_remaining) if failure_code else None
             updated = record_attempt(
                 updated,
                 logical_run_id=logical_run_id,

@@ -138,6 +138,8 @@ class JobOut(BaseModel):
     company_ssic_code: str = ""
     company_ssic_description: str = ""
     company_ssic_source: str = ""
+    employer_relationship: Optional[str] = None
+    employer_relationship_evidence: str = ""
     scraped_at: str
 
 

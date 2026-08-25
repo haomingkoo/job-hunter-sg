@@ -72,11 +72,14 @@ def _extract_openings(item: dict) -> int:
             return min(parsed, 10000)
     return 1
 
+
 @dataclass
 class Job:
     title: str
     company: str
     location: str = ""
+    work_location_scope: str = "unknown"
+    work_location_scope_source: str = "unknown"
     salary: str = ""
     source: str = ""
     url: str = ""
@@ -86,6 +89,9 @@ class Job:
     description: str = ""
     skills: list = field(default_factory=list)
     agency: str = ""  # For gov jobs
+    company_ssic_code: str = ""
+    company_ssic_description: str = ""
+    company_ssic_source: str = ""
     closing_date: str = ""
     source_posting_id: str = ""
     openings: int = 1
@@ -120,25 +126,37 @@ class Job:
         return hashlib.md5(raw.encode()).hexdigest()
 
 
-
 class MyCareersFutureScraper:
     """
     Uses the public MCF API at api.mycareersfuture.gov.sg
     This is the same API the website calls internally.
     """
+
     BASE_URL = "https://api.mycareersfuture.gov.sg/v2/jobs"
 
     @staticmethod
-    def _location(item: dict) -> str:
-        """Return a useful job region, not the posting company's office building."""
+    def _company_identity(item: dict) -> tuple[str, str, str]:
+        company = item.get("postedCompany") if isinstance(item.get("postedCompany"), dict) else {}
+        return (
+            str(company.get("name") or "Unknown").strip(),
+            str(company.get("ssicCode2020") or company.get("ssicCode") or "").strip(),
+            str(company.get("ssicDescription2020") or company.get("ssicDescription") or "").strip(),
+        )
+
+    @staticmethod
+    def _work_location(item: dict) -> tuple[str, str]:
+        """Preserve MCF's raw overseas tri-state instead of guessing on missing."""
         address = item.get("address") if isinstance(item.get("address"), dict) else {}
-        if address.get("isOverseas"):
-            return str(address.get("overseasCountry") or "Overseas").strip()
+        is_overseas = address.get("isOverseas")
+        if is_overseas is True:
+            return str(address.get("overseasCountry") or "Overseas").strip(), "overseas"
+        if is_overseas is not False:
+            return "", "unknown"
 
         company = item.get("postedCompany") if isinstance(item.get("postedCompany"), dict) else {}
         ssic = str(company.get("ssicCode2020") or company.get("ssicCode") or "").strip()
         if ssic.startswith("78"):
-            return "Singapore"
+            return "", "singapore"
 
         districts = address.get("districts") if isinstance(address.get("districts"), list) else []
         for district in districts:
@@ -146,8 +164,12 @@ class MyCareersFutureScraper:
                 continue
             region = str(district.get("region") or district.get("location") or "").strip()
             if region:
-                return region
-        return "Singapore"
+                return region, "singapore"
+        return "", "singapore"
+
+    @classmethod
+    def _location(cls, item: dict) -> str:
+        return cls._work_location(item)[0]
 
     def search(self, keyword: str, limit: int = 20, page: int = 0) -> list[Job]:
         log.info(f"[MCF] Searching for '{keyword}' (limit={limit}, page={page})...")
@@ -188,11 +210,15 @@ class MyCareersFutureScraper:
                     elif isinstance(skill, str):
                         skills.append(skill)
 
-                location = self._location(item)
+                location, work_location_scope = self._work_location(item)
 
                 uuid = item.get("uuid", "")
                 title = item.get("title", "Unknown")
-                company_name = item.get("postedCompany", {}).get("name", "Unknown")
+                (
+                    company_name,
+                    company_ssic_code,
+                    company_ssic_description,
+                ) = self._company_identity(item)
 
                 # Position levels — now returns [{id: int, position: str}]
                 seniority = ""
@@ -205,14 +231,23 @@ class MyCareersFutureScraper:
                     title=title,
                     company=company_name,
                     location=location,
+                    work_location_scope=work_location_scope,
+                    work_location_scope_source=(
+                        "mcf_address_is_overseas" if work_location_scope != "unknown" else "unknown"
+                    ),
                     salary=salary_str,
                     source="MyCareersFuture",
                     url=f"https://www.mycareersfuture.gov.sg/job/{uuid}" if uuid else "",
-                    posted_date=item.get("metadata", {}).get("newPostingDate", "") if isinstance(item.get("metadata"), dict) else "",
+                    posted_date=item.get("metadata", {}).get("newPostingDate", "")
+                    if isinstance(item.get("metadata"), dict)
+                    else "",
                     employment_type=_extract_employment_type(item),
                     seniority=seniority,
                     description=_clean_html(item.get("description", "")),
                     skills=skills,
+                    company_ssic_code=company_ssic_code,
+                    company_ssic_description=company_ssic_description,
+                    company_ssic_source=("mcf_posted_company" if company_ssic_code else ""),
                     source_posting_id=uuid,
                     openings=_extract_openings(item),
                 )
@@ -226,17 +261,27 @@ class MyCareersFutureScraper:
         return jobs
 
 
-
 class CareersGovScraper:
     """
     Careers@Gov data sourced from OpenGovSG's pre-parsed JSON dump.
     https://github.com/opengovsg/careersgovsg-jobs-data
     Credit: Alwyn Tan @ Open Government Products
     """
+
     DATA_URL = "https://raw.githubusercontent.com/opengovsg/careersgovsg-jobs-data/main/data/job-listings.json"
 
     _cached_jobs: list[dict] | None = None
     _cache_time: float = 0
+
+    @staticmethod
+    def _location(item: dict) -> str:
+        """Preserve unknown rather than inventing a Singapore worksite."""
+        return str(item.get("location") or "").strip()
+
+    @classmethod
+    def _work_location(cls, item: dict) -> tuple[str, str]:
+        location = cls._location(item)
+        return location, ("singapore" if location.casefold() == "singapore" else "unknown")
 
     @classmethod
     def _fetch_data(cls) -> list[dict]:
@@ -332,10 +377,13 @@ class CareersGovScraper:
         closing = self._parse_timestamp(item, "closingDate")
         job_id = str(item.get("jobId") or "").strip()
         posting_no = str(item.get("postingNo") or "").strip()
+        location, work_location_scope = self._work_location(item)
         return Job(
             title=(item.get("jobTitle") or "").strip(),
             company="Singapore Public Service",
-            location=(item.get("location") or "Singapore").strip(),
+            location=location,
+            work_location_scope=work_location_scope,
+            work_location_scope_source=("careers_gov_location" if work_location_scope != "unknown" else "unknown"),
             salary="",
             source="Careers@Gov",
             url=self._build_url(item),
@@ -360,11 +408,15 @@ class CareersGovScraper:
 
         if keyword:
             kw = keyword.lower()
-            data = [j for j in data if kw in (j.get("jobTitle") or "").lower()
-                    or kw in (j.get("agency") or "").lower()
-                    or kw in (j.get("jobDescription") or "").lower()]
+            data = [
+                j
+                for j in data
+                if kw in (j.get("jobTitle") or "").lower()
+                or kw in (j.get("agency") or "").lower()
+                or kw in (j.get("jobDescription") or "").lower()
+            ]
 
-        page = data[offset:offset + limit]
+        page = data[offset : offset + limit]
         log.info(f"[Careers@Gov] Got {len(page)} results (total matched: {len(data)})")
         return [self._to_job(item) for item in page]
 
@@ -379,7 +431,6 @@ class CareersGovScraper:
         return [self._to_job(item) for item in data]
 
 
-
 class SSGSkillsFrameworkAPI:
     """
     Uses the public SSG-WSG Skills Framework API for job role data.
@@ -391,11 +442,13 @@ class SSGSkillsFrameworkAPI:
 
     Set env vars: SKILLSFUTURE_CLIENTID, SKILLSFUTURE_SECRET
     """
+
     BASE_URL = "https://public-api.ssg-wsg.sg"
     TOKEN_URL = "https://public-api.ssg-wsg.sg/dp-oauth/oauth/token"
 
     def __init__(self):
         import base64 as _b64
+
         self._b64 = _b64
         self._client_id = os.environ.get("SKILLSFUTURE_CLIENTID", os.environ.get("skillsfuture_clientid", ""))
         self._client_secret = os.environ.get("SKILLSFUTURE_SECRET", os.environ.get("skillsfuture_secret", ""))
@@ -410,9 +463,7 @@ class SSGSkillsFrameworkAPI:
             log.warning("[SSG] No credentials set (SKILLSFUTURE_CLIENTID / SKILLSFUTURE_SECRET)")
             return ""
         try:
-            basic = self._b64.b64encode(
-                f"{self._client_id}:{self._client_secret}".encode()
-            ).decode()
+            basic = self._b64.b64encode(f"{self._client_id}:{self._client_secret}".encode()).decode()
             resp = requests.post(
                 self.TOKEN_URL,
                 data={"grant_type": "client_credentials"},
@@ -512,10 +563,23 @@ class SSGSkillsFrameworkAPI:
         return all_skills
 
 
-
 class AdzunaScraper:
     """Adzuna official API — free tier, SG supported."""
+
     BASE_URL = "https://api.adzuna.com/v1/api/jobs/sg/search/1"
+
+    @staticmethod
+    def _location(item: dict) -> str:
+        """The SG endpoint narrows the search, but missing row evidence stays unknown."""
+        location = item.get("location")
+        if not isinstance(location, dict):
+            return ""
+        return str(location.get("display_name") or "").strip()
+
+    @classmethod
+    def _work_location(cls, item: dict) -> tuple[str, str]:
+        location = cls._location(item)
+        return location, ("singapore" if "singapore" in location.casefold() else "unknown")
 
     def search(self, keyword: str, limit: int = 20) -> list[Job]:
         app_id = os.environ.get("ADZUNA_APP_ID", "")
@@ -551,25 +615,30 @@ class AdzunaScraper:
 
                 company = item.get("company", {})
                 company_name = company.get("display_name", "") if isinstance(company, dict) else str(company)
-                location = item.get("location", {})
-                loc_name = location.get("display_name", "Singapore") if isinstance(location, dict) else "Singapore"
+                loc_name, work_location_scope = self._work_location(item)
                 category = item.get("category", {})
                 cat_label = category.get("label", "") if isinstance(category, dict) else ""
 
-                jobs.append(Job(
-                    title=item.get("title", "").replace("<strong>", "").replace("</strong>", ""),
-                    company=company_name,
-                    location=loc_name,
-                    salary=salary_str,
-                    source="Adzuna",
-                    url=item.get("redirect_url", ""),
-                    posted_date=item.get("created", ""),
-                    description=item.get("description", "").replace("<strong>", "").replace("</strong>", ""),
-                    employment_type=item.get("contract_type", ""),
-                    seniority=cat_label,
-                    source_posting_id=str(item.get("id") or ""),
-                    openings=_extract_openings(item),
-                ))
+                jobs.append(
+                    Job(
+                        title=item.get("title", "").replace("<strong>", "").replace("</strong>", ""),
+                        company=company_name,
+                        location=loc_name,
+                        work_location_scope=work_location_scope,
+                        work_location_scope_source=(
+                            "adzuna_location" if work_location_scope != "unknown" else "unknown"
+                        ),
+                        salary=salary_str,
+                        source="Adzuna",
+                        url=item.get("redirect_url", ""),
+                        posted_date=item.get("created", ""),
+                        description=item.get("description", "").replace("<strong>", "").replace("</strong>", ""),
+                        employment_type=item.get("contract_type", ""),
+                        seniority=cat_label,
+                        source_posting_id=str(item.get("id") or ""),
+                        openings=_extract_openings(item),
+                    )
+                )
 
         except requests.exceptions.RequestException as e:
             # Sanitize error — URL contains API credentials as query params
@@ -579,9 +648,18 @@ class AdzunaScraper:
         return jobs
 
 
-
 class JoobleScraper:
     """Jooble official API — free, 67+ countries including SG."""
+
+    @staticmethod
+    def _location(item: dict) -> str:
+        """The request targets Singapore, but missing row evidence stays unknown."""
+        return str(item.get("location") or "").strip()
+
+    @classmethod
+    def _work_location(cls, item: dict) -> tuple[str, str]:
+        location = cls._location(item)
+        return location, ("singapore" if "singapore" in location.casefold() else "unknown")
 
     def search(self, keyword: str, limit: int = 20) -> list[Job]:
         api_key = os.environ.get("JOOBLE_API_KEY", "")
@@ -602,19 +680,26 @@ class JoobleScraper:
             log.info(f"[Jooble] Got {len(results)} results (total: {data.get('totalCount', '?')})")
 
             for item in results[:limit]:
-                jobs.append(Job(
-                    title=item.get("title", ""),
-                    company=item.get("company", ""),
-                    location=item.get("location", "Singapore"),
-                    salary=item.get("salary", ""),
-                    source="Jooble",
-                    url=item.get("link", ""),
-                    posted_date=item.get("updated", ""),
-                    description=item.get("snippet", ""),
-                    employment_type=item.get("type", ""),
-                    source_posting_id=str(item.get("id") or item.get("link") or ""),
-                    openings=_extract_openings(item),
-                ))
+                location, work_location_scope = self._work_location(item)
+                jobs.append(
+                    Job(
+                        title=item.get("title", ""),
+                        company=item.get("company", ""),
+                        location=location,
+                        work_location_scope=work_location_scope,
+                        work_location_scope_source=(
+                            "jooble_location" if work_location_scope != "unknown" else "unknown"
+                        ),
+                        salary=item.get("salary", ""),
+                        source="Jooble",
+                        url=item.get("link", ""),
+                        posted_date=item.get("updated", ""),
+                        description=item.get("snippet", ""),
+                        employment_type=item.get("type", ""),
+                        source_posting_id=str(item.get("id") or item.get("link") or ""),
+                        openings=_extract_openings(item),
+                    )
+                )
 
         except requests.exceptions.RequestException as e:
             # Sanitize error — URL contains API key in path
@@ -622,7 +707,6 @@ class JoobleScraper:
             err_status = getattr(getattr(e, "response", None), "status_code", "N/A")
             log.warning(f"[Jooble] Request failed: {err_type} (status={err_status})")
         return jobs
-
 
 
 class JobAggregator:
