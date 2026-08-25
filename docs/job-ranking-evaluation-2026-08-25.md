@@ -11,6 +11,7 @@ prove the others.
 | Offline regression | `backend/scripts/evaluate_job_ranking.py` over `job-ranking-v1` | 3/3 synthetic cases passed |
 | Live coordinator | SEA-LION opt-in prompt evaluations, three repeats per case | 3/3 named-Micron and 3/3 explicit manager-search trials passed |
 | Frozen production corpus | 81,031 public postings re-exported with source-backed employer provenance at `2026-08-25T19:17:00Z`; row order and every embedding input match the pinned matrix | 1,192 verified direct, 48,634 unknown, and 31,205 intermediary rows; released and candidate default eligibility both retain 49,826 rows |
+| Arm-blinded release evaluation | Three fresh raters over 48 pooled items and eight precommitted cases | V4 passed: candidate was non-inferior in all eight cases, improved six, and had zero hard-constraint violations |
 | PostgreSQL policy parity | Read-only checks against the production PostgreSQL regex engine | EA markers, EA numbers, and punctuated agency names matched; direct-employer negative control did not |
 | Signed-in deployed journey | Exact candidate release | Not yet accepted |
 
@@ -18,6 +19,19 @@ The current frozen corpus SHA-256 is
 `1598f23d892aafb63d010492c45bf1ad7699b3afd0983abb99f70ece71cad45b`.
 The corpus is not checked into Git because it is 213 MB; the hashes bind the
 local evaluation artifacts used for this report.
+
+The compact, hash-bound result receipt is
+`backend/evals/job-ranking-release-v4.result.json`. This is a frozen-corpus
+release evaluation, not a historical backtest. The explicit Micron case found
+four company-constrained roles, but all four were seniority stretches for the
+synthetic seven-year profile; the pass therefore does not mean every returned
+role is application-ready.
+
+V3 failed its non-inferiority gate because two raters treated a Director title
+as eligible even though the case specified the literal whole-word title phrase
+`manager`. V4 is a disclosed protocol correction: literal company and title
+constraints are enforced mechanically, then three new blinded raters judge the
+remaining semantic questions. No V3 judgment was reused.
 
 ## Frozen-corpus development findings
 
@@ -63,8 +77,8 @@ postings, but its judgments were written after observing its pools. Its
 superseded approximate comparator has therefore been deleted instead of being
 kept as a second release-like path.
 
-A release claim still requires a precommitted query set, arm-blinded pooled
-judgments, captured outputs from the released checkout, and the candidate
-outputs on the identical corpus. Retrieval evidence must then be combined with
-an exact-SHA signed-in browser run and persisted trace evidence; neither one can
+The release evaluation now has a precommitted query set, arm-blinded pooled
+judgments, exact-checkout released and candidate captures, and a passing
+non-inferiority gate. Retrieval evidence must still be combined with an
+exact-SHA signed-in browser run and persisted trace evidence; neither one can
 stand in for the other.

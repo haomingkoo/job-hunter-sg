@@ -51,6 +51,7 @@ tmp/
 !backend/evals/corpora/synthetic-v1/cases/*/*.json
 !backend/evals/job-ranking-v1.json
 !backend/evals/job-ranking-release-v*.protocol.json
+!backend/evals/job-ranking-release-v*.result.json
 !backend/evals/work-location-scope-v*.coverage.json
 backend/evals/corpora/private/
 backend/evals/live-runs/
