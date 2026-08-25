@@ -10,9 +10,21 @@ from typing import Any
 import agent_tool_contract as contract
 import config
 from database import SessionLocal
-from embedding_service import encode_text, find_similar_jobs, find_similar_jobs_for_ids
-from employer_filter import company_name_matches, direct_employer_condition
-from job_visibility import apply_public_job_visibility, is_junior_posting
+from embedding_service import (
+    EmbeddingIndexUnavailable,
+    encode_text,
+    find_similar_jobs,
+    find_similar_jobs_for_ids,
+)
+from employer_filter import company_name_matches
+from job_visibility import (
+    apply_public_job_visibility,
+    experienced_hire_prefilter_condition,
+    is_junior_posting,
+    is_singapore_job_location,
+    job_title_matches,
+    singapore_job_prefilter_condition,
+)
 from langchain_core.tools import tool
 from models import ScrapedJob
 
@@ -54,6 +66,8 @@ def search_jobs(
     exclude_junior: bool = False,
     company: str = "",
     direct_employers_only: bool = False,
+    singapore_only: bool = True,
+    title_phrase: str = "",
 ) -> dict:
     """Search the current internal Singapore job corpus by role or responsibility.
 
@@ -65,6 +79,8 @@ def search_jobs(
     similarity alone cannot tell apart from senior work in the same field.
     `company` constrains results to that named employer on whole normalized
     words. `direct_employers_only` excludes recruitment agencies.
+    `singapore_only` excludes postings whose stated work location is overseas.
+    `title_phrase` requires that normalized whole-word phrase in the job title.
     """
     clean_query = (query or "").strip()
     if not clean_query:
@@ -80,28 +96,71 @@ def search_jobs(
     try:
         db = SessionLocal()
         clean_company = (company or "").strip()
+        clean_title_phrase = (title_phrase or "").strip()
         eligible_job_ids = None
-        if clean_company or direct_employers_only:
+        if (
+            clean_company
+            or clean_title_phrase
+            or direct_employers_only
+            or exclude_junior
+            or singapore_only
+        ):
             eligible_query = apply_public_job_visibility(
-                db.query(ScrapedJob.id, ScrapedJob.company)
+                db.query(
+                    ScrapedJob.id,
+                    ScrapedJob.company,
+                    ScrapedJob.title,
+                    ScrapedJob.salary_floor,
+                )
             )
             if direct_employers_only:
-                eligible_query = eligible_query.filter(
-                    direct_employer_condition(
-                        ScrapedJob.company,
-                        ScrapedJob.company_ssic_description,
-                        ScrapedJob.description,
+                unclassified = apply_public_job_visibility(
+                    db.query(ScrapedJob.id)
+                ).filter(ScrapedJob.direct_employer < 0).first()
+                if unclassified:
+                    return contract.search_jobs_error(
+                        clean_query,
+                        "employer_index_unavailable",
+                        "The employer classification index is rebuilding. Please retry shortly.",
+                        failure_type="unavailable",
                     )
-                )
+                eligible_query = eligible_query.filter(ScrapedJob.direct_employer == 1)
             if clean_company:
                 first_word = next(iter(re.findall(r"[a-z0-9]+", clean_company.casefold())), "")
                 eligible_query = eligible_query.filter(
                     ScrapedJob.company.ilike(f"%{first_word}%")
                 )
+            if clean_title_phrase:
+                first_title_word = next(
+                    iter(re.findall(r"[a-z0-9]+", clean_title_phrase.casefold())),
+                    "",
+                )
+                eligible_query = eligible_query.filter(
+                    ScrapedJob.title.ilike(f"%{first_title_word}%")
+                )
+            if exclude_junior:
+                eligible_query = eligible_query.filter(experienced_hire_prefilter_condition(
+                    ScrapedJob.seniority,
+                    ScrapedJob.salary_floor,
+                ))
+            if singapore_only:
+                eligible_query = eligible_query.filter(
+                    singapore_job_prefilter_condition(ScrapedJob.location)
+                )
             eligible_job_ids = {
                 job_id
-                for job_id, employer in eligible_query.all()
-                if not clean_company or company_name_matches(employer, clean_company)
+                for job_id, employer, title, salary_floor
+                in eligible_query.all()
+                if (not clean_company or company_name_matches(employer, clean_company))
+                and (not clean_title_phrase or job_title_matches(title, clean_title_phrase))
+                # The SQL prefilter already proves the structured location and
+                # seniority fields; Python only checks their title-based
+                # exceptions here.
+                and (not singapore_only or is_singapore_job_location("Singapore", title))
+                and (
+                    not exclude_junior
+                    or not is_junior_posting(None, title, salary_floor)
+                )
             }
         query_vector = encode_text(clean_query)
         candidate_limit = max(
@@ -141,11 +200,6 @@ def search_jobs(
             .filter(ScrapedJob.id.in_(scores.keys()))
             .all()
         )
-        if exclude_junior:
-            jobs = [
-                job for job in jobs
-                if not is_junior_posting(job.seniority, job.title, job.salary_floor)
-            ]
         by_id = {job.id: job for job in jobs}
         results = [
             contract.job_payload(
@@ -168,6 +222,13 @@ def search_jobs(
                 len(eligible_job_ids) if eligible_job_ids is not None else None
             ),
             visible_candidate_count=len(results),
+        )
+    except EmbeddingIndexUnavailable:
+        return contract.search_jobs_error(
+            clean_query,
+            "embedding_index_unavailable",
+            "The job matching index is rebuilding. Please retry shortly.",
+            failure_type="unavailable",
         )
     except Exception as exc:
         return contract.search_jobs_error(

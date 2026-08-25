@@ -8,28 +8,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from dotenv import load_dotenv
 from resume_agent.contracts import TARGET_JOB_PERSONAS
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 
 
-def _load_backend_env() -> None:
-    env_path = BACKEND_DIR / ".env"
-    if not env_path.exists():
-        return
-    for raw_line in env_path.read_text().splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.removeprefix("export ").strip()
-        value = value.strip().strip("'\"")
-        if key:
-            os.environ.setdefault(key, value)
-
-
-_load_backend_env()
+load_dotenv(BACKEND_DIR / ".env", override=False)
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_LIVE_SEALION") != "1",
@@ -67,14 +53,34 @@ def _prompt_eval_discovery(jobs, *, company: str = ""):
             *,
             company: str = "",
             direct_employers_only: bool = True,
+            exclude_junior: bool = False,
+            singapore_only: bool = True,
+            title_phrase: str = "",
         ):
             self.calls.append({
                 "query": query,
                 "company": company,
                 "direct_employers_only": direct_employers_only,
+                "exclude_junior": exclude_junior,
+                "singapore_only": singapore_only,
+                "title_phrase": title_phrase,
             })
             company_matches = company.casefold() == expected_company.casefold()
             visible = jobs if direct_employers_only and company_matches else ()
+            if exclude_junior:
+                from job_visibility import is_junior_posting
+
+                visible = tuple(
+                    job for job in visible
+                    if not is_junior_posting(job.seniority, job.title)
+                )
+            if title_phrase:
+                from job_visibility import job_title_matches
+
+                visible = tuple(
+                    job for job in visible
+                    if job_title_matches(job.title, title_phrase)
+                )
             return JobSearchResult(
                 query=query,
                 jobs=visible,
@@ -85,6 +91,9 @@ def _prompt_eval_discovery(jobs, *, company: str = ""):
                 eligible_candidate_count=len(visible),
                 company=company,
                 direct_employers_only=direct_employers_only,
+                exclude_junior=exclude_junior,
+                singapore_only=singapore_only,
+                title_phrase=title_phrase,
             )
 
         def get_job(self, job_id: int):
@@ -479,11 +488,19 @@ def test_live_recruitment_coordinator_keeps_general_search_employer_neutral_and_
         thread_id,
         discovery,
         resume_text,
-        "Find roles for me.",
+        "Find manager roles for me.",
     )
 
     reply = DeepAgentConversationModel(telemetry=telemetry).respond(
-        [Message(1, "user", "Find roles for me.", thread_id, datetime.now(timezone.utc))],
+        [
+            Message(
+                1,
+                "user",
+                "Find manager roles for me.",
+                thread_id,
+                datetime.now(timezone.utc),
+            )
+        ],
         resume_text,
         context=context,
     )
@@ -492,6 +509,13 @@ def test_live_recruitment_coordinator_keeps_general_search_employer_neutral_and_
     assert not reply.checkpoint_cleanup_token
     assert all(call["company"] == "" for call in discovery.calls)
     assert all(call["direct_employers_only"] is True for call in discovery.calls)
+    assert all(call["singapore_only"] is True for call in discovery.calls)
+    assert all(call["title_phrase"].casefold() == "manager" for call in discovery.calls)
+    assert all(
+        call["exclude_junior"] is True
+        or call["title_phrase"].casefold() == "manager"
+        for call in discovery.calls
+    )
     assert any(
         term in " ".join(call["query"] for call in discovery.calls).casefold()
         for term in ("semiconductor", "manufacturing", "quality", "yield")

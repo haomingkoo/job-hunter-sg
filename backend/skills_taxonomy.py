@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import logging
-
-log = logging.getLogger("jobhunter.taxonomy")
+from build_learned_skills import load_learned_skills
+from sg_skills import ALL_SG_TERMS
 
 ONET_SKILLS: set[str] = {
     "active learning", "active listening", "complex problem solving",
@@ -499,12 +498,7 @@ def _build_tier1() -> set[str]:
     combined.update(s.lower() for s in ONET_SOFTWARE_CATEGORIES)
     combined.update(s.lower() for s in TECH_SKILLS)
 
-    # Import SG skills if available
-    try:
-        from sg_skills import ALL_SG_TERMS
-        combined.update(s.lower() for s in ALL_SG_TERMS)
-    except ImportError:
-        log.warning("sg_skills module not found, skipping SG terms")
+    combined.update(s.lower() for s in ALL_SG_TERMS)
 
     return combined
 
@@ -522,11 +516,7 @@ def load_tier2_skills() -> set[str]:
     if _tier2_cache is not None:
         return _tier2_cache
 
-    try:
-        from build_learned_skills import load_learned_skills
-        _tier2_cache = load_learned_skills()
-    except (ImportError, Exception):
-        _tier2_cache = set()
+    _tier2_cache = load_learned_skills()
 
     return _tier2_cache
 

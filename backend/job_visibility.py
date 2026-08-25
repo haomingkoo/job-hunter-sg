@@ -14,6 +14,27 @@ from models import ScrapedJob
 DEFAULT_PUBLIC_JOB_MAX_AGE_DAYS = int(os.environ.get("PUBLIC_JOB_MAX_AGE_DAYS", "60"))
 KNOWN_RETIREMENT_REASONS = ("source_retired", "age_retired")
 UNCLASSIFIED_SECTOR = "Unclassified"
+SINGAPORE_JOB_LOCATIONS = frozenset({
+    "singapore",
+    "central",
+    "islandwide",
+    "west",
+    "north",
+    "east",
+    "north-east",
+})
+# Some source rows claim a Singapore region while the title states the actual
+# overseas work site. These are the unambiguous overseas place names currently
+# observed in that title pattern; ordinary mentions of overseas customers or
+# travel in descriptions are deliberately ignored.
+_OVERSEAS_TITLE_LOCATION = re.compile(
+    r"\b(?:based|located|stationed)\s+in\s+(?:"
+    r"indonesia|hong\s+kong|bangkok|kuala\s+lumpur|kl|malaysia|batam|jb|"
+    r"china|shanghai|vietnam|thailand|india|south\s+korea|korea|philippines|"
+    r"taiwan|cyprus|saudi\s+arabia|united\s+arab\s+emirates|uae|myanmar"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def job_corpus_marker(db) -> str:
@@ -56,15 +77,23 @@ def public_job_cutoff_iso(max_age_days: int | None = None, now: datetime | None 
     return (ref - timedelta(days=days)).isoformat()
 
 
-def apply_public_job_visibility(query, include_old: bool = False):
+def apply_public_job_visibility(
+    query,
+    include_old: bool = False,
+    *,
+    now: datetime | None = None,
+):
     query = query.filter(ScrapedJob.hidden == 0)
     if include_old:
         return query
-    today = datetime.now(timezone.utc).date().isoformat()
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    today = reference.date().isoformat()
     return query.filter(
         ScrapedJob.posted_at_sort.isnot(None),
         ScrapedJob.posted_at_sort != "",
-        ScrapedJob.posted_at_sort >= public_job_cutoff_iso(),
+        ScrapedJob.posted_at_sort >= public_job_cutoff_iso(now=reference),
         or_(
             ScrapedJob.closing_date.is_(None),
             ScrapedJob.closing_date == "",
@@ -90,6 +119,28 @@ def apply_expired_job_visibility(query):
             ),
         )
     )
+
+
+def is_singapore_job_location(location: str | None, title: str | None = None) -> bool:
+    """Return whether structured and explicit title evidence point to Singapore."""
+    return (
+        (location or "").strip().casefold() in SINGAPORE_JOB_LOCATIONS
+        and not _OVERSEAS_TITLE_LOCATION.search(title or "")
+    )
+
+
+def singapore_job_prefilter_condition(location_column):
+    """Portable SQL prefilter; Python verifies title evidence after loading."""
+    return func.lower(func.trim(func.coalesce(location_column, ""))).in_(
+        SINGAPORE_JOB_LOCATIONS
+    )
+
+
+def job_title_matches(title: str | None, phrase: str | None) -> bool:
+    """Match a caller-supplied title phrase on normalized whole words."""
+    wanted = " ".join(re.findall(r"[a-z0-9]+", (phrase or "").casefold()))
+    actual = " ".join(re.findall(r"[a-z0-9]+", (title or "").casefold()))
+    return bool(wanted) and f" {wanted} " in f" {actual} "
 
 
 # MyCareersFuture and Careers@Gov seniority labels, grouped so a candidate can be
@@ -132,3 +183,10 @@ def is_junior_posting(
     if salary_floor and salary_floor >= JUNIOR_LABEL_SALARY_CEILING:
         return False
     return True
+
+
+def experienced_hire_prefilter_condition(seniority_column, salary_floor_column):
+    """Portable SQL prefilter; Python verifies title evidence after loading."""
+    seniority = func.lower(func.coalesce(seniority_column, ""))
+    contradicted_by_pay = func.coalesce(salary_floor_column, 0) >= JUNIOR_LABEL_SALARY_CEILING
+    return or_(~seniority.in_(JUNIOR_SENIORITY_LABELS), contradicted_by_pay)

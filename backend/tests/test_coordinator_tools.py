@@ -137,6 +137,9 @@ class _RecordingDiscovery:
         *,
         company: str = "",
         direct_employers_only: bool = True,
+        exclude_junior: bool = False,
+        singapore_only: bool = True,
+        title_phrase: str = "",
     ):
         from recruitment_team.discovery import JobSearchResult
 
@@ -144,6 +147,9 @@ class _RecordingDiscovery:
             "query": query,
             "company": company,
             "direct_employers_only": direct_employers_only,
+            "exclude_junior": exclude_junior,
+            "singapore_only": singapore_only,
+            "title_phrase": title_phrase,
         })
         assert self._results, "the loop searched more times than the test scripted"
         result = self._results.pop(0)
@@ -514,6 +520,9 @@ def test_search_jobs_goes_through_the_port_without_a_hidden_level_filter():
         "query": "staff yield engineer",
         "company": "",
         "direct_employers_only": True,
+        "exclude_junior": False,
+        "singapore_only": True,
+        "title_phrase": "",
     }]
     assert result["ok"] is True
     assert result["valid_empty"] is False
@@ -528,6 +537,9 @@ def test_search_jobs_exposes_explicit_employer_constraints():
         "query",
         "company",
         "direct_employers_only",
+        "exclude_junior",
+        "singapore_only",
+        "title_phrase",
     }
 
 
@@ -542,12 +554,16 @@ def test_search_jobs_forwards_named_company_and_agency_choice():
             "query": "quality transformation",
             "company": "Micron",
             "direct_employers_only": False,
+            "title_phrase": "manager",
         })
 
     assert discovery.calls == [{
         "query": "quality transformation",
         "company": "Micron",
         "direct_employers_only": False,
+        "exclude_junior": False,
+        "singapore_only": True,
+        "title_phrase": "manager",
     }]
 
 
@@ -756,7 +772,10 @@ def test_a_search_run_inside_a_turn_reaches_the_thread_and_survives_a_shortlist_
         {
             "query": "semiconductor yield analytics",
             "company": "",
-            "direct_employers_only": True,
+                "direct_employers_only": True,
+                "exclude_junior": False,
+                "singapore_only": True,
+                "title_phrase": "",
         }
     ]
     assert [job.job_id for job in snapshot.case_facts.recommendations] == [501]

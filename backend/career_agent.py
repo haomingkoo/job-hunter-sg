@@ -8,6 +8,7 @@ approval, and replay semantics.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from typing import Any
@@ -218,7 +219,7 @@ def _coerce_decision(value: Any) -> str:
 
 
 def _normalise_pack(raw: Any, *, resume_text: str, match_result: dict[str, Any]) -> dict[str, Any]:
-    pack = json.loads(json.dumps(_DEFAULT_PACK))
+    pack = copy.deepcopy(_DEFAULT_PACK)
     if isinstance(raw, dict):
         for key, default_value in _DEFAULT_PACK.items():
             value = raw.get(key)

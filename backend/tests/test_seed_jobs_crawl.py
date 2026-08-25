@@ -34,7 +34,7 @@ def _prepare_crawl(monkeypatch):
     monkeypatch.setattr(seed_jobs, "init_db", lambda: None)
     monkeypatch.setattr(seed_jobs, "SessionLocal", testing_session)
     monkeypatch.setattr(seed_jobs, "apply_job_precomputes", lambda clean: None)
-    monkeypatch.setattr(seed_jobs, "preparse_job_description", None)
+    monkeypatch.setattr(seed_jobs, "preparse_job_description", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(seed_jobs, "_posted_sort_iso", lambda *_: "2026-07-13T00:00:00")
     monkeypatch.setattr(seed_jobs, "MCF_MIN_HEALTHY_JOBS", 1)
     monkeypatch.setattr(seed_jobs.time, "sleep", lambda _: None)

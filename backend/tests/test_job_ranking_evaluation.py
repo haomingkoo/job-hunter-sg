@@ -59,7 +59,7 @@ def test_ranking_run_reports_an_empty_eligible_set_as_a_failed_case(tmp_path):
         "company": "Asia Search Pte Ltd",
         "description": "Recruitment role.",
         "skills": [],
-        "relevance": 0,
+        "relevance": 1,
     }]
     case["required_in_top_k"] = []
     case["forbidden_in_results"] = []
@@ -72,3 +72,45 @@ def test_ranking_run_reports_an_empty_eligible_set_as_a_failed_case(tmp_path):
 
     assert report["passed"] is False
     assert report["cases"][0]["violations"] == [{"type": "no_eligible_candidates"}]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda manifest: manifest.update(cases=[]), "ranking manifest requires at least one case"),
+        (
+            lambda manifest: manifest["cases"].append(dict(manifest["cases"][0])),
+            "ranking manifest case IDs must be unique",
+        ),
+        (
+            lambda manifest: manifest["cases"][0].update(
+                required_in_top_k=[101],
+                forbidden_in_results=[101],
+            ),
+            "required and forbidden candidates overlap",
+        ),
+        (
+            lambda manifest: [candidate.update(relevance=0) for candidate in manifest["cases"][0]["candidates"]],
+            "at least one candidate must be relevant",
+        ),
+    ],
+)
+def test_ranking_gate_rejects_fail_open_manifests(tmp_path, mutate, message):
+    manifest = json.loads(MANIFEST.read_text())
+    mutate(manifest)
+    path = tmp_path / "ranking.json"
+    path.write_text(json.dumps(manifest))
+
+    with pytest.raises(ValueError) as error:
+        run(path)
+
+    assert message in str(error.value)
+
+
+def test_ranking_gate_rejects_duplicate_or_unknown_output_ids():
+    case = json.loads(MANIFEST.read_text())["cases"][0]
+
+    with pytest.raises(ValueError, match="ranked job IDs must be unique"):
+        evaluate_case(case, [101, 101])
+    with pytest.raises(ValueError, match="ranked results contain an unknown candidate"):
+        evaluate_case(case, [999])

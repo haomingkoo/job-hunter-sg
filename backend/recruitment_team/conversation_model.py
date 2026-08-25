@@ -122,6 +122,7 @@ class ModelReply:
     model_name: str
     input_tokens: int | None = None
     output_tokens: int | None = None
+    reply_mode: Literal["adapter", "paused", "structured", "unsubmitted_prose"] = "adapter"
     preference_updates: tuple[PreferenceUpdate, ...] = ()
     # Which prompt produced this turn. A trace that always stamps the same
     # constant cannot tell you which one ran.

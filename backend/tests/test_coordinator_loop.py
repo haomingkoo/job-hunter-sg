@@ -197,16 +197,25 @@ class _RecordingDiscovery:
         *,
         company: str = "",
         direct_employers_only: bool = True,
+        exclude_junior: bool = False,
+        singapore_only: bool = True,
+        title_phrase: str = "",
     ):
         self.calls.append({
             "query": query,
             "company": company,
             "direct_employers_only": direct_employers_only,
+            "exclude_junior": exclude_junior,
+            "singapore_only": singapore_only,
+            "title_phrase": title_phrase,
         })
         return self._inner.search_jobs(
             query,
             company=company,
             direct_employers_only=direct_employers_only,
+            exclude_junior=exclude_junior,
+            singapore_only=singapore_only,
+            title_phrase=title_phrase,
         )
 
     def get_job(self, job_id: int):
@@ -498,7 +507,10 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
         {
             "query": "semiconductor yield analytics engineer",
             "company": "",
-            "direct_employers_only": True,
+                "direct_employers_only": True,
+                "exclude_junior": False,
+                "singapore_only": True,
+                "title_phrase": "",
         }
     ]
 
@@ -890,12 +902,9 @@ def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
 
 
 def test_a_failed_search_is_surfaced_to_the_agent_and_leaves_the_shortlist_alone():
-    """A source failure is information mid-turn, not the end of the turn.
-
-    It is returned to the model so it can decide what to do, and it changes no
-    durable state.
-    """
+    """A source failure fails closed and preserves the last verified shortlist."""
     from backend.tests.test_recruitment_team_module import _session_factory
+    from recruitment_team.errors import ConversationUnavailable
     from recruitment_team.interface import SearchJobs, SendMessage, StartThread
 
     discovery = _RecordingDiscovery(
@@ -931,13 +940,20 @@ def test_a_failed_search_is_surfaced_to_the_agent_and_leaves_the_shortlist_alone
             SearchJobs(thread_id=thread_id, query="semiconductor yield analytics"),
             idempotency_key="button-search",
         )
-        team.execute(
-            owner_id,
-            SendMessage(thread_id=thread_id, message="Try a staff-level search."),
-            idempotency_key="turn-2",
-        )
+        with pytest.raises(ConversationUnavailable) as error:
+            team.execute(
+                owner_id,
+                SendMessage(thread_id=thread_id, message="Try a staff-level search."),
+                idempotency_key="turn-2",
+            )
         snapshot = team.snapshot(owner_id, thread_id)
 
+    assert error.value.failure_type == "transient"
+    assert error.value.failure_code == "connection_failure"
+    assert error.value.detail == {
+        "validation_code": "search_result_unavailable",
+        "tool_name": "search_jobs",
+    }
     assert [job.job_id for job in snapshot.case_facts.recommendations] == [601]
     assert snapshot.case_facts.latest_search_query == "semiconductor yield analytics"
     assert "connection_failure" in _rendered(agent.requests[2])
@@ -1807,6 +1823,8 @@ def test_a_turn_that_answers_in_prose_is_delivered_not_failed():
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
     with sessions() as db:
+        from models import RecruitmentRun
+
         team = _team(db, agent, _RecordingDiscovery([]))
         receipt = team.execute(
             owner_id,
@@ -1814,6 +1832,12 @@ def test_a_turn_that_answers_in_prose_is_delivered_not_failed():
             idempotency_key="turn-1",
         )
         snapshot = team.snapshot(owner_id, receipt.thread_id)
+        persisted_result = db.get(RecruitmentRun, receipt.run_id).result
+        completed_event = next(
+            event
+            for event in reversed(team.events(owner_id, receipt.thread_id, after_sequence=0))
+            if event.event_type == "run" and event.status == "completed"
+        )
 
     assert [message.role for message in snapshot.messages] == ["user", "assistant"]
     assert snapshot.messages[-1].content == (
@@ -1823,6 +1847,8 @@ def test_a_turn_that_answers_in_prose_is_delivered_not_failed():
     )
     # Nothing the submission would have carried is invented on this path.
     assert snapshot.case_facts.preferences == ()
+    assert persisted_result["reply_mode"] == "unsubmitted_prose"
+    assert completed_event.attributes["reply_mode"] == "unsubmitted_prose"
 
 
 def test_an_unsubmitted_reply_cut_off_mid_sentence_is_rejected():
@@ -1854,6 +1880,95 @@ def test_unsubmitted_prose_cannot_claim_a_search_that_never_ran():
     assert error.value.failure_code == "structured_output_invalid"
 
 
+def test_failed_search_cannot_be_reported_as_found_matches():
+    from recruitment_team.errors import ConversationUnavailable
+
+    agent = ScriptedDeepAgent(responses=[
+        tool_call("search_jobs", {"query": "quality manager"}, "call-failed-search"),
+        final("I found five matching roles for you."),
+    ])
+
+    with pytest.raises(ConversationUnavailable) as error:
+        _model(agent).respond(
+            [],
+            RESUME_TEXT,
+            (),
+            _context(_RecordingDiscovery([_failed_search()])),
+        )
+
+    assert error.value.failure_type == "transient"
+    assert error.value.failure_code == "connection_failure"
+    assert error.value.detail == {
+        "validation_code": "search_result_unavailable",
+        "tool_name": "search_jobs",
+    }
+
+
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "There are five matching roles available.",
+        "Five relevant jobs are ready for review.",
+        "I have five suitable opportunities for you.",
+        "Here are five strong fits to review.",
+        "Your search produced several suitable openings.",
+        "The corpus contains five relevant vacancies.",
+        "We have five matching positions available.",
+    ),
+)
+def test_failed_search_rejects_paraphrased_positive_result_claims(claim):
+    from recruitment_team.errors import ConversationUnavailable
+
+    agent = ScriptedDeepAgent(responses=[
+        tool_call("search_jobs", {"query": "quality manager"}, "call-failed-search"),
+        submission(claim),
+    ])
+
+    with pytest.raises(ConversationUnavailable) as error:
+        _model(agent).respond(
+            [],
+            RESUME_TEXT,
+            (),
+            _context(_RecordingDiscovery([_failed_search()])),
+        )
+
+    assert error.value.failure_code == "connection_failure"
+    assert error.value.detail["validation_code"] == "search_result_unavailable"
+    assert error.value.detail["tool_name"] == "search_jobs"
+
+
+def test_unverified_search_claim_failure_is_durable_and_content_free():
+    from backend.tests.test_recruitment_team_module import _session_factory
+    from models import RecruitmentRun
+    from recruitment_team.errors import ConversationUnavailable
+    from recruitment_team.interface import StartThread
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    agent = ScriptedDeepAgent(responses=[final("There are five matching roles available.")])
+    with sessions() as db:
+        team = _team(db, agent, _RecordingDiscovery([]))
+        with pytest.raises(ConversationUnavailable):
+            team.execute(
+                owner_id,
+                StartThread(resume_version_id=resume_id, message="Find roles for me."),
+                idempotency_key="unverified-search-claim",
+            )
+        run = db.query(RecruitmentRun).one()
+        terminal = run.result["terminal_error"]
+        failed_event = next(
+            event
+            for event in team.events(owner_id, run.thread_id, after_sequence=0)
+            if event.event_type == "run" and event.status == "failed"
+        )
+
+    assert terminal["validation_code"] == "unverified_tool_claim"
+    assert terminal["tool_name"] == "search_jobs"
+    assert failed_event.detail["validation_code"] == "unverified_tool_claim"
+    assert failed_event.detail["tool_name"] == "search_jobs"
+    assert "five matching roles" not in str(terminal).lower()
+
+
 def test_conversation_reply_schema_requires_a_complete_sentence():
     """ToolStrategy uses this validation error to ask the model to repair its reply."""
     from pydantic import ValidationError
@@ -1877,6 +1992,7 @@ def test_structured_output_repairs_an_incomplete_reply_before_completion():
     reply = _model(agent).respond([], RESUME_TEXT, (), _context(_RecordingDiscovery([])))
 
     assert reply.content == "The strongest fit is operations leadership."
+    assert reply.reply_mode == "structured"
     assert agent.calls == 2
 
 

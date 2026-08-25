@@ -31,7 +31,7 @@ from email_service import (
     send_email,
     smtp_configured,
 )
-from employer_filter import direct_employer_condition, normalize_employer_name
+from employer_filter import normalize_employer_name
 from models import JobAlertDelivery, JobAlertPreference, ScrapedJob, TrackedJob, User, UserMemory
 from skill_extractor import extract_skill_phrases, normalize_skill_strings
 
@@ -459,13 +459,7 @@ def find_alert_matches(
     )
 
     if pref.direct_employers_only:
-        query = query.filter(
-            direct_employer_condition(
-                ScrapedJob.company,
-                ScrapedJob.company_ssic_description,
-                ScrapedJob.description,
-            )
-        )
+        query = query.filter(ScrapedJob.direct_employer == 1)
 
     if keywords:
         keyword_conditions = []
@@ -601,6 +595,11 @@ def _process_due_alert(
     dry_run: bool,
 ) -> tuple[int, bool] | None:
     """Process one locked preference; return candidate count and backlog state."""
+    if pref.direct_employers_only and db.query(ScrapedJob.id).filter(
+        ScrapedJob.hidden == 0,
+        ScrapedJob.direct_employer < 0,
+    ).first() is not None:
+        raise EmployerClassificationUnavailable
     user = db.get(User, pref.user_id)
     mem = db.query(UserMemory).filter(UserMemory.user_id == pref.user_id).first()
     resume_text = (mem.resume_text or "").strip() if mem else ""
@@ -671,6 +670,10 @@ class AlertPersistenceAfterAcceptanceError(RuntimeError):
         self.job_count = job_count
 
 
+class EmployerClassificationUnavailable(RuntimeError):
+    """Direct-employer alerts must not advance past unclassified jobs."""
+
+
 def run_job_alerts(dry_run: bool = False, limit_users: int | None = None) -> dict:
     if limit_users is not None and limit_users < 1:
         raise ValueError("limit_users must be a positive integer")
@@ -694,6 +697,7 @@ def run_job_alerts(dry_run: bool = False, limit_users: int | None = None) -> dic
         "skipped_no_resume": 0,
         "skipped_not_due": 0,
         "skipped_overlap": False,
+        "skipped_employer_index_unavailable": 0,
         "errors": [],
     }
     if not dry_run and not stats["email_configured"]:
@@ -769,6 +773,9 @@ def run_job_alerts(dry_run: bool = False, limit_users: int | None = None) -> dic
                         "error": type(exc).__name__,
                         "stage": "persistence_after_acceptance",
                     })
+                except EmployerClassificationUnavailable:
+                    db.rollback()
+                    stats["skipped_employer_index_unavailable"] += 1
                 except EmailDeliveryError as exc:
                     db.rollback()
                     if exc.delivery_unknown:

@@ -10,7 +10,38 @@ from sqlalchemy.pool import StaticPool
 
 import main
 from database import Base, get_db
-from models import ScrapedJob
+from models import ScrapedJob, UsageLog
+
+
+def test_job_search_readiness_requires_a_bound_exact_provenance_scan(jobs_client):
+    import embedding_service
+
+    db = jobs_client.test_db
+    for job in db.query(ScrapedJob).all():
+        embedding_service.stamp_job_embedding(job, [0.1] * 384)
+    db.commit()
+
+    unproven = jobs_client.get("/api/job-search/readiness").json()
+    assert unproven["current_embeddings"] == unproven["searchable_jobs"]
+    assert unproven["content_provenance_verified"] is False
+    assert unproven["ready"] is False
+
+    db.add(UsageLog(
+        action="job_embedding_ready",
+        detail=embedding_service.embedding_readiness_marker(db),
+    ))
+    db.commit()
+
+    proven = jobs_client.get("/api/job-search/readiness").json()
+    assert proven["content_provenance_verified"] is True
+    assert proven["ready"] is True
+
+    newest = db.query(ScrapedJob).order_by(ScrapedJob.id.desc()).first()
+    newest.scraped_at = datetime.now(timezone.utc).isoformat()
+    db.commit()
+    changed = jobs_client.get("/api/job-search/readiness").json()
+    assert changed["content_provenance_verified"] is False
+    assert changed["ready"] is False
 
 
 @pytest.fixture()
@@ -46,6 +77,7 @@ def jobs_client():
                 posted_at_sort=posted_at,
                 scraped_at=posted_at,
                 parsed_jd={"experience_years": experience},
+                direct_employer=1,
             )
         )
     db.commit()
@@ -105,6 +137,7 @@ def dated_jobs_client():
                 seniority="Senior",
                 description="Build a Python data platform.",
                 parsed_jd={"experience_years": "5"},
+                direct_employer=1,
             )
         )
     db.commit()

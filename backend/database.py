@@ -109,6 +109,14 @@ def _apply_lightweight_migrations(connection=None) -> None:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN job_terms_preview JSON")
     if "embedding_vector" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN embedding_vector JSON")
+    if "embedding_input_sha256" not in existing_columns:
+        statements.append(
+            "ALTER TABLE scraped_jobs ADD COLUMN embedding_input_sha256 VARCHAR(64) DEFAULT ''"
+        )
+    if "embedding_model_identity" not in existing_columns:
+        statements.append(
+            "ALTER TABLE scraped_jobs ADD COLUMN embedding_model_identity VARCHAR(300) DEFAULT ''"
+        )
     if "closing_date" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN closing_date VARCHAR(100) DEFAULT ''")
     if "source_posting_id" not in existing_columns:
@@ -129,6 +137,10 @@ def _apply_lightweight_migrations(connection=None) -> None:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN company_ssic_description VARCHAR(300) DEFAULT ''")
     if "company_ssic_source" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN company_ssic_source VARCHAR(30) DEFAULT ''")
+    if "direct_employer" not in existing_columns:
+        statements.append(
+            "ALTER TABLE scraped_jobs ADD COLUMN direct_employer INTEGER NOT NULL DEFAULT -1"
+        )
     if "salary_floor" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN salary_floor INTEGER DEFAULT 0")
     if "skills_flat" not in existing_columns:
@@ -153,6 +165,7 @@ def _apply_lightweight_migrations(connection=None) -> None:
         "ix_scraped_jobs_source_posting": "CREATE INDEX ix_scraped_jobs_source_posting ON scraped_jobs (source, source_posting_id)",
         "ix_scraped_jobs_ssic_code": "CREATE INDEX ix_scraped_jobs_ssic_code ON scraped_jobs (company_ssic_code)",
         "ix_scraped_jobs_ssic_source": "CREATE INDEX ix_scraped_jobs_ssic_source ON scraped_jobs (company_ssic_source)",
+        "ix_scraped_jobs_direct_employer": "CREATE INDEX ix_scraped_jobs_direct_employer ON scraped_jobs (direct_employer)",
         "ix_scraped_jobs_salary_floor": "CREATE INDEX ix_scraped_jobs_salary_floor ON scraped_jobs (salary_floor)",
         "ix_scraped_jobs_content_hash": "CREATE INDEX ix_scraped_jobs_content_hash ON scraped_jobs (content_hash)",
         "ix_scraped_jobs_promotional": "CREATE INDEX ix_scraped_jobs_promotional ON scraped_jobs (promotional_score)",

@@ -82,6 +82,7 @@ def merge_execution_metrics(current: dict | None, update: dict | None) -> dict:
                     "error_count": 0,
                     "input_tokens": 0,
                     "output_tokens": 0,
+                    "token_usage_available": True,
                     "latency_ms": 0.0,
                     "models": [],
                 },
@@ -104,6 +105,16 @@ def merge_execution_metrics(current: dict | None, update: dict | None) -> dict:
                 *totals["models"],
                 *((values or {}).get("models") or []),
             ]))
+            if int((values or {}).get("call_count") or 0) > 0:
+                totals["token_usage_available"] = bool(
+                    totals["token_usage_available"]
+                    and (values or {}).get("token_usage_available") is True
+                )
+    transport_sources = [
+        source
+        for source in (current, update)
+        if int(source.get("transport_call_count") or 0) > 0
+    ]
     return {
         "logical_run_id": str(current.get("logical_run_id") or update.get("logical_run_id") or ""),
         "trace_key": str(current.get("trace_key") or update.get("trace_key") or ""),
@@ -150,6 +161,10 @@ def merge_execution_metrics(current: dict | None, update: dict | None) -> dict:
         + int(update.get("transport_retry_count") or 0),
         "transport_error_count": int(current.get("transport_error_count") or 0)
         + int(update.get("transport_error_count") or 0),
+        "transport_token_usage_available": bool(transport_sources) and all(
+            source.get("transport_token_usage_available") is True
+            for source in transport_sources
+        ),
         "transport_latency_ms": round(
             float(current.get("transport_latency_ms") or 0)
             + float(update.get("transport_latency_ms") or 0),
@@ -182,6 +197,9 @@ def merge_execution_event(current: dict | None, event: dict) -> dict:
         "transport_attempt_count": event.get("transport_attempt_count") or 0,
         "transport_retry_count": event.get("transport_retry_count") or 0,
         "transport_error_count": event.get("transport_error_count") or 0,
+        "transport_token_usage_available": event.get(
+            "transport_token_usage_available"
+        ) is True,
         "transport_latency_ms": event.get("transport_latency_ms") or 0,
         "transport_models": event.get("transport_models") or [],
         "transport_by_role": event.get("transport_by_role") or {},

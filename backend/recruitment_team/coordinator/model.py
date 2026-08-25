@@ -139,7 +139,34 @@ def _resume_edit_reply(edits: list[dict], reply: ConversationReply) -> str:
     return "\n\n".join(paragraphs)
 
 
+def _has_job_result_evidence(context: ConversationContext) -> bool:
+    if context.search_results:
+        return any(result.jobs for result in context.search_results)
+    return bool(context.recommendations or context.shortlisted_jobs)
+
+
 _TOOL_CLAIM_RULES = (
+    (
+        re.compile(
+            r"\b(?:found|identified|located|returned)\b.{0,30}"
+            r"\b(?:match(?:es)?|roles?|jobs?|postings?)\b",
+            re.I,
+        ),
+        "search_jobs",
+        _has_job_result_evidence,
+    ),
+    (
+        re.compile(
+            r"\bthere (?:are|is)\s+(?!(?:no|not|zero)\b).{0,35}"
+            r"\b(?:match(?:es)?|roles?|jobs?|postings?)\b"
+            r"|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+|"
+            r"some|several|multiple)\s+.{0,25}\b(?:match(?:es)?|roles?|jobs?|postings?)\b"
+            r".{0,25}\b(?:available|ready|found|identified|located|returned)\b",
+            re.I,
+        ),
+        "search_jobs",
+        _has_job_result_evidence,
+    ),
     (re.compile(r"\b(?:searched|ran (?:a )?search)\b", re.I), "search_jobs", lambda c: bool(c.search_results)),
     (
         re.compile(r"\b(?:shortlisted|added .{0,40} to (?:the |your )?shortlist|published .{0,20}shortlist)\b", re.I),
@@ -460,6 +487,23 @@ class DeepAgentConversationModel:
             span.set_attribute("search_count", len(context.search_results))
             span.set_attribute("proposed_edit_count", len(context.proposed_edits))
 
+            latest_search = context.search_results[-1] if context.search_results else None
+            if latest_search is not None and (
+                latest_search.failure_type or latest_search.failure_code
+            ):
+                failure_code = latest_search.failure_code or "connection_failure"
+                span.set_attribute("failure_type", latest_search.failure_type or "transient")
+                span.set_attribute("failure_code", failure_code)
+                span.set_attribute("failed_tool_name", "search_jobs")
+                raise ConversationUnavailable(
+                    "job search did not complete",
+                    decision=classify_failure(failure_code),
+                    detail={
+                        "validation_code": "search_result_unavailable",
+                        "tool_name": "search_jobs",
+                    },
+                )
+
             if state.interrupts:
                 if mentions_protected_status(pending_question):
                     span.set_attribute("failure_type", "safety")
@@ -482,6 +526,7 @@ class DeepAgentConversationModel:
                     model_name=_model_name(state),
                     search_query=executed_query,
                     pause_token=run_config["configurable"]["thread_id"],
+                    reply_mode="paused",
                 )
 
             reply = state.values.get("structured_response")
@@ -521,6 +566,10 @@ class DeepAgentConversationModel:
                         raise ConversationUnavailable(
                             "coordinator prose claimed tool work that did not complete",
                             decision=classify_failure("structured_output_invalid"),
+                            detail={
+                                "validation_code": "unverified_tool_claim",
+                                "tool_name": unverified_tool,
+                            },
                         )
                     span.set_attribute("outcome", "unsubmitted_prose")
                     return ModelReply(
@@ -528,6 +577,7 @@ class DeepAgentConversationModel:
                         content=prose,
                         model_name=_model_name(state),
                         search_query=executed_query,
+                        reply_mode="unsubmitted_prose",
                     )
                 span.set_attribute("failure_type", "validation")
                 span.set_attribute("failure_code", "structured_output_invalid")
@@ -557,6 +607,10 @@ class DeepAgentConversationModel:
                 raise ConversationUnavailable(
                     "coordinator reply claimed tool work that did not complete",
                     decision=classify_failure("structured_output_invalid"),
+                    detail={
+                        "validation_code": "unverified_tool_claim",
+                        "tool_name": unverified_tool,
+                    },
                 )
             span.set_attribute("outcome", "submitted")
             return ModelReply(
@@ -576,6 +630,7 @@ class DeepAgentConversationModel:
                 # for. `_query_from_candidate` reads this on the next
                 # SearchJobs command.
                 search_query=executed_query,
+                reply_mode="structured",
             )
 
     def _turn(

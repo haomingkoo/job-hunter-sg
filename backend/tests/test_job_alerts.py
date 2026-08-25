@@ -106,6 +106,7 @@ def test_job_alert_commit_failure_does_not_report_a_durable_send(monkeypatch, tm
             title="Platform Engineer",
             company="Example Employer",
             dedup_key="alert-commit-failure",
+            direct_employer=1,
         )
         seed.add(job)
         seed.flush()
@@ -166,6 +167,50 @@ def test_job_alert_commit_failure_does_not_report_a_durable_send(monkeypatch, tm
     }]
     with Session(engine) as check:
         assert check.query(JobAlertDelivery).count() == 0
+    engine.dispose()
+
+
+def test_direct_employer_alert_does_not_advance_while_index_is_incomplete(
+    monkeypatch,
+    tmp_path,
+):
+    engine = create_engine(f"sqlite:///{tmp_path / 'alert-index-rebuild.db'}")
+    Base.metadata.create_all(engine)
+    now = datetime(2026, 8, 25, tzinfo=timezone.utc)
+    previous_cursor = now - timedelta(days=2)
+    with Session(engine, expire_on_commit=False) as db:
+        user = User(email="rebuild@example.test", password_hash="unused", name="Rebuild")
+        db.add(user)
+        db.flush()
+        db.add_all([
+            UserMemory(user_id=user.id, resume_text="Experienced quality manager " * 4),
+            JobAlertPreference(
+                user_id=user.id,
+                enabled=True,
+                direct_employers_only=True,
+                last_run_at=previous_cursor,
+                match_cursor_at=previous_cursor,
+            ),
+            ScrapedJob(
+                title="Quality Manager",
+                company="Direct Employer",
+                dedup_key="unclassified-alert-job",
+                scraped_at=now.isoformat(),
+                direct_employer=-1,
+            ),
+        ])
+        db.commit()
+        user_id = user.id
+
+    monkeypatch.setattr(job_alerts, "_utcnow", lambda: now)
+    monkeypatch.setattr(job_alerts, "SessionLocal", lambda: Session(engine))
+    result = job_alerts.run_job_alerts(dry_run=True)
+
+    assert result["skipped_employer_index_unavailable"] == 1
+    with Session(engine) as check:
+        preference = check.query(JobAlertPreference).filter_by(user_id=user_id).one()
+        assert job_alerts._as_utc(preference.last_run_at) == previous_cursor
+        assert job_alerts._as_utc(preference.match_cursor_at) == previous_cursor
     engine.dispose()
 
 

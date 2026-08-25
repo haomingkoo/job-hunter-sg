@@ -34,6 +34,9 @@ class SearchJobs:
     query: str
     company: str = ""
     direct_employers_only: bool = True
+    exclude_junior: bool = False
+    singapore_only: bool = True
+    title_phrase: str = ""
 
 
 @dataclass(frozen=True)

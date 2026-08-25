@@ -84,6 +84,7 @@ def test_observer_counts_a_successful_sdk_retry_without_recording_payloads(monke
         "model": "observed-model",
         "input_tokens": 1,
         "output_tokens": 1,
+        "token_usage_available": True,
     }
     serialized = json.dumps(span.attributes)
     assert "secret-provider" not in serialized
@@ -119,6 +120,7 @@ def test_observer_counts_exhausted_connection_retries_with_safe_error_type(monke
         "model": "observed-model",
         "input_tokens": 0,
         "output_tokens": 0,
+        "token_usage_available": False,
     }
     assert span.status == "error"
     assert span.error_type == "APIConnectionError"
@@ -162,6 +164,7 @@ def test_shared_observed_model_factory_counts_a_retry_for_its_stage(monkeypatch)
         "model": "observed-model",
         "input_tokens": 1,
         "output_tokens": 1,
+        "token_usage_available": True,
     }
 
 
@@ -296,6 +299,7 @@ def test_transport_metrics_are_durable_role_aware_and_concurrency_isolated():
     assert results[1]["transport_error_count"] == 0
     assert results[1]["transport_input_tokens"] == 0
     assert results[1]["transport_output_tokens"] == 0
+    assert results[1]["transport_token_usage_available"] is False
     assert results[1]["transport_latency_ms"] >= 0
     assert results[1]["transport_models"] == []
     assert results[1]["transport_by_role"]["specialist"] == {
@@ -305,6 +309,7 @@ def test_transport_metrics_are_durable_role_aware_and_concurrency_isolated():
         "error_count": 0,
         "input_tokens": 0,
         "output_tokens": 0,
+        "token_usage_available": False,
         "latency_ms": results[1]["transport_by_role"]["specialist"]["latency_ms"],
         "models": [],
     }
@@ -357,6 +362,7 @@ def test_code_owned_stage_overrides_factory_role_in_durable_metrics():
         "error_count": 0,
         "input_tokens": 0,
         "output_tokens": 0,
+        "token_usage_available": False,
         "latency_ms": role_metrics["latency_ms"],
         "models": [],
     }
@@ -389,12 +395,14 @@ def test_resume_edit_validator_call_emits_content_free_semantic_attempt():
         "model": "evidence-model",
         "input_tokens": 41,
         "output_tokens": 7,
+        "token_usage_available": True,
         "latency_ms": summary["nested_model_attempts"][0]["latency_ms"],
         "attempt_count": 1,
         "status": "success",
     }]
     assert summary["transport_input_tokens"] == 41
     assert summary["transport_output_tokens"] == 7
+    assert summary["transport_token_usage_available"] is True
     assert summary["transport_models"] == ["evidence-model"]
     assert summary["transport_by_role"]["resume_edit_evidence"]["models"] == [
         "evidence-model"

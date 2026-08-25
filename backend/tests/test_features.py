@@ -788,6 +788,18 @@ class TestAPIEndpoints:
         assert data["db"] == "connected"
         assert data["commit"] == commit_sha
 
+    def test_job_search_readiness_reports_derived_index_coverage(self, client):
+        response = client.get("/api/job-search/readiness")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data["ready"], bool)
+        assert data["searchable_jobs"] >= 0
+        assert 0 <= data["current_embeddings"] <= data["searchable_jobs"]
+        assert 0 <= data["classified_employers"] <= data["searchable_jobs"]
+        assert isinstance(data["content_provenance_verified"], bool)
+        assert "@" in data["embedding_model_identity"]
+
     def test_jobs_endpoint(self, client):
         resp = client.get("/api/jobs")
         assert resp.status_code == 200
@@ -831,6 +843,8 @@ class TestAPIEndpoints:
         assert main._embedding_backfill_progress == {
             "running": False,
             "done": 0,
+            "refreshed": 0,
+            "vector_rewrites": 0,
             "total": 0,
             "phase": "failed",
             "error_code": "embedding_backfill_failed",
@@ -853,9 +867,21 @@ class TestAPIEndpoints:
             def all(self):
                 return []
 
+            def one(self):
+                return (0, None, None)
+
+            def first(self):
+                return None
+
         class EmptySession:
-            def query(self, _model):
+            def query(self, *_models):
                 return EmptyQuery()
+
+            def add(self, _model):
+                pass
+
+            def commit(self):
+                pass
 
             def close(self):
                 pass

@@ -8,6 +8,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from company_taxonomy import apply_company_taxonomy
+from employer_filter import is_direct_employer
 
 
 def parse_job_posted_at(posted_date: str, scraped_at: str = "") -> datetime:
@@ -283,6 +284,11 @@ def apply_job_precomputes(job_data: dict) -> dict:
         job_data.get("description", "") or "",
     )["score"]
     apply_company_taxonomy(job_data)
+    job_data["direct_employer"] = int(is_direct_employer(
+        job_data.get("company", "") or "",
+        job_data.get("company_ssic_description", "") or "",
+        job_data.get("description", "") or "",
+    ))
     return job_data
 
 

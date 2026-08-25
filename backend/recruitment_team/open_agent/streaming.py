@@ -106,6 +106,9 @@ def describe_progress(event: dict) -> tuple[str, dict] | None:
             args = event["args"]
             detail["company_filter_applied"] = bool(str(args.get("company") or "").strip())
             detail["direct_employers_only"] = args.get("direct_employers_only", True) is True
+            detail["exclude_junior"] = args.get("exclude_junior", False) is True
+            detail["singapore_only"] = args.get("singapore_only", True) is True
+            detail["title_filter_applied"] = bool(str(args.get("title_phrase") or "").strip())
         return f"{team_member} called {tool_name}.", detail
 
     if event.get("kind") == "tool_result":

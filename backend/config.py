@@ -241,13 +241,6 @@ AGENT_E2E_POLL_INTERVAL_SECONDS: int = _positive_int_env("AGENT_E2E_POLL_INTERVA
 AGENT_E2E_TERMINAL_TIMEOUT_SECONDS: int = _positive_int_env("AGENT_E2E_TERMINAL_TIMEOUT_SECONDS", 300)
 if AGENT_MAX_ACTIVE_RUNS < AGENT_MAX_CONCURRENT_RUNS_PER_USER:
     raise ValueError("AGENT_MAX_ACTIVE_RUNS must be at least AGENT_MAX_CONCURRENT_RUNS_PER_USER")
-WORKSPACE_AGENT_DRAFT_MIN_CHARS: int = _int_env("WORKSPACE_AGENT_DRAFT_MIN_CHARS", 50)
-WORKSPACE_AGENT_DRAFT_LABEL_ROLE_CHARS: int = _int_env("WORKSPACE_AGENT_DRAFT_LABEL_ROLE_CHARS", 80)
-WORKSPACE_SUBMITTED_ARTIFACT_TOKEN_BYTES: int = _int_env("WORKSPACE_SUBMITTED_ARTIFACT_TOKEN_BYTES", 12)
-WORKSPACE_AGENT_REVIEW_DEFAULT_ROLES: tuple[str, ...] = _csv_env(
-    "WORKSPACE_AGENT_REVIEW_DEFAULT_ROLES",
-    "recruiter,hiring_manager,ats,skeptic,market_researcher",
-)
 RECRUITMENT_RETENTION_NOTICE: dict[str, str] = {
     "live_data": "Deleted immediately from the live application database.",
     "backups": "Infrastructure backups follow the provider retention policy and may expire later.",

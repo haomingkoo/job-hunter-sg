@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from job_precompute import parse_job_posted_at, posted_sort_iso
+from job_precompute import apply_job_precomputes, parse_job_posted_at, posted_sort_iso
 
 
 @pytest.mark.parametrize(
@@ -61,3 +61,23 @@ print(value)
 
     assert completed.returncode == 0, completed.stderr
     assert "T" in completed.stdout
+
+
+def test_job_precomputes_persist_direct_employer_classification():
+    direct = apply_job_precomputes({
+        "title": "Quality Manager",
+        "company": "Micron Semiconductor",
+        "description": "Lead quality systems.",
+        "skills": [],
+        "salary": "",
+    })
+    agency = apply_job_precomputes({
+        "title": "Quality Manager",
+        "company": "Example Talent Search",
+        "description": "EA Licence No: 12C3456.",
+        "skills": [],
+        "salary": "",
+    })
+
+    assert direct["direct_employer"] == 1
+    assert agency["direct_employer"] == 0

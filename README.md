@@ -70,7 +70,6 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 ### AI Resume Chat Builder
 - Conversational interface that builds your resume from scratch
 - Coaches you to add metrics and quantified achievements
-- Suggests trending skills from the job database
 - Generates structured resume dropped directly into the editor
 
 ### Cover Letter Generator

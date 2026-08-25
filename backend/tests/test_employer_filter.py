@@ -1,6 +1,11 @@
 from sqlalchemy import Column, MetaData, String, Table, create_engine, select
 
-from employer_filter import company_name_matches, direct_employer_condition, is_recruitment_employer
+from employer_filter import (
+    company_name_matches,
+    direct_employer_condition,
+    is_direct_employer,
+    is_recruitment_employer,
+)
 
 
 def test_company_name_matching_uses_normalized_whole_words():
@@ -32,6 +37,8 @@ def test_verified_agencies_and_ea_licence_markers_are_recruiters():
         "APBA TG Human Resource Pte. Ltd.",
         "First Konnection Pte. Ltd.",
         "SearchAsia Consulting Pte. Ltd.",
+        "One Search Consulting Pte. Ltd.",
+        "GMP-TECHNOLOGIES (S) PTE LTD",
         "Raffles Employment Pte. Ltd.",
         "LH Manpower Service Pte. Ltd.",
     ):
@@ -66,6 +73,7 @@ def test_alias_and_description_checks_avoid_nearby_false_positives():
         "Example Software Pte Ltd",
         description="Manage software licence renewals for the EA platform.",
     )
+    assert not is_direct_employer("")
     assert not is_recruitment_employer(
         "Example Shipping Pte Ltd",
         description="A valid sea licence is required.",
@@ -163,6 +171,16 @@ def test_sql_condition_matches_python_classification():
             "ssic": None,
             "description": None,
         },
+        {
+            "company": "GMP-TECHNOLOGIES (S) PTE LTD",
+            "ssic": "",
+            "description": "Quality role.",
+        },
+        {
+            "company": None,
+            "ssic": "",
+            "description": "Unknown employer role.",
+        },
     ]
     with engine.begin() as connection:
         connection.execute(employers.insert(), rows)
@@ -181,7 +199,7 @@ def test_sql_condition_matches_python_classification():
     expected_direct = {
         row["company"]
         for row in rows
-        if not is_recruitment_employer(
+        if is_direct_employer(
             row["company"],
             row["ssic"],
             row["description"],

@@ -94,6 +94,7 @@ def safe_terminal_error_payload(error: BaseException) -> dict:
                 "correction_scope",
                 "partial_artifact_id",
                 "alternatives",
+                "tool_name",
             }
         })
         if error.detail.get("validation_code"):
