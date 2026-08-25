@@ -122,6 +122,13 @@ def test_prepare_pool_hides_arms_ranks_and_job_keys(tmp_path: Path) -> None:
     assert len(mapping["cases"][0]["items"]) == 2
 
 
+def test_company_gate_uses_normalized_whole_words() -> None:
+    assert release_evaluation._company_name_matches(
+        "Micron Semiconductor Asia Pte Ltd", "Micron"
+    )
+    assert not release_evaluation._company_name_matches("Ecomicron Labs", "Micron")
+
+
 def test_score_release_uses_median_majority_and_precommitted_gates(
     tmp_path: Path,
 ) -> None:
@@ -163,7 +170,15 @@ def test_score_release_uses_median_majority_and_precommitted_gates(
         _write_json(path, judgment)
         judgment_paths.append(path)
 
-    report = score_release(protocol, pool_path, mapping_path, judgment_paths)
+    report = score_release(
+        protocol,
+        corpus,
+        released,
+        candidate,
+        pool_path,
+        mapping_path,
+        judgment_paths,
+    )
 
     assert report["promotion_passed"] is True
     assert report["cases"][0]["candidate"]["ndcg_at_k"] == 1.0
@@ -190,4 +205,35 @@ def test_score_release_rejects_incomplete_judgment(tmp_path: Path) -> None:
         judgment_paths.append(path)
 
     with pytest.raises(ReleaseEvaluationError, match="did not judge every"):
-        score_release(protocol, pool_path, mapping_path, judgment_paths)
+        score_release(
+            protocol,
+            corpus,
+            released,
+            candidate,
+            pool_path,
+            mapping_path,
+            judgment_paths,
+        )
+
+
+def test_score_release_rejects_mapping_tampering(tmp_path: Path) -> None:
+    protocol, corpus, released, candidate = _artifacts(tmp_path)
+    pool, mapping = prepare_blinded_pool(protocol, corpus, released, candidate)
+    pool_path = tmp_path / "pool.json"
+    mapping_path = tmp_path / "mapping.json"
+    _write_json(pool_path, pool)
+    mapping["cases"][0]["candidate_ranked"] = mapping["cases"][0][
+        "released_ranked"
+    ]
+    _write_json(mapping_path, mapping)
+
+    with pytest.raises(ReleaseEvaluationError, match="bound receipts"):
+        score_release(
+            protocol,
+            corpus,
+            released,
+            candidate,
+            pool_path,
+            mapping_path,
+            [],
+        )

@@ -49,7 +49,9 @@ cd backend
   --mapping-output /path/to/private-mapping.json
 .venv/bin/python -m scripts.evaluate_job_ranking_release score \
   --protocol evals/job-ranking-release-v1.protocol.json \
-  --pool /path/to/pool.json --mapping /path/to/private-mapping.json \
+  --corpus /path/to/corpus.jsonl --released /path/to/released.json \
+  --candidate /path/to/candidate.json --pool /path/to/pool.json \
+  --mapping /path/to/private-mapping.json \
   --judgment /path/to/judge-1.json --judgment /path/to/judge-2.json \
   --judgment /path/to/judge-3.json --output /path/to/report.json
 ```

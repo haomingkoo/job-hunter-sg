@@ -25,6 +25,9 @@ def main() -> int:
     prepare.add_argument("--mapping-output", type=Path, required=True)
     score = commands.add_parser("score")
     score.add_argument("--protocol", type=Path, required=True)
+    score.add_argument("--corpus", type=Path, required=True)
+    score.add_argument("--released", type=Path, required=True)
+    score.add_argument("--candidate", type=Path, required=True)
     score.add_argument("--pool", type=Path, required=True)
     score.add_argument("--mapping", type=Path, required=True)
     score.add_argument("--judgment", type=Path, action="append", required=True)
@@ -39,7 +42,15 @@ def main() -> int:
     else:
         _write(
             args.output,
-            score_release(args.protocol, args.pool, args.mapping, args.judgment),
+            score_release(
+                args.protocol,
+                args.corpus,
+                args.released,
+                args.candidate,
+                args.pool,
+                args.mapping,
+                args.judgment,
+            ),
         )
     return 0
 

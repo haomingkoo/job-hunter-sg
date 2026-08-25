@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import re
 from statistics import median
 from typing import Any
 
@@ -194,6 +195,14 @@ def _dcg(values: list[int]) -> float:
     return sum((2**value - 1) / math.log2(index + 2) for index, value in enumerate(values))
 
 
+def _company_name_matches(company: str, requested_company: str) -> bool:
+    """Mirror production's normalized whole-phrase company constraint."""
+    normalize = lambda value: " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
+    actual = normalize(company)
+    requested = normalize(requested_company)
+    return bool(requested) and f" {requested} " in f" {actual} "
+
+
 def _aggregate_judgments(
     pool: dict[str, Any], pool_hash: str, judgment_paths: list[Path]
 ) -> tuple[dict[tuple[str, str], dict[str, Any]], list[dict[str, Any]]]:
@@ -260,12 +269,18 @@ def _aggregate_judgments(
 
 def score_release(
     protocol_path: str | Path,
+    corpus_path: str | Path,
+    released_receipt_path: str | Path,
+    candidate_receipt_path: str | Path,
     pool_path: str | Path,
     mapping_path: str | Path,
     judgment_paths: list[str | Path],
 ) -> dict[str, Any]:
     """Aggregate blinded judgments and apply the precommitted promotion rule."""
     protocol_path = Path(protocol_path).resolve()
+    corpus_path = Path(corpus_path).resolve()
+    released_receipt_path = Path(released_receipt_path).resolve()
+    candidate_receipt_path = Path(candidate_receipt_path).resolve()
     pool_path = Path(pool_path).resolve()
     mapping_path = Path(mapping_path).resolve()
     protocol = _load_object(protocol_path, "protocol")
@@ -275,6 +290,14 @@ def score_release(
         raise ReleaseEvaluationError("pool and scoring harness SHA-256 mismatch")
     pool = _load_object(pool_path, "pool")
     mapping = _load_object(mapping_path, "mapping")
+    expected_pool, expected_mapping = prepare_blinded_pool(
+        protocol_path,
+        corpus_path,
+        released_receipt_path,
+        candidate_receipt_path,
+    )
+    if pool != expected_pool or mapping != expected_mapping:
+        raise ReleaseEvaluationError("pool or mapping differs from the bound receipts")
     protocol_hash = _sha256_file(protocol_path)
     if pool.get("protocol_sha256") != protocol_hash or mapping.get("protocol_sha256") != protocol_hash:
         raise ReleaseEvaluationError("pool or mapping has the wrong protocol")
@@ -333,7 +356,10 @@ def score_release(
                 "company_constraint_violations": [
                     item_id
                     for item_id in ranked_items
-                    if company and company not in str(pool_items[(case_id, item_id)]["company"]).casefold()
+                    if company and not _company_name_matches(
+                        str(pool_items[(case_id, item_id)]["company"]),
+                        company,
+                    )
                 ],
             }
         reports.append({
