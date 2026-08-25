@@ -116,11 +116,19 @@ function humanize(item) {
 function buildRoster(events) {
   if (!events.length) return [];
   const byMember = new Map();
+  const lifecycleByRun = new Map();
   for (const item of events) {
+    if (item.event_type === "run") {
+      const current = lifecycleByRun.get(item.run_id);
+      if (!current || Number(item.sequence) > Number(current.sequence)) {
+        lifecycleByRun.set(item.run_id, item);
+      }
+    }
     const existing = byMember.get(item.team_member) || { id: item.team_member, steps: [] };
     // Keep every step. The old panel showed only the newest, which threw the tool loop away.
     existing.steps.push({
       key: item.sequence,
+      runId: item.run_id,
       summary: humanize(item),
       status: item.status,
     });
@@ -137,13 +145,25 @@ function buildRoster(events) {
       i === 0
       || step.summary !== row.steps[i - 1].summary
       || step.status !== row.steps[i - 1].status
+      || step.runId !== row.steps[i - 1].runId
     ));
-    row.status = row.steps[row.steps.length - 1]?.status;
+    const latestByRun = new Map();
+    for (const step of row.steps) latestByRun.set(step.runId, step);
+    const latestActiveStep = [...latestByRun.values()]
+      .filter((step) => (
+        step.status === "running" && !statusFromLifecycle(lifecycleByRun.get(step.runId))
+      ))
+      .reduce((latest, step) => (!latest || step.key > latest.key ? step : latest), null);
+    const latestStep = latestActiveStep || row.steps.at(-1);
+    const lifecycleStatus = statusFromLifecycle(lifecycleByRun.get(latestStep?.runId));
+    row.status = lifecycleStatus && ["running", "failed"].includes(latestStep?.status)
+      ? lifecycleStatus
+      : latestStep?.status;
     // A specialist can submit and then be re-engaged, so its verdict is the last completed
     // step rather than the last step. Keep both: the verdict is what the candidate wants,
     // the live step is what reassures them something is still happening.
     row.conclusion = [...row.steps].reverse().find((step) => step.status === "completed");
-    row.liveStep = row.status === "running" ? row.steps[row.steps.length - 1] : null;
+    row.liveStep = row.status === "running" ? latestStep : null;
     rows.push(row);
   }
   rows.sort((a, b) => (a.id === "coordinator" ? -1 : b.id === "coordinator" ? 1 : 0));
@@ -156,6 +176,24 @@ function latestRunIdOf(events) {
     if (!latest || Number(item.sequence) > Number(latest.sequence)) latest = item;
   }
   return latest?.run_id;
+}
+
+function latestLifecycleOf(events) {
+  return events
+    .filter((item) => item.event_type === "run")
+    .reduce((latest, item) => (
+      !latest || Number(item.sequence) > Number(latest.sequence) ? item : latest
+    ), null);
+}
+
+function statusFromLifecycle(lifecycle) {
+  if (!lifecycle || lifecycle.status === "running") return null;
+  if (lifecycle.detail?.failure_code === "quality_gate_blocked") return "quality_blocked";
+  if (lifecycle.status === "failed") return "failed";
+  if (lifecycle.status === "completed") {
+    return lifecycle.detail?.reply_mode === "paused" ? "paused" : "completed";
+  }
+  return null;
 }
 
 function AgentRow({ agent, defaultOpen }) {
@@ -257,25 +295,20 @@ export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
   const specialists = assessmentRoster.filter((agent) => SPECIALIST_IDS.has(agent.id));
   // "Reported" means it has produced a verdict, even if it was re-engaged afterwards.
   const reported = specialists.filter((a) => a.conclusion).length;
-  const active = buildRoster(latestRunEvents).find((a) => a.status === "running");
-  const latestRunFailed = latestRunEvents.some((item) => item.status === "failed");
-  const latestRunBlocked = latestRunEvents.some((item) => item.status === "quality_blocked");
-  const latestRunCompleted = latestRunEvents.some(
-    (item) => item.event_type === "run" && item.status === "completed",
-  );
-  const displayRoster = useMemo(() => roster.map((agent) => (
-    latestRunCompleted && agent.status === "running"
-      ? { ...agent, status: "completed", liveStep: null }
-      : agent
-  )), [latestRunCompleted, roster]);
+  const latestRunActive = buildRoster(latestRunEvents).find((a) => a.status === "running");
+  const active = roster.find((agent) => agent.status === "running");
+  const latestRunStatus = statusFromLifecycle(latestLifecycleOf(latestRunEvents));
 
   let headline = "Idle";
   if (awaitingAnswer) headline = "Waiting on your answer";
-  else if (busy && active) headline = `${MEMBERS[active.id]?.name || active.id} is working`;
+  else if (busy && latestRunActive) {
+    headline = `${MEMBERS[latestRunActive.id]?.name || latestRunActive.id} is working`;
+  }
   else if (busy) headline = "Team is working";
-  else if (latestRunBlocked) headline = "Assessment held back for review";
-  else if (latestRunFailed) headline = "Run stopped before completion";
-  else if (roster.length) headline = "Run complete";
+  else if (active) headline = `${MEMBERS[active.id]?.name || active.id} is working`;
+  else if (latestRunStatus === "quality_blocked") headline = "Assessment held back for review";
+  else if (latestRunStatus === "failed") headline = "Run stopped before completion";
+  else if (latestRunStatus === "completed") headline = "Run complete";
 
   return (
     <aside className="rounded-3xl border border-[#DCE7F2] bg-[#F5F8FB] p-4">
@@ -306,7 +339,7 @@ export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
         </p>
       ) : (
         <ol className="mt-3 space-y-2">
-          {displayRoster.map((agent) => (
+          {roster.map((agent) => (
             <AgentRow key={agent.id} agent={agent} defaultOpen={agent.status === "running"} />
           ))}
         </ol>
