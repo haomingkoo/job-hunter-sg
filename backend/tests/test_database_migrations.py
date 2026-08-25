@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -37,40 +38,127 @@ def test_legacy_work_location_backfill_is_provisional_overseas_safe_and_batched(
     monkeypatch.setattr(database, "_WORK_LOCATION_BACKFILL_BATCH_SIZE", 2)
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
+    reference = datetime(2026, 8, 26, 12, tzinfo=timezone.utc)
     with engine.begin() as connection:
-        connection.execute(
-            ScrapedJob.__table__.insert(),
-            [
-                {
-                    "id": 1,
-                    "title": "Engineer",
-                    "company": "Example",
-                    "location": "NGEE ANN CITY",
-                    "source": "MyCareersFuture",
-                    "description": "Build products in Singapore.",
-                    "dedup_key": "scope-backfill-1",
-                },
-                {
-                    "id": 2,
-                    "title": "Engineer",
-                    "company": "Example",
-                    "location": "Singapore",
-                    "source": "MyCareersFuture",
-                    "description": "Location: Shanghai, China",
-                    "dedup_key": "scope-backfill-2",
-                },
-                {
-                    "id": 3,
-                    "title": "Engineer",
-                    "company": "Example",
-                    "location": "",
-                    "source": "MyCareersFuture",
-                    "description": "Location: Singapore",
-                    "dedup_key": "scope-backfill-3",
-                },
-            ],
-        )
-        database._backfill_work_location_scopes(connection)
+        rows = [
+            {
+                "id": 1,
+                "title": "Engineer",
+                "company": "Example",
+                "location": "NGEE ANN CITY",
+                "source": "MyCareersFuture",
+                "description": "Build products in Singapore.",
+                "posted_at_sort": "2026-08-20T00:00:00+00:00",
+                "dedup_key": "scope-backfill-1",
+            },
+            {
+                "id": 2,
+                "title": "Engineer",
+                "company": "Example",
+                "location": "Singapore",
+                "source": "MyCareersFuture",
+                "description": "Location: Shanghai, China",
+                "posted_at_sort": "2026-08-20T00:00:00+00:00",
+                "dedup_key": "scope-backfill-2",
+            },
+            {
+                "id": 3,
+                "title": "Engineer",
+                "company": "Example",
+                "location": "",
+                "source": "MyCareersFuture",
+                "description": "Location: Singapore",
+                "dedup_key": "scope-backfill-3",
+            },
+            {
+                "id": 4,
+                "title": "Hidden engineer",
+                "company": "Example",
+                "location": "Singapore",
+                "source": "MyCareersFuture",
+                "posted_at_sort": "2026-08-20T00:00:00+00:00",
+                "hidden": 1,
+                "dedup_key": "scope-backfill-hidden",
+            },
+            {
+                "id": 5,
+                "title": "Old engineer",
+                "company": "Example",
+                "location": "Singapore",
+                "source": "MyCareersFuture",
+                "posted_at_sort": "2026-01-01T00:00:00+00:00",
+                "dedup_key": "scope-backfill-old",
+            },
+            {
+                "id": 6,
+                "title": "Closed engineer",
+                "company": "Example",
+                "location": "Singapore",
+                "source": "MyCareersFuture",
+                "posted_at_sort": "2026-08-20T00:00:00+00:00",
+                "closing_date": "2026-08-25",
+                "dedup_key": "scope-backfill-closed",
+            },
+            {
+                "id": 7,
+                "title": "Public service engineer",
+                "company": "Public Agency",
+                "location": "Singapore",
+                "source": "Careers@Gov",
+                "posted_at_sort": "2026-08-20T00:00:00+00:00",
+                "dedup_key": "scope-backfill-careersgov-sg",
+            },
+            {
+                "id": 8,
+                "title": "Overseas public service engineer",
+                "company": "Public Agency",
+                "location": "Germany",
+                "source": "Careers@Gov",
+                "posted_at_sort": "2026-08-20T00:00:00+00:00",
+                "dedup_key": "scope-backfill-careersgov-germany",
+            },
+            {
+                "id": 9,
+                "title": "Remote public service engineer",
+                "company": "Public Agency",
+                "location": "Remote",
+                "source": "Careers@Gov",
+                "posted_at_sort": "2026-08-20T00:00:00+00:00",
+                "dedup_key": "scope-backfill-careersgov-remote",
+            },
+            {
+                "id": 10,
+                "title": "Unverified overseas engineer",
+                "company": "Example",
+                "location": "Germany",
+                "source": "MyCareersFuture",
+                "posted_at_sort": "2026-08-20T00:00:00+00:00",
+                "dedup_key": "scope-backfill-mcf-germany",
+            },
+            {
+                "id": 11,
+                "title": "Local engineer",
+                "company": "Example",
+                "location": "North  East",
+                "source": "MyCareersFuture",
+                "posted_at_sort": "2026-08-20T00:00:00+00:00",
+                "dedup_key": "scope-backfill-mcf-spaced-region",
+            },
+            {
+                "id": 12,
+                "title": "Aggregator engineer",
+                "company": "Example",
+                "location": "Singapore",
+                "source": "Jooble",
+                "posted_at_sort": "2026-08-20T00:00:00+00:00",
+                "work_location_scope": "singapore",
+                "work_location_scope_source": "jooble_location",
+                "dedup_key": "scope-backfill-jooble-sg",
+            },
+        ]
+        for row in rows:
+            connection.execute(ScrapedJob.__table__.insert(), row)
+        database._backfill_work_location_scopes(connection, now=reference)
         rows = connection.execute(
             text("SELECT id, work_location_scope, work_location_scope_source FROM scraped_jobs ORDER BY id")
         ).all()
@@ -79,6 +167,77 @@ def test_legacy_work_location_backfill_is_provisional_overseas_safe_and_batched(
         (1, "singapore", "legacy_mcf_source_provisional_v1"),
         (2, "overseas", "text_override_v1"),
         (3, "unknown", "unknown"),
+        (4, "unknown", "unknown"),
+        (5, "unknown", "unknown"),
+        (6, "unknown", "unknown"),
+        (7, "singapore", "legacy_careersgov_source_provisional_v1"),
+        (8, "unknown", "unknown"),
+        (9, "unknown", "unknown"),
+        (10, "unknown", "unknown"),
+        (11, "singapore", "legacy_mcf_source_provisional_v1"),
+        (12, "singapore", "jooble_location"),
+    ]
+
+
+def test_set_based_backfill_only_writes_location_exceptions_individually():
+    import database
+
+    rows = [
+        {
+            "id": 1,
+            "source": "MyCareersFuture",
+            "location": "Singapore",
+            "title": "Engineer",
+            "description": "Build products.",
+            "work_location_scope": "singapore",
+            "work_location_scope_source": "legacy_mcf_source_provisional_v1",
+        },
+        {
+            "id": 2,
+            "source": "MyCareersFuture",
+            "location": "Singapore",
+            "title": "Engineer",
+            "description": "This role is based in Malaysia.",
+            "work_location_scope": "singapore",
+            "work_location_scope_source": "legacy_mcf_source_provisional_v1",
+        },
+    ]
+
+    class Result:
+        def __init__(self, values):
+            self.values = values
+
+        def mappings(self):
+            return self.values
+
+    class Connection:
+        def __init__(self):
+            self.selected = False
+            self.set_based_updates = []
+            self.updates = []
+
+        def execute(self, statement, parameters):
+            sql = str(statement)
+            if sql.startswith("SELECT"):
+                if self.selected:
+                    return Result([])
+                self.selected = True
+                return Result(rows)
+            if "AND source = :source" in sql:
+                self.set_based_updates.append(parameters["source"])
+                return Result([])
+            self.updates.extend(parameters)
+            return Result([])
+
+    connection = Connection()
+    database._backfill_work_location_scopes(
+        connection,
+        now=datetime(2026, 8, 26, 12, tzinfo=timezone.utc),
+    )
+
+    assert connection.set_based_updates == ["MyCareersFuture", "Careers@Gov"]
+    assert connection.updates == [
+        {"job_id": 2, "scope": "overseas", "scope_source": "text_override_v1"},
     ]
 
 
@@ -177,6 +336,12 @@ def test_legacy_users_remain_unverified_when_verification_column_is_added(monkey
     assert "ALTER TABLE scraped_jobs ADD COLUMN embedding_input_sha256 VARCHAR(64) DEFAULT ''" in statements
     assert "ALTER TABLE scraped_jobs ADD COLUMN embedding_model_identity VARCHAR(300) DEFAULT ''" in statements
     assert "ALTER TABLE scraped_jobs ADD COLUMN direct_employer INTEGER NOT NULL DEFAULT -1" in statements
+    assert (
+        "ALTER TABLE scraped_jobs ADD COLUMN work_location_scope VARCHAR(20) NOT NULL DEFAULT 'unknown'"
+    ) in statements
+    assert (
+        "ALTER TABLE scraped_jobs ADD COLUMN work_location_scope_source VARCHAR(40) NOT NULL DEFAULT 'unknown'"
+    ) in statements
     assert not any("ix_scraped_jobs_direct_employer" in item for item in statements)
     assert "ALTER TABLE recruitment_activity_events ADD COLUMN parent_id TEXT" in statements
     assert "ALTER TABLE recruitment_activity_events ADD COLUMN duration_ms FLOAT" in statements

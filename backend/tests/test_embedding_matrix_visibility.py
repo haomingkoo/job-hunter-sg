@@ -300,6 +300,78 @@ def test_careersgov_term_refresh_invalidates_changed_embedding(monkeypatch):
     assert job.embedding_model_identity == ""
 
 
+def test_careersgov_detail_enrichment_reclassifies_overseas_worksite(monkeypatch):
+    import main
+    from models import ScrapedJob
+
+    job = ScrapedJob(
+        title="Quality Manager",
+        company="Public Agency",
+        source="Careers@Gov",
+        url="https://jobs.careers.gov.sg/jobs/hrp/123/ABC",
+        location="Singapore",
+        description="Lead the quality system.",
+        skills=["quality"],
+        work_location_scope="singapore",
+        work_location_scope_source="careers_gov_location",
+        dedup_key="careersgov-overseas-detail",
+    )
+
+    monkeypatch.setattr(
+        main.CareersGovScraper,
+        "get_job_detail",
+        lambda _self, _path: {"jobDescription": "This role will be based in Malaysia."},
+    )
+    monkeypatch.setattr(main, "_derive_careersgov_skill_cues", lambda **_kwargs: ([], {}))
+    monkeypatch.setattr(main, "_refresh_job_precomputes", lambda _job: None)
+    monkeypatch.setattr(main, "_compute_and_cache_term_preview", lambda *_args: None)
+    monkeypatch.setattr("embedding_service.invalidate_job_embedding_if_stale", lambda _job: False)
+
+    assert main._enrich_careersgov_job(job, None) is True
+    assert job.work_location_scope == "overseas"
+    assert job.work_location_scope_source == "text_override_v1"
+
+
+@pytest.mark.parametrize(
+    ("initial_scope", "initial_source"),
+    [("unknown", "unknown"), ("overseas", "text_override_v1")],
+)
+def test_careersgov_detail_enrichment_restores_structured_singapore_scope(
+    monkeypatch,
+    initial_scope,
+    initial_source,
+):
+    import main
+    from models import ScrapedJob
+
+    job = ScrapedJob(
+        title="Quality Manager",
+        company="Public Agency",
+        source="Careers@Gov",
+        url="https://jobs.careers.gov.sg/jobs/hrp/123/ABC",
+        location="Singapore",
+        description="This role was based in Malaysia.",
+        skills=["quality"],
+        work_location_scope=initial_scope,
+        work_location_scope_source=initial_source,
+        dedup_key=f"careersgov-restore-{initial_scope}",
+    )
+
+    monkeypatch.setattr(
+        main.CareersGovScraper,
+        "get_job_detail",
+        lambda _self, _path: {"jobDescription": "Lead the quality system in Singapore."},
+    )
+    monkeypatch.setattr(main, "_derive_careersgov_skill_cues", lambda **_kwargs: ([], {}))
+    monkeypatch.setattr(main, "_refresh_job_precomputes", lambda _job: None)
+    monkeypatch.setattr(main, "_compute_and_cache_term_preview", lambda *_args: None)
+    monkeypatch.setattr("embedding_service.invalidate_job_embedding_if_stale", lambda _job: False)
+
+    assert main._enrich_careersgov_job(job, None) is True
+    assert job.work_location_scope == "singapore"
+    assert job.work_location_scope_source == "careers_gov_location"
+
+
 def test_experienced_hire_sql_prefilter_plus_python_matches_classification():
     import embedding_service
     from database import SessionLocal

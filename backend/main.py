@@ -1213,6 +1213,27 @@ def _enrich_careersgov_job(job: ScrapedJob, db: Session) -> bool:
         job.description = description
         updated = True
 
+    from job_visibility import resolve_work_location_scope
+
+    _, source_scope = CareersGovScraper._work_location({"location": job.location})
+    resolved_scope = resolve_work_location_scope(
+        source_scope,
+        job.location,
+        job.title,
+        job.description,
+    )
+    resolved_source = (
+        "text_override_v1"
+        if resolved_scope != source_scope
+        else "careers_gov_location"
+        if source_scope != "unknown"
+        else "unknown"
+    )
+    if resolved_scope != job.work_location_scope or resolved_source != job.work_location_scope_source:
+        job.work_location_scope = resolved_scope
+        job.work_location_scope_source = resolved_source
+        updated = True
+
     skills = _extract_careersgov_skills(detail)
     if skills and skills != (job.skills or []):
         job.skills = skills
