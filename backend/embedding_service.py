@@ -191,15 +191,6 @@ def find_similar_jobs(
     if _job_matrix is None or len(_job_ids) == 0:
         return []
 
-    query = np.array(query_vector, dtype=np.float32).reshape(1, -1)
-    # Normalize query (should already be, but be safe)
-    norm = np.linalg.norm(query)
-    if norm > 0:
-        query = query / norm
-
-    # Cosine similarity via dot product (vectors are normalized)
-    similarities = (_job_matrix @ query.T).flatten()
-
     if eligible_job_ids is not None:
         eligible_indices = np.fromiter(
             (
@@ -211,17 +202,65 @@ def find_similar_jobs(
         )
         if len(eligible_indices) == 0:
             return []
-        candidate_similarities = similarities[eligible_indices]
+        candidate_ids = [_job_ids[index] for index in eligible_indices]
+        candidate_matrix = _job_matrix[eligible_indices]
     else:
-        eligible_indices = np.arange(len(_job_ids))
-        candidate_similarities = similarities
+        candidate_ids = _job_ids
+        candidate_matrix = _job_matrix
 
-    k = min(top_k, len(candidate_similarities))
-    top_indices = np.argpartition(candidate_similarities, -k)[-k:]
-    top_indices = top_indices[np.argsort(candidate_similarities[top_indices])[::-1]]
+    return _rank_matrix(query_vector, candidate_ids, candidate_matrix, top_k)
+
+
+def _rank_matrix(
+    query_vector: list[float],
+    job_ids: list[int],
+    matrix: np.ndarray,
+    top_k: int,
+) -> list[tuple[int, float]]:
+    query = np.array(query_vector, dtype=np.float32).reshape(1, -1)
+    norm = np.linalg.norm(query)
+    if norm > 0:
+        query = query / norm
+    similarities = (matrix @ query.T).flatten()
+    k = min(top_k, len(similarities))
+    top_indices = np.argpartition(similarities, -k)[-k:]
+    top_indices = top_indices[np.argsort(similarities[top_indices])[::-1]]
 
     return [
-        (_job_ids[int(eligible_indices[idx])], float(candidate_similarities[idx]))
-        for idx in top_indices
-        if candidate_similarities[idx] > 0
+        (job_ids[index], float(similarities[index]))
+        for index in top_indices
+        if similarities[index] > 0
     ]
+
+
+def find_similar_jobs_for_ids(
+    query_vector: list[float],
+    db_session: Session,
+    eligible_job_ids: set[int],
+    top_k: int = 50,
+) -> list[tuple[int, float]]:
+    """Rank a small, prevalidated job set without loading the global matrix."""
+    if not eligible_job_ids:
+        return []
+
+    from models import ScrapedJob
+
+    rows = (
+        db_session.query(ScrapedJob.id, ScrapedJob.embedding_vector)
+        .filter(
+            ScrapedJob.id.in_(eligible_job_ids),
+            ScrapedJob.embedding_vector.isnot(None),
+        )
+        .all()
+    )
+    ids = [job_id for job_id, vector in rows if vector]
+    vectors = [vector for _job_id, vector in rows if vector]
+    if not vectors:
+        return []
+
+    return _rank_matrix(
+        query_vector,
+        ids,
+        np.array(vectors, dtype=np.float32),
+        top_k,
+    )

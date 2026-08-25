@@ -10,7 +10,7 @@ from typing import Any
 import agent_tool_contract as contract
 import config
 from database import SessionLocal
-from embedding_service import encode_text, find_similar_jobs
+from embedding_service import encode_text, find_similar_jobs, find_similar_jobs_for_ids
 from employer_filter import company_name_matches, direct_employer_condition
 from job_visibility import apply_public_job_visibility, is_junior_posting
 from langchain_core.tools import tool
@@ -104,12 +104,24 @@ def search_jobs(
                 if not clean_company or company_name_matches(employer, clean_company)
             }
         query_vector = encode_text(clean_query)
-        similar = find_similar_jobs(
-            query_vector,
-            db,
-            top_k=max(limit * config.AGENT_SEARCH_CANDIDATE_MULTIPLIER, limit),
-            eligible_job_ids=eligible_job_ids,
+        candidate_limit = max(
+            limit * config.AGENT_SEARCH_CANDIDATE_MULTIPLIER,
+            limit,
         )
+        if clean_company:
+            similar = find_similar_jobs_for_ids(
+                query_vector,
+                db,
+                eligible_job_ids or set(),
+                top_k=candidate_limit,
+            )
+        else:
+            similar = find_similar_jobs(
+                query_vector,
+                db,
+                top_k=candidate_limit,
+                eligible_job_ids=eligible_job_ids,
+            )
         if not similar:
             return contract.search_jobs_result(
                 clean_query,
