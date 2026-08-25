@@ -216,6 +216,27 @@ describe("TeamActivityPanel step content", () => {
     expect(text).not.toContain("Run complete");
   });
 
+  it("stops every stale working row when the latest run fails", () => {
+    renderEvents([
+      activity("read_candidate_evidence", {}, {
+        team_member: "candidate_profiler",
+        summary: "The candidate profiler is studying this resume.",
+      }),
+      activity("search_jobs", {}, { team_member: "coordinator" }),
+      activity("search_jobs", {}, {
+        sequence: 3,
+        status: "failed",
+        team_member: "coordinator",
+        summary: "The coordinator stopped before completion.",
+      }),
+    ], { busy: false });
+
+    const profiler = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Candidate profiler"));
+    expect(profiler.textContent).toContain("Stopped");
+    expect(profiler.textContent).not.toContain("Working");
+  });
+
   it("does not leave the coordinator working after the judge completes the run", () => {
     const text = renderEvents([
       activity("submit_target_assessment_synthesis", {}, {

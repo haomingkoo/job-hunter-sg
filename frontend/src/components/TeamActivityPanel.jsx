@@ -263,11 +263,18 @@ export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
   const latestRunCompleted = latestRunEvents.some(
     (item) => item.event_type === "run" && item.status === "completed",
   );
+  const terminalRosterStatus = latestRunCompleted
+    ? "completed"
+    : latestRunFailed
+      ? "failed"
+      : latestRunBlocked
+        ? "quality_blocked"
+        : null;
   const displayRoster = useMemo(() => roster.map((agent) => (
-    latestRunCompleted && agent.status === "running"
-      ? { ...agent, status: "completed", liveStep: null }
+    terminalRosterStatus && agent.status === "running"
+      ? { ...agent, status: terminalRosterStatus, liveStep: null }
       : agent
-  )), [latestRunCompleted, roster]);
+  )), [terminalRosterStatus, roster]);
 
   let headline = "Idle";
   if (awaitingAnswer) headline = "Waiting on your answer";
