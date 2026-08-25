@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Generator
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import create_engine, event, inspect, text
@@ -19,8 +20,25 @@ import config as app_config
 _SCHEMA_MIGRATION_LOCK_KEY = 0x4A485347
 _ACTIVITY_METADATA_SCRUB_VERSION = "2026-08-23-recruitment-activity-metadata-scrub"
 _DELETION_TOMBSTONE_SCRUB_VERSION = "2026-08-23-recruitment-deletion-tombstone-scrub"
-_WORK_LOCATION_SCOPE_V1 = "2026-08-26-work-location-scope-v1"
+_WORK_LOCATION_SCOPE_V2 = "2026-08-26-work-location-scope-v2"
 _WORK_LOCATION_BACKFILL_BATCH_SIZE = 1000
+_LEGACY_LOCATION_SOURCES = {
+    "MyCareersFuture": "legacy_mcf_source_provisional_v1",
+    "Careers@Gov": "legacy_careersgov_source_provisional_v1",
+}
+_LEGACY_MCF_SINGAPORE_LOCATIONS = frozenset(
+    {
+        "singapore",
+        "central",
+        "islandwide",
+        "west",
+        "north",
+        "east",
+        "north-east",
+        "north east",
+        "ngee ann city",
+    }
+)
 
 DEFAULT_DATABASE_PATH = Path(__file__).resolve().with_name("jobhunter.db")
 DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DEFAULT_DATABASE_PATH}")
@@ -336,7 +354,7 @@ def _apply_lightweight_migrations(connection=None) -> None:
     if "scraped_jobs" in inspector.get_table_names():
         _run_once_migration(
             connection,
-            _WORK_LOCATION_SCOPE_V1,
+            _WORK_LOCATION_SCOPE_V2,
             lambda: _backfill_work_location_scopes(connection),
         )
 
@@ -361,21 +379,66 @@ def _apply_lightweight_migrations(connection=None) -> None:
         )
 
 
-def _backfill_work_location_scopes(connection) -> None:
-    """Persist the versioned legacy MCF classification in bounded batches."""
-    from job_visibility import resolve_work_location_scope
+def _backfill_work_location_scopes(
+    connection,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Classify legacy rows that are public now or can become public at startup."""
+    from job_visibility import public_job_cutoff_iso, resolve_work_location_scope
+
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    cutoff = public_job_cutoff_iso(now=reference)
+    today = reference.date().isoformat()
+    visibility_sql = (
+        "hidden = 0 "
+        "AND (posted_at_sort IS NULL OR posted_at_sort = '' OR posted_at_sort >= :cutoff) "
+        "AND (closing_date IS NULL OR closing_date = '' OR closing_date >= :today)"
+    )
+    mcf_singapore_locations = ", ".join(f"'{location}'" for location in sorted(_LEGACY_MCF_SINGAPORE_LOCATIONS))
+    for source, scope_source in _LEGACY_LOCATION_SOURCES.items():
+        source_location_sql = (
+            "LOWER(TRIM(location)) = 'singapore'"
+            if source == "Careers@Gov"
+            else f"LOWER(TRIM(location)) IN ({mcf_singapore_locations})"
+        )
+        connection.execute(
+            text(
+                "UPDATE scraped_jobs SET work_location_scope = 'singapore', "
+                "work_location_scope_source = :scope_source "
+                f"WHERE {visibility_sql} AND source = :source "
+                f"AND {source_location_sql} "
+                "AND (work_location_scope <> 'singapore' "
+                "OR work_location_scope_source <> :scope_source)"
+            ),
+            {
+                "cutoff": cutoff,
+                "today": today,
+                "source": source,
+                "scope_source": scope_source,
+            },
+        )
 
     last_id = 0
     while True:
         rows = list(
             connection.execute(
                 text(
-                    "SELECT id, source, location, title, description FROM scraped_jobs "
-                    "WHERE id > :last_id ORDER BY id LIMIT :batch_size"
+                    "SELECT id, source, location, title, description, "
+                    "work_location_scope, work_location_scope_source FROM scraped_jobs "
+                    f"WHERE id > :last_id AND {visibility_sql} "
+                    "AND source IN (:mcf_source, :careersgov_source) "
+                    "ORDER BY id LIMIT :batch_size"
                 ),
                 {
                     "last_id": last_id,
                     "batch_size": _WORK_LOCATION_BACKFILL_BATCH_SIZE,
+                    "cutoff": cutoff,
+                    "today": today,
+                    "mcf_source": "MyCareersFuture",
+                    "careersgov_source": "Careers@Gov",
                 },
             ).mappings()
         )
@@ -385,46 +448,45 @@ def _backfill_work_location_scopes(connection) -> None:
         for row in rows:
             location = str(row["location"] or "")
             normalized = " ".join(location.split()).casefold()
-            provisional = (
-                "singapore"
+            is_source_backed_singapore = (
+                normalized == "singapore"
+                if row["source"] == "Careers@Gov"
+                else normalized in _LEGACY_MCF_SINGAPORE_LOCATIONS
                 if row["source"] == "MyCareersFuture"
-                and normalized
-                and normalized
-                not in {
-                    "anywhere",
-                    "hybrid",
-                    "remote",
-                    "various",
-                    "worldwide",
-                }
-                else "unknown"
+                else False
             )
+            provisional = "singapore" if is_source_backed_singapore else "unknown"
             resolved = resolve_work_location_scope(
                 provisional,
                 location,
                 str(row["title"] or ""),
                 str(row["description"] or ""),
             )
-            updates.append(
-                {
-                    "job_id": int(row["id"]),
-                    "scope": resolved,
-                    "scope_source": (
-                        "text_override_v1"
-                        if resolved != provisional
-                        else "legacy_mcf_source_provisional_v1"
-                        if provisional == "singapore"
-                        else "unknown"
-                    ),
-                }
+            scope_source = (
+                "text_override_v1"
+                if resolved != provisional
+                else _LEGACY_LOCATION_SOURCES[row["source"]]
+                if provisional == "singapore"
+                else "unknown"
             )
-        connection.execute(
-            text(
-                "UPDATE scraped_jobs SET work_location_scope = :scope, "
-                "work_location_scope_source = :scope_source WHERE id = :job_id"
-            ),
-            updates,
-        )
+            stored_scope = str(row["work_location_scope"] or "unknown")
+            stored_source = str(row["work_location_scope_source"] or "unknown")
+            if resolved != stored_scope or scope_source != stored_source:
+                updates.append(
+                    {
+                        "job_id": int(row["id"]),
+                        "scope": resolved,
+                        "scope_source": scope_source,
+                    }
+                )
+        if updates:
+            connection.execute(
+                text(
+                    "UPDATE scraped_jobs SET work_location_scope = :scope, "
+                    "work_location_scope_source = :scope_source WHERE id = :job_id"
+                ),
+                updates,
+            )
         last_id = int(rows[-1]["id"])
 
 

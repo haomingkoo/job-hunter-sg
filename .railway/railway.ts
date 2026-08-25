@@ -4,7 +4,7 @@ export default defineRailway(() => {
   const repository = github("haomingkoo/job-hunter-sg", { checkSuites: true });
 
   const Postgres = postgres("Postgres", { region: "asia-southeast1-eqsg3a" });
-  const postgresVolume = volume("postgres-volume", { alerts: { usage: { "100": {}, "80": {}, "95": {} } }, allowOnlineResize: true, region: "asia-southeast1-eqsg3a", sizeMB: 5000 });
+  const postgresVolume = volume("postgres-volume", { alerts: { usage: { "100": {}, "80": {}, "95": {} } }, allowOnlineResize: true, region: "asia-southeast1-eqsg3a", sizeMB: 10000 });
   const jobAlertsDaily = service("job-alerts-daily", {
     source: repository,
     build: { buildEnvironment: "V3", builder: "DOCKERFILE", dockerfilePath: "Dockerfile.alerts" },
