@@ -840,13 +840,17 @@ class TestAPIEndpoints:
         response = main.admin_backfill_embeddings({}, authorization="test")
 
         assert response["status"] == "started"
+        assert response["limit"] == 500
         assert main._embedding_backfill_progress == {
             "running": False,
             "done": 0,
             "refreshed": 0,
             "vector_rewrites": 0,
+            "unresolved": 0,
             "total": 0,
             "phase": "failed",
+            "complete": False,
+            "limit": 500,
             "error_code": "embedding_backfill_failed",
             "error_type": "RuntimeError",
         }
@@ -891,8 +895,128 @@ class TestAPIEndpoints:
         main.admin_backfill_embeddings({}, authorization="test")
 
         assert main._embedding_backfill_progress["phase"] == "done"
+        assert main._embedding_backfill_progress["complete"] is True
         assert main._embedding_backfill_progress["error_code"] == ""
         assert main._embedding_backfill_progress["error_type"] == ""
+
+    @pytest.mark.parametrize(
+        "body",
+        (
+            {"force": "yes"},
+            {"batch_size": True},
+            {"batch_size": 1.5},
+            {"batch_size": float("inf")},
+            {"batch_size": "32"},
+            {"batch_size": 0},
+            {"batch_size": 257},
+            {"limit": True},
+            {"limit": 2.9},
+            {"limit": float("inf")},
+            {"limit": "500"},
+            {"limit": 0},
+            {"limit": 501},
+        ),
+    )
+    def test_embedding_backfill_rejects_invalid_or_unbounded_work(self, monkeypatch, body):
+        import main
+        from fastapi import HTTPException
+
+        monkeypatch.setattr(main, "_require_admin", lambda _authorization: None)
+        main._embedding_backfill_progress["running"] = False
+
+        with pytest.raises(HTTPException) as exc_info:
+            main.admin_backfill_embeddings(body, authorization="test")
+
+        assert exc_info.value.status_code == 400
+
+    def test_embedding_backfill_reserves_the_worker_before_thread_start(self, monkeypatch):
+        import main
+
+        queued = []
+
+        class DelayedThread:
+            def __init__(self, *, target, **_kwargs):
+                queued.append(target)
+
+            def start(self):
+                pass
+
+        monkeypatch.setattr(main, "_require_admin", lambda _authorization: None)
+        monkeypatch.setattr(main.threading, "Thread", DelayedThread)
+        main._embedding_backfill_progress["running"] = False
+
+        try:
+            first = main.admin_backfill_embeddings({}, authorization="test")
+            second = main.admin_backfill_embeddings({}, authorization="test")
+
+            assert first["status"] == "started"
+            assert second["status"] == "already_running"
+            assert len(queued) == 1
+        finally:
+            main._embedding_backfill_progress["running"] = False
+
+    def test_embedding_backfill_releases_reservation_if_thread_start_fails(self, monkeypatch):
+        import main
+
+        class FailingThread:
+            def __init__(self, **_kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError("thread unavailable")
+
+        monkeypatch.setattr(main, "_require_admin", lambda _authorization: None)
+        monkeypatch.setattr(main.threading, "Thread", FailingThread)
+        main._embedding_backfill_progress["running"] = False
+
+        with pytest.raises(RuntimeError, match="thread unavailable"):
+            main.admin_backfill_embeddings({}, authorization="test")
+
+        assert main._embedding_backfill_progress["running"] is False
+        assert main._embedding_backfill_progress["phase"] == "failed"
+        assert main._embedding_backfill_progress["error_code"] == (
+            "embedding_backfill_start_failed"
+        )
+
+    def test_embedding_backfill_reports_a_bounded_pause(self, monkeypatch):
+        import database
+        import embedding_service
+        import main
+
+        class ImmediateThread:
+            def __init__(self, *, target, **_kwargs):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        class EmptySession:
+            def close(self):
+                pass
+
+        result = {
+            "searchable": 1_000,
+            "scanned": 500,
+            "refreshed": 500,
+            "vector_rewrites": 400,
+            "unresolved": 0,
+            "complete": False,
+        }
+        monkeypatch.setattr(main, "_require_admin", lambda _authorization: None)
+        monkeypatch.setattr(main.threading, "Thread", ImmediateThread)
+        monkeypatch.setattr(database, "SessionLocal", EmptySession)
+        monkeypatch.setattr(
+            embedding_service,
+            "refresh_job_embeddings",
+            lambda *_args, **_kwargs: result,
+        )
+        main._embedding_backfill_progress["running"] = False
+
+        main.admin_backfill_embeddings({}, authorization="test")
+
+        assert main._embedding_backfill_progress["running"] is False
+        assert main._embedding_backfill_progress["phase"] == "paused"
+        assert main._embedding_backfill_progress["complete"] is False
 
     def test_analytics_trends_endpoint(self, client):
         from market_analytics import invalidate

@@ -4,6 +4,7 @@ Backfill embedding vectors for scraped jobs that are missing them.
 Usage:
     python backfill_embeddings.py            # backfill jobs missing embeddings
     python backfill_embeddings.py --force     # re-embed all jobs
+    python backfill_embeddings.py --missing-only  # never rewrite legacy vectors
     python backfill_embeddings.py --limit 500 # process at most 500 jobs
 """
 
@@ -19,7 +20,11 @@ from embedding_service import (
 )
 
 
-def backfill(force: bool = False, limit: int | None = None) -> None:
+def backfill(
+    force: bool = False,
+    limit: int | None = None,
+    missing_only: bool = False,
+) -> None:
     db = SessionLocal()
     try:
         started_at = time.time()
@@ -31,12 +36,14 @@ def backfill(force: bool = False, limit: int | None = None) -> None:
             print(
                 f"  scanned={state['scanned']}/{state['searchable']} "
                 f"refreshed={refreshed} rewrites={state['vector_rewrites']} "
+                f"unresolved={state['unresolved']} "
                 f"({rate:.1f} refreshes/sec)"
             )
 
         result = refresh_job_embeddings(
             db,
             force=force,
+            missing_only=missing_only,
             limit=limit,
             on_progress=report,
         )
@@ -45,7 +52,8 @@ def backfill(force: bool = False, limit: int | None = None) -> None:
             return
         print(
             f"Done. Scanned {result['scanned']}; refreshed {result['refreshed']}; "
-            f"rewrote {result['vector_rewrites']} vectors in "
+            f"rewrote {result['vector_rewrites']} vectors; "
+            f"left {result['unresolved']} unresolved in "
             f"{time.time() - started_at:.1f}s using {EMBEDDING_MODEL_IDENTITY}."
         )
 
@@ -55,10 +63,16 @@ def backfill(force: bool = False, limit: int | None = None) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Backfill job embedding vectors")
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--force",
         action="store_true",
         help="Re-embed all jobs, even those with existing vectors",
+    )
+    mode.add_argument(
+        "--missing-only",
+        action="store_true",
+        help="Embed missing vectors without rewriting unproven legacy vectors",
     )
     parser.add_argument(
         "--limit",
@@ -67,4 +81,4 @@ if __name__ == "__main__":
         help="Maximum number of jobs to process",
     )
     args = parser.parse_args()
-    backfill(force=args.force, limit=args.limit)
+    backfill(force=args.force, limit=args.limit, missing_only=args.missing_only)

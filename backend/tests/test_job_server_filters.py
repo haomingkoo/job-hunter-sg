@@ -18,7 +18,7 @@ def test_job_search_readiness_requires_a_bound_exact_provenance_scan(jobs_client
 
     db = jobs_client.test_db
     for job in db.query(ScrapedJob).all():
-        embedding_service.stamp_job_embedding(job, [0.1] * 384)
+        embedding_service.stamp_job_embedding(job, [1.0] + [0.0] * 383)
     db.commit()
 
     unproven = jobs_client.get("/api/job-search/readiness").json()

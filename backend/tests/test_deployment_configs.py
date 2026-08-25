@@ -35,7 +35,10 @@ def test_full_crawl_service_runs_the_versioned_cli_to_completion():
     dockerfile = (ROOT / "Dockerfile.crawler").read_text()
     infrastructure = (ROOT / ".railway" / "railway.ts").read_text()
 
-    assert 'CMD ["/bin/sh", "-c", "python seed_jobs.py --full && python backfill_embeddings.py"]' in dockerfile
+    assert (
+        'CMD ["/bin/sh", "-c", "python seed_jobs.py --full && '
+        'python backfill_embeddings.py --missing-only"]'
+    ) in dockerfile
     assert "USER appuser" in dockerfile
     assert "ENV HF_HUB_OFFLINE=1" in dockerfile
     assert "TRANSFORMERS_OFFLINE=1" in dockerfile
