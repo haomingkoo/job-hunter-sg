@@ -1,60 +1,70 @@
 # Job-ranking evaluation — 2026-08-25
 
-This report separates three different claims that were previously easy to blur:
-retrieval correctness, coordinator decision quality, and deployed browser
-acceptance. Passing one does not prove the others.
+This report separates retrieval regression, current-corpus diagnosis,
+coordinator tool choice, and deployed browser acceptance. Passing one does not
+prove the others.
 
-## Results
+## Evidence collected
 
 | Layer | Evidence | Result |
 |---|---|---|
-| Deterministic retrieval | `backend/scripts/evaluate_job_ranking.py` over `job-ranking-v1` | 3/3 cases passed; NDCG@k 1.0; named-company and direct-employer invariants passed |
-| Live coordinator model | SEA-LION opt-in tests, three repeats per case | 3/3 explicit-Micron and 3/3 employer-neutral general-search trials passed |
-| Current production corpus | Four read-only semantic searches over 81,031 visible, embedded jobs | Mixed; useful top results, but query wording changed seniority and role quality materially |
-| Signed-in deployed journey | Current exact release | Not yet accepted after the matching changes |
+| Offline regression | `backend/scripts/evaluate_job_ranking.py` over `job-ranking-v1` | 3/3 synthetic cases passed |
+| Live coordinator | SEA-LION opt-in prompt evaluations, three repeats per case | 3/3 named-Micron and 3/3 explicit manager-search trials passed |
+| Frozen production corpus | 81,031 public postings exported at `2026-08-25T11:38:00Z` and re-embedded from frozen text | Micron and other plausible manager roles were retrieved; the earlier numeric comparison is withdrawn because its post-hoc judged pool was incomplete |
+| PostgreSQL policy parity | Read-only checks against the production PostgreSQL regex engine | EA markers, EA numbers, and punctuated agency names matched; direct-employer negative control did not |
+| Signed-in deployed journey | Exact candidate release | Not yet accepted |
 
-The live general-search evaluation requires the coordinator to keep `company`
-empty, keep direct-employer filtering enabled, derive a semiconductor-relevant
-query from synthetic candidate evidence, rank the manufacturing-transformation
-manager first, and omit sales and junior distractors. The named-employer
-evaluation requires the model to pass `company=Micron` and preserve the exact
-candidate quote as a durable preference. Neither test uses a private resume.
+The frozen corpus SHA-256 is
+`bfee51bf22c0d6dc2010efb10edd7d72de3a90c238895ecdedd4cbad31a5bfa4`.
+The post-hoc development manifest SHA-256 is
+`e5e7acf5ccf426bd257b02d007f8d0d9997f1ae960e6d008d977b5efdf183ded`.
+The corpus is not checked into Git because it is 213 MB; the hashes bind the
+local evaluation artifacts used for this report.
 
-## Production-corpus findings
+## Frozen-corpus development findings
 
-The strongest broad query ranked Micron's Senior Manager, FE Central PQE role
-first and also surfaced manager roles at Heptagon and HP. Shorter queries were
-less reliable:
+The original four-case development table is deliberately not retained as
+evidence. After the replay was corrected to reproduce released filtering order,
+some returned jobs had no judgment. Reporting NDCG or recall for that incomplete
+pool would be false precision. The replay now fails closed when any returned job
+is unjudged.
 
-- `semiconductor manufacturing transformation manager` ranked a sales role
-  first and admitted listings from Asia Search and Kerry Consulting despite the
-  direct-employer filter.
-- `quality systems manager semiconductor QMS CAPA 8D FMEA` mostly returned
-  engineer-level roles before manager roles.
-- `production operations manager semiconductor yield continuous improvement`
-  ranked a relevant Production Manager first, but placed a fresh-entry Micron
-  engineer second.
+For the rich query, the constrained retrieval ranked Micron's Senior Manager,
+FE Central PQE role first, followed by manager roles at Heptagon, HP, New Toyo,
+and Sys-Mac. The explicit-Micron case returned only Micron manager titles, again
+with Senior Manager, FE Central PQE first. The short general case placed Micron
+seventh in the seven-result retrieval set, so the coordinator can still select
+it after comparing resume evidence rather than fame.
 
-The agency leak is a classifier defect, not an LLM preference. Asia Search and
-Kerry Consulting had no SSIC metadata in the production rows, so their names are
-now covered by the shared Python/SQL employer taxonomy and equivalence test.
+The policy now keeps direct employers, Singapore work locations, and explicit
+title constraints inside pre-ranking eligibility. Overseas postings remain real
+source rows and can be requested explicitly, but they are not returned by the
+Recruitment Team's default Singapore search. Title evidence such as "Based in
+Batam" overrides a misleading structured value such as "Islandwide".
 
-The overseas location facets are source-backed rather than a parser accident.
-MyCareersFuture explicitly marks a small number of postings as based in countries
-such as Indonesia or Malaysia. They should remain visible as real postings, but
-an explicit candidate location constraint must never be silently ignored.
+## Live prompt evaluation
 
-## What this does not prove
+The named-employer evaluation requires the coordinator to pass `company=Micron`
+instead of hoping semantic similarity recognises the employer. The manager
+evaluation requires employer neutrality, direct-employer and Singapore
+constraints, and an effective manager-level constraint. SEA-LION consistently
+used `title_phrase=manager`; it did not redundantly add `exclude_junior` in that
+case. It then published the strongest manufacturing-transformation role and
+omitted the sales and technician distractors. The prompt tests use synthetic
+candidate evidence, not a private resume.
 
-`job-ranking-v1` is a small synthetic regression seed, not a historical or
-population-quality backtest. The production searches are current-corpus
-diagnostics without frozen human relevance labels, so they cannot establish
-Recall@5 or compare the previous and current rankers fairly. The live model
-tests prove prompt/tool behavior against controlled candidates, not production
-persistence or rendered cards.
+## What this proves—and does not prove
 
-A defensible promotion benchmark still needs a versioned snapshot sampled from
-real searches, labels reviewed by the candidate or another human, and a baseline
-versus candidate comparison covering NDCG@5, Recall@5, hard-constraint
-violations, seniority errors, latency, tokens, and model calls. The comparison
-must fail on any hard-constraint violation; aggregate score must not hide one.
+This is a real frozen-corpus development replay, but it does not yet prove a
+ranking improvement. It reproduces the Micron retrieval observation and checks
+constraint mechanics on source-backed postings. It is not a
+released-SHA-versus-candidate backtest: both diagnostic arms use the current
+encoder and ranker, and the judgments were written after observing the
+development pools. The machine-readable receipt therefore returns
+`release_qualified: false`.
+
+A release claim still requires a precommitted query set, arm-blinded pooled
+judgments, captured outputs from the released checkout, and the candidate
+outputs on the identical corpus. Retrieval evidence must then be combined with
+an exact-SHA signed-in browser run and persisted trace evidence; neither one can
+stand in for the other.

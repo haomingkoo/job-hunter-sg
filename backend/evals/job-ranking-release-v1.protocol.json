@@ -15,6 +15,10 @@
     "frozen_matrix_dtype": "float32",
     "derivation": "The encoder was run over build_job_embed_text for each corpus row in JSONL order"
   },
+  "evaluation_harness": {
+    "capture_sha256": "63740ab1c2d722f93f1b967bc185b837b3587e5712608f32a2714138e34481c6",
+    "pool_and_scoring_sha256": "b5af7fd9ac37f8f801993ec8b6133040b79749fa7251eb52e4e9d113ebd2bcb6"
+  },
   "candidate_profile": {
     "scope": "synthetic evaluation persona; not a private resume",
     "experience": "Seven years in semiconductor manufacturing, quality, and transformation, including about two and a half years at manager level",
@@ -57,7 +61,15 @@
       "Every candidate top-k result has a blinded judgment",
       "Explicit Micron search returns only eligible Micron roles"
     ],
-    "comparison": "Candidate must be non-inferior to the released arm on every case and improve at least one case; no arbitrary aggregate threshold"
+    "primary_metric": "NDCG@k from the median blinded relevance judgment, with ineligible jobs receiving zero relevance",
+    "comparison": "Candidate NDCG@k must be greater than or equal to the released arm on every case and strictly greater on at least one case; no aggregate threshold or cross-case averaging",
+    "reported_diagnostics": [
+      "Recall@k over eligible relevant jobs in the judged pool",
+      "Hard-constraint violations",
+      "Seniority-fit errors",
+      "Empty result cases",
+      "Per-item rater disagreement"
+    ]
   },
   "cases": [
     {

@@ -33,6 +33,37 @@ cd backend
 .venv/bin/python -m scripts.evaluate_job_ranking
 ```
 
+The full frozen-corpus command is a development diagnostic, not a CI or release
+gate. Its manifest must hash-bind a public-only JSONL export and label every
+returned job. It always reports `release_qualified: false` because it does not
+execute a released checkout:
+
+```bash
+cd backend
+.venv/bin/python -m scripts.compare_job_ranking /path/to/manifest.json
+```
+
+A ranking release requires the hash-bound protocol under `backend/evals`, arm
+captures from clean exact-SHA checkouts, and three complete arm-blinded judgment
+files. `evaluate_job_ranking_release prepare` creates a judge-visible union pool
+and a separate private mapping. `score` validates the pool bindings, aggregates
+median relevance and majority boolean labels, reports disagreement, and applies
+the precommitted per-case gates:
+
+```bash
+cd backend
+.venv/bin/python -m scripts.evaluate_job_ranking_release prepare \
+  --protocol evals/job-ranking-release-v1.protocol.json \
+  --corpus /path/to/corpus.jsonl --released /path/to/released.json \
+  --candidate /path/to/candidate.json --pool-output /path/to/pool.json \
+  --mapping-output /path/to/private-mapping.json
+.venv/bin/python -m scripts.evaluate_job_ranking_release score \
+  --protocol evals/job-ranking-release-v1.protocol.json \
+  --pool /path/to/pool.json --mapping /path/to/private-mapping.json \
+  --judgment /path/to/judge-1.json --judgment /path/to/judge-2.json \
+  --judgment /path/to/judge-3.json --output /path/to/report.json
+```
+
 ## Research Outputs
 
 Research artifacts must save:
