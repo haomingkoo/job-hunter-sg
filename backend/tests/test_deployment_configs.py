@@ -25,6 +25,7 @@ def test_scheduled_alert_image_runs_as_non_root():
 
 def test_full_crawl_service_runs_the_versioned_cli_to_completion():
     config = tomllib.loads((ROOT / "railway.seed.toml").read_text())
+    dockerfile = (ROOT / "Dockerfile").read_text()
 
     assert config["build"] == {
         "builder": "dockerfile",
@@ -35,3 +36,5 @@ def test_full_crawl_service_runs_the_versioned_cli_to_completion():
         "cronSchedule": "0 22 * * *",
         "restartPolicyType": "never",
     }
+    assert "ENV HF_HUB_OFFLINE=1" in dockerfile
+    assert "TRANSFORMERS_OFFLINE=1" in dockerfile
