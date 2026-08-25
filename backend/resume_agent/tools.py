@@ -8,7 +8,6 @@ import re
 from typing import Any
 
 import agent_tool_contract as contract
-import config
 from database import SessionLocal
 from embedding_service import (
     EmbeddingIndexUnavailable,
@@ -110,7 +109,8 @@ def search_jobs(
                     ScrapedJob.id,
                     ScrapedJob.company,
                     ScrapedJob.title,
-                    ScrapedJob.salary_floor,
+                    ScrapedJob.location,
+                    ScrapedJob.seniority,
                 )
             )
             if direct_employers_only:
@@ -149,24 +149,18 @@ def search_jobs(
                 )
             eligible_job_ids = {
                 job_id
-                for job_id, employer, title, salary_floor
+                for job_id, employer, title, location, seniority
                 in eligible_query.all()
                 if (not clean_company or company_name_matches(employer, clean_company))
                 and (not clean_title_phrase or job_title_matches(title, clean_title_phrase))
-                # The SQL prefilter already proves the structured location and
-                # seniority fields; Python only checks their title-based
-                # exceptions here.
-                and (not singapore_only or is_singapore_job_location("Singapore", title))
+                and (not singapore_only or is_singapore_job_location(location, title))
                 and (
                     not exclude_junior
-                    or not is_junior_posting(None, title, salary_floor)
+                    or not is_junior_posting(seniority, title)
                 )
             }
         query_vector = encode_text(clean_query)
-        candidate_limit = max(
-            limit * config.AGENT_SEARCH_CANDIDATE_MULTIPLIER,
-            limit,
-        )
+        candidate_limit = contract.semantic_candidate_limit(limit)
         if clean_company:
             similar = find_similar_jobs_for_ids(
                 query_vector,

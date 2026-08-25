@@ -172,6 +172,42 @@ def embedding_readiness_is_current(db_session: Session) -> bool:
     ).first() is not None
 
 
+def get_job_search_readiness(db_session: Session) -> dict[str, int | bool | str]:
+    """Return the single provenance-aware readiness view for every interface."""
+    from job_visibility import apply_public_job_visibility
+    from models import ScrapedJob
+
+    searchable = apply_public_job_visibility(
+        db_session.query(func.count(ScrapedJob.id))
+    ).scalar() or 0
+    current_embeddings = apply_public_job_visibility(
+        db_session.query(func.count(ScrapedJob.id))
+    ).filter(
+        ScrapedJob.embedding_vector.isnot(None),
+        ScrapedJob.embedding_input_sha256.isnot(None),
+        func.length(ScrapedJob.embedding_input_sha256) == 64,
+        ScrapedJob.embedding_model_identity == EMBEDDING_MODEL_IDENTITY,
+    ).scalar() or 0
+    classified_employers = apply_public_job_visibility(
+        db_session.query(func.count(ScrapedJob.id))
+    ).filter(ScrapedJob.direct_employer.in_((0, 1))).scalar() or 0
+    content_provenance_verified = embedding_readiness_is_current(db_session)
+    ready = (
+        searchable > 0
+        and current_embeddings == searchable
+        and classified_employers == searchable
+        and content_provenance_verified
+    )
+    return {
+        "ready": ready,
+        "searchable_jobs": searchable,
+        "current_embeddings": current_embeddings,
+        "classified_employers": classified_employers,
+        "content_provenance_verified": content_provenance_verified,
+        "embedding_model_identity": EMBEDDING_MODEL_IDENTITY,
+    }
+
+
 def refresh_job_embeddings(
     db_session: Session,
     *,

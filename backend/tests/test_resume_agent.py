@@ -266,7 +266,7 @@ def test_search_jobs_applies_company_and_direct_employer_constraints_before_rank
 
 
 def test_job_dedup_preserves_posting_and_salary_variants():
-    from agent_tool_contract import deduplicate_job_payloads
+    from agent_tool_contract import deduplicate_job_payloads, search_jobs_result
 
     postings = [{
         "id": job_id,
@@ -302,6 +302,17 @@ def test_job_dedup_preserves_posting_and_salary_variants():
         "$14,000 - $17,000",
         "$11,000 - $14,000",
     ]
+    result = search_jobs_result(
+        "principal ai engineer",
+        3,
+        deduplicated,
+        visible_candidate_count=len(postings),
+    )
+    assert result["visible_candidate_count"] == 3
+    assert result["deduplicated_result_count"] == 1
+    assert result["duplicate_count"] == 2
+    assert result["retained_result_count"] == 1
+    assert result["truncated"] is False
 
 
 def test_job_dedup_keeps_same_title_at_same_company_when_descriptions_differ():

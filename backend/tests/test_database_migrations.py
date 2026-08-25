@@ -131,7 +131,7 @@ def test_legacy_users_remain_unverified_when_verification_column_is_added(monkey
         "ALTER TABLE scraped_jobs ADD COLUMN direct_employer INTEGER NOT NULL DEFAULT -1"
         in statements
     )
-    assert any("ix_scraped_jobs_direct_employer" in item for item in statements)
+    assert not any("ix_scraped_jobs_direct_employer" in item for item in statements)
     assert "ALTER TABLE recruitment_activity_events ADD COLUMN parent_id TEXT" in statements
     assert "ALTER TABLE recruitment_activity_events ADD COLUMN duration_ms FLOAT" in statements
     assert any("recruitment_activity_events ADD COLUMN attributes JSON" in item for item in statements)

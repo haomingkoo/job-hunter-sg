@@ -146,6 +146,51 @@ def test_mcp_search_jobs_empty_and_error_are_structured(monkeypatch):
     assert failed["error"]["code"] == "search_failed"
 
 
+def test_mcp_ats_status_uses_provenance_aware_embedding_readiness(monkeypatch):
+    import mcp_tools
+
+    class FakeVisible:
+        def __init__(self):
+            self.counts = iter((10, 8, 7))
+
+        def filter(self, *_args):
+            return self
+
+        def count(self):
+            return next(self.counts)
+
+    visible = FakeVisible()
+
+    class FakeDb:
+        def query(self, *_args):
+            return object()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(mcp_tools, "SessionLocal", FakeDb)
+    monkeypatch.setattr(mcp_tools, "apply_public_job_visibility", lambda _query: visible)
+    monkeypatch.setattr(
+        mcp_tools,
+        "get_job_search_readiness",
+        lambda _db: {
+            "ready": False,
+            "current_embeddings": 0,
+            "classified_employers": 10,
+            "content_provenance_verified": False,
+            "embedding_model_identity": "test-model@revision",
+        },
+    )
+
+    status = json.loads(mcp_tools.ats_precompute_status())
+
+    assert status["embedding_ready"] == 0
+    assert status["embedding_ready_percent"] == 0
+    assert status["embedding_provenance_verified"] is False
+    assert status["embedding_model_identity"] == "test-model@revision"
+    assert status["job_search_ready"] is False
+
+
 def test_get_job_does_not_return_hidden_job(monkeypatch):
     import mcp_tools
 

@@ -81,3 +81,86 @@ def test_job_precomputes_persist_direct_employer_classification():
 
     assert direct["direct_employer"] == 1
     assert agency["direct_employer"] == 0
+
+
+def test_incremental_precompute_backfill_skips_retired_jobs():
+    from database import SessionLocal
+    from main import _precompute_batch
+    from models import ScrapedJob
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = SessionLocal()
+    try:
+        public = ScrapedJob(
+            title="Quality Manager",
+            company="Micron Semiconductor",
+            description="Lead quality systems.",
+            dedup_key="precompute-public-job",
+            posted_at_sort=now,
+            scraped_at=now,
+            hidden=0,
+            direct_employer=-1,
+        )
+        retired = ScrapedJob(
+            title="Quality Manager",
+            company="Retired Semiconductor",
+            description="Lead quality systems.",
+            dedup_key="precompute-retired-job",
+            posted_at_sort=now,
+            scraped_at=now,
+            hidden=1,
+            retirement_reason="source_retired",
+            direct_employer=-1,
+        )
+        db.add_all((public, retired))
+        db.commit()
+
+        done, _ = _precompute_batch(
+            db,
+            (ScrapedJob.direct_employer < 0)
+            & ScrapedJob.dedup_key.in_(
+                ("precompute-public-job", "precompute-retired-job")
+            ),
+            50,
+            public_only=True,
+        )
+        public = db.query(ScrapedJob).filter_by(dedup_key="precompute-public-job").one()
+        retired = db.query(ScrapedJob).filter_by(dedup_key="precompute-retired-job").one()
+
+        assert done == 1
+        assert public.direct_employer == 1
+        assert retired.direct_employer == -1
+    finally:
+        db.query(ScrapedJob).filter(
+            ScrapedJob.dedup_key.in_(("precompute-public-job", "precompute-retired-job"))
+        ).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+def test_mutated_listing_refreshes_every_derived_search_field():
+    from main import _refresh_job_precomputes
+    from models import ScrapedJob
+
+    job = ScrapedJob(
+        title="Quality Manager",
+        company="Example Talent Search",
+        description="Lead QMS for our client.",
+        skills=["ISO 9001"],
+        salary="$8,000 - $10,000",
+        dedup_key="derived-field-refresh",
+        sector="stale",
+        direct_employer=1,
+        salary_floor=1,
+        skills_flat="stale",
+        promotional_score=99,
+    )
+
+    _refresh_job_precomputes(job)
+
+    assert job.direct_employer == 0
+    assert job.salary_floor == 8000
+    assert job.skills_flat == "ISO 9001"
+    assert job.sector != "stale"
+    assert job.promotional_score != 99
+    assert len(job.content_hash) == 64

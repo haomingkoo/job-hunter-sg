@@ -13,7 +13,7 @@ from sqlalchemy import func
 import agent_tool_contract as contract
 from ats_terms import build_job_ats_terms, match_resume_against_job_terms
 from database import SessionLocal
-from embedding_service import encode_text, find_similar_jobs
+from embedding_service import encode_text, find_similar_jobs, get_job_search_readiness
 from job_visibility import apply_public_job_visibility
 from job_precompute import display_salary
 from models import ScrapedJob
@@ -181,16 +181,24 @@ def search_jobs(query: str, limit: int | None = None, detail: bool = False) -> s
     try:
         db = SessionLocal()
         matches = find_similar_jobs(
-            encode_text(clean_query), db, top_k=max(capped * 10, capped)
+            encode_text(clean_query),
+            db,
+            top_k=contract.semantic_candidate_limit(capped),
         )
         jobs = []
         for job_id, similarity in matches:
             job = _get_public_job(db, job_id)
             if job:
                 jobs.append(contract.job_payload(job, similarity, detail=detail))
-            if len(jobs) >= capped:
-                break
-        return _json(contract.search_jobs_result(clean_query, capped, jobs, detail=detail))
+        deduplicated = contract.deduplicate_job_payloads(jobs)
+        return _json(contract.search_jobs_result(
+            clean_query,
+            capped,
+            deduplicated,
+            detail=detail,
+            candidate_count=len(matches),
+            visible_candidate_count=len(jobs),
+        ))
     except Exception:
         return _json(
             contract.search_jobs_error(
@@ -333,13 +341,20 @@ def ats_precompute_status() -> str:
         total = visible.count()
         parsed = visible.filter(ScrapedJob.parsed_jd.isnot(None)).count()
         previews = visible.filter(ScrapedJob.job_terms_preview.isnot(None)).count()
-        embeddings = visible.filter(ScrapedJob.embedding_vector.isnot(None)).count()
+        search_readiness = get_job_search_readiness(db)
+        embeddings = int(search_readiness["current_embeddings"])
         return _json(
             {
                 "visible_jobs": total,
                 "parsed_jd_ready": parsed,
                 "job_terms_preview_ready": previews,
                 "embedding_ready": embeddings,
+                "embedding_provenance_verified": search_readiness[
+                    "content_provenance_verified"
+                ],
+                "embedding_model_identity": search_readiness["embedding_model_identity"],
+                "job_search_ready": search_readiness["ready"],
+                "classified_employers": search_readiness["classified_employers"],
                 "parsed_jd_ready_percent": _percent(parsed, total),
                 "job_terms_preview_ready_percent": _percent(previews, total),
                 "embedding_ready_percent": _percent(embeddings, total),

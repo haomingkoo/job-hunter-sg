@@ -63,6 +63,7 @@ def test_parallel_ai_quota_never_exceeds_account_limit():
 
 
 def test_power_match_charges_only_after_cache_miss(monkeypatch):
+    import embedding_service
     import main
     from auth import hash_password
     from database import SessionLocal
@@ -77,13 +78,22 @@ def test_power_match_charges_only_after_cache_miss(monkeypatch):
     )
     db.add(user)
     db.flush()
-    db.add(UserMemory(user_id=user.id, resume_text="Experienced engineer " * 20))
+    db.add(UserMemory(
+        user_id=user.id,
+        resume_text="Experienced engineer " * 20,
+        resume_embedding=[0.1, 0.2],
+    ))
     db.commit()
     main._power_match_cache.pop(user.id, None)
     snapshot = {"result_version": main._POWER_MATCH_RESULT_VERSION, "resume_ready": True}
     monkeypatch.setattr(main, "_job_corpus_marker", lambda _db: "corpus")
     monkeypatch.setattr(main, "_power_resume_source_meta", lambda *_args: {})
     monkeypatch.setattr(main, "_load_power_match_snapshot", lambda **_kwargs: snapshot)
+    monkeypatch.setattr(
+        embedding_service,
+        "get_job_search_readiness",
+        lambda _db: {"ready": True},
+    )
     monkeypatch.setattr(
         main,
         "_consume_ai_credit",
@@ -98,6 +108,24 @@ def test_power_match_charges_only_after_cache_miss(monkeypatch):
 
         main._power_match_cache.pop(user.id, None)
         monkeypatch.setattr(main, "_load_power_match_snapshot", lambda **_kwargs: None)
+        monkeypatch.setattr(
+            main,
+            "_select_power_match_candidates",
+            lambda **_kwargs: [SimpleNamespace(id=7)],
+        )
+        monkeypatch.setattr(
+            embedding_service,
+            "find_similar_jobs_for_ids",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                embedding_service.EmbeddingIndexUnavailable("rebuilding")
+            ),
+        )
+        with pytest.raises(HTTPException) as unavailable:
+            main.get_power_match(limit=8, direct_employers_only=True, user=user, db=db)
+        assert unavailable.value.status_code == 503
+        assert unavailable.value.detail["code"] == "power_match_job_index_unavailable"
+
+        monkeypatch.setattr(main, "_select_power_match_candidates", lambda **_kwargs: [])
         monkeypatch.setattr(
             main,
             "_consume_ai_credit",

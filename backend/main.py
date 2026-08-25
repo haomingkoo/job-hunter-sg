@@ -72,7 +72,7 @@ from resume_versions import (
 )
 from story_bank import STORY_TAGS
 from story_routes import router as story_router
-from job_store import find_existing_scraped_job
+from job_store import compute_content_hash, find_existing_scraped_job
 from job_visibility import (
     apply_expired_job_visibility,
     apply_public_job_visibility,
@@ -271,7 +271,7 @@ def _clear_analytics_cache() -> None:
 _power_match_cache: dict[int, dict] = {}
 _POWER_MATCH_CACHE_TTL = 600  # 10 minutes
 _POWER_MATCH_SNAPSHOT_TTL_SECONDS = 86400  # 24 hours
-_POWER_MATCH_RESULT_VERSION = "power_match_v4"
+_POWER_MATCH_RESULT_VERSION = "power_match_v5"
 _BROWSE_POWER_MATCH_LIMIT = 200
 
 
@@ -894,6 +894,38 @@ def _compute_and_cache_term_preview(
     return labels
 
 
+def _refresh_job_precomputes(job: ScrapedJob) -> None:
+    """Recompute every stored field derived from mutable listing content."""
+    data = {
+        "title": job.title or "",
+        "company": job.company or "",
+        "salary": job.salary or "",
+        "skills": job.skills,
+        "description": job.description or "",
+        "sector": job.sector or "",
+        "company_ssic_code": job.company_ssic_code or "",
+        "company_ssic_description": job.company_ssic_description or "",
+        "company_ssic_source": job.company_ssic_source or "",
+    }
+    _apply_job_precomputes(data)
+    job.sector = str(data["sector"])
+    job.company_ssic_code = str(data.get("company_ssic_code") or "")
+    job.company_ssic_description = str(data.get("company_ssic_description") or "")
+    job.company_ssic_source = str(data.get("company_ssic_source") or "")
+    job.direct_employer = int(data["direct_employer"])
+    job.salary_floor = int(data["salary_floor"])
+    job.skills_flat = str(data["skills_flat"])
+    job.promotional_score = int(data["promotional_score"])
+    job.content_hash = compute_content_hash({
+        "company": job.company,
+        "title": job.title,
+        "location": job.location,
+        "salary": job.salary,
+        "employment_type": job.employment_type,
+        "description": job.description,
+    })
+
+
 def _refresh_careersgov_terms_if_weak(job: ScrapedJob, db: Session) -> bool:
     if not job or job.source != "Careers@Gov" or not (job.description or "").strip():
         return False
@@ -918,6 +950,7 @@ def _refresh_careersgov_terms_if_weak(job: ScrapedJob, db: Session) -> bool:
         job.skills = derived_skills
         changed = True
     if changed:
+        _refresh_job_precomputes(job)
         _compute_and_cache_term_preview(job, db)
         from embedding_service import invalidate_job_embedding_if_stale
         invalidate_job_embedding_if_stale(job)
@@ -971,6 +1004,7 @@ def _enrich_careersgov_job(job: ScrapedJob, db: Session) -> bool:
         job.posted_at_sort = expected_sort
         updated = True
     if updated and job.description:
+        _refresh_job_precomputes(job)
         _compute_and_cache_term_preview(job, db)
     if updated:
         from embedding_service import invalidate_job_embedding_if_stale
@@ -1943,41 +1977,11 @@ def public_health(db: Session = Depends(get_db)) -> dict:
 @app.get("/api/job-search/readiness")
 def job_search_readiness(db: Session = Depends(get_db)) -> dict:
     """Report whether derived search indexes cover the entire public corpus."""
-    from embedding_service import (
-        EMBEDDING_MODEL_IDENTITY,
-        embedding_readiness_is_current,
-    )
+    from embedding_service import get_job_search_readiness
 
-    searchable = apply_public_job_visibility(
-        db.query(func.count(ScrapedJob.id))
-    ).scalar() or 0
-    current_embeddings = apply_public_job_visibility(
-        db.query(func.count(ScrapedJob.id))
-    ).filter(
-        ScrapedJob.embedding_vector.isnot(None),
-        ScrapedJob.embedding_input_sha256.isnot(None),
-        func.length(ScrapedJob.embedding_input_sha256) == 64,
-        ScrapedJob.embedding_model_identity == EMBEDDING_MODEL_IDENTITY,
-    ).scalar() or 0
-    classified_employers = apply_public_job_visibility(
-        db.query(func.count(ScrapedJob.id))
-    ).filter(ScrapedJob.direct_employer.in_((0, 1))).scalar() or 0
-    content_provenance_verified = embedding_readiness_is_current(db)
-    ready = (
-        searchable > 0
-        and current_embeddings == searchable
-        and classified_employers == searchable
-        and content_provenance_verified
-    )
-    return {
-        "ready": ready,
-        "searchable_jobs": searchable,
-        "current_embeddings": current_embeddings,
-        "classified_employers": classified_employers,
-        "content_provenance_verified": content_provenance_verified,
-        "embedding_model_identity": EMBEDDING_MODEL_IDENTITY,
-        "commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", "").strip() or "unknown",
-    }
+    readiness = get_job_search_readiness(db)
+    readiness["commit"] = os.environ.get("RAILWAY_GIT_COMMIT_SHA", "").strip() or "unknown"
+    return readiness
 
 
 @app.post("/api/client-error", status_code=status.HTTP_204_NO_CONTENT)
@@ -2861,7 +2865,9 @@ _JOB_PRECOMPUTE_MARKER = "sector_ssic_promotional_v2"
 _PRECOMPUTE_LOAD_ONLY = (
     ScrapedJob.id,
     ScrapedJob.title,
+    ScrapedJob.location,
     ScrapedJob.salary,
+    ScrapedJob.employment_type,
     ScrapedJob.skills,
     ScrapedJob.description,
     ScrapedJob.company,
@@ -2872,16 +2878,28 @@ _PRECOMPUTE_LOAD_ONLY = (
     ScrapedJob.direct_employer,
     ScrapedJob.salary_floor,
     ScrapedJob.skills_flat,
+    ScrapedJob.content_hash,
     ScrapedJob.promotional_score,
 )
 
 
-def _precompute_batch(db: Session, filter_clause, batch_size: int) -> tuple[int, int]:
+def _precompute_batch(
+    db: Session,
+    filter_clause,
+    batch_size: int,
+    *,
+    public_only: bool = False,
+) -> tuple[int, int]:
     """Recompute precomputed fields for one batch; returns (rows done, highest id)."""
-    jobs = (
+    query = (
         db.query(ScrapedJob)
         .options(load_only(*_PRECOMPUTE_LOAD_ONLY))
         .filter(filter_clause)
+    )
+    if public_only:
+        query = apply_public_job_visibility(query)
+    jobs = (
+        query
         .order_by(ScrapedJob.id.asc())
         .limit(batch_size)
         .all()
@@ -2889,32 +2907,7 @@ def _precompute_batch(db: Session, filter_clause, batch_size: int) -> tuple[int,
     last_id = 0
     for job in jobs:
         last_id = max(last_id, job.id)
-        data = {
-            "title": job.title or "",
-            "company": job.company or "",
-            # The raw string, never the display form. apply_job_precomputes derives
-            # salary_floor from whatever it is handed, and display_salary turns
-            # "$1 - $10,000" into "Up to $10,000", which would store 10000 as the
-            # floor for a posting every other write path records as 1.
-            "salary": job.salary or "",
-            "skills": job.skills,
-            "description": job.description or "",
-            "sector": job.sector or "",
-            "company_ssic_code": job.company_ssic_code or "",
-            "company_ssic_description": job.company_ssic_description or "",
-            "company_ssic_source": job.company_ssic_source or "",
-        }
-        _apply_job_precomputes(data)
-        job.sector = data["sector"]
-        job.company_ssic_code = data.get("company_ssic_code", "")
-        job.company_ssic_description = data.get("company_ssic_description", "")
-        job.company_ssic_source = data.get("company_ssic_source", "")
-        job.direct_employer = data["direct_employer"]
-        job.salary_floor = data["salary_floor"]
-        job.skills_flat = data["skills_flat"]
-        # Every field apply_job_precomputes writes must be copied back here, or it
-        # is computed and silently discarded.
-        job.promotional_score = data["promotional_score"]
+        _refresh_job_precomputes(job)
 
     done = len(jobs)
     if done:
@@ -2960,7 +2953,15 @@ def _backfill_job_precomputes(db: Session, batch_size: int = 500) -> int:
         ScrapedJob.direct_employer < 0,
     )
     while True:
-        done, _last_id = _precompute_batch(db, missing_precomputes, batch_size)
+        # Derived search fields only gate the public corpus. Updating hundreds of
+        # thousands of retired rows here creates avoidable database bloat during
+        # a deployment and cannot affect a user-visible result.
+        done, _last_id = _precompute_batch(
+            db,
+            missing_precomputes,
+            batch_size,
+            public_only=True,
+        )
         if not done:
             break
         total_done += done
@@ -3625,6 +3626,30 @@ def get_power_match(
     corpus_marker = f"{_job_corpus_marker(db)}:direct={int(direct_employers_only)}"
     resume_source_meta = _power_resume_source_meta(db, user.id, resume_text)
 
+    from embedding_service import (
+        EmbeddingIndexUnavailable,
+        find_similar_jobs_for_ids,
+        get_job_search_readiness,
+    )
+
+    if not mem or not mem.resume_embedding:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "power_match_resume_embedding_unavailable",
+                "message": "Your resume matching index is rebuilding. Please retry shortly.",
+            },
+        )
+    readiness = get_job_search_readiness(db)
+    if not readiness["ready"]:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "power_match_job_index_unavailable",
+                "message": "The job matching index is rebuilding. Please retry shortly.",
+            },
+        )
+
     cached = _power_match_cache.get(user.id)
     if (
         cached
@@ -3652,7 +3677,6 @@ def get_power_match(
         }
         return snapshot
 
-    _consume_ai_credit(user, db, "power_match")
     resume_skills, resume_signal_mode = _extract_resume_skills(resume_text, db)
     resume_skill_lookup = {skill.lower(): skill for skill in resume_skills}
     lower_resume = resume_text.lower()
@@ -3669,16 +3693,35 @@ def get_power_match(
 
     semantic_scores: dict[int, float] = {}
     try:
-        from embedding_service import find_similar_jobs, is_similarity_matrix_ready
-
-        # Keep the HTTP path bounded: use semantic scores only when both the
-        # resume embedding and job matrix are already warm.
-        resume_vector = mem.resume_embedding if mem and mem.resume_embedding else None
-        if resume_vector and is_similarity_matrix_ready():
-            similar = find_similar_jobs(resume_vector, db, top_k=200)
+        candidate_ids = {job.id for job in candidate_jobs}
+        if candidate_ids:
+            similar = find_similar_jobs_for_ids(
+                mem.resume_embedding,
+                db,
+                candidate_ids,
+                top_k=len(candidate_ids),
+            )
             semantic_scores = {job_id: sim for job_id, sim in similar}
-    except Exception:
-        pass
+            candidate_jobs = [job for job in candidate_jobs if job.id in semantic_scores]
+    except EmbeddingIndexUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "power_match_job_index_unavailable",
+                "message": "The job matching index is rebuilding. Please retry shortly.",
+            },
+        ) from exc
+    except Exception as exc:
+        log.error("[PowerMatch] Semantic ranking failed: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "power_match_semantic_search_failed",
+                "message": "Power Match is temporarily unavailable. Please retry shortly.",
+            },
+        ) from exc
+
+    _consume_ai_credit(user, db, "power_match")
 
     # Precompute resume-side domain hits (same for every job)
     resume_domain_hits = _count_domain_hits(resume_skills, SEMICONDUCTOR_DOMAIN_TERMS)
@@ -5083,10 +5126,12 @@ def generate_application_pack(
                 db.commit()
                 from embedding_service import invalidate_matrix_cache
                 invalidate_matrix_cache()
+                _clear_analytics_cache()
         elif target_job.source == "Careers@Gov" and _refresh_careersgov_terms_if_weak(target_job, db):
             db.commit()
             from embedding_service import invalidate_matrix_cache
             invalidate_matrix_cache()
+            _clear_analytics_cache()
 
         job_title = job_title or target_job.title or ""
         job_company = job_company or target_job.company or ""

@@ -165,7 +165,6 @@ def _apply_lightweight_migrations(connection=None) -> None:
         "ix_scraped_jobs_source_posting": "CREATE INDEX ix_scraped_jobs_source_posting ON scraped_jobs (source, source_posting_id)",
         "ix_scraped_jobs_ssic_code": "CREATE INDEX ix_scraped_jobs_ssic_code ON scraped_jobs (company_ssic_code)",
         "ix_scraped_jobs_ssic_source": "CREATE INDEX ix_scraped_jobs_ssic_source ON scraped_jobs (company_ssic_source)",
-        "ix_scraped_jobs_direct_employer": "CREATE INDEX ix_scraped_jobs_direct_employer ON scraped_jobs (direct_employer)",
         "ix_scraped_jobs_salary_floor": "CREATE INDEX ix_scraped_jobs_salary_floor ON scraped_jobs (salary_floor)",
         "ix_scraped_jobs_content_hash": "CREATE INDEX ix_scraped_jobs_content_hash ON scraped_jobs (content_hash)",
         "ix_scraped_jobs_promotional": "CREATE INDEX ix_scraped_jobs_promotional ON scraped_jobs (promotional_score)",

@@ -142,7 +142,6 @@ class ScrapedJob(Base):
         Index("ix_scraped_jobs_source_posting", "source", "source_posting_id"),
         Index("ix_scraped_jobs_ssic_code", "company_ssic_code"),
         Index("ix_scraped_jobs_ssic_source", "company_ssic_source"),
-        Index("ix_scraped_jobs_direct_employer", "direct_employer"),
         Index("ix_scraped_jobs_salary_floor", "salary_floor"),
     )
 
