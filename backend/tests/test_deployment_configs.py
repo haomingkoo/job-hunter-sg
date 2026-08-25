@@ -25,16 +25,17 @@ def test_scheduled_alert_image_runs_as_non_root():
 
 def test_full_crawl_service_runs_the_versioned_cli_to_completion():
     config = tomllib.loads((ROOT / "railway.seed.toml").read_text())
-    dockerfile = (ROOT / "Dockerfile").read_text()
+    dockerfile = (ROOT / "Dockerfile.crawler").read_text()
 
     assert config["build"] == {
         "builder": "dockerfile",
-        "dockerfilePath": "Dockerfile",
+        "dockerfilePath": "Dockerfile.crawler",
     }
     assert config["deploy"] == {
-        "startCommand": "python seed_jobs.py --full && python backfill_embeddings.py",
         "cronSchedule": "0 22 * * *",
         "restartPolicyType": "never",
     }
+    assert 'CMD ["/bin/sh", "-c", "python seed_jobs.py --full && python backfill_embeddings.py"]' in dockerfile
+    assert "USER appuser" in dockerfile
     assert "ENV HF_HUB_OFFLINE=1" in dockerfile
     assert "TRANSFORMERS_OFFLINE=1" in dockerfile

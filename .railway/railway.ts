@@ -70,8 +70,7 @@ export default defineRailway(() => {
   });
   const enthusiasticGratitude = service("enthusiastic-gratitude", {
     source: repository,
-    build: { builder: "DOCKERFILE", dockerfilePath: "Dockerfile" },
-    start: "python seed_jobs.py --full && python backfill_embeddings.py",
+    build: { builder: "DOCKERFILE", dockerfilePath: "Dockerfile.crawler" },
     replicas: { "asia-southeast1-eqsg3a": 1 },
     deploy: { cronSchedule: "0 22 * * *", restartPolicyType: "NEVER" },
     env: {

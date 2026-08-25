@@ -1,8 +1,7 @@
 [build]
 builder = "dockerfile"
-dockerfilePath = "Dockerfile"
+dockerfilePath = "Dockerfile.crawler"
 
 [deploy]
-startCommand = "python seed_jobs.py --full && python backfill_embeddings.py"
 cronSchedule = "0 22 * * *"
 restartPolicyType = "never"
