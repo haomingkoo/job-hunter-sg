@@ -302,6 +302,11 @@ def test_transport_metrics_are_durable_role_aware_and_concurrency_isolated():
     assert results[1]["transport_token_usage_available"] is False
     assert results[1]["transport_latency_ms"] >= 0
     assert results[1]["transport_models"] == []
+    assert results[1]["transport_observations"][0]["observation_id"]
+    assert (
+        results[1]["transport_observations"][0]["observation_id"]
+        != results[2]["transport_observations"][0]["observation_id"]
+    )
     assert results[1]["transport_by_role"]["specialist"] == {
         "call_count": 1,
         "attempt_count": 2,

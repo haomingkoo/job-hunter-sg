@@ -453,8 +453,10 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
               </label>
               <label className="flex items-center justify-between gap-3 rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-2">
                 <span>
-                  <span className="block text-sm font-medium text-[#384959]">Direct employers only</span>
-                  <span className="block text-xs text-[#6A89A7]">Hide recruiters by default.</span>
+                  <span className="block text-sm font-medium text-[#384959]">Hide known recruiters</span>
+                  <span className="block text-xs text-[#6A89A7]">
+                    Verified direct and unverified employers remain eligible.
+                  </span>
                 </span>
                 <input
                   type="checkbox"

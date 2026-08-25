@@ -94,10 +94,12 @@ def _search_result(jobs, query: str = ""):
 def _ranked_match(job_id: int, *, pay_position: str = "above_peer_median") -> dict:
     return {
         "job_id": job_id,
-        "matched": [{
-            "statement": "Builds production agent platforms.",
-            "resume_quote": "Built a production agent platform with traced model and tool calls.",
-        }],
+        "matched": [
+            {
+                "statement": "Builds production agent platforms.",
+                "resume_quote": "Built a production agent platform with traced model and tool calls.",
+            }
+        ],
         "stretch": [],
         "missing": ["Named cloud platform"],
         "level_fit": "aligned",
@@ -143,14 +145,16 @@ class _RecordingDiscovery:
     ):
         from recruitment_team.discovery import JobSearchResult
 
-        self.calls.append({
-            "query": query,
-            "company": company,
-            "direct_employers_only": direct_employers_only,
-            "exclude_junior": exclude_junior,
-            "singapore_only": singapore_only,
-            "title_phrase": title_phrase,
-        })
+        self.calls.append(
+            {
+                "query": query,
+                "company": company,
+                "direct_employers_only": direct_employers_only,
+                "exclude_junior": exclude_junior,
+                "singapore_only": singapore_only,
+                "title_phrase": title_phrase,
+            }
+        )
         assert self._results, "the loop searched more times than the test scripted"
         result = self._results.pop(0)
         return JobSearchResult(
@@ -248,9 +252,7 @@ def _raw_case_facts(sessions, thread_id: str) -> dict:
     from models import RecruitmentThread
 
     with sessions() as db:
-        thread = (
-            db.query(RecruitmentThread).filter(RecruitmentThread.id == thread_id).first()
-        )
+        thread = db.query(RecruitmentThread).filter(RecruitmentThread.id == thread_id).first()
         return dict(thread.case_facts)
 
 
@@ -332,21 +334,29 @@ def test_record_preferences_requires_latest_message_evidence_and_exact_removals(
     )
 
     with assessment_context(context, initial_edits=context.proposed_edits):
-        accepted = record_preferences.invoke({
-            "updates": [{
-                "field": "constraints",
-                "value": "not computer vision",
-                "evidence_quote": "open to computer vision",
-                "operation": "remove",
-            }]
-        })
-        invalid_quote = record_preferences.invoke({
-            "updates": [{
-                "field": "constraints",
-                "value": "not entry level",
-                "evidence_quote": "I never said this",
-            }]
-        })
+        accepted = record_preferences.invoke(
+            {
+                "updates": [
+                    {
+                        "field": "constraints",
+                        "value": "not computer vision",
+                        "evidence_quote": "open to computer vision",
+                        "operation": "remove",
+                    }
+                ]
+            }
+        )
+        invalid_quote = record_preferences.invoke(
+            {
+                "updates": [
+                    {
+                        "field": "constraints",
+                        "value": "not entry level",
+                        "evidence_quote": "I never said this",
+                    }
+                ]
+            }
+        )
 
     assert accepted == {"accepted": True, "recorded": 1}
     assert context.drafted_preferences[0].operation == "remove"
@@ -381,9 +391,7 @@ def test_write_plan_replaces_changed_steps_and_repeats_as_an_idempotent_noop():
 def test_persisted_shortlist_keeps_requirements_and_salary_context():
     from recruitment_team.recruitment_team import RecruitmentTeam
 
-    restored = RecruitmentTeam._job_from_dict(
-        asdict(_job(103, "AI Platform Engineer", "Example"))
-    )
+    restored = RecruitmentTeam._job_from_dict(asdict(_job(103, "AI Platform Engineer", "Example")))
 
     assert restored.parsed_jd["required_skills"] == ["Python"]
     assert restored.job_terms_preview == ("Python", "Semiconductor")
@@ -453,6 +461,7 @@ def test_read_shortlist_outside_a_conversation_is_loud_rather_than_empty():
 
 def test_read_shortlist_refuses_an_assessment_context():
     from backend.tests.fakes import AllowingEditEvidenceValidator
+
     """The two shapes share one ContextVar, so the wrong one must not read as empty."""
     from backend.tests.test_recruitment_team_module import (
         _candidate_profile_run,
@@ -516,14 +525,16 @@ def test_search_jobs_goes_through_the_port_without_a_hidden_level_filter():
     with assessment_context(context, initial_edits=context.proposed_edits):
         result = search_jobs.invoke({"query": "staff yield engineer"})
 
-    assert discovery.calls == [{
-        "query": "staff yield engineer",
-        "company": "",
-        "direct_employers_only": True,
-        "exclude_junior": False,
-        "singapore_only": True,
-        "title_phrase": "",
-    }]
+    assert discovery.calls == [
+        {
+            "query": "staff yield engineer",
+            "company": "",
+            "direct_employers_only": True,
+            "exclude_junior": False,
+            "singapore_only": True,
+            "title_phrase": "",
+        }
+    ]
     assert result["ok"] is True
     assert result["valid_empty"] is False
     assert [job["company"] for job in result["jobs"]] == ["NXP"]
@@ -543,6 +554,20 @@ def test_search_jobs_exposes_explicit_employer_constraints():
     }
 
 
+def test_search_jobs_contract_does_not_claim_verified_direct_employers():
+    from recruitment_team.open_agent.tools import search_jobs
+    from recruitment_team.prompts import COORDINATOR_SYSTEM_PROMPT
+
+    tool_contract = " ".join(search_jobs.description.casefold().split())
+    prompt_contract = " ".join(COORDINATOR_SYSTEM_PROMPT.casefold().split())
+    for contract in (tool_contract, prompt_contract):
+        assert "known recruitment-agency or other intermediary evidence" in contract
+        assert "remain unverified" in contract
+        assert "verified direct-employer postings" in contract
+    assert "results come from direct employers" not in tool_contract
+    assert "search direct employers by default" not in prompt_contract
+
+
 def test_search_jobs_forwards_named_company_and_agency_choice():
     from recruitment_team.open_agent.context import assessment_context
     from recruitment_team.open_agent.tools import search_jobs
@@ -550,21 +575,25 @@ def test_search_jobs_forwards_named_company_and_agency_choice():
     discovery = _RecordingDiscovery([_search_result([])])
     context = _context(discovery)
     with assessment_context(context, initial_edits=context.proposed_edits):
-        search_jobs.invoke({
+        search_jobs.invoke(
+            {
+                "query": "quality transformation",
+                "company": "Micron",
+                "direct_employers_only": False,
+                "title_phrase": "manager",
+            }
+        )
+
+    assert discovery.calls == [
+        {
             "query": "quality transformation",
             "company": "Micron",
             "direct_employers_only": False,
+            "exclude_junior": False,
+            "singapore_only": True,
             "title_phrase": "manager",
-        })
-
-    assert discovery.calls == [{
-        "query": "quality transformation",
-        "company": "Micron",
-        "direct_employers_only": False,
-        "exclude_junior": False,
-        "singapore_only": True,
-        "title_phrase": "manager",
-    }]
+        }
+    ]
 
 
 def test_write_shortlist_rejects_stale_jobs_outside_latest_company_constraint():
@@ -573,10 +602,12 @@ def test_write_shortlist_rejects_stale_jobs_outside_latest_company_constraint():
 
     stale = _job(201, "Quality Manager", "EnviroDynamics")
     micron = _job(202, "Senior Quality Manager", "Micron Semiconductor")
-    discovery = _RecordingDiscovery([
-        _search_result([stale]),
-        _search_result([micron]),
-    ])
+    discovery = _RecordingDiscovery(
+        [
+            _search_result([stale]),
+            _search_result([micron]),
+        ]
+    )
     match = _ranked_match(stale.job_id)
     context = _context(
         discovery,
@@ -585,11 +616,13 @@ def test_write_shortlist_rejects_stale_jobs_outside_latest_company_constraint():
 
     with assessment_context(context, initial_edits=context.proposed_edits):
         search_jobs.invoke({"query": "quality manager"})
-        search_jobs.invoke({
-            "query": "quality transformation",
-            "company": "Micron",
-            "direct_employers_only": True,
-        })
+        search_jobs.invoke(
+            {
+                "query": "quality transformation",
+                "company": "Micron",
+                "direct_employers_only": True,
+            }
+        )
         result = write_shortlist.invoke({"matches": [match]})
 
     assert result["accepted"] is False
@@ -649,15 +682,21 @@ def test_write_shortlist_accepts_only_known_jobs_with_verbatim_resume_quotes():
 
     with assessment_context(context, initial_edits=context.proposed_edits):
         accepted = write_shortlist.invoke({"matches": [match]})
-        rejected = write_shortlist.invoke({
-            "matches": [{
-                **match,
-                "matched": [{
-                    "statement": "Invented evidence.",
-                    "resume_quote": "This sentence is not in the resume.",
-                }],
-            }],
-        })
+        rejected = write_shortlist.invoke(
+            {
+                "matches": [
+                    {
+                        **match,
+                        "matched": [
+                            {
+                                "statement": "Invented evidence.",
+                                "resume_quote": "This sentence is not in the resume.",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
 
     assert accepted == {"accepted": True, "published_job_ids": [201]}
     assert context.drafted_matches == [match]
@@ -707,6 +746,7 @@ def test_a_source_failure_is_returned_to_the_agent_rather_than_raised():
     assert result["failure_type"] == "transient"
     assert result["failure_code"] == "connection_failure"
     assert result["retryable"] is False
+    assert result["retry"] is False
     assert len(context.search_results) == 1
 
 
@@ -744,9 +784,7 @@ def test_a_search_run_inside_a_turn_reaches_the_thread_and_survives_a_shortlist_
     from recruitment_team.interface import ShortlistJob, StartThread
     from recruitment_team.open_agent.tools import search_jobs
 
-    discovery = _RecordingDiscovery(
-        [_search_result([_job(501, "Yield Enhancement Engineer", "Micron")])]
-    )
+    discovery = _RecordingDiscovery([_search_result([_job(501, "Yield Enhancement Engineer", "Micron")])])
     model = _ToolCallingConversationModel(
         [[(search_jobs, {"query": "semiconductor yield analytics"})]],
         reply="Yield Enhancement Engineer at Micron is your closest current match.",
@@ -772,10 +810,10 @@ def test_a_search_run_inside_a_turn_reaches_the_thread_and_survives_a_shortlist_
         {
             "query": "semiconductor yield analytics",
             "company": "",
-                "direct_employers_only": True,
-                "exclude_junior": False,
-                "singapore_only": True,
-                "title_phrase": "",
+            "direct_employers_only": True,
+            "exclude_junior": False,
+            "singapore_only": True,
+            "title_phrase": "",
         }
     ]
     assert [job.job_id for job in snapshot.case_facts.recommendations] == [501]
@@ -803,10 +841,14 @@ def test_agent_publishes_an_ordered_explained_subset_of_search_results():
         _ranked_match(502),
         _ranked_match(503, pay_position="near_peer_median"),
     ]
-    model = _ToolCallingConversationModel([[
-        (search_jobs, {"query": "AI platform engineer"}),
-        (write_shortlist, {"matches": matches}),
-    ]])
+    model = _ToolCallingConversationModel(
+        [
+            [
+                (search_jobs, {"query": "AI platform engineer"}),
+                (write_shortlist, {"matches": matches}),
+            ]
+        ]
+    )
 
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
@@ -833,22 +875,29 @@ def test_agent_recorded_preferences_survive_even_when_the_final_reply_has_none()
     from recruitment_team.interface import StartThread
     from recruitment_team.open_agent.tools import record_preferences
 
-    model = _ToolCallingConversationModel([[
-        (record_preferences, {
-            "updates": [
-                {
-                    "field": "constraints",
-                    "value": "not computer vision",
-                    "evidence_quote": "Not computer vision",
-                },
-                {
-                    "field": "seniority",
-                    "value": "not entry level",
-                    "evidence_quote": "not entry level",
-                },
+    model = _ToolCallingConversationModel(
+        [
+            [
+                (
+                    record_preferences,
+                    {
+                        "updates": [
+                            {
+                                "field": "constraints",
+                                "value": "not computer vision",
+                                "evidence_quote": "Not computer vision",
+                            },
+                            {
+                                "field": "seniority",
+                                "value": "not entry level",
+                                "evidence_quote": "not entry level",
+                            },
+                        ]
+                    },
+                ),
             ]
-        }),
-    ]])
+        ]
+    )
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
 
@@ -861,9 +910,7 @@ def test_agent_recorded_preferences_survive_even_when_the_final_reply_has_none()
             ),
             idempotency_key="tool-preferences",
         )
-        snapshot = _team(db, model, _RecordingDiscovery([])).snapshot(
-            owner_id, receipt.thread_id
-        )
+        snapshot = _team(db, model, _RecordingDiscovery([])).snapshot(owner_id, receipt.thread_id)
 
     assert [(fact.field, fact.value) for fact in snapshot.case_facts.preferences] == [
         ("constraints", "not computer vision"),
@@ -993,9 +1040,7 @@ def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
             _search_result([]),
         ]
     )
-    model = _ToolCallingConversationModel(
-        [[], [(search_jobs, {"query": "quantum photonics architect"})]]
-    )
+    model = _ToolCallingConversationModel([[], [(search_jobs, {"query": "quantum photonics architect"})]])
 
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
@@ -1027,9 +1072,7 @@ def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
     assert snapshot.case_facts.latest_search_query == RESUME_HINT
     assert shortlisted.status == "completed"
     # The query that ran is still recorded, so the next SearchJobs command sees it.
-    assert _raw_case_facts(sessions, receipt.thread_id)["search_query"] == (
-        "quantum photonics architect"
-    )
+    assert _raw_case_facts(sessions, receipt.thread_id)["search_query"] == ("quantum photonics architect")
 
 
 def test_a_failed_search_leaves_the_existing_shortlist_alone():
@@ -1042,9 +1085,7 @@ def test_a_failed_search_leaves_the_existing_shortlist_alone():
             _failed_search(),
         ]
     )
-    model = _ToolCallingConversationModel(
-        [[], [(search_jobs, {"query": "staff yield engineer"})]]
-    )
+    model = _ToolCallingConversationModel([[], [(search_jobs, {"query": "staff yield engineer"})]])
 
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
@@ -1190,9 +1231,7 @@ def test_a_rewrite_drafted_in_a_turn_reaches_the_pending_table_and_stays_pending
         from models import ProposedResumeEdit, ResumeVersion
 
         stored = db.query(ResumeVersion).filter(ResumeVersion.id == resume_id).one()
-        db.query(ProposedResumeEdit).filter(
-            ProposedResumeEdit.thread_id == receipt.thread_id
-        ).one()
+        db.query(ProposedResumeEdit).filter(ProposedResumeEdit.thread_id == receipt.thread_id).one()
         assert stored.resume_text == resume_text
 
 
@@ -1226,15 +1265,19 @@ def test_candidate_confirmed_number_becomes_cited_pending_edit_and_survives_rest
         def respond(self, messages, resume_text, current_preferences=(), context=None):
             from recruitment_team.conversation_model import ModelReply
 
-            recorded = record_candidate_evidence.invoke({
-                "evidence_quotes": ["mentored 3 junior engineers at DBS"],
-            })
+            recorded = record_candidate_evidence.invoke(
+                {
+                    "evidence_quotes": ["mentored 3 junior engineers at DBS"],
+                }
+            )
             block = create_resume_document(resume_text)["blocks"][-1]
-            drafted = propose_resume_edit.invoke({
-                "block_id": block["id"],
-                "rewrite": "Guided 3 junior engineers through code reviews.",
-                "candidate_evidence_ids": recorded["evidence_ids"],
-            })
+            drafted = propose_resume_edit.invoke(
+                {
+                    "block_id": block["id"],
+                    "rewrite": "Guided 3 junior engineers through code reviews.",
+                    "candidate_evidence_ids": recorded["evidence_ids"],
+                }
+            )
             assert drafted["accepted"] is True
             return ModelReply(content="Drafted one confirmed edit.", model_name="test-model")
 
@@ -1256,11 +1299,7 @@ def test_candidate_confirmed_number_becomes_cited_pending_edit_and_survives_rest
         from models import ProposedResumeEdit, ResumeVersion
 
         stored = db.query(ResumeVersion).filter(ResumeVersion.id == resume_id).one()
-        edit_row = (
-            db.query(ProposedResumeEdit)
-            .filter(ProposedResumeEdit.thread_id == receipt.thread_id)
-            .one()
-        )
+        edit_row = db.query(ProposedResumeEdit).filter(ProposedResumeEdit.thread_id == receipt.thread_id).one()
 
     assert snapshot.case_facts.preferences == ()
     assert len(snapshot.case_facts.confirmed_evidence) == 1
@@ -1269,10 +1308,12 @@ def test_candidate_confirmed_number_becomes_cited_pending_edit_and_survives_rest
     assert fact.source_message_id == snapshot.messages[0].message_id
     assert pending[0]["rewrite"] == "Guided 3 junior engineers through code reviews."
     assert edit_row.evidence_ids == [fact.evidence_id]
-    assert pending[0]["evidence_refs"] == [{
-        "evidence_id": fact.evidence_id,
-        "evidence_quote": fact.evidence_quote,
-    }]
+    assert pending[0]["evidence_refs"] == [
+        {
+            "evidence_id": fact.evidence_id,
+            "evidence_quote": fact.evidence_quote,
+        }
+    ]
     assert stored.resume_text == source
 
 
@@ -1285,12 +1326,14 @@ def test_candidate_evidence_quote_and_id_must_be_exact_before_editing():
 
     document = {
         "revision": "rev-1",
-        "blocks": [{
-            "id": "b1",
-            "text": "Guided [N] junior engineers through code reviews.",
-            "section_key": "experience",
-            "entry_id": "e1",
-        }],
+        "blocks": [
+            {
+                "id": "b1",
+                "text": "Guided [N] junior engineers through code reviews.",
+                "section_key": "experience",
+                "entry_id": "e1",
+            }
+        ],
     }
     context = _context(
         _RecordingDiscovery([]),
@@ -1301,26 +1344,36 @@ def test_candidate_evidence_quote_and_id_must_be_exact_before_editing():
     )
 
     with assessment_context(context, initial_edits=context.proposed_edits):
-        invalid_quote = record_candidate_evidence.invoke({
-            "evidence_quotes": ["I mentored 4 junior engineers."],
-        })
-        unsupported = propose_resume_edit.invoke({
-            "block_id": "b1",
-            "rewrite": "Guided 3 junior engineers through code reviews.",
-        })
-        recorded = record_candidate_evidence.invoke({
-            "evidence_quotes": ["mentored 3 junior engineers"],
-        })
-        unknown_id = propose_resume_edit.invoke({
-            "block_id": "b1",
-            "rewrite": "Guided 3 junior engineers through code reviews.",
-            "candidate_evidence_ids": ["candidate_missing"],
-        })
-        accepted = propose_resume_edit.invoke({
-            "block_id": "b1",
-            "rewrite": "Guided 3 junior engineers through code reviews.",
-            "candidate_evidence_ids": recorded["evidence_ids"],
-        })
+        invalid_quote = record_candidate_evidence.invoke(
+            {
+                "evidence_quotes": ["I mentored 4 junior engineers."],
+            }
+        )
+        unsupported = propose_resume_edit.invoke(
+            {
+                "block_id": "b1",
+                "rewrite": "Guided 3 junior engineers through code reviews.",
+            }
+        )
+        recorded = record_candidate_evidence.invoke(
+            {
+                "evidence_quotes": ["mentored 3 junior engineers"],
+            }
+        )
+        unknown_id = propose_resume_edit.invoke(
+            {
+                "block_id": "b1",
+                "rewrite": "Guided 3 junior engineers through code reviews.",
+                "candidate_evidence_ids": ["candidate_missing"],
+            }
+        )
+        accepted = propose_resume_edit.invoke(
+            {
+                "block_id": "b1",
+                "rewrite": "Guided 3 junior engineers through code reviews.",
+                "candidate_evidence_ids": recorded["evidence_ids"],
+            }
+        )
 
     assert invalid_quote["accepted"] is False
     assert "Unsupported numeric facts: 3" in unsupported["reason"]
@@ -1347,15 +1400,11 @@ def test_an_unknown_block_refusal_names_the_blocks_the_agent_may_edit():
 
     from resume_document import create_resume_document
 
-    document = create_resume_document(
-        "HAOMING KOO\n\nEXPERIENCE\n\nLed the yield ramp for four fabs.\n"
-    )
+    document = create_resume_document("HAOMING KOO\n\nEXPERIENCE\n\nLed the yield ramp for four fabs.\n")
     context = _context(_RecordingDiscovery([]), resume_document=document)
 
     with assessment_context(context, initial_edits=context.proposed_edits):
-        answer = propose_resume_edit.invoke(
-            {"block_id": "experience-bullet-1", "rewrite": "Led the yield ramp."}
-        )
+        answer = propose_resume_edit.invoke({"block_id": "experience-bullet-1", "rewrite": "Led the yield ramp."})
 
     assert answer["accepted"] is False
     known = [block["id"] for block in document["blocks"]]
@@ -1426,9 +1475,7 @@ def test_a_rejected_turn_persists_no_search_it_ran():
             return ModelReply(content="", model_name="tool-calling-double")
 
     discovery = _RecordingDiscovery([_search_result([_job(1201, "Yield Engineer", "Micron")])])
-    model = _EmptyReplyModel(
-        [[(search_jobs, {"query": "yield engineer"})]]
-    )
+    model = _EmptyReplyModel([[(search_jobs, {"query": "yield engineer"})]])
 
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)

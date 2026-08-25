@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 from hashlib import sha256
 from html import unescape
 from typing import Any, Literal, Protocol
+from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import StructuredTool
@@ -770,6 +771,7 @@ class LangChainCandidateProfiler:
                         checkpoint_id,
                         {
                             "event": "checkpoint_hit",
+                            "attempt_id": uuid4().hex,
                             "stage": "candidate_profile",
                             "scope_id": scope.scope_id,
                             "status": "success",
@@ -849,6 +851,7 @@ class LangChainCandidateProfiler:
                 ):
                     model_call_count += 1
                     attempt_started = time.perf_counter()
+                    attempt_observation_id = str(uuid4())
                     if failure:
                         progress("correction", scope, attempt=attempt)
                     attempt_request = list(request)
@@ -917,6 +920,7 @@ class LangChainCandidateProfiler:
                                 checkpoint_id,
                                 {
                                     "event": "model_attempt",
+                                    "attempt_id": attempt_observation_id,
                                     "stage": "candidate_profile",
                                     "scope_id": scope.scope_id,
                                     "attempt": attempt,
@@ -985,6 +989,7 @@ class LangChainCandidateProfiler:
                         checkpoint_id,
                         {
                             "event": "model_attempt",
+                            "attempt_id": attempt_observation_id,
                             "stage": "candidate_profile",
                             "scope_id": scope.scope_id,
                             "attempt": attempt,

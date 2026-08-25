@@ -7,6 +7,7 @@ import re
 import time
 from dataclasses import asdict, replace
 from typing import Any, Callable, Literal
+from uuid import uuid4
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import StructuredTool
@@ -548,6 +549,7 @@ class GloballyReviewedCandidateProfiler:
                 checkpoint_id,
                 {
                     "event": "checkpoint_hit",
+                    "attempt_id": uuid4().hex,
                     "stage": stage.strip("_"),
                     "scope_id": stage,
                     "status": "success",
@@ -588,6 +590,7 @@ class GloballyReviewedCandidateProfiler:
                     )
                 )
             started = time.perf_counter()
+            attempt_observation_id = str(uuid4())
             with self._telemetry.operation(
                 "candidate_profile_review.model_attempt",
                 {
@@ -608,6 +611,7 @@ class GloballyReviewedCandidateProfiler:
                         checkpoint_id,
                         {
                             "event": "model_attempt",
+                            "attempt_id": attempt_observation_id,
                             "stage": stage.strip("_"),
                             "scope_id": stage,
                             "attempt": attempt,
@@ -663,6 +667,7 @@ class GloballyReviewedCandidateProfiler:
                 checkpoint_id,
                 {
                     "event": "model_attempt",
+                    "attempt_id": attempt_observation_id,
                     "stage": stage.strip("_"),
                     "scope_id": stage,
                     "attempt": attempt,

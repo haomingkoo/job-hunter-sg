@@ -19,6 +19,8 @@ import config as app_config
 _SCHEMA_MIGRATION_LOCK_KEY = 0x4A485347
 _ACTIVITY_METADATA_SCRUB_VERSION = "2026-08-23-recruitment-activity-metadata-scrub"
 _DELETION_TOMBSTONE_SCRUB_VERSION = "2026-08-23-recruitment-deletion-tombstone-scrub"
+_WORK_LOCATION_SCOPE_V1 = "2026-08-26-work-location-scope-v1"
+_WORK_LOCATION_BACKFILL_BATCH_SIZE = 1000
 
 DEFAULT_DATABASE_PATH = Path(__file__).resolve().with_name("jobhunter.db")
 DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DEFAULT_DATABASE_PATH}")
@@ -43,11 +45,13 @@ if not DATABASE_URL.startswith("sqlite"):
 
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 if DATABASE_URL.startswith("sqlite"):
+
     @event.listens_for(engine, "connect")
     def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
+
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
@@ -110,13 +114,9 @@ def _apply_lightweight_migrations(connection=None) -> None:
     if "embedding_vector" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN embedding_vector JSON")
     if "embedding_input_sha256" not in existing_columns:
-        statements.append(
-            "ALTER TABLE scraped_jobs ADD COLUMN embedding_input_sha256 VARCHAR(64) DEFAULT ''"
-        )
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN embedding_input_sha256 VARCHAR(64) DEFAULT ''")
     if "embedding_model_identity" not in existing_columns:
-        statements.append(
-            "ALTER TABLE scraped_jobs ADD COLUMN embedding_model_identity VARCHAR(300) DEFAULT ''"
-        )
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN embedding_model_identity VARCHAR(300) DEFAULT ''")
     if "closing_date" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN closing_date VARCHAR(100) DEFAULT ''")
     if "source_posting_id" not in existing_columns:
@@ -138,8 +138,20 @@ def _apply_lightweight_migrations(connection=None) -> None:
     if "company_ssic_source" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN company_ssic_source VARCHAR(30) DEFAULT ''")
     if "direct_employer" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN direct_employer INTEGER NOT NULL DEFAULT -1")
+    if "employer_relationship" not in existing_columns:
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN employer_relationship VARCHAR(20)")
+    if "employer_relationship_evidence" not in existing_columns:
         statements.append(
-            "ALTER TABLE scraped_jobs ADD COLUMN direct_employer INTEGER NOT NULL DEFAULT -1"
+            "ALTER TABLE scraped_jobs ADD COLUMN employer_relationship_evidence VARCHAR(50) NOT NULL DEFAULT ''"
+        )
+    if "work_location_scope" not in existing_columns:
+        statements.append(
+            "ALTER TABLE scraped_jobs ADD COLUMN work_location_scope VARCHAR(20) NOT NULL DEFAULT 'unknown'"
+        )
+    if "work_location_scope_source" not in existing_columns:
+        statements.append(
+            "ALTER TABLE scraped_jobs ADD COLUMN work_location_scope_source VARCHAR(40) NOT NULL DEFAULT 'unknown'"
         )
     if "salary_floor" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN salary_floor INTEGER DEFAULT 0")
@@ -150,9 +162,7 @@ def _apply_lightweight_migrations(connection=None) -> None:
     if "promotional_score" not in existing_columns:
         statements.append("ALTER TABLE scraped_jobs ADD COLUMN promotional_score INTEGER DEFAULT 0")
     if "company_promotional_score" not in existing_columns:
-        statements.append(
-            "ALTER TABLE scraped_jobs ADD COLUMN company_promotional_score INTEGER DEFAULT 0"
-        )
+        statements.append("ALTER TABLE scraped_jobs ADD COLUMN company_promotional_score INTEGER DEFAULT 0")
 
     existing_indexes = {idx["name"] for idx in inspector.get_indexes("scraped_jobs")}
     index_defs = {
@@ -168,6 +178,8 @@ def _apply_lightweight_migrations(connection=None) -> None:
         "ix_scraped_jobs_salary_floor": "CREATE INDEX ix_scraped_jobs_salary_floor ON scraped_jobs (salary_floor)",
         "ix_scraped_jobs_content_hash": "CREATE INDEX ix_scraped_jobs_content_hash ON scraped_jobs (content_hash)",
         "ix_scraped_jobs_promotional": "CREATE INDEX ix_scraped_jobs_promotional ON scraped_jobs (promotional_score)",
+        "ix_scraped_jobs_work_location_scope": "CREATE INDEX ix_scraped_jobs_work_location_scope ON scraped_jobs (work_location_scope)",
+        "ix_scraped_jobs_employer_relationship": "CREATE INDEX ix_scraped_jobs_employer_relationship ON scraped_jobs (employer_relationship)",
     }
     for idx_name, idx_sql in index_defs.items():
         if idx_name not in existing_indexes:
@@ -182,9 +194,7 @@ def _apply_lightweight_migrations(connection=None) -> None:
         if "email_verified_at" not in user_columns:
             statements.append("ALTER TABLE users ADD COLUMN email_verified_at TIMESTAMP")
         if "token_version" not in user_columns:
-            statements.append(
-                "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0"
-            )
+            statements.append("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
 
     if "tracked_jobs" in inspector.get_table_names():
         tracked_columns = {col["name"] for col in inspector.get_columns("tracked_jobs")}
@@ -211,41 +221,40 @@ def _apply_lightweight_migrations(connection=None) -> None:
         if "unsubscribed_at" not in alert_columns:
             statements.append("ALTER TABLE job_alert_preferences ADD COLUMN unsubscribed_at TIMESTAMP")
         if "match_cursor_at" not in alert_columns:
-            statements.extend((
-                "ALTER TABLE job_alert_preferences ADD COLUMN match_cursor_at TIMESTAMP",
-                "UPDATE job_alert_preferences SET match_cursor_at = last_run_at "
-                "WHERE match_cursor_at IS NULL",
-            ))
+            statements.extend(
+                (
+                    "ALTER TABLE job_alert_preferences ADD COLUMN match_cursor_at TIMESTAMP",
+                    "UPDATE job_alert_preferences SET match_cursor_at = last_run_at WHERE match_cursor_at IS NULL",
+                )
+            )
 
     if "job_alert_deliveries" in inspector.get_table_names():
-        delivery_indexes = {
-            index["name"] for index in inspector.get_indexes("job_alert_deliveries")
-        }
+        delivery_indexes = {index["name"] for index in inspector.get_indexes("job_alert_deliveries")}
         if "ux_job_alert_deliveries_user_job" not in delivery_indexes:
             # Keep the newest state for legacy duplicates before enforcing the
             # identity already assumed by record_delivery_action().
-            statements.extend((
-                "DELETE FROM job_alert_deliveries WHERE id IN ("
-                "SELECT id FROM ("
-                "SELECT id, ROW_NUMBER() OVER ("
-                "PARTITION BY user_id, scraped_job_id ORDER BY id DESC"
-                ") AS duplicate_rank FROM job_alert_deliveries"
-                ") ranked WHERE duplicate_rank > 1)",
-                "CREATE UNIQUE INDEX ux_job_alert_deliveries_user_job "
-                "ON job_alert_deliveries (user_id, scraped_job_id)",
-            ))
+            statements.extend(
+                (
+                    "DELETE FROM job_alert_deliveries WHERE id IN ("
+                    "SELECT id FROM ("
+                    "SELECT id, ROW_NUMBER() OVER ("
+                    "PARTITION BY user_id, scraped_job_id ORDER BY id DESC"
+                    ") AS duplicate_rank FROM job_alert_deliveries"
+                    ") ranked WHERE duplicate_rank > 1)",
+                    "CREATE UNIQUE INDEX ux_job_alert_deliveries_user_job "
+                    "ON job_alert_deliveries (user_id, scraped_job_id)",
+                )
+            )
 
     # usage_logs: rate limits and admin metrics should not full-scan forever
     if "usage_logs" in inspector.get_table_names():
         usage_indexes = {idx["name"] for idx in inspector.get_indexes("usage_logs")}
         usage_index_defs = {
             "ix_usage_logs_user_action_created": (
-                "CREATE INDEX ix_usage_logs_user_action_created "
-                "ON usage_logs (user_id, action, created_at)"
+                "CREATE INDEX ix_usage_logs_user_action_created ON usage_logs (user_id, action, created_at)"
             ),
             "ix_usage_logs_action_created": (
-                "CREATE INDEX ix_usage_logs_action_created "
-                "ON usage_logs (action, created_at)"
+                "CREATE INDEX ix_usage_logs_action_created ON usage_logs (action, created_at)"
             ),
         }
         for idx_name, idx_sql in usage_index_defs.items():
@@ -269,9 +278,7 @@ def _apply_lightweight_migrations(connection=None) -> None:
                 "ALTER TABLE target_assessment_artifacts ADD COLUMN synthesis_claims JSON NOT NULL DEFAULT '[]'"
             )
         if "pending_synthesis_claims" not in assessment_columns:
-            statements.append(
-                "ALTER TABLE target_assessment_artifacts ADD COLUMN pending_synthesis_claims JSON"
-            )
+            statements.append("ALTER TABLE target_assessment_artifacts ADD COLUMN pending_synthesis_claims JSON")
         if "pending_proposed_edits" not in assessment_columns:
             statements.append("ALTER TABLE target_assessment_artifacts ADD COLUMN pending_proposed_edits JSON")
 
@@ -282,37 +289,23 @@ def _apply_lightweight_migrations(connection=None) -> None:
                 "ALTER TABLE candidate_profile_artifacts ADD COLUMN execution_metrics JSON NOT NULL DEFAULT '{}'"
             )
         if "evaluation" not in profile_columns:
-            statements.append(
-                "ALTER TABLE candidate_profile_artifacts ADD COLUMN evaluation JSON"
-            )
+            statements.append("ALTER TABLE candidate_profile_artifacts ADD COLUMN evaluation JSON")
 
     if "recruitment_runs" in inspector.get_table_names():
         run_columns = {col["name"] for col in inspector.get_columns("recruitment_runs")}
         if "attempt_ledger" not in run_columns:
-            statements.append(
-                "ALTER TABLE recruitment_runs ADD COLUMN attempt_ledger JSON NOT NULL DEFAULT '{}'"
-            )
+            statements.append("ALTER TABLE recruitment_runs ADD COLUMN attempt_ledger JSON NOT NULL DEFAULT '{}'")
         if "lease_owner" not in run_columns:
-            statements.append(
-                "ALTER TABLE recruitment_runs ADD COLUMN lease_owner VARCHAR(64)"
-            )
+            statements.append("ALTER TABLE recruitment_runs ADD COLUMN lease_owner VARCHAR(64)")
         if "lease_expires_at" not in run_columns:
-            statements.append(
-                "ALTER TABLE recruitment_runs ADD COLUMN lease_expires_at TIMESTAMP"
-            )
+            statements.append("ALTER TABLE recruitment_runs ADD COLUMN lease_expires_at TIMESTAMP")
 
     if "recruitment_activity_events" in inspector.get_table_names():
-        activity_columns = {
-            col["name"] for col in inspector.get_columns("recruitment_activity_events")
-        }
+        activity_columns = {col["name"] for col in inspector.get_columns("recruitment_activity_events")}
         if "parent_id" not in activity_columns:
-            statements.append(
-                "ALTER TABLE recruitment_activity_events ADD COLUMN parent_id TEXT"
-            )
+            statements.append("ALTER TABLE recruitment_activity_events ADD COLUMN parent_id TEXT")
         if "duration_ms" not in activity_columns:
-            statements.append(
-                "ALTER TABLE recruitment_activity_events ADD COLUMN duration_ms FLOAT"
-            )
+            statements.append("ALTER TABLE recruitment_activity_events ADD COLUMN duration_ms FLOAT")
         if "attributes" not in activity_columns:
             statements.append(
                 "ALTER TABLE recruitment_activity_events ADD COLUMN attributes JSON NOT NULL DEFAULT '{}'"
@@ -340,16 +333,18 @@ def _apply_lightweight_migrations(connection=None) -> None:
     for statement in statements:
         connection.execute(text(statement))
 
+    if "scraped_jobs" in inspector.get_table_names():
+        _run_once_migration(
+            connection,
+            _WORK_LOCATION_SCOPE_V1,
+            lambda: _backfill_work_location_scopes(connection),
+        )
+
     if "recruitment_activity_events" in inspector.get_table_names():
         _run_once_migration(
             connection,
             _ACTIVITY_METADATA_SCRUB_VERSION,
-            lambda: connection.execute(
-                text(
-                    "UPDATE recruitment_activity_events "
-                    "SET detail = '{}', attributes = '{}'"
-                )
-            ),
+            lambda: connection.execute(text("UPDATE recruitment_activity_events SET detail = '{}', attributes = '{}'")),
         )
 
     if "recruitment_thread_deletion_requests" in inspector.get_table_names():
@@ -366,13 +361,82 @@ def _apply_lightweight_migrations(connection=None) -> None:
         )
 
 
+def _backfill_work_location_scopes(connection) -> None:
+    """Persist the versioned legacy MCF classification in bounded batches."""
+    from job_visibility import resolve_work_location_scope
+
+    last_id = 0
+    while True:
+        rows = list(
+            connection.execute(
+                text(
+                    "SELECT id, source, location, title, description FROM scraped_jobs "
+                    "WHERE id > :last_id ORDER BY id LIMIT :batch_size"
+                ),
+                {
+                    "last_id": last_id,
+                    "batch_size": _WORK_LOCATION_BACKFILL_BATCH_SIZE,
+                },
+            ).mappings()
+        )
+        if not rows:
+            return
+        updates = []
+        for row in rows:
+            location = str(row["location"] or "")
+            normalized = " ".join(location.split()).casefold()
+            provisional = (
+                "singapore"
+                if row["source"] == "MyCareersFuture"
+                and normalized
+                and normalized
+                not in {
+                    "anywhere",
+                    "hybrid",
+                    "remote",
+                    "various",
+                    "worldwide",
+                }
+                else "unknown"
+            )
+            resolved = resolve_work_location_scope(
+                provisional,
+                location,
+                str(row["title"] or ""),
+                str(row["description"] or ""),
+            )
+            updates.append(
+                {
+                    "job_id": int(row["id"]),
+                    "scope": resolved,
+                    "scope_source": (
+                        "text_override_v1"
+                        if resolved != provisional
+                        else "legacy_mcf_source_provisional_v1"
+                        if provisional == "singapore"
+                        else "unknown"
+                    ),
+                }
+            )
+        connection.execute(
+            text(
+                "UPDATE scraped_jobs SET work_location_scope = :scope, "
+                "work_location_scope_source = :scope_source WHERE id = :job_id"
+            ),
+            updates,
+        )
+        last_id = int(rows[-1]["id"])
+
+
 def _run_once_migration(connection, version: str, migrate) -> None:
     """Run one idempotent data repair and record it in the same transaction."""
-    connection.execute(text(
-        "CREATE TABLE IF NOT EXISTS app_schema_migrations ("
-        "version VARCHAR(100) PRIMARY KEY, "
-        "applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
-    ))
+    connection.execute(
+        text(
+            "CREATE TABLE IF NOT EXISTS app_schema_migrations ("
+            "version VARCHAR(100) PRIMARY KEY, "
+            "applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+        )
+    )
     applied = connection.execute(
         text("SELECT version FROM app_schema_migrations WHERE version = :version"),
         {"version": version},

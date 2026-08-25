@@ -185,19 +185,24 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <button
-              type="button"
-              onClick={() => setDirectOnly((value) => !value)}
-              disabled={loading}
-              className={`inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                directOnly
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                  : "border-white bg-white text-[#384959] hover:bg-[#f0f4f8]"
-              }`}
-            >
-              <ShieldCheck size={14} />
-              Direct employers only
-            </button>
+            <div>
+              <button
+                type="button"
+                onClick={() => setDirectOnly((value) => !value)}
+                disabled={loading}
+                className={`inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium shadow-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                  directOnly
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-white bg-white text-[#384959] hover:bg-[#f0f4f8]"
+                }`}
+              >
+                <ShieldCheck size={14} />
+                Hide known recruiters
+              </button>
+              <p className="mt-1 max-w-56 text-[11px] leading-tight text-[#6A89A7]">
+                Verified direct and unverified employers remain eligible.
+              </p>
+            </div>
             <button
               type="button"
               onClick={loadPowerMatches}
@@ -233,8 +238,8 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
         {data?.resume_ready && (
           <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-800">
             {data.direct_employers_only
-              ? "Direct-employer mode is on, so staffing and recruitment firms are filtered out of these matches."
-              : "Direct-employer mode is off, so recruiter-posted roles may appear and are ranked slightly lower."}
+              ? "Known recruiters are hidden; verified direct and unverified employers remain eligible."
+              : "Known-recruiter filtering is off, so recruiter-posted roles may appear and are ranked by fit."}
           </div>
         )}
       </div>

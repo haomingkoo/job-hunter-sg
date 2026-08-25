@@ -37,6 +37,10 @@ export function ExecutionDetails({ metrics }) {
   const models = metrics.models || [];
   const validationCodes = metrics.validation_codes || [];
   const hasSeparateUsageMetrics = Object.hasOwn(metrics, "reported_model_call_count");
+  const transportCallCountAvailable = Object.hasOwn(metrics, "transport_call_count");
+  const transportTokenUsageAvailable = metrics.transport_token_usage_available === true;
+  const transportRetryCountAvailable = Object.hasOwn(metrics, "transport_retry_count");
+  const transportErrorCountAvailable = Object.hasOwn(metrics, "transport_error_count");
 
   return (
     <details className="rounded-xl border border-[#DCE7F2] bg-[#FAFCFE] px-3 py-2 text-xs text-[#4A6785]">
@@ -52,7 +56,11 @@ export function ExecutionDetails({ metrics }) {
             </div>
             <div>
               <dt>Transport-observed calls</dt>
-              <dd className="font-semibold text-[#384959]">{formatMetricNumber(metrics.transport_call_count)}</dd>
+              <dd className="font-semibold text-[#384959]">
+                {transportCallCountAvailable
+                  ? formatMetricNumber(metrics.transport_call_count)
+                  : "Unavailable"}
+              </dd>
             </div>
           </>
         ) : (
@@ -75,7 +83,11 @@ export function ExecutionDetails({ metrics }) {
             </div>
             <div>
               <dt>Transport-observed input tokens</dt>
-              <dd className="font-semibold text-[#384959]">{formatMetricNumber(metrics.transport_input_tokens)}</dd>
+              <dd className="font-semibold text-[#384959]">
+                {transportTokenUsageAvailable
+                  ? formatMetricNumber(metrics.transport_input_tokens)
+                  : "Unavailable"}
+              </dd>
             </div>
             <div>
               <dt>Workflow-reported output tokens</dt>
@@ -83,7 +95,11 @@ export function ExecutionDetails({ metrics }) {
             </div>
             <div>
               <dt>Transport-observed output tokens</dt>
-              <dd className="font-semibold text-[#384959]">{formatMetricNumber(metrics.transport_output_tokens)}</dd>
+              <dd className="font-semibold text-[#384959]">
+                {transportTokenUsageAvailable
+                  ? formatMetricNumber(metrics.transport_output_tokens)
+                  : "Unavailable"}
+              </dd>
             </div>
           </>
         ) : (
@@ -100,11 +116,19 @@ export function ExecutionDetails({ metrics }) {
         )}
         <div>
           <dt>Transport retries</dt>
-          <dd className="font-semibold text-[#384959]">{formatMetricNumber(metrics.transport_retry_count)}</dd>
+          <dd className="font-semibold text-[#384959]">
+            {transportRetryCountAvailable
+              ? formatMetricNumber(metrics.transport_retry_count)
+              : "Unavailable"}
+          </dd>
         </div>
         <div>
           <dt>Transport errors</dt>
-          <dd className="font-semibold text-[#384959]">{formatMetricNumber(metrics.transport_error_count)}</dd>
+          <dd className="font-semibold text-[#384959]">
+            {transportErrorCountAvailable
+              ? formatMetricNumber(metrics.transport_error_count)
+              : "Unavailable"}
+          </dd>
         </div>
       </dl>
       {models.length > 0 && (

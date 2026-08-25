@@ -236,6 +236,8 @@ def test_global_merge_and_one_independent_evaluation_reduce_repetition_with_prov
         "submit_candidate_profile_evaluation",
     ]
     assert result.model_call_count == 3
+    assert all(attempt.get("attempt_id") for attempt in store.metrics["attempts"])
+    assert len({attempt["attempt_id"] for attempt in store.metrics["attempts"]}) == 3
     assert result.scope_count == 5
     model_spans = [span for span in telemetry.spans if span.name == "candidate_profile_review.model_attempt"]
     validation_spans = [span for span in telemetry.spans if span.name == "candidate_profile_review.validation"]
@@ -472,9 +474,15 @@ def test_review_checkpoints_make_replay_zero_call():
         model,
         checkpoint_store=store,
     ).profile(document)
+    replayed = GloballyReviewedCandidateProfiler(
+        _Extractor(local),
+        model,
+        checkpoint_store=store,
+    ).profile(document)
 
     assert model.calls == []
     assert result.checkpoint_hit_count == 3
+    assert replayed.checkpoint_hit_count == 6
     assert result.evaluation["result"] == "pass"
 
 

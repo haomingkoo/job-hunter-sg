@@ -31,8 +31,13 @@ from email_service import (
     send_email,
     smtp_configured,
 )
-from employer_filter import normalize_employer_name
+from employer_filter import (
+    employer_relationship_eligibility_condition,
+    get_employer_relationship_readiness,
+    normalize_employer_name,
+)
 from models import JobAlertDelivery, JobAlertPreference, ScrapedJob, TrackedJob, User, UserMemory
+from job_visibility import apply_public_job_visibility
 from skill_extractor import extract_skill_phrases, normalize_skill_strings
 
 
@@ -202,12 +207,7 @@ def verify_unsubscribe_token(token: str, db: Session) -> int | None:
     user_id = int(payload)
     if user_id <= 0 or user_id > 2**63 - 1:
         return None
-    user = (
-        db.query(User)
-        .filter(User.id == user_id)
-        .populate_existing()
-        .first()
-    )
+    user = db.query(User).filter(User.id == user_id).populate_existing().first()
     if not user:
         return None
     expected = hmac.new(
@@ -344,21 +344,9 @@ def score_job_for_alert(
     job_skills = _job_alert_terms(job)
     title_terms = _extract_title_terms(job.title)
 
-    matched_skills = [
-        skill
-        for skill in job_skills
-        if _term_matches_resume(skill, resume_lookup, lower_resume)
-    ]
-    missing_skills = [
-        skill
-        for skill in job_skills
-        if not _term_matches_resume(skill, resume_lookup, lower_resume)
-    ]
-    title_hits = [
-        term
-        for term in title_terms
-        if _term_matches_resume(term, resume_lookup, lower_resume)
-    ]
+    matched_skills = [skill for skill in job_skills if _term_matches_resume(skill, resume_lookup, lower_resume)]
+    missing_skills = [skill for skill in job_skills if not _term_matches_resume(skill, resume_lookup, lower_resume)]
+    title_hits = [term for term in title_terms if _term_matches_resume(term, resume_lookup, lower_resume)]
 
     if not matched_skills and not title_hits:
         return None
@@ -420,15 +408,11 @@ def find_alert_matches(
     limit: int | None = None,
 ) -> list[AlertMatch]:
     now = now or _utcnow()
-    since = (
-        _as_utc(getattr(pref, "match_cursor_at", None))
-        or _as_utc(pref.last_run_at)
-        or (now - timedelta(days=1))
-    )
+    since = _as_utc(getattr(pref, "match_cursor_at", None)) or _as_utc(pref.last_run_at) or (now - timedelta(days=1))
     since_iso = since.isoformat()
     keywords = _split_keywords(pref.keywords)
 
-    query = (
+    query = apply_public_job_visibility(
         db.query(ScrapedJob)
         .options(
             load_only(
@@ -453,13 +437,18 @@ def find_alert_matches(
             )
         )
         .filter(
-            ScrapedJob.hidden == 0,
             or_(ScrapedJob.scraped_at >= since_iso, ScrapedJob.posted_at_sort >= since_iso),
         )
     )
 
     if pref.direct_employers_only:
-        query = query.filter(ScrapedJob.direct_employer == 1)
+        query = query.filter(
+            employer_relationship_eligibility_condition(
+                ScrapedJob.employer_relationship,
+                ScrapedJob.employer_relationship_evidence,
+                ScrapedJob.company,
+            )
+        )
 
     if keywords:
         keyword_conditions = []
@@ -477,11 +466,7 @@ def find_alert_matches(
 
     delivered_ids = {
         row[0]
-        for row in (
-            db.query(JobAlertDelivery.scraped_job_id)
-            .filter(JobAlertDelivery.user_id == pref.user_id)
-            .all()
-        )
+        for row in (db.query(JobAlertDelivery.scraped_job_id).filter(JobAlertDelivery.user_id == pref.user_id).all())
     }
     tracked_ids, tracked_keys = _tracked_suppression(db, pref.user_id)
     resume_skills = extract_resume_alert_skills(resume_text)
@@ -538,23 +523,23 @@ def render_alert_email(user: User, pref: JobAlertPreference, matches: list[Alert
             ]
         )
         missing_html = (
-            f"<div style=\"color:#6b7280;font-size:13px;margin-top:4px;\">Gaps: {html.escape(missing)}</div>"
+            f'<div style="color:#6b7280;font-size:13px;margin-top:4px;">Gaps: {html.escape(missing)}</div>'
             if missing
             else ""
         )
         html_rows.append(
-            "<div style=\"border:1px solid #dbe7f3;border-radius:10px;padding:14px 16px;margin:12px 0;\">"
-            f"<div style=\"font-size:13px;font-weight:700;color:#0f766e;\">Suitability {match.score}</div>"
-            f"<div style=\"font-size:16px;font-weight:700;color:#243447;margin-top:4px;\">"
+            '<div style="border:1px solid #dbe7f3;border-radius:10px;padding:14px 16px;margin:12px 0;">'
+            f'<div style="font-size:13px;font-weight:700;color:#0f766e;">Suitability {match.score}</div>'
+            f'<div style="font-size:16px;font-weight:700;color:#243447;margin-top:4px;">'
             f"{html.escape(job.title)}</div>"
-            f"<div style=\"color:#4b6478;margin-top:2px;\">{html.escape(job.company)}</div>"
-            f"<div style=\"color:#6b7280;font-size:13px;margin-top:4px;\">"
+            f'<div style="color:#4b6478;margin-top:2px;">{html.escape(job.company)}</div>'
+            f'<div style="color:#6b7280;font-size:13px;margin-top:4px;">'
             f"{html.escape(job.location or 'Singapore')}{html.escape(salary)}</div>"
-            f"<div style=\"color:#374151;font-size:13px;margin-top:10px;\">Matched: {html.escape(matched)}</div>"
+            f'<div style="color:#374151;font-size:13px;margin-top:10px;">Matched: {html.escape(matched)}</div>'
             f"{missing_html}"
-            f"<a href=\"{html.escape(url)}\" style=\"display:inline-block;margin-top:12px;"
+            f'<a href="{html.escape(url)}" style="display:inline-block;margin-top:12px;'
             "background:#384959;color:white;text-decoration:none;border-radius:8px;padding:8px 12px;"
-            "font-size:13px;font-weight:700;\">View posting</a>"
+            'font-size:13px;font-weight:700;">View posting</a>'
             "</div>"
         )
 
@@ -567,19 +552,19 @@ def render_alert_email(user: User, pref: JobAlertPreference, matches: list[Alert
     )
     text_body = "\n".join(text_lines)
     html_body = (
-        "<div style=\"font-family:Inter,Arial,sans-serif;background:#f6f9fc;padding:24px;color:#243447;\">"
-        "<div style=\"max-width:640px;margin:0 auto;background:white;border:1px solid #dbe7f3;"
-        "border-radius:12px;padding:24px;\">"
-        f"<h1 style=\"font-size:20px;margin:0 0 8px;\">New matched jobs for {html.escape(user.name)}</h1>"
-        f"<p style=\"color:#4b6478;margin:0 0 18px;\">These roles scored at or above {pref.min_score} "
+        '<div style="font-family:Inter,Arial,sans-serif;background:#f6f9fc;padding:24px;color:#243447;">'
+        '<div style="max-width:640px;margin:0 auto;background:white;border:1px solid #dbe7f3;'
+        'border-radius:12px;padding:24px;">'
+        f'<h1 style="font-size:20px;margin:0 0 8px;">New matched jobs for {html.escape(user.name)}</h1>'
+        f'<p style="color:#4b6478;margin:0 0 18px;">These roles scored at or above {pref.min_score} '
         "against your saved resume.</p>"
         f"{''.join(html_rows)}"
-        "<p style=\"color:#6b7280;font-size:13px;margin-top:20px;\">"
+        '<p style="color:#6b7280;font-size:13px;margin-top:20px;">'
         "Track jobs you apply to or want to suppress, and Job Hunter SG will avoid repeat alerts. "
-        f"You can manage alerts from Account: <a href=\"{html.escape(app_base_url)}\">{html.escape(app_base_url)}</a>"
+        f'You can manage alerts from Account: <a href="{html.escape(app_base_url)}">{html.escape(app_base_url)}</a>'
         "</p>"
-        "<p style=\"color:#6b7280;font-size:12px;margin-top:12px;\">"
-        f"<a href=\"{html.escape(unsubscribe_url)}\" style=\"color:#6b7280;\">Unsubscribe from job alerts</a>. "
+        '<p style="color:#6b7280;font-size:12px;margin-top:12px;">'
+        f'<a href="{html.escape(unsubscribe_url)}" style="color:#6b7280;">Unsubscribe from job alerts</a>. '
         "Job match alerts are informational only and are not job offers."
         "</p>"
         "</div></div>"
@@ -595,10 +580,7 @@ def _process_due_alert(
     dry_run: bool,
 ) -> tuple[int, bool] | None:
     """Process one locked preference; return candidate count and backlog state."""
-    if pref.direct_employers_only and db.query(ScrapedJob.id).filter(
-        ScrapedJob.hidden == 0,
-        ScrapedJob.direct_employer < 0,
-    ).first() is not None:
+    if pref.direct_employers_only and not get_employer_relationship_readiness(db)["ready"]:
         raise EmployerClassificationUnavailable
     user = db.get(User, pref.user_id)
     mem = db.query(UserMemory).filter(UserMemory.user_id == pref.user_id).first()
@@ -725,11 +707,7 @@ def run_job_alerts(dry_run: bool = False, limit_users: int | None = None) -> dic
                 try:
                     local_guard = nullcontext() if dry_run else account_lifecycle_lock(user_id)
                     with local_guard:
-                        storage_guard = (
-                            nullcontext()
-                            if dry_run
-                            else locked_account_storage(user_id, db)
-                        )
+                        storage_guard = nullcontext() if dry_run else locked_account_storage(user_id, db)
                         with storage_guard:
                             db.expire_all()
                             pref = db.get(JobAlertPreference, preference_id)
@@ -768,11 +746,13 @@ def run_job_alerts(dry_run: bool = False, limit_users: int | None = None) -> dic
                     db.rollback()
                     stats["smtp_accepted"] += 1
                     stats["persistence_after_acceptance"] += 1
-                    stats["errors"].append({
-                        "user_id": user_id,
-                        "error": type(exc).__name__,
-                        "stage": "persistence_after_acceptance",
-                    })
+                    stats["errors"].append(
+                        {
+                            "user_id": user_id,
+                            "error": type(exc).__name__,
+                            "stage": "persistence_after_acceptance",
+                        }
+                    )
                 except EmployerClassificationUnavailable:
                     db.rollback()
                     stats["skipped_employer_index_unavailable"] += 1
@@ -780,12 +760,14 @@ def run_job_alerts(dry_run: bool = False, limit_users: int | None = None) -> dic
                     db.rollback()
                     if exc.delivery_unknown:
                         stats["delivery_unknown"] += 1
-                    stats["errors"].append({
-                        "user_id": user_id,
-                        "error": type(exc).__name__,
-                        "stage": exc.stage,
-                        "delivery_unknown": exc.delivery_unknown,
-                    })
+                    stats["errors"].append(
+                        {
+                            "user_id": user_id,
+                            "error": type(exc).__name__,
+                            "stage": exc.stage,
+                            "delivery_unknown": exc.delivery_unknown,
+                        }
+                    )
                 except Exception as exc:
                     db.rollback()
                     stats["errors"].append({"user_id": user_id, "error": type(exc).__name__})

@@ -89,6 +89,8 @@ def sanitize_job(job_dict: dict) -> dict:
         "title",
         "company",
         "location",
+        "work_location_scope",
+        "work_location_scope_source",
         "salary",
         "source",
         "agency",
@@ -96,11 +98,25 @@ def sanitize_job(job_dict: dict) -> dict:
         "company_ssic_code",
         "company_ssic_description",
         "company_ssic_source",
+        "employer_relationship",
+        "employer_relationship_evidence",
     ):
         if field in sanitized and isinstance(sanitized[field], str):
             sanitized[field] = sanitize_html(sanitized[field])
     if "description" in sanitized and isinstance(sanitized["description"], str):
         sanitized["description"] = sanitize_html(sanitized["description"])
+    from job_visibility import resolve_work_location_scope
+
+    reported_scope = str(sanitized.get("work_location_scope") or "unknown").strip().casefold()
+    resolved_scope = resolve_work_location_scope(
+        reported_scope,
+        sanitized.get("location"),
+        sanitized.get("title"),
+        sanitized.get("description"),
+    )
+    sanitized["work_location_scope"] = resolved_scope
+    if resolved_scope != reported_scope:
+        sanitized["work_location_scope_source"] = "text_override_v1" if resolved_scope == "overseas" else "unknown"
     if "url" in sanitized:
         sanitized["url"] = sanitize_url(sanitized.get("url", ""))
     try:

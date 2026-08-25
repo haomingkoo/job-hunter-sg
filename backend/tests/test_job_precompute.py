@@ -64,23 +64,48 @@ print(value)
 
 
 def test_job_precomputes_persist_direct_employer_classification():
-    direct = apply_job_precomputes({
-        "title": "Quality Manager",
-        "company": "Micron Semiconductor",
-        "description": "Lead quality systems.",
-        "skills": [],
-        "salary": "",
-    })
-    agency = apply_job_precomputes({
-        "title": "Quality Manager",
-        "company": "Example Talent Search",
-        "description": "EA Licence No: 12C3456.",
-        "skills": [],
-        "salary": "",
-    })
+    direct = apply_job_precomputes(
+        {
+            "title": "Quality Manager",
+            "company": "Micron Semiconductor",
+            "description": "Lead quality systems.",
+            "skills": [],
+            "salary": "",
+        }
+    )
+    agency = apply_job_precomputes(
+        {
+            "title": "Quality Manager",
+            "company": "Example Talent Search",
+            "description": "EA Licence No: 12C3456.",
+            "skills": [],
+            "salary": "",
+        }
+    )
+    mcf_agency = apply_job_precomputes(
+        {
+            "title": "Quality Manager",
+            "company": "Example Services",
+            "description": "Find your next opportunity.",
+            "source": "MyCareersFuture",
+            "company_ssic_code": "78104",
+            "company_ssic_description": "Employment agencies",
+            "company_ssic_source": "mcf_posted_company",
+            "skills": [],
+            "salary": "",
+        }
+    )
 
     assert direct["direct_employer"] == 1
+    assert direct["employer_relationship"] == "unknown"
+    assert direct["employer_relationship_evidence"] == "legacy_no_relationship_signal"
     assert agency["direct_employer"] == 0
+    assert agency["employer_relationship"] == "intermediary"
+    assert agency["employer_relationship_evidence"] == "company_recruitment_taxonomy"
+    assert mcf_agency["company_ssic_code"] == "78104"
+    assert mcf_agency["company_ssic_source"] == "mcf_posted_company"
+    assert mcf_agency["employer_relationship"] == "intermediary"
+    assert mcf_agency["employer_relationship_evidence"] == "mcf_posted_company_ssic_78"
 
 
 def test_incremental_precompute_backfill_skips_retired_jobs():
@@ -118,9 +143,7 @@ def test_incremental_precompute_backfill_skips_retired_jobs():
         done, _ = _precompute_batch(
             db,
             (ScrapedJob.direct_employer < 0)
-            & ScrapedJob.dedup_key.in_(
-                ("precompute-public-job", "precompute-retired-job")
-            ),
+            & ScrapedJob.dedup_key.in_(("precompute-public-job", "precompute-retired-job")),
             50,
             public_only=True,
         )
@@ -134,6 +157,52 @@ def test_incremental_precompute_backfill_skips_retired_jobs():
         db.query(ScrapedJob).filter(
             ScrapedJob.dedup_key.in_(("precompute-public-job", "precompute-retired-job"))
         ).delete(synchronize_session=False)
+        db.commit()
+        db.close()
+
+
+def test_incremental_precompute_repairs_invalid_nonempty_relationship_pair():
+    from database import SessionLocal
+    from employer_filter import employer_relationship_unclassified_condition
+    from main import _precompute_batch
+    from models import ScrapedJob
+
+    now = datetime.now(timezone.utc).isoformat()
+    db = SessionLocal()
+    try:
+        job = ScrapedJob(
+            title="Quality Manager",
+            company="Micron Semiconductor",
+            description="Lead quality systems.",
+            source="MyCareersFuture",
+            dedup_key="invalid-relationship-pair",
+            posted_at_sort=now,
+            scraped_at=now,
+            employer_relationship="direct",
+            employer_relationship_evidence="mcf_no_relationship_signal",
+        )
+        db.add(job)
+        db.commit()
+
+        done, _ = _precompute_batch(
+            db,
+            employer_relationship_unclassified_condition(
+                ScrapedJob.employer_relationship,
+                ScrapedJob.employer_relationship_evidence,
+            )
+            & (ScrapedJob.dedup_key == "invalid-relationship-pair"),
+            50,
+            public_only=True,
+        )
+        repaired = db.query(ScrapedJob).filter_by(dedup_key="invalid-relationship-pair").one()
+
+        assert done >= 1
+        assert repaired.employer_relationship == "unknown"
+        assert repaired.employer_relationship_evidence == "mcf_no_relationship_signal"
+    finally:
+        db.query(ScrapedJob).filter_by(dedup_key="invalid-relationship-pair").delete(
+            synchronize_session=False
+        )
         db.commit()
         db.close()
 

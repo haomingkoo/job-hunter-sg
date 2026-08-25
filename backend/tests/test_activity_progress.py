@@ -12,7 +12,7 @@ import json
 
 from langchain_core.messages import AIMessage
 
-from recruitment_team.open_agent.streaming import describe_progress
+from recruitment_team.open_agent.streaming import describe_progress, rejected_tool_result
 from recruitment_team.activity_events import public_detail, trace_attributes
 
 from backend.tests.test_open_agent_runner import _ScriptedModel
@@ -38,6 +38,27 @@ def _result(tool_name: str, content, team_member: str = "coordinator") -> dict:
     }
 
 
+def test_nonretryable_failed_tool_result_is_a_mechanical_rejection():
+    assert (
+        rejected_tool_result(
+            _result(
+                "search_jobs",
+                {"ok": False, "retryable": False, "failure_code": "index_unavailable"},
+            )
+        )
+        is True
+    )
+    assert (
+        rejected_tool_result(
+            _result(
+                "search_jobs",
+                {"ok": False, "retryable": True, "failure_code": "transport_timeout"},
+            )
+        )
+        is False
+    )
+
+
 def test_a_tool_call_keeps_the_summary_shape_the_panel_parses():
     summary, detail = describe_progress(_call("read_shortlist"))
 
@@ -53,22 +74,22 @@ def test_a_persona_is_named_as_the_member_that_ran_the_tool():
 
 
 def test_a_search_call_never_exposes_the_query_it_ran():
-    _, detail = describe_progress(
-        _call("search_jobs", {"query": "semiconductor yield analytics engineer"})
-    )
+    _, detail = describe_progress(_call("search_jobs", {"query": "semiconductor yield analytics engineer"}))
 
     assert "query" not in detail
 
 
 def test_a_search_call_exposes_constraints_without_company_text():
-    _, detail = describe_progress(_call(
-        "search_jobs",
-        {
-            "query": "quality transformation",
-            "company": "Micron",
-            "direct_employers_only": True,
-        },
-    ))
+    _, detail = describe_progress(
+        _call(
+            "search_jobs",
+            {
+                "query": "quality transformation",
+                "company": "Micron",
+                "direct_employers_only": True,
+            },
+        )
+    )
 
     assert detail["company_filter_applied"] is True
     assert detail["direct_employers_only"] is True
@@ -119,14 +140,19 @@ def test_a_coordinator_search_result_reports_how_many_postings_came_back():
 
 
 def test_a_search_result_exposes_safe_candidate_funnel_counts():
-    _, detail = describe_progress(_result("search_jobs", {
-        "ok": True,
-        "jobs": [{"job_id": 1}],
-        "candidate_count": 7,
-        "eligible_candidate_count": 63,
-        "visible_candidate_count": 7,
-        "truncated": True,
-    }))
+    _, detail = describe_progress(
+        _result(
+            "search_jobs",
+            {
+                "ok": True,
+                "jobs": [{"job_id": 1}],
+                "candidate_count": 7,
+                "eligible_candidate_count": 63,
+                "visible_candidate_count": 7,
+                "truncated": True,
+            },
+        )
+    )
 
     assert detail["result_count"] == 1
     assert detail["candidate_count"] == 7
@@ -137,9 +163,7 @@ def test_a_search_result_exposes_safe_candidate_funnel_counts():
 
 def test_the_assessment_search_result_shape_reports_the_same_count():
     """`agent_tool_contract.search_jobs_result` reports `results` and a count."""
-    _, detail = describe_progress(
-        _result("search_jobs", {"ok": True, "count": 1, "results": [{"id": 7}]})
-    )
+    _, detail = describe_progress(_result("search_jobs", {"ok": True, "count": 1, "results": [{"id": 7}]}))
 
     assert detail["outcome"] == "1 matching posting"
 
@@ -211,17 +235,13 @@ def test_an_accepted_edit_says_it_is_still_pending():
 
 
 def test_a_published_shortlist_is_not_misreported_as_a_resume_edit():
-    _, detail = describe_progress(
-        _result("write_shortlist", {"accepted": True, "published_job_ids": [12, 34]})
-    )
+    _, detail = describe_progress(_result("write_shortlist", {"accepted": True, "published_job_ids": [12, 34]}))
 
     assert detail["outcome"] == "2 roles ranked with resume evidence"
 
 
 def test_a_plan_update_reports_the_visible_artifact_size():
-    _, detail = describe_progress(
-        _result("write_plan", {"accepted": True, "recorded": 3, "changed": True})
-    )
+    _, detail = describe_progress(_result("write_plan", {"accepted": True, "recorded": 3, "changed": True}))
 
     assert detail["outcome"] == "plan updated with 3 steps"
 
@@ -251,9 +271,7 @@ def test_a_rejected_edit_reports_the_gate_that_rejected_it():
 
 
 def test_an_unbounded_rejection_reason_is_not_exposed():
-    _, detail = describe_progress(
-        _result("propose_resume_edit", {"accepted": False, "reason": "gate failed. " * 50})
-    )
+    _, detail = describe_progress(_result("propose_resume_edit", {"accepted": False, "reason": "gate failed. " * 50}))
 
     assert detail["outcome"] == "no resume edit passed the evidence gate"
     assert "gate failed" not in detail["outcome"]
@@ -261,21 +279,24 @@ def test_an_unbounded_rejection_reason_is_not_exposed():
 
 def test_a_model_message_produces_no_activity_row():
     """Invariant 9. A plain model message is reasoning, not a conclusion."""
-    assert describe_progress(
-        {"kind": "message", "team_member": "coordinator", "content": "Let me think about this."}
-    ) is None
+    assert (
+        describe_progress({"kind": "message", "team_member": "coordinator", "content": "Let me think about this."})
+        is None
+    )
 
 
 def test_a_model_attempt_produces_metadata_only_activity():
-    summary, detail = describe_progress({
-        "kind": "model_attempt",
-        "team_member": "recruiter",
-        "id": "model-step-1",
-        "model": "provider-model",
-        "input_tokens": 123,
-        "output_tokens": 45,
-        "content": "private model output",
-    })
+    summary, detail = describe_progress(
+        {
+            "kind": "model_attempt",
+            "team_member": "recruiter",
+            "id": "model-step-1",
+            "model": "provider-model",
+            "input_tokens": 123,
+            "output_tokens": 45,
+            "content": "private model output",
+        }
+    )
 
     assert summary == "recruiter completed a model step."
     assert detail == {"stage": "model", "model_attempt_id": "model-step-1"}
@@ -319,8 +340,12 @@ def test_no_posting_text_travels_through_a_result_row():
             {
                 "ok": True,
                 "jobs": [
-                    {"job_id": 1, "title": "Yield Enhancement Engineer", "company": "Micron",
-                     "description": "Own wafer yield across three fabs."}
+                    {
+                        "job_id": 1,
+                        "title": "Yield Enhancement Engineer",
+                        "company": "Micron",
+                        "description": "Own wafer yield across three fabs.",
+                    }
                 ],
             },
         )
@@ -346,6 +371,7 @@ def test_the_search_graph_streams_the_count_that_came_back(monkeypatch):
     from recruitment_team.tool_call_guard import ToolCallGuardMiddleware
 
     monkeypatch.setattr(agent_models.ai_service, "_get_api_key", lambda: "test-key")
+
     class FakeDb:
         def close(self):
             return None
@@ -356,18 +382,20 @@ def test_the_search_graph_streams_the_count_that_came_back(monkeypatch):
 
     search = AIMessage(
         content="",
-        tool_calls=[{
-            "name": "search_jobs",
-            "args": {
-                "query": "semiconductor yield analytics engineer",
-                "n": None,
-                "detail": False,
-                # This test isolates event streaming; its FakeDb deliberately
-                # has no query interface for eligibility filtering.
-                "singapore_only": False,
-            },
-            "id": "call-1",
-        }],
+        tool_calls=[
+            {
+                "name": "search_jobs",
+                "args": {
+                    "query": "semiconductor yield analytics engineer",
+                    "n": None,
+                    "detail": False,
+                    # This test isolates event streaming; its FakeDb deliberately
+                    # has no query interface for eligibility filtering.
+                    "singapore_only": False,
+                },
+                "id": "call-1",
+            }
+        ],
     )
     graph = create_resume_agent(
         model=_ScriptedModel(responses=[search, AIMessage(content="Done.")]),
@@ -376,16 +404,14 @@ def test_the_search_graph_streams_the_count_that_came_back(monkeypatch):
         middleware=[ToolCallGuardMiddleware()],
     )
 
-    events = list(iter_progress_events(
-        graph,
-        {"messages": [{"role": "user", "content": "Find matching roles."}]},
-        {"recursion_limit": 12},
-    ))
-    progress = [
-        row
-        for event in events
-        if (row := describe_progress(event)) is not None
-    ]
+    events = list(
+        iter_progress_events(
+            graph,
+            {"messages": [{"role": "user", "content": "Find matching roles."}]},
+            {"recursion_limit": 12},
+        )
+    )
+    progress = [row for event in events if (row := describe_progress(event)) is not None]
     by_stage = {detail.get("stage"): (summary, detail) for summary, detail in progress}
 
     assert by_stage["call"][0] == "coordinator called search_jobs."
@@ -448,9 +474,7 @@ def test_a_conversational_turn_publishes_one_activity_row_per_tool_step():
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
     with sessions() as db:
-        team = RecruitmentTeam(
-            db, model, _discovery(), _role_profiler(), RecordedTelemetry(), publisher
-        )
+        team = RecruitmentTeam(db, model, _discovery(), _role_profiler(), RecordedTelemetry(), publisher)
         receipt = team.execute(
             owner_id,
             StartThread(resume_version_id=resume_id, message="Find me yield roles."),
@@ -460,9 +484,9 @@ def test_a_conversational_turn_publishes_one_activity_row_per_tool_step():
     # A fresh session, so this reads what the turn really committed rather than
     # what is still pending in the session that wrote it.
     with sessions() as db:
-        stored = RecruitmentTeam(
-            db, model, _discovery(), _role_profiler(), RecordedTelemetry(), publisher
-        ).events(owner_id, receipt.thread_id, after_sequence=0)
+        stored = RecruitmentTeam(db, model, _discovery(), _role_profiler(), RecordedTelemetry(), publisher).events(
+            owner_id, receipt.thread_id, after_sequence=0
+        )
 
     steps = [event for event in publisher.events if event.event_type == "conversation"]
     assert [event.summary for event in steps] == [

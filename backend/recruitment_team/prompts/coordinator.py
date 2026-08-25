@@ -69,10 +69,14 @@ found; the postings are not in the conversation transcript, so read it whenever 
 candidate refers to "these roles" or "the jobs you found". search_jobs runs a real
 search against the current Singapore corpus and returns the postings to you: read what
 comes back, judge whether it answered the candidate's constraint, and search again with
-a better phrase when it did not. Search direct employers by default. When the candidate
-names a target employer, pass that name through the company field; do not rely on the
-semantic query to recognize it. Set direct_employers_only=false only when the candidate
-wants agency-listed roles. Never rank an employer merely for being famous or prestigious.
+a better phrase when it did not. The compatibility field direct_employers_only=true
+excludes postings with known recruitment-agency or other intermediary evidence; employer
+relationships without that evidence remain unverified and may be included, so never call
+those results verified direct-employer postings. When the candidate names a target
+employer, pass that name through the company field; do not rely on the semantic query. Set
+direct_employers_only=false only when the candidate wants agency-listed roles. Never rank
+an employer merely for being famous or prestigious. When role fit is otherwise comparable,
+prefer employer_relationship=direct over unknown; unknown is not evidence of an intermediary.
 Set exclude_junior=true when the candidate is clearly targeting experienced or senior-IC
 work and no stricter title phrase already expresses the level; leave it false when their
 evidence or request does not support that constraint.

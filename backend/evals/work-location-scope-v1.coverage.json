@@ -1,0 +1,31 @@
+{
+  "classifier_version": "work-location-scope-v1",
+  "corpus": {
+    "sha256": "fc407973db31ed90bfbb8987fa64303e84830dcb30ccd35eb1cb69ab77911a85",
+    "visible_job_count": 16390
+  },
+  "generated_at": "2026-08-26",
+  "method": "Pre-migration projection of visible local rows; non-empty, non-generic legacy MyCareersFuture locations receive transitional Singapore scope before explicit overseas title/description overrides.",
+  "sources": {
+    "MyCareersFuture": {
+      "provenance": "legacy_mcf_source_provisional_v1",
+      "location_families": {
+        "building_or_address_label": {
+          "overseas": 35,
+          "singapore": 10387,
+          "unknown": 0
+        },
+        "canonical_region": {
+          "overseas": 6,
+          "singapore": 5962,
+          "unknown": 0
+        }
+      },
+      "totals": {
+        "overseas": 41,
+        "singapore": 16349,
+        "unknown": 0
+      }
+    }
+  }
+}

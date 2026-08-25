@@ -15,15 +15,19 @@ from embedding_service import (
     find_similar_jobs,
     find_similar_jobs_for_ids,
 )
-from employer_filter import company_name_matches
+from employer_filter import (
+    company_name_matches,
+    employer_relationship_eligibility_condition,
+    employer_relationship_rank,
+    get_employer_relationship_readiness,
+)
 from job_visibility import (
+    WORK_LOCATION_SINGAPORE,
     apply_public_job_visibility,
     experienced_hire_prefilter_condition,
     is_junior_posting,
     is_singapore_job_location,
     job_title_matches,
-    overseas_worksite_description_prefilter_condition,
-    singapore_job_prefilter_condition,
 )
 from langchain_core.tools import tool
 from models import ScrapedJob
@@ -42,6 +46,7 @@ def _search_failure_type(exc: Exception) -> str:
     if any(term in name for term in ("auth", "permission", "unauthorized")):
         return "authentication"
     return "unavailable"
+
 
 _current_bullets: ContextVar[dict[str, str]] = ContextVar(
     "resume_agent_current_bullets",
@@ -78,7 +83,9 @@ def search_jobs(
     `exclude_junior` drops traineeships and entry-level postings, which
     similarity alone cannot tell apart from senior work in the same field.
     `company` constrains results to that named employer on whole normalized
-    words. `direct_employers_only` excludes recruitment agencies.
+    words. `direct_employers_only` is a compatibility name: it excludes
+    employers with known intermediary evidence, while unverified employers
+    remain eligible and must not be described as verified direct employers.
     `singapore_only` excludes postings whose stated work location is overseas.
     `title_phrase` requires that normalized whole-word phrase in the job title.
     """
@@ -98,13 +105,7 @@ def search_jobs(
         clean_company = (company or "").strip()
         clean_title_phrase = (title_phrase or "").strip()
         eligible_job_ids = None
-        if (
-            clean_company
-            or clean_title_phrase
-            or direct_employers_only
-            or exclude_junior
-            or singapore_only
-        ):
+        if clean_company or clean_title_phrase or direct_employers_only or exclude_junior or singapore_only:
             eligible_query = apply_public_job_visibility(
                 db.query(
                     ScrapedJob.id,
@@ -112,75 +113,57 @@ def search_jobs(
                     ScrapedJob.title,
                     ScrapedJob.location,
                     ScrapedJob.seniority,
+                    ScrapedJob.work_location_scope,
                 )
             )
             if direct_employers_only:
-                unclassified = apply_public_job_visibility(
-                    db.query(ScrapedJob.id)
-                ).filter(ScrapedJob.direct_employer < 0).first()
-                if unclassified:
+                if not get_employer_relationship_readiness(db)["ready"]:
                     return contract.search_jobs_error(
                         clean_query,
                         "employer_index_unavailable",
                         "The employer classification index is rebuilding. Please retry shortly.",
                         failure_type="unavailable",
                     )
-                eligible_query = eligible_query.filter(ScrapedJob.direct_employer == 1)
+                eligible_query = eligible_query.filter(
+                    employer_relationship_eligibility_condition(
+                        ScrapedJob.employer_relationship,
+                        ScrapedJob.employer_relationship_evidence,
+                        ScrapedJob.company,
+                    )
+                )
             if clean_company:
                 first_word = next(iter(re.findall(r"[a-z0-9]+", clean_company.casefold())), "")
-                eligible_query = eligible_query.filter(
-                    ScrapedJob.company.ilike(f"%{first_word}%")
-                )
+                eligible_query = eligible_query.filter(ScrapedJob.company.ilike(f"%{first_word}%"))
             if clean_title_phrase:
                 first_title_word = next(
                     iter(re.findall(r"[a-z0-9]+", clean_title_phrase.casefold())),
                     "",
                 )
-                eligible_query = eligible_query.filter(
-                    ScrapedJob.title.ilike(f"%{first_title_word}%")
-                )
+                eligible_query = eligible_query.filter(ScrapedJob.title.ilike(f"%{first_title_word}%"))
             if exclude_junior:
-                eligible_query = eligible_query.filter(experienced_hire_prefilter_condition(
-                    ScrapedJob.seniority,
-                    ScrapedJob.title,
-                ))
-            if singapore_only:
                 eligible_query = eligible_query.filter(
-                    singapore_job_prefilter_condition(ScrapedJob.location)
+                    experienced_hire_prefilter_condition(
+                        ScrapedJob.seniority,
+                        ScrapedJob.title,
+                    )
                 )
+            if singapore_only:
+                eligible_query = eligible_query.filter(ScrapedJob.work_location_scope == WORK_LOCATION_SINGAPORE)
             eligible_job_ids = {
                 job_id
-                for job_id, employer, title, location, seniority
-                in eligible_query.all()
+                for job_id, employer, title, location, seniority, work_location_scope in eligible_query.all()
                 if (not clean_company or company_name_matches(employer, clean_company))
                 and (not clean_title_phrase or job_title_matches(title, clean_title_phrase))
                 and (
                     not singapore_only
-                    or is_singapore_job_location(location, title)
-                )
-                and (
-                    not exclude_junior
-                    or not is_junior_posting(seniority, title)
-                )
-            }
-            if singapore_only and eligible_job_ids:
-                suspect_descriptions = apply_public_job_visibility(
-                    db.query(ScrapedJob.id, ScrapedJob.description)
-                ).filter(
-                    singapore_job_prefilter_condition(ScrapedJob.location),
-                    overseas_worksite_description_prefilter_condition(
-                        ScrapedJob.description
-                    ),
-                )
-                eligible_job_ids.difference_update(
-                    job_id
-                    for job_id, description in suspect_descriptions.all()
-                    if job_id in eligible_job_ids
-                    and not is_singapore_job_location(
-                        "Singapore",
-                        description=description,
+                    or is_singapore_job_location(
+                        location,
+                        title,
+                        work_location_scope=work_location_scope,
                     )
                 )
+                and (not exclude_junior or not is_junior_posting(seniority, title))
+            }
         query_vector = encode_text(clean_query)
         candidate_limit = contract.semantic_candidate_limit(limit)
         if clean_company:
@@ -204,18 +187,12 @@ def search_jobs(
                 [],
                 detail=detail,
                 candidate_count=0,
-                eligible_candidate_count=(
-                    len(eligible_job_ids) if eligible_job_ids is not None else None
-                ),
+                eligible_candidate_count=(len(eligible_job_ids) if eligible_job_ids is not None else None),
                 visible_candidate_count=0,
             )
 
         scores = {job_id: score for job_id, score in similar}
-        jobs = (
-            apply_public_job_visibility(db.query(ScrapedJob))
-            .filter(ScrapedJob.id.in_(scores.keys()))
-            .all()
-        )
+        jobs = apply_public_job_visibility(db.query(ScrapedJob)).filter(ScrapedJob.id.in_(scores.keys())).all()
         by_id = {job.id: job for job in jobs}
         results = [
             contract.job_payload(
@@ -227,6 +204,13 @@ def search_jobs(
             for job_id, _score in similar
             if job_id in by_id
         ]
+        results.sort(
+            key=lambda item: (
+                -float(item.get("score") or 0),
+                -employer_relationship_rank(item.get("employer_relationship")),
+                int(item["id"]),
+            )
+        )
         deduplicated = contract.deduplicate_job_payloads(results)
         return contract.search_jobs_result(
             clean_query,
@@ -234,9 +218,7 @@ def search_jobs(
             deduplicated,
             detail=detail,
             candidate_count=len(similar),
-            eligible_candidate_count=(
-                len(eligible_job_ids) if eligible_job_ids is not None else None
-            ),
+            eligible_candidate_count=(len(eligible_job_ids) if eligible_job_ids is not None else None),
             visible_candidate_count=len(results),
         )
     except EmbeddingIndexUnavailable:
@@ -270,14 +252,10 @@ def get_job(job_id: int) -> dict:
     db = None
     try:
         db = SessionLocal()
-        job = apply_public_job_visibility(
-            db.query(ScrapedJob).filter(ScrapedJob.id == job_id)
-        ).first()
+        job = apply_public_job_visibility(db.query(ScrapedJob).filter(ScrapedJob.id == job_id)).first()
         if not job:
             return contract.get_job_empty_result(job_id)
-        return contract.get_job_result(
-            contract.job_payload(job, detail=True, include_parsed=False)
-        )
+        return contract.get_job_result(contract.job_payload(job, detail=True, include_parsed=False))
     except Exception as exc:
         return contract.tool_error(
             contract.GET_JOB_TOOL,
@@ -308,10 +286,7 @@ def score_resume(resume_text: str) -> dict:
     return {
         "overall_score": result.get("overall_score", 0),
         "dimensions": {
-            name: {
-                key: dimension.get(key)
-                for key in ("score", "max", "status")
-            }
+            name: {key: dimension.get(key) for key in ("score", "max", "status")}
             for name, dimension in result.get("dimensions", {}).items()
         },
         "keyword_match": {
@@ -398,8 +373,7 @@ def propose_edit(bullet_id: str, rewrite: str) -> dict:
             "application_status": "rejected",
             "bullet_id": bullet_id,
             "rewrite": "",
-            "reason": "; ".join(gate.message for gate in failed)
-            or "Validation gates rejected rewrite.",
+            "reason": "; ".join(gate.message for gate in failed) or "Validation gates rejected rewrite.",
             "gates": _gate_payload(gates),
         }
 

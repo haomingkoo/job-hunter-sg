@@ -83,8 +83,18 @@ def _eligible(
         if policy == "released":
             if employer.is_recruitment_employer(company, ssic, description):
                 return False
-        elif not employer.is_direct_employer(company, ssic, description):
-            return False
+        else:
+            relationship = employer.classify_employer_relationship(
+                source=str(job.get("source") or ""),
+                company=company,
+                agency=str(job.get("agency") or ""),
+                ssic_code=str(job.get("company_ssic_code") or ""),
+                ssic_description=ssic,
+                ssic_source=str(job.get("company_ssic_source") or ""),
+                description=description,
+            ).relationship
+            if relationship == employer.EMPLOYER_RELATIONSHIP_INTERMEDIARY:
+                return False
     requested_company = str(case.get("company") or "").strip()
     if requested_company and not employer.company_name_matches(company, requested_company):
         return False
@@ -94,8 +104,25 @@ def _eligible(
     title_phrase = str(case.get("title_phrase") or "").strip()
     if title_phrase and not visibility.job_title_matches(title, title_phrase):
         return False
+    location = str(job.get("location") or "")
+    frozen_scope = str(job.get("work_location_scope") or "").strip().casefold()
+    if not frozen_scope:
+        normalized_location = " ".join(location.split()).casefold()
+        frozen_scope = "unknown"
+        if "singapore" in normalized_location:
+            frozen_scope = "singapore"
+        elif (
+            str(job.get("source") or "") == "MyCareersFuture"
+            and normalized_location
+            and normalized_location
+            not in {"anywhere", "hybrid", "remote", "various", "worldwide"}
+        ):
+            frozen_scope = "singapore"
     if case.get("singapore_only", True) and not visibility.is_singapore_job_location(
-        str(job.get("location") or ""), title, description
+        location,
+        title,
+        description,
+        frozen_scope,
     ):
         return False
     return not case.get("exclude_junior", False) or not visibility.is_junior_posting(
@@ -113,11 +140,7 @@ def _rank_case(
     policy: str,
     modules: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    eligible_indices = [
-        index
-        for index, job in enumerate(jobs)
-        if _eligible(job, case, policy=policy, modules=modules)
-    ]
+    eligible_indices = [index for index, job in enumerate(jobs) if _eligible(job, case, policy=policy, modules=modules)]
     if not eligible_indices:
         return []
     top_k = int(case["top_k"])
@@ -137,27 +160,49 @@ def _rank_case(
             if modules["job_visibility"].is_junior_posting(
                 str(job.get("seniority") or ""),
                 str(job.get("title") or ""),
-                modules["job_precompute"].salary_floor_from_text(
-                    str(job.get("salary") or "")
-                ),
+                modules["job_precompute"].salary_floor_from_text(str(job.get("salary") or "")),
             ):
                 continue
-        payloads.append({
-            "id": index,
-            "key": job["key"],
-            "title": job.get("title", ""),
-            "company": job.get("company", ""),
-            "location": job.get("location", ""),
-            "description": job.get("description", ""),
-            "source": job.get("source", ""),
-            "source_posting_id": job.get("source_posting_id", ""),
-            "score": score,
-        })
+        payloads.append(
+            {
+                "id": index,
+                "key": job["key"],
+                "title": job.get("title", ""),
+                "company": job.get("company", ""),
+                "location": job.get("location", ""),
+                "description": job.get("description", ""),
+                "source": job.get("source", ""),
+                "source_posting_id": job.get("source_posting_id", ""),
+                "score": score,
+                "employer_relationship": (
+                    modules["employer_filter"]
+                    .classify_employer_relationship(
+                        source=str(job.get("source") or ""),
+                        company=str(job.get("company") or ""),
+                        agency=str(job.get("agency") or ""),
+                        ssic_code=str(job.get("company_ssic_code") or ""),
+                        ssic_description=str(job.get("company_ssic_description") or ""),
+                        ssic_source=str(job.get("company_ssic_source") or ""),
+                        description=str(job.get("description") or ""),
+                    )
+                    .relationship
+                    if policy == "candidate"
+                    else None
+                ),
+            }
+        )
+    if policy == "candidate":
+        payloads.sort(
+            key=lambda item: (
+                -float(item["score"]),
+                -modules["employer_filter"].employer_relationship_rank(
+                    item.get("employer_relationship")
+                ),
+                int(item["id"]),
+            )
+        )
     deduplicated = modules["agent_tool_contract"].deduplicate_job_payloads(payloads)
-    return [
-        {"job_key": str(job["key"]), "score": round(float(job["score"]), 8)}
-        for job in deduplicated[:top_k]
-    ]
+    return [{"job_key": str(job["key"]), "score": round(float(job["score"]), 8)} for job in deduplicated[:top_k]]
 
 
 def capture(
@@ -195,11 +240,19 @@ def capture(
         raise ValueError("embedding matrix shape or dtype mismatch")
     modules = _implementation_modules(root)
     embedding = modules["embedding_service"]
-    if (
-        embedding.EMBEDDING_MODEL_NAME != encoder["model"]
-        or embedding.EMBEDDING_MODEL_REVISION != encoder["revision"]
-    ):
+    if embedding.EMBEDDING_MODEL_NAME != encoder["model"] or embedding.EMBEDDING_MODEL_REVISION != encoder["revision"]:
         raise ValueError("implementation encoder differs from the protocol")
+    classifier_version = "released-legacy"
+    employer_classifier_version = "released-legacy"
+    if policy == "candidate":
+        classifier_version = modules["job_visibility"].WORK_LOCATION_CLASSIFIER_VERSION
+        expected_classifier = protocol["work_location_classifier"]["version"]
+        if classifier_version != expected_classifier:
+            raise ValueError("candidate work-location classifier differs from the protocol")
+        employer_classifier_version = modules["employer_filter"].EMPLOYER_RELATIONSHIP_CLASSIFIER_VERSION
+        expected_employer_classifier = protocol["employer_relationship_classifier"]["version"]
+        if employer_classifier_version != expected_employer_classifier:
+            raise ValueError("candidate employer-relationship classifier differs from the protocol")
     cases = [
         {
             "case_id": case["case_id"],
@@ -220,9 +273,9 @@ def capture(
         "matrix_sha256": encoder["frozen_matrix_sha256"],
         "implementation_sha": implementation_sha,
         "policy": policy,
-        "candidate_expansion_multiplier": int(
-            modules["config"].AGENT_SEARCH_CANDIDATE_MULTIPLIER
-        ),
+        "candidate_expansion_multiplier": int(modules["config"].AGENT_SEARCH_CANDIDATE_MULTIPLIER),
+        "work_location_classifier_version": classifier_version,
+        "employer_relationship_classifier_version": employer_classifier_version,
         "cases": cases,
     }
 

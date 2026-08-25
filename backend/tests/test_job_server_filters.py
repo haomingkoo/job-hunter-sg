@@ -10,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 import main
 from database import Base, get_db
+from employer_filter import EMPLOYER_RELATIONSHIP_PRECOMPUTE_MARKER
 from models import ScrapedJob, UsageLog
 
 
@@ -25,15 +26,23 @@ def test_job_search_readiness_requires_a_bound_exact_provenance_scan(jobs_client
     assert unproven["current_embeddings"] == unproven["searchable_jobs"]
     assert unproven["content_provenance_verified"] is False
     assert unproven["ready"] is False
+    assert unproven["employer_classifier_current"] is False
 
     db.add(UsageLog(
         action="job_embedding_ready",
         detail=embedding_service.embedding_readiness_marker(db),
     ))
+    db.add(
+        UsageLog(
+            action="job_precompute",
+            detail=EMPLOYER_RELATIONSHIP_PRECOMPUTE_MARKER,
+        )
+    )
     db.commit()
 
     proven = jobs_client.get("/api/job-search/readiness").json()
     assert proven["content_provenance_verified"] is True
+    assert proven["employer_classifier_current"] is True
     assert proven["ready"] is True
 
     newest = db.query(ScrapedJob).order_by(ScrapedJob.id.desc()).first()
@@ -78,6 +87,8 @@ def jobs_client():
                 scraped_at=posted_at,
                 parsed_jd={"experience_years": experience},
                 direct_employer=1,
+                employer_relationship="unknown",
+                employer_relationship_evidence="mcf_no_relationship_signal",
             )
         )
     db.commit()
@@ -138,8 +149,20 @@ def dated_jobs_client():
                 description="Build a Python data platform.",
                 parsed_jd={"experience_years": "5"},
                 direct_employer=1,
+                employer_relationship="unknown",
+                employer_relationship_evidence=(
+                    "legacy_no_relationship_signal"
+                    if title == "Wrong source"
+                    else "mcf_no_relationship_signal"
+                ),
             )
         )
+    db.add(
+        UsageLog(
+            action="job_precompute",
+            detail=EMPLOYER_RELATIONSHIP_PRECOMPUTE_MARKER,
+        )
+    )
     db.commit()
 
     def override_db():

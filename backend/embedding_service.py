@@ -45,6 +45,7 @@ def _get_model() -> SentenceTransformer:
         if _model is not None:
             return _model
         from sentence_transformers import SentenceTransformer
+
         _model = SentenceTransformer(
             EMBEDDING_MODEL_NAME,
             revision=EMBEDDING_MODEL_REVISION,
@@ -155,9 +156,7 @@ def stamp_job_embedding(job, vector: list[float]) -> bool:
         try:
             stored = np.asarray(job.embedding_vector, dtype=np.float32)
             vector_changed = not (
-                stored.shape == current.shape
-                and np.isfinite(stored).all()
-                and np.array_equal(stored, current)
+                stored.shape == current.shape and np.isfinite(stored).all() and np.array_equal(stored, current)
             )
         except (TypeError, ValueError):
             pass
@@ -195,36 +194,42 @@ def embedding_readiness_is_current(db_session: Session) -> bool:
     from models import UsageLog
 
     marker = embedding_readiness_marker(db_session)
-    return db_session.query(UsageLog.id).filter(
-        UsageLog.action == "job_embedding_ready",
-        UsageLog.detail == marker,
-    ).first() is not None
+    return (
+        db_session.query(UsageLog.id)
+        .filter(
+            UsageLog.action == "job_embedding_ready",
+            UsageLog.detail == marker,
+        )
+        .first()
+        is not None
+    )
 
 
 def get_job_search_readiness(db_session: Session) -> dict[str, int | bool | str]:
     """Return the single provenance-aware readiness view for every interface."""
+    from employer_filter import get_employer_relationship_readiness
     from job_visibility import apply_public_job_visibility
     from models import ScrapedJob
 
-    searchable = apply_public_job_visibility(
-        db_session.query(func.count(ScrapedJob.id))
-    ).scalar() or 0
-    current_embeddings = apply_public_job_visibility(
-        db_session.query(func.count(ScrapedJob.id))
-    ).filter(
-        ScrapedJob.embedding_vector.isnot(None),
-        ScrapedJob.embedding_input_sha256.isnot(None),
-        func.length(ScrapedJob.embedding_input_sha256) == 64,
-        ScrapedJob.embedding_model_identity == EMBEDDING_MODEL_IDENTITY,
-    ).scalar() or 0
-    classified_employers = apply_public_job_visibility(
-        db_session.query(func.count(ScrapedJob.id))
-    ).filter(ScrapedJob.direct_employer.in_((0, 1))).scalar() or 0
+    searchable = apply_public_job_visibility(db_session.query(func.count(ScrapedJob.id))).scalar() or 0
+    current_embeddings = (
+        apply_public_job_visibility(db_session.query(func.count(ScrapedJob.id)))
+        .filter(
+            ScrapedJob.embedding_vector.isnot(None),
+            ScrapedJob.embedding_input_sha256.isnot(None),
+            func.length(ScrapedJob.embedding_input_sha256) == 64,
+            ScrapedJob.embedding_model_identity == EMBEDDING_MODEL_IDENTITY,
+        )
+        .scalar()
+        or 0
+    )
+    employer_readiness = get_employer_relationship_readiness(db_session)
+    classified_employers = int(employer_readiness["valid_jobs"])
     content_provenance_verified = embedding_readiness_is_current(db_session)
     ready = (
         searchable > 0
         and current_embeddings == searchable
-        and classified_employers == searchable
+        and employer_readiness["ready"] is True
         and content_provenance_verified
     )
     return {
@@ -232,6 +237,8 @@ def get_job_search_readiness(db_session: Session) -> dict[str, int | bool | str]
         "searchable_jobs": searchable,
         "current_embeddings": current_embeddings,
         "classified_employers": classified_employers,
+        "employer_classifier_version": employer_readiness["classifier_version"],
+        "employer_classifier_current": employer_readiness["current_marker"],
         "content_provenance_verified": content_provenance_verified,
         "embedding_model_identity": EMBEDDING_MODEL_IDENTITY,
     }
@@ -262,12 +269,7 @@ def refresh_job_embeddings(
         raise ValueError("force and missing_only cannot be combined")
     last_id = 0
     while True:
-        page = (
-            query.filter(ScrapedJob.id > last_id)
-            .order_by(ScrapedJob.id.asc())
-            .limit(page_size)
-            .all()
-        )
+        page = query.filter(ScrapedJob.id > last_id).order_by(ScrapedJob.id.asc()).limit(page_size).all()
         if not page:
             break
         last_id = page[-1].id
@@ -284,22 +286,13 @@ def refresh_job_embeddings(
             batch = batch[:remaining]
         if batch:
             vectors = encode_texts(
-                [
-                    build_job_embed_text(job.title, job.description, job.skills)
-                    for job in batch
-                ],
+                [build_job_embed_text(job.title, job.description, job.skills) for job in batch],
                 batch_size=batch_size,
             )
             if len(vectors) != len(batch):
                 raise ValueError("embedding encoder returned an unexpected vector count")
-            vectors = [
-                _canonical_embedding_vector(vector).tolist()
-                for vector in vectors
-            ]
-            vector_rewrites += sum(
-                stamp_job_embedding(job, vector)
-                for job, vector in zip(batch, vectors)
-            )
+            vectors = [_canonical_embedding_vector(vector).tolist() for vector in vectors]
+            vector_rewrites += sum(stamp_job_embedding(job, vector) for job, vector in zip(batch, vectors))
             db_session.commit()
             refreshed += len(batch)
         db_session.expunge_all()
@@ -309,39 +302,35 @@ def refresh_job_embeddings(
             "refreshed": refreshed,
             "vector_rewrites": vector_rewrites,
             "unresolved": unresolved,
-            "complete": (
-                scanned == searchable
-                and not deferred_due_to_limit
-                and unresolved == 0
-            ),
+            "complete": (scanned == searchable and not deferred_due_to_limit and unresolved == 0),
         }
         if on_progress is not None:
             on_progress(state)
         if limit is not None and refreshed >= limit:
             break
 
-    complete = (
-        scanned == searchable
-        and not deferred_due_to_limit
-        and unresolved == 0
-    )
+    complete = scanned == searchable and not deferred_due_to_limit and unresolved == 0
     if refreshed:
-        db_session.add(UsageLog(
-            user_id=None,
-            action="job_embedding_refresh",
-            detail=(
-                f"scanned={scanned};refreshed={refreshed};"
-                f"vector_rewrites={vector_rewrites};unresolved={unresolved};"
-                f"complete={int(complete)};"
-                f"model={EMBEDDING_MODEL_IDENTITY}"
-            ),
-        ))
+        db_session.add(
+            UsageLog(
+                user_id=None,
+                action="job_embedding_refresh",
+                detail=(
+                    f"scanned={scanned};refreshed={refreshed};"
+                    f"vector_rewrites={vector_rewrites};unresolved={unresolved};"
+                    f"complete={int(complete)};"
+                    f"model={EMBEDDING_MODEL_IDENTITY}"
+                ),
+            )
+        )
     if complete and not embedding_readiness_is_current(db_session):
-        db_session.add(UsageLog(
-            user_id=None,
-            action="job_embedding_ready",
-            detail=embedding_readiness_marker(db_session),
-        ))
+        db_session.add(
+            UsageLog(
+                user_id=None,
+                action="job_embedding_ready",
+                detail=embedding_readiness_marker(db_session),
+            )
+        )
     if refreshed or complete:
         db_session.commit()
     if refreshed:
@@ -389,11 +378,7 @@ def invalidate_matrix_cache() -> None:
 def is_similarity_matrix_ready() -> bool:
     """Return True only when similarity search can run without rebuilding."""
     with _matrix_lock:
-        return (
-            _job_matrix is not None
-            and len(_job_ids) > 0
-            and (time.monotonic() - _matrix_ts) < _MATRIX_TTL
-        )
+        return _job_matrix is not None and len(_job_ids) > 0 and (time.monotonic() - _matrix_ts) < _MATRIX_TTL
 
 
 def _refresh_matrix_if_stale(db_session: Session) -> None:
@@ -401,11 +386,7 @@ def _refresh_matrix_if_stale(db_session: Session) -> None:
     global _job_matrix, _job_ids, _matrix_ts, _matrix_generation_id
     now = time.monotonic()
     generation_id = _embedding_generation_id(db_session)
-    if (
-        _job_matrix is not None
-        and generation_id == _matrix_generation_id
-        and (now - _matrix_ts) < _MATRIX_TTL
-    ):
+    if _job_matrix is not None and generation_id == _matrix_generation_id and (now - _matrix_ts) < _MATRIX_TTL:
         return
 
     with _matrix_lock:
@@ -426,9 +407,7 @@ def _refresh_matrix_if_stale(db_session: Session) -> None:
 
         ids: list[int] = []
         vectors: list[list[float]] = []
-        searchable_count = apply_public_job_visibility(
-            db_session.query(func.count(ScrapedJob.id))
-        ).scalar() or 0
+        searchable_count = apply_public_job_visibility(db_session.query(func.count(ScrapedJob.id))).scalar() or 0
         query = (
             apply_public_job_visibility(
                 db_session.query(
@@ -468,9 +447,7 @@ def _refresh_matrix_if_stale(db_session: Session) -> None:
         if len(ids) != searchable_count:
             _matrix_ts = 0.0
             _matrix_generation_id = generation_id
-            raise EmbeddingIndexUnavailable(
-                f"embedding index coverage is {len(ids)}/{searchable_count}"
-            )
+            raise EmbeddingIndexUnavailable(f"embedding index coverage is {len(ids)}/{searchable_count}")
 
         matrix = np.array(vectors, dtype=np.float32)
         vectors.clear()  # free Python list memory before publishing matrix
@@ -498,11 +475,7 @@ def find_similar_jobs(
 
     if eligible_job_ids is not None:
         eligible_indices = np.fromiter(
-            (
-                index
-                for index, job_id in enumerate(_job_ids)
-                if job_id in eligible_job_ids
-            ),
+            (index for index, job_id in enumerate(_job_ids) if job_id in eligible_job_ids),
             dtype=np.int64,
         )
         if len(eligible_indices) == 0:
@@ -542,10 +515,7 @@ def rank_embedding_matrix(
     order = np.lexsort((valid_job_ids, -similarities[valid_indices]))
     top_indices = valid_indices[order[:top_k]]
 
-    return [
-        (job_ids[index], float(similarities[index]))
-        for index in top_indices
-    ]
+    return [(job_ids[index], float(similarities[index])) for index in top_indices]
 
 
 def find_similar_jobs_for_ids(
@@ -562,15 +532,17 @@ def find_similar_jobs_for_ids(
     from models import ScrapedJob
 
     rows = (
-        apply_public_job_visibility(db_session.query(
-            ScrapedJob.id,
-            ScrapedJob.title,
-            ScrapedJob.description,
-            ScrapedJob.skills,
-            ScrapedJob.embedding_vector,
-            ScrapedJob.embedding_input_sha256,
-            ScrapedJob.embedding_model_identity,
-        ))
+        apply_public_job_visibility(
+            db_session.query(
+                ScrapedJob.id,
+                ScrapedJob.title,
+                ScrapedJob.description,
+                ScrapedJob.skills,
+                ScrapedJob.embedding_vector,
+                ScrapedJob.embedding_input_sha256,
+                ScrapedJob.embedding_model_identity,
+            )
+        )
         .filter(ScrapedJob.id.in_(eligible_job_ids))
         .all()
     )
@@ -589,9 +561,7 @@ def find_similar_jobs_for_ids(
     ids = [job_id for job_id, _vector in current]
     vectors = [vector for _job_id, vector in current]
     if len(current) != len(rows):
-        raise EmbeddingIndexUnavailable(
-            f"eligible embedding coverage is {len(current)}/{len(rows)}"
-        )
+        raise EmbeddingIndexUnavailable(f"eligible embedding coverage is {len(current)}/{len(rows)}")
     if not vectors:
         return []
 

@@ -1,11 +1,116 @@
 from sqlalchemy import Column, MetaData, String, Table, create_engine, select
 
 from employer_filter import (
+    EMPLOYER_RELATIONSHIP_DIRECT,
+    EMPLOYER_RELATIONSHIP_INTERMEDIARY,
+    EMPLOYER_RELATIONSHIP_UNKNOWN,
+    classify_employer_relationship,
     company_name_matches,
     direct_employer_condition,
+    employer_relationship_eligibility_condition,
+    employer_relationship_valid_condition,
     is_direct_employer,
     is_recruitment_employer,
 )
+
+
+def test_relationship_classifier_never_upgrades_absence_of_agency_evidence_to_direct():
+    unknown = classify_employer_relationship(
+        source="MyCareersFuture",
+        company="Micron Semiconductor",
+        ssic_code="26112",
+        ssic_source="mcf_posted_company",
+        description="Lead quality systems.",
+    )
+    intermediary = classify_employer_relationship(
+        source="MyCareersFuture",
+        company="Acme Talent Solutions Pte Ltd",
+        ssic_code="78104",
+        ssic_source="mcf_posted_company",
+        description="Client opportunities.",
+    )
+    direct = classify_employer_relationship(
+        source="Careers@Gov",
+        company="Singapore Public Service",
+        agency="Ministry of Trade and Industry",
+        description="Join the ministry.",
+    )
+
+    assert (unknown.relationship, unknown.evidence) == (
+        EMPLOYER_RELATIONSHIP_UNKNOWN,
+        "mcf_no_relationship_signal",
+    )
+    assert (intermediary.relationship, intermediary.evidence) == (
+        EMPLOYER_RELATIONSHIP_INTERMEDIARY,
+        "mcf_posted_company_ssic_78",
+    )
+    assert (direct.relationship, direct.evidence) == (
+        EMPLOYER_RELATIONSHIP_DIRECT,
+        "careers_gov_official",
+    )
+
+
+def test_mcf_non_recruitment_code_does_not_claim_ssic_78_provenance():
+    assessment = classify_employer_relationship(
+        source="MyCareersFuture",
+        company="Example Services",
+        ssic_code="26112",
+        ssic_description="Recruitment support activities",
+        ssic_source="mcf_posted_company",
+        description="Support hiring operations.",
+    )
+
+    assert assessment.relationship == EMPLOYER_RELATIONSHIP_INTERMEDIARY
+    assert assessment.evidence == "mcf_posted_company_ssic_description"
+
+
+def test_relationship_sql_policy_includes_unknown_but_requires_valid_evidence():
+    metadata = MetaData()
+    employers = Table(
+        "relationship_employers",
+        metadata,
+        Column("company", String),
+        Column("relationship", String),
+        Column("evidence", String),
+    )
+    engine = create_engine("sqlite://")
+    metadata.create_all(engine)
+    rows = [
+        {"company": "Gov", "relationship": "direct", "evidence": "careers_gov_official"},
+        {"company": "Micron", "relationship": "unknown", "evidence": "mcf_no_relationship_signal"},
+        {"company": "Recruiter", "relationship": "intermediary", "evidence": "description_ea_licence"},
+        {"company": "False Claim", "relationship": "direct", "evidence": "mcf_no_relationship_signal"},
+    ]
+    with engine.begin() as connection:
+        connection.execute(employers.insert(), rows)
+        eligible = (
+            connection.execute(
+                select(employers.c.company).where(
+                    employer_relationship_eligibility_condition(
+                        employers.c.relationship,
+                        employers.c.evidence,
+                        employers.c.company,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        valid = (
+            connection.execute(
+                select(employers.c.company).where(
+                    employer_relationship_valid_condition(
+                        employers.c.relationship,
+                        employers.c.evidence,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    assert eligible == ["Gov", "Micron"]
+    assert valid == ["Gov", "Micron", "Recruiter"]
 
 
 def test_company_name_matching_uses_normalized_whole_words():
