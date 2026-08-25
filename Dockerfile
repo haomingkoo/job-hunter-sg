@@ -31,6 +31,8 @@ RUN useradd --create-home --uid 10001 --user-group appuser && chown appuser:appu
 ENV HOME=/home/appuser
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')" && \
     chown -R appuser:appuser /home/appuser
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
 
 COPY --chown=appuser:appuser backend/ .
 COPY --chown=appuser:appuser shared/ ../shared/
