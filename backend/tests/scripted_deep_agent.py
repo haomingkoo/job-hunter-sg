@@ -94,9 +94,6 @@ def tool_call(name: str, args: dict, call_id: str) -> AIMessage:
 def submission(
     reply: str,
     *,
-    preference_updates: list[dict] | None = None,
-    search_query: str = "",
-    pending_edit_block_ids: list[str] | None = None,
     assumptions: list[str] | None = None,
     missing_information: list[str] | None = None,
     follow_up_question: str = "",
@@ -105,18 +102,12 @@ def submission(
     """The structured-output call the coordinator loop terminates on.
 
     Reuses the existing conversation payload contract verbatim, so a scripted turn
-    is validated by the same pydantic schema production uses. It does **not** by
-    itself exercise the evidence-quote rule: `preference_updates` defaults to
-    empty, and `preference_update_error` only has something to reject when a test
-    passes one whose quote does or does not occur in the latest user message.
+    is validated by the same pydantic schema production uses.
     """
     return tool_call(
         CONVERSATION_REPLY_TOOL,
         {
             "reply": reply,
-            "preference_updates": list(preference_updates or []),
-            "search_query": search_query,
-            "pending_edit_block_ids": list(pending_edit_block_ids or []),
             "assumptions": list(assumptions or []),
             "missing_information": list(missing_information or []),
             "follow_up_question": follow_up_question,
@@ -126,7 +117,7 @@ def submission(
 
 
 def preference(field: str, value: str, evidence_quote: str) -> dict:
-    """One preference update for `submission(preference_updates=[...])`."""
+    """One preference update for the record_preferences tool."""
     return {"field": field, "value": value, "evidence_quote": evidence_quote}
 
 

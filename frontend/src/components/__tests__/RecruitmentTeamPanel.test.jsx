@@ -200,6 +200,46 @@ describe("RecruitmentTeamPanel", () => {
     );
   });
 
+  it("loads earlier conversation messages without making the initial snapshot unbounded", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "thread-history");
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") return response([]);
+      if (path === "/api/recruitment-team/threads/thread-history") {
+        return response({
+          thread_id: "thread-history",
+          workflow_state: "exploring",
+          case_facts: {},
+          messages: [{ message_id: 101, role: "assistant", content: "Recent reply." }],
+          message_history_has_more: true,
+          oldest_message_id: 101,
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-history?before_message_id=101") {
+        return response({
+          messages: [{ message_id: 1, role: "user", content: "Original request." }],
+          message_history_has_more: false,
+          oldest_message_id: 1,
+        });
+      }
+      if (path === "/api/recruitment-team/threads/thread-history/events") return response([]);
+      if (path === "/api/recruitment-team/threads") return response([]);
+      if (path.includes("/proposed-edits")) return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+    expect(container.textContent).toContain("Recent reply.");
+    expect(container.textContent).not.toContain("Original request.");
+
+    const loadEarlier = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Load earlier messages");
+    await act(async () => loadEarlier.click());
+
+    expect(container.textContent).toContain("Original request.");
+    expect(container.textContent).toContain("Recent reply.");
+    expect(container.textContent).not.toContain("Load earlier messages");
+  });
+
   it("refreshes a detached running action until its committed result appears", async () => {
     vi.useFakeTimers();
     localStorage.setItem("jobhunter:recruitment-thread:42", "thread-detached");
@@ -754,6 +794,7 @@ describe("RecruitmentTeamPanel", () => {
             resume_version_id: 7,
             resume_label: "AI resume",
             candidate_profile_status: "completed",
+            latest_ranking_receipt: { candidate_profile_used: true },
             recommendations: [job],
             match_rationales: [{
               job_id: 101,

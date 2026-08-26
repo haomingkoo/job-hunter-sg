@@ -27,28 +27,66 @@ log = logging.getLogger("jobhunter.recruitment_team")
 RETRY_FEEDBACK_SCOPE_KEY = "__retry_feedback__"
 
 
+def _profile_evidence_disposition_is_publishable(
+    profile: dict | None,
+    evaluation: dict | None,
+) -> bool:
+    """Require the stored profile to equal the evaluator-supported subset."""
+    if not isinstance(profile, dict) or not isinstance(evaluation, dict):
+        return False
+    profile_fields = profile.get("fields")
+    evaluated_fields = evaluation.get("field_evaluations")
+    disposition = evaluation.get("evidence_disposition")
+    if (
+        not isinstance(profile_fields, (list, tuple))
+        or not profile_fields
+        or not isinstance(evaluated_fields, (list, tuple))
+        or not evaluated_fields
+        or not isinstance(disposition, dict)
+        or not all(isinstance(item, dict) and item.get("field_id") for item in profile_fields)
+        or not all(isinstance(item, dict) and item.get("field_id") for item in evaluated_fields)
+    ):
+        return False
+    profile_ids = [str(item["field_id"]) for item in profile_fields]
+    evaluated_ids = [str(item["field_id"]) for item in evaluated_fields]
+    supported_ids = [
+        str(item["field_id"])
+        for item in evaluated_fields
+        if item.get("label") == "supported"
+        and item.get("disposition_source") == "supported_field_refs"
+    ]
+    rejected_ids = [
+        str(item["field_id"])
+        for item in evaluated_fields
+        if item.get("label") != "supported"
+        or item.get("disposition_source") != "supported_field_refs"
+    ]
+    expected_result = "pass" if not rejected_ids else "revise"
+    expected_action = (
+        "publish_supported_profile"
+        if not rejected_ids
+        else "publish_supported_subset"
+    )
+    return (
+        len(profile_ids) == len(set(profile_ids))
+        and len(evaluated_ids) == len(set(evaluated_ids))
+        and profile_ids == supported_ids
+        and disposition.get("policy") == "fully_supported_fields_only"
+        and disposition.get("action") == expected_action
+        and disposition.get("supported_field_ids") == supported_ids
+        and disposition.get("rejected_field_ids") == rejected_ids
+        and evaluation.get("result") == expected_result
+    )
+
+
 def candidate_profile_artifact_is_current(record: CandidateProfileArtifact) -> bool:
     from resume_document import SCHEMA_VERSION
 
     policy = record.execution_policy or {}
     evaluation = record.evaluation
     profile = record.profile
-    profile_fields = profile.get("fields") if isinstance(profile, dict) else None
-    evaluated_fields = (
-        evaluation.get("field_evaluations") if isinstance(evaluation, dict) else None
-    )
     return (
-        isinstance(profile_fields, list)
-        and isinstance(evaluation, dict)
-        and isinstance(evaluated_fields, list)
-        and all(isinstance(item, dict) for item in profile_fields)
-        and all(isinstance(item, dict) for item in evaluated_fields)
-        and all(item.get("field_id") for item in profile_fields)
-        and all(item.get("field_id") for item in evaluated_fields)
-        and len(evaluated_fields) == len(profile_fields)
-        and {item.get("field_id") for item in evaluated_fields if isinstance(item, dict)}
-        == {item.get("field_id") for item in profile_fields if isinstance(item, dict)}
-        and evaluation.get("result") in {"pass", "revise", "block"}
+        _profile_evidence_disposition_is_publishable(profile, evaluation)
         and record.prompt_version == CANDIDATE_PROFILE_PROMPT_VERSION
         and record.decomposition_version == CANDIDATE_PROFILE_DECOMPOSITION_VERSION
         and policy.get("review_version") == CANDIDATE_PROFILE_REVIEW_VERSION
@@ -253,11 +291,16 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         record = self._validated_record(checkpoint_id)
         if record is None:
             raise ValueError("Candidate profile cannot complete without validated scopes")
+        serialized_profile = asdict(profile)
+        if not _profile_evidence_disposition_is_publishable(serialized_profile, evaluation):
+            raise ValueError(
+                "Candidate profile cannot complete without a publishable supported-evidence disposition"
+            )
         scopes = dict(record.scopes)
         scopes.pop(RETRY_FEEDBACK_SCOPE_KEY, None)
         record.scopes = scopes
         record.status = "completed"
-        record.profile = asdict(profile)
+        record.profile = serialized_profile
         record.evaluation = evaluation
         record.error = None
         record.updated_at = _utcnow()

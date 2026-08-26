@@ -1,6 +1,6 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import TeamActivityPanel from "../TeamActivityPanel.jsx";
 
@@ -164,7 +164,8 @@ describe("TeamActivityPanel step content", () => {
       }),
     ]);
 
-    expect(text).toContain("1 of 1 reported");
+    expect(text).toContain("1 reported");
+    expect(text).not.toContain("1 of 1 reported");
     expect(text).toContain("Reported");
   });
 
@@ -511,30 +512,82 @@ describe("TeamActivityPanel step content", () => {
       }),
     ]);
 
-    expect(text).toContain("0 of 1 reported");
+    expect(text).toContain("0 reported");
+    expect(text).not.toContain("0 of 1 reported");
     expect(text).not.toContain("2 of 3 reported");
   });
 
-  it("uses durable sequence order when reconnect events arrive out of order", () => {
-    const completed = ["recruiter", "hiring_manager", "ats", "skeptic", "market_researcher"]
-      .map((team_member, index) => activity("submit_target_specialist_assessment", {}, {
-        sequence: 200 + index,
-        run_id: "active-assessment",
+  it("uses an authoritative required-specialist count when an event supplies it", () => {
+    const text = renderEvents([
+      activity("read_target_job", { required_specialist_count: 5 }, {
+        run_id: "assessment-run",
+        event_type: "assessment",
+      }),
+      activity("submit_target_specialist_assessment", {}, {
+        run_id: "assessment-run",
         event_type: "assessment",
         status: "completed",
-        team_member,
-        summary: `${team_member} submitted its assessment.`,
-      }));
-    const lateOlderEvent = activity("search_jobs", {}, {
-      sequence: 99,
-      run_id: "older-conversation",
-      event_type: "conversation",
+        team_member: "recruiter",
+      }),
+    ]);
+
+    expect(text).toContain("1 of 5 reported");
+  });
+
+  it("keeps the explicit foreground run visible when a background profiler reports later", () => {
+    const text = renderEvents([
+      activity("read_target_job", {}, {
+        sequence: 10,
+        run_id: "assessment-run",
+        event_type: "assessment",
+        team_member: "coordinator",
+      }),
+      activity("read_candidate_evidence", {}, {
+        sequence: 11,
+        run_id: "profile-run",
+        event_type: "candidate_profile",
+        team_member: "candidate_profiler",
+      }),
+    ], { foregroundRunId: "assessment-run" });
+
+    expect(text).toContain("Coordinator is working");
+    expect(text).toContain("independent judge");
+    expect(text).not.toContain("Candidate profiler is working");
+  });
+
+  it("deduplicates and orders reconnect events before choosing lifecycle state", () => {
+    const completed = activity("ConversationReply", {}, {
+      sequence: 3,
+      event_type: "run",
+      status: "completed",
     });
+    const text = renderEvents([
+      completed,
+      activity("search_jobs", {}, { sequence: 1, event_type: "run" }),
+      activity("search_jobs", {}, { sequence: 2 }),
+      { ...completed },
+    ], { busy: false });
 
-    const text = renderEvents([...completed, lateOlderEvent]);
+    expect(text).toContain("Run complete");
+    expect(text).not.toContain("Coordinator is working");
+  });
 
-    expect(text).toContain("5 of 5 reported");
-    expect(text.match(/Reported/g)).toHaveLength(5);
+  it("derives elapsed time from the durable run timestamp", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-02T00:02:05Z"));
+    try {
+      renderEvents([
+        activity("search_jobs", {}, {
+          sequence: 1,
+          event_type: "run",
+          created_at: "2026-08-02T00:00:00Z",
+        }),
+      ]);
+
+      expect(container.querySelector('[aria-label="Elapsed 02:05"]')).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not carry an old assessment count into the active conversation", () => {

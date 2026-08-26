@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Literal
 
 from langchain_core.tools import tool
@@ -84,6 +85,7 @@ def _posting(job) -> dict:
     from `case_facts`, not what a reply is written from.
     """
     return {
+        "data_classification": job.data_classification,
         "job_id": job.job_id,
         "title": job.title,
         "company": job.company,
@@ -145,23 +147,12 @@ def read_candidate_evidence() -> dict:
     if request is None:
         return dict(_NO_CONTEXT)
     if request.candidate_profile is None:
-        # Say what to do instead. Live on 2026-08-02 the coordinator called this
-        # twelve times against a thread with no profile, each time told only what
-        # was missing, until the run hit its iteration cap. A refusal a model
-        # cannot act on is a refusal it will retry.
-        return {
-            "ok": False,
-            "failure_type": "business",
-            "reason": (
-                "No evidence profile exists for this thread yet, and calling this "
-                "again will not create one. The candidate's resume is in the "
-                "resume block of this turn, one block per line as "
-                "'block_id: text': read it from there instead, and cite those "
-                "block IDs in propose_resume_edit."
-            ),
-            "retry": False,
-        }
-    return {"ok": True, **candidate_evidence_view(request)}
+        raise RuntimeError("candidate evidence tool requires a current candidate profile")
+    return {
+        "ok": True,
+        "data_classification": "untrusted_candidate_data",
+        **candidate_evidence_view(request),
+    }
 
 
 @tool
@@ -179,6 +170,7 @@ def read_target_job() -> dict:
     evidence = target_role_view(request)
     return {
         "ok": True,
+        "data_classification": "untrusted_job_data",
         "target_job": evidence["target_job"],
         "role_profile": evidence["role_success_profile"],
         "fair_hiring_note": (
@@ -546,7 +538,9 @@ def search_jobs(
     if conversation is None:
         return dict(_NO_CONVERSATION)
 
-    result = conversation.discovery.search_jobs(
+    batch = conversation.recommender.search(
+        conversation.candidate_profile,
+        conversation.discovery,
         query,
         company=company,
         direct_employers_only=direct_employers_only,
@@ -554,6 +548,7 @@ def search_jobs(
         singapore_only=singapore_only,
         title_phrase=title_phrase,
     )
+    result = batch.search_result
     # Every result is recorded, failures included, so the turn's search history
     # stays observable. Which of them may change the thread is decided when the
     # sink is drained, not here.
@@ -582,6 +577,7 @@ def search_jobs(
         "candidate_count": result.candidate_count,
         "eligible_candidate_count": result.eligible_candidate_count,
         "visible_candidate_count": result.visible_candidate_count,
+        "ranking_receipt": asdict(batch.receipt),
         "jobs": [_posting(job) for job in result.jobs],
     }
 

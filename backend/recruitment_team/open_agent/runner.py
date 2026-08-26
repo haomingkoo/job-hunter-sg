@@ -387,7 +387,10 @@ class OpenAgentTargetAssessmentRunner:
         renew_lease: Callable[[], None] | None = None,
     ) -> Iterator[TargetAssessmentUpdate]:
         yield TargetAssessmentProgress(
-            team_member="coordinator", status="running", summary="Open-agent run started.", detail={}
+            team_member="coordinator",
+            status="running",
+            summary="Open-agent run started.",
+            detail={"required_specialist_count": len(self._registry.personas)},
         )
 
         orchestrator_model = self._model_factory()

@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import Barrier, Lock, Thread
 
 from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import sessionmaker
 
 from database import Base
@@ -20,6 +21,7 @@ from models import (
     User,
 )
 from recruitment_team.run_lease import reconcile_expired_runs, renew_run_lease
+from run_concurrency import _owner_admission_statement, database_owner_run_available
 
 
 def _sessions(tmp_path):
@@ -102,6 +104,38 @@ def _running_run(
         ])
         db.commit()
         return user.id, thread.id, run.id
+
+
+def test_database_admission_counts_only_live_runs_for_the_owner(tmp_path):
+    now = datetime.now(timezone.utc)
+    sessions = _sessions(tmp_path)
+    owner_id, _, run_id = _running_run(
+        sessions,
+        expires_at=now + timedelta(minutes=1),
+    )
+
+    with sessions() as db:
+        assert database_owner_run_available(db, owner_id) is False
+        db.rollback()
+
+    with sessions() as db:
+        run = db.get(RecruitmentRun, run_id)
+        run.lease_expires_at = now - timedelta(seconds=1)
+        db.commit()
+        assert database_owner_run_available(db, owner_id) is True
+        db.rollback()
+
+
+def test_database_admission_locks_the_existing_owner_row_on_postgresql():
+    sql = str(
+        _owner_admission_statement(42).compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+
+    assert "WHERE users.id = 42" in sql
+    assert sql.endswith("FOR UPDATE")
 
 
 def test_two_reconcilers_create_one_retryable_interruption(tmp_path):

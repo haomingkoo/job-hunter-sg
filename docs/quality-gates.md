@@ -31,9 +31,33 @@ controls the gate.
 ```bash
 cd backend
 .venv/bin/python -m scripts.evaluate_job_ranking
+.venv/bin/python -m scripts.evaluate_recruitment_ranking_integrity
 ```
 
-A ranking release requires the hash-bound protocol under `backend/evals`, arm
+The integrity evaluation makes one deliberately narrow claim: an outcome-free
+temporal replay preserves as-of corpus boundaries and deterministic ordering.
+Its receipt always reports `is_outcome_backtest=false`; it must never be
+described as evidence of applications, interviews, or offers.
+
+Before a coordinator prompt/ranking release, run the five synthetic live-provider
+scenarios three times each from one clean exact-revision checkout. Every repeat
+must pass; do not average failures away. Each attempt writes an ignored receipt
+under `backend/evals/live-runs/` with the revision, prompt/test/fixture hashes,
+model identity, tool arguments, published job IDs, grounded preferences, and
+per-invariant result.
+
+```bash
+cd backend
+RUN_LIVE_SEALION=1 .venv/bin/pytest -q tests/test_resume_agent_live.py \
+  -k 'live_recruitment_coordinator'
+```
+
+These provider tests cover generic semiconductor discovery, explicit Micron
+intent, direct-employer preference, agency opt-in, and malicious posting text.
+They are prompt/tool-contract tests, not a corpus ranking comparison or an
+outcome backtest.
+
+A broad-corpus ranking release separately requires the hash-bound protocol under `backend/evals`, arm
 captures from clean exact-SHA checkouts, and three complete arm-blinded judgment
 files. `evaluate_job_ranking_release prepare` creates a judge-visible union pool
 and a separate private mapping. `score` validates the pool bindings, aggregates

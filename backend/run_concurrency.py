@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import and_, or_, select
+from sqlalchemy.orm import Session
 
 import config
 
@@ -36,3 +40,47 @@ def release_owner_run(owner_key: str) -> None:
 def owner_has_active_run(owner_key: str) -> bool:
     with _lock:
         return active_runs.get(owner_key, 0) > 0
+
+
+def _owner_admission_statement(owner_id: int):
+    from models import User
+
+    return select(User.id).where(User.id == owner_id).with_for_update()
+
+
+def database_owner_run_available(db: Session, owner_id: int) -> bool:
+    """Serialize per-user admission until the caller commits its running row.
+
+    PostgreSQL turns ``FOR UPDATE`` into a cross-worker lock on the existing
+    user row. SQLite ignores the clause, where the process-local gate above is
+    still the concurrency mechanism used by the application and tests.
+
+    The caller must create or claim its ``RecruitmentRun`` and commit before
+    releasing this transaction; otherwise another worker could observe the
+    owner as idle after the row lock is released.
+    """
+
+    # Import lazily: models imports configuration used by application startup,
+    # while this module is also imported by that startup path.
+    from models import RecruitmentRun
+
+    db.execute(_owner_admission_statement(owner_id)).scalar_one()
+    now = datetime.now(timezone.utc)
+    legacy_cutoff = now - timedelta(seconds=config.RECRUITMENT_RUN_LEASE_SECONDS)
+    live_lease = or_(
+        RecruitmentRun.lease_expires_at > now,
+        and_(
+            RecruitmentRun.lease_expires_at.is_(None),
+            RecruitmentRun.created_at > legacy_cutoff,
+        ),
+    )
+    active_for_owner = (
+        db.query(RecruitmentRun.id)
+        .filter(
+            RecruitmentRun.user_id == owner_id,
+            RecruitmentRun.status == "running",
+            live_lease,
+        )
+        .count()
+    )
+    return active_for_owner < config.AGENT_MAX_CONCURRENT_RUNS_PER_USER

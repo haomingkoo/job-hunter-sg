@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from database import Base
 from models import ResumeVersion, User
-from recruitment_team.candidate_profile import CandidateEvidenceProfile
+from recruitment_team.candidate_profile import (
+    CandidateEvidenceProfile,
+    CandidateProfileEvidence,
+    CandidateProfileField,
+)
 from recruitment_team.candidate_profile_store import (
     SQLAlchemyCandidateProfileStore,
+    _profile_evidence_disposition_is_publishable,
 )
 
 
@@ -42,6 +49,59 @@ def _owner_resume(factory, email: str) -> tuple[int, int]:
         return user.id, resume.id
 
 
+def _supported_profile_and_evaluation(*, rejected: bool = False):
+    field = CandidateProfileField(
+        field_id="supported-field",
+        category="demonstrated_capability",
+        statement="Built a validated workflow.",
+        resume_evidence_ids=("evidence-1",),
+        evidence_quotes=("Built a validated workflow.",),
+        evidence_kind="direct",
+        evidence_support_score=100,
+        score_reason="Direct source text.",
+    )
+    profile = CandidateEvidenceProfile(
+        profile_version="candidate-evidence-profile-v3",
+        resume_document_id="document-id",
+        resume_revision="revision-id",
+        fields=(field,),
+        cited_resume_evidence=(
+            CandidateProfileEvidence(
+                evidence_id="evidence-1",
+                kind="bullet",
+                text="Built a validated workflow.",
+                source_locator="experience-1",
+                section_key="experience",
+            ),
+        ),
+    )
+    rows = [{
+        "field_id": field.field_id,
+        "label": "supported",
+        "disposition_source": "supported_field_refs",
+    }]
+    rejected_ids = []
+    if rejected:
+        rows.append({
+            "field_id": "rejected-field",
+            "label": "partially_supported",
+            "disposition_source": "field_evaluation",
+        })
+        rejected_ids.append("rejected-field")
+    evaluation = {
+        "evaluation_version": "review-v1",
+        "result": "revise" if rejected else "pass",
+        "field_evaluations": rows,
+        "evidence_disposition": {
+            "policy": "fully_supported_fields_only",
+            "action": "publish_supported_subset" if rejected else "publish_supported_profile",
+            "supported_field_ids": [field.field_id],
+            "rejected_field_ids": rejected_ids,
+        },
+    }
+    return profile, evaluation
+
+
 def test_candidate_profile_store_persists_scopes_failure_and_completion():
     factory = _session_factory()
     owner_id, resume_id = _owner_resume(factory, "owner@example.com")
@@ -67,14 +127,7 @@ def test_candidate_profile_store_persists_scopes_failure_and_completion():
         assert failed.status == "failed"
         assert store.load(checkpoint_id) == {"summary_01": scope_payload}
 
-        profile = CandidateEvidenceProfile(
-            profile_version="candidate-evidence-profile-v3",
-            resume_document_id="document-id",
-            resume_revision="revision-id",
-            fields=(),
-            cited_resume_evidence=(),
-        )
-        evaluation = {"evaluation_version": "review-v1", "result": "pass"}
+        profile, evaluation = _supported_profile_and_evaluation()
         completed = store.complete(checkpoint_id, profile, evaluation)
 
         assert completed.status == "completed"
@@ -82,6 +135,46 @@ def test_candidate_profile_store_persists_scopes_failure_and_completion():
         assert completed.evaluation == evaluation
         assert completed.error is None
         assert store.completed(checkpoint_id).id == completed.id
+
+
+def test_candidate_profile_store_accepts_revise_only_as_a_supported_subset():
+    profile, evaluation = _supported_profile_and_evaluation(rejected=True)
+
+    assert isinstance(asdict(profile)["fields"], tuple)
+    assert _profile_evidence_disposition_is_publishable(asdict(profile), evaluation)
+    assert _profile_evidence_disposition_is_publishable(
+        {
+            "fields": [
+                {"field_id": field.field_id}
+                for field in profile.fields
+            ]
+        },
+        evaluation,
+    )
+
+
+def test_candidate_profile_store_rejects_block_and_unfiltered_fields():
+    profile, evaluation = _supported_profile_and_evaluation(rejected=True)
+    unfiltered = {
+        "fields": [
+            {"field_id": profile.fields[0].field_id},
+            {"field_id": "rejected-field"},
+        ]
+    }
+    blocked = {
+        **evaluation,
+        "result": "block",
+        "field_evaluations": [{"field_id": "rejected-field", "label": "unsupported"}],
+        "evidence_disposition": {
+            "policy": "fully_supported_fields_only",
+            "action": "block_no_supported_evidence",
+            "supported_field_ids": [],
+            "rejected_field_ids": ["rejected-field"],
+        },
+    }
+
+    assert not _profile_evidence_disposition_is_publishable(unfiltered, evaluation)
+    assert not _profile_evidence_disposition_is_publishable({"fields": []}, blocked)
 
 
 def test_candidate_profile_store_keeps_retry_feedback_out_of_completed_scopes():

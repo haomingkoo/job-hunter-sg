@@ -9,9 +9,9 @@ prove the others.
 | Layer | Evidence | Result |
 |---|---|---|
 | Offline regression | `backend/scripts/evaluate_job_ranking.py` over `job-ranking-v1` | 3/3 synthetic cases passed |
-| Live coordinator | SEA-LION opt-in prompt evaluations, three repeats per case | 3/3 named-Micron and 3/3 explicit manager-search trials passed |
+| Live coordinator | Historical SEA-LION opt-in prompt evaluations, three repeats per case | 3/3 named-Micron and 3/3 explicit manager-search trials passed; no exact-revision per-attempt receipts were retained |
 | Frozen production corpus | 81,031 public postings re-exported with source-backed employer provenance at `2026-08-25T19:17:00Z`; row order and every embedding input match the pinned matrix | 1,192 verified direct, 48,634 unknown, and 31,205 intermediary rows; released and candidate default eligibility both retain 49,826 rows |
-| Arm-blinded release evaluation | Three fresh raters over 48 pooled items and eight precommitted cases | V4 passed: candidate was non-inferior in all eight cases, improved six, and had zero hard-constraint violations |
+| Arm-blinded release evaluation | Three recorded raters of unspecified type over 48 pooled items and eight precommitted cases | V4 passed: candidate was non-inferior in all eight cases, improved six, and had zero hard-constraint violations |
 | PostgreSQL policy parity | Read-only checks against the production PostgreSQL regex engine | EA markers, EA numbers, and punctuated agency names matched; direct-employer negative control did not |
 | Signed-in deployed journey | Exact candidate release | Not yet accepted |
 
@@ -22,7 +22,10 @@ local evaluation artifacts used for this report.
 
 The compact, hash-bound result receipt is
 `backend/evals/job-ranking-release-v4.result.json`. This is a frozen-corpus
-release evaluation, not a historical backtest. The explicit Micron case found
+release evaluation for candidate SHA `60c5149`, not the current dirty worktree
+or a historical backtest. The underlying corpus, pooled items, mapping and
+individual judgments are not checked into this repository, so the compact
+receipt cannot be fully replayed from Git alone. The explicit Micron case found
 four company-constrained roles, but all four were seniority stretches for the
 synthetic seven-year profile; the pass therefore does not mean every returned
 role is application-ready.

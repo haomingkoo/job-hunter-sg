@@ -385,6 +385,11 @@ def test_runner_fails_before_judge_with_zero_personas_consulted(monkeypatch):
 
     updates = list(runner.run(_request()))
     progress = [item for item in updates if isinstance(item, TargetAssessmentProgress)]
+    from recruitment_team.persona_packs import load_persona_pack_registry
+
+    assert progress[0].detail["required_specialist_count"] == len(
+        load_persona_pack_registry().personas
+    )
     result = next(item for item in updates if isinstance(item, TargetAssessmentResult))
 
     assert progress[0].team_member == "coordinator" and progress[0].status == "running"
@@ -1706,19 +1711,10 @@ def test_runner_never_surfaces_a_protected_status_question(monkeypatch):
 def test_checkpoint_serializer_explicitly_allows_conversation_reply():
     import warnings
 
-    from recruitment_team.conversation_model import ConversationReply, PreferenceUpdatePayload
+    from recruitment_team.conversation_model import ConversationReply
     from recruitment_team.open_agent.runner import _CHECKPOINTER
 
-    reply = ConversationReply(
-        reply="Platform roles only.",
-        preference_updates=[
-            PreferenceUpdatePayload(
-                field="role",
-                value="AI platform engineer",
-                evidence_quote="Platform roles only.",
-            )
-        ],
-    )
+    reply = ConversationReply(reply="Platform roles only.")
 
     encoded = _CHECKPOINTER.serde.dumps_typed(reply)
     with warnings.catch_warnings():

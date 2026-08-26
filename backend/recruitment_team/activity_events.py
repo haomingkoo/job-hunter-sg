@@ -13,11 +13,16 @@ from models import RecruitmentActivityEvent, RecruitmentRun, RecruitmentThread
 from .interface import ActivityEvent
 
 
+DEFAULT_ACTIVITY_EVENT_LIMIT = 200
+MAX_ACTIVITY_EVENT_LIMIT = 500
+
+
 _PUBLIC_DETAIL_KEYS = frozenset({
     "artifact_id",
     "attempt",
     "attempt_count",
     "attempt_limit",
+    "attempted_stage",
     "candidate_count",
     "company_filter_applied",
     "candidate_profile_artifact_id",
@@ -71,6 +76,7 @@ _PUBLIC_DETAIL_KEYS = frozenset({
 _PUBLIC_ATTRIBUTE_KEYS = frozenset({
     "attempt_count",
     "attempt_limit",
+    "attempted_stage",
     "command_type",
     "error_type",
     "failure_code",
@@ -80,7 +86,7 @@ _PUBLIC_ATTRIBUTE_KEYS = frozenset({
     "reply_mode",
     "result_count",
     "retryable",
-    "span_id",
+    "operation_id",
     "stage",
     "tool_name",
     "validation_code",
@@ -109,7 +115,7 @@ def trace_attributes(item: dict, detail: dict) -> dict:
     if isinstance(detail.get("result_count"), int):
         attributes["result_count"] = detail["result_count"]
     if item.get("id"):
-        attributes["span_id"] = str(item["id"])
+        attributes["operation_id"] = str(item["id"])
     return attributes
 
 
@@ -177,6 +183,9 @@ def create_record(
 
 def to_activity_event(item: RecruitmentActivityEvent) -> ActivityEvent:
     """Project a persisted row to the recruitment-team interface."""
+    attributes = dict(item.attributes or {})
+    if "operation_id" not in attributes and attributes.get("span_id"):
+        attributes["operation_id"] = attributes["span_id"]
     return ActivityEvent(
         sequence=item.sequence,
         run_id=item.run_id,
@@ -189,6 +198,6 @@ def to_activity_event(item: RecruitmentActivityEvent) -> ActivityEvent:
         detail=item.detail,
         parent_id=item.parent_id,
         duration_ms=item.duration_ms,
-        attributes=item.attributes or {},
+        attributes=attributes,
         created_at=item.created_at,
     )

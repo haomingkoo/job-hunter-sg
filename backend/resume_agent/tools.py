@@ -24,6 +24,7 @@ from employer_filter import (
 from job_visibility import (
     WORK_LOCATION_SINGAPORE,
     apply_public_job_visibility,
+    apply_singapore_market_visibility,
     experienced_hire_prefilter_condition,
     is_junior_posting,
     is_singapore_job_location,
@@ -192,7 +193,12 @@ def search_jobs(
             )
 
         scores = {job_id: score for job_id, score in similar}
-        jobs = apply_public_job_visibility(db.query(ScrapedJob)).filter(ScrapedJob.id.in_(scores.keys())).all()
+        visible_jobs = (
+            apply_singapore_market_visibility(db.query(ScrapedJob))
+            if singapore_only
+            else apply_public_job_visibility(db.query(ScrapedJob))
+        )
+        jobs = visible_jobs.filter(ScrapedJob.id.in_(scores.keys())).all()
         by_id = {job.id: job for job in jobs}
         results = [
             contract.job_payload(
@@ -252,7 +258,9 @@ def get_job(job_id: int) -> dict:
     db = None
     try:
         db = SessionLocal()
-        job = apply_public_job_visibility(db.query(ScrapedJob).filter(ScrapedJob.id == job_id)).first()
+        job = apply_singapore_market_visibility(
+            db.query(ScrapedJob).filter(ScrapedJob.id == job_id)
+        ).first()
         if not job:
             return contract.get_job_empty_result(job_id)
         return contract.get_job_result(contract.job_payload(job, detail=True, include_parsed=False))

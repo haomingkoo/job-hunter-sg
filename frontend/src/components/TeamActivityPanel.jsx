@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
+
+import { activityDetail } from "../lib/recruitmentActivity.js";
 
 /**
  * Renders the specialists as persistent identities rather than as a log. Every member
@@ -12,6 +14,7 @@ import { ChevronDown } from "lucide-react";
 // display_name values come from recruitment_team/persona_packs/v1/personas.json.
 const MEMBERS = {
   coordinator: { name: "Coordinator", remit: "Runs the brief and decides who works next" },
+  job_search: { name: "Job search", remit: "Runs the deterministic posting search and profile-aware ranking" },
   candidate_profiler: { name: "Candidate profiler", remit: "Builds your evidence profile from the resume" },
   role_profiler: { name: "Role profiler", remit: "Builds the target role's source-backed success profile" },
   recruiter: { name: "Recruiter screen", remit: "Judges it the way a first-pass screen would" },
@@ -49,21 +52,17 @@ function monogram(id) {
   return (words.length > 1 ? words[0][0] + words[1][0] : name.slice(0, 2)).toUpperCase();
 }
 
-function useElapsed(active) {
+function useElapsed(active, startedAt) {
   const [now, setNow] = useState(() => Date.now());
-  const startedAt = useRef(null);
+  const startedAtMs = Date.parse(startedAt || "");
   useEffect(() => {
-    if (!active) {
-      startedAt.current = null;
-      return undefined;
-    }
-    startedAt.current = Date.now();
+    if (!active || !Number.isFinite(startedAtMs)) return undefined;
     setNow(Date.now());
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [active]);
-  if (!active || !startedAt.current) return null;
-  const total = Math.max(0, Math.floor((now - startedAt.current) / 1000));
+  }, [active, startedAtMs]);
+  if (!active || !Number.isFinite(startedAtMs)) return null;
+  const total = Math.max(0, Math.floor((now - startedAtMs) / 1000));
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
@@ -98,18 +97,19 @@ function capitalize(text) {
 function humanize(item) {
   const summary = item.summary;
   if (!summary) return summary;
-  const detail = item.detail || {};
+  const detail = activityDetail(item);
 
   // What came back. Counts and named outcomes only: no tool ever returns its
   // raw payload to this panel.
   if (detail.stage === "result" && detail.outcome) return capitalize(detail.outcome);
 
-  const tool = normalizeTool(detail.tool_name || summary.match(/^\w+ called (\w+)\.?$/)?.[1]);
+  const tool = normalizeTool(detail.tool_name);
   const phrase = TOOL_PHRASES[tool];
   if (phrase) return capitalize(phrase);
 
   // The row already names the agent, so drop a leading "ats ..." / "hiring_manager ..." subject.
-  return capitalize(summary.replace(new RegExp(`^${item.team_member}\\s+`), ""));
+  const memberPrefix = `${item.team_member} `;
+  return capitalize(summary.startsWith(memberPrefix) ? summary.slice(memberPrefix.length) : summary);
 }
 
 /** Preserve the thread's completed work as later runs add new steps. */
@@ -168,22 +168,6 @@ function buildRoster(events) {
   }
   rows.sort((a, b) => (a.id === "coordinator" ? -1 : b.id === "coordinator" ? 1 : 0));
   return rows;
-}
-
-function latestRunIdOf(events) {
-  let latest = null;
-  for (const item of events) {
-    if (!latest || Number(item.sequence) > Number(latest.sequence)) latest = item;
-  }
-  return latest?.run_id;
-}
-
-function latestLifecycleOf(events) {
-  return events
-    .filter((item) => item.event_type === "run")
-    .reduce((latest, item) => (
-      !latest || Number(item.sequence) > Number(latest.sequence) ? item : latest
-    ), null);
 }
 
 function statusFromLifecycle(lifecycle) {
@@ -271,16 +255,15 @@ function AgentRow({ agent, defaultOpen }) {
   );
 }
 
-export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
+export default function TeamActivityPanel({ events, busy, awaitingAnswer, foregroundRunId = "" }) {
+  // The parent keeps this collection deduplicated and ordered at its state boundary.
   const roster = useMemo(() => buildRoster(events), [events]);
-  const elapsed = useElapsed(busy);
-  // Reconnect catch-up and live SSE can arrive out of order. Sequence is the
-  // durable ordering contract; array position is only transport timing.
-  const latestRunId = useMemo(() => latestRunIdOf(events), [events]);
+  const latestRunId = foregroundRunId || events.at(-1)?.run_id;
   const latestRunEvents = useMemo(
     () => events.filter((item) => item.run_id === latestRunId),
     [events, latestRunId],
   );
+  const elapsed = useElapsed(busy, latestRunEvents[0]?.created_at);
   // Only a full assessment runs specialists and a judge. A chat turn now streams
   // its own tool steps through this panel, and promising it several minutes of
   // specialists would be a lie on every message.
@@ -288,16 +271,22 @@ export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
     return latestRunEvents.some((item) => item.event_type === "assessment");
   }, [latestRunEvents]);
 
-  const assessmentRoster = useMemo(
-    () => buildRoster(latestRunEvents.filter((item) => item.event_type === "assessment")),
+  const latestRunRoster = useMemo(
+    () => buildRoster(latestRunEvents),
     [latestRunEvents],
   );
-  const specialists = assessmentRoster.filter((agent) => SPECIALIST_IDS.has(agent.id));
+  const specialists = latestRunRoster.filter((agent) => SPECIALIST_IDS.has(agent.id));
   // "Reported" means it has produced a verdict, even if it was re-engaged afterwards.
   const reported = specialists.filter((a) => a.conclusion).length;
-  const latestRunActive = buildRoster(latestRunEvents).find((a) => a.status === "running");
+  const requiredSpecialistCount = latestRunEvents.reduce((known, item) => {
+    const count = Number(item.detail?.required_specialist_count);
+    return Number.isInteger(count) && count > 0 ? count : known;
+  }, null);
+  const latestRunActive = latestRunRoster.find((agent) => agent.status === "running");
   const active = roster.find((agent) => agent.status === "running");
-  const latestRunStatus = statusFromLifecycle(latestLifecycleOf(latestRunEvents));
+  const latestRunStatus = statusFromLifecycle(
+    latestRunEvents.findLast((item) => item.event_type === "run"),
+  );
 
   let headline = "Idle";
   if (awaitingAnswer) headline = "Waiting on your answer";
@@ -323,7 +312,11 @@ export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
 
       <p className="mt-0.5 text-[11px] text-[#4A6785]" aria-live="polite">
         {headline}
-        {assessing && specialists.length > 0 && ` · ${reported} of ${specialists.length} reported`}
+        {assessing && specialists.length > 0 && (
+          requiredSpecialistCount
+            ? ` · ${reported} of ${requiredSpecialistCount} reported`
+            : ` · ${reported} reported`
+        )}
       </p>
 
       {busy && assessing && (
@@ -335,7 +328,7 @@ export default function TeamActivityPanel({ events, busy, awaitingAnswer }) {
 
       {roster.length === 0 ? (
         <p className="mt-4 text-xs leading-relaxed text-[#4A6785]">
-          The coordinator and candidate profiler start work after your first message.
+          The candidate profiler checks your evidence first; the coordinator follows with that profile.
         </p>
       ) : (
         <ol className="mt-3 space-y-2">

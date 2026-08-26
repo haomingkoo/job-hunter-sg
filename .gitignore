@@ -48,6 +48,7 @@ tmp/
 !.env.example
 !shared/resume-classification.json
 !backend/recruitment_team/persona_packs/**/*.json
+!backend/evals/ranking-integrity/*.json
 !backend/evals/corpora/synthetic-v1/cases/*/*.json
 !backend/evals/job-ranking-v1.json
 !backend/evals/job-ranking-release-v*.protocol.json
@@ -59,5 +60,6 @@ backend/data/*.xlsx
 backend/data/company_ssic_cache.json
 backend/data/learned_skills.json
 .superpowers/
+/.ua/
 # roborev snapshots
 /.roborev/

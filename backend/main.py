@@ -82,6 +82,7 @@ from job_store import compute_content_hash, find_existing_scraped_job
 from job_visibility import (
     apply_expired_job_visibility,
     apply_public_job_visibility,
+    apply_singapore_market_visibility,
     job_corpus_marker as _job_corpus_marker,
     sector_filter_condition as _sector_filter_condition,
     sector_label as _analytics_sector_label,
@@ -160,6 +161,7 @@ from schemas import (
     UserOut,
 )
 from ai_service import _call_sealion, apply_uk_spelling, coach_resume, get_ai_status, integrate_keywords, rewrite_bullet
+from ai_quota import consume_ai_credit as _consume_ai_credit
 from config import SEALION_FAST_MODEL
 from ats_terms import (
     build_job_ats_terms,
@@ -220,7 +222,6 @@ _filter_meta_marker: str = ""
 _FILTER_META_TTL = app_config.ANALYTICS_FILTER_META_TTL_SECONDS
 _FILTER_META_CACHE_LOCK = threading.Lock()
 _PUBLIC_RATE_LIMITER = FixedWindowRateLimiter()
-_AI_QUOTA_LOCK = threading.Lock()
 _CREDENTIAL_MUTATION_LOCK = threading.Lock()
 _COURSE_RECOMMEND_SLOTS = threading.BoundedSemaphore(2)
 _SEED_RUN_LOCK = threading.Lock()
@@ -331,19 +332,18 @@ async def lifespan(_application: FastAPI):
             interrupted = _reconcile_interrupted_recruitment_runs(SessionLocal)
             if interrupted:
                 log.warning("[STARTUP] Reconciled %s interrupted recruitment runs", interrupted)
-            db = SessionLocal()
-            cutoff = datetime.now(timezone.utc) - timedelta(days=30)
-            stale = _retire_jobs_older_than(
-                db,
-                cutoff,
-                datetime.now(timezone.utc).isoformat(),
-            )
-            if stale > 0:
-                log.info(f"[STARTUP] Retiring {stale} stale jobs...")
-                db.commit()
-                _clear_analytics_cache()
-                log.info(f"[STARTUP] Retired {stale} stale jobs")
-            db.close()
+            with SessionLocal() as db:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+                stale = _retire_jobs_older_than(
+                    db,
+                    cutoff,
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                if stale > 0:
+                    log.info(f"[STARTUP] Retiring {stale} stale jobs...")
+                    db.commit()
+                    _clear_analytics_cache()
+                    log.info(f"[STARTUP] Retired {stale} stale jobs")
         except Exception as e:
             log.warning(f"[STARTUP] Stale job cleanup failed: {e}")
 
@@ -408,26 +408,25 @@ async def lifespan(_application: FastAPI):
     threading.Thread(target=_startup_maintenance, daemon=True).start()
 
     try:
-        db2 = SessionLocal()
-        admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
-        admin_pw = os.environ.get("ADMIN_PASSWORD", "")
-        if (
-            password_auth_enabled()
-            and admin_email
-            and admin_pw
-            and not db2.query(User).filter(User.email == admin_email).first()
-        ):
-            admin = User(
-                email=admin_email,
-                password_hash=hash_password(admin_pw),
-                name="Admin",
-                tier="admin",
-                email_verified_at=datetime.now(timezone.utc),
-            )
-            db2.add(admin)
-            db2.commit()
-            log.info("Admin account created")
-        db2.close()
+        with SessionLocal() as db2:
+            admin_email = os.environ.get("ADMIN_EMAIL", "").strip().lower()
+            admin_pw = os.environ.get("ADMIN_PASSWORD", "")
+            if (
+                password_auth_enabled()
+                and admin_email
+                and admin_pw
+                and not db2.query(User).filter(User.email == admin_email).first()
+            ):
+                admin = User(
+                    email=admin_email,
+                    password_hash=hash_password(admin_pw),
+                    name="Admin",
+                    tier="admin",
+                    email_verified_at=datetime.now(timezone.utc),
+                )
+                db2.add(admin)
+                db2.commit()
+                log.info("Admin account created")
     except Exception as e:
         log.warning(f"Admin account creation failed: {e}")
 
@@ -1306,6 +1305,7 @@ def _select_power_match_candidates(
     resume_skills: list[str],
     limit: int = 500,
     direct_employers_only: bool = False,
+    resume_embedding: list[float] | None = None,
 ) -> list[ScrapedJob]:
     base_query = db.query(ScrapedJob).options(
         load_only(
@@ -1334,7 +1334,7 @@ def _select_power_match_candidates(
             ScrapedJob.skills_flat,
         )
     )
-    base_query = apply_public_job_visibility(base_query)
+    base_query = apply_singapore_market_visibility(base_query)
     if direct_employers_only:
         base_query = base_query.filter(
             employer_relationship_eligibility_condition(
@@ -1343,6 +1343,31 @@ def _select_power_match_candidates(
                 ScrapedJob.company,
             )
         )
+
+    if resume_embedding:
+        from embedding_service import find_similar_jobs
+
+        # The global embedding matrix intentionally contains every public row so
+        # callers can opt into non-Singapore searches. Power Match is a
+        # Singapore surface, so constrain ranking to this already-filtered
+        # candidate set instead of relying on post-ranking filtering, which can
+        # lose good local matches below overseas results.
+        eligible_job_ids = {
+            job_id for (job_id,) in base_query.with_entities(ScrapedJob.id).all()
+        }
+        similar = find_similar_jobs(
+            resume_embedding,
+            db,
+            top_k=limit,
+            eligible_job_ids=eligible_job_ids,
+        )
+        ranked_ids = [job_id for job_id, _score in similar]
+        if not ranked_ids:
+            return []
+        jobs = base_query.filter(ScrapedJob.id.in_(ranked_ids)).all()
+        jobs_by_id = {job.id: job for job in jobs}
+        return [jobs_by_id[job_id] for job_id in ranked_ids if job_id in jobs_by_id]
+
     hard_resume_terms = [skill for skill in resume_skills if skill.lower() in SEMICONDUCTOR_HARD_TERMS]
     prioritized_terms = hard_resume_terms[:8] + [
         skill for skill in resume_skills[:12] if skill.lower() not in {term.lower() for term in hard_resume_terms[:8]}
@@ -3443,7 +3468,11 @@ def list_cached_jobs(
             )
 
     query = db.query(ScrapedJob).options(load_only(*_JOB_LIST_COLUMNS))
-    query = apply_expired_job_visibility(query) if view == "expired" else apply_public_job_visibility(query)
+    query = (
+        apply_expired_job_visibility(query)
+        if view == "expired"
+        else apply_singapore_market_visibility(query)
+    )
     if min_match_score is not None:
         eligible_ids = [
             job_id
@@ -3640,7 +3669,11 @@ def list_cached_jobs(
         ):
             filter_meta = _filter_meta_cache
         else:
-            selected_visibility = apply_expired_job_visibility if view == "expired" else apply_public_job_visibility
+            selected_visibility = (
+                apply_expired_job_visibility
+                if view == "expired"
+                else apply_singapore_market_visibility
+            )
             source_counts = (
                 selected_visibility(db.query(ScrapedJob.source, func.count()))
                 .filter(ScrapedJob.source != "")
@@ -3775,7 +3808,9 @@ def get_similar_jobs(
     db: Session = Depends(get_db),
 ) -> list[ScrapedJob]:
     """Find similar jobs based on title keywords and skills overlap."""
-    job = apply_public_job_visibility(db.query(ScrapedJob)).filter(ScrapedJob.id == job_id).first()
+    job = apply_singapore_market_visibility(db.query(ScrapedJob)).filter(
+        ScrapedJob.id == job_id
+    ).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -3805,7 +3840,7 @@ def get_similar_jobs(
 
     conditions = [ScrapedJob.title.ilike(_contains_like_pattern(word), escape="\\") for word in title_words[:3]]
     similar = (
-        apply_public_job_visibility(db.query(ScrapedJob))
+        apply_singapore_market_visibility(db.query(ScrapedJob))
         .filter(ScrapedJob.id != job_id, or_(*conditions))
         .order_by(ScrapedJob.id.desc())
         .limit(limit)
@@ -3999,6 +4034,7 @@ def get_power_match(
         resume_skills=resume_skills,
         limit=candidate_limit,
         direct_employers_only=direct_employers_only,
+        resume_embedding=mem.resume_embedding,
     )
 
     semantic_scores: dict[int, float] = {}
@@ -4290,7 +4326,9 @@ def recommend_skillsfuture_courses(
 
 @app.get("/api/jobs/{job_id}", response_model=JobOut)
 def get_cached_job(job_id: int, db: Session = Depends(get_db)) -> ScrapedJob:
-    job = apply_public_job_visibility(db.query(ScrapedJob)).filter(ScrapedJob.id == job_id).first()
+    job = apply_singapore_market_visibility(db.query(ScrapedJob)).filter(
+        ScrapedJob.id == job_id
+    ).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
@@ -4304,7 +4342,9 @@ def match_resume_to_job(
     db: Session = Depends(get_db),
 ) -> dict:
     """Compare resume against a specific job's skills and description."""
-    job = db.query(ScrapedJob).filter(ScrapedJob.id == job_id).first()
+    job = apply_singapore_market_visibility(db.query(ScrapedJob)).filter(
+        ScrapedJob.id == job_id
+    ).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     if not _PUBLIC_RATE_LIMITER.allow(f"job-match:{user.id}", limit=30, window_seconds=60):
@@ -4926,26 +4966,6 @@ def _get_memory_context(user: Optional[User], db: Session) -> str:
 def ai_status() -> dict:
     """Check AI service availability and queue status."""
     return get_ai_status()
-
-
-def _consume_ai_credit(
-    user: User,
-    db: Session,
-    detail: str,
-) -> None:
-    with _AI_QUOTA_LOCK:
-        try:
-            if db.get_bind().dialect.name == "postgresql":
-                db.execute(
-                    text("SELECT pg_advisory_xact_lock(:key)"),
-                    {"key": 0x4A480000 + user.id},
-                )
-            check_rate_limit(user, "ai", db)
-            db.add(UsageLog(user_id=user.id, action="ai", detail=detail))
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
 
 
 @app.post("/api/ai/coach")

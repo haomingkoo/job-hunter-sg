@@ -546,33 +546,21 @@ records `detail["failure_type"]` on a failed activity event, and re-raises
 
 ### Preference updates on the new path
 
-`ConversationReply.preference_updates` is carried out of `structured_response` into
-`ModelReply.preference_updates` as `PreferenceUpdate` tuples, exactly as
-`LangChainConversationModel` does at `conversation_model.py:205-216`. Everything
-downstream is unchanged: `preference_update_error` in `_model_reply` rejects a quote that
-does not occur verbatim in the latest user message, and `_merge_preference_updates`
-writes `case_facts["preferences"]`.
+**Superseded by the tool-authoritative coordinator contract.** The coordinator now writes
+preferences only through `record_preferences`, which validates exact quotes before placing
+updates in the conversation context. `ConversationReply` carries prose and uncertainty,
+not a second preference-write channel. Adapter `ModelReply.preference_updates` remains for
+non-agent conversation adapters, and the recruitment-team boundary still validates it.
 
-This carry is one of the easiest things in the slice to drop wholesale with every test
-still green, so both halves are asserted: a valid quote must land in
-`case_facts["preferences"]`, and an invalid one must not.
-
-**Corrected in revision 5.** Revision 3 said an invalid quote must raise `InvalidCommand`
-and append no assistant message. Live on 2026-08-02, asked to improve a resume, the
-coordinator drafted eight edits that passed every validation gate and attached one
-preference update quoting a sentence the candidate never wrote. The turn was thrown away
-whole: no reply, no edits, a 422. The rule exists to keep a fabricated preference out of
-`case_facts`, and dropping the update does that. Failing the turn does that and destroys
-the work beside it. So `evidenced_preference_updates` splits them, the evidenced ones
-merge, and the rejections are recorded on the model span rather than raised. An empty
-reply is still fatal, and that is what the persistence test now uses.
+The tool can reject an unevidenced batch without losing the rest of the turn. The model
+may correct the call using the returned validation error, and only accepted tool output
+reaches `case_facts["preferences"]`.
 
 ### `search_query` stops being a request
 
-`DeepAgentConversationModel` **overwrites** `ModelReply.search_query` with the last query
-actually passed to the `search_jobs` tool this turn, discarding whatever the model wrote
-in the payload. `case_facts["search_query"]` then records a query that was really run
-instead of one that was asked for. The field becomes an observation.
+`DeepAgentConversationModel` sets `ModelReply.search_query` from the last query actually
+passed to the `search_jobs` tool. `ConversationReply` has no search-query field, so the
+model cannot create a second, unexecuted value.
 
 Two keys, two meanings, and they can differ:
 
@@ -583,13 +571,7 @@ Two keys, two meanings, and they can differ:
   jobs**, kept consistent with `recommendations` so the panel never shows a query that
   does not describe the list under it.
 
-The specification test scripts a submission whose `search_query` is deliberately
-different from the query the tool ran with, and asserts both keys equal the executed one.
-Revision 1's assertion compared `ScriptedDiscovery`'s echoed query to itself and could
-not fail.
-
-This does not resolve the optional-field trap for `LangChainConversationModel`. That is
-slice V2 / issue #147, where the field must become required in the submission schema.
+The specification test asserts both persisted keys equal the executed query.
 
 ---
 

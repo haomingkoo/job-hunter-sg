@@ -106,11 +106,15 @@ class RequestBodyLimitMiddleware:
 class SecurityHeadersMiddleware:
     """Add browser hardening headers without buffering response bodies."""
 
+    _INLINE_SCRIPT_HASHES = (
+        "'sha256-dcTEVEoKdqF+uPHaS+qqc2wX5aL9IJ/t7LB/pZgrnms='",  # pragma: allowlist secret
+        "'sha256-MUR+DfZdT3WqUYsRBvg17GSufh4pf36A2/35CsV5Gts='",  # pragma: allowlist secret
+    )
     _CONTENT_SECURITY_POLICY = (
         "default-src 'self'; base-uri 'self'; object-src 'none'; "
         "frame-ancestors 'none'; form-action 'self'; img-src 'self' data: https:; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "script-src 'self' 'unsafe-inline'; connect-src 'self' https:; "
+        f"script-src 'self' {' '.join(_INLINE_SCRIPT_HASHES)}; connect-src 'self' https:; "
         "font-src 'self' data: https://fonts.gstatic.com"
     ).encode()
 

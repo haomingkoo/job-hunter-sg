@@ -140,6 +140,21 @@ def apply_public_job_visibility(
     )
 
 
+def apply_singapore_market_visibility(
+    query,
+    include_old: bool = False,
+    *,
+    now: datetime | None = None,
+):
+    """Hide postings proven overseas while retaining unresolved legacy rows."""
+    return apply_public_job_visibility(query, include_old, now=now).filter(
+        or_(
+            ScrapedJob.work_location_scope.is_(None),
+            ScrapedJob.work_location_scope != WORK_LOCATION_OVERSEAS,
+        )
+    )
+
+
 def apply_expired_job_visibility(query):
     """Return only jobs with evidence that they are no longer active."""
     today = datetime.now(timezone.utc).date().isoformat()

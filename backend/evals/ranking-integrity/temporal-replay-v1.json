@@ -1,0 +1,83 @@
+{
+  "fixture_version": "temporal-replay-v1",
+  "evaluation_kind": "temporal_replay",
+  "outcomes": [],
+  "candidate_profile": {
+    "profile_version": "synthetic-semiconductor-manager-v1",
+    "observed_at": "2026-01-01T00:00:00+08:00",
+    "fields": [
+      {
+        "field_id": "quality-leadership",
+        "category": "demonstrated_capability",
+        "statement": "Led quality management across semiconductor manufacturing sites.",
+        "evidence_kind": "direct"
+      }
+    ]
+  },
+  "jobs": [
+    {
+      "job_id": 201,
+      "observed_at": "2026-01-10T00:00:00+08:00",
+      "title": "Quality Manager",
+      "company": "Unverified Semiconductor",
+      "seniority": "Manager",
+      "description": "Lead quality management.",
+      "skills": ["quality management"],
+      "employer_relationship": "unknown",
+      "employer_relationship_evidence": "mcf_no_relationship_signal"
+    },
+    {
+      "job_id": 202,
+      "observed_at": "2026-02-01T00:00:00+08:00",
+      "title": "Quality Manager",
+      "company": "Direct Semiconductor",
+      "seniority": "Manager",
+      "description": "Lead quality management.",
+      "skills": ["quality management"],
+      "employer_relationship": "direct",
+      "employer_relationship_evidence": "official_company_source"
+    },
+    {
+      "job_id": 203,
+      "observed_at": "2026-01-10T00:00:00+08:00",
+      "title": "Quality Manager",
+      "company": "Example Recruitment",
+      "seniority": "Manager",
+      "description": "Lead quality management.",
+      "skills": ["quality management"],
+      "employer_relationship": "intermediary",
+      "employer_relationship_evidence": "ea_licence"
+    },
+    {
+      "job_id": 204,
+      "observed_at": "2026-01-10T00:00:00+08:00",
+      "title": "Software Manager",
+      "company": "Unverified Software",
+      "seniority": "Manager",
+      "description": "Lead software development.",
+      "skills": ["software development"],
+      "employer_relationship": "unknown",
+      "employer_relationship_evidence": "mcf_no_relationship_signal"
+    }
+  ],
+  "replays": [
+    {
+      "case_id": "january-as-of",
+      "cutoff": "2026-01-31T23:59:59+08:00",
+      "query": "quality manager",
+      "direct_employers_only": true,
+      "similarity_scores": {"201": 0.95, "203": 0.99, "204": 1.00},
+      "expected_ranked_job_ids": [201, 203, 204],
+      "direct_before_unknown": []
+    },
+    {
+      "case_id": "february-as-of",
+      "cutoff": "2026-02-28T23:59:59+08:00",
+      "query": "quality manager",
+      "direct_employers_only": true,
+      "similarity_scores": {"201": 0.95, "202": 0.80, "203": 0.99, "204": 1.00},
+      "expected_ranked_job_ids": [202, 201, 203, 204],
+      "direct_before_unknown": [[202, 201], [202, 203]]
+    }
+  ]
+}

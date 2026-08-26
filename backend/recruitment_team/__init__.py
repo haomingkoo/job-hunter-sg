@@ -1,7 +1,7 @@
 """Job Hunter SG V3 recruitment-team module."""
 
 from .assessed_role_success import EvidenceAssessedRoleSuccessProfiler
-from .conversation_model import LangChainConversationModel, ScriptedConversationModel
+from .conversation_model import ScriptedConversationModel
 from .coordinator.context import ConversationContext
 from .coordinator.model import DeepAgentConversationModel
 from .recruitment_team import RecruitmentTeam
@@ -18,7 +18,6 @@ from .role_success import (
 __all__ = [
     "ConversationContext",
     "DeepAgentConversationModel",
-    "LangChainConversationModel",
     "EvidenceAssessedRoleSuccessProfiler",
     "LangChainRoleEvidenceAssessor",
     "RecruitmentTeam",

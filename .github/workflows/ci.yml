@@ -88,6 +88,12 @@ jobs:
           job-hunter-sg-crawler-ci:${{ github.sha }}
           -m scripts.evaluate_job_ranking
 
+      - name: Run recruitment ranking integrity evaluation
+        run: >-
+          docker run --rm --entrypoint python
+          job-hunter-sg-crawler-ci:${{ github.sha }}
+          -m scripts.evaluate_recruitment_ranking_integrity
+
   frontend-build:
     name: Frontend tests and build
     runs-on: ubuntu-latest

@@ -11,6 +11,7 @@ import SpecialistReport from "./SpecialistReport.jsx";
 import ProposedEditsPanel from "./ProposedEditsPanel.jsx";
 import AiServiceStatus from "./AiServiceStatus.jsx";
 import { apiFetch } from "../lib/api.js";
+import { normalizeActivityEvents } from "../lib/recruitmentActivity.js";
 import { streamRecruitmentCommand } from "../lib/recruitmentTeamApi.js";
 
 
@@ -177,6 +178,7 @@ export default function RecruitmentTeamPanel({
   );
   const [snapshot, setSnapshot] = useState(null);
   const [events, setEvents] = useState([]);
+  const [foregroundRunId, setForegroundRunId] = useState("");
   const [candidateProfile, setCandidateProfile] = useState(null);
   const [targetAssessment, setTargetAssessment] = useState(null);
   const [proposedEdits, setProposedEdits] = useState([]);
@@ -199,6 +201,7 @@ export default function RecruitmentTeamPanel({
   const [deletionTarget, setDeletionTarget] = useState(null);
   const [retention, setRetention] = useState(null);
   const [lifecycleNotice, setLifecycleNotice] = useState("");
+  const [loadingEarlierMessages, setLoadingEarlierMessages] = useState(false);
   const handledInitialRequestRef = useRef("");
 
   const selectedResume = useMemo(
@@ -212,7 +215,7 @@ export default function RecruitmentTeamPanel({
   const candidateStudyRunning = snapshot?.case_facts?.candidate_profile_status === "running";
   const candidateProfileReady = snapshot?.case_facts?.candidate_profile_status === "completed";
   const persistedRunActive = !busy && events.at(-1)?.status === "running";
-  const latestRunEvent = [...events].reverse().find((item) => item.event_type === "run");
+  const latestRunEvent = events.findLast((item) => item.event_type === "run");
   const failedConversationTurn = latestRunEvent?.status === "failed"
     && ["start_thread", "send_message", "answer_assessment_question"]
       .includes(latestRunEvent.detail?.command_type)
@@ -238,6 +241,7 @@ export default function RecruitmentTeamPanel({
     (snapshot?.case_facts?.match_rationales || []).map((item) => [item.job_id, item]),
   );
   const allDisplayedJobsRanked = displayedJobs.every((job) => matchRationales.has(job.job_id));
+  const profileRankingUsed = snapshot?.case_facts?.latest_ranking_receipt?.candidate_profile_used === true;
   const selectedTargetId = snapshot?.case_facts?.selected_target?.job_id;
   const selectedTarget = snapshot?.case_facts?.selected_target;
   const selectedTrackedJobId = snapshot?.case_facts?.tracked_job_ids?.[String(selectedTargetId)];
@@ -260,11 +264,19 @@ export default function RecruitmentTeamPanel({
   );
 
   function appendActivity(activityEvent) {
-    setEvents((current) => (
-      current.some((item) => item.sequence === activityEvent.sequence)
-        ? current
-        : [...current, activityEvent]
-    ));
+    setEvents((current) => normalizeActivityEvents([...current, activityEvent]));
+  }
+
+  function streamForegroundCommand(path, body) {
+    let runId = "";
+    setForegroundRunId("");
+    return streamRecruitmentCommand(path, body, (activityEvent) => {
+      if (!runId && activityEvent.run_id) {
+        runId = activityEvent.run_id;
+        setForegroundRunId(activityEvent.run_id);
+      }
+      appendActivity(activityEvent);
+    });
   }
 
   async function loadThreads() {
@@ -284,7 +296,7 @@ export default function RecruitmentTeamPanel({
       eventResponse.json(),
     ]);
     setSnapshot(nextSnapshot);
-    setEvents(nextEvents);
+    setEvents(normalizeActivityEvents(nextEvents));
     if (nextSnapshot.case_facts?.candidate_profile_artifact_id) {
       const profileResponse = await apiFetch(
         `/api/recruitment-team/threads/${id}/candidate-profile`,
@@ -303,6 +315,29 @@ export default function RecruitmentTeamPanel({
     }
     const editsResponse = await apiFetch(`/api/recruitment-team/threads/${id}/proposed-edits`);
     setProposedEdits(await editsResponse.json());
+  }
+
+  async function loadEarlierMessages() {
+    const beforeMessageId = snapshot?.oldest_message_id;
+    if (!threadId || !snapshot?.message_history_has_more || !beforeMessageId) return;
+    setLoadingEarlierMessages(true);
+    setError("");
+    try {
+      const response = await apiFetch(
+        `/api/recruitment-team/threads/${threadId}?before_message_id=${beforeMessageId}`,
+      );
+      const page = await response.json();
+      setSnapshot((current) => ({
+        ...current,
+        messages: [...(page.messages || []), ...(current?.messages || [])],
+        message_history_has_more: page.message_history_has_more,
+        oldest_message_id: page.oldest_message_id,
+      }));
+    } catch (historyError) {
+      setError(historyError.message || "Could not load earlier messages.");
+    } finally {
+      setLoadingEarlierMessages(false);
+    }
   }
 
   async function runTurn(action, { clearMessage = false, refreshOnError = false, fallbackError = "" } = {}) {
@@ -327,10 +362,9 @@ export default function RecruitmentTeamPanel({
     setBusy(true);
     setError("");
     try {
-      await streamRecruitmentCommand(
+      await streamForegroundCommand(
         `/api/recruitment-team/threads/${threadId}/runs/${failedConversationTurn.run_id}/retry/stream`,
         {},
-        appendActivity,
       );
       await refreshThread(threadId);
     } catch (retryError) {
@@ -438,22 +472,20 @@ export default function RecruitmentTeamPanel({
         const receipt = threadId
           && snapshot?.status !== "archived"
           && currentVersionId === requestedVersionId
-          ? await streamRecruitmentCommand(
+          ? await streamForegroundCommand(
             `/api/recruitment-team/threads/${threadId}/messages/stream`,
             {
               message: initialRequest.message,
               idempotency_key: globalThis.crypto.randomUUID(),
             },
-            appendActivity,
           )
-          : await streamRecruitmentCommand(
+          : await streamForegroundCommand(
             "/api/recruitment-team/threads/stream",
             {
               resume_version_id: requestedVersionId,
               message: initialRequest.message,
               idempotency_key: globalThis.crypto.randomUUID(),
             },
-            appendActivity,
           );
         const nextThreadId = receipt.thread_id;
         localStorage.setItem(storedThreadKey(user.id), nextThreadId);
@@ -604,14 +636,13 @@ export default function RecruitmentTeamPanel({
     setBusy(true);
     setError("");
     try {
-      const receipt = await streamRecruitmentCommand(
+      const receipt = await streamForegroundCommand(
         "/api/recruitment-team/threads/stream",
         {
           resume_version_id: Number(resumeVersionId),
           message: "Find roles for me.",
           idempotency_key: globalThis.crypto.randomUUID(),
         },
-        appendActivity,
       );
       const nextThreadId = receipt.thread_id;
       setThreadId(nextThreadId);
@@ -646,19 +677,17 @@ export default function RecruitmentTeamPanel({
     try {
       const idempotencyKey = globalThis.crypto.randomUUID();
       const receipt = threadId
-        ? await streamRecruitmentCommand(
+        ? await streamForegroundCommand(
           `/api/recruitment-team/threads/${threadId}/messages/stream`,
           { message: text, idempotency_key: idempotencyKey },
-          appendActivity,
         )
-        : await streamRecruitmentCommand(
+        : await streamForegroundCommand(
           "/api/recruitment-team/threads/stream",
           {
             resume_version_id: Number(resumeVersionId),
             message: text,
             idempotency_key: idempotencyKey,
           },
-          appendActivity,
         );
       const nextThreadId = receipt.thread_id;
       localStorage.setItem(storedThreadKey(user.id), nextThreadId);
@@ -668,13 +697,12 @@ export default function RecruitmentTeamPanel({
       if (createdThread) await loadThreads();
       while (queuedMessagesRef.current.length) {
         const [queuedMessage, ...remaining] = queuedMessagesRef.current;
-        const queuedReceipt = await streamRecruitmentCommand(
+        const queuedReceipt = await streamForegroundCommand(
           `/api/recruitment-team/threads/${nextThreadId}/messages/stream`,
           {
             message: queuedMessage,
             idempotency_key: globalThis.crypto.randomUUID(),
           },
-          appendActivity,
         );
         queuedMessagesRef.current = remaining;
         setQueuedMessages(remaining);
@@ -691,10 +719,9 @@ export default function RecruitmentTeamPanel({
     const query = message.trim();
     if (!threadId || busy || archived) return undefined;
     return runTurn(
-      () => streamRecruitmentCommand(
+      () => streamForegroundCommand(
         `/api/recruitment-team/threads/${threadId}/jobs/search/stream`,
         { query, idempotency_key: globalThis.crypto.randomUUID() },
-        appendActivity,
       ),
       { clearMessage: true },
     );
@@ -703,10 +730,9 @@ export default function RecruitmentTeamPanel({
   function studyResume() {
     if (!threadId || busy || archived) return undefined;
     return runTurn(
-      () => streamRecruitmentCommand(
+      () => streamForegroundCommand(
         `/api/recruitment-team/threads/${threadId}/candidate-profile/stream`,
         { idempotency_key: globalThis.crypto.randomUUID() },
-        appendActivity,
       ),
       { refreshOnError: true },
     );
@@ -715,10 +741,9 @@ export default function RecruitmentTeamPanel({
   function assessTarget() {
     if (!threadId || busy || archived) return undefined;
     return runTurn(
-      () => streamRecruitmentCommand(
+      () => streamForegroundCommand(
         `/api/recruitment-team/threads/${threadId}/assessment/stream`,
         { idempotency_key: globalThis.crypto.randomUUID() },
-        appendActivity,
       ),
       { refreshOnError: true },
     );
@@ -730,10 +755,9 @@ export default function RecruitmentTeamPanel({
     if (!threadId || !answer || busy || archived) return undefined;
     setMessage("");
     return runTurn(
-      () => streamRecruitmentCommand(
+      () => streamForegroundCommand(
         `/api/recruitment-team/threads/${threadId}/assessment/answer/stream`,
         { answer, idempotency_key: globalThis.crypto.randomUUID() },
-        appendActivity,
       ),
       { refreshOnError: true },
     ).then((completed) => {
@@ -764,10 +788,9 @@ export default function RecruitmentTeamPanel({
 
   function updateJob(path) {
     if (busy || archived) return undefined;
-    return runTurn(() => streamRecruitmentCommand(
+    return runTurn(() => streamForegroundCommand(
       `${path}/stream`,
       { idempotency_key: globalThis.crypto.randomUUID() },
-      appendActivity,
     ), { refreshOnError: true });
   }
 
@@ -775,14 +798,13 @@ export default function RecruitmentTeamPanel({
     event.preventDefault();
     if (busy || archived) return;
     const saved = await runTurn(
-      () => streamRecruitmentCommand(
+      () => streamForegroundCommand(
         `/api/recruitment-team/threads/${threadId}/jobs/${jobId}/feedback/stream`,
         {
           scope: feedbackScope,
           reason: feedbackReason.trim(),
           idempotency_key: globalThis.crypto.randomUUID(),
         },
-        appendActivity,
       ),
       { refreshOnError: true },
     );
@@ -1024,6 +1046,18 @@ export default function RecruitmentTeamPanel({
           )}
 
           <div className="min-h-72 space-y-3" aria-live="polite">
+            {snapshot?.message_history_has_more && (
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={loadEarlierMessages}
+                  disabled={loadingEarlierMessages}
+                  className="rounded-full border border-[#BDDDFC] px-3 py-1.5 text-xs font-medium text-[#384959] disabled:opacity-60"
+                >
+                  {loadingEarlierMessages ? "Loading…" : "Load earlier messages"}
+                </button>
+              </div>
+            )}
             {snapshot?.messages?.map((item, index) => (
               <div
                 key={`${item.run_id || index}:${item.role}`}
@@ -1045,8 +1079,8 @@ export default function RecruitmentTeamPanel({
                       Working from {selectedResume.label}
                     </p>
                     <p className="mt-1 max-w-md text-xs leading-relaxed text-[#4A6785]">
-                      The candidate profiler studies your resume evidence automatically while
-                      the coordinator searches current Singapore roles and explains its work.
+                      The candidate profiler resolves your resume evidence first. The coordinator
+                      then searches current Singapore roles and explains its work.
                     </p>
                     {/* Two doors, because a candidate who knows what they want should not
                         have to answer questions first, and one who does not should not face
@@ -1299,7 +1333,13 @@ export default function RecruitmentTeamPanel({
                           <p className="text-sm text-[#6A89A7]">{job.company} · {job.location}</p>
                         </div>
                         <span className="rounded-full bg-[#f0f5fa] px-2 py-1 text-xs text-[#384959]">
-                          {selected ? "Selected target" : shortlisted ? "Shortlisted" : rationale ? "Profile-ranked match" : "Search result"}
+                          {selected
+                            ? "Selected target"
+                            : shortlisted
+                              ? "Shortlisted"
+                              : rationale && profileRankingUsed
+                                ? "Profile-ranked match"
+                                : "Search result"}
                         </span>
                       </div>
                       <p className="mt-2 text-sm text-[#384959]">
@@ -1680,6 +1720,7 @@ export default function RecruitmentTeamPanel({
           events={events}
           busy={busy || persistedRunActive}
           awaitingAnswer={awaitingAnswer}
+          foregroundRunId={busy ? foregroundRunId : ""}
         />
       </div>
     </section>

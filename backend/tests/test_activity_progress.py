@@ -9,11 +9,13 @@ out, a tool's raw return value and a model's plain message do not.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from langchain_core.messages import AIMessage
 
 from recruitment_team.open_agent.streaming import describe_progress, rejected_tool_result
-from recruitment_team.activity_events import public_detail, trace_attributes
+from recruitment_team.activity_events import public_detail, to_activity_event, trace_attributes
 
 from backend.tests.test_open_agent_runner import _ScriptedModel
 
@@ -122,6 +124,37 @@ def test_trace_attributes_never_persist_query_text_even_when_it_looks_safe():
     assert "query_redacted" not in safe
     assert "query" not in private
     assert "query_redacted" not in private
+
+
+def test_activity_operation_ids_are_not_mislabeled_as_trace_spans():
+    attributes = trace_attributes(
+        _call("search_jobs"),
+        {"tool_name": "search_jobs", "stage": "call"},
+    )
+
+    assert attributes["operation_id"] == "call-1"
+    assert "span_id" not in attributes
+
+
+def test_legacy_span_attribute_projects_to_the_operation_contract():
+    projected = to_activity_event(SimpleNamespace(
+        sequence=1,
+        run_id="run-1",
+        event_type="conversation",
+        status="running",
+        team_member="coordinator",
+        attempt=1,
+        trace_key="trace-1",
+        summary="coordinator called search_jobs.",
+        detail={},
+        parent_id="run-1",
+        duration_ms=None,
+        attributes={"span_id": "legacy-call-1"},
+        created_at=datetime.now(timezone.utc),
+    ))
+
+    assert projected.attributes["span_id"] == "legacy-call-1"
+    assert projected.attributes["operation_id"] == "legacy-call-1"
 
 
 def test_a_coordinator_search_result_reports_how_many_postings_came_back():
@@ -452,6 +485,7 @@ def test_a_conversational_turn_publishes_one_activity_row_per_tool_step():
     from recruitment_team.telemetry import RecordedTelemetry
 
     from backend.tests.test_recruitment_team_module import (
+        _candidate_profile_run,
         _discovery,
         _owner_with_resume,
         _role_profiler,
@@ -474,7 +508,19 @@ def test_a_conversational_turn_publishes_one_activity_row_per_tool_step():
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
     with sessions() as db:
-        team = RecruitmentTeam(db, model, _discovery(), _role_profiler(), RecordedTelemetry(), publisher)
+        from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+
+        team = RecruitmentTeam(
+            db,
+            model,
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            publisher,
+            candidate_profiler_factory_provider=lambda: ScriptedCandidateProfilerFactory(
+                [_candidate_profile_run()]
+            ),
+        )
         receipt = team.execute(
             owner_id,
             StartThread(resume_version_id=resume_id, message="Find me yield roles."),
@@ -488,7 +534,11 @@ def test_a_conversational_turn_publishes_one_activity_row_per_tool_step():
             owner_id, receipt.thread_id, after_sequence=0
         )
 
-    steps = [event for event in publisher.events if event.event_type == "conversation"]
+    steps = [
+        event
+        for event in publisher.events
+        if event.event_type == "conversation" and event.detail.get("tool_name")
+    ]
     assert [event.summary for event in steps] == [
         "coordinator called search_jobs.",
         "coordinator finished search_jobs.",
@@ -510,7 +560,11 @@ def test_a_conversational_turn_publishes_one_activity_row_per_tool_step():
 
     # The rows outlive the session that wrote them, so reopening the thread
     # replays the same trail the live stream showed.
-    assert [event.summary for event in stored if event.event_type == "conversation"] == [
+    assert [
+        event.summary
+        for event in stored
+        if event.event_type == "conversation" and event.detail.get("tool_name")
+    ] == [
         event.summary for event in steps
     ]
 

@@ -11,9 +11,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, sessionmaker
 
 from auth import get_current_user
+from ai_quota import consume_ai_credit
 from database import get_db
 from models import User
 
+from . import activity_events
 from .conversation_model import ConversationModel
 from .coordinator.model import DeepAgentConversationModel
 from .candidate_profile import (
@@ -43,13 +45,17 @@ from .interface import (
     ShortlistJob,
     StartThread,
 )
-from .recruitment_team import RecruitmentTeam, THREAD_TITLE_MAX_CHARS
+from .recruitment_team import (
+    DEFAULT_THREAD_MESSAGE_PAGE_SIZE,
+    MAX_THREAD_MESSAGE_PAGE_SIZE,
+    RecruitmentTeam,
+    THREAD_TITLE_MAX_CHARS,
+)
 from .role_success import LangChainRoleDefinitionGenerator, RoleSuccessProfiler
 from .role_evidence_assessor import LangChainRoleEvidenceAssessor
 from .telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 from .assessment_contracts import TargetAssessmentRunner
 from .open_agent.runner import OpenAgentTargetAssessmentRunner, delete_checkpoint
-from .study import dispatch_resume_study
 from resume_agent.models import ResumeAgentConfigurationError
 
 
@@ -75,9 +81,7 @@ class SendMessageRequest(BaseModel):
 
 
 class SearchJobsRequest(BaseModel):
-    """Omit query to search from what the candidate has already said."""
-
-    query: str = Field(default="", max_length=SEARCH_QUERY_MAX_CHARS)
+    query: str = Field(min_length=1, max_length=SEARCH_QUERY_MAX_CHARS)
     company: str = Field(default="", max_length=SEARCH_QUERY_MAX_CHARS)
     direct_employers_only: bool = True
     exclude_junior: bool = False
@@ -160,27 +164,11 @@ def _raise_model_configuration_error():
     raise HTTPException(status_code=503, detail="AI service is not configured.") from None
 
 
-def get_study_profiler_provider(
+def get_candidate_profiler_factory_provider(
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
 ):
-    """Delay model construction until the background study has started."""
+    """Delay model construction until a durable conversation run exists."""
     return lambda: get_candidate_profiler_factory(telemetry)
-
-
-def _automatic_study_dispatcher(db: Session, telemetry, profiler_provider):
-    bind = db.get_bind()
-    if bind.dialect.name == "sqlite" and not bind.url.database:
-        return None
-    study_sessions = sessionmaker(bind=bind, expire_on_commit=False)
-    return lambda owner_id, resume_id, thread_id, activity_publisher=None: dispatch_resume_study(
-        study_sessions,
-        owner_id=owner_id,
-        resume_version_id=resume_id,
-        thread_id=thread_id,
-        profiler_factory_provider=profiler_provider,
-        telemetry=telemetry,
-        activity_publisher=activity_publisher,
-    )
 
 
 def get_target_assessment_runner(
@@ -197,7 +185,7 @@ def _team(
     telemetry: RecruitmentTelemetry,
     candidate_profiler_factory: CandidateProfilerFactory | None = None,
     target_assessment_runner: TargetAssessmentRunner | None = None,
-    study_dispatcher=None,
+    candidate_profiler_factory_provider=None,
 ) -> RecruitmentTeam:
     return RecruitmentTeam(
         db,
@@ -208,7 +196,14 @@ def _team(
         IgnoreActivityPublisher(),
         candidate_profiler_factory,
         target_assessment_runner,
-        study_dispatcher,
+        ai_credit_consumer=lambda owner_id, command_type, operation_key: consume_ai_credit(
+            db.get(User, owner_id),
+            db,
+            f"recruitment_team:{command_type}",
+            operation_key=f"{owner_id}:{operation_key}",
+            commit=False,
+        ),
+        candidate_profiler_factory_provider=candidate_profiler_factory_provider,
     )
 
 
@@ -218,14 +213,21 @@ def _read_team(db: Session, telemetry: RecruitmentTelemetry) -> RecruitmentTeam:
 
 
 def _streaming_read_team_factory(db: Session, telemetry: RecruitmentTelemetry):
-    return lambda activity_publisher: RecruitmentTeam(
-        db,
-        None,
-        None,
-        None,
-        telemetry,
-        activity_publisher,
-    )
+    worker_sessions = sessionmaker(bind=db.get_bind(), expire_on_commit=False)
+
+    def create(activity_publisher):
+        worker_db = worker_sessions()
+        return RecruitmentTeam(
+            worker_db,
+            None,
+            None,
+            None,
+            telemetry,
+            activity_publisher,
+            owns_session=True,
+        )
+
+    return create
 
 
 def _streaming_team_factory(
@@ -236,23 +238,14 @@ def _streaming_team_factory(
     telemetry: RecruitmentTelemetry,
     candidate_profiler_factory: CandidateProfilerFactory | None = None,
     target_assessment_runner: TargetAssessmentRunner | None = None,
-    study_dispatcher=None,
+    candidate_profiler_factory_provider=None,
 ):
+    worker_sessions = sessionmaker(bind=db.get_bind(), expire_on_commit=False)
+
     def create(activity_publisher):
-        visible_study_dispatcher = (
-            (
-                lambda owner_id, resume_id, thread_id: study_dispatcher(
-                    owner_id,
-                    resume_id,
-                    thread_id,
-                    activity_publisher,
-                )
-            )
-            if study_dispatcher is not None
-            else None
-        )
+        worker_db = worker_sessions()
         return RecruitmentTeam(
-            db,
+            worker_db,
             conversation_model,
             discovery,
             role_profiler,
@@ -260,7 +253,15 @@ def _streaming_team_factory(
             activity_publisher,
             candidate_profiler_factory,
             target_assessment_runner,
-            visible_study_dispatcher,
+            ai_credit_consumer=lambda owner_id, command_type, operation_key: consume_ai_credit(
+                worker_db.get(User, owner_id),
+                worker_db,
+                f"recruitment_team:{command_type}",
+                operation_key=f"{owner_id}:{operation_key}",
+                commit=False,
+            ),
+            owns_session=True,
+            candidate_profiler_factory_provider=candidate_profiler_factory_provider,
         )
 
     return create
@@ -309,9 +310,8 @@ def start_thread(
     discovery: DiscoveryPort = Depends(get_job_discovery),
     role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
-    study_profiler_provider=Depends(get_study_profiler_provider),
+    candidate_profiler_factory_provider=Depends(get_candidate_profiler_factory_provider),
 ):
-    study_dispatcher = _automatic_study_dispatcher(db, telemetry, study_profiler_provider)
     return _execute_command(
         _team(
             db,
@@ -319,7 +319,7 @@ def start_thread(
             discovery,
             role_profiler,
             telemetry,
-            study_dispatcher=study_dispatcher,
+            candidate_profiler_factory_provider=candidate_profiler_factory_provider,
         ),
         user.id,
         StartThread(resume_version_id=body.resume_version_id, message=body.message),
@@ -336,9 +336,8 @@ def stream_start_thread(
     discovery: DiscoveryPort = Depends(get_job_discovery),
     role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
-    study_profiler_provider=Depends(get_study_profiler_provider),
+    candidate_profiler_factory_provider=Depends(get_candidate_profiler_factory_provider),
 ):
-    study_dispatcher = _automatic_study_dispatcher(db, telemetry, study_profiler_provider)
     command = StartThread(
         resume_version_id=body.resume_version_id,
         message=body.message,
@@ -350,7 +349,7 @@ def stream_start_thread(
             discovery,
             role_profiler,
             telemetry,
-            study_dispatcher=study_dispatcher,
+            candidate_profiler_factory_provider=candidate_profiler_factory_provider,
         ),
         user.id,
         command,
@@ -368,9 +367,17 @@ def send_message(
     discovery: DiscoveryPort = Depends(get_job_discovery),
     role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+    candidate_profiler_factory_provider=Depends(get_candidate_profiler_factory_provider),
 ):
     return _execute_command(
-        _team(db, conversation_model, discovery, role_profiler, telemetry),
+        _team(
+            db,
+            conversation_model,
+            discovery,
+            role_profiler,
+            telemetry,
+            candidate_profiler_factory_provider=candidate_profiler_factory_provider,
+        ),
         user.id,
         SendMessage(thread_id=thread_id, message=body.message),
         body.idempotency_key,
@@ -388,6 +395,7 @@ def retry_conversation_run(
     role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
     target_assessment_runner: TargetAssessmentRunner = Depends(get_target_assessment_runner),
+    candidate_profiler_factory_provider=Depends(get_candidate_profiler_factory_provider),
 ):
     try:
         return asdict(
@@ -398,6 +406,7 @@ def retry_conversation_run(
                 role_profiler,
                 telemetry,
                 target_assessment_runner=target_assessment_runner,
+                candidate_profiler_factory_provider=candidate_profiler_factory_provider,
             ).retry_conversation_run(
                 user.id,
                 thread_id,
@@ -419,6 +428,7 @@ def stream_retry_conversation_run(
     role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
     target_assessment_runner: TargetAssessmentRunner = Depends(get_target_assessment_runner),
+    candidate_profiler_factory_provider=Depends(get_candidate_profiler_factory_provider),
 ):
     return StreamingResponse(
         stream_retry(
@@ -429,6 +439,7 @@ def stream_retry_conversation_run(
                 role_profiler,
                 telemetry,
                 target_assessment_runner=target_assessment_runner,
+                candidate_profiler_factory_provider=candidate_profiler_factory_provider,
             ),
             user.id,
             thread_id,
@@ -449,7 +460,7 @@ def build_candidate_profile(
     discovery: DiscoveryPort = Depends(get_job_discovery),
     role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
-    candidate_profiler_factory: CandidateProfilerFactory = Depends(get_candidate_profiler_factory),
+    candidate_profiler_factory_provider=Depends(get_candidate_profiler_factory_provider),
 ):
     return _execute_command(
         _team(
@@ -458,7 +469,7 @@ def build_candidate_profile(
             discovery,
             role_profiler,
             telemetry,
-            candidate_profiler_factory,
+            candidate_profiler_factory_provider=candidate_profiler_factory_provider,
         ),
         user.id,
         BuildCandidateProfile(thread_id=thread_id),
@@ -476,7 +487,7 @@ def stream_candidate_profile(
     discovery: DiscoveryPort = Depends(get_job_discovery),
     role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
-    candidate_profiler_factory: CandidateProfilerFactory = Depends(get_candidate_profiler_factory),
+    candidate_profiler_factory_provider=Depends(get_candidate_profiler_factory_provider),
 ):
     return _stream_command_response(
         _streaming_team_factory(
@@ -485,7 +496,7 @@ def stream_candidate_profile(
             discovery,
             role_profiler,
             telemetry,
-            candidate_profiler_factory,
+            candidate_profiler_factory_provider=candidate_profiler_factory_provider,
         ),
         user.id,
         BuildCandidateProfile(thread_id=thread_id),
@@ -639,10 +650,18 @@ def stream_send_message(
     discovery: DiscoveryPort = Depends(get_job_discovery),
     role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+    candidate_profiler_factory_provider=Depends(get_candidate_profiler_factory_provider),
 ):
     command = SendMessage(thread_id=thread_id, message=body.message)
     return _stream_command_response(
-        _streaming_team_factory(db, conversation_model, discovery, role_profiler, telemetry),
+        _streaming_team_factory(
+            db,
+            conversation_model,
+            discovery,
+            role_profiler,
+            telemetry,
+            candidate_profiler_factory_provider=candidate_profiler_factory_provider,
+        ),
         user.id,
         command,
         body.idempotency_key,
@@ -659,9 +678,17 @@ def search_thread_jobs(
     discovery: DiscoveryPort = Depends(get_job_discovery),
     role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+    candidate_profiler_factory_provider=Depends(get_candidate_profiler_factory_provider),
 ):
     return _execute_command(
-        _team(db, conversation_model, discovery, role_profiler, telemetry),
+        _team(
+            db,
+            conversation_model,
+            discovery,
+            role_profiler,
+            telemetry,
+            candidate_profiler_factory_provider=candidate_profiler_factory_provider,
+        ),
         user.id,
         SearchJobs(
             thread_id=thread_id,
@@ -686,9 +713,17 @@ def stream_search_thread_jobs(
     discovery: DiscoveryPort = Depends(get_job_discovery),
     role_profiler: RoleSuccessProfiler = Depends(get_role_success_profiler),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
+    candidate_profiler_factory_provider=Depends(get_candidate_profiler_factory_provider),
 ):
     return _stream_command_response(
-        _streaming_team_factory(db, conversation_model, discovery, role_profiler, telemetry),
+        _streaming_team_factory(
+            db,
+            conversation_model,
+            discovery,
+            role_profiler,
+            telemetry,
+            candidate_profiler_factory_provider=candidate_profiler_factory_provider,
+        ),
         user.id,
         SearchJobs(
             thread_id=thread_id,
@@ -879,6 +914,12 @@ def delete_thread(
 @router.get("/threads/{thread_id}")
 def get_thread(
     thread_id: str,
+    message_limit: int = Query(
+        default=DEFAULT_THREAD_MESSAGE_PAGE_SIZE,
+        ge=1,
+        le=MAX_THREAD_MESSAGE_PAGE_SIZE,
+    ),
+    before_message_id: int | None = Query(default=None, ge=1),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
@@ -888,6 +929,8 @@ def get_thread(
             _read_team(db, telemetry).snapshot(
                 user.id,
                 thread_id,
+                message_limit=message_limit,
+                before_message_id=before_message_id,
             )
         )
     except Exception as error:
@@ -898,6 +941,12 @@ def get_thread(
 def get_thread_events(
     thread_id: str,
     after_sequence: int = Query(default=0, ge=0),
+    limit: int = Query(
+        default=activity_events.DEFAULT_ACTIVITY_EVENT_LIMIT,
+        ge=1,
+        le=activity_events.MAX_ACTIVITY_EVENT_LIMIT,
+    ),
+    tail: bool = Query(default=True),
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
@@ -909,6 +958,8 @@ def get_thread_events(
                 user.id,
                 thread_id,
                 after_sequence,
+                limit,
+                tail=tail,
             )
         ]
     except Exception as error:
