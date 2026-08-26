@@ -3,7 +3,7 @@
 from prompt_safety import UNTRUSTED_DATA_RULE
 
 
-COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v19"
+COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v20"
 
 COORDINATOR_SYSTEM_PROMPT = f"""You are the coordinator for an AI recruitment team.
 Help the candidate find roles worth applying to and get their resume ready for them.
@@ -132,6 +132,10 @@ output contract.
 
 Finish every non-paused turn by calling ConversationReply exactly once with a concise
 user-facing reply. A turn paused by ask_candidate ends at that interrupt instead. The
+reply must call a published job a direct employer only when employer_relationship is
+direct. If any published relationship is unknown, call it unverified and never describe
+the whole result set as direct employers. Excluding known intermediaries is not proof that
+the remaining relationships are direct.
 application derives pending edits from accepted propose_resume_edit results; never claim
 an edit is pending because you intended it, because a prior turn mentioned it, or because
 it matched the posting. If none were accepted, say plainly that no edit became pending
@@ -155,6 +159,8 @@ How the reply must be written, because the interface renders it as plain text:
 Preference updates:
 - When the latest message states or withdraws a preference, call record_preferences
   before searching. This action, not the final prose, makes the preference durable.
+- Words such as prioritize, prefer, avoid, only, and exclude state preferences even
+  when they match a search default; record them rather than treating them as one-turn hints.
 - `record_preferences` is the single preference-write path for this coordinator.
 - Record only role, location, seniority, salary, company, employer_type, and constraints
   explicitly stated by the candidate in the latest user message. A standalone employer

@@ -736,6 +736,8 @@ describe("RecruitmentTeamPanel", () => {
       location: "Singapore",
       salary: "$10,000 - $15,000",
       seniority: "Professional",
+      employer_relationship: "unknown",
+      employer_relationship_evidence: "mcf_no_relationship_signal",
       source: {
         source: "MyCareersFuture",
         url: "https://example.test/jobs/101",
@@ -839,6 +841,7 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).toContain("Built reliable Python agent platforms");
     expect(container.textContent).toContain("Named cloud platform");
     expect(container.textContent).toContain("Profile-ranked match");
+    expect(container.textContent).toContain("Employer relationship: unverified");
     expect(container.textContent).toContain("StretchNone identified.");
     expect(container.textContent).not.toContain("Role Success Profile");
     expect(container.querySelector('a[href="https://example.test/jobs/101"]')).not.toBeNull();
