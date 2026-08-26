@@ -641,6 +641,10 @@ def test_search_jobs_contract_does_not_claim_verified_direct_employers():
         assert "known recruitment-agency or other intermediary evidence" in contract
         assert "remain unverified" in contract
         assert "verified direct-employer postings" in contract
+    assert "published job a direct employer only" in prompt_contract
+    assert "never describe the whole result set as direct employers" in prompt_contract
+    assert "excluding known intermediaries is not proof" in prompt_contract
+    assert "when they match a search default" in prompt_contract
     assert "results come from direct employers" not in tool_contract
     assert "search direct employers by default" not in prompt_contract
 

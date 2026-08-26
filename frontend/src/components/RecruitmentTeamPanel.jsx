@@ -1350,6 +1350,13 @@ export default function RecruitmentTeamPanel({
                         {job.source.closing_date ? ` · closes ${job.source.closing_date}` : ""}
                         {variants.length > 1 ? ` · ${variants.length} posting variants retained` : ""}
                       </p>
+                      <p className="mt-1 text-xs text-[#6A89A7]">
+                        Employer relationship: {job.employer_relationship === "direct"
+                          ? "verified direct"
+                          : job.employer_relationship === "intermediary"
+                            ? "intermediary"
+                            : "unverified"}
+                      </p>
                       {rationale && (
                         <div className="mt-3 rounded-xl bg-[#f7fafc] p-3 text-xs text-[#384959]">
                           <p className="font-medium">

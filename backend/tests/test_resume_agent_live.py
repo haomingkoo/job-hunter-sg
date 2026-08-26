@@ -4,6 +4,7 @@ import importlib
 import hashlib
 import json
 import os
+import re
 import secrets
 import subprocess
 from datetime import datetime, timezone
@@ -822,7 +823,10 @@ def test_live_recruitment_coordinator_honours_direct_employer_preference(repeat)
         pytest.fail("RUN_LIVE_SEALION=1 requires a configured SEA-LION API key.")
 
     revision = _exact_evaluation_revision()
-    message = "Find semiconductor quality manager roles from direct employers only, no recruitment agencies."
+    message = (
+        "Find semiconductor quality manager roles. Prioritize direct employers and exclude "
+        "postings with known recruitment-agency or intermediary evidence."
+    )
     jobs = (
         _prompt_eval_job(
             21,
@@ -869,6 +873,20 @@ def test_live_recruitment_coordinator_honours_direct_employer_preference(repeat)
     )
 
     published_ids = [match["job_id"] for match in context.drafted_matches]
+    reply_makes_unqualified_direct_claim = bool(
+        re.search(
+            r"\bdirect(?:-|\s+)(?:employers?|companies|hiring)\b|"
+            r"\b(?:hire|hiring|recruit(?:s|ing)?)\s+directly\b",
+            reply.content,
+            re.I,
+        )
+        and not re.search(
+            r"\b(?:unknown|unverified|not verified|cannot verify|can't verify|"
+            r"could not verify|not established)\b",
+            reply.content,
+            re.I,
+        )
+    )
     invariants = {
         "searched": bool(discovery.calls),
         "direct_filter_preserved": bool(discovery.calls) and all(
@@ -882,6 +900,9 @@ def test_live_recruitment_coordinator_honours_direct_employer_preference(repeat)
         ),
         "known_intermediary_not_published": 23 not in published_ids,
         "relevant_role_published": bool({21, 22} & set(published_ids)),
+        "unverified_relationship_not_called_direct": (
+            22 not in published_ids or not reply_makes_unqualified_direct_claim
+        ),
     }
     _write_prompt_eval_receipt(
         scenario="direct-employer-preference",
