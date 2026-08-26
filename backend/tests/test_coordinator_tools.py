@@ -340,8 +340,15 @@ def test_read_shortlist_hides_old_rationales_after_a_new_search():
 
     old_match = _ranked_match(101)
     new_match = _ranked_match(202)
+    current = replace(
+        _job(202, "Staff Agent Platform Engineer", "NXP"),
+        description="Build a production agent platform with traced model and tool calls.",
+        skills=("agent platform", "model tracing"),
+        job_terms_preview=(),
+        parsed_jd=None,
+    )
     context = _context(
-        _RecordingDiscovery([_search_result([_job(202, "Staff Yield Engineer", "NXP")])]),
+        _RecordingDiscovery([_search_result([current])]),
         recommendations=[_job(101, "Yield Enhancement Engineer", "Micron")],
         published_matches=[old_match],
         resume_document={"blocks": [{"text": new_match["matched"][0]["resume_quote"]}]},
@@ -738,6 +745,50 @@ def test_write_shortlist_rejects_agency_job_from_direct_employer_search():
     assert result["ineligible_job_ids"] == [agency.job_id]
 
 
+def test_write_shortlist_omits_profile_free_distractors_from_general_search():
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import search_jobs, write_shortlist
+
+    matched = replace(
+        _job(211, "Quality Management Manager", "Known Employer"),
+        description="Own quality management.",
+        skills=("quality management",),
+        job_terms_preview=(),
+        parsed_jd=None,
+    )
+    distractor = replace(
+        _job(212, "Semiconductor Sales Manager", "Commercial Employer"),
+        description="Own sales targets and distributor accounts.",
+        skills=("sales", "account management"),
+        job_terms_preview=(),
+        parsed_jd=None,
+    )
+    discovery = _RecordingDiscovery(
+        [_search_result([distractor, matched]), _search_result([])]
+    )
+    context = _context(
+        discovery,
+        candidate_profile=_candidate_profile("Led quality management across manufacturing sites."),
+        resume_document={"blocks": [{"text": REVIEWED_PROFILE_QUERY}]},
+    )
+    matched_rationale = _ranked_match(matched.job_id)
+    distractor_rationale = _ranked_match(distractor.job_id)
+
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        search_jobs.invoke({"query": "semiconductor management"})
+        result = write_shortlist.invoke(
+            {"matches": [matched_rationale, distractor_rationale]}
+        )
+
+    assert result == {
+        "accepted": True,
+        "published_job_ids": [matched.job_id],
+        "excluded_job_ids": [distractor.job_id],
+        "exclusion_reason": "No direct profile-term match.",
+    }
+    assert [item["job_id"] for item in context.drafted_matches] == [matched.job_id]
+
+
 def test_write_shortlist_does_not_reuse_an_older_search_after_latest_empty():
     from recruitment_team.open_agent.context import assessment_context
     from recruitment_team.open_agent.tools import search_jobs, write_shortlist
@@ -816,6 +867,37 @@ def test_write_shortlist_does_not_infer_pay_for_a_job_without_salary():
         "reason": "Job 202 states no salary; do not infer one.",
     }
     assert context.drafted_matches == []
+
+
+def test_write_shortlist_visibly_corrects_stated_salary_without_peer_context():
+    from recruitment_team.open_agent.context import assessment_context
+    from recruitment_team.open_agent.tools import write_shortlist
+
+    job = replace(_job(203, "AI Engineer", "Example"), salary_context=None)
+    context = _context(
+        _RecordingDiscovery([]),
+        recommendations=[job],
+        resume_document={"blocks": [{"text": "Built reliable Python agent platforms."}]},
+    )
+    match = _ranked_match(203, pay_position="salary_not_stated")
+    match["matched"][0]["resume_quote"] = "Built reliable Python agent platforms."
+
+    with assessment_context(context, initial_edits=context.proposed_edits):
+        result = write_shortlist.invoke({"matches": [match]})
+
+    assert result == {
+        "accepted": True,
+        "published_job_ids": [203],
+        "pay_position_corrections": [
+            {
+                "job_id": 203,
+                "from": "salary_not_stated",
+                "to": "insufficient_context",
+                "reason": "The posting states salary but has no peer salary context.",
+            }
+        ],
+    }
+    assert context.drafted_matches[0]["pay_position"] == "insufficient_context"
 
 
 def test_a_source_failure_is_returned_to_the_agent_rather_than_raised():
@@ -931,8 +1013,20 @@ def test_agent_publishes_an_ordered_explained_subset_of_search_results():
 
     jobs = [
         _job(501, "AI Engineer I", "Junior Employer"),
-        _job(502, "Principal AI Engineer", "Best Employer"),
-        _job(503, "Senior AI Engineer", "Second Employer"),
+        replace(
+            _job(502, "Principal Agent Platform Engineer", "Best Employer"),
+            description="Build production agent platforms with traced model and tool calls.",
+            skills=("agent platform", "model tracing"),
+            job_terms_preview=(),
+            parsed_jd=None,
+        ),
+        replace(
+            _job(503, "Senior Agent Platform Engineer", "Second Employer"),
+            description="Own a production agent platform and traced tool calls.",
+            skills=("agent platform", "tool tracing"),
+            job_terms_preview=(),
+            parsed_jd=None,
+        ),
     ]
     discovery = _RecordingDiscovery([_search_result(jobs)])
     matches = [

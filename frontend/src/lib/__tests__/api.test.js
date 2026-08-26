@@ -100,6 +100,38 @@ describe("apiFetch", () => {
     });
   });
 
+  it("shows a coded rebuilding message instead of masking every 503", async () => {
+    global.fetch = vi.fn(() => Promise.resolve({
+      ok: false,
+      status: 503,
+      text: () => Promise.resolve(JSON.stringify({
+        detail: {
+          code: "power_match_job_index_unavailable",
+          message: "The job matching index is rebuilding. Please retry shortly.",
+        },
+      })),
+      headers: { get: () => "application/json" },
+    }));
+
+    const error = await apiFetch("/api/jobs/power-match").catch((caught) => caught);
+
+    expect(error.message).toBe("The job matching index is rebuilding. Please retry shortly.");
+    expect(error.detail.code).toBe("power_match_job_index_unavailable");
+  });
+
+  it("still masks uncoded transient server details", async () => {
+    global.fetch = vi.fn(() => Promise.resolve({
+      ok: false,
+      status: 503,
+      text: () => Promise.resolve(JSON.stringify({ detail: "internal dependency failure" })),
+      headers: { get: () => "application/json" },
+    }));
+
+    await expect(apiFetch("/api/private-operation")).rejects.toThrow(
+      "The server is temporarily unavailable. Please try again shortly.",
+    );
+  });
+
   it("clears the full resume draft when explicitly requested", () => {
     sessionStorage.setItem("jh_resume_profile", "{}");
     sessionStorage.setItem("jh_resume_text", "draft");

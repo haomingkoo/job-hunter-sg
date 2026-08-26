@@ -41,9 +41,11 @@ jobs:
 
       - name: Wait for and verify exact production commit
         run: |
+          set -euo pipefail
           python backend/scripts/verify_production.py \
             "$BASE_URL" "$EXPECTED_SHA" --wait-seconds 900 \
-            | tee production-receipt.json
+            > production-receipt.json
+          cat production-receipt.json
           {
             echo '### Production receipt'
             echo '```json'

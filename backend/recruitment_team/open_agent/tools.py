@@ -410,6 +410,9 @@ def write_shortlist(matches: list[_RankedMatch]) -> dict:
     omit roles that violate the candidate's stated constraints. Every matched
     point needs an exact resume quote. Level and pay are separate judgments;
     salary context is evidence, never a formula or an imputed offer.
+    In a profile-backed general search, the tool reports and omits jobs with no
+    direct profile-term match. A named-employer search still keeps visible
+    stretch roles from the company the candidate explicitly requested.
     """
     from ..coordinator.context import current_conversation, merged_recommendations
 
@@ -434,6 +437,7 @@ def write_shortlist(matches: list[_RankedMatch]) -> dict:
         }
 
     latest_search = conversation.search_results[-1] if conversation.search_results else None
+    excluded: list[int] = []
     if latest_search is not None:
         latest_job_ids = {job.job_id for job in latest_search.jobs}
         ineligible = [
@@ -459,9 +463,34 @@ def write_shortlist(matches: list[_RankedMatch]) -> dict:
                 "ineligible_job_ids": ineligible,
             }
 
+        receipt = latest_search.ranking_receipt
+        if receipt is not None and receipt.candidate_profile_used and not latest_search.company:
+            evidence_matches = {
+                item.job_id: item.profile_term_match_count
+                for item in receipt.jobs
+            }
+            excluded = [
+                match.job_id
+                for match in parsed
+                if evidence_matches.get(match.job_id, 0) == 0
+            ]
+            if excluded:
+                parsed = [match for match in parsed if match.job_id not in excluded]
+                job_ids = [match.job_id for match in parsed]
+                if not parsed:
+                    return {
+                        "accepted": False,
+                        "reason": (
+                            "None of these jobs has a direct profile-term match. "
+                            "Refine the search or explain that no evidence-supported match was found."
+                        ),
+                        "excluded_job_ids": excluded,
+                    }
+
     blocks = (conversation.resume_document or {}).get("blocks") or []
     resume_text = "\n".join(str(block.get("text") or "") for block in blocks)
-    for match in parsed:
+    pay_position_corrections: list[dict[str, object]] = []
+    for index, match in enumerate(parsed):
         for point in (*match.matched, *match.stretch):
             quote = point.resume_quote.strip()
             if quote not in resume_text:
@@ -476,6 +505,21 @@ def write_shortlist(matches: list[_RankedMatch]) -> dict:
                 }
         job = known_jobs[match.job_id]
         has_salary = bool(job.salary.strip())
+        if (
+            match.pay_position == "salary_not_stated"
+            and has_salary
+            and job.salary_context is None
+        ):
+            parsed[index] = match.model_copy(update={"pay_position": "insufficient_context"})
+            pay_position_corrections.append(
+                {
+                    "job_id": match.job_id,
+                    "from": "salary_not_stated",
+                    "to": "insufficient_context",
+                    "reason": "The posting states salary but has no peer salary context.",
+                }
+            )
+            continue
         if match.pay_position == "salary_not_stated" and has_salary:
             return {
                 "accepted": False,
@@ -497,7 +541,13 @@ def write_shortlist(matches: list[_RankedMatch]) -> dict:
 
     conversation.drafted_matches.clear()
     conversation.drafted_matches.extend(match.model_dump() for match in parsed)
-    return {"accepted": True, "published_job_ids": job_ids}
+    result = {"accepted": True, "published_job_ids": job_ids}
+    if excluded:
+        result["excluded_job_ids"] = excluded
+        result["exclusion_reason"] = "No direct profile-term match."
+    if pay_position_corrections:
+        result["pay_position_corrections"] = pay_position_corrections
+    return result
 
 
 @tool

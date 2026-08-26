@@ -2,11 +2,24 @@ import json
 import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
 from scripts.verify_production import verify_once, verify_until_deployed
+
+
+def test_production_workflow_cannot_hide_verifier_failure_behind_tee():
+    workflow = (
+        Path(__file__).resolve().parents[2]
+        / ".github"
+        / "workflows"
+        / "production-smoke.yml"
+    ).read_text()
+
+    assert "set -euo pipefail" in workflow
+    assert "| tee production-receipt.json" not in workflow
 
 
 COMMIT = "a" * 40
