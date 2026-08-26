@@ -45,26 +45,41 @@ async function readApiError(resp) {
   const raw = await resp.text();
   const text = raw.trim();
   const contentType = resp.headers.get("content-type") || "";
+  let payload = null;
+  if (contentType.includes("application/json") && text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      // fall through to status and plain-text handling
+    }
+  }
 
   if (resp.status === 524) {
     return new Error("The server took too long to build this result. Please try again in a minute.");
   }
   if ([502, 503, 504].includes(resp.status)) {
+    const detail = payload?.detail;
+    if (
+      detail
+      && typeof detail === "object"
+      && typeof detail.code === "string"
+      && typeof detail.message === "string"
+      && detail.message.trim()
+    ) {
+      const error = new Error(detail.message.trim());
+      error.detail = detail;
+      return error;
+    }
     return new Error("The server is temporarily unavailable. Please try again shortly.");
   }
 
-  if (contentType.includes("application/json") && text) {
-    try {
-      const payload = JSON.parse(text);
-      const detail = payload.detail || payload.message || payload.error;
-      if (typeof detail === "string" && detail.trim()) return new Error(detail.trim());
-      if (detail && typeof detail === "object") {
-        const error = new Error(detail.message || `Request failed (${resp.status})`);
-        error.detail = detail;
-        return error;
-      }
-    } catch {
-      // fall through to plain-text handling
+  if (payload) {
+    const detail = payload.detail || payload.message || payload.error;
+    if (typeof detail === "string" && detail.trim()) return new Error(detail.trim());
+    if (detail && typeof detail === "object") {
+      const error = new Error(detail.message || `Request failed (${resp.status})`);
+      error.detail = detail;
+      return error;
     }
   }
 
