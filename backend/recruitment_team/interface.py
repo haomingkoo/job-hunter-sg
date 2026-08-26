@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Literal
 
 from .discovery import JobSnapshot
+from .job_recommender import RankingReceipt
 from .role_success import RoleSuccessProfile
 
 
@@ -153,6 +154,7 @@ class CaseFacts:
     resume_label: str
     resume_sha256: str
     latest_search_query: str = ""
+    latest_ranking_receipt: RankingReceipt | None = None
     recommendations: tuple[JobSnapshot, ...] = ()
     match_rationales: tuple[dict, ...] = ()
     shortlisted_jobs: tuple[JobSnapshot, ...] = ()
@@ -239,6 +241,8 @@ class ThreadSnapshot:
     workflow_state: str
     case_facts: CaseFacts
     messages: list[Message]
+    message_history_has_more: bool
+    oldest_message_id: int | None
     last_event_sequence: int
 
 

@@ -228,6 +228,7 @@ class _RecordingDiscovery:
 
 def _context(discovery, *, recommendations=(), shortlisted=(), events=None, **overrides):
     from backend.tests.fakes import AllowingEditEvidenceValidator
+    from backend.tests.test_recruitment_team_module import _candidate_profile_run
     from recruitment_team import ConversationContext
 
     kwargs = {
@@ -236,7 +237,7 @@ def _context(discovery, *, recommendations=(), shortlisted=(), events=None, **ov
         # between two tests that both used thread "1".
         "thread_id": str(uuid.uuid4()),
         "trace_key": "coordinator-loop-trace",
-        "candidate_profile": None,
+        "candidate_profile": _candidate_profile_run().profile,
         "role_profile": None,
         "target_job": None,
         "resume_document": _resume_document(),
@@ -267,9 +268,10 @@ def _model(agent):
 
 def _team(db, agent, discovery, publisher=None, telemetry=None):
     from backend.tests.fakes import AllowingEditEvidenceValidator
-    from backend.tests.test_recruitment_team_module import _role_profiler
+    from backend.tests.test_recruitment_team_module import _candidate_profile_run, _role_profiler
     from recruitment_team import RecruitmentTeam
     from recruitment_team.activity_publisher import RecordedActivityPublisher
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
     from recruitment_team.telemetry import RecordedTelemetry
 
     return RecruitmentTeam(
@@ -280,6 +282,9 @@ def _team(db, agent, discovery, publisher=None, telemetry=None):
         telemetry or RecordedTelemetry(),
         publisher or RecordedActivityPublisher(),
         edit_evidence_validator=AllowingEditEvidenceValidator(),
+        candidate_profiler_factory_provider=lambda: ScriptedCandidateProfilerFactory(
+            [_candidate_profile_run()]
+        ),
     )
 
 
@@ -470,7 +475,10 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
     from recruitment_team.interface import StartThread
 
     discovery = _RecordingDiscovery(
-        [_search_result([_job(101, "Yield Enhancement Engineer", "Micron")])]
+        [
+            _search_result([_job(101, "Yield Enhancement Engineer", "Micron")]),
+            _search_result([_job(101, "Yield Enhancement Engineer", "Micron")]),
+        ]
     )
     agent = ScriptedDeepAgent(
         responses=[
@@ -503,7 +511,7 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
         snapshot = team.snapshot(owner_id, receipt.thread_id)
 
     # The search really ran, through the port, with the parameter the agent chose.
-    assert discovery.calls == [
+    assert discovery.calls[0] == (
         {
             "query": "semiconductor yield analytics engineer",
             "company": "",
@@ -512,7 +520,10 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
                 "singapore_only": True,
                 "title_phrase": "",
         }
-    ]
+    )
+    assert discovery.calls[1]["query"] == (
+        "Built a production agent platform with traced model and tool calls."
+    )
 
     # The results landed in the thread, in the shape _known_job resolves against.
     # Without this, the next ShortlistJob click is a 422, not just a stale panel.
@@ -554,10 +565,10 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
     assert search_call.attributes == {
         "tool_name": "search_jobs",
         "stage": "call",
-        "span_id": "call-1",
+        "operation_id": "call-1",
     }
     assert search_call.parent_id == receipt.run_id
-    assert search_result.parent_id == search_call.attributes["span_id"] == "call-1"
+    assert search_result.parent_id == search_call.attributes["operation_id"] == "call-1"
     assert search_result.attributes["result_count"] == 1
     assert search_result.duration_ms is not None
     assert search_result.duration_ms >= 0
@@ -603,12 +614,16 @@ def test_a_shortlist_the_model_never_saw_reaches_the_next_conversational_turn():
             submission("Tell me which fabs you have worked with."),
             # Turn 2: the only way to learn what the button found.
             tool_call("read_shortlist", {}, "call-read"),
+            tool_call(
+                "record_preferences",
+                {"updates": [
+                    preference("location", "Singapore", "I want to stay in Singapore")
+                ]},
+                "call-preference",
+            ),
             submission(
                 "Your leadership bullet already matches Yield Enhancement Engineer "
                 "at Micron, so I would lead with it.",
-                preference_updates=[
-                    preference("location", "Singapore", "I want to stay in Singapore")
-                ],
             ),
         ]
     )
@@ -665,35 +680,33 @@ def test_a_shortlist_the_model_never_saw_reaches_the_next_conversational_turn():
         ("location", "Singapore")
     ]
 
-    assert agent.calls == 3
+    assert agent.calls == 4
 
 
-def test_a_preference_quote_absent_from_the_user_message_is_dropped_not_fatal():
-    """The unevidenced preference is discarded. The turn still lands.
-
-    This reverses revision 3's rule, and the reason is a live run on 2026-08-02.
-    Asked to improve a resume, the coordinator drafted eight edits that passed
-    every validation gate, then attached one preference update quoting a sentence
-    the candidate never wrote. Raising InvalidCommand threw the whole turn away:
-    no reply, no edits, a 422, and eight gate-passing rewrites lost to one bad
-    quote.
-
-    The rule exists to stop a fabricated preference being persisted. Dropping the
-    update does that. Failing the turn does that and destroys the work next to it,
-    which is a harsher trade than the invariant asks for.
-    """
+def test_an_unevidenced_preference_is_rejected_then_the_turn_can_continue():
     from backend.tests.test_recruitment_team_module import _session_factory
     from recruitment_team.interface import StartThread
 
     discovery = _RecordingDiscovery([])
     agent = ScriptedDeepAgent(
         responses=[
-            submission(
-                "Noted.",
-                preference_updates=[
+            tool_call(
+                "record_preferences",
+                {"updates": [
                     preference("salary", "$15,000", "I need at least fifteen thousand"),
                     preference("location", "Singapore", "yield engineering role"),
-                ],
+                ]},
+                "call-invalid-preferences",
+            ),
+            tool_call(
+                "record_preferences",
+                {"updates": [
+                    preference("location", "Singapore", "yield engineering role")
+                ]},
+                "call-valid-preference",
+            ),
+            submission(
+                "Noted.",
             )
         ]
     )
@@ -718,7 +731,7 @@ def test_a_preference_quote_absent_from_the_user_message_is_dropped_not_fatal():
         roles = [row.role for row in db.query(RecruitmentMessage).all()]
     assert roles == ["user", "assistant"], "the turn survives one unevidenced update"
 
-    # The quotable one is kept, the fabricated one never reaches case_facts.
+    assert "Every preference needs an exact quote" in _rendered(agent.requests[1])
     assert [(fact.field, fact.value) for fact in snapshot.case_facts.preferences] == [
         ("location", "Singapore")
     ]
@@ -742,6 +755,18 @@ def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results()
                 [
                     _job(201, "Graduate Trainee, Process", "HRNET Ventures", seniority="Junior"),
                     _job(202, "Intern, Data", "BOK SENG Logistics", seniority="Junior"),
+                ]
+            ),
+            _search_result(
+                [
+                    _job(201, "Graduate Trainee, Process", "HRNET Ventures", seniority="Junior"),
+                    _job(202, "Intern, Data", "BOK SENG Logistics", seniority="Junior"),
+                ]
+            ),
+            _search_result(
+                [
+                    _job(203, "Staff Yield Engineer", "NXP"),
+                    _job(201, "Graduate Trainee, Process", "HRNET Ventures", seniority="Junior"),
                 ]
             ),
             _search_result(
@@ -778,7 +803,7 @@ def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results()
         )
         snapshot = team.snapshot(owner_id, receipt.thread_id)
 
-    assert discovery.search_count == 2
+    assert discovery.search_count == 4
 
     # The first result set was in front of the model when it chose the second
     # query. That, and not the count, is what "read its own results" means.
@@ -804,6 +829,8 @@ def test_tool_call_guard_rejects_a_materially_identical_repeat_within_a_turn():
     discovery = _RecordingDiscovery(
         [
             _search_result([_job(301, "Yield Engineer", "Micron")]),
+            _search_result([_job(301, "Yield Engineer", "Micron")]),
+            _search_result([_job(302, "Process Integration Engineer", "Avago")]),
             _search_result([_job(302, "Process Integration Engineer", "Avago")]),
         ]
     )
@@ -830,7 +857,12 @@ def test_tool_call_guard_rejects_a_materially_identical_repeat_within_a_turn():
     assert results[2].get("reason") != "identical_call_no_new_information"
 
     # Only the two allowed calls reached the port. The rejected one never did.
-    assert [call["query"] for call in discovery.calls] == [same["query"], other["query"]]
+    assert [call["query"] for call in discovery.calls] == [
+        same["query"],
+        "Built a production agent platform with traced model and tool calls.",
+        other["query"],
+        "Built a production agent platform with traced model and tool calls.",
+    ]
     assert agent.calls == 4
 
 
@@ -852,6 +884,7 @@ def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
                     _job(502, "Process Integration Engineer", "GlobalFoundries"),
                 ]
             ),
+            _search_result([]),
             _search_result([]),
         ]
     )
@@ -975,14 +1008,14 @@ def test_search_query_records_the_query_that_ran_not_the_one_the_model_asked_for
     from recruitment_team.interface import StartThread
 
     executed = "staff semiconductor yield engineer"
-    discovery = _RecordingDiscovery([_search_result([_job(701, "Staff Yield Engineer", "NXP")])])
+    discovery = _RecordingDiscovery([
+        _search_result([_job(701, "Staff Yield Engineer", "NXP")]),
+        _search_result([_job(701, "Staff Yield Engineer", "NXP")]),
+    ])
     agent = ScriptedDeepAgent(
         responses=[
             tool_call("search_jobs", {"query": executed}, "call-1"),
-            submission(
-                "Staff Yield Engineer at NXP is the strongest current match.",
-                search_query="remote product manager",
-            ),
+            submission("Staff Yield Engineer at NXP is the strongest current match."),
         ]
     )
 
@@ -1000,7 +1033,7 @@ def test_search_query_records_the_query_that_ran_not_the_one_the_model_asked_for
     facts = _raw_case_facts(sessions, thread_id)
     assert facts["search_query"] == executed
     assert facts["latest_search_query"] == executed
-    assert "remote product manager" not in json.dumps(facts)
+    assert facts["search_query"] == executed
 
 
 def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(monkeypatch):
@@ -1076,6 +1109,7 @@ def test_iteration_cap_fails_the_turn_instead_of_raising_or_fabricating_a_reply(
         "command_type": "send_message",
         "attempt_count": 1,
         "attempt_limit": 2,
+        "attempted_stage": "send_message",
         "failure_type": "business",
         "failure_code": "attempt_budget_exhausted",
         "retryable": False,
@@ -1127,7 +1161,10 @@ def test_repeated_rejected_tool_results_fail_before_the_global_iteration_cap(mon
     assert agent.calls == 3
     assert agent.consumed == 3
     assert "retry" in _rendered(agent.requests[2])
-    assert not any(event.status == "completed" for event in publisher.events)
+    assert not any(
+        event.event_type == "run" and event.status == "completed"
+        for event in publisher.events
+    )
     with sessions() as db:
         assert [row.role for row in db.query(RecruitmentMessage).all()] == ["user"]
 
@@ -1216,7 +1253,10 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
         ) or True,
     )
 
-    discovery = _RecordingDiscovery([_search_result([_job(401, "Staff Yield Engineer", "NXP")])])
+    discovery = _RecordingDiscovery([
+        _search_result([_job(401, "Staff Yield Engineer", "NXP")]),
+        _search_result([_job(401, "Staff Yield Engineer", "NXP")]),
+    ])
     agent = ScriptedDeepAgent(
         responses=[
             tool_call(
@@ -1274,7 +1314,7 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
         )
         resumed = team.snapshot(owner_id, first.thread_id)
 
-    assert discovery.search_count == 1
+    assert discovery.search_count == 2
     assert [job.job_id for job in resumed.case_facts.recommendations] == [401]
     assert "NXP" in resumed.messages[-1].content
     assert agent.calls == 3
@@ -1448,8 +1488,7 @@ def test_a_proposed_edit_reaches_the_pending_table_and_the_rejections_reach_the_
                 "call-3",
             ),
             submission(
-                "Drafted one evidence-safe rewrite of your leadership bullet.",
-                pending_edit_block_ids=[block_id],
+                "The tighter wording foregrounds leadership while preserving the original scope.",
             ),
         ]
     )
@@ -1477,45 +1516,14 @@ def test_a_proposed_edit_reaches_the_pending_table_and_the_rejections_reach_the_
     assert pending[0]["original"] == LEADERSHIP_BULLET
     assert pending[0]["rewrite"] == accepted_rewrite
     assert snapshot.messages[-1].content == (
-        "1 evidence-supported resume edit is pending below for your approval."
+        "1 evidence-supported resume edit is pending below for your approval.\n\n"
+        "The tighter wording foregrounds leadership while preserving the original scope."
     )
 
     # Both rejections came back to the model with a reason it could act on.
     assert "40" in _rendered(agent.requests[1])
     assert "Missing facts from original: 12" in _rendered(agent.requests[2])
     assert agent.calls == 4
-
-
-def test_reply_cannot_claim_resume_edits_that_do_not_match_tool_results():
-    from recruitment_team.errors import ConversationUnavailable
-
-    block_id = _leadership_block_id()
-    agent = ScriptedDeepAgent(
-        responses=[
-            tool_call(
-                "propose_resume_edit",
-                {
-                    "block_id": block_id,
-                    "rewrite": "Led a team of 40 engineers building semiconductor yield analytics.",
-                },
-                "call-edit",
-            ),
-            submission(
-                "Drafted one pending edit.",
-                pending_edit_block_ids=[block_id],
-            ),
-        ]
-    )
-
-    with pytest.raises(ConversationUnavailable) as error:
-        _model(agent).respond(
-            [],
-            RESUME_TEXT,
-            (),
-            _context(_RecordingDiscovery([])),
-        )
-
-    assert error.value.failure_code == "structured_output_invalid"
 
 
 def test_edit_turn_renders_actual_results_and_labels_uncertainty():
@@ -1575,9 +1583,9 @@ def test_a_transport_turn_reaches_the_loop_without_overriding_the_dependency(mon
     """End to end through FastAPI with the real DI graph for the conversation model.
 
     `get_conversation_model` is deliberately NOT overridden. Only the model factory
-    is patched, at the seam `create_resume_agent` uses. If `http_routes.py:91` still
-    returns `LangChainConversationModel`, the scripted structured-output call is
-    never consumed and this fails.
+    is patched, at the seam `create_resume_agent` uses. If the HTTP dependency no
+    longer returns the tool-using coordinator, the scripted structured-output call
+    is never consumed and this fails.
 
     `get_role_success_profiler` is overridden because it eagerly constructs a live
     SEA-LION client (`role_success.py:354-360`). That is unrelated to the wiring
@@ -1588,12 +1596,24 @@ def test_a_transport_turn_reaches_the_loop_without_overriding_the_dependency(mon
     import main
     import resume_agent.agent as agent_module
     from auth import get_current_user
-    from backend.tests.test_recruitment_team_module import _role_profiler, _session_factory
+    from backend.tests.test_recruitment_team_module import (
+        _candidate_profile_run,
+        _role_profiler,
+        _session_factory,
+    )
     from database import get_db
-    from recruitment_team.http_routes import get_job_discovery, get_role_success_profiler
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.http_routes import (
+        get_candidate_profiler_factory_provider,
+        get_job_discovery,
+        get_role_success_profiler,
+    )
 
     discovery = _RecordingDiscovery(
-        [_search_result([_job(801, "Yield Enhancement Engineer", "Micron")])]
+        [
+            _search_result([_job(801, "Yield Enhancement Engineer", "Micron")]),
+            _search_result([_job(801, "Yield Enhancement Engineer", "Micron")]),
+        ]
     )
     agent = ScriptedDeepAgent(
         responses=[
@@ -1628,6 +1648,9 @@ def test_a_transport_turn_reaches_the_loop_without_overriding_the_dependency(mon
     )()
     main.app.dependency_overrides[get_job_discovery] = lambda: discovery
     main.app.dependency_overrides[get_role_success_profiler] = lambda: _role_profiler()
+    main.app.dependency_overrides[get_candidate_profiler_factory_provider] = (
+        lambda: lambda: ScriptedCandidateProfilerFactory([_candidate_profile_run()])
+    )
     try:
         client = TestClient(main.app)
         started = client.post(
@@ -1649,10 +1672,11 @@ def test_a_transport_turn_reaches_the_loop_without_overriding_the_dependency(mon
             get_current_user,
             get_job_discovery,
             get_role_success_profiler,
+            get_candidate_profiler_factory_provider,
         ):
             main.app.dependency_overrides.pop(dependency, None)
 
-    assert discovery.search_count == 1
+    assert discovery.search_count == 2
     assert [job["job_id"] for job in body["case_facts"]["recommendations"]] == [801]
     assert "Micron" in body["messages"][-1]["content"]
     assert agent.calls == 2
@@ -1676,7 +1700,7 @@ def test_the_coordinator_binds_only_the_tools_it_needs():
     )
 
     discovery = _RecordingDiscovery([])
-    unavailable = _bound_tool_names(model._build_agent(_context(discovery)))
+    without_target = _bound_tool_names(model._build_agent(_context(discovery)))
     bound = _bound_tool_names(
         model._build_agent(
             _context(
@@ -1699,7 +1723,7 @@ def test_the_coordinator_binds_only_the_tools_it_needs():
         "write_plan",
         "write_shortlist",
     }
-    assert unavailable == bound - {"read_candidate_evidence", "read_target_job"}
+    assert without_target == bound - {"read_target_job"}
     # Deepagents' write_todos is deliberately absent. Live on 2026-08-02 the model wrote the
     # same three-item list eleven times and died on the iteration cap, ignoring an
     # actionable refusal, a prompt rule and a hard guard. The scoped write_plan
@@ -1754,10 +1778,9 @@ def _bound_tool_names(graph) -> set[str]:
 def test_a_turn_reports_the_prompt_that_actually_ran():
     """A trace stamping a constant cannot tell you which prompt produced a turn.
 
-    COORDINATOR_PROMPT_VERSION was defined, exported and read by nothing while
-    every production chat span recorded the retired conversation prompt version.
+    The coordinator reports its own version instead of a generic fallback.
     """
-    from recruitment_team.prompts import COORDINATOR_PROMPT_VERSION, CONVERSATION_PROMPT_VERSION
+    from recruitment_team.prompts import COORDINATOR_PROMPT_VERSION
 
     discovery = _RecordingDiscovery([_search_result([])])
     agent = ScriptedDeepAgent(responses=[submission("Noted.")])
@@ -1765,95 +1788,75 @@ def test_a_turn_reports_the_prompt_that_actually_ran():
     reply = _model(agent).respond([], "", (), _context(discovery))
 
     assert reply.prompt_version == COORDINATOR_PROMPT_VERSION
-    assert reply.prompt_version != CONVERSATION_PROMPT_VERSION
 
 
-def test_a_thread_with_no_profile_still_shows_the_agent_the_resume():
-    """Every other test seeds a profile. Production's first turn does not.
+def test_a_thread_with_no_profile_fails_before_building_the_coordinator():
+    """A coordinator turn cannot bypass the reviewed evidence-profile gate."""
+    agent = ScriptedDeepAgent(responses=[submission("Noted.")])
 
-    Live on 2026-08-02 the coordinator answered "please share your resume" to a
-    thread that already had one, then spun to the iteration cap hunting for
-    context it could never reach. read_candidate_evidence returns nothing until
-    the study has run, so on a fresh thread the resume is the only evidence there is.
-    """
+    with pytest.raises(
+        RuntimeError,
+        match="coordinator requires a current candidate evidence profile",
+    ):
+        _model(agent).respond(
+            [],
+            RESUME_TEXT,
+            (),
+            _context(_RecordingDiscovery([]), candidate_profile=None),
+        )
+
+    assert agent.calls == 0
+
+
+def test_the_resume_is_withheld_when_a_reviewed_profile_exists():
+    """The coordinator receives citable profile evidence, not raw resume text."""
     discovery = _RecordingDiscovery([_search_result([])])
     agent = ScriptedDeepAgent(responses=[submission("Noted.")])
 
-    _model(agent).respond(
-        [], RESUME_TEXT, (), _context(discovery, candidate_profile=None)
-    )
-
-    assert "Yield Engineering Manager" in _rendered(agent.requests[0])
-
-
-def test_the_resume_is_withheld_once_a_profile_exists():
-    """Two copies of the same evidence in one prompt, one of them uncited."""
-    discovery = _RecordingDiscovery([_search_result([])])
-    agent = ScriptedDeepAgent(responses=[submission("Noted.")])
-
-    _model(agent).respond(
-        [], RESUME_TEXT, (), _context(discovery, candidate_profile=object())
-    )
+    _model(agent).respond([], RESUME_TEXT, (), _context(discovery))
 
     assert "Yield Engineering Manager" not in _rendered(agent.requests[0])
 
 
-def test_a_turn_that_answers_in_prose_is_delivered_not_failed():
-    """The model sometimes answers without calling the submission tool.
+def test_model_context_keeps_recent_dialogue_and_uses_durable_state_for_older_turns(monkeypatch):
+    from types import SimpleNamespace
 
-    Not hypothetical, and not configuration. On 2026-08-02 the same message, the
-    same model and a byte-identical ChatOpenAI construction produced a completed
-    six-step turn through one harness and two `no_submission` failures through
-    another, at 72s and 97s with zero tool calls. Payloads were within 400
-    characters of each other. What differs run to run is whether the model
-    decides to route its answer through `ConversationReply`.
+    import config
 
-    Making the candidate's turn a 503 because the model chose prose is a brittle
-    contract: the answer existed and was thrown away. Invariant 7 says HTTP 200 is
-    not an acceptance criterion, and this respects it, because the reply here is
-    the model's own user-facing text, not a fabricated success. What the turn
-    cannot claim is anything that only the submission carries, so no preference
-    update is recorded on this path.
-    """
-    from backend.tests.test_recruitment_team_module import _session_factory
-    from recruitment_team.interface import StartThread
+    monkeypatch.setattr(config, "RECRUITMENT_MODEL_HISTORY_TURNS", 1)
+    model = _model(ScriptedDeepAgent(responses=[]))
+    context = _context(_RecordingDiscovery([]))
+    messages = [
+        SimpleNamespace(role="user", content="old user detail"),
+        SimpleNamespace(role="assistant", content="old assistant reply"),
+        SimpleNamespace(role="user", content="recent user detail"),
+        SimpleNamespace(role="assistant", content="recent assistant reply"),
+        SimpleNamespace(role="user", content="current request"),
+    ]
 
-    prose = (
-        "Your resume shows a semiconductor operations background moving into "
-        "applied AI. Two role families fit: agentic AI platform engineering, and "
-        "applied AI in manufacturing. Which of those interests you more?"
+    payload = model._new_turn_payload(context, messages, ())
+    rendered = _rendered(payload["messages"])
+
+    assert "old user detail" not in rendered
+    assert "old assistant reply" not in rendered
+    assert "recent user detail" in rendered
+    assert "recent assistant reply" in rendered
+    assert "current request" in rendered
+
+
+def test_a_turn_that_skips_structured_submission_fails_visibly():
+    """Free prose is not a hidden success path around the reply contract."""
+    from recruitment_team.errors import ConversationUnavailable
+
+    agent = ScriptedDeepAgent(
+        responses=[final("I can help you compare semiconductor leadership roles.")]
     )
-    agent = ScriptedDeepAgent(responses=[final(prose)])
 
-    sessions = _session_factory()
-    owner_id, resume_id = _owner_with_resume(sessions)
-    with sessions() as db:
-        from models import RecruitmentRun
+    with pytest.raises(ConversationUnavailable) as error:
+        _model(agent).respond([], RESUME_TEXT, (), _context(_RecordingDiscovery([])))
 
-        team = _team(db, agent, _RecordingDiscovery([]))
-        receipt = team.execute(
-            owner_id,
-            StartThread(resume_version_id=resume_id, message="What should I target?"),
-            idempotency_key="turn-1",
-        )
-        snapshot = team.snapshot(owner_id, receipt.thread_id)
-        persisted_result = db.get(RecruitmentRun, receipt.run_id).result
-        completed_event = next(
-            event
-            for event in reversed(team.events(owner_id, receipt.thread_id, after_sequence=0))
-            if event.event_type == "run" and event.status == "completed"
-        )
-
-    assert [message.role for message in snapshot.messages] == ["user", "assistant"]
-    assert snapshot.messages[-1].content == (
-        "Your resume shows a semiconductor operations background moving into applied AI. "
-        "Two role families fit: agentic AI platform engineering, and applied AI in manufacturing.\n\n"
-        "Which of those interests you more?"
-    )
-    # Nothing the submission would have carried is invented on this path.
-    assert snapshot.case_facts.preferences == ()
-    assert persisted_result["reply_mode"] == "unsubmitted_prose"
-    assert completed_event.attributes["reply_mode"] == "unsubmitted_prose"
+    assert error.value.failure_type == "validation"
+    assert error.value.failure_code == "structured_output_invalid"
 
 
 def test_an_unsubmitted_reply_cut_off_mid_sentence_is_rejected():

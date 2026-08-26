@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import os
+from pathlib import Path
+import re
 import secrets
 import sys
 import threading
@@ -216,6 +220,27 @@ def test_security_headers_harden_private_responses():
     assert headers[b"referrer-policy"] == b"no-referrer"
     assert b"frame-ancestors 'none'" in headers[b"content-security-policy"]
     assert b"max-age=31536000" in headers[b"strict-transport-security"]
+
+
+def test_csp_hashes_every_inline_script_without_allowing_arbitrary_inline_code():
+    from security import SecurityHeadersMiddleware
+
+    index = (Path(__file__).resolve().parents[2] / "frontend" / "index.html").read_text()
+    inline_scripts = re.findall(
+        r'<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)</script>',
+        index,
+    )
+    expected_hashes = {
+        "'sha256-"
+        + base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
+        + "'"
+        for script in inline_scripts
+    }
+    policy = SecurityHeadersMiddleware._CONTENT_SECURITY_POLICY.decode()
+
+    assert inline_scripts
+    assert "script-src 'self' 'unsafe-inline'" not in policy
+    assert expected_hashes == set(SecurityHeadersMiddleware._INLINE_SCRIPT_HASHES)
 
 
 def test_security_headers_wrap_spa_fallback():

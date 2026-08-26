@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from ats_terms import build_job_ats_terms
 from job_precompute import display_salary
-from job_visibility import apply_public_job_visibility
+from job_visibility import apply_singapore_market_visibility
 from models import ScrapedJob, TrackedJob
 
 
@@ -305,7 +305,7 @@ class CorpusAndMomResearchProvider:
         words = _normalized_words(tracked.role)[:TITLE_QUERY_TERM_LIMIT]
         if not words:
             return []
-        query = apply_public_job_visibility(self._db.query(ScrapedJob)).filter(
+        query = apply_singapore_market_visibility(self._db.query(ScrapedJob)).filter(
             or_(*(ScrapedJob.title.ilike(f"%{word}%") for word in words))
         )
         if target is not None:
@@ -317,7 +317,9 @@ class CorpusAndMomResearchProvider:
         tracked: TrackedJob,
         target: ScrapedJob | None,
     ) -> list[ScrapedJob]:
-        query = apply_public_job_visibility(self._db.query(ScrapedJob)).filter(ScrapedJob.company == tracked.company)
+        query = apply_singapore_market_visibility(self._db.query(ScrapedJob)).filter(
+            ScrapedJob.company == tracked.company
+        )
         if target is not None:
             query = query.filter(ScrapedJob.id != target.id)
         return query.order_by(ScrapedJob.posted_at_sort.desc(), ScrapedJob.id.desc()).limit(COMPANY_JOB_LIMIT).all()

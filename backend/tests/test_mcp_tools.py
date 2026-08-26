@@ -515,9 +515,11 @@ def test_match_resume_to_jobs_uses_ats_terms_without_storing_resume(monkeypatch)
         lambda db, job_id, include_old=False: FakeJob() if job_id == 7 else None,
     )
     monkeypatch.setattr(mcp_tools, "encode_text", lambda text: [0.1, 0.2])
+    monkeypatch.setattr(mcp_tools, "singapore_public_job_ids", lambda _db: {7})
 
-    def fake_find_similar_jobs(vector, db, top_k):
+    def fake_find_similar_jobs(vector, db, top_k, *, eligible_job_ids):
         assert top_k == 20
+        assert eligible_job_ids == {7}
         return [(7, 0.8)]
 
     monkeypatch.setattr(mcp_tools, "find_similar_jobs", fake_find_similar_jobs)
@@ -561,6 +563,7 @@ def test_match_resume_to_jobs_returns_an_explicit_empty_result_without_newest_fa
 
     monkeypatch.setattr(mcp_tools, "SessionLocal", FakeDb)
     monkeypatch.setattr(mcp_tools, "encode_text", lambda _text: [0.1, 0.2])
+    monkeypatch.setattr(mcp_tools, "singapore_public_job_ids", lambda _db: set())
     monkeypatch.setattr(mcp_tools, "find_similar_jobs", lambda *_args, **_kwargs: [])
 
     data = json.loads(mcp_tools.match_resume_to_jobs("Built Python services", limit=2))

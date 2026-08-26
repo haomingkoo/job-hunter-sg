@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import time
 import uuid
 from collections.abc import Callable
@@ -30,7 +29,11 @@ from models import (
 import config
 from application_workspace import ensure_recruitment_application
 from resume_agent.telemetry import trace_key
-from run_concurrency import release_owner_run, reserve_owner_run
+from run_concurrency import (
+    database_owner_run_available,
+    release_owner_run,
+    reserve_owner_run,
+)
 from schemas import TrackedJobCreate
 
 from .interface import (
@@ -56,6 +59,7 @@ from .interface import (
     TargetAssessmentArtifactSnapshot,
     confirmed_evidence_fact,
 )
+from .job_recommender import JobRecommender, ranking_receipt_from_dict
 from .execution_metrics import merge_execution_metrics
 from .model_transport_observer import collect_transport_metrics
 from .errors import (
@@ -127,7 +131,7 @@ from .resume_edit_evidence import (
 from .telemetry import RecruitmentTelemetry
 from .activity_publisher import ActivityPublisher
 from . import activity_events
-from .prompts import CONVERSATION_PROMPT_VERSION
+from .prompts import COORDINATOR_PROMPT_VERSION
 from .assessment_contracts import (
     TargetAssessmentProgress,
     TargetAssessmentRequest,
@@ -142,19 +146,13 @@ def _utcnow() -> datetime:
 
 
 FIRST_ATTEMPT = 1
+DEFAULT_THREAD_MESSAGE_PAGE_SIZE = 100
+MAX_THREAD_MESSAGE_PAGE_SIZE = 200
 ACTIVE_THREAD_STATUS = "active"
 ARCHIVED_THREAD_STATUS = "archived"
 THREAD_TITLE_MAX_CHARS = 120
 MAX_JOB_FEEDBACK_SIGNALS = 100
-# A derived query stands in for a typed one, so keep it to a search-sized phrase.
 MAX_DERIVED_QUERY_CHARS = 200
-# Fallback for turns where the model composed no phrase. Only what the candidate
-# wants belongs in a similarity query: an embedding has no way to represent
-# "not", so searching "not computer vision" scores computer vision roles higher.
-SEMANTIC_PREFERENCE_FIELDS = frozenset({"role"})
-# A UI-sent opener is an instruction to the team, not something the candidate
-# wants searched, so it must never become the query.
-AUTOPILOT_MARKER = "[autopilot]"
 
 
 def _job_hidden_by_feedback(facts: dict, job: JobSnapshot) -> bool:
@@ -220,25 +218,11 @@ def _current_candidate_profile_artifact(
     )
 
 
-RESUME_TITLE_MAX_CHARS = 60
-RESUME_TITLE_LINES = 3
-RESUME_FALLBACK_WORDS = 30
-# A LinkedIn PDF export is two-column, and text extraction interleaves the
-# sidebar with the body, so nothing can be inferred from a line's position.
-# These pick title-shaped lines out of that jumble wherever they landed.
-_ROLE_WORD = re.compile(
-    r"\b(engineer|analyst|manager|accountant|consultant|specialist|developer"
-    r"|director|lead|officer|executive|scientist|architect)\b",
-    re.IGNORECASE,
-)
-# Contact details are not signal, and a query is not a place to put someone's
-# email address.
-_CONTACT_LINE = re.compile(r"@|https?://|linkedin\.com|www\.|\+\d{6,}", re.IGNORECASE)
-_FIRST_PERSON = re.compile(r"\b(i|i'm|my|me|we)\b", re.IGNORECASE)
 BUILD_CANDIDATE_PROFILE_MESSAGE = "Study my attached resume and build its evidence profile."
 ASSESS_TARGET_JOB_MESSAGE = "Run the bounded recruitment-team assessment for my selected target."
 COMPLETION_SUMMARIES = {
     "coordinator": "The coordinator completed this turn.",
+    "job_search": "The job search service completed this request.",
     "candidate_profiler": "The candidate profiler completed this turn.",
     "role_profiler": "The role profiler completed this turn.",
     "quality_judge": "The independent quality judge completed this turn.",
@@ -272,8 +256,11 @@ class RecruitmentTeam:
         activity_publisher: ActivityPublisher,
         candidate_profiler_factory: CandidateProfilerFactory | None = None,
         target_assessment_runner: TargetAssessmentRunner | None = None,
-        study_dispatcher: Callable[[int, int, str], None] | None = None,
         edit_evidence_validator: ResumeEditEvidenceValidator | None = None,
+        recommender: JobRecommender | None = None,
+        ai_credit_consumer: Callable[[int, str, str], None] | None = None,
+        owns_session: bool = False,
+        candidate_profiler_factory_provider: Callable[[], CandidateProfilerFactory] | None = None,
     ):
         self._db = db
         self._conversation_model = conversation_model
@@ -283,10 +270,18 @@ class RecruitmentTeam:
         self._activity_publisher = activity_publisher
         self._candidate_profiler_factory = candidate_profiler_factory
         self._target_assessment_runner = target_assessment_runner
-        self._study_dispatcher = study_dispatcher
+        self._candidate_profiler_factory_provider = candidate_profiler_factory_provider
         self._edit_evidence_validator = edit_evidence_validator or LangChainResumeEditEvidenceValidator(
             telemetry=telemetry
         )
+        self._recommender = recommender or JobRecommender()
+        self._ai_credit_consumer = ai_credit_consumer
+        self._owns_session = owns_session
+
+    def close(self) -> None:
+        """Release a transport-owned database session, if this team owns one."""
+        if self._owns_session:
+            self._db.close()
 
     def _record_run_attempt(
         self,
@@ -339,7 +334,7 @@ class RecruitmentTeam:
         detail: dict,
     ) -> None:
         facts = thread.case_facts or {}
-        if command_type == "build_candidate_profile":
+        if command_type in {"build_candidate_profile", "candidate_profile"}:
             artifact_id = facts.get("candidate_profile_artifact_id")
             artifact = self._db.get(CandidateProfileArtifact, artifact_id) if artifact_id else None
         elif command_type in {"assess_target_job", "answer_assessment_question"}:
@@ -366,7 +361,8 @@ class RecruitmentTeam:
             artifact.error = merged
 
     def _prepare_workflow_resume(self, run: RecruitmentRun, *, record: bool = True) -> None:
-        stage = run.command_type
+        ledger = run.attempt_ledger or {}
+        stage = str(ledger.get("last_attempted_stage") or run.command_type)
         remaining = attempts_remaining(
             run.attempt_ledger,
             stage,
@@ -456,6 +452,7 @@ class RecruitmentTeam:
                 SendMessage,
                 BuildCandidateProfile,
                 SearchJobs,
+                SelectTargetJob,
                 AssessTargetJob,
                 AnswerAssessmentQuestion,
             ),
@@ -497,7 +494,49 @@ class RecruitmentTeam:
                     # never takes ownership. Record only after claim refreshes
                     # the row; production sessions disable autoflush.
                     self._prepare_workflow_resume(previous, record=False)
-                return self._execute_locked(owner_id, command, key, previous)
+                if capacity_limited and not database_owner_run_available(self._db, owner_id):
+                    # Release the database row lock now rather than holding it
+                    # until request-session cleanup.
+                    self._db.rollback()
+                    raise RunConcurrencyExceeded(
+                        "Another AI run is already active for this user or the service is at capacity. Try again shortly."
+                    )
+                if previous is None:
+                    # Another worker may have completed this idempotency key
+                    # while this request waited on the owner row lock.
+                    previous = (
+                        self._db.query(RecruitmentRun)
+                        .filter(
+                            RecruitmentRun.user_id == owner_id,
+                            RecruitmentRun.idempotency_key == key,
+                        )
+                        .first()
+                    )
+                    if previous is not None and previous.status != "failed":
+                        receipt = self._receipt(previous)
+                        self._db.rollback()
+                        return receipt
+                    if previous is not None:
+                        if previous.command_type in {
+                            "start_thread",
+                            "send_message",
+                            "answer_assessment_question",
+                        }:
+                            self._assert_latest_failed_conversation_turn(previous)
+                        self._prepare_workflow_resume(previous, record=False)
+                if previous is None and capacity_limited and self._ai_credit_consumer is not None:
+                    self._ai_credit_consumer(owner_id, type(command).__name__, key)
+                try:
+                    return self._execute_locked(
+                        owner_id,
+                        command,
+                        key,
+                        previous,
+                    )
+                except BaseException:
+                    if self._db.in_transaction():
+                        self._db.rollback()
+                    raise
 
             if thread_id is None:
                 return execute_current()
@@ -545,7 +584,9 @@ class RecruitmentTeam:
                 thread = self._owned_thread(owner_id, command.thread_id)
                 resume = self._owned_resume(owner_id, thread.resume_version_id)
                 command_type = "search_jobs"
-                message = command.query.strip() or self._query_from_candidate(thread, resume)
+                message = command.query.strip()
+                if not message:
+                    raise InvalidCommand("job search requires an explicit query")
             elif isinstance(command, ShortlistJob):
                 thread = self._owned_thread(owner_id, command.thread_id)
                 resume = self._owned_resume(owner_id, thread.resume_version_id)
@@ -630,39 +671,81 @@ class RecruitmentTeam:
                         content=message.strip(),
                     )
                 )
-            candidate_profile_command = isinstance(command, BuildCandidateProfile)
+            candidate_profile_command = isinstance(
+                command,
+                (StartThread, SendMessage, BuildCandidateProfile, SearchJobs),
+            )
+            direct_search_command = isinstance(command, SearchJobs)
             running_event = self._event(
                 thread,
                 run,
                 event_type="run",
                 status="running",
                 summary=(
-                    "The candidate profiler is studying this resume."
+                    "The candidate profiler is checking the current resume evidence profile."
                     if candidate_profile_command
-                    else "The recruitment-team coordinator is reviewing your request."
+                    else (
+                        "The job search service is searching current postings."
+                        if direct_search_command
+                        else "The recruitment-team coordinator is reviewing your request."
+                    )
                 ),
                 team_member=(
-                    "candidate_profiler" if candidate_profile_command else "coordinator"
+                    "candidate_profiler"
+                    if candidate_profile_command
+                    else ("job_search" if direct_search_command else "coordinator")
                 ),
             )
             with self._telemetry.operation("persist_running"):
                 self._db.commit()
             self._activity_publisher.publish(activity_events.to_activity_event(running_event))
-
-            if isinstance(command, StartThread) and self._study_dispatcher is not None:
-                self._study_dispatcher(owner_id, resume.id, thread.id)
-
             command_transport_metrics: dict = {}
+            attempted_stage = command_type
             try:
                 if isinstance(command, SearchJobs):
-                    reply, completion_detail = self._search_jobs(thread, command, message)
-                    completion_member = "coordinator"
-                elif isinstance(command, BuildCandidateProfile):
-                    reply, completion_detail = self._build_candidate_profile(
-                        owner_id,
+                    attempted_stage = "candidate_profile"
+                    profile_detail = self._ensure_candidate_profile(owner_id, thread, resume, run)
+                    self._publish_stage_event(
                         thread,
-                        resume,
                         run,
+                        event_type="candidate_profile",
+                        status="completed",
+                        summary=(
+                            "The current resume evidence profile was reused."
+                            if profile_detail["reused"]
+                            else "The candidate profiler completed the resume evidence profile."
+                        ),
+                        detail=profile_detail,
+                        team_member="candidate_profiler",
+                    )
+                    self._publish_stage_event(
+                        thread,
+                        run,
+                        event_type="job_search",
+                        status="running",
+                        summary="The job search service is searching current postings.",
+                        detail={"operation": "job_search"},
+                        team_member="job_search",
+                    )
+                    attempted_stage = command_type
+                    reply, completion_detail = self._search_jobs(thread, resume, command, message)
+                    completion_detail = {**completion_detail, "profile": profile_detail}
+                    completion_member = "job_search"
+                elif isinstance(command, BuildCandidateProfile):
+                    completion_detail = self._ensure_candidate_profile(
+                        owner_id, thread, resume, run
+                    )
+                    reply = ModelReply(
+                        content=(
+                            "The current role-neutral evidence profile is already ready."
+                            if completion_detail["reused"]
+                            else "The role-neutral evidence profile is ready."
+                        ),
+                        model_name=(
+                            "candidate-profile-cache"
+                            if completion_detail["reused"]
+                            else str(self._candidate_profiler_factory.model_name)
+                        ),
                     )
                     completion_member = "candidate_profiler"
                 elif isinstance(command, ShortlistJob):
@@ -712,6 +795,43 @@ class RecruitmentTeam:
                         if thread.workflow_state == "awaiting_candidate_answer"
                         else "quality_judge"
                     )
+                elif isinstance(command, (StartThread, SendMessage)):
+                    attempted_stage = "candidate_profile"
+                    profile_detail = self._ensure_candidate_profile(owner_id, thread, resume, run)
+                    self._publish_stage_event(
+                        thread,
+                        run,
+                        event_type="candidate_profile",
+                        status="completed",
+                        summary=(
+                            "The current resume evidence profile was reused."
+                            if profile_detail["reused"]
+                            else "The candidate profiler completed the resume evidence profile."
+                        ),
+                        detail=profile_detail,
+                        team_member="candidate_profiler",
+                    )
+                    self._publish_stage_event(
+                        thread,
+                        run,
+                        event_type="conversation",
+                        status="running",
+                        summary="The recruitment-team coordinator is reviewing your request.",
+                        detail={"operation": "coordinator"},
+                        team_member="coordinator",
+                    )
+                    attempted_stage = command_type
+                    with collect_transport_metrics() as conversation_transport_metrics:
+                        reply = self._model_reply(
+                            thread,
+                            resume,
+                            run,
+                            correlation_key,
+                            command_type,
+                        )
+                    command_transport_metrics = conversation_transport_metrics.summary()
+                    completion_detail = {"model": reply.model_name, "profile": profile_detail}
+                    completion_member = "coordinator"
                 else:
                     with collect_transport_metrics() as conversation_transport_metrics:
                         reply = self._model_reply(
@@ -729,6 +849,10 @@ class RecruitmentTeam:
                     getattr(error, "recruitment_transport_metrics", None)
                     or command_transport_metrics
                 )
+                if attempted_stage == "candidate_profile":
+                    facts = dict(thread.case_facts or {})
+                    facts["candidate_profile_status"] = "failed"
+                    thread.case_facts = facts
                 self._renew_run_lease(run)
                 run.status = "failed"
                 run.error_type = type(error).__name__
@@ -746,11 +870,15 @@ class RecruitmentTeam:
                 limit = (
                     TRANSPORT_ATTEMPT_LIMIT
                     if layer == "transport"
-                    else SEMANTIC_ATTEMPT_LIMITS[command_type]
+                    else (
+                        config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS
+                        if attempted_stage == "candidate_profile"
+                        else SEMANTIC_ATTEMPT_LIMITS[command_type]
+                    )
                 )
                 remaining = attempts_remaining(
                     run.attempt_ledger,
-                    command_type,
+                    attempted_stage,
                     layer,
                     limit - FIRST_ATTEMPT,
                 )
@@ -794,16 +922,21 @@ class RecruitmentTeam:
                     error.decision = decision
                 self._record_run_attempt(
                     run,
-                    stage=command_type,
+                    stage=attempted_stage,
                     layer=layer,
                     limit=limit,
                     status="error",
                     decision=decision,
                     error_type=type(error).__name__,
                 )
-                attempt_budget = run.attempt_ledger["stages"][command_type][layer]
+                run.attempt_ledger = {
+                    **(run.attempt_ledger or {}),
+                    "last_attempted_stage": attempted_stage,
+                }
+                attempt_budget = run.attempt_ledger["stages"][attempted_stage][layer]
                 failure_detail = {
                     "command_type": command_type,
+                    "attempted_stage": attempted_stage,
                     "attempt_count": attempt_budget["used"],
                     "attempt_limit": attempt_budget["limit"],
                     "error_type": type(error).__name__,
@@ -828,7 +961,7 @@ class RecruitmentTeam:
                             "tool_name",
                         }
                     })
-                self._persist_recovery_decision(thread, command_type, failure_detail)
+                self._persist_recovery_decision(thread, attempted_stage, failure_detail)
                 terminal_error = {
                     key: failure_detail[key]
                     for key in (
@@ -855,13 +988,23 @@ class RecruitmentTeam:
                 for attribute, value in failure_detail.items():
                     if attribute != "message":
                         command_span.set_attribute(attribute, value)
+                failure_member = (
+                    "candidate_profiler"
+                    if attempted_stage == "candidate_profile" or command_type == "build_candidate_profile"
+                    else ("job_search" if command_type == "search_jobs" else "coordinator")
+                )
                 failed_event = self._event(
                     thread,
                     run,
                     event_type="run",
                     status="failed",
-                    summary="The coordinator could not complete this turn.",
+                    summary={
+                        "candidate_profiler": "The candidate profiler could not complete the resume study.",
+                        "job_search": "The job search service could not complete this request.",
+                        "coordinator": "The coordinator could not complete this turn.",
+                    }[failure_member],
                     detail=failure_detail,
+                    team_member=failure_member,
                     parent_id=run.id,
                     duration_ms=_run_duration_ms(run),
                     attributes={
@@ -1044,7 +1187,10 @@ class RecruitmentTeam:
                 "attempt": FIRST_ATTEMPT,
             },
         ) as model_span:
-            messages = self._messages(thread.id)
+            messages = self._messages(
+                thread.id,
+                limit=(config.RECRUITMENT_MODEL_HISTORY_TURNS * 2) + 1,
+            )[0]
             latest_user = next(
                 (message for message in reversed(messages) if message.role == "user"),
                 None,
@@ -1108,7 +1254,7 @@ class RecruitmentTeam:
             model_span.set_attribute("model", reply.model_name)
             model_span.set_attribute(
                 "prompt_version",
-                getattr(reply, "prompt_version", "") or CONVERSATION_PROMPT_VERSION,
+                getattr(reply, "prompt_version", "") or COORDINATOR_PROMPT_VERSION,
             )
             model_span.set_attribute("preference_update_count", len(evidenced))
             if unevidenced:
@@ -1136,7 +1282,7 @@ class RecruitmentTeam:
         from resume_document import create_resume_document
 
         facts = thread.case_facts
-        profile = self._find_completed_candidate_profile(thread, resume)
+        profile = self._completed_candidate_profile(thread, resume)
         return ConversationContext(
             thread_id=thread.id,
             trace_key=correlation_key,
@@ -1166,6 +1312,7 @@ class RecruitmentTeam:
             plan=self._plan_steps(facts),
             discovery=self._discovery,
             edit_evidence_validator=self._edit_evidence_validator,
+            recommender=self._recommender,
             latest_user_message=latest_user.content,
             latest_user_message_id=latest_user.message_id,
             latest_user_run_id=latest_user.run_id,
@@ -1278,6 +1425,9 @@ class RecruitmentTeam:
         )
         facts["latest_search_query"] = latest_query
         facts["recommendations"] = [asdict(job) for job in recommendations]
+        latest_receipt = results[-1].ranking_receipt
+        if latest_receipt is not None:
+            facts["latest_ranking_receipt"] = asdict(latest_receipt)
         facts.pop("match_rationales", None)
         thread.case_facts = facts
 
@@ -1320,69 +1470,10 @@ class RecruitmentTeam:
         facts["plan"] = list(conversation.drafted_plan)
         thread.case_facts = facts
 
-    def _query_from_candidate(self, thread: RecruitmentThread, resume: ResumeVersion) -> str:
-        """Build a search query from model output, preferences, message, or resume."""
-        facts = thread.case_facts or {}
-        composed = str(facts.get("search_query") or "").strip()
-        if composed:
-            return _trim_to_word(composed, MAX_DERIVED_QUERY_CHARS)
-
-        preferences = " ".join(
-            str(fact.get("value") or "")
-            for fact in (facts.get("preferences") or [])
-            if isinstance(fact, dict) and fact.get("field") in SEMANTIC_PREFERENCE_FIELDS
-        ).strip()
-        if preferences:
-            return _trim_to_word(preferences, MAX_DERIVED_QUERY_CHARS)
-
-        latest = (
-            self._db.query(RecruitmentMessage)
-            .filter(RecruitmentMessage.thread_id == thread.id, RecruitmentMessage.role == "user")
-            .order_by(RecruitmentMessage.id.desc())
-            .first()
-        )
-        typed = (latest.content or "").strip() if latest else ""
-        if typed and not typed.startswith(AUTOPILOT_MARKER):
-            return _trim_to_word(typed, MAX_DERIVED_QUERY_CHARS)
-
-        return self._query_from_resume(resume)
-
-    @staticmethod
-    def _query_from_resume(resume: ResumeVersion) -> str:
-        """Build a search phrase from resume role titles and skills."""
-        from resume_agent.tools import extract_skills
-
-        text = resume.resume_text or ""
-        titles: list[str] = []
-        seen: set[str] = set()
-        for raw in text.splitlines():
-            line = raw.strip().rstrip("\u00b7").strip()
-            if not line or len(line) > RESUME_TITLE_MAX_CHARS or line.endswith("."):
-                continue
-            if _CONTACT_LINE.search(line) or _FIRST_PERSON.search(line):
-                continue
-            if not _ROLE_WORD.search(line) or line.lower() in seen:
-                continue
-            seen.add(line.lower())
-            titles.append(line)
-            if len(titles) >= RESUME_TITLE_LINES:
-                break
-
-        phrase = " ".join(titles + extract_skills.invoke({"text": text})).strip()
-        if not phrase:
-            # A prose resume has no title lines and may name no known skill, so
-            # use its own opening words rather than the label the candidate typed.
-            body = [
-                line.strip() for line in text.splitlines()
-                if line.strip() and not _CONTACT_LINE.search(line)
-            ]
-            phrase = " ".join(" ".join(body).split()[:RESUME_FALLBACK_WORDS]).strip()
-        return _trim_to_word(phrase or resume.label or "roles matching my experience",
-                             MAX_DERIVED_QUERY_CHARS)
-
     def _search_jobs(
         self,
         thread: RecruitmentThread,
+        resume: ResumeVersion,
         command: SearchJobs,
         resolved_query: str,
     ) -> tuple[ModelReply, dict]:
@@ -1393,6 +1484,7 @@ class RecruitmentTeam:
             },
         ) as search_span:
             search_span.set_attribute("query_derived", not command.query.strip())
+            profile = self._completed_candidate_profile(thread, resume)
             result = self._discovery.search_jobs(
                 resolved_query,
                 company=command.company,
@@ -1401,6 +1493,8 @@ class RecruitmentTeam:
                 singapore_only=command.singapore_only,
                 title_phrase=command.title_phrase,
             )
+            batch = self._recommender.recommend(profile, result)
+            result = batch.search_result
             search_span.set_attribute("valid_empty", result.valid_empty)
             search_span.set_attribute("result_count", len(result.jobs))
             search_span.set_attribute("truncated", result.truncated)
@@ -1423,13 +1517,14 @@ class RecruitmentTeam:
         )
         facts["latest_search_query"] = result.query
         facts["recommendations"] = [asdict(job) for job in visible_jobs]
+        facts["latest_ranking_receipt"] = asdict(batch.receipt)
         thread.case_facts = facts
         count = len(visible_jobs)
         content = (
             "No current jobs matched this search. The source was reached successfully; "
             "you can refine the role or constraints."
             if result.valid_empty
-            else f"I found {count} current, source-backed job matches. Review the "
+            else f"Found {count} current, source-backed job matches. Review the "
             "posting evidence below before shortlisting a target."
         )
         return ModelReply(content=content, model_name="job-discovery"), {
@@ -1590,6 +1685,66 @@ class RecruitmentTeam:
             "attempt_count": run.attempt_count,
             "validation_codes": list(run.validation_codes),
         }
+
+    def _ensure_candidate_profile(
+        self,
+        owner_id: int,
+        thread: RecruitmentThread,
+        resume: ResumeVersion,
+        command_run: RecruitmentRun,
+    ) -> dict:
+        """Resolve the exact resume profile required before a coordinator turn."""
+        profile = self._find_completed_candidate_profile(thread, resume)
+        if profile is not None:
+            return {
+                "operation": "candidate_profile",
+                "artifact_id": thread.case_facts.get("candidate_profile_artifact_id"),
+                "field_count": len(profile.fields),
+                "reused": True,
+            }
+        if self._candidate_profiler_factory is None:
+            provider_error = None
+            if self._candidate_profiler_factory_provider is not None:
+                try:
+                    self._candidate_profiler_factory = self._candidate_profiler_factory_provider()
+                except Exception as error:
+                    provider_error = error
+            if self._candidate_profiler_factory is None:
+                unavailable = CandidateProfilingUnavailable(
+                    "candidate profile capability is not configured",
+                    decision=classify_failure("invalid_configuration"),
+                    detail={"attempted_stage": "candidate_profile"},
+                )
+                if provider_error is not None:
+                    raise unavailable from provider_error
+                raise unavailable
+        _, detail = self._build_candidate_profile(owner_id, thread, resume, command_run)
+        return {**detail, "reused": False}
+
+    def _publish_stage_event(
+        self,
+        thread: RecruitmentThread,
+        run: RecruitmentRun,
+        *,
+        event_type: str,
+        status: str,
+        summary: str,
+        detail: dict,
+        team_member: str,
+    ) -> None:
+        event = self._event(
+            thread,
+            run,
+            event_type=event_type,
+            status=status,
+            summary=summary,
+            detail=detail,
+            team_member=team_member,
+            parent_id=run.id,
+        )
+        self._renew_run_lease(run)
+        self._db.commit()
+        self._activity_publisher.publish(activity_events.to_activity_event(event))
 
     def _shortlist_job(
         self,
@@ -2071,9 +2226,25 @@ class RecruitmentTeam:
         if artifact is None:
             raise ThreadNotFound(f"assessment artifact {artifact_id} not found")
 
-        latest_user = next(
-            (message for message in reversed(self._messages(thread.id)) if message.role == "user"),
-            None,
+        latest_user_record = (
+            self._db.query(RecruitmentMessage)
+            .filter(
+                RecruitmentMessage.thread_id == thread.id,
+                RecruitmentMessage.role == "user",
+            )
+            .order_by(RecruitmentMessage.id.desc())
+            .first()
+        )
+        latest_user = (
+            Message(
+                message_id=latest_user_record.id,
+                role=latest_user_record.role,
+                content=latest_user_record.content,
+                run_id=latest_user_record.run_id,
+                created_at=latest_user_record.created_at,
+            )
+            if latest_user_record is not None
+            else None
         )
         if latest_user is None:
             raise InvalidCommand("assessment answer has no user message")
@@ -2425,9 +2596,21 @@ class RecruitmentTeam:
             thread.case_facts = facts
         return self._candidate_profile_from_dict(artifact.profile)
 
-    def snapshot(self, owner_id: int, thread_id: str) -> ThreadSnapshot:
+    def snapshot(
+        self,
+        owner_id: int,
+        thread_id: str,
+        *,
+        message_limit: int = DEFAULT_THREAD_MESSAGE_PAGE_SIZE,
+        before_message_id: int | None = None,
+    ) -> ThreadSnapshot:
         thread = self._owned_thread(owner_id, thread_id)
         facts = thread.case_facts
+        messages, message_history_has_more = self._messages(
+            thread.id,
+            limit=message_limit,
+            before_message_id=before_message_id,
+        )
         return ThreadSnapshot(
             thread_id=thread.id,
             title=self._thread_title(thread),
@@ -2438,6 +2621,11 @@ class RecruitmentTeam:
                 resume_label=str(facts["resume_label"]),
                 resume_sha256=str(facts["resume_sha256"]),
                 latest_search_query=str(facts.get("latest_search_query") or ""),
+                latest_ranking_receipt=(
+                    ranking_receipt_from_dict(facts["latest_ranking_receipt"])
+                    if isinstance(facts.get("latest_ranking_receipt"), dict)
+                    else None
+                ),
                 recommendations=tuple(self._job_from_dict(item) for item in facts.get("recommendations", [])),
                 match_rationales=tuple(
                     item for item in facts.get("match_rationales", []) if isinstance(item, dict)
@@ -2485,7 +2673,9 @@ class RecruitmentTeam:
                 ),
                 target_assessment_status=str(facts.get("target_assessment_status") or "not_started"),
             ),
-            messages=self._messages(thread.id),
+            messages=messages,
+            message_history_has_more=message_history_has_more,
+            oldest_message_id=(messages[0].message_id if messages else None),
             last_event_sequence=thread.next_event_sequence - 1,
         )
 
@@ -2573,18 +2763,25 @@ class RecruitmentTeam:
         owner_id: int,
         thread_id: str,
         after_sequence: int,
+        limit: int = activity_events.DEFAULT_ACTIVITY_EVENT_LIMIT,
+        *,
+        tail: bool = True,
     ) -> list[ActivityEvent]:
         self._owned_thread(owner_id, thread_id)
         reconcile_expired_runs(self._db, thread_id=thread_id)
-        records = (
+        query = (
             self._db.query(RecruitmentActivityEvent)
             .filter(
                 RecruitmentActivityEvent.thread_id == thread_id,
                 RecruitmentActivityEvent.sequence > after_sequence,
             )
-            .order_by(RecruitmentActivityEvent.sequence)
-            .all()
         )
+        if tail and after_sequence == 0:
+            records = list(reversed(
+                query.order_by(RecruitmentActivityEvent.sequence.desc()).limit(limit).all()
+            ))
+        else:
+            records = query.order_by(RecruitmentActivityEvent.sequence).limit(limit).all()
         return [activity_events.to_activity_event(item) for item in records]
 
     def run_replay(
@@ -2613,9 +2810,14 @@ class RecruitmentTeam:
                 RecruitmentActivityEvent.sequence > after_sequence,
             )
             .order_by(RecruitmentActivityEvent.sequence)
+            .limit(activity_events.DEFAULT_ACTIVITY_EVENT_LIMIT + 1)
             .all()
         )
+        has_more_events = len(records) > activity_events.DEFAULT_ACTIVITY_EVENT_LIMIT
+        records = records[:activity_events.DEFAULT_ACTIVITY_EVENT_LIMIT]
         events = [activity_events.to_activity_event(item) for item in records]
+        if has_more_events:
+            return events, None
         if run.status == "completed":
             return events, ("receipt", self._receipt(run))
         if run.status != "failed":
@@ -3155,13 +3357,22 @@ class RecruitmentTeam:
     def _candidate_profile_from_dict(item: dict) -> CandidateEvidenceProfile:
         return candidate_profile_from_dict(item)
 
-    def _messages(self, thread_id: str) -> list[Message]:
-        records = (
+    def _messages(
+        self,
+        thread_id: str,
+        *,
+        limit: int,
+        before_message_id: int | None = None,
+    ) -> tuple[list[Message], bool]:
+        query = (
             self._db.query(RecruitmentMessage)
             .filter(RecruitmentMessage.thread_id == thread_id)
-            .order_by(RecruitmentMessage.id)
-            .all()
         )
+        if before_message_id is not None:
+            query = query.filter(RecruitmentMessage.id < before_message_id)
+        records = query.order_by(RecruitmentMessage.id.desc()).limit(limit + 1).all()
+        has_more = len(records) > limit
+        records = list(reversed(records[:limit]))
         return [
             Message(
                 message_id=item.id,
@@ -3171,7 +3382,7 @@ class RecruitmentTeam:
                 created_at=item.created_at,
             )
             for item in records
-        ]
+        ], has_more
 
     @staticmethod
     def _preference_facts(facts: dict) -> tuple[PreferenceFact, ...]:

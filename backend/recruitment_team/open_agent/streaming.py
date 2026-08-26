@@ -95,8 +95,6 @@ def describe_progress(event: dict) -> tuple[str, dict] | None:
     team_member = event.get("team_member") or "coordinator"
 
     if event.get("kind") == "tool_call":
-        # `{member} called {tool}.` is the shape TeamActivityPanel's humanize()
-        # parses, and the shape the #146 activity assertions pin.
         detail = {"tool_name": tool_name, "stage": "call"}
         if event.get("id"):
             detail["tool_call_id"] = event["id"]

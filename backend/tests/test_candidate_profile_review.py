@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 
+import pytest
 from langchain_core.messages import AIMessage
 
 from resume_document import create_resume_document
@@ -10,11 +11,13 @@ from recruitment_team.candidate_profile import (
     CandidateProfileEvidence,
     CandidateProfileField,
     CandidateProfileRun,
+    CandidateProfileValidationError,
     _build_profile,
 )
 from recruitment_team.candidate_profile_review import (
     GloballyReviewedCandidateProfiler,
     _SemanticMergeSubmission,
+    _apply_evidence_disposition,
     _evaluation_input,
     _global_review_input,
     _semantic_merge_input,
@@ -103,20 +106,10 @@ def _merged_payload(run):
     }
 
 
-def _evaluation_payload(_field_id, evidence):
+def _evaluation_payload(_field_id, _evidence):
     return {
-        "supported_field_refs": [],
-        "field_evaluations": [
-            {
-                "field_ref": "field_1",
-                "strengths": ["The realized result and audit qualifier are preserved."],
-                "weaknesses": [],
-                "score": 100,
-                "score_reason": "Both source blocks support the canonical fact.",
-                "label": "supported",
-                "cited_evidence_ids": [item.evidence_id for item in evidence],
-            }
-        ],
+        "supported_field_refs": ["field_1"],
+        "field_evaluations": [],
         "strengths": ["Repeated evidence is represented once with complete provenance."],
         "weaknesses": [],
         "score": 100,
@@ -505,6 +498,151 @@ def test_evaluation_expands_explicit_supported_refs_to_complete_field_rows():
     assert failure == ""
     assert [row["field_id"] for row in accepted["field_evaluations"]] == [field.field_id for field in profile.fields]
     assert all(row["label"] == "supported" for row in accepted["field_evaluations"])
+
+
+def test_evaluation_result_must_match_categorical_field_disposition():
+    profile = _local_run(_document()).profile
+    _payload, field_refs = _evaluation_input(profile)
+    raw = {
+        "supported_field_refs": ["field_1"],
+        "field_evaluations": [
+            {
+                "field_ref": "field_2",
+                "strengths": ["The field preserves part of the source."],
+                "weaknesses": ["The statement overstates the source."],
+                "score": 99,
+                "score_reason": "The categorical label, not this score, controls disposition.",
+                "label": "partially_supported",
+                "cited_evidence_ids": list(profile.fields[1].resume_evidence_ids),
+            }
+        ],
+        "strengths": ["One field is fully supported."],
+        "weaknesses": ["One field requires revision."],
+        "score": 99,
+        "score_reason": "Aggregate scores do not override field labels.",
+        "result": "pass",
+    }
+
+    accepted, failure = _validate_evaluation(raw, field_refs)
+
+    assert accepted is None
+    assert failure == "evaluation:result_disposition_mismatch(expected=revise;observed=pass)"
+
+
+def test_detailed_supported_label_cannot_bypass_supported_field_refs_contract():
+    profile = _local_run(_document()).profile
+    _payload, field_refs = _evaluation_input(profile)
+    raw = {
+        "supported_field_refs": ["field_2"],
+        "field_evaluations": [
+            {
+                "field_ref": "field_1",
+                "strengths": ["Some wording is grounded."],
+                "weaknesses": ["The diagnostic still identifies a material weakness."],
+                "score": 100,
+                "score_reason": "A numeric score cannot grant supported disposition.",
+                "label": "supported",
+                "cited_evidence_ids": list(profile.fields[0].resume_evidence_ids),
+            }
+        ],
+        "strengths": ["One field is contractually supported."],
+        "weaknesses": ["One field used the wrong disposition bucket."],
+        "score": 100,
+        "score_reason": "Only supported_field_refs admits a field.",
+        "result": "pass",
+    }
+
+    accepted, failure = _validate_evaluation(raw, field_refs)
+
+    assert accepted is None
+    assert failure == (
+        "evaluation:summary_result:supported_requires_supported_field_ref"
+    )
+
+
+def test_revise_retains_only_supported_fields_and_keeps_rejected_diagnostics():
+    profile = _local_run(_document()).profile
+    evaluation = {
+        "result": "revise",
+        "field_evaluations": [
+            {
+                "field_id": profile.fields[0].field_id,
+                "label": "supported",
+                "disposition_source": "supported_field_refs",
+            },
+            {
+                "field_id": profile.fields[1].field_id,
+                "label": "partially_supported",
+                "disposition_source": "field_evaluation",
+                "weaknesses": ["The qualifier needs revision."],
+            },
+        ],
+    }
+
+    retained, diagnostic = _apply_evidence_disposition(profile, evaluation)
+
+    assert [field.field_id for field in retained.fields] == [profile.fields[0].field_id]
+    assert {item.evidence_id for item in retained.cited_resume_evidence} == set(
+        profile.fields[0].resume_evidence_ids
+    )
+    assert diagnostic["field_evaluations"] == evaluation["field_evaluations"]
+    assert diagnostic["evidence_disposition"] == {
+        "policy": "fully_supported_fields_only",
+        "action": "publish_supported_subset",
+        "supported_field_ids": [profile.fields[0].field_id],
+        "rejected_field_ids": [profile.fields[1].field_id],
+    }
+
+
+def test_block_with_no_supported_fields_fails_closed_and_preserves_evaluation_scope():
+    document = _document()
+    local = _local_run(document)
+    merged = _merged_payload(local)
+    blocks = {block["id"]: block for block in document["blocks"]}
+    accepted, failure = _validate_global_merge(merged, local.profile, blocks)
+    assert failure == ""
+    reviewed = _build_profile(document, accepted["fields"])
+    blocked_evaluation = _evaluation_payload(
+        reviewed.fields[0].field_id,
+        reviewed.cited_resume_evidence,
+    )
+    blocked_evaluation["supported_field_refs"] = []
+    blocked_evaluation["field_evaluations"] = [
+        {
+            "field_ref": "field_1",
+            "strengths": ["The canonical statement is concise."],
+            "weaknesses": ["The canonical statement is not fully supported."],
+            "score": 100,
+            "score_reason": "The unsupported label controls despite the score.",
+            "label": "unsupported",
+            "cited_evidence_ids": [
+                item.evidence_id for item in reviewed.cited_resume_evidence
+            ],
+        }
+    ]
+    blocked_evaluation["result"] = "block"
+    model = _Model(
+        [
+            {"reviewed_field_numbers": [1, 2], **merged},
+            {"decisions": []},
+            blocked_evaluation,
+        ]
+    )
+    store = _Store()
+
+    with pytest.raises(CandidateProfileValidationError) as error:
+        GloballyReviewedCandidateProfiler(
+            _Extractor(local),
+            model,
+            checkpoint_store=store,
+        ).profile(document)
+
+    assert error.value.validation_code == "evaluation:no_supported_fields"
+    assert error.value.rejected_submission["result"] == "block"
+    assert error.value.rejected_submission["evidence_disposition"]["action"] == (
+        "block_no_supported_evidence"
+    )
+    assert store.saved["__independent_evaluation__"]["result"] == "block"
 
 
 def test_evaluation_rejects_a_noncanonical_field_citation():

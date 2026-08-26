@@ -16,10 +16,13 @@ QUALITY_GATES = Path(__file__).resolve().parents[2] / "docs/quality-gates.md"
 def test_synthetic_ranking_check_is_not_described_as_an_outcome_backtest():
     documentation = QUALITY_GATES.read_text().casefold()
     module_description = (ranking_evaluation.__doc__ or "").casefold()
+    synthetic_section = documentation.split(
+        "the synthetic semantic job-ranking regression", 1
+    )[1].split("the integrity evaluation", 1)[0]
 
     assert "synthetic semantic job-ranking regression" in documentation
     assert "synthetic semantic job-ranking regression" in module_description
-    assert "backtest" not in documentation
+    assert "backtest" not in synthetic_section
     assert "backtest" not in module_description
 
 

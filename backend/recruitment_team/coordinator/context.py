@@ -8,6 +8,7 @@ from typing import Any, Callable
 from ..candidate_profile import CandidateEvidenceProfile
 from ..discovery import DiscoveryPort, JobSearchResult, JobSnapshot
 from ..interface import ConfirmedEvidenceFact, PreferenceFact, PreferenceUpdate
+from ..job_recommender import JobRecommender
 from ..role_success import RoleSuccessProfile
 from ..resume_edit_evidence import ResumeEditEvidenceValidator
 
@@ -30,6 +31,7 @@ class ConversationContext:
     published_matches: tuple[dict[str, Any], ...]
     discovery: DiscoveryPort
     edit_evidence_validator: ResumeEditEvidenceValidator
+    recommender: JobRecommender = field(default_factory=JobRecommender, compare=False)
     plan: tuple[dict[str, str], ...] = ()
     latest_user_message: str = ""
     latest_user_message_id: int = 0

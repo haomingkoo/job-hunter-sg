@@ -16,10 +16,10 @@ from langgraph.types import Command
 import config
 from prompt_safety import xml_data_block
 
-from ..conversation_model import ConversationReply, ModelReply, reply_is_complete
+from ..conversation_model import ConversationReply, ModelReply
 from ..errors import ConversationUnavailable, InvalidCommand
 from ..fair_hiring import mentions_protected_status
-from ..interface import Message, PreferenceFact, PreferenceUpdate
+from ..interface import Message, PreferenceFact
 from ..open_agent import context as open_agent_context
 from ..open_agent.streaming import format_questions, iter_progress_events, rejected_tool_result
 from ..open_agent.tools import (
@@ -102,19 +102,13 @@ def _model_name(state) -> str:
     return "coordinator-deep-agent"
 
 
-def _final_reply_text(state) -> str:
-    """Return final assistant text without reasoning or tool-call messages."""
+def _unsubmitted_text_for_validation(state) -> str:
+    """Read rejected model prose only to classify a safe terminal failure."""
     for message in reversed(state.values.get("messages") or []):
-        if getattr(message, "type", "") != "ai" or getattr(message, "tool_calls", None):
+        if getattr(message, "type", "") != "ai":
             continue
         content = getattr(message, "content", "")
-        if isinstance(content, list):
-            content = "".join(
-                part.get("text", "")
-                for part in content
-                if isinstance(part, dict) and part.get("type") == "text"
-            )
-        return str(content or "").strip()
+        return content if isinstance(content, str) else ""
     return ""
 
 
@@ -127,6 +121,18 @@ def _resume_edit_reply(edits: list[dict], reply: ConversationReply) -> str:
         paragraphs = [
             "No resume edit became pending. The attempted rewrites did not stay within your confirmed evidence."
         ]
+    # Accepted tool results own edit state. Keep the model's useful explanation,
+    # but suppress any paragraph in which it tries to narrate pending, accepted,
+    # or rejected edit state itself.
+    paragraphs.extend(
+        paragraph.strip()
+        for paragraph in re.split(r"\n\s*\n", reply.reply.strip())
+        if paragraph.strip()
+        and not (
+            re.search(r"\b(?:edit|edits|rewrite|rewrites|draft|drafts)\b", paragraph, re.I)
+            and re.search(r"\b(?:pending|accepted|rejected)\b", paragraph, re.I)
+        )
+    )
     assumptions = [item.strip() for item in reply.assumptions if item.strip()]
     missing = [item.strip() for item in reply.missing_information if item.strip()]
     if assumptions:
@@ -227,15 +233,6 @@ def _thread_state_block(context: ConversationContext, preferences: tuple[Prefere
     )
 
 
-def _resume_block(context: ConversationContext, resume_text: str) -> str:
-    """Serialize the resume with canonical block IDs when available."""
-    blocks = (context.resume_document or {}).get("blocks") or []
-    if not blocks:
-        return xml_data_block("resume", resume_text)
-    lines = "\n".join(f"{block.get('id')}: {block.get('text', '')}" for block in blocks)
-    return xml_data_block("resume", lines)
-
-
 class DeepAgentConversationModel:
     """Conversation adapter that runs a real tool loop for every turn."""
 
@@ -278,6 +275,9 @@ class DeepAgentConversationModel:
         # importing this module does not open a sqlite connection.
         from ..open_agent.runner import _CHECKPOINTER
 
+        if context.candidate_profile is None:
+            raise RuntimeError("coordinator requires a current candidate evidence profile")
+
         # Not create_deep_agent: its base stack binds eight more tools and its
         # `middleware` argument only appends, so they cannot be declined.
         tools = [
@@ -292,8 +292,7 @@ class DeepAgentConversationModel:
         ]
         if context.target_job is not None:
             tools.append(read_target_job)
-        if context.candidate_profile is not None:
-            tools.append(read_candidate_evidence)
+        tools.append(read_candidate_evidence)
 
         return create_agent(
             model=self._build_model(),
@@ -320,7 +319,6 @@ class DeepAgentConversationModel:
         context: ConversationContext,
         messages: list[Message],
         current_preferences: tuple[PreferenceFact, ...],
-        resume_text: str = "",
     ) -> dict:
         """The DB transcript, then the compact thread state, then this message.
 
@@ -336,23 +334,20 @@ class DeepAgentConversationModel:
             ),
             None,
         )
+        prior_messages = [
+            message
+            for index, message in enumerate(messages)
+            if index != latest_index
+        ][-(config.RECRUITMENT_MODEL_HISTORY_TURNS * 2):]
         request.extend(
             convert_to_messages(
                 [
                     {"role": message.role, "content": message.content}
-                    for index, message in enumerate(messages)
-                    if index != latest_index
+                    for message in prior_messages
                 ]
             )
         )
         turn = _thread_state_block(context, current_preferences)
-        if context.candidate_profile is None and resume_text.strip():
-            # Until the study has run there is no evidence profile, so
-            # read_candidate_evidence returns nothing and the agent has no way to
-            # learn who it is talking to. Live on 2026-08-02 it answered "please
-            # share your resume" to a thread that already had one, then spun to
-            # the iteration cap hunting for context it could never reach.
-            turn = f"{turn}\n\n{_resume_block(context, resume_text)}"
         if latest_index is not None:
             turn = f"{turn}\n\n{messages[latest_index].content}"
         request.append(HumanMessage(content=turn))
@@ -365,6 +360,7 @@ class DeepAgentConversationModel:
         current_preferences: tuple[PreferenceFact, ...] = (),
         context: ConversationContext | None = None,
     ) -> ModelReply:
+        del resume_text
         if context is None:
             # A guard clause, not a quiet degradation back into the blind
             # coordinator this adapter exists to replace.
@@ -372,7 +368,7 @@ class DeepAgentConversationModel:
 
         agent = self._build_agent(context)
         run_config, payload, skip_tool_call_ids, question_limit_enforced = self._turn(
-            agent, context, messages, current_preferences, resume_text
+            agent, context, messages, current_preferences
         )
 
         try:
@@ -531,68 +527,22 @@ class DeepAgentConversationModel:
 
             reply = state.values.get("structured_response")
             if not submitted or not isinstance(reply, ConversationReply):
-                # The model answered without routing through ConversationReply.
-                # Whether it does is run-to-run variance, not configuration: on
-                # 2026-08-02 the same message, model and byte-identical
-                # ChatOpenAI produced four completed turns through one harness
-                # and two no_submission failures through another. Throwing away
-                # an answer the candidate could have read, because of which
-                # shape the model chose, is a brittle contract.
-                #
-                # This is not a fabricated success. The content is the model's
-                # own user-facing text, and nothing the submission alone carries
-                # is invented: no preference update is recorded here.
-                prose = _final_reply_text(state)
-                if prose:
-                    if edit_attempted:
-                        span.set_attribute("failure_type", "validation")
-                        span.set_attribute("failure_code", "structured_output_invalid")
-                        raise ConversationUnavailable(
-                            "coordinator did not report its resume edit results structurally",
-                            decision=classify_failure("structured_output_invalid"),
-                        )
-                    if not reply_is_complete(prose):
-                        span.set_attribute("failure_type", "validation")
-                        span.set_attribute("failure_code", "structured_output_invalid")
-                        raise ConversationUnavailable(
-                            "coordinator returned an incomplete reply",
-                            decision=classify_failure("structured_output_invalid"),
-                        )
-                    unverified_tool = _unverified_tool_claim(prose, context)
-                    if unverified_tool:
-                        span.set_attribute("failure_type", "validation")
-                        span.set_attribute("failure_code", "structured_output_invalid")
-                        span.set_attribute("unverified_tool_claim", unverified_tool)
-                        raise ConversationUnavailable(
-                            "coordinator prose claimed tool work that did not complete",
-                            decision=classify_failure("structured_output_invalid"),
-                            detail={
-                                "validation_code": "unverified_tool_claim",
-                                "tool_name": unverified_tool,
-                            },
-                        )
-                    span.set_attribute("outcome", "unsubmitted_prose")
-                    return ModelReply(
-                        prompt_version=COORDINATOR_PROMPT_VERSION,
-                        content=prose,
-                        model_name=_model_name(state),
-                        search_query=executed_query,
-                        reply_mode="unsubmitted_prose",
-                    )
                 span.set_attribute("failure_type", "validation")
                 span.set_attribute("failure_code", "structured_output_invalid")
-                raise ConversationUnavailable(
-                    "coordinator loop ended without a reply",
-                    decision=classify_failure("structured_output_invalid"),
+                unverified_tool = _unverified_tool_claim(
+                    _unsubmitted_text_for_validation(state), context
                 )
-            actual_edit_ids = sorted(edit["block_id"] for edit in context.proposed_edits)
-            declared_edit_ids = sorted(reply.pending_edit_block_ids)
-            if edit_attempted and declared_edit_ids != actual_edit_ids:
-                span.set_attribute("failure_type", "validation")
-                span.set_attribute("failure_code", "structured_output_invalid")
+                detail = None
+                if unverified_tool:
+                    span.set_attribute("unverified_tool_claim", unverified_tool)
+                    detail = {
+                        "validation_code": "unverified_tool_claim",
+                        "tool_name": unverified_tool,
+                    }
                 raise ConversationUnavailable(
-                    "coordinator reported resume edits that do not match the accepted tool results",
+                    "coordinator did not submit the required structured reply",
                     decision=classify_failure("structured_output_invalid"),
+                    detail=detail,
                 )
             content = (
                 _resume_edit_reply(context.proposed_edits, reply)
@@ -617,15 +567,6 @@ class DeepAgentConversationModel:
                 prompt_version=COORDINATOR_PROMPT_VERSION,
                 content=content,
                 model_name=_model_name(state),
-                preference_updates=tuple(
-                    PreferenceUpdate(
-                        field=item.field,
-                        value=item.value.strip(),
-                        evidence_quote=item.evidence_quote.strip(),
-                        operation=item.operation,
-                    )
-                    for item in reply.preference_updates
-                ),
                 # An observation, not a request: what ran, not what was wished
                 # for. `_query_from_candidate` reads this on the next
                 # SearchJobs command.
@@ -639,7 +580,6 @@ class DeepAgentConversationModel:
         context: ConversationContext,
         messages: list[Message],
         current_preferences: tuple[PreferenceFact, ...],
-        resume_text: str,
     ) -> tuple[dict, Any, set[str] | None, bool]:
         """Resume the paused graph if there is one, otherwise start a fresh one."""
         if context.pause_token:
@@ -663,7 +603,7 @@ class DeepAgentConversationModel:
         run_config = self._run_config(f"coordinator-{context.thread_id}-{uuid.uuid4()}")
         return (
             run_config,
-            self._new_turn_payload(context, messages, current_preferences, resume_text),
+            self._new_turn_payload(context, messages, current_preferences),
             None,
             False,
         )

@@ -76,6 +76,13 @@ SEALION_AGENT_MODEL: str = os.getenv("SEALION_AGENT_MODEL", "aisingapore/Qwen-SE
 COORDINATOR_MODEL: str = os.getenv("COORDINATOR_MODEL", "").strip() or SEALION_AGENT_MODEL
 # A reasoning tier thinks before it writes; with no floor the reply gets the rest.
 RECRUITMENT_CONVERSATION_MAX_TOKENS: int = _int_env("RECRUITMENT_CONVERSATION_MAX_TOKENS", 8000)
+# Durable thread state is injected separately on every turn, so the model only
+# needs a recent conversational window. Keep this configurable by turns rather
+# than burying a provider-specific message count in the coordinator.
+RECRUITMENT_MODEL_HISTORY_TURNS: int = _positive_int_env(
+    "RECRUITMENT_MODEL_HISTORY_TURNS",
+    12,
+)
 RECRUITMENT_EDIT_EVIDENCE_MAX_TOKENS: int = _positive_int_env(
     "RECRUITMENT_EDIT_EVIDENCE_MAX_TOKENS",
     2000,

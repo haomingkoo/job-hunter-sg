@@ -7,11 +7,14 @@ import json
 from bisect import bisect_right
 from dataclasses import dataclass, replace
 from statistics import median
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import and_, or_
 
 from .recovery import classify_failure, normalize_failure_code
+
+if TYPE_CHECKING:
+    from .job_recommender import RankingReceipt
 
 
 JOB_REASONING_REQUIREMENT_FIELDS = (
@@ -64,6 +67,7 @@ class JobSnapshot:
     fact_context_status: str = "unavailable"
     employer_relationship: str | None = None
     employer_relationship_evidence: str = ""
+    data_classification: str = "untrusted_job_data"
 
     @classmethod
     def from_payload(cls, payload: dict) -> "JobSnapshot":
@@ -123,6 +127,9 @@ class JobSnapshot:
             employer_relationship_evidence=str(
                 payload.get("employer_relationship_evidence") or ""
             ),
+            data_classification=str(
+                payload.get("data_classification") or "untrusted_job_data"
+            ),
         )
 
 
@@ -142,6 +149,14 @@ class JobSearchResult:
     exclude_junior: bool = False
     singapore_only: bool = True
     title_phrase: str = ""
+    ranking_receipt: RankingReceipt | None = None
+
+    def with_ranking(
+        self,
+        jobs: tuple[JobSnapshot, ...],
+        receipt: RankingReceipt,
+    ) -> "JobSearchResult":
+        return replace(self, jobs=jobs, ranking_receipt=receipt)
 
 
 class DiscoveryPort(Protocol):
@@ -165,7 +180,7 @@ def _enrich_job_facts(payloads: list[dict]) -> list[dict]:
     Salary context is descriptive. A missing posting salary is never imputed.
     """
     from database import SessionLocal
-    from job_visibility import apply_public_job_visibility
+    from job_visibility import apply_singapore_market_visibility
     from models import ScrapedJob
 
     job_ids = [int(item["id"]) for item in payloads if item.get("id") is not None]
@@ -173,7 +188,9 @@ def _enrich_job_facts(payloads: list[dict]) -> list[dict]:
         return [dict(item) for item in payloads]
 
     with SessionLocal() as db:
-        jobs = apply_public_job_visibility(db.query(ScrapedJob)).filter(ScrapedJob.id.in_(job_ids)).all()
+        jobs = apply_singapore_market_visibility(db.query(ScrapedJob)).filter(
+            ScrapedJob.id.in_(job_ids)
+        ).all()
         jobs_by_id = {job.id: job for job in jobs}
         pairs = {
             ((job.sector or "").strip(), (job.seniority or "").strip())
@@ -186,7 +203,7 @@ def _enrich_job_facts(payloads: list[dict]) -> list[dict]:
                 and_(ScrapedJob.sector == sector, ScrapedJob.seniority == seniority) for sector, seniority in pairs
             ]
             salary_rows = (
-                apply_public_job_visibility(
+                apply_singapore_market_visibility(
                     db.query(
                         ScrapedJob.sector,
                         ScrapedJob.seniority,

@@ -17,6 +17,7 @@ from embedding_service import encode_text, find_similar_jobs, get_job_search_rea
 from job_visibility import (
     WORK_LOCATION_SINGAPORE,
     apply_public_job_visibility,
+    apply_singapore_market_visibility,
     singapore_public_job_ids,
 )
 from job_precompute import display_salary
@@ -46,7 +47,7 @@ def _limit(value: int, default: int = 20, maximum: int = 50) -> int:
 
 
 def _get_public_job(db, job_id: int, include_old: bool = False) -> ScrapedJob | None:
-    return apply_public_job_visibility(
+    return apply_singapore_market_visibility(
         db.query(ScrapedJob).filter(ScrapedJob.id == job_id),
         include_old=include_old,
     ).first()
@@ -242,10 +243,10 @@ def source_stats() -> str:
     """Return public job counts and freshness by source."""
     db = SessionLocal()
     try:
-        visible = apply_public_job_visibility(db.query(ScrapedJob))
+        visible = apply_singapore_market_visibility(db.query(ScrapedJob))
         total = visible.count()
         rows = (
-            apply_public_job_visibility(
+            apply_singapore_market_visibility(
                 db.query(
                     ScrapedJob.source,
                     func.count(ScrapedJob.id),
@@ -299,7 +300,12 @@ def match_resume_to_jobs(resume_text: str, limit: int = 10) -> str:
     candidate_limit = min(50, max(20, capped * 4))
     db = SessionLocal()
     try:
-        matches = find_similar_jobs(encode_text(clean_resume), db, top_k=candidate_limit)
+        matches = find_similar_jobs(
+            encode_text(clean_resume),
+            db,
+            top_k=candidate_limit,
+            eligible_job_ids=singapore_public_job_ids(db),
+        )
         recommendations = []
         for job_id, similarity in matches:
             job = _get_public_job(db, job_id)

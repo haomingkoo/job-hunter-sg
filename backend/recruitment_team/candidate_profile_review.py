@@ -440,6 +440,8 @@ def _validate_evaluation(
 
     for row in rows:
         field = field_refs[str(row["field_ref"])]
+        if row["label"] == "supported":
+            return None, f"evaluation:{field.field_id}:supported_requires_supported_field_ref"
         allowed = set(field.resume_evidence_ids)
         for citation in row["cited_evidence_ids"]:
             evidence_id = str(citation)
@@ -455,7 +457,13 @@ def _validate_evaluation(
         if field_ref in detailed:
             row = dict(detailed[field_ref])
             row.pop("field_ref")
-            expanded.append({"field_id": field.field_id, **row})
+            expanded.append(
+                {
+                    "field_id": field.field_id,
+                    "disposition_source": "field_evaluation",
+                    **row,
+                }
+            )
             continue
         expanded.append(
             {
@@ -465,8 +473,23 @@ def _validate_evaluation(
                 "score": 100,
                 "score_reason": "The independent reviewer marked this field fully supported.",
                 "label": "supported",
+                "disposition_source": "supported_field_refs",
                 "cited_evidence_ids": list(field.resume_evidence_ids),
             }
+        )
+    labels = [str(row["label"]) for row in expanded]
+    supported_count = labels.count("supported")
+    expected_result: ProfileResult
+    if supported_count == len(labels):
+        expected_result = "pass"
+    elif supported_count:
+        expected_result = "revise"
+    else:
+        expected_result = "block"
+    if payload["result"] != expected_result:
+        return None, (
+            "evaluation:result_disposition_mismatch"
+            f"(expected={expected_result};observed={payload['result']})"
         )
     return {
         "field_evaluations": expanded,
@@ -476,6 +499,59 @@ def _validate_evaluation(
         "score_reason": payload["score_reason"],
         "result": payload["result"],
     }, ""
+
+
+def _apply_evidence_disposition(
+    profile: CandidateEvidenceProfile,
+    evaluation: dict,
+) -> tuple[CandidateEvidenceProfile, dict]:
+    """Expose only fields the independent evaluator labelled fully supported."""
+    rows = evaluation["field_evaluations"]
+    supported_ids = {
+        str(row["field_id"])
+        for row in rows
+        if row.get("label") == "supported"
+        and row.get("disposition_source") == "supported_field_refs"
+    }
+    retained_fields = tuple(
+        field for field in profile.fields if field.field_id in supported_ids
+    )
+    retained_evidence_ids = {
+        evidence_id
+        for field in retained_fields
+        for evidence_id in field.resume_evidence_ids
+    }
+    retained_evidence = tuple(
+        item
+        for item in profile.cited_resume_evidence
+        if item.evidence_id in retained_evidence_ids
+    )
+    rejected_ids = [
+        str(row["field_id"])
+        for row in rows
+        if row.get("label") != "supported"
+    ]
+    action = (
+        "publish_supported_profile"
+        if not rejected_ids
+        else "publish_supported_subset"
+        if retained_fields
+        else "block_no_supported_evidence"
+    )
+    disposition = {
+        **evaluation,
+        "evidence_disposition": {
+            "policy": "fully_supported_fields_only",
+            "action": action,
+            "supported_field_ids": [field.field_id for field in retained_fields],
+            "rejected_field_ids": rejected_ids,
+        },
+    }
+    return replace(
+        profile,
+        fields=retained_fields,
+        cited_resume_evidence=retained_evidence,
+    ), disposition
 
 
 def _evaluation_input(
@@ -847,6 +923,20 @@ class GloballyReviewedCandidateProfiler:
             "profile_version": profile.profile_version,
             **evaluation,
         }
+        profile, evaluation = _apply_evidence_disposition(profile, evaluation)
+        if not profile.fields:
+            metrics = self._store.execution_metrics(local.checkpoint_id)
+            raise CandidateProfileValidationError(
+                "evaluation:no_supported_fields",
+                evaluation,
+                attempt_count=int(metrics.get("model_call_count") or local.attempt_count),
+                model_name=str((metrics.get("models") or [self._model_name])[-1]),
+                input_tokens=int(metrics.get("input_tokens") or 0) or None,
+                output_tokens=int(metrics.get("output_tokens") or 0) or None,
+                validation_codes=tuple(metrics.get("validation_codes") or ()),
+                checkpoint_id=local.checkpoint_id,
+                completed_scope_ids=tuple(self._store.load(local.checkpoint_id)),
+            )
         metrics = self._store.execution_metrics(local.checkpoint_id)
         return replace(
             local,

@@ -98,14 +98,6 @@ RECRUITER_DESCRIPTION_MARKERS = (
     "employment agency license",
 )
 
-RECRUITER_DESCRIPTION_SQL_PATTERN = (
-    r"(^|[^a-z])(?:"
-    r"ea\s*[/|:]?\s*(?:licen[cs]e|no|personnel|registration|reg(?:istration)?\s*no)"
-    r"|eapersonnel"
-    r"|employment\s+agency\s*\(?\s*licen[cs]e"
-    r")([^a-z0-9]|$)"
-)
-
 # Singapore employment-agency licence numbers are often printed without an
 # explicit "EA Licence" label, for example ``15C7752``.
 EA_LICENCE_NUMBER_PATTERN = r"(^|[^a-z0-9])\d{2}[cs]\d{4}([^a-z0-9]|$)"
@@ -351,45 +343,6 @@ def employer_relationship_rank(relationship: str | None) -> int:
     if relationship == EMPLOYER_RELATIONSHIP_UNKNOWN:
         return 1
     return 0
-
-
-def is_direct_employer(
-    company: str,
-    ssic_description: str = "",
-    description: str = "",
-) -> bool:
-    """Legacy compatibility predicate: means no known intermediary evidence, not verified direct."""
-    return bool(normalize_employer_name(company)) and not is_recruitment_employer(
-        company,
-        ssic_description,
-        description,
-    )
-
-
-def _sql_phrase_condition(lowered_column, phrase: str):
-    words = re.findall(r"[a-z0-9]+", phrase.casefold())
-    pattern = r"(^|[^a-z0-9])" + r"[^a-z0-9]+".join(map(re.escape, words))
-    return lowered_column.regexp_match(pattern + r"([^a-z0-9]|$)")
-
-
-def direct_employer_condition(
-    company_column,
-    ssic_description_column=None,
-    description_column=None,
-):
-    company_lower = func.lower(func.coalesce(company_column, ""))
-    recruiter_conditions = [company_lower.like(f"%{keyword}%") for keyword in RECRUITER_COMPANY_KEYWORDS]
-    recruiter_conditions.extend(_sql_phrase_condition(company_lower, keyword) for keyword in RECRUITER_COMPANY_KEYWORDS)
-    recruiter_conditions.extend(_sql_phrase_condition(company_lower, alias) for alias in RECRUITER_COMPANY_ALIASES)
-    if ssic_description_column is not None:
-        ssic_lower = func.lower(func.coalesce(ssic_description_column, ""))
-        recruiter_conditions.extend(ssic_lower.like(f"%{keyword}%") for keyword in RECRUITER_SSIC_KEYWORDS)
-    if description_column is not None:
-        description_lower = func.lower(func.coalesce(description_column, ""))
-        recruiter_conditions.append(description_lower.regexp_match(RECRUITER_DESCRIPTION_SQL_PATTERN))
-        recruiter_conditions.append(description_lower.regexp_match(EA_LICENCE_NUMBER_PATTERN))
-        recruiter_conditions.append(description_lower.regexp_match(ANONYMOUS_CLIENT_DESCRIPTION_PATTERN))
-    return and_(func.trim(company_lower) != "", ~or_(*recruiter_conditions))
 
 
 def company_name_matches(company: str, requested_company: str) -> bool:

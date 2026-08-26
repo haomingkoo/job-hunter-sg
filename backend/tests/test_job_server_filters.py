@@ -91,6 +91,26 @@ def jobs_client():
                 employer_relationship_evidence="mcf_no_relationship_signal",
             )
         )
+    db.add(
+        ScrapedJob(
+            title="Overseas role",
+            company="Example Overseas Employer",
+            location="Malaysia",
+            salary="$8,000",
+            salary_floor=8_000,
+            source="MyCareersFuture",
+            source_posting_id="mcf-overseas",
+            dedup_key="server-filter-overseas",
+            posted_at_sort=now.isoformat(),
+            scraped_at=now.isoformat(),
+            parsed_jd={"experience_years": "5"},
+            work_location_scope="overseas",
+            work_location_scope_source="structured_location",
+            direct_employer=1,
+            employer_relationship="unknown",
+            employer_relationship_evidence="mcf_no_relationship_signal",
+        )
+    )
     db.commit()
 
     def override_db():
@@ -201,6 +221,40 @@ def test_location_and_experience_filters_apply_before_pagination(jobs_client):
         "East Region": 1,
         "West Region": 1,
     }
+
+
+def test_verified_overseas_postings_are_absent_from_singapore_browse_and_facets(jobs_client):
+    payload = jobs_client.get("/api/jobs", params={"per_page": 100}).json()
+
+    assert "Overseas role" not in {job["title"] for job in payload["jobs"]}
+    assert "Malaysia" not in {item["value"] for item in payload["filter_meta"]["locations"]}
+
+
+def test_verified_overseas_posting_cannot_be_matched_by_direct_id(jobs_client):
+    overseas_id = (
+        jobs_client.test_db.query(ScrapedJob.id)
+        .filter(ScrapedJob.work_location_scope == "overseas")
+        .scalar()
+    )
+    main.app.dependency_overrides[main.get_current_user] = lambda: type(
+        "TestUser",
+        (),
+        {"id": 1},
+    )()
+    try:
+        response = jobs_client.post(
+            f"/api/jobs/{overseas_id}/match",
+            json={
+                "resume_text": (
+                    "Semiconductor manufacturing leader with quality systems "
+                    "and multi-site operations experience."
+                )
+            },
+        )
+    finally:
+        main.app.dependency_overrides.pop(main.get_current_user, None)
+
+    assert response.status_code == 404
 
 
 def test_multiple_locations_and_salary_sort_are_server_side(jobs_client):

@@ -98,8 +98,9 @@ def _stream_operation(
                 output.put((event_name, payload))
 
     def execute() -> None:
+        team: RecruitmentTeam | None = None
         try:
-            team: RecruitmentTeam = team_factory(
+            team = team_factory(
                 _QueueActivityPublisher(output, stream_open, stream_lock)
             )
             publish("receipt", operation(team))
@@ -124,6 +125,11 @@ def _stream_operation(
             # had nothing to act on. Anything else stays generic: an unexpected
             # exception's text is not written for a user to read.
             publish("error", safe_terminal_error_payload(error))
+        finally:
+            if team is not None:
+                close = getattr(team, "close", None)
+                if close is not None:
+                    close()
 
     worker = Thread(target=execute, name="recruitment-team-command")
     worker.start()

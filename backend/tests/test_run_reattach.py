@@ -144,11 +144,14 @@ def test_accepted_run_replays_only_new_events_and_its_stored_receipt():
 def test_failed_run_replays_the_exact_original_safe_error_without_new_work():
     from recruitment_team.errors import ConversationUnavailable
     from recruitment_team.http_routes import (
+        get_candidate_profiler_factory_provider,
         get_conversation_model,
         get_job_discovery,
         get_role_success_profiler,
     )
     from recruitment_team.recovery import classify_failure
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from backend.tests.test_recruitment_team_module import _candidate_profile_run
 
     class FailingModel:
         def __init__(self):
@@ -188,6 +191,9 @@ def test_failed_run_replays_the_exact_original_safe_error_without_new_work():
     main.app.dependency_overrides[get_conversation_model] = lambda: model
     main.app.dependency_overrides[get_job_discovery] = lambda: None
     main.app.dependency_overrides[get_role_success_profiler] = lambda: None
+    main.app.dependency_overrides[get_candidate_profiler_factory_provider] = (
+        lambda: lambda: ScriptedCandidateProfilerFactory([_candidate_profile_run()])
+    )
     try:
         client = TestClient(main.app)
         original = _sse(client.post(
@@ -198,7 +204,8 @@ def test_failed_run_replays_the_exact_original_safe_error_without_new_work():
                 "idempotency_key": "failed-reattach",
             },
         ))
-        assert [block["event"] for block in original] == ["activity", "activity", "error"]
+        assert original[-1]["event"] == "error"
+        assert all(block["event"] == "activity" for block in original[:-1])
         run_id = json.loads(original[0]["data"])["run_id"]
         original_error = json.loads(original[-1]["data"])
         assert original_error["message"] == (
@@ -218,7 +225,7 @@ def test_failed_run_replays_the_exact_original_safe_error_without_new_work():
             f"/api/recruitment-team/runs/{run_id}/stream",
             params={"after_sequence": 0},
         ))
-        assert [block["event"] for block in replay] == ["activity", "activity", "error"]
+        assert [block["event"] for block in replay] == [block["event"] for block in original]
         assert json.loads(replay[-1]["data"]) == original_error
         assert model.calls == 1
         with sessions() as db:

@@ -42,10 +42,13 @@ def _session_factory():
 
 def _team(db):
     from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
     from recruitment_team.discovery import ScriptedDiscovery
     from recruitment_team.role_success import ScriptedRoleSuccessProfiler
     from recruitment_team.telemetry import RecordedTelemetry
     from recruitment_team.activity_publisher import RecordedActivityPublisher
+
+    from backend.tests.test_recruitment_team_module import _candidate_profile_run
 
     return RecruitmentTeam(
         db,
@@ -54,6 +57,9 @@ def _team(db):
         ScriptedRoleSuccessProfiler([]),
         RecordedTelemetry(),
         RecordedActivityPublisher(),
+        candidate_profiler_factory_provider=(
+            lambda: ScriptedCandidateProfilerFactory([_candidate_profile_run()])
+        ),
     )
 
 

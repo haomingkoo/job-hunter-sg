@@ -16,6 +16,7 @@ ENV HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1
 
 COPY --chown=appuser:appuser backend/ .
+COPY --chown=appuser:appuser shared/ ../shared/
 
 USER appuser
 

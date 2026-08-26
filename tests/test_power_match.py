@@ -15,8 +15,9 @@ from market_analytics import _analytics_skill_key  # noqa: E402
 
 
 class FakeQuery:
-    def __init__(self, results):
+    def __init__(self, results, *, ids_only=False):
         self.results = results
+        self.ids_only = ids_only
         self.all_calls = 0
         self.limit_values = []
 
@@ -25,6 +26,9 @@ class FakeQuery:
 
     def filter(self, *args):
         return self
+
+    def with_entities(self, *_args):
+        return FakeQuery(self.results, ids_only=True)
 
     def order_by(self, *args):
         return self
@@ -35,6 +39,8 @@ class FakeQuery:
 
     def all(self):
         self.all_calls += 1
+        if self.ids_only:
+            return [(item.id,) for item in self.results]
         return list(self.results)
 
 
@@ -60,6 +66,41 @@ def test_power_match_candidates_do_not_backfill_with_newest_jobs():
     assert result == [matched_job]
     assert db.query_obj.all_calls == 1
     assert db.query_obj.limit_values == [100]
+
+
+def test_power_match_candidates_use_the_resume_profile_across_the_eligible_corpus(monkeypatch):
+    newest_keyword_match = SimpleNamespace(id=2)
+    profile_match = SimpleNamespace(id=1)
+    db = FakeDb([newest_keyword_match, profile_match])
+    observed = {}
+
+    def fake_find_similar_jobs(vector, db_session, top_k, *, eligible_job_ids):
+        observed.update(
+            vector=vector,
+            db_session=db_session,
+            top_k=top_k,
+            eligible_job_ids=eligible_job_ids,
+        )
+        return [(profile_match.id, 0.91)]
+
+    monkeypatch.setattr("embedding_service.find_similar_jobs", fake_find_similar_jobs)
+
+    result = _select_power_match_candidates(
+        db=db,
+        resume_text="Semiconductor quality and manufacturing leadership",
+        resume_skills=["quality management"],
+        limit=100,
+        resume_embedding=[0.1, 0.2],
+    )
+
+    assert result == [profile_match]
+    assert observed == {
+        "vector": [0.1, 0.2],
+        "db_session": db,
+        "top_k": 100,
+        "eligible_job_ids": {newest_keyword_match.id, profile_match.id},
+    }
+    assert db.query_obj.limit_values == []
 
 
 def test_power_match_duplicate_key_collapses_reposted_same_role():
