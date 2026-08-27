@@ -20,4 +20,4 @@ COPY --chown=appuser:appuser shared/ ../shared/
 
 USER appuser
 
-CMD ["/bin/sh", "-c", "python seed_jobs.py --full && python backfill_embeddings.py --missing-only"]
+CMD ["/bin/sh", "-c", "python seed_jobs.py --full && python backfill_embeddings.py"]

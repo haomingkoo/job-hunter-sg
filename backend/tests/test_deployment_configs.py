@@ -37,7 +37,7 @@ def test_full_crawl_service_runs_the_versioned_cli_to_completion():
 
     assert (
         'CMD ["/bin/sh", "-c", "python seed_jobs.py --full && '
-        'python backfill_embeddings.py --missing-only"]'
+        'python backfill_embeddings.py"]'
     ) in dockerfile
     assert "USER appuser" in dockerfile
     assert "ENV HF_HUB_OFFLINE=1" in dockerfile
