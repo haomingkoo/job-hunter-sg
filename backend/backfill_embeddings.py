@@ -2,7 +2,7 @@
 Backfill embedding vectors for scraped jobs that are missing them.
 
 Usage:
-    python backfill_embeddings.py            # backfill jobs missing embeddings
+    python backfill_embeddings.py            # refresh missing or stale embeddings
     python backfill_embeddings.py --force     # re-embed all jobs
     python backfill_embeddings.py --missing-only  # never rewrite legacy vectors
     python backfill_embeddings.py --limit 500 # process at most 500 jobs
