@@ -831,11 +831,9 @@ def test_live_recruitment_coordinator_honours_direct_employer_preference(repeat)
         _prompt_eval_job(
             21,
             "Semiconductor Quality Manager",
-            "Direct Chipmaker Pte Ltd",
+            "Unverified Chipmaker Pte Ltd",
             "Own semiconductor QMS, CAPA, yield improvement and 8D.",
             ("QMS", "CAPA", "yield", "8D"),
-            relationship="direct",
-            relationship_evidence="official_company_source",
         ),
         _prompt_eval_job(
             22,

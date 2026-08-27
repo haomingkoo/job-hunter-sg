@@ -135,7 +135,8 @@ user-facing reply. A turn paused by ask_candidate ends at that interrupt instead
 reply must call a published job a direct employer only when employer_relationship is
 direct. If any published relationship is unknown, call it unverified and never describe
 the whole result set as direct employers. Excluding known intermediaries is not proof that
-the remaining relationships are direct.
+the remaining relationships are direct. Do not summarize employer relationships in the
+reply; the rendered job cards carry the authoritative relationship labels.
 application derives pending edits from accepted propose_resume_edit results; never claim
 an edit is pending because you intended it, because a prior turn mentioned it, or because
 it matched the posting. If none were accepted, say plainly that no edit became pending
