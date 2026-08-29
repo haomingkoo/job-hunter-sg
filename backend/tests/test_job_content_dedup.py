@@ -14,7 +14,16 @@ from sqlalchemy.pool import StaticPool
 
 from database import Base
 from job_store import compute_content_hash, find_existing_scraped_job
-from models import ScrapedJob, TrackedJob, User
+from models import (
+    InterviewStory,
+    JobAlertDelivery,
+    ResumeVersion,
+    ScrapedJob,
+    StoryUsage,
+    TailoredResume,
+    TrackedJob,
+    User,
+)
 from sanitizer import sanitize_job
 
 
@@ -148,7 +157,7 @@ def test_visible_hash_backfill_skips_hidden_legacy_rows():
     assert db.query(ScrapedJob).filter_by(dedup_key="hidden").one().content_hash == ""
 
 
-def test_legacy_prune_preserves_visible_archived_and_user_linked_jobs():
+def test_legacy_prune_preserves_visible_archived_and_every_user_linked_job():
     from job_store import prune_unreferenced_legacy_hidden_jobs
 
     db = _session()
@@ -156,7 +165,15 @@ def test_legacy_prune_preserves_visible_archived_and_user_linked_jobs():
     db.add(user)
     db.flush()
     removable = ScrapedJob(title="Remove", company="C", dedup_key="remove", hidden=1)
-    linked = ScrapedJob(title="Keep linked", company="C", dedup_key="linked", hidden=1)
+    linked_jobs = {
+        name: ScrapedJob(
+            title=f"Keep {name}",
+            company="C",
+            dedup_key=f"linked-{name}",
+            hidden=1,
+        )
+        for name in ("tracked", "tailored", "resume", "story", "alert")
+    }
     archived = ScrapedJob(
         title="Keep archive",
         company="C",
@@ -165,10 +182,49 @@ def test_legacy_prune_preserves_visible_archived_and_user_linked_jobs():
         retirement_reason="source_retired",
     )
     visible = ScrapedJob(title="Keep visible", company="C", dedup_key="visible")
-    db.add_all((removable, linked, archived, visible))
+    db.add_all((removable, *linked_jobs.values(), archived, visible))
     db.flush()
-    db.add(TrackedJob(user_id=user.id, company="C", role="Role", scraped_job_id=linked.id))
+    story = InterviewStory(user_id=user.id, title="Example")
+    db.add(story)
+    db.flush()
+    db.add_all(
+        (
+            TrackedJob(
+                user_id=user.id,
+                company="C",
+                role="Role",
+                scraped_job_id=linked_jobs["tracked"].id,
+            ),
+            TailoredResume(
+                user_id=user.id,
+                job_id=linked_jobs["tailored"].id,
+                session_id="session-1",
+            ),
+            ResumeVersion(
+                user_id=user.id,
+                label="Saved",
+                job_id=linked_jobs["resume"].id,
+            ),
+            StoryUsage(
+                story_id=story.id,
+                user_id=user.id,
+                job_id=linked_jobs["story"].id,
+            ),
+            JobAlertDelivery(
+                user_id=user.id,
+                scraped_job_id=linked_jobs["alert"].id,
+            ),
+        )
+    )
     db.commit()
 
     assert prune_unreferenced_legacy_hidden_jobs(db, 10) == 1
-    assert {row.dedup_key for row in db.query(ScrapedJob)} == {"linked", "archive", "visible"}
+    assert {row.dedup_key for row in db.query(ScrapedJob)} == {
+        "linked-tracked",
+        "linked-tailored",
+        "linked-resume",
+        "linked-story",
+        "linked-alert",
+        "archive",
+        "visible",
+    }
