@@ -37,8 +37,35 @@ def _prepare_crawl(monkeypatch):
     monkeypatch.setattr(seed_jobs, "preparse_job_description", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(seed_jobs, "_posted_sort_iso", lambda *_: "2026-07-13T00:00:00")
     monkeypatch.setattr(seed_jobs, "MCF_MIN_HEALTHY_JOBS", 1)
+    monkeypatch.setattr(seed_jobs.app_config, "CRAWL_MAX_NEW_JOBS_PER_SOURCE", 10000)
+    monkeypatch.setattr(seed_jobs.app_config, "CRAWL_VISIBLE_HASH_BACKFILL_BATCH", 5000)
+    monkeypatch.setattr(seed_jobs.app_config, "CRAWL_LEGACY_HIDDEN_PRUNE_BATCH", 5000)
     monkeypatch.setattr(seed_jobs.time, "sleep", lambda _: None)
     return engine, testing_session
+
+
+def test_mcf_growth_circuit_breaker_bounds_new_rows(monkeypatch):
+    engine, testing_session = _prepare_crawl(monkeypatch)
+    monkeypatch.setattr(seed_jobs.app_config, "CRAWL_MAX_NEW_JOBS_PER_SOURCE", 1)
+    monkeypatch.setattr(
+        MyCareersFutureScraper,
+        "search",
+        lambda self, keyword, limit, page: [
+            _job("MyCareersFuture", "new-1"),
+            _job("MyCareersFuture", "new-2"),
+        ]
+        if page == 0
+        else [],
+    )
+    monkeypatch.setattr(CareersGovScraper, "fetch_all", lambda self: [])
+
+    stats = seed_jobs.crawl_all_jobs()
+
+    db = testing_session()
+    assert stats["errors"] >= 1
+    assert db.query(ScrapedJob).count() <= 1
+    db.close()
+    engine.dispose()
 
 
 def _seed(
@@ -180,7 +207,7 @@ def test_mcf_completed_crawl_collapses_semantic_spam_and_builds_preview(monkeypa
     db = testing_session()
     rows = db.query(ScrapedJob).filter(ScrapedJob.source == "MyCareersFuture").all()
     assert sum(not row.hidden for row in rows) == 1
-    assert db.query(ScrapedJob).filter(ScrapedJob.source_posting_id == "legacy-copy").one().hidden == 1
+    assert rows[0].source_posting_id == "canonical"
     assert stats["duplicates_collapsed"] == 1
     assert preview_ids == ["canonical"]
     db.close()

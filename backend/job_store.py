@@ -5,9 +5,17 @@ from __future__ import annotations
 import hashlib
 import re
 
+from sqlalchemy import exists
 from sqlalchemy.orm import Session
 
-from models import ScrapedJob
+from models import (
+    JobAlertDelivery,
+    ResumeVersion,
+    ScrapedJob,
+    StoryUsage,
+    TailoredResume,
+    TrackedJob,
+)
 
 # Fields that make a listing the same listing to a reader. Deliberately excludes
 # posted_date, closing_date and every posting identifier, because those are exactly
@@ -40,7 +48,12 @@ def compute_content_hash(job_data: dict) -> str:
     return hashlib.sha256("\x1f".join(parts).encode()).hexdigest()
 
 
-def backfill_content_hashes(db: Session, limit: int = 5000) -> int:
+def backfill_content_hashes(
+    db: Session,
+    limit: int = 5000,
+    *,
+    public_only: bool = False,
+) -> int:
     """Stamp content_hash on rows written before the column existed.
 
     Without this the content fallback never fires on the existing corpus, because
@@ -48,12 +61,10 @@ def backfill_content_hashes(db: Session, limit: int = 5000) -> int:
     number stamped; call until it returns 0. Batched rather than threaded so it
     stays a plain request with no background-progress machinery.
     """
-    rows = (
-        db.query(ScrapedJob)
-        .filter(ScrapedJob.content_hash == "")
-        .limit(limit)
-        .all()
-    )
+    query = db.query(ScrapedJob).filter(ScrapedJob.content_hash == "")
+    if public_only:
+        query = query.filter(ScrapedJob.hidden == 0)
+    rows = query.order_by(ScrapedJob.id).limit(limit).all()
     stamped = 0
     for row in rows:
         content_hash = compute_content_hash(
@@ -72,6 +83,36 @@ def backfill_content_hashes(db: Session, limit: int = 5000) -> int:
         stamped += 1
     db.commit()
     return stamped
+
+
+def prune_unreferenced_legacy_hidden_jobs(db: Session, limit: int) -> int:
+    """Delete invisible legacy duplicates while preserving user-linked jobs."""
+    candidate_ids = [
+        row.id
+        for row in (
+            db.query(ScrapedJob.id)
+            .filter(
+                ScrapedJob.hidden == 1,
+                ScrapedJob.retirement_reason == "",
+                ~exists().where(TrackedJob.scraped_job_id == ScrapedJob.id),
+                ~exists().where(TailoredResume.job_id == ScrapedJob.id),
+                ~exists().where(ResumeVersion.job_id == ScrapedJob.id),
+                ~exists().where(StoryUsage.job_id == ScrapedJob.id),
+                ~exists().where(JobAlertDelivery.scraped_job_id == ScrapedJob.id),
+            )
+            .order_by(ScrapedJob.id)
+            .limit(limit)
+        )
+    ]
+    if not candidate_ids:
+        return 0
+    deleted = (
+        db.query(ScrapedJob)
+        .filter(ScrapedJob.id.in_(candidate_ids))
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return deleted
 
 
 def find_existing_scraped_job(db: Session, job_data: dict) -> ScrapedJob | None:
