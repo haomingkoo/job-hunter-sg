@@ -315,13 +315,13 @@ export default function AnalyticsTab() {
         </p>
         {!loading && !error && data?.partial && (
           <p className="mt-1 text-xs text-[#6A89A7]">
-            Showing a recent sample of {data.sampled_jobs?.toLocaleString()} listings for faster loading.
+            Showing the latest {data.sampled_jobs?.toLocaleString()} matching listings for faster loading. Applying a filter rebuilds this sample from all matching listings, so a filtered count may be higher.
           </p>
         )}
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile icon={Briefcase} label="Roles analysed" value={data?.total_jobs_with_terms ? formatNumber(data.total_jobs_with_terms) : "..."} />
+        <StatTile icon={Briefcase} label={data?.partial ? "Sample roles analysed" : "Roles analysed"} value={data?.total_jobs_with_terms ? formatNumber(data.total_jobs_with_terms) : "..."} />
         <StatTile icon={Tags} label="Skill terms" value={data?.skill_signal_count ? formatNumber(data.skill_signal_count) : "..."} />
         <StatTile icon={Building2} label="Hiring orgs" value={data?.company_count ? formatNumber(data.company_count) : "..."} />
         <StatTile icon={ShieldCheck} label="Industry mapped" value={`${industryMappedPercent}%`} />
@@ -453,7 +453,7 @@ export default function AnalyticsTab() {
           </div>
           <div className="mt-4 grid gap-4 xl:grid-cols-4">
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Sources</div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">{data?.partial ? "Sources in analysed sample" : "Sources"}</div>
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
                 {(data.sources || []).slice(0, 6).map((item, index) => (
                   <BarRow
