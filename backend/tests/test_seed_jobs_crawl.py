@@ -68,6 +68,35 @@ def test_mcf_growth_circuit_breaker_bounds_new_rows(monkeypatch):
     engine.dispose()
 
 
+def test_successful_crawl_does_not_prune_when_cleanup_is_disabled(monkeypatch):
+    engine, _testing_session = _prepare_crawl(monkeypatch)
+    monkeypatch.setattr(seed_jobs.app_config, "CRAWL_LEGACY_HIDDEN_PRUNE_BATCH", 0)
+    mcf_job = _job("MyCareersFuture", "mcf-1")
+    cgov_job = _job("Careers@Gov", "cgov-1")
+    mcf_job.description = "Build and maintain a software platform."
+    cgov_job.description = "Operate and improve a public service."
+    monkeypatch.setattr(
+        MyCareersFutureScraper,
+        "search",
+        lambda self, keyword, limit, page: [mcf_job] if page == 0 else [],
+    )
+    monkeypatch.setattr(CareersGovScraper, "fetch_all", lambda self: [cgov_job])
+    monkeypatch.setattr(seed_jobs, "CAREERSGOV_MIN_HEALTHY_JOBS", 1)
+    prune_calls = []
+    monkeypatch.setattr(
+        seed_jobs,
+        "prune_unreferenced_legacy_hidden_jobs",
+        lambda db, limit: prune_calls.append(limit),
+    )
+
+    stats = seed_jobs.crawl_all_jobs()
+
+    assert stats["errors"] == 0
+    assert stats["legacy_hidden_pruned"] == 0
+    assert prune_calls == []
+    engine.dispose()
+
+
 def _seed(
     db,
     job: Job,

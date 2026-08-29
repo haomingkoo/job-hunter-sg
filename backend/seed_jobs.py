@@ -552,7 +552,7 @@ def crawl_all_jobs() -> dict:
         stats["errors"] += 1
         db.rollback()
 
-    if stats["errors"] == 0:
+    if stats["errors"] == 0 and app_config.CRAWL_LEGACY_HIDDEN_PRUNE_BATCH:
         try:
             stats["legacy_hidden_pruned"] = prune_unreferenced_legacy_hidden_jobs(
                 db,
