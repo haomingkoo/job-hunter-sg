@@ -29,11 +29,16 @@ from sqlalchemy import or_
 sys.path.insert(0, os.path.dirname(__file__))
 
 from ats_terms import build_job_ats_terms
+import config as app_config
 from database import init_db, SessionLocal
 from crawl_lease import job_crawl_lease
 from embedding_service import invalidate_job_embedding_if_stale
 from job_precompute import apply_job_precomputes, posted_sort_iso as _posted_sort_iso
-from job_store import find_existing_scraped_job
+from job_store import (
+    backfill_content_hashes,
+    find_existing_scraped_job,
+    prune_unreferenced_legacy_hidden_jobs,
+)
 from jd_preparser import preparse_job_description
 from models import ScrapedJob
 from sanitizer import sanitize_job
@@ -78,6 +83,10 @@ log = logging.getLogger("seed")
 
 MCF_MIN_HEALTHY_JOBS = 5000
 CAREERSGOV_MIN_HEALTHY_JOBS = 500
+
+
+class CrawlGrowthLimitExceeded(RuntimeError):
+    pass
 
 
 def _crawl_semantic_key(job) -> str:
@@ -269,8 +278,16 @@ def crawl_all_jobs() -> dict:
         "retired": 0,
         "reactivated": 0,
         "duplicates_collapsed": 0,
+        "hashes_backfilled": 0,
+        "legacy_hidden_pruned": 0,
     }
     start = time.time()
+
+    stats["hashes_backfilled"] = backfill_content_hashes(
+        db,
+        app_config.CRAWL_VISIBLE_HASH_BACKFILL_BATCH,
+        public_only=True,
+    )
 
     from scraper import MyCareersFutureScraper
     mcf = MyCareersFutureScraper()
@@ -284,6 +301,7 @@ def crawl_all_jobs() -> dict:
     mcf_seen = 0
     mcf_seen_semantic_keys: set[str] = set()
     mcf_terminal_page_seen = False
+    mcf_growth_limit_hit = False
     page = 0
     while True:
         try:
@@ -314,6 +332,7 @@ def crawl_all_jobs() -> dict:
                 mcf_complete = False
             mcf_terminal_page_seen = len(jobs) < 100
 
+            page_transaction = db.begin()
             page_new = 0
             page_updated = 0
             page_reactivated = 0
@@ -348,6 +367,11 @@ def crawl_all_jobs() -> dict:
                             existing.retired_at = ""
                             _build_term_preview(existing, db)
                         else:
+                            if stats["new"] + page_new >= app_config.CRAWL_MAX_NEW_JOBS_PER_SOURCE:
+                                raise CrawlGrowthLimitExceeded(
+                                    "MCF exceeded CRAWL_MAX_NEW_JOBS_PER_SOURCE="
+                                    f"{app_config.CRAWL_MAX_NEW_JOBS_PER_SOURCE}"
+                                )
                             job_row = ScrapedJob(**clean)
                             db.add(job_row)
                             db.flush()
@@ -359,12 +383,22 @@ def crawl_all_jobs() -> dict:
                     page_updated += int(not is_new)
                     page_reactivated += int(was_hidden)
                     mcf_seen += 1
+                except CrawlGrowthLimitExceeded as e:
+                    log.error(f"[MCF] Growth circuit breaker: {e}")
+                    stats["errors"] += 1
+                    mcf_complete = False
+                    mcf_growth_limit_hit = True
+                    break
                 except Exception as e:
                     log.error(f"[MCF] Page {page} job failed: {e}")
                     stats["errors"] += 1
                     mcf_complete = False
 
-            db.commit()
+            if mcf_growth_limit_hit:
+                page_transaction.rollback()
+                break
+
+            page_transaction.commit()
             db.expunge_all()
             stats["new"] += page_new
             stats["updated"] += page_updated
@@ -481,6 +515,11 @@ def crawl_all_jobs() -> dict:
                         existing.retired_at = ""
                         _build_term_preview(existing, db)
                     else:
+                        if cgov_new >= app_config.CRAWL_MAX_NEW_JOBS_PER_SOURCE:
+                            raise CrawlGrowthLimitExceeded(
+                                "Careers@Gov exceeded CRAWL_MAX_NEW_JOBS_PER_SOURCE="
+                                f"{app_config.CRAWL_MAX_NEW_JOBS_PER_SOURCE}"
+                            )
                         job_row = ScrapedJob(**clean)
                         db.add(job_row)
                         _build_term_preview(job_row, db)
@@ -513,6 +552,17 @@ def crawl_all_jobs() -> dict:
         stats["errors"] += 1
         db.rollback()
 
+    if stats["errors"] == 0:
+        try:
+            stats["legacy_hidden_pruned"] = prune_unreferenced_legacy_hidden_jobs(
+                db,
+                app_config.CRAWL_LEGACY_HIDDEN_PRUNE_BATCH,
+            )
+        except Exception as e:
+            log.error(f"Legacy hidden-job pruning failed: {e}")
+            stats["errors"] += 1
+            db.rollback()
+
     duration = round(time.time() - start, 1)
     total_in_db = db.query(ScrapedJob).count()
     db.close()
@@ -526,6 +576,8 @@ def crawl_all_jobs() -> dict:
     log.info(f"  Jobs retired:     {stats['retired']}")
     log.info(f"  Jobs reactivated: {stats['reactivated']}")
     log.info(f"  Duplicates hidden: {stats['duplicates_collapsed']}")
+    log.info(f"  Hashes backfilled: {stats['hashes_backfilled']}")
+    log.info(f"  Legacy rows pruned: {stats['legacy_hidden_pruned']}")
     log.info(f"  Errors:           {stats['errors']}")
     log.info(f"  Duration:         {duration}s ({round(duration/60, 1)} min)")
     log.info(f"  Total jobs in DB: {total_in_db}")
