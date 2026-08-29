@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 
-from sqlalchemy import exists
+from sqlalchemy import exists, func
 from sqlalchemy.orm import Session
 
 from models import (
@@ -85,21 +85,37 @@ def backfill_content_hashes(
     return stamped
 
 
+def _legacy_hidden_cleanup_filters():
+    return (
+        ScrapedJob.hidden == 1,
+        ScrapedJob.retirement_reason == "",
+        ~exists().where(TrackedJob.scraped_job_id == ScrapedJob.id),
+        ~exists().where(TailoredResume.job_id == ScrapedJob.id),
+        ~exists().where(ResumeVersion.job_id == ScrapedJob.id),
+        ~exists().where(StoryUsage.job_id == ScrapedJob.id),
+        ~exists().where(JobAlertDelivery.scraped_job_id == ScrapedJob.id),
+    )
+
+
+def count_unreferenced_legacy_hidden_jobs(db: Session) -> int:
+    """Count rows eligible for the guarded legacy cleanup."""
+    return int(
+        db.query(func.count(ScrapedJob.id))
+        .filter(*_legacy_hidden_cleanup_filters())
+        .scalar()
+        or 0
+    )
+
+
 def prune_unreferenced_legacy_hidden_jobs(db: Session, limit: int) -> int:
-    """Delete invisible legacy duplicates while preserving user-linked jobs."""
+    """Delete a bounded batch of invisible, unreferenced legacy duplicates."""
+    if limit <= 0:
+        raise ValueError("limit must be greater than zero")
     candidate_ids = [
         row.id
         for row in (
             db.query(ScrapedJob.id)
-            .filter(
-                ScrapedJob.hidden == 1,
-                ScrapedJob.retirement_reason == "",
-                ~exists().where(TrackedJob.scraped_job_id == ScrapedJob.id),
-                ~exists().where(TailoredResume.job_id == ScrapedJob.id),
-                ~exists().where(ResumeVersion.job_id == ScrapedJob.id),
-                ~exists().where(StoryUsage.job_id == ScrapedJob.id),
-                ~exists().where(JobAlertDelivery.scraped_job_id == ScrapedJob.id),
-            )
+            .filter(*_legacy_hidden_cleanup_filters())
             .order_by(ScrapedJob.id)
             .limit(limit)
         )
