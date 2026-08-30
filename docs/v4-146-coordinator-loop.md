@@ -392,11 +392,11 @@ unaffected. `create_deep_agent` in the installed `deepagents` 0.6.12 already acc
 
 The coordinator prompt is a new versioned module,
 `recruitment_team/prompts/coordinator.py`, carrying
-`COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v1"`. It inherits the depth
-rules and preference rules verbatim from `CONVERSATION_SYSTEM_PROMPT`
-(`prompts/conversation.py`), drops the search-phrase rules at lines 63-72 (the agent now
-searches for itself), and adds the tool contract. `CONVERSATION_PROMPT_VERSION` and its
-prompt stay where they are, because `LangChainConversationModel` still uses them.
+`COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v21"`. It inherits the depth
+rules from `CONVERSATION_SYSTEM_PROMPT` (`prompts/conversation.py`), makes free-text
+preference and candidate-fact writes non-durable, and adds the bounded tool contract.
+`CONVERSATION_PROMPT_VERSION` and its prompt stay where they are, because
+`LangChainConversationModel` still uses them.
 
 ---
 

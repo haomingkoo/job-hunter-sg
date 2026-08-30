@@ -8,11 +8,12 @@ Parent product epic: #88
 
 ## Problem
 
-A candidate can upload a new resume, navigate to Recruitment Team, and receive
-analysis based on an older saved resume. The upload is only a browser draft, the
-team silently restores an active conversation, and the resume selector only lists
-saved versions. A second latent defect allows saved resume content to change in
-place while completed candidate profiles are reused by version ID.
+Before this change, a candidate could upload a new resume, navigate to Recruitment
+Team, and receive analysis based on an older saved resume. The upload remained only
+a browser draft, the team silently restored an active conversation, and the resume
+selector listed only saved versions. A second latent defect allowed saved resume
+content to change in place while completed candidate profiles were reused by version
+ID.
 
 This is an evidence-identity failure. It can produce polished but irrelevant job
 recommendations and makes the system's provenance claims untrustworthy.
@@ -164,7 +165,7 @@ leaving the source thread unchanged.
 
 Cap submitted-resume history and aggregate bytes, stop returning base64 histories,
 add endpoint-specific rate limiting, validate file signatures, and prevent pasted
-external instructions from satisfying durable candidate-evidence commands.
+external instructions from becoming durable candidate evidence or automatic edits.
 
 ### 7. Production acceptance
 

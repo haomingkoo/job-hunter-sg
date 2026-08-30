@@ -6,11 +6,11 @@ Status: Accepted
 
 ## Context
 
-An authenticated upload currently produces a browser draft but not a saved resume
-version. Recruitment Team may then restore an older active thread. Separately,
-saved resume content can be overwritten while completed candidate profiles are
-looked up mainly by resume-version ID. Together these behaviours can attach stale
-career evidence to a new conversation.
+Before this decision, an authenticated upload produced a browser draft but not a
+saved resume version. Recruitment Team could then restore an older active thread.
+Separately, saved resume content could be overwritten while completed candidate
+profiles were looked up mainly by resume-version ID. Together these behaviours could
+attach stale career evidence to a new conversation.
 
 The system already has user-owned `ResumeVersion` records, a
 `RecruitmentThread.resume_version_id`, a server-computed `resume_sha256` in thread

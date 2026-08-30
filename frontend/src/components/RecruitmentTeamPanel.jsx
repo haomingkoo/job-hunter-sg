@@ -863,9 +863,6 @@ export default function RecruitmentTeamPanel({
               <Users size={threadId ? 18 : 22} />
             </div>
             <div>
-              {!threadId && (
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#BDDDFC]">V3</p>
-              )}
               <h1
                 id="recruitment-team-title"
                 className={threadId ? "text-base font-semibold" : "text-2xl font-semibold"}
