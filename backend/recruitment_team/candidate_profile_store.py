@@ -6,6 +6,7 @@ import logging
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
+from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -121,11 +122,17 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         owner_id: int,
         resume_version_id: int,
         model_name: str,
+        write_fence: Callable[[], None] | None = None,
     ):
         self._db = db
         self._owner_id = owner_id
         self._resume_version_id = resume_version_id
         self._model_name = model_name
+        self._write_fence = write_fence
+
+    def _fence_write(self) -> None:
+        if self._write_fence is not None:
+            self._write_fence()
 
     def _record(self, checkpoint_id: str) -> CandidateProfileArtifact | None:
         return (
@@ -139,6 +146,12 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         )
 
     def _create(self, checkpoint_id: str) -> CandidateProfileArtifact:
+        existing = self._record(checkpoint_id)
+        if existing is not None:
+            if existing.status == "completed":
+                raise CandidateProfileCheckpointMismatch(checkpoint_id)
+            self._db.delete(existing)
+            self._db.flush()
         record = CandidateProfileArtifact(
             id=str(uuid.uuid4()),
             user_id=self._owner_id,
@@ -172,35 +185,22 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
             record.execution_policy,
         )
         if actual != expected:
-            # Only a resumable partial checkpoint is disposable. A completed
-            # artifact is the candidate's finished profile and is still read by
-            # target assessment, so deleting it because a timeout constant moved
-            # would destroy real work. Leave it and return None, which makes the
-            # caller start a fresh checkpoint alongside it.
-            if record.status == "completed":
-                log.info(
-                    "Superseded candidate-profile artifact %s is completed; "
-                    "keeping it and starting a fresh checkpoint.",
-                    checkpoint_id,
-                )
-                return None
             log.info(
-                "Discarding partial candidate-profile checkpoint %s: built under "
-                "a superseded prompt/model/decomposition/policy version.",
+                "Ignoring candidate-profile checkpoint %s built under a superseded "
+                "prompt/model/decomposition/policy version.",
                 checkpoint_id,
             )
-            self._db.delete(record)
-            self._db.flush()
             return None
         return record
 
     def load(self, checkpoint_id: str) -> dict[str, dict[str, Any]]:
         record = self._validated_record(checkpoint_id)
-        return {
+        scopes = {
             key: value
             for key, value in (record.scopes if record is not None else {}).items()
             if key != RETRY_FEEDBACK_SCOPE_KEY
         }
+        return scopes
 
     def save(
         self,
@@ -208,6 +208,7 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         scope_id: str,
         payload: dict[str, Any],
     ) -> None:
+        self._fence_write()
         record = self._validated_record(checkpoint_id) or self._create(checkpoint_id)
         scopes = dict(record.scopes)
         scopes[scope_id] = payload
@@ -227,7 +228,8 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
             return None
         retry_feedback = record.scopes.get(RETRY_FEEDBACK_SCOPE_KEY) or {}
         value = retry_feedback.get(scope_id)
-        return dict(value) if isinstance(value, dict) else None
+        feedback = dict(value) if isinstance(value, dict) else None
+        return feedback
 
     def save_retry_feedback(
         self,
@@ -235,6 +237,7 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         scope_id: str,
         feedback: dict[str, Any],
     ) -> None:
+        self._fence_write()
         record = self._validated_record(checkpoint_id) or self._create(checkpoint_id)
         scopes = dict(record.scopes)
         retry_feedback = dict(scopes.get(RETRY_FEEDBACK_SCOPE_KEY) or {})
@@ -247,6 +250,7 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         self._db.commit()
 
     def clear_retry_feedback(self, checkpoint_id: str, scope_id: str) -> None:
+        self._fence_write()
         record = self._validated_record(checkpoint_id)
         if record is None:
             return
@@ -264,6 +268,7 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         self._db.commit()
 
     def record_execution_event(self, checkpoint_id: str, event: dict[str, Any]) -> None:
+        self._fence_write()
         record = self._validated_record(checkpoint_id) or self._create(checkpoint_id)
         record.execution_metrics = merge_execution_event(
             dict(record.execution_metrics or {}),
@@ -274,9 +279,11 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
 
     def execution_metrics(self, checkpoint_id: str) -> dict[str, Any]:
         record = self._validated_record(checkpoint_id)
-        return dict(record.execution_metrics or {}) if record is not None else {}
+        metrics = dict(record.execution_metrics or {}) if record is not None else {}
+        return metrics
 
     def merge_execution_metrics(self, checkpoint_id: str, metrics: dict[str, Any]) -> None:
+        self._fence_write()
         record = self._validated_record(checkpoint_id) or self._create(checkpoint_id)
         record.execution_metrics = merge_execution_metrics(record.execution_metrics, metrics)
         record.updated_at = _utcnow()
@@ -288,6 +295,7 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         profile: CandidateEvidenceProfile,
         evaluation: dict | None = None,
     ) -> CandidateProfileArtifact:
+        self._fence_write()
         record = self._validated_record(checkpoint_id)
         if record is None:
             raise ValueError("Candidate profile cannot complete without validated scopes")
@@ -309,6 +317,7 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         return record
 
     def fail(self, checkpoint_id: str, error: dict[str, Any]) -> CandidateProfileArtifact:
+        self._fence_write()
         record = self._validated_record(checkpoint_id) or self._create(checkpoint_id)
         record.status = "failed"
         record.error = error

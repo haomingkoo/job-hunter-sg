@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from database import Base
-from models import ResumeVersion, User
+from models import CandidateProfileArtifact, ResumeVersion, User
 from recruitment_team.candidate_profile import (
     CandidateEvidenceProfile,
     CandidateProfileEvidence,
@@ -135,6 +136,28 @@ def test_candidate_profile_store_persists_scopes_failure_and_completion():
         assert completed.evaluation == evaluation
         assert completed.error is None
         assert store.completed(checkpoint_id).id == completed.id
+
+
+def test_candidate_profile_store_fences_checkpoint_writes_before_mutation():
+    factory = _session_factory()
+    owner_id, resume_id = _owner_resume(factory, "fenced@example.com")
+
+    with factory() as db:
+        def reject_expired_worker():
+            raise RuntimeError("run lease expired")
+
+        store = SQLAlchemyCandidateProfileStore(
+            db,
+            owner_id=owner_id,
+            resume_version_id=resume_id,
+            model_name="model-a",
+            write_fence=reject_expired_worker,
+        )
+
+        with pytest.raises(RuntimeError, match="run lease expired"):
+            store.save("f" * 64, "summary_01", {"fields": []})
+
+        assert db.query(CandidateProfileArtifact).count() == 0
 
 
 def test_candidate_profile_store_accepts_revise_only_as_a_supported_subset():
@@ -285,6 +308,10 @@ def test_candidate_profile_store_raises_a_distinct_error_on_checkpoint_mismatch(
         # candidate permanently unable to build a profile after any deploy that
         # changed a value inside execution_policy.
         assert store_b.load(checkpoint_id) == {}
+        original = db.query(CandidateProfileArtifact).filter_by(
+            checkpoint_id=checkpoint_id,
+        ).one()
+        assert original.model_name == "model-a"
 
         # And the next save starts a clean checkpoint under the new version.
         store_b.save(checkpoint_id, "summary_01", {"fields": [{"field_id": "f1"}]})

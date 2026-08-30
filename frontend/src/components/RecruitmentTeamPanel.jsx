@@ -1380,9 +1380,14 @@ export default function RecruitmentTeamPanel({
                         </p>
                         <p className="mt-2 text-sm text-[#6A89A7]">{field.score_reason}</p>
                         {(field.evidence_quotes || []).map((quote, index) => (
-                          <blockquote key={`${field.field_id}:${index}`} className="mt-2 border-l-2 border-[#BDDDFC] pl-3 text-xs text-[#6A89A7]">
-                            “{quote}”
-                          </blockquote>
+                          <div key={`${field.field_id}:${index}`} className="mt-2">
+                            <p className="text-[11px] font-medium uppercase tracking-wide text-[#6A89A7]">
+                              Cited resume source block
+                            </p>
+                            <blockquote className="mt-1 border-l-2 border-[#BDDDFC] pl-3 text-xs text-[#6A89A7]">
+                              {quote}
+                            </blockquote>
+                          </div>
                         ))}
                       </article>
                     ))}
