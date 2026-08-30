@@ -56,9 +56,10 @@ that a source is in the nightly crawl.
 ### Resumes, scoring, matching, and tailoring
 
 Uploads enter through the bounded `resume_upload.py` boundary and are parsed in an isolated worker before
-`resume_document.py` creates the canonical document. Saving or importing from
-the browser creates a user-owned `ResumeVersion`; parsing alone does not create
-one. `resume_scorer.py` calculates resume quality scores.
+`resume_document.py` creates the canonical document. An authenticated upload creates
+exactly one user-owned `ResumeVersion` in the same successful request; a guest upload
+is parse-only. Explicit browser saves and imports also create user-owned versions.
+`resume_scorer.py` calculates resume quality scores.
 Power Match combines the stored resume and job corpus through
 `embedding_service.py`/`semantic_corpus.py`; repeatable results are cached in
 `PowerMatchSnapshot` by user, resume hash, corpus marker, and limit.

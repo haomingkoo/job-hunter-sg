@@ -1,6 +1,7 @@
 # Job Hunter SG V3 — AI Recruitment Team PRD
 
-Status: active whole-app delivery; the north-star journey is not yet production-accepted end to end
+Status: historical foundation; resume binding and chat-memory boundaries are superseded by
+[`resume-bound-recruitment-prd.md`](resume-bound-recruitment-prd.md)
 
 ## Implementation status — 2026-08-03
 
@@ -12,13 +13,12 @@ production evidence and remaining issue disposition live in
 `PASSDOWN-2026-08-02.md` and `issue-audit-2026-08-03.md`; this PRD does not preserve
 superseded July runtime failures as current status.
 
-The deployed north-star journey now passes clarification, cited drafting, acceptance
-into a reversible version, DOCX/PDF export, and continuation into new source-backed
-matches grounded in that refined resume. PR #203 passed signed-in production acceptance
-without opening the generic Jobs feed and retained the earlier conversation. Remaining
-whole-app work is limited to the valid open outcomes in the issue audit; this journey
-proof does not close those observability, recovery, calibration, accessibility, or
-staging requirements.
+PR #203 historically passed clarification, cited drafting, acceptance into a reversible
+version, DOCX/PDF export, and a new source-backed search without opening the generic Jobs
+feed. The current contract does not rebind or continue the source conversation after an
+accepted edit: the derived resume starts a new explicitly bound thread. Remaining
+whole-app work is tracked separately; the older journey proof does not establish current
+production acceptance.
 
 The whole application is not complete until the north-star loop below passes as one
 signed-in deployed journey. Existing isolated capabilities, HTTP success, or a green
@@ -66,7 +66,7 @@ The primary end-to-end journey is a continuous loop:
 
 ```text
 saved or uploaded resume
-→ persistent candidate memory and career conversation
+→ resume-bound thread context and career conversation
 → ask naturally for suitable jobs
 → current source-backed recommendations, not a raw result dump
 → selected target job
@@ -79,13 +79,11 @@ saved or uploaded resume
 → repeat without re-entering stable candidate facts
 ```
 
-Candidate memory spans conversations and resume revisions: stable facts, preferences,
-evidence, prior clarifications, targets, applications, accepted edits, and downloads
-remain attributable and reusable. A new conversation does not create a new person. An
-explicit request to help another person creates or selects a separate candidate context;
-their resume, evidence, preferences, history, and applications must never be silently
-merged with the current candidate. An ordinary role or industry pivot is not an identity
-switch.
+Candidate evidence does not silently span conversations or resume revisions. Each thread
+is bound to one immutable resume version and validated workflow artifacts; free-text chat
+may steer its current turn but does not write durable candidate facts or preferences. A
+different resume or accepted derived version starts a new explicitly bound thread. Resume,
+evidence, history, and applications from different people must never be silently merged.
 
 The default interaction is **propose first, then refine**. For an open-ended request,
 the coordinator gives the strongest useful answer, recommendation, or pending draft the
@@ -93,10 +91,11 @@ available evidence supports before asking questions. It then separates direct re
 evidence and candidate-confirmed facts from assumptions, transferable hypotheses, and
 genuinely missing information. Follow-up questions target only gaps whose answers can
 materially improve accuracy or impact, explain what they would improve, and update the
-durable candidate context when answered. They do not block unrelated progress, repeat
-known information, force the user through a funnel, or convert an assumption into a
-resume claim. A pivot or unrelated question remains a valid conversational turn; the
-coordinator adapts instead of forcing the current workflow to close.
+validated assessment workflow when answered. Ordinary free-text answers remain turn-local.
+Questions do not block unrelated progress, repeat known information, force the user through
+a funnel, or convert an assumption into a resume claim. A pivot or unrelated question
+remains a valid conversational turn; the coordinator adapts instead of forcing the current
+workflow to close.
 
 The coordinator owns the task plan. It chooses which tools and specialists to use, their
 order, whether to revisit prior work, and when enough evidence exists to propose a draft.
@@ -561,7 +560,8 @@ rather than converted into false precision. Exact evidence is recorded in the pa
 - Add conversation and signed-in browser acceptance proving an open-ended request gets
   a useful proposal before clarification; confirmed evidence, assumptions, and missing
   information are distinguishable; a focused answer refines the pending draft and
-  durable candidate context; and an unrelated pivot is answered without forced closure.
+  any explicitly validated assessment artifact; and an unrelated pivot is answered
+  without forced closure.
 - Add streaming contract tests proving events are ordered, resumable, deduplicated, and do not expose private prompts or resume content in telemetry.
 - Add activity-view component tests for live, completed, failed, retrying, partial, and reduced-motion states.
 - Add labelled recommendation fixtures with known relevant and irrelevant jobs. Measure precision by role family and evidence segment rather than aggregate ranking alone.
