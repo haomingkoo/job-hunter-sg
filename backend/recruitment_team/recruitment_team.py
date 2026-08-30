@@ -1589,6 +1589,7 @@ class RecruitmentTeam:
             owner_id=owner_id,
             resume_version_id=resume.id,
             model_name=self._candidate_profiler_factory.model_name,
+            write_fence=lambda: self._renew_run_lease(command_run),
         )
         def publish_progress(progress: CandidateProfileProgress) -> None:
             status, summary, detail = candidate_profile_progress_event(progress)

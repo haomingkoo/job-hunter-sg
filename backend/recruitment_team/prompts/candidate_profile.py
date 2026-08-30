@@ -104,14 +104,6 @@ Submit exactly one submit_candidate_profile_evaluation tool call and no free tex
 
 def candidate_profile_validation_feedback(validation_code: str) -> str:
     """Return actionable correction guidance without weakening validation."""
-
-    if any(code.endswith(":quote_not_found") for code in validation_code.split("|")):
-        return (
-            "Every evidence quote must occur verbatim inside the cited resume block or inside "
-            "the contiguous text of all cited adjacent blocks. If the quote crosses a block "
-            "boundary, add every adjacent block ID it crosses; otherwise shorten the quote to "
-            "verbatim text contained by the cited block."
-        )
     return "Correct the exact validation error while preserving all supported source facts."
 
 
@@ -122,10 +114,13 @@ location preference, salary preference, or seniority preference.
 Submit fields only when the resume supports them. Use these categories:
 chronology, stated_skill, demonstrated_capability, outcome,
 scope_seniority_signal, domain, credential, and ambiguity. Every field needs a stable unique ID, a concise
-statement, one or more canonical resume evidence IDs, verbatim contiguous evidence
-quotes from those blocks, evidence_kind direct or transferable_hypothesis, a raw
+statement, one or more canonical resume evidence IDs, evidence_kind direct or
+transferable_hypothesis, a raw
 evidence-support score from 0 to 100, and a short score reason. The score measures
 resume support only, never candidate quality or role fit.
+
+The service derives exact evidence quotes from the immutable cited blocks. Do not
+transcribe or invent quote text; select only the canonical evidence IDs.
 
 The field ID is a correction handle and must be unique only within this supplied
 scope. The pipeline derives the final globally stable ID from the accepted fact and
@@ -143,6 +138,8 @@ structurally distinct record within a section. Do not assume that omitted blocks
 are absent from the resume. Return an empty fields array when this scope contains
 no evidence belonging to the allowed categories. Scope results are validated and
 merged deterministically; do not summarize across unseen scopes.
+When record_evidence_ids contains more than one record, every field must cite IDs
+from exactly one record. Cross-record synthesis happens only in the later review.
 
 Apply these boundaries:
 - chronology is a dated role, education, credential, or availability fact. A role

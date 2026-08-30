@@ -47,7 +47,13 @@ ProfileCategory = Literal[
     "ambiguity",
 ]
 EvidenceKind = Literal["direct", "transferable_hypothesis"]
-CANDIDATE_PROFILE_DECOMPOSITION_VERSION = "semantic-entity-v3"
+CANDIDATE_PROFILE_DECOMPOSITION_VERSION = "semantic-entity-v4"
+PROFILE_SCOPE_MAX_WORDS = 800
+_CONTACT_BLOCK = re.compile(
+    r"(?:[\w.+-]+@[\w-]+\.[\w.-]+|https?://|linkedin\.com|"
+    r"\b(?:phone|mobile|tel)\b|\+\d[\d().\s-]{6,}\d|\b\d{4}\s\d{4}\b|\b[689]\d{7}\b)",
+    re.IGNORECASE,
+)
 
 
 def candidate_profile_execution_policy() -> dict[str, str | int]:
@@ -58,9 +64,10 @@ def candidate_profile_execution_policy() -> dict[str, str | int]:
         "validation_feedback_version": CANDIDATE_PROFILE_VALIDATION_FEEDBACK_VERSION,
         "review_version": CANDIDATE_PROFILE_REVIEW_VERSION,
         "review_attempts": config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS,
-        "model_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
+        "correction_attempts": config.CANDIDATE_PROFILE_CORRECTION_ATTEMPTS,
+        "model_timeout_seconds": config.CANDIDATE_PROFILE_MODEL_HTTP_TIMEOUT_SECONDS,
         "validation_attempts": config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
-        "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
+        "transport_retries": config.CANDIDATE_PROFILE_MODEL_TRANSPORT_RETRIES,
         "decomposition_version": CANDIDATE_PROFILE_DECOMPOSITION_VERSION,
         "resume_document_schema_version": SCHEMA_VERSION,
     }
@@ -285,6 +292,7 @@ class _ProfileScope:
     scope_id: str
     section_key: str
     blocks: tuple[dict[str, Any], ...]
+    evidence_groups: tuple[frozenset[str], ...]
 
 
 class _FieldSubmission(BaseModel):
@@ -294,7 +302,9 @@ class _FieldSubmission(BaseModel):
     category: ProfileCategory
     statement: str = Field(min_length=1)
     resume_evidence_ids: list[str] = Field(min_length=1)
-    evidence_quotes: list[str] = Field(min_length=1)
+    # Kept optional for wire compatibility. Exact quotes are derived from the
+    # immutable cited blocks after submission, never trusted from the model.
+    evidence_quotes: list[str] = Field(default_factory=list)
     evidence_kind: EvidenceKind
     evidence_support_score: int = Field(ge=0, le=100)
     score_reason: str = Field(min_length=1)
@@ -317,7 +327,7 @@ _SUBMIT_PROFILE_TOOL = StructuredTool.from_function(
         "Submit the complete role-neutral Candidate Evidence Profile for the supplied "
         "immutable resume blocks. Give every field an ID unique within this supplied scope. "
         "Every field must cite canonical block IDs and include "
-        "contiguous evidence quotes, an evidence kind, and a raw support score with its "
+        "an evidence kind and a raw support score with its "
         "reason. Use for resume facts, supported transferable hypotheses, and explicit "
         "ambiguities. Do not use it for job fit, preferences, recommendations, or facts "
         "not present in the resume."
@@ -358,33 +368,100 @@ def _scope_slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_") or "document_header"
 
 
+def _looks_like_unsectioned_header(block: dict[str, Any], index: int) -> bool:
+    text = str(block.get("text") or "").strip()
+    if not text or _CONTACT_BLOCK.search(text):
+        return True
+    words = [word.strip(",.") for word in text.split()]
+    return bool(
+        index == 0
+        and 1 < len(words) <= 7
+        and not re.search(r"[!?;:@|]", text)
+        and all(word.replace("-", "").isalpha() for word in words)
+        and all(word.istitle() or word.isupper() for word in words)
+    )
+
+
 def _profile_scopes(blocks: list[dict[str, Any]]) -> tuple[_ProfileScope, ...]:
-    """Split on document semantics, never character or token counts."""
-    grouped: list[tuple[str, list[dict[str, Any]]]] = []
-    current: list[dict[str, Any]] = []
-    current_section = ""
-    for block in blocks:
+    """Pack semantic entries into bounded scopes without splitting a source block."""
+
+    first_section_index = next(
+        (
+            index
+            for index, block in enumerate(blocks)
+            if str(block.get("section_key") or "")
+        ),
+        None,
+    )
+    sections: list[tuple[str, list[dict[str, Any]]]] = []
+    for index, block in enumerate(blocks):
         section_key = str(block.get("section_key") or "")
-        kind = str(block.get("kind") or "")
-        starts_scope = bool(current) and (
-            section_key != current_section
-            or kind == "section_heading"
-            or (
-                kind == "entry_heading"
-                and any(item.get("kind") != "section_heading" for item in current)
-            )
-        )
-        if starts_scope:
-            grouped.append((current_section, current))
-            current = []
-        current.append(block)
-        current_section = section_key
-    if current:
-        grouped.append((current_section, current))
+        if section_key == "document_header":
+            continue
+        if first_section_index is not None and index < first_section_index and not section_key:
+            continue
+        if first_section_index is None and _looks_like_unsectioned_header(block, index):
+            continue
+        if not sections or sections[-1][0] != section_key:
+            sections.append((section_key, []))
+        sections[-1][1].append(block)
+
+    grouped: list[tuple[str, list[dict[str, Any]], list[frozenset[str]]]] = []
+    for section_key, section_blocks in sections:
+        entries: list[list[dict[str, Any]]] = []
+        entry: list[dict[str, Any]] = []
+        for block in section_blocks:
+            if block.get("kind") == "entry_heading" and any(
+                item.get("kind") == "entry_heading" for item in entry
+            ):
+                entries.append(entry)
+                entry = []
+            entry.append(block)
+        if entry:
+            entries.append(entry)
+
+        units: list[list[dict[str, Any]]] = []
+        for complete_entry in entries:
+            context = [
+                block
+                for block in complete_entry
+                if block.get("kind") in {"section_heading", "entry_heading"}
+            ]
+            chunk: list[dict[str, Any]] = []
+            chunk_words = 0
+            for block in complete_entry:
+                block_words = len(str(block.get("text") or "").split())
+                if chunk and chunk_words + block_words > PROFILE_SCOPE_MAX_WORDS:
+                    units.append(chunk)
+                    chunk = list(context)
+                    chunk_words = sum(
+                        len(str(item.get("text") or "").split()) for item in chunk
+                    )
+                if block not in chunk:
+                    chunk.append(block)
+                    chunk_words += block_words
+            if chunk:
+                units.append(chunk)
+
+        packed: list[dict[str, Any]] = []
+        evidence_groups: list[frozenset[str]] = []
+        packed_words = 0
+        for unit in units:
+            unit_words = sum(len(str(item.get("text") or "").split()) for item in unit)
+            if packed and packed_words + unit_words > PROFILE_SCOPE_MAX_WORDS:
+                grouped.append((section_key, packed, evidence_groups))
+                packed = []
+                evidence_groups = []
+                packed_words = 0
+            packed.extend(unit)
+            evidence_groups.append(frozenset(str(item["id"]) for item in unit))
+            packed_words += unit_words
+        if packed:
+            grouped.append((section_key, packed, evidence_groups))
 
     ordinals: dict[str, int] = {}
     scopes: list[_ProfileScope] = []
-    for section_key, scope_blocks in grouped:
+    for section_key, scope_blocks, evidence_groups in grouped:
         slug = _scope_slug(section_key)
         ordinal = ordinals.get(slug, 0) + 1
         ordinals[slug] = ordinal
@@ -393,6 +470,7 @@ def _profile_scopes(blocks: list[dict[str, Any]]) -> tuple[_ProfileScope, ...]:
                 scope_id=f"{slug}_{ordinal:02d}",
                 section_key=section_key,
                 blocks=tuple(scope_blocks),
+                evidence_groups=tuple(evidence_groups),
             )
         )
     return tuple(scopes)
@@ -411,6 +489,7 @@ def _profile_checkpoint_id(
             "review_version": CANDIDATE_PROFILE_REVIEW_VERSION,
             "decomposition_version": CANDIDATE_PROFILE_DECOMPOSITION_VERSION,
             "model": configured_model_name,
+            "execution_policy": candidate_profile_execution_policy(),
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -436,8 +515,10 @@ def _response_payload(
 def _validate_submission(
     payload: dict,
     blocks: dict[str, dict],
+    evidence_groups: tuple[frozenset[str], ...] | None = None,
 ) -> tuple[dict | None, str]:
-    fields = payload["fields"]
+    fields = [dict(item) for item in payload["fields"]]
+    payload = {**payload, "fields": fields}
     field_ids = [str(item["field_id"]).strip() for item in fields]
     if len(field_ids) != len(set(field_ids)):
         return None, "field_id:duplicate"
@@ -457,25 +538,15 @@ def _validate_submission(
         if len(evidence_ids) != len(set(evidence_ids)):
             validation_codes.append(f"field:{field_id}:duplicate_evidence_id")
             continue
+        if evidence_groups is not None and not any(
+            set(evidence_ids).issubset(group) for group in evidence_groups
+        ):
+            validation_codes.append(f"field:{field_id}:cross_entry_evidence")
+            continue
 
         ordered_evidence_ids = sorted(evidence_ids, key=block_positions.__getitem__)
         cited_texts = [_normalize(str(blocks[evidence_id].get("text") or "")) for evidence_id in ordered_evidence_ids]
-        contiguous_runs: list[list[str]] = []
-        previous_position: int | None = None
-        for evidence_id, text in zip(ordered_evidence_ids, cited_texts, strict=True):
-            position = block_positions[evidence_id]
-            if previous_position is None or position != previous_position + 1:
-                contiguous_runs.append([])
-            contiguous_runs[-1].append(text)
-            previous_position = position
-        quote_sources = [*cited_texts, *(" ".join(run) for run in contiguous_runs)]
-        quote_not_found = False
-        for quote in item["evidence_quotes"]:
-            normalized_quote = _normalize(str(quote))
-            if not normalized_quote or not any(normalized_quote in text for text in quote_sources):
-                quote_not_found = True
-        if quote_not_found:
-            validation_codes.append(f"field:{field_id}:quote_not_found")
+        item["evidence_quotes"] = [str(blocks[evidence_id].get("text") or "") for evidence_id in ordered_evidence_ids]
 
         supported_numbers = extract_numbers(" ".join(cited_texts))
         # Ground candidate facts, not the model's confidence metadata. The score
@@ -607,8 +678,8 @@ class LangChainCandidateProfiler:
             model = create_observed_agent_model(
                 self._telemetry,
                 role="candidate_profile",
-                timeout=config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
-                max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
+                timeout=config.CANDIDATE_PROFILE_MODEL_HTTP_TIMEOUT_SECONDS,
+                max_retries=config.CANDIDATE_PROFILE_MODEL_TRANSPORT_RETRIES,
             )
         if not hasattr(model, "bind_tools"):
             raise TypeError("Candidate profile model must support bind_tools")
@@ -638,7 +709,13 @@ class LangChainCandidateProfiler:
                         xml_data_block(
                             "profile_scope",
                             json.dumps(
-                                {"scope_id": scope.scope_id, "section_key": scope.section_key},
+                                {
+                                    "scope_id": scope.scope_id,
+                                    "section_key": scope.section_key,
+                                    "record_evidence_ids": [
+                                        sorted(group) for group in scope.evidence_groups
+                                    ],
+                                },
                                 ensure_ascii=False,
                                 separators=(",", ":"),
                             ),
@@ -748,7 +825,11 @@ class LangChainCandidateProfiler:
             ) as scope_span:
                 cached = checkpoints.get(scope.scope_id)
                 if cached is not None:
-                    payload, failure = _validate_submission(cached, scope_blocks)
+                    payload, failure = _validate_submission(
+                        cached,
+                        scope_blocks,
+                        scope.evidence_groups,
+                    )
                     if payload is None:
                         progress("failure", scope)
                         scope_span.set_attribute("status", "error")
@@ -796,6 +877,7 @@ class LangChainCandidateProfiler:
                     resumed_payload, resumed_failure = _validate_submission(
                         rejected_payload,
                         scope_blocks,
+                        scope.evidence_groups,
                     )
                     if resumed_payload is not None:
                         self._clear_retry_feedback(checkpoint_id, scope.scope_id)
@@ -898,8 +980,8 @@ class LangChainCandidateProfiler:
                             "attempt": attempt,
                             "max_attempts": config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
                             "prompt_version": CANDIDATE_PROFILE_PROMPT_VERSION,
-                            "configured_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
-                            "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
+                            "configured_timeout_seconds": config.CANDIDATE_PROFILE_MODEL_HTTP_TIMEOUT_SECONDS,
+                            "transport_retries": config.CANDIDATE_PROFILE_MODEL_TRANSPORT_RETRIES,
                             "logical_run_id": checkpoint_id,
                             "checkpoint_id": checkpoint_id,
                             "stage": "candidate_profile",
@@ -977,7 +1059,11 @@ class LangChainCandidateProfiler:
                         rejected_payload = submitted_payload
                         payload = submitted_payload
                         if submitted_payload is not None:
-                            payload, failure = _validate_submission(submitted_payload, scope_blocks)
+                            payload, failure = _validate_submission(
+                                submitted_payload,
+                                scope_blocks,
+                                scope.evidence_groups,
+                            )
                         public_failure = _metadata_validation_code(failure)
                         validation_span.set_attribute("validation_code", public_failure)
                         validation_span.set_attribute("accepted", payload is not None)
@@ -1091,8 +1177,8 @@ class LangChainCandidateProfilerFactory:
             model = create_observed_agent_model(
                 self._telemetry,
                 role="candidate_profile",
-                timeout=config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
-                max_retries=config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
+                timeout=config.CANDIDATE_PROFILE_MODEL_HTTP_TIMEOUT_SECONDS,
+                max_retries=config.CANDIDATE_PROFILE_MODEL_TRANSPORT_RETRIES,
             )
         self._model = model
         self.model_name = str(getattr(model, "model_name", "") or getattr(model, "model", "") or type(model).__name__)

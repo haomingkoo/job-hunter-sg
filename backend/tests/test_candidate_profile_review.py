@@ -198,7 +198,6 @@ def test_global_merge_and_one_independent_evaluation_reduce_repetition_with_prov
     model = _Model(
         [
             semantic_submission,
-            {"decisions": []},
             _evaluation_payload(
                 reviewed.fields[0].field_id,
                 reviewed.cited_resume_evidence,
@@ -225,17 +224,16 @@ def test_global_merge_and_one_independent_evaluation_reduce_repetition_with_prov
     assert result.evaluation["field_evaluations"][0]["field_id"] == result.profile.fields[0].field_id
     assert [name for name, _messages in model.calls] == [
         "submit_globally_merged_candidate_profile",
-        "submit_globally_merged_candidate_profile",
         "submit_candidate_profile_evaluation",
     ]
-    assert result.model_call_count == 3
+    assert result.model_call_count == 2
     assert all(attempt.get("attempt_id") for attempt in store.metrics["attempts"])
-    assert len({attempt["attempt_id"] for attempt in store.metrics["attempts"]}) == 3
-    assert result.scope_count == 5
+    assert len({attempt["attempt_id"] for attempt in store.metrics["attempts"]}) == 2
+    assert result.scope_count == 4
     model_spans = [span for span in telemetry.spans if span.name == "candidate_profile_review.model_attempt"]
     validation_spans = [span for span in telemetry.spans if span.name == "candidate_profile_review.validation"]
-    assert len(model_spans) == 3
-    assert len(validation_spans) == 3
+    assert len(model_spans) == 2
+    assert len(validation_spans) == 2
     assert all(span.attributes["review_version"] == CANDIDATE_PROFILE_REVIEW_VERSION for span in model_spans)
     assert all(span.attributes["accepted"] is True for span in validation_spans)
     assert "Reduced close" not in repr([span.attributes for span in telemetry.spans])
@@ -248,16 +246,81 @@ def test_global_merge_and_one_independent_evaluation_reduce_repetition_with_prov
         )
         for item in progress
     ] == [
-        ("start", "__global_semantic_merge__", 5, 2),
-        ("checkpoint", "__global_semantic_merge__", 5, 2),
-        ("completion", "__global_semantic_merge__", 5, 3),
-        ("start", "__global_correction__", 5, 3),
-        ("checkpoint", "__global_correction__", 5, 3),
-        ("completion", "__global_correction__", 5, 4),
-        ("start", "__independent_evaluation__", 5, 4),
-        ("checkpoint", "__independent_evaluation__", 5, 4),
-        ("completion", "__independent_evaluation__", 5, 5),
+        ("start", "__global_semantic_merge__", 4, 2),
+        ("checkpoint", "__global_semantic_merge__", 4, 2),
+        ("completion", "__global_semantic_merge__", 4, 3),
+        ("start", "__independent_evaluation__", 4, 3),
+        ("checkpoint", "__independent_evaluation__", 4, 3),
+        ("completion", "__independent_evaluation__", 4, 4),
     ]
+
+
+def test_global_correction_allows_one_extra_bounded_fix_attempt():
+    document = _document()
+    local = _local_run(document)
+    semantic_submission = {"reviewed_field_numbers": [1, 2], **_merged_payload(local)}
+    semantic_submission["decisions"][0]["score_reason"] = (
+        "The combined evidence likely supports the result."
+    )
+    unsupported_number = {
+        "decisions": [{
+            "source_field_numbers": [1],
+            "category": "outcome",
+            "statement": "Reduced close from 8 days to 5 days across 2 systems.",
+            "evidence_kind": "direct",
+            "evidence_support_score": 100,
+            "score_reason": "The cited evidence states the result.",
+        }]
+    }
+    direct_inference = {
+        "decisions": [{
+            "source_field_numbers": [1],
+            "category": "outcome",
+            "statement": "Reduced close from 8 days to 5 days, preserving audit controls.",
+            "evidence_kind": "direct",
+            "evidence_support_score": 90,
+            "score_reason": "The evidence likely supports this combined statement.",
+        }]
+    }
+    corrected = {
+        "decisions": [{
+            "source_field_numbers": [1],
+            "category": "outcome",
+            "statement": "Reduced close from 8 days to 5 days, preserving audit controls.",
+            "evidence_kind": "direct",
+            "evidence_support_score": 100,
+            "score_reason": "Both cited blocks directly state the realized result.",
+        }]
+    }
+    model = _Model([
+        semantic_submission,
+        unsupported_number,
+        direct_inference,
+        corrected,
+        _evaluation_payload("unused", local.profile.cited_resume_evidence),
+    ])
+    store = _Store()
+
+    result = GloballyReviewedCandidateProfiler(
+        _Extractor(local),
+        model,
+        checkpoint_store=store,
+    ).profile(document)
+
+    assert [name for name, _messages in model.calls].count(
+        "submit_globally_merged_candidate_profile"
+    ) == 4
+    assert result.model_call_count == 5
+    assert set(result.profile.fields[0].resume_evidence_ids) == {
+        item.evidence_id for item in local.profile.cited_resume_evidence
+    }
+    correction_codes = [
+        attempt["validation_code"]
+        for attempt in store.metrics["attempts"]
+        if attempt.get("validation_code")
+    ][-2:]
+    assert correction_codes[0].endswith(":unsupported_numbers(2)")
+    assert correction_codes[1].endswith(":direct_evidence_admits_inference")
 
 
 def test_global_validator_reports_reused_field_numbers():
@@ -474,8 +537,8 @@ def test_review_checkpoints_make_replay_zero_call():
     ).profile(document)
 
     assert model.calls == []
-    assert result.checkpoint_hit_count == 3
-    assert replayed.checkpoint_hit_count == 6
+    assert result.checkpoint_hit_count == 2
+    assert replayed.checkpoint_hit_count == 4
     assert result.evaluation["result"] == "pass"
 
 

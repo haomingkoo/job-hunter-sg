@@ -45,7 +45,7 @@ from .telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 GLOBAL_MERGE_SCOPE = "__global_semantic_merge__"
 CORRECTION_SCOPE = "__global_correction__"
 EVALUATION_SCOPE = "__independent_evaluation__"
-REVIEW_STAGE_COUNT = 3
+REVIEW_STAGE_COUNT = 2
 
 QualityLabel = Literal[
     "supported",
@@ -618,6 +618,7 @@ class GloballyReviewedCandidateProfiler:
         tool: StructuredTool,
         schema: type[BaseModel],
         validator: Callable[[dict], tuple[dict | None, str]],
+        attempt_limit: int = config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS,
     ) -> dict:
         cached = self._store.load(checkpoint_id).get(stage)
         if cached is not None:
@@ -647,7 +648,7 @@ class GloballyReviewedCandidateProfiler:
             )
 
         bound_model = self._model.bind_tools([tool], tool_choice=tool.name)
-        for attempt in range(first_attempt, config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS + 1):
+        for attempt in range(first_attempt, attempt_limit + 1):
             request = list(messages)
             if failure:
                 request.append(
@@ -672,10 +673,10 @@ class GloballyReviewedCandidateProfiler:
                 {
                     "stage": stage.strip("_"),
                     "attempt": attempt,
-                    "max_attempts": config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS,
+                    "max_attempts": attempt_limit,
                     "review_version": CANDIDATE_PROFILE_REVIEW_VERSION,
-                    "configured_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
-                    "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
+                    "configured_timeout_seconds": config.CANDIDATE_PROFILE_MODEL_HTTP_TIMEOUT_SECONDS,
+                    "transport_retries": config.CANDIDATE_PROFILE_MODEL_TRANSPORT_RETRIES,
                     "logical_run_id": checkpoint_id,
                 },
             ) as model_span:
@@ -691,7 +692,7 @@ class GloballyReviewedCandidateProfiler:
                             "stage": stage.strip("_"),
                             "scope_id": stage,
                             "attempt": attempt,
-                            "attempt_limit": config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS,
+                            "attempt_limit": attempt_limit,
                             "status": "error",
                             "model": self._model_name,
                             "latency_ms": (time.perf_counter() - started) * 1000,
@@ -736,7 +737,7 @@ class GloballyReviewedCandidateProfiler:
                 validation_span.set_attribute("accepted", payload is not None)
                 validation_span.set_attribute(
                     "retry_triggered",
-                    payload is None and attempt < config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS,
+                    payload is None and attempt < attempt_limit,
                 )
             status = "success" if payload is not None else "validation_failed"
             self._store.record_execution_event(
@@ -747,7 +748,7 @@ class GloballyReviewedCandidateProfiler:
                     "stage": stage.strip("_"),
                     "scope_id": stage,
                     "attempt": attempt,
-                    "attempt_limit": config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS,
+                    "attempt_limit": attempt_limit,
                     "status": status,
                     "model": self._model_name,
                     "input_tokens": int(usage.get("input_tokens") or 0),
@@ -760,7 +761,7 @@ class GloballyReviewedCandidateProfiler:
                 self._store.clear_retry_feedback(checkpoint_id, stage)
                 self._store.save(checkpoint_id, stage, payload)
                 return payload
-            exhausted = attempt == config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS
+            exhausted = attempt == attempt_limit
             self._store.save_retry_feedback(
                 checkpoint_id,
                 stage,
@@ -792,6 +793,7 @@ class GloballyReviewedCandidateProfiler:
         validator: Callable[[dict], tuple[dict | None, str]],
         scope_count: int,
         completed_scope_count: int,
+        attempt_limit: int = config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS,
     ) -> dict:
         self._publish_progress(
             "start",
@@ -807,6 +809,7 @@ class GloballyReviewedCandidateProfiler:
                 tool=tool,
                 schema=schema,
                 validator=validator,
+                attempt_limit=attempt_limit,
             )
         except Exception:
             self._publish_progress(
@@ -841,7 +844,7 @@ class GloballyReviewedCandidateProfiler:
             local.profile,
             blocks,
         )
-        scope_count = local.scope_count + REVIEW_STAGE_COUNT
+        scope_count = local.scope_count + 2
         completed_scope_count = local.scope_count
         merged = self._run_stage(
             checkpoint_id=local.checkpoint_id,
@@ -874,30 +877,34 @@ class GloballyReviewedCandidateProfiler:
             merged_profile,
             blocks,
         )
-        corrected = self._run_stage(
-            checkpoint_id=local.checkpoint_id,
-            stage=CORRECTION_SCOPE,
-            messages=[
-                SystemMessage(content=CANDIDATE_PROFILE_CORRECTION_PROMPT),
-                HumanMessage(
-                    content=xml_data_block(
-                        "candidate_profile_correction_data",
-                        json.dumps(correction_input, ensure_ascii=False, separators=(",", ":")),
-                    )
+        corrected = merged
+        if required_correction_numbers:
+            scope_count += 1
+            corrected = self._run_stage(
+                checkpoint_id=local.checkpoint_id,
+                stage=CORRECTION_SCOPE,
+                messages=[
+                    SystemMessage(content=CANDIDATE_PROFILE_CORRECTION_PROMPT),
+                    HumanMessage(
+                        content=xml_data_block(
+                            "candidate_profile_correction_data",
+                            json.dumps(correction_input, ensure_ascii=False, separators=(",", ":")),
+                        )
+                    ),
+                ],
+                tool=_GLOBAL_MERGE_TOOL,
+                schema=_MergeSubmission,
+                validator=lambda payload: _validate_global_merge(
+                    payload,
+                    merged_profile,
+                    blocks,
+                    required_correction_numbers,
                 ),
-            ],
-            tool=_GLOBAL_MERGE_TOOL,
-            schema=_MergeSubmission,
-            validator=lambda payload: _validate_global_merge(
-                payload,
-                merged_profile,
-                blocks,
-                required_correction_numbers,
-            ),
-            scope_count=scope_count,
-            completed_scope_count=completed_scope_count,
-        )
-        completed_scope_count += 1
+                scope_count=scope_count,
+                completed_scope_count=completed_scope_count,
+                attempt_limit=config.CANDIDATE_PROFILE_CORRECTION_ATTEMPTS,
+            )
+            completed_scope_count += 1
         profile = _build_profile(resume_document, corrected["fields"])
         evaluation_input, field_refs = _evaluation_input(profile)
         evaluation = self._run_stage(
@@ -948,6 +955,6 @@ class GloballyReviewedCandidateProfiler:
             input_tokens=int(metrics.get("input_tokens") or 0) or None,
             output_tokens=int(metrics.get("output_tokens") or 0) or None,
             validation_codes=tuple(metrics.get("validation_codes") or local.validation_codes),
-            scope_count=local.scope_count + REVIEW_STAGE_COUNT,
+            scope_count=scope_count,
             model_name=str((metrics.get("models") or [self._model_name])[-1]),
         )

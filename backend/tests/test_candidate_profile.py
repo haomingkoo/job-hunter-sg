@@ -11,6 +11,7 @@ from recruitment_team.candidate_profile import (
     CandidateProfileTransportError,
     LangChainCandidateProfiler,
     LangChainCandidateProfilerFactory,
+    PROFILE_SCOPE_MAX_WORDS,
     ScriptedCandidateProfilerFactory,
     _canonicalize_profile_fields,
     _metadata_validation_code,
@@ -192,7 +193,7 @@ def test_candidate_profile_retries_with_original_blocks_failed_output_and_exact_
 
     document = _document()
     failed = _valid_payload(document)
-    failed["fields"][0]["evidence_quotes"] = ["A quote absent from the cited block."]
+    failed["fields"][0]["statement"] = "Reduced close from 8 days to 3 days."
     model = _ProfileModel([failed, _valid_payload(document)])
     telemetry = RecordedTelemetry()
     progress = []
@@ -204,18 +205,15 @@ def test_candidate_profile_retries_with_original_blocks_failed_output_and_exact_
     ).profile(document)
 
     assert run.attempt_count == 2
-    assert run.validation_codes == ("field:outcome_close_cycle:quote_not_found",)
+    assert run.validation_codes == ("field:outcome_close_cycle:unsupported_numbers(3)",)
     correction = model.requests[1][-1].content
     assert model.requests[1][1].content == model.requests[0][1].content
     assert "resume_blocks" not in correction
     assert "failed_candidate_profile" in correction
-    assert "A quote absent from the cited block." in correction
-    assert "field:outcome_close_cycle:quote_not_found" in correction
-    assert "If the quote crosses a block boundary, add every adjacent block ID" in correction
+    assert "Reduced close from 8 days to 3 days." in correction
+    assert "field:outcome_close_cycle:unsupported_numbers(3)" in correction
     assert "correction_evidence_boundary" in correction
-    assert "A quote absent from the cited block." in correction
     assert "Reduced close from 8 days to 5 days" in correction
-    assert "change the cited block IDs" in correction
     assert [item.transition for item in progress] == [
         "start",
         "correction",
@@ -230,8 +228,8 @@ def test_candidate_profile_retries_with_original_blocks_failed_output_and_exact_
         "max_attempts": config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
         "prompt_version": "candidate-evidence-profile-v3",
         "scope_id": "experience_01",
-        "configured_timeout_seconds": config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS,
-        "transport_retries": config.RECRUITMENT_MODEL_TRANSPORT_RETRIES,
+        "configured_timeout_seconds": config.CANDIDATE_PROFILE_MODEL_HTTP_TIMEOUT_SECONDS,
+        "transport_retries": config.CANDIDATE_PROFILE_MODEL_TRANSPORT_RETRIES,
         "logical_run_id": run.checkpoint_id,
         "checkpoint_id": run.checkpoint_id,
         "stage": "candidate_profile",
@@ -248,7 +246,7 @@ def test_candidate_profile_retries_with_original_blocks_failed_output_and_exact_
                 "logical_run_id": run.checkpoint_id,
                 "checkpoint_id": run.checkpoint_id,
                 "stage": "candidate_profile_validation",
-                "validation_code": "field:quote_not_found",
+                "validation_code": "field:unsupported_numbers",
             "accepted": False,
             "retry_triggered": True,
         },
@@ -286,10 +284,6 @@ def test_candidate_profile_retries_with_original_blocks_failed_output_and_exact_
         (
             lambda payload: payload["fields"][0].update(resume_evidence_ids=[]),
             "field:outcome_close_cycle:missing_positive_citation",
-        ),
-        (
-            lambda payload: payload["fields"][0].update(evidence_quotes=["not present"]),
-            "field:outcome_close_cycle:quote_not_found",
         ),
         (
             lambda payload: payload["fields"][0].update(statement="Reduced close from 8 days to 3 days."),
@@ -338,10 +332,10 @@ def test_candidate_profile_reports_all_field_errors_in_one_validation_pass():
     document = _document()
     payload = _valid_payload(document)
     first = payload["fields"][0]
-    first["evidence_quotes"] = ["missing first quote"]
+    first["statement"] = "Reduced close from 8 days to 3 days."
     second = deepcopy(first)
     second["field_id"] = "outcome_close_cycle_second"
-    second["evidence_quotes"] = ["missing second quote"]
+    second["statement"] = "Reduced close from 8 days to 4 days."
     payload["fields"].append(second)
 
     accepted, failure = _validate_submission(
@@ -350,7 +344,7 @@ def test_candidate_profile_reports_all_field_errors_in_one_validation_pass():
     )
 
     assert accepted is None
-    assert failure == ("field:outcome_close_cycle:quote_not_found|field:outcome_close_cycle_second:quote_not_found")
+    assert failure == ("field:outcome_close_cycle:unsupported_numbers(3)|field:outcome_close_cycle_second:unsupported_numbers(4)")
 
 
 def test_candidate_profile_decodes_xml_transport_entities_without_loosening_quotes():
@@ -374,10 +368,10 @@ def test_candidate_profile_decodes_xml_transport_entities_without_loosening_quot
     accepted, failure = _validate_submission(payload, {block["id"]: block})
 
     assert failure == ""
-    assert accepted == payload
+    assert accepted["fields"][0]["evidence_quotes"] == [block["text"]]
 
 
-def test_candidate_profile_allows_quotes_across_only_adjacent_cited_blocks():
+def test_candidate_profile_derives_exact_quotes_from_canonical_block_ids():
     blocks = {
         "b_1": {"text": "Led a cross-border finance-process"},
         "b_2": {"text": "transition into a new finance system."},
@@ -400,12 +394,12 @@ def test_candidate_profile_allows_quotes_across_only_adjacent_cited_blocks():
 
     accepted, failure = _validate_submission(payload, blocks)
     assert failure == ""
-    assert accepted == payload
+    assert accepted["fields"][0]["evidence_quotes"] == [blocks["b_1"]["text"], blocks["b_2"]["text"]]
 
     payload["fields"][0]["resume_evidence_ids"] = ["b_1", "b_3"]
     accepted, failure = _validate_submission(payload, blocks)
-    assert accepted is None
-    assert failure == "field:capability_transition:quote_not_found"
+    assert failure == ""
+    assert accepted["fields"][0]["evidence_quotes"] == [blocks["b_1"]["text"], blocks["b_3"]["text"]]
 
 
 def test_candidate_profile_has_no_hidden_free_text_or_schema_fallback():
@@ -488,9 +482,9 @@ def test_candidate_profile_telemetry_records_only_safe_transport_error_type():
     assert "private resume content" not in str(span.attributes)
 
 
-def test_candidate_profile_scopes_follow_structure_without_size_limits():
+def test_candidate_profile_scopes_pack_entries_with_a_bounded_word_target():
     document = create_resume_document(
-        "EXPERIENCE\nRole A | 2020 - 2022\n- Delivered " + "A" * 20_000 + ".\n"
+        "EXPERIENCE\nRole A | 2020 - 2022\n- Delivered " + "A " * 900 + ".\n"
         "Role B | 2022 - 2024\n- Delivered B.\nEDUCATION\nDegree"
     )
 
@@ -499,9 +493,20 @@ def test_candidate_profile_scopes_follow_structure_without_size_limits():
     assert [scope.scope_id for scope in scopes] == [
         "experience_01",
         "experience_02",
+        "experience_03",
         "education_01",
     ]
-    assert "Role B" in scopes[1].blocks[0]["text"]
+    assert any("Role B" in block["text"] for block in scopes[2].blocks)
+    assert any("Role A" in block["text"] for block in scopes[1].blocks)
+    assert all(
+        sum(len(str(block.get("text") or "").split()) for block in scope.blocks)
+        <= PROFILE_SCOPE_MAX_WORDS
+        or sum(
+            block.get("kind") not in {"section_heading", "entry_heading"}
+            for block in scope.blocks
+        ) == 1
+        for scope in scopes
+    )
 
 
 def test_candidate_profile_scopes_keep_complete_role_entries_together():
@@ -518,6 +523,153 @@ def test_candidate_profile_scopes_keep_complete_role_entries_together():
         "Delivered the first complete result.",
         "Delivered the second complete result.",
     ]
+
+
+def test_candidate_profile_batches_a_ten_entry_resume_into_at_most_five_scopes():
+    entries = "\n".join(
+        f"Role {index} | 2020 - 2024\n- " + "delivered evidence " * 80
+        for index in range(10)
+    )
+    document = create_resume_document(f"EXPERIENCE\n{entries}")
+
+    scopes = _profile_scopes(document["blocks"])
+
+    assert len(scopes) <= 5
+    assert sum(
+        sum(block.get("kind") == "entry_heading" for block in scope.blocks)
+        for scope in scopes
+    ) == 10
+
+
+def test_candidate_profile_rejects_evidence_spanning_packed_entries():
+    document = create_resume_document(
+        "EXPERIENCE\nRole A | 2020 - 2022\n- Delivered alpha.\n"
+        "Role B | 2022 - 2024\n- Delivered beta."
+    )
+    scope = _profile_scopes(document["blocks"])[0]
+    bullets = [block for block in scope.blocks if block["kind"] == "bullet"]
+    payload = {
+        "fields": [{
+            "field_id": "cross_entry_claim",
+            "category": "demonstrated_capability",
+            "statement": "Delivered alpha and beta.",
+            "resume_evidence_ids": [block["id"] for block in bullets],
+            "evidence_kind": "direct",
+            "evidence_support_score": 100,
+            "score_reason": "The two cited bullets state the claim.",
+        }],
+    }
+
+    accepted, failure = _validate_submission(
+        payload,
+        {str(block["id"]): block for block in scope.blocks},
+        scope.evidence_groups,
+    )
+
+    assert accepted is None
+    assert failure == "field:cross_entry_claim:cross_entry_evidence"
+
+
+def test_candidate_profile_never_sends_document_header_blocks_to_the_model():
+    document = create_resume_document(
+        "Hui Shan Koo, CPA\ncandidate@example.com\n+65 6123 4567\nFinance transformation leader."
+    )
+
+    scopes = _profile_scopes(document["blocks"])
+
+    sent_text = [block["text"] for scope in scopes for block in scope.blocks]
+    assert sent_text == ["Finance transformation leader."]
+
+
+@pytest.mark.parametrize(
+    "role_heading",
+    ["Accountant 2020 - 2024", "Role | 2020 - 2024"],
+)
+def test_candidate_profile_keeps_headingless_dated_role_context(role_heading):
+    document = create_resume_document(f"Candidate Name\n{role_heading}\n- Closed the books.")
+
+    sent_text = [
+        block["text"]
+        for scope in _profile_scopes(document["blocks"])
+        for block in scope.blocks
+    ]
+
+    assert role_heading in sent_text
+
+
+def test_candidate_profile_revalidates_cross_entry_evidence_after_resume():
+    document = create_resume_document(
+        "EXPERIENCE\nRole A | 2020 - 2022\n- Delivered alpha.\n"
+        "Role B | 2022 - 2024\n- Delivered beta."
+    )
+    scope = _profile_scopes(document["blocks"])[0]
+    bullets = [block for block in scope.blocks if block["kind"] == "bullet"]
+    rejected = {
+        "fields": [{
+            "field_id": "cross_entry_claim",
+            "category": "demonstrated_capability",
+            "statement": "Delivered alpha and beta.",
+            "resume_evidence_ids": [block["id"] for block in bullets],
+            "evidence_kind": "direct",
+            "evidence_support_score": 100,
+            "score_reason": "The two bullets state the claim.",
+        }],
+    }
+    accepted = {
+        "fields": [{
+            "field_id": "single_entry_claim",
+            "category": "demonstrated_capability",
+            "statement": "Delivered alpha.",
+            "resume_evidence_ids": [bullets[0]["id"]],
+            "evidence_kind": "direct",
+            "evidence_support_score": 100,
+            "score_reason": "The cited bullet states the claim.",
+        }],
+    }
+
+    class Store:
+        def __init__(self):
+            self.saved = {}
+            self.feedback = {
+                scope.scope_id: {
+                    "rejected_payload": rejected,
+                    "failed_output": {"tool_calls": []},
+                    "validation_code": "field:cross_entry_claim:cross_entry_evidence",
+                    "next_attempt": 2,
+                    "exhausted": False,
+                }
+            }
+            self.events = []
+
+        def load(self, _checkpoint_id):
+            return dict(self.saved)
+
+        def save(self, _checkpoint_id, scope_id, payload):
+            self.saved[scope_id] = payload
+
+        def load_retry_feedback(self, _checkpoint_id, scope_id):
+            return self.feedback.get(scope_id)
+
+        def save_retry_feedback(self, *_args):
+            raise AssertionError("the corrected payload should pass")
+
+        def clear_retry_feedback(self, _checkpoint_id, scope_id):
+            self.feedback.pop(scope_id, None)
+
+        def record_execution_event(self, _checkpoint_id, event):
+            self.events.append(event)
+
+        def execution_metrics(self, checkpoint_id):
+            return _execution_metrics(checkpoint_id, self.events)
+
+    store = Store()
+    model = _ProfileModel([accepted])
+
+    run = LangChainCandidateProfiler(model, checkpoint_store=store).profile(document)
+
+    assert len(model.requests) == 1
+    assert run.profile.fields[0].statement == "Delivered alpha."
+    assert store.saved[scope.scope_id]["fields"][0]["field_id"] == "single_entry_claim"
 
 
 def test_candidate_profile_reuses_only_revalidated_scope_checkpoints():
@@ -574,7 +726,7 @@ def test_candidate_profile_reuses_only_revalidated_scope_checkpoints():
 def test_candidate_profile_preserves_validation_feedback_across_transport_resume():
     document = _document()
     rejected = _valid_payload(document)
-    rejected["fields"][0]["evidence_quotes"] = ["A quote absent from the cited block."]
+    rejected["fields"][0]["statement"] = "Reduced close from 8 days to 3 days."
     accepted = _valid_payload(document)
 
     class Store:
@@ -628,7 +780,7 @@ def test_candidate_profile_preserves_validation_feedback_across_transport_resume
             ],
         },
         "rejected_payload": rejected,
-        "validation_code": "field:outcome_close_cycle:quote_not_found",
+        "validation_code": "field:outcome_close_cycle:unsupported_numbers(3)",
         "fixability": "fixable",
         "next_attempt": 2,
         "exhausted": False,
@@ -641,15 +793,15 @@ def test_candidate_profile_preserves_validation_feedback_across_transport_resume
     ).profile(document)
 
     assert run.model_call_count == 3
-    assert run.validation_codes == ("field:quote_not_found",)
+    assert run.validation_codes == ("field:unsupported_numbers",)
     assert run.input_tokens == 26
     assert run.output_tokens == 10
     assert [event["status"] for event in store.execution_events] == [
         "validation_failed", "error", "success",
     ]
     correction = resumed_model.requests[0][-1].content
-    assert "A quote absent from the cited block." in correction
-    assert "field:outcome_close_cycle:quote_not_found" in correction
+    assert "Reduced close from 8 days to 3 days." in correction
+    assert "field:outcome_close_cycle:unsupported_numbers(3)" in correction
     assert "Reduced close from 8 days to 5 days" in correction
     assert store.retry_feedback == {}
     assert store.saved["experience_01"] == accepted
@@ -658,7 +810,7 @@ def test_candidate_profile_preserves_validation_feedback_across_transport_resume
 def test_candidate_profile_does_not_repeat_exhausted_semantic_attempts_after_resume():
     document = _document()
     rejected = _valid_payload(document)
-    rejected["fields"][0]["evidence_quotes"] = ["A quote absent from the cited block."]
+    rejected["fields"][0]["statement"] = "Reduced close from 8 days to 3 days."
 
     class Store:
         def __init__(self):
@@ -705,7 +857,7 @@ def test_candidate_profile_does_not_repeat_exhausted_semantic_attempts_after_res
 def test_candidate_profile_fails_closed_on_invalid_checkpoint():
     document = _document()
     invalid = _valid_payload(document)
-    invalid["fields"][0]["evidence_quotes"] = ["not in the block"]
+    invalid["fields"][0]["statement"] = "Reduced close from 8 days to 3 days."
 
     class Store:
         def load(self, _checkpoint_id):
@@ -717,7 +869,7 @@ def test_candidate_profile_fails_closed_on_invalid_checkpoint():
     with pytest.raises(CandidateProfileValidationError) as caught:
         LangChainCandidateProfiler(_ProfileModel([]), checkpoint_store=Store()).profile(document)
 
-    assert caught.value.validation_code == ("checkpoint:experience_01:field:outcome_close_cycle:quote_not_found")
+    assert caught.value.validation_code == ("checkpoint:experience_01:field:outcome_close_cycle:unsupported_numbers(3)")
 
 
 def test_candidate_profile_default_model_observes_configured_transport_retries(monkeypatch):
@@ -737,8 +889,8 @@ def test_candidate_profile_default_model_observes_configured_transport_retries(m
 
     from recruitment_team.model_transport_observer import ModelTransportObserver
 
-    assert captured["timeout"] == config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS
-    assert captured["max_retries"] == config.RECRUITMENT_MODEL_TRANSPORT_RETRIES
+    assert captured["timeout"] == config.CANDIDATE_PROFILE_MODEL_HTTP_TIMEOUT_SECONDS
+    assert captured["max_retries"] == config.CANDIDATE_PROFILE_MODEL_TRANSPORT_RETRIES
     assert captured["http_client"] is not None
     assert len(captured["callbacks"]) == 1
     assert isinstance(captured["callbacks"][0], ModelTransportObserver)
@@ -764,8 +916,8 @@ def test_candidate_profile_factory_default_model_observes_transport(monkeypatch)
 
     assert factory._model is model
     assert factory._telemetry is telemetry
-    assert captured["timeout"] == config.RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS
-    assert captured["max_retries"] == config.RECRUITMENT_MODEL_TRANSPORT_RETRIES
+    assert captured["timeout"] == config.CANDIDATE_PROFILE_MODEL_HTTP_TIMEOUT_SECONDS
+    assert captured["max_retries"] == config.CANDIDATE_PROFILE_MODEL_TRANSPORT_RETRIES
     assert captured["http_client"] is not None
     assert len(captured["callbacks"]) == 1
     assert isinstance(captured["callbacks"][0], ModelTransportObserver)
