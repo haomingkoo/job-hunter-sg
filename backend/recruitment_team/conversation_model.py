@@ -14,23 +14,6 @@ if TYPE_CHECKING:  # pragma: no cover - import cycle guard, annotations are stri
     from .coordinator.context import ConversationContext
 
 
-class PreferenceUpdatePayload(BaseModel):
-    """Validated input for the authoritative record_preferences tool."""
-
-    field: Literal[
-        "role",
-        "location",
-        "seniority",
-        "salary",
-        "company",
-        "employer_type",
-        "constraints",
-    ]
-    value: str = Field(min_length=1)
-    evidence_quote: str = Field(min_length=1)
-    operation: Literal["set", "remove"] = "set"
-
-
 class ConversationReply(BaseModel):
     """Submit one recruitment-team reply.
 

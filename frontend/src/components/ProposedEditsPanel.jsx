@@ -1,17 +1,18 @@
 import { useState } from "react";
 
 /** Pending edits; acceptance creates a new resume version. */
-export default function ProposedEditsPanel({ edits, onAccept, onReject, busy, result }) {
+export default function ProposedEditsPanel({ edits, onAccept, onReject, onStartConversation, busy, result }) {
   const [rejecting, setRejecting] = useState(() => new Set());
+  const pendingEdits = Array.isArray(edits) ? edits : [];
 
-  if (!Array.isArray(edits) || edits.length === 0) return null;
+  if (pendingEdits.length === 0 && !result) return null;
 
-  const applicable = edits.filter((edit) => edit.applicable);
-  const stale = edits.filter((edit) => !edit.applicable);
+  const applicable = pendingEdits.filter((edit) => edit.applicable);
+  const stale = pendingEdits.filter((edit) => !edit.applicable);
 
   return (
     <section aria-labelledby="proposed-edits-title" className="mt-6 border-t border-[#DCE7F2] pt-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      {pendingEdits.length > 0 && <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 id="proposed-edits-title" className="text-sm font-semibold text-[#384959]">
             Suggested resume edits
@@ -31,14 +32,25 @@ export default function ProposedEditsPanel({ edits, onAccept, onReject, busy, re
             {busy ? "Saving" : `Accept all ${applicable.length}`}
           </button>
         )}
-      </div>
+      </div>}
 
       {result && (
-        <p role="status" className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-          Saved as “{result.label}”.{" "}
-          {result.stale_edit_ids?.length > 0 &&
-            `${result.stale_edit_ids.length} edit(s) were skipped because your resume had changed since they were drafted.`}
-        </p>
+        <div role="status" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+          <span>
+            Saved as “{result.label}”.{" "}
+            {result.stale_edit_ids?.length > 0 &&
+              `${result.stale_edit_ids.length} edit(s) were skipped because your resume had changed since they were drafted.`}
+          </span>
+          {onStartConversation && (
+            <button
+              type="button"
+              onClick={() => onStartConversation(result.resume_version_id)}
+              className="rounded-lg border border-emerald-700 px-2.5 py-1 font-semibold"
+            >
+              Start conversation with this version
+            </button>
+          )}
+        </div>
       )}
 
       <ol className="mt-3 space-y-3">

@@ -50,6 +50,9 @@ class RankingReceipt:
     candidate_queries: tuple[str, ...]
     employer_preference_applied: bool
     jobs: tuple[RankedJobReceipt, ...]
+    resume_version_id: int | None = None
+    resume_sha256: str = ""
+    candidate_profile_artifact_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -93,6 +96,13 @@ def ranking_receipt_from_dict(value: dict) -> RankingReceipt:
             )
             for item in value["jobs"]
         ),
+        resume_version_id=(
+            int(value["resume_version_id"])
+            if value.get("resume_version_id") is not None
+            else None
+        ),
+        resume_sha256=str(value.get("resume_sha256") or ""),
+        candidate_profile_artifact_id=str(value.get("candidate_profile_artifact_id") or ""),
     )
 
 

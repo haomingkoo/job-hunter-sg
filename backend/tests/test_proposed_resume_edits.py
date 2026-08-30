@@ -58,7 +58,7 @@ def _team(db):
         RecordedTelemetry(),
         RecordedActivityPublisher(),
         candidate_profiler_factory_provider=(
-            lambda: ScriptedCandidateProfilerFactory([_candidate_profile_run()])
+            lambda: ScriptedCandidateProfilerFactory([_candidate_profile_run(RESUME_TEXT)])
         ),
     )
 
@@ -145,11 +145,10 @@ def test_accepting_writes_a_new_version_and_leaves_the_source_untouched():
         assert "Operated vLLM inference clusters on AMD MI300X GPUs." in created.resume_text
         assert created.id != resume_id
         assert source.resume_text == RESUME_TEXT, "accepting overwrote the candidate's master resume"
-        assert thread.resume_version_id == created.id
-        assert thread.case_facts["resume_version_id"] == created.id
-        assert thread.case_facts["resume_sha256"] != hashlib.sha256(source.resume_text.encode()).hexdigest()
-        assert thread.case_facts["candidate_profile_status"] == "not_started"
-        assert thread.case_facts["target_assessment_status"] == "not_started"
+        assert thread.resume_version_id == source.id
+        assert thread.case_facts["resume_version_id"] == source.id
+        assert thread.case_facts["resume_sha256"] == hashlib.sha256(source.resume_text.encode()).hexdigest()
+        assert thread.case_facts["candidate_profile_status"] == "completed"
 
 
 def test_stale_edits_are_reported_rather_than_silently_dropped():

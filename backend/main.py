@@ -75,6 +75,8 @@ from resume_versions import (
     MAX_ACTIVE_RESUME_VERSIONS as _MAX_ACTIVE_RESUME_VERSIONS,
     MAX_RESUME_STRUCTURED_BYTES as _MAX_RESUME_STRUCTURED_BYTES,
     MAX_SAVED_RESUME_CHARS as _MAX_SAVED_RESUME_CHARS,
+    create_version as _create_resume_version,
+    version_summary as _resume_version_summary,
 )
 from story_bank import STORY_TAGS
 from story_routes import router as story_router
@@ -222,6 +224,7 @@ _filter_meta_marker: str = ""
 _FILTER_META_TTL = app_config.ANALYTICS_FILTER_META_TTL_SECONDS
 _FILTER_META_CACHE_LOCK = threading.Lock()
 _PUBLIC_RATE_LIMITER = FixedWindowRateLimiter()
+WORKSPACE_SUBMITTED_RESUME_UPLOADS_PER_HOUR = 20
 _CREDENTIAL_MUTATION_LOCK = threading.Lock()
 _COURSE_RECOMMEND_SLOTS = threading.BoundedSemaphore(2)
 _SEED_RUN_LOCK = threading.Lock()
@@ -4530,18 +4533,28 @@ async def upload_workspace_submitted_resume(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
+    if not _PUBLIC_RATE_LIMITER.allow(
+        f"workspace-submitted-resume:{user.id}",
+        limit=WORKSPACE_SUBMITTED_RESUME_UPLOADS_PER_HOUR,
+        window_seconds=3600,
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Too many submitted resume uploads. Please try again later.",
+        )
     upload = await parse_uploaded_resume(file)
-    return workspace_module.save_submitted_resume(
-        db,
-        user,
-        workspace_id,
-        filename=upload.filename,
-        content_type=upload.content_type,
-        file_bytes=upload.file_bytes,
-        parsed_resume=upload.parsed_resume,
-        submitted_date=submitted_date,
-        notes=notes,
-    )
+    with _locked_account_storage(user.id, db):
+        return workspace_module.save_submitted_resume(
+            db,
+            user,
+            workspace_id,
+            filename=upload.filename,
+            content_type=upload.content_type,
+            file_bytes=upload.file_bytes,
+            parsed_resume=upload.parsed_resume,
+            submitted_date=submitted_date,
+            notes=notes,
+        )
 
 
 @app.delete("/api/tracked/{job_id}")
@@ -5719,28 +5732,41 @@ async def upload_resume(
     owner = f"user:{user.id}" if user else f"ip:{_get_client_ip(request)}"
     if not _PUBLIC_RATE_LIMITER.allow(f"resume-upload:{owner}", limit=10, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many resume uploads. Please try again later.")
+    upload_name = Path(file.filename or "Uploaded resume").stem or "Uploaded resume"
     result = (await parse_uploaded_resume(file)).parsed_resume
 
     parse_quality = result.get("parse_quality", {})
-    db.add(
-        UsageLog(
-            user_id=user.id if user else None,
-            action="resume_upload",
-            detail=json.dumps(
-                {
-                    "file_type": result["file_type"],
-                    "word_count": result["word_count"],
-                    "line_count": result["line_count"],
-                    "parse_quality": parse_quality,
-                },
-                separators=(",", ":"),
-            ),
+    with _locked_account_storage(user.id, db) if user else nullcontext():
+        db.add(
+            UsageLog(
+                user_id=user.id if user else None,
+                action="resume_upload",
+                detail=json.dumps(
+                    {
+                        "file_type": result["file_type"],
+                        "word_count": result["word_count"],
+                        "line_count": result["line_count"],
+                        "parse_quality": parse_quality,
+                    },
+                    separators=(",", ":"),
+                ),
+            )
         )
-    )
-    if user:
-        _consume_ai_credit(user, db, "resume_embedding")
-    _persist_resume_to_memory(user, db, result["text"])
-    db.commit()
+        if user:
+            _consume_ai_credit(user, db, "resume_embedding")
+            version = _create_resume_version(
+                db,
+                user.id,
+                {
+                    "label": upload_name,
+                    "resume_text": result["text"],
+                    "resume_structured": result.get("document"),
+                    "source": "upload",
+                },
+            )
+            db.flush()
+            result["resume_version"] = _resume_version_summary(version)
+        db.commit()
 
     return result
 

@@ -93,4 +93,16 @@ describe("ProposedEditsPanel", () => {
     expect(status.textContent).toContain("Tailored for Platform Operations Engineer");
     expect(status.textContent).toContain("1 edit(s) were skipped");
   });
+
+  it("keeps the derived-version handoff visible after every edit is accepted", () => {
+    const onStartConversation = vi.fn();
+    mount({
+      edits: [],
+      result: { resume_version_id: 19, label: "Hui Shan tailored", stale_edit_ids: [] },
+      onStartConversation,
+    });
+
+    act(() => buttonLabelled("Start conversation with this version").click());
+    expect(onStartConversation).toHaveBeenCalledWith(19);
+  });
 });

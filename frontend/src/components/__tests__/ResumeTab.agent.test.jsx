@@ -93,8 +93,8 @@ describe("ResumeTab Agent v2", () => {
 
   it("searches again with the exact refined resume version after export", async () => {
     sessionStorage.setItem("jh_wizard_step", "4");
-    const onSearchMatchingJobs = vi.fn();
     const onInitialResumeVersionLoaded = vi.fn();
+    const onSearchMatchingJobs = vi.fn();
     global.URL.createObjectURL = vi.fn(() => "blob:resume");
     global.URL.revokeObjectURL = vi.fn();
     global.fetch = vi.fn((url, options = {}) => {
@@ -192,8 +192,9 @@ describe("ResumeTab Agent v2", () => {
     expect(classicEditor.className).not.toContain("hidden");
   });
 
-  it("scores a first upload once", async () => {
+  it("keeps an authenticated upload's version identity for recruitment handoff", async () => {
     sessionStorage.clear();
+    sessionStorage.setItem("jh_wizard_step", "4");
     global.fetch = vi.fn((url, options = {}) => {
       const target = String(url);
       if (target.includes("/api/resume/ingest-text")) {
@@ -205,6 +206,7 @@ describe("ResumeTab Agent v2", () => {
           text: "Jane Doe\nPROFESSIONAL EXPERIENCE\n• Built a reporting pipeline used by 50 finance users every month.",
           name: "Jane Doe",
           parse_quality: { warnings: [] },
+          resume_version: { id: 19, label: "Jane Doe", content_sha256: "a".repeat(64) },
         });
       }
       if (target.includes("/api/resume/score")) {
@@ -217,7 +219,13 @@ describe("ResumeTab Agent v2", () => {
     });
 
     await act(async () => {
-      root.render(<ResumeTab selectedJob={null} user={null} setActiveTab={() => {}} />);
+      root.render(
+        <ResumeTab
+          selectedJob={null}
+          user={{ id: 1 }}
+          setActiveTab={() => {}}
+        />,
+      );
     });
     const input = container.querySelector('input[type="file"]');
     Object.defineProperty(input, "files", {
@@ -231,6 +239,10 @@ describe("ResumeTab Agent v2", () => {
     });
 
     expect(global.fetch.mock.calls.filter(([url]) => String(url).includes("/api/resume/score"))).toHaveLength(1);
+    expect(localStorage.getItem("jobhunter:pending-resume-version:1")).toBe("19");
+    expect(global.fetch.mock.calls.filter(([url, request]) => (
+      String(url).endsWith("/api/resume/versions") && request?.method === "POST"
+    ))).toHaveLength(0);
   });
 
   it("confirms a candidate heading through the canonical document endpoint", async () => {

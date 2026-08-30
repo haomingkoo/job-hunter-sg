@@ -116,11 +116,6 @@ def submission(
     )
 
 
-def preference(field: str, value: str, evidence_quote: str) -> dict:
-    """One preference update for the record_preferences tool."""
-    return {"field": field, "value": value, "evidence_quote": evidence_quote}
-
-
 def final(text: str) -> AIMessage:
     """A plain reply with no tool call: how a graph without a response_format ends."""
     return AIMessage(content=text)

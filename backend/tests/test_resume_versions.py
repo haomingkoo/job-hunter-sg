@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -91,7 +94,7 @@ def test_create_rejects_malformed_scalar_fields(db, updates, status_code):
     assert caught.value.status_code == status_code
 
 
-def test_update_is_owner_scoped_and_keeps_one_master(db):
+def test_update_is_owner_scoped_and_keeps_content_immutable(db):
     owner = _user(db)
     other = _user(db, "other-owner@example.test")
     first = create_version(db, owner.id, _body(label="First"))
@@ -103,7 +106,6 @@ def test_update_is_owner_scoped_and_keeps_one_master(db):
         second.id,
         {
             "label": "Updated second",
-            "resume_text": "Led dependable platform delivery and improved service reliability across teams.",
             "is_master": True,
             "score": 91,
         },
@@ -113,11 +115,81 @@ def test_update_is_owner_scoped_and_keeps_one_master(db):
     db.refresh(first)
     assert updated.is_master is True
     assert first.is_master is False
-    assert updated.word_count == len(updated.resume_text.split())
     assert updated.score == 91
     with pytest.raises(HTTPException) as caught:
         get_owned_version(db, other.id, updated.id)
     assert caught.value.status_code == 404
+
+    original_text = updated.resume_text
+    with pytest.raises(HTTPException) as immutable:
+        update_version(
+            db,
+            owner.id,
+            updated.id,
+            {"resume_text": "Led a completely different career across finance and tax operations."},
+        )
+    assert immutable.value.status_code == 409
+    assert updated.resume_text == original_text
+
+
+def test_version_identity_changes_only_with_new_content(db):
+    user = _user(db)
+    first = create_version(db, user.id, _body(label="First"))
+    second = create_version(
+        db,
+        user.id,
+        _body(
+            label="Second",
+            resume_text="Led tax operations and financial reporting across international organisations.",
+            is_master=False,
+        ),
+    )
+
+    first_summary = version_detail(first)
+    second_summary = version_detail(second)
+
+    assert first_summary["content_sha256"] != second_summary["content_sha256"]
+    assert len(first_summary["content_sha256"]) == 64
+
+
+def test_authenticated_upload_persists_one_selectable_version(db, monkeypatch):
+    import main
+    from auth import get_optional_user
+    from database import get_db
+    from resume_document import create_resume_document
+
+    user = _user(db, "upload-owner@example.test")
+    text = "Chartered Accountant with regional tax operations and finance automation experience."
+
+    async def parsed_upload(_file):
+        return SimpleNamespace(
+            parsed_resume={
+                "text": text,
+                "document": create_resume_document(text),
+                "file_type": "docx",
+                "word_count": len(text.split()),
+                "line_count": 1,
+                "parse_quality": {"label": "good"},
+            }
+        )
+
+    monkeypatch.setattr(main, "parse_uploaded_resume", parsed_upload)
+    main.app.dependency_overrides[get_db] = lambda: db
+    main.app.dependency_overrides[get_optional_user] = lambda: user
+    try:
+        response = TestClient(main.app).post(
+            "/api/resume/upload",
+            files={"file": ("Hui Shan Accounting Resume.docx", b"fixture", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+        )
+    finally:
+        main.app.dependency_overrides.pop(get_db, None)
+        main.app.dependency_overrides.pop(get_optional_user, None)
+
+    assert response.status_code == 200
+    saved = response.json()["resume_version"]
+    assert saved["label"] == "Hui Shan Accounting Resume"
+    assert len(saved["content_sha256"]) == 64
+    assert [item["id"] for item in list_versions(db, user.id)] == [saved["id"]]
 
 
 def test_archive_is_soft_and_removes_version_from_owned_library(db):

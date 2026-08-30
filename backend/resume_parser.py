@@ -10,7 +10,7 @@ import io
 import json
 import logging
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
@@ -441,6 +441,16 @@ def _extract_docx(file_bytes: bytes) -> tuple[str, list[dict]]:
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
             entries = archive.infolist()
+            names = {entry.filename for entry in entries}
+            if not {"[Content_Types].xml", "word/document.xml"}.issubset(names):
+                raise ValueError("File content does not match DOCX format.")
+            if any(
+                entry.flag_bits & 0x1
+                or PurePosixPath(entry.filename).is_absolute()
+                or ".." in PurePosixPath(entry.filename).parts
+                for entry in entries
+            ):
+                raise ValueError("DOCX contains unsafe archive entries.")
             if len(entries) > MAX_DOCX_ENTRIES:
                 raise ValueError("DOCX contains too many files.")
             total_compressed = sum(max(entry.compress_size, 1) for entry in entries)
@@ -491,6 +501,10 @@ def parse_resume(filename: str, content_type: str, file_bytes: bytes) -> dict:
     No truncation — returns everything.
     """
     file_type = validate_upload(filename, content_type, len(file_bytes))
+    if file_type == "pdf" and not file_bytes.startswith(b"%PDF-"):
+        raise ValueError("File content does not match PDF format.")
+    if file_type == "docx" and not file_bytes.startswith(b"PK\x03\x04"):
+        raise ValueError("File content does not match DOCX format.")
 
     possible_multi_column_layout = False
     page_count = 0

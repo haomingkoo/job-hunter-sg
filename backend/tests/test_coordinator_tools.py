@@ -236,7 +236,7 @@ class _ToolCallingConversationModel:
         )
 
 
-def _team(db, model, discovery):
+def _team(db, model, discovery, *, candidate_resume_text=None):
     from backend.tests.fakes import AllowingEditEvidenceValidator
     from backend.tests.test_recruitment_team_module import _candidate_profile_run
     from recruitment_team import RecruitmentTeam
@@ -253,7 +253,9 @@ def _team(db, model, discovery):
         RecordedActivityPublisher(),
         edit_evidence_validator=AllowingEditEvidenceValidator(),
         candidate_profiler_factory_provider=lambda: ScriptedCandidateProfilerFactory(
-            [_candidate_profile_run()]
+            [_candidate_profile_run(candidate_resume_text)]
+            if candidate_resume_text is not None
+            else [_candidate_profile_run()]
         ),
     )
 
@@ -360,54 +362,6 @@ def test_read_shortlist_hides_old_rationales_after_a_new_search():
         assert read_shortlist.invoke({})["published_matches"] == []
         assert write_shortlist.invoke({"matches": [new_match]})["accepted"] is True
         assert read_shortlist.invoke({})["published_matches"] == [new_match]
-
-
-def test_record_preferences_requires_latest_message_evidence_and_exact_removals():
-    from recruitment_team.interface import PreferenceFact
-    from recruitment_team.open_agent.context import assessment_context
-    from recruitment_team.open_agent.tools import record_preferences
-
-    stored = PreferenceFact(
-        field="constraints",
-        value="not computer vision",
-        evidence_quote="not computer vision",
-        source_run_id="run-1",
-        source_message_id=1,
-    )
-    context = _context(
-        _RecordingDiscovery([]),
-        preferences=(stored,),
-        latest_user_message="I am actually open to computer vision now.",
-    )
-
-    with assessment_context(context, initial_edits=context.proposed_edits):
-        accepted = record_preferences.invoke(
-            {
-                "updates": [
-                    {
-                        "field": "constraints",
-                        "value": "not computer vision",
-                        "evidence_quote": "open to computer vision",
-                        "operation": "remove",
-                    }
-                ]
-            }
-        )
-        invalid_quote = record_preferences.invoke(
-            {
-                "updates": [
-                    {
-                        "field": "constraints",
-                        "value": "not entry level",
-                        "evidence_quote": "I never said this",
-                    }
-                ]
-            }
-        )
-
-    assert accepted == {"accepted": True, "recorded": 1}
-    assert context.drafted_preferences[0].operation == "remove"
-    assert invalid_quote["accepted"] is False
 
 
 def test_write_plan_replaces_changed_steps_and_repeats_as_an_idempotent_noop():
@@ -645,7 +599,7 @@ def test_search_jobs_contract_does_not_claim_verified_direct_employers():
     assert "never describe the whole result set as direct employers" in prompt_contract
     assert "excluding known intermediaries is not proof" in prompt_contract
     assert "do not summarize employer relationships in the reply" in prompt_contract
-    assert "when they match a search default" in prompt_contract
+    assert "not a durable candidate-fact or preference write path" in prompt_contract
     assert "results come from direct employers" not in tool_contract
     assert "search direct employers by default" not in prompt_contract
 
@@ -1068,53 +1022,6 @@ def test_agent_publishes_an_ordered_explained_subset_of_search_results():
     assert [match["job_id"] for match in restored.case_facts.match_rationales] == [502, 503]
 
 
-def test_agent_recorded_preferences_survive_even_when_the_final_reply_has_none():
-    from recruitment_team.interface import StartThread
-    from recruitment_team.open_agent.tools import record_preferences
-
-    model = _ToolCallingConversationModel(
-        [
-            [
-                (
-                    record_preferences,
-                    {
-                        "updates": [
-                            {
-                                "field": "constraints",
-                                "value": "not computer vision",
-                                "evidence_quote": "Not computer vision",
-                            },
-                            {
-                                "field": "seniority",
-                                "value": "not entry level",
-                                "evidence_quote": "not entry level",
-                            },
-                        ]
-                    },
-                ),
-            ]
-        ]
-    )
-    sessions = _session_factory()
-    owner_id, resume_id = _owner_with_resume(sessions)
-
-    with sessions() as db:
-        receipt = _team(db, model, _RecordingDiscovery([])).execute(
-            owner_id,
-            StartThread(
-                resume_version_id=resume_id,
-                message="Not computer vision and not entry level.",
-            ),
-            idempotency_key="tool-preferences",
-        )
-        snapshot = _team(db, model, _RecordingDiscovery([])).snapshot(owner_id, receipt.thread_id)
-
-    assert [(fact.field, fact.value) for fact in snapshot.case_facts.preferences] == [
-        ("constraints", "not computer vision"),
-        ("seniority", "not entry level"),
-    ]
-
-
 def test_a_shortlist_the_model_never_saw_is_readable_on_the_next_turn():
     """The headline #146 scenario, minus the loop.
 
@@ -1215,11 +1122,31 @@ def test_two_searches_in_one_turn_merge_newest_first_and_dedupe_by_job_id():
     assert [job.job_id for job in snapshot.case_facts.recommendations] == [703, 701, 702]
     assert snapshot.case_facts.latest_search_query == "staff semiconductor yield engineer"
     assert snapshot.case_facts.latest_ranking_receipt is not None
+    assert snapshot.case_facts.latest_ranking_receipt.resume_version_id == resume_id
+    assert len(snapshot.case_facts.latest_ranking_receipt.resume_sha256) == 64
+    assert (
+        snapshot.case_facts.latest_ranking_receipt.candidate_profile_artifact_id
+        == snapshot.case_facts.candidate_profile_artifact_id
+    )
     assert [item.job_id for item in snapshot.case_facts.latest_ranking_receipt.jobs] == [703, 701]
     ranking_receipt = _raw_case_facts(sessions, receipt.thread_id)["latest_ranking_receipt"]
     assert ranking_receipt["query"] == "staff semiconductor yield engineer"
     assert ranking_receipt["candidate_generation_scope"] == "query_and_profile_search_union"
     assert [item["job_id"] for item in ranking_receipt["jobs"]] == [703, 701]
+
+    from models import RecruitmentThread
+
+    with sessions() as db:
+        thread = db.get(RecruitmentThread, receipt.thread_id)
+        facts = dict(thread.case_facts)
+        facts["candidate_profile_artifact_id"] = "failed-replacement-profile"
+        facts["candidate_profile_status"] = "failed"
+        thread.case_facts = facts
+        db.commit()
+        stale = _team(db, model, discovery).snapshot(owner_id, receipt.thread_id)
+
+    assert stale.case_facts.latest_ranking_receipt is None
+    assert stale.case_facts.recommendations == ()
 
 
 def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
@@ -1436,153 +1363,6 @@ def test_a_rewrite_drafted_in_a_turn_reaches_the_pending_table_and_stays_pending
         stored = db.query(ResumeVersion).filter(ResumeVersion.id == resume_id).one()
         db.query(ProposedResumeEdit).filter(ProposedResumeEdit.thread_id == receipt.thread_id).one()
         assert stored.resume_text == resume_text
-
-
-def test_candidate_confirmed_number_becomes_cited_pending_edit_and_survives_restart():
-    """A focused candidate answer is evidence, not a search preference.
-
-    Production asked for the number hidden behind `[N]`, then rejected the exact
-    answer as an invented metric and told the candidate to edit manually. This
-    drives the public module path and proves the quote, source message, pending
-    diff, and unchanged source resume all survive a new session.
-    """
-    from recruitment_team.interface import StartThread
-    from recruitment_team.open_agent.tools import (
-        propose_resume_edit,
-        record_candidate_evidence,
-    )
-
-    from resume_document import create_resume_document
-
-    sessions = _session_factory()
-    owner_id, resume_id = _owner_with_resume(sessions)
-    source = "EXPERIENCE\nGuided [N] junior engineers through code reviews."
-    with sessions() as db:
-        from models import ResumeVersion
-
-        resume = db.query(ResumeVersion).filter(ResumeVersion.id == resume_id).one()
-        resume.resume_text = source
-        db.commit()
-
-    class ConfirmedEvidenceModel:
-        def respond(self, messages, resume_text, current_preferences=(), context=None):
-            from recruitment_team.conversation_model import ModelReply
-
-            recorded = record_candidate_evidence.invoke(
-                {
-                    "evidence_quotes": ["mentored 3 junior engineers at DBS"],
-                }
-            )
-            block = create_resume_document(resume_text)["blocks"][-1]
-            drafted = propose_resume_edit.invoke(
-                {
-                    "block_id": block["id"],
-                    "rewrite": "Guided 3 junior engineers through code reviews.",
-                    "candidate_evidence_ids": recorded["evidence_ids"],
-                }
-            )
-            assert drafted["accepted"] is True
-            return ModelReply(content="Drafted one confirmed edit.", model_name="test-model")
-
-    with sessions() as db:
-        team = _team(db, ConfirmedEvidenceModel(), _RecordingDiscovery([]))
-        receipt = team.execute(
-            owner_id,
-            StartThread(
-                resume_version_id=resume_id,
-                message="Sarah confirms she mentored 3 junior engineers at DBS.",
-            ),
-            idempotency_key="confirmed-evidence-turn",
-        )
-
-    with sessions() as db:
-        team = _team(db, ConfirmedEvidenceModel(), _RecordingDiscovery([]))
-        snapshot = team.snapshot(owner_id, receipt.thread_id)
-        pending = team.proposed_edits(owner_id, receipt.thread_id)
-        from models import ProposedResumeEdit, ResumeVersion
-
-        stored = db.query(ResumeVersion).filter(ResumeVersion.id == resume_id).one()
-        edit_row = db.query(ProposedResumeEdit).filter(ProposedResumeEdit.thread_id == receipt.thread_id).one()
-
-    assert snapshot.case_facts.preferences == ()
-    assert len(snapshot.case_facts.confirmed_evidence) == 1
-    fact = snapshot.case_facts.confirmed_evidence[0]
-    assert fact.evidence_quote == "mentored 3 junior engineers at DBS"
-    assert fact.source_message_id == snapshot.messages[0].message_id
-    assert pending[0]["rewrite"] == "Guided 3 junior engineers through code reviews."
-    assert edit_row.evidence_ids == [fact.evidence_id]
-    assert pending[0]["evidence_refs"] == [
-        {
-            "evidence_id": fact.evidence_id,
-            "evidence_quote": fact.evidence_quote,
-        }
-    ]
-    assert stored.resume_text == source
-
-
-def test_candidate_evidence_quote_and_id_must_be_exact_before_editing():
-    from recruitment_team.open_agent.context import assessment_context
-    from recruitment_team.open_agent.tools import (
-        propose_resume_edit,
-        record_candidate_evidence,
-    )
-
-    document = {
-        "revision": "rev-1",
-        "blocks": [
-            {
-                "id": "b1",
-                "text": "Guided [N] junior engineers through code reviews.",
-                "section_key": "experience",
-                "entry_id": "e1",
-            }
-        ],
-    }
-    context = _context(
-        _RecordingDiscovery([]),
-        resume_document=document,
-        latest_user_message="I mentored 3 junior engineers.",
-        latest_user_message_id=17,
-        latest_user_run_id="run-17",
-    )
-
-    with assessment_context(context, initial_edits=context.proposed_edits):
-        invalid_quote = record_candidate_evidence.invoke(
-            {
-                "evidence_quotes": ["I mentored 4 junior engineers."],
-            }
-        )
-        unsupported = propose_resume_edit.invoke(
-            {
-                "block_id": "b1",
-                "rewrite": "Guided 3 junior engineers through code reviews.",
-            }
-        )
-        recorded = record_candidate_evidence.invoke(
-            {
-                "evidence_quotes": ["mentored 3 junior engineers"],
-            }
-        )
-        unknown_id = propose_resume_edit.invoke(
-            {
-                "block_id": "b1",
-                "rewrite": "Guided 3 junior engineers through code reviews.",
-                "candidate_evidence_ids": ["candidate_missing"],
-            }
-        )
-        accepted = propose_resume_edit.invoke(
-            {
-                "block_id": "b1",
-                "rewrite": "Guided 3 junior engineers through code reviews.",
-                "candidate_evidence_ids": recorded["evidence_ids"],
-            }
-        )
-
-    assert invalid_quote["accepted"] is False
-    assert "Unsupported numeric facts: 3" in unsupported["reason"]
-    assert unknown_id["accepted"] is False
-    assert accepted["accepted"] is True
-    assert accepted["application_status"] == "pending_user_review"
 
 
 def test_an_unknown_block_refusal_names_the_blocks_the_agent_may_edit():

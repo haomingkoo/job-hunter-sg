@@ -18,9 +18,7 @@ from ..assessment_contracts import (
     render_target_synthesis,
     validate_target_synthesis,
 )
-from ..conversation_model import PreferenceUpdatePayload
 from ..fair_hiring import mentions_protected_status
-from ..interface import ConfirmedEvidenceFact, PreferenceUpdate, confirmed_evidence_fact
 from ..resume_edit_evidence import ResumeEditEvidenceRequest
 from . import context
 from .evidence_view import candidate_evidence_view, target_role_view
@@ -32,7 +30,6 @@ _NO_CONVERSATION = {
     "failure_type": "business",
     "reason": "No active conversation context.",
 }
-
 
 class _ResumeMatch(BaseModel):
     statement: str = Field(min_length=1)
@@ -56,14 +53,6 @@ class _RankedMatch(BaseModel):
 
 class _WriteShortlistPayload(BaseModel):
     matches: list[_RankedMatch] = Field(min_length=1)
-
-
-class _RecordPreferencesPayload(BaseModel):
-    updates: list[PreferenceUpdatePayload] = Field(min_length=1)
-
-
-class _RecordCandidateEvidencePayload(BaseModel):
-    evidence_quotes: list[str] = Field(min_length=1)
 
 
 class _PlanStep(BaseModel):
@@ -276,99 +265,6 @@ def read_shortlist() -> dict:
                 else list(conversation.published_matches)
             )
         ),
-    }
-
-
-@tool(args_schema=_RecordPreferencesPayload)
-def record_preferences(updates: list[PreferenceUpdatePayload]) -> dict:
-    """Record preferences explicitly stated or withdrawn in the latest message.
-
-    Use one update per independently retractable fact. evidence_quote must be an
-    exact phrase from the candidate's latest message. A removal's value must
-    exactly match the stored preference it withdraws. Put an independent exclusion
-    such as "not entry level" in constraints; use seniority for a desired level or
-    career track such as "senior individual contributor".
-    """
-    from ..coordinator.context import current_conversation
-
-    conversation = current_conversation()
-    if conversation is None:
-        return dict(_NO_CONVERSATION)
-    parsed = [PreferenceUpdatePayload.model_validate(update) for update in updates]
-    invalid_quotes = [
-        update.evidence_quote
-        for update in parsed
-        if update.evidence_quote.strip() not in conversation.latest_user_message
-    ]
-    if invalid_quotes:
-        return {
-            "accepted": False,
-            "reason": "Every preference needs an exact quote from the latest message.",
-            "invalid_quotes": invalid_quotes,
-        }
-    stored = {(fact.field, fact.value) for fact in conversation.preferences}
-    invalid_removals = [
-        {"field": update.field, "value": update.value}
-        for update in parsed
-        if update.operation == "remove" and (update.field, update.value.strip()) not in stored
-    ]
-    if invalid_removals:
-        return {
-            "accepted": False,
-            "reason": "A removal must exactly match a stored preference.",
-            "invalid_removals": invalid_removals,
-        }
-    conversation.drafted_preferences.clear()
-    conversation.drafted_preferences.extend(
-        PreferenceUpdate(
-            field=update.field,
-            value=update.value.strip(),
-            evidence_quote=update.evidence_quote.strip(),
-            operation=update.operation,
-        )
-        for update in parsed
-    )
-    return {"accepted": True, "recorded": len(parsed)}
-
-
-@tool(args_schema=_RecordCandidateEvidencePayload)
-def record_candidate_evidence(evidence_quotes: list[str]) -> dict:
-    """Store factual evidence explicitly stated in the candidate's latest message.
-
-    Each quote must occur exactly in the latest message. Candidate evidence is not a
-    role, salary, location, seniority, or constraint preference. The returned IDs can
-    be cited by propose_resume_edit in this turn or a later turn.
-    """
-    from ..coordinator.context import current_conversation
-
-    conversation = current_conversation()
-    if conversation is None:
-        return dict(_NO_CONVERSATION)
-    quotes = [quote.strip() for quote in evidence_quotes if quote.strip()]
-    invalid = [quote for quote in quotes if quote not in conversation.latest_user_message]
-    if not quotes or invalid:
-        return {
-            "accepted": False,
-            "reason": "Every candidate-evidence quote must occur exactly in the latest message.",
-            "invalid_quotes": invalid,
-        }
-    known = {fact.evidence_id for fact in (*conversation.confirmed_evidence, *conversation.drafted_confirmed_evidence)}
-    recorded: list[ConfirmedEvidenceFact] = []
-    for quote in quotes:
-        fact = confirmed_evidence_fact(
-            quote,
-            source_run_id=conversation.latest_user_run_id,
-            source_message_id=conversation.latest_user_message_id,
-        )
-        if fact.evidence_id in known:
-            continue
-        conversation.drafted_confirmed_evidence.append(fact)
-        recorded.append(fact)
-        known.add(fact.evidence_id)
-    return {
-        "accepted": True,
-        "recorded": len(recorded),
-        "evidence_ids": [fact.evidence_id for fact in recorded],
     }
 
 
@@ -643,8 +539,8 @@ def propose_resume_edit(
     `block_id` must be a canonical block ID visible in the active resume
     document. `rewrite` must replace that block's text without introducing
     new facts unless candidate_evidence_ids cites exact profile fields returned by
-    read_candidate_evidence or candidate-confirmed evidence IDs returned by
-    record_candidate_evidence. It must stay within one block (no line breaks) --
+    read_candidate_evidence or evidence confirmed through the assessment workflow.
+    It must stay within one block (no line breaks) --
     this tool cannot insert or delete a block. A valid proposal remains pending
     until the candidate explicitly accepts it.
     """
@@ -689,10 +585,7 @@ def propose_resume_edit(
     available_evidence.update(
         {
             fact.evidence_id: fact.evidence_quote
-            for fact in (
-                *getattr(request, "confirmed_evidence", ()),
-                *getattr(request, "drafted_confirmed_evidence", ()),
-            )
+            for fact in getattr(request, "confirmed_evidence", ())
         }
     )
     unknown_evidence_ids = [evidence_id for evidence_id in requested_ids if evidence_id not in available_evidence]

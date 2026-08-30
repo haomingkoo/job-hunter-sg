@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import base64
+import json
 import secrets
 from contextlib import nullcontext
 from dataclasses import asdict
@@ -54,6 +54,8 @@ MAX_NEGOTIATION_ROUNDS = 20
 MIN_AGENT_DRAFT_CHARS = 50
 MAX_AGENT_DRAFT_LABEL_ROLE_CHARS = 80
 SUBMITTED_ARTIFACT_TOKEN_BYTES = 12
+MAX_SUBMITTED_RESUME_ARTIFACTS = 20
+MAX_SUBMITTED_RESUME_HISTORY_BYTES = 1_000_000
 
 APPLICATION_OUTCOME_GROUPS = {
     "submitted": {"applied"},
@@ -91,6 +93,14 @@ def ensure_resume_version_owner(db: Session, user_id: int, version_id: int | Non
 
 
 def workspace_response(tracked: TrackedJob) -> dict:
+    role_metadata = dict(tracked.role_metadata or {})
+    artifacts = role_metadata.get(SUBMITTED_RESUME_ARTIFACTS_METADATA_KEY)
+    if isinstance(artifacts, list):
+        role_metadata[SUBMITTED_RESUME_ARTIFACTS_METADATA_KEY] = [
+            {key: value for key, value in artifact.items() if key != "content_base64"}
+            for artifact in artifacts
+            if isinstance(artifact, dict)
+        ]
     return {
         "id": tracked.id,
         "user_id": tracked.user_id,
@@ -106,7 +116,7 @@ def workspace_response(tracked: TrackedJob) -> dict:
         "notes": tracked.notes or "",
         "scraped_job_id": tracked.scraped_job_id,
         "resume_version_id": tracked.resume_version_id,
-        "role_metadata": tracked.role_metadata or {},
+        "role_metadata": role_metadata,
         "stage_history": tracked.stage_history or [],
         "created_at": tracked.created_at,
         "updated_at": tracked.updated_at,
@@ -866,12 +876,21 @@ def save_submitted_resume(
         "word_count": parsed.get("word_count", 0),
         "line_count": parsed.get("line_count", 0),
         "parse_quality": parsed.get("parse_quality", {}),
-        "content_base64": base64.b64encode(file_bytes).decode("ascii"),
         "created_at": now.isoformat(),
     }
     role_metadata = dict(tracked.role_metadata or {})
     history = list(role_metadata.get(SUBMITTED_RESUME_ARTIFACTS_METADATA_KEY) or [])
+    if len(history) >= MAX_SUBMITTED_RESUME_ARTIFACTS:
+        raise HTTPException(
+            status_code=409,
+            detail="Submitted resume history limit reached for this application",
+        )
     history.append(artifact)
+    if len(json.dumps(history, separators=(",", ":")).encode()) > MAX_SUBMITTED_RESUME_HISTORY_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Submitted resume history is too large for this application",
+        )
     role_metadata[SUBMITTED_RESUME_ARTIFACTS_METADATA_KEY] = history
     role_metadata[SUBMITTED_RESUME_METADATA_KEY] = {
         key: artifact[key]

@@ -150,18 +150,23 @@ def _candidate_profile_evaluation():
     }
 
 
-def _candidate_profile_run():
+def _candidate_profile_run(
+    resume_text: str = "Built a production agent platform with traced model and tool calls.",
+):
     from recruitment_team.candidate_profile import (
         CandidateEvidenceProfile,
         CandidateProfileField,
         CandidateProfileRun,
     )
 
+    from resume_document import create_resume_document
+
+    document = create_resume_document(resume_text)
     return CandidateProfileRun(
         profile=CandidateEvidenceProfile(
             profile_version="candidate-evidence-profile-v3",
-            resume_document_id="d_test",
-            resume_revision="r_test",
+            resume_document_id=document["document_id"],
+            resume_revision=document["revision"],
             fields=(
                 CandidateProfileField(
                     field_id="demonstrated_agent_platform",
@@ -334,6 +339,91 @@ def test_two_turn_thread_persists_through_the_module_interface():
         for span in telemetry.spans
         if span.name in {"command", "model"}
     )
+
+
+def test_mutated_legacy_resume_binding_blocks_reads_and_model_calls():
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.errors import InvalidCommand
+    from recruitment_team.interface import SendMessage, StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    model = ScriptedConversationModel(["Initial reply.", "Must not run."])
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            model,
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Start."),
+            "binding-start",
+        )
+        resume = db.get(ResumeVersion, resume_id)
+        resume.resume_text = "Chartered Accountant with regional tax and finance experience."
+        db.commit()
+
+        snapshot = team.snapshot(owner_id, started.thread_id)
+        assert snapshot.case_facts.resume_binding_status == "mismatch"
+        with pytest.raises(InvalidCommand, match="resume_binding_mismatch"):
+            team.execute(
+                owner_id,
+                SendMessage(thread_id=started.thread_id, message="Continue."),
+                "binding-mismatch",
+            )
+
+    assert model.call_count == 1
+
+
+def test_hashless_legacy_thread_remains_readable_for_recovery():
+    from models import RecruitmentThread
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.interface import StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Initial reply."]),
+            _discovery(),
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Start."),
+            "legacy-hash-start",
+        )
+        thread = db.get(RecruitmentThread, started.thread_id)
+        facts = dict(thread.case_facts)
+        facts.pop("resume_sha256")
+        thread.case_facts = facts
+        db.commit()
+
+        snapshot = team.snapshot(owner_id, started.thread_id)
+
+    assert snapshot.case_facts.resume_binding_status == "mismatch"
+    assert snapshot.case_facts.resume_sha256 == ""
+    assert snapshot.messages[-1].content == "Initial reply."
+
+
+def test_resume_binding_conflict_has_a_stable_stream_error_code():
+    from recruitment_team.errors import ResumeBindingConflict, safe_terminal_error_payload
+
+    payload = safe_terminal_error_payload(ResumeBindingConflict("Start a new conversation."))
+
+    assert payload["code"] == "resume_binding_mismatch"
+    assert payload["error_type"] == "ResumeBindingConflict"
 
 
 def test_thread_snapshot_pages_messages_from_newest_to_oldest_without_losing_order():
@@ -1927,6 +2017,12 @@ def test_search_shortlist_and_target_are_source_backed_and_durable():
     assert restored.case_facts.latest_search_query == "a refined later search"
     assert restored.case_facts.latest_ranking_receipt is not None
     assert restored.case_facts.latest_ranking_receipt.candidate_profile_used is True
+    assert restored.case_facts.latest_ranking_receipt.resume_version_id == resume_id
+    assert len(restored.case_facts.latest_ranking_receipt.resume_sha256) == 64
+    assert (
+        restored.case_facts.latest_ranking_receipt.candidate_profile_artifact_id
+        == restored.case_facts.candidate_profile_artifact_id
+    )
     assert restored.case_facts.latest_ranking_receipt.candidate_generation_scope == "query_search_only"
     assert restored.case_facts.recommendations == (later_job,)
     assert restored.case_facts.shortlisted_jobs == (job,)
@@ -1972,6 +2068,70 @@ def test_search_shortlist_and_target_are_source_backed_and_durable():
     assert profile_span.attributes["comparable_job_count"] == 0
     assert profile_span.attributes["candidate_profile_version"] == "candidate-evidence-profile-v3"
     assert profile_span.attributes["candidate_profile_field_count"] == 1
+
+
+def test_stale_profile_policy_hides_derived_jobs_and_blocks_actions():
+    from models import CandidateProfileArtifact
+    from recruitment_team import RecruitmentTeam, ScriptedConversationModel
+    from recruitment_team.activity_publisher import IgnoreActivityPublisher
+    from recruitment_team.candidate_profile import ScriptedCandidateProfilerFactory
+    from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
+    from recruitment_team.errors import InvalidCommand
+    from recruitment_team.interface import BuildCandidateProfile, SearchJobs, ShortlistJob, StartThread
+    from recruitment_team.telemetry import RecordedTelemetry
+
+    sessions = _session_factory()
+    owner_id, resume_id = _owner_with_resume(sessions)
+    job = _job_snapshot()
+    discovery = ScriptedDiscovery([
+        JobSearchResult(
+            query="agent systems",
+            jobs=(job,),
+            candidate_count=1,
+            visible_candidate_count=1,
+            truncated=False,
+            valid_empty=False,
+        )
+    ])
+
+    with sessions() as db:
+        team = RecruitmentTeam(
+            db,
+            ScriptedConversationModel(["Ready."]),
+            discovery,
+            _role_profiler(),
+            RecordedTelemetry(),
+            IgnoreActivityPublisher(),
+            ScriptedCandidateProfilerFactory([_candidate_profile_run()]),
+        )
+        started = team.execute(
+            owner_id,
+            StartThread(resume_version_id=resume_id, message="Find a role."),
+            "stale-policy-start",
+        )
+        team.execute(
+            owner_id,
+            BuildCandidateProfile(thread_id=started.thread_id),
+            "stale-policy-profile",
+        )
+        team.execute(
+            owner_id,
+            SearchJobs(thread_id=started.thread_id, query="agent systems"),
+            "stale-policy-search",
+        )
+        artifact = db.query(CandidateProfileArtifact).filter_by(user_id=owner_id).one()
+        artifact.prompt_version = "retired-profile-policy"
+        db.commit()
+
+        snapshot = team.snapshot(owner_id, started.thread_id)
+        assert snapshot.case_facts.recommendations == ()
+        assert snapshot.case_facts.latest_ranking_receipt is None
+        with pytest.raises(InvalidCommand, match="job was not returned"):
+            team.execute(
+                owner_id,
+                ShortlistJob(thread_id=started.thread_id, job_id=job.job_id),
+                "stale-policy-shortlist",
+            )
 
 
 def test_target_role_profile_resumes_rejected_correction_after_restart_without_partial_facts():
@@ -5182,9 +5342,16 @@ def test_receipt_reports_the_workflow_state_the_run_actually_ended_in():
 
 def test_a_paused_assessment_keeps_pre_judge_specialist_work_private():
     """Pending specialist work is resumable state, not a candidate-facing result."""
+    import hashlib
     import uuid
+    from dataclasses import asdict
 
     from models import CandidateProfileArtifact, RecruitmentThread, TargetAssessmentArtifact
+    from recruitment_team.candidate_profile import (
+        CANDIDATE_PROFILE_DECOMPOSITION_VERSION,
+        candidate_profile_execution_policy,
+    )
+    from recruitment_team.prompts import CANDIDATE_PROFILE_PROMPT_VERSION
     from recruitment_team import RecruitmentTeam, ScriptedConversationModel
     from recruitment_team.activity_publisher import RecordedActivityPublisher
     from recruitment_team.interface import StartThread
@@ -5206,18 +5373,25 @@ def test_a_paused_assessment_keeps_pre_judge_specialist_work_private():
 
         verdicts = [{"persona_id": "recruiter", "status": "completed",
                      "submission": {"summary": "Strong on platform work.", "score": 71}}]
+        profile_run = _candidate_profile_run()
+        target = _job_snapshot()
         profile_id = str(uuid.uuid4())
         db.add(CandidateProfileArtifact(
             id=profile_id, user_id=owner_id, resume_version_id=resume_id,
-            checkpoint_id="c1", prompt_version="p1", decomposition_version="d1",
-            model_name="scripted", execution_policy={}, status="completed", scopes={},
+            checkpoint_id="c1", prompt_version=CANDIDATE_PROFILE_PROMPT_VERSION,
+            decomposition_version=CANDIDATE_PROFILE_DECOMPOSITION_VERSION,
+            model_name="scripted", execution_policy=candidate_profile_execution_policy(),
+            status="completed", scopes={},
+            profile=asdict(profile_run.profile), evaluation=profile_run.evaluation,
         ))
         artifact_id = str(uuid.uuid4())
         db.add(TargetAssessmentArtifact(
             id=artifact_id, user_id=owner_id, thread_id=started.thread_id,
             run_id=started.run_id, resume_version_id=resume_id,
             candidate_profile_artifact_id=profile_id, target_job_id=101,
-            target_snapshot_sha256="x" * 64, status="paused",
+            target_snapshot_sha256=hashlib.sha256(
+                json.dumps(asdict(target), sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(), status="paused",
             specialist_runs=[], synthesis="", execution_policy={},
             pending_specialist_runs=verdicts,
         ))
@@ -5225,7 +5399,16 @@ def test_a_paused_assessment_keeps_pre_judge_specialist_work_private():
             RecruitmentThread.id == started.thread_id
         ).one()
         facts = dict(thread.case_facts)
+        facts["candidate_profile_artifact_id"] = profile_id
+        facts["candidate_profile_status"] = "completed"
+        facts["selected_target"] = asdict(target)
         facts["target_assessment_artifact_id"] = artifact_id
+        facts["latest_ranking_receipt"] = {
+            "resume_version_id": resume_id,
+            "resume_sha256": facts["resume_sha256"],
+            "candidate_profile_used": True,
+            "candidate_profile_artifact_id": profile_id,
+        }
         thread.case_facts = facts
         db.commit()
 

@@ -546,15 +546,11 @@ records `detail["failure_type"]` on a failed activity event, and re-raises
 
 ### Preference updates on the new path
 
-**Superseded by the tool-authoritative coordinator contract.** The coordinator now writes
-preferences only through `record_preferences`, which validates exact quotes before placing
-updates in the conversation context. `ConversationReply` carries prose and uncertainty,
-not a second preference-write channel. Adapter `ModelReply.preference_updates` remains for
-non-agent conversation adapters, and the recruitment-team boundary still validates it.
-
-The tool can reject an unevidenced batch without losing the rest of the turn. The model
-may correct the call using the returned validation error, and only accepted tool output
-reaches `case_facts["preferences"]`.
+The deep-agent conversation path does not persist preferences from free text. It may use
+the current message to answer the turn, but durable candidate facts come from the bound
+resume snapshot and validated workflow artifacts. Adapter `ModelReply.preference_updates`
+remains for non-agent conversation adapters, and the recruitment-team boundary validates
+those updates before writing them to `case_facts["preferences"]`.
 
 ### `search_query` stops being a request
 

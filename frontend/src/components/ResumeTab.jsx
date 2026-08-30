@@ -1079,6 +1079,11 @@ export default function ResumeTab({
       setShowSetupPanel(false);
       if (wizardStep === 1) setWizardStep(2);
       applyResumeText(nextText, { rescore: true, clearRewrites: true });
+      if (data.resume_version?.id) {
+        setMatchResumeVersionId(data.resume_version.id);
+        localStorage.setItem(`jobhunter:pending-resume-version:${user.id}`, String(data.resume_version.id));
+        await fetchVersions();
+      }
     } catch (err) {
       setUploadError(err.message || "Failed to upload file. Please try again.");
     } finally {

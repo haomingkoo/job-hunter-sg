@@ -153,6 +153,9 @@ class CaseFacts:
     resume_version_id: int
     resume_label: str
     resume_sha256: str
+    resume_word_count: int = 0
+    resume_created_at: str = ""
+    resume_binding_status: str = "verified"
     latest_search_query: str = ""
     latest_ranking_receipt: RankingReceipt | None = None
     recommendations: tuple[JobSnapshot, ...] = ()
@@ -256,3 +259,6 @@ class ThreadSummary:
     resume_label: str
     last_message: str | None
     updated_at: datetime
+    resume_sha256: str = ""
+    resume_word_count: int = 0
+    resume_created_at: str = ""
