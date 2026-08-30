@@ -50,7 +50,9 @@ Do not silently refresh a historical record into a current instruction.
 The following explain intended designs and past decisions. They do not prove
 that every described feature is deployed:
 
-- [AI recruitment team PRD](v3-ai-recruitment-team-prd.md)
+- [resume-bound Recruitment Team PRD](resume-bound-recruitment-prd.md)
+- [immutable resume-bound thread ADR](adr/0001-immutable-resume-bound-recruitment-threads.md)
+- [original AI recruitment team PRD](v3-ai-recruitment-team-prd.md)
 - [retry and recovery policy](v3-retry-recovery-policy.md)
 - [study-first design](v4-141-study-first.md)
 - [coordinator-loop design](v4-146-coordinator-loop.md)

@@ -19,6 +19,10 @@ class InvalidCommand(RecruitmentTeamError):
     pass
 
 
+class ResumeBindingConflict(InvalidCommand):
+    code = "resume_binding_mismatch"
+
+
 class ServiceUnavailable(RecruitmentTeamError):
     """A recruitment dependency failed with one deterministic recovery decision."""
 
@@ -77,6 +81,8 @@ def safe_terminal_error_payload(error: BaseException) -> dict:
             else "The recruitment team could not complete this turn."
         ),
     }
+    if isinstance(error, ResumeBindingConflict):
+        payload["code"] = error.code
     if isinstance(error, ServiceUnavailable):
         payload.update({
             "failure_type": error.failure_type,

@@ -26,8 +26,6 @@ _specialist_slots = threading.BoundedSemaphore(
 )
 _STATE_DEPENDENT_RETRY_TOOLS = frozenset({"submit_target_assessment_synthesis"})
 _HIDE_AFTER_ACCEPTED_TOOLS = frozenset({
-    "record_candidate_evidence",
-    "record_preferences",
     "read_candidate_evidence",
     "read_shortlist",
     "read_target_job",

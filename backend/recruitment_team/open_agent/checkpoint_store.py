@@ -21,12 +21,12 @@ from psycopg_pool import ConnectionPool
 import config
 from database import DATABASE_URL
 
-from ..conversation_model import ConversationReply, PreferenceUpdatePayload
+from ..conversation_model import ConversationReply
 
 
 def _serializer() -> JsonPlusSerializer:
     return JsonPlusSerializer(
-        allowed_msgpack_modules=(ConversationReply, PreferenceUpdatePayload),
+        allowed_msgpack_modules=(ConversationReply,),
     )
 
 

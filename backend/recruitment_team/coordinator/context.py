@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from ..candidate_profile import CandidateEvidenceProfile
 from ..discovery import DiscoveryPort, JobSearchResult, JobSnapshot
-from ..interface import ConfirmedEvidenceFact, PreferenceFact, PreferenceUpdate
+from ..interface import ConfirmedEvidenceFact, PreferenceFact
 from ..job_recommender import JobRecommender
 from ..role_success import RoleSuccessProfile
 from ..resume_edit_evidence import ResumeEditEvidenceValidator
@@ -37,10 +37,6 @@ class ConversationContext:
     latest_user_message_id: int = 0
     latest_user_run_id: str = ""
     confirmed_evidence: tuple[ConfirmedEvidenceFact, ...] = ()
-    drafted_confirmed_evidence: list[ConfirmedEvidenceFact] = field(
-        default_factory=list,
-        compare=False,
-    )
     # The LangGraph thread id of a graph this thread left paused on
     # ask_candidate, or "" when nothing is pending. Read from case_facts; the
     # reply reports a new one back the same way.
@@ -49,7 +45,6 @@ class ConversationContext:
     # so the tools stay free of the ORM and the write lands in the same
     # transaction as the assistant message.
     search_results: list[JobSearchResult] = field(default_factory=list, compare=False)
-    drafted_preferences: list[PreferenceUpdate] = field(default_factory=list, compare=False)
     drafted_matches: list[dict[str, Any]] = field(default_factory=list, compare=False)
     drafted_plan: list[dict[str, str]] = field(default_factory=list, compare=False)
     proposed_edits: list[dict[str, Any]] = field(default_factory=list, compare=False)

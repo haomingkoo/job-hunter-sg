@@ -167,6 +167,13 @@ describe("RecruitmentTeamPanel", () => {
       root.render(<RecruitmentTeamPanel user={{ id: 42 }} />);
     });
 
+    const resumeSelect = container.querySelector("select");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")
+        .set.call(resumeSelect, "7");
+      resumeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
     const textarea = container.querySelector("textarea");
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")
@@ -316,6 +323,12 @@ describe("RecruitmentTeamPanel", () => {
     });
 
     await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+    const resumeSelect = container.querySelector("select");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")
+        .set.call(resumeSelect, "7");
+      resumeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
     const autopilot = [...container.querySelectorAll("button")]
       .find((button) => button.textContent === "Find roles for me");
     await act(async () => autopilot.click());
@@ -473,6 +486,13 @@ describe("RecruitmentTeamPanel", () => {
       root.render(<RecruitmentTeamPanel user={{ id: 42 }} />);
     });
 
+    const resumeSelect = container.querySelector("select");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")
+        .set.call(resumeSelect, "7");
+      resumeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
     const textarea = container.querySelector("textarea");
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")
@@ -491,9 +511,8 @@ describe("RecruitmentTeamPanel", () => {
 
     expect(localStorage.getItem("jobhunter:recruitment-thread:42")).toBeNull();
     expect(container.textContent).not.toContain("I will focus on evidence-backed matches.");
-    // The empty state now offers a choice rather than an empty box: autopilot, or
-    // say what you want. Either way it names the resume it will work from.
-    expect(container.textContent).toContain("Find roles for me");
+    // A new conversation no longer inherits the previous resume selection.
+    expect(container.textContent).toContain("Choose a resume…");
     expect(threadsFetchCount).toBe(fetchesBeforeReset);
   });
 
@@ -531,6 +550,261 @@ describe("RecruitmentTeamPanel", () => {
     expect(container.textContent).toContain("Welcome back.");
     expect(localStorage.getItem("jobhunter:recruitment-thread:42"))
       .toBe("persisted-thread");
+  });
+
+  it("prefers a newly uploaded resume over silently restoring an older thread", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "old-semiconductor-thread");
+    localStorage.setItem("jobhunter:pending-resume-version:42", "19");
+    streamRecruitmentCommand.mockResolvedValue({
+      thread_id: "hui-thread",
+      run_id: "hui-run",
+      status: "completed",
+    });
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") {
+        return response([{
+          id: 19,
+          label: "Hui Shan accounting resume",
+          word_count: 800,
+          content_sha256: "a".repeat(64),
+        }]);
+      }
+      if (path === "/api/recruitment-team/threads") return response([]);
+      if (path === "/api/recruitment-team/threads/hui-thread") {
+        return response({
+          thread_id: "hui-thread",
+          workflow_state: "exploring",
+          case_facts: {
+            resume_version_id: 19,
+            resume_label: "Hui Shan accounting resume",
+            resume_sha256: "a".repeat(64),
+          },
+          messages: [],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/hui-thread/events") return response([]);
+      if (path === "/api/recruitment-team/threads/hui-thread/proposed-edits") return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+
+    expect(container.textContent).toContain("Hui Shan accounting resume");
+    expect(container.querySelector("select").value).toBe("19");
+    expect(apiFetch).not.toHaveBeenCalledWith(
+      "/api/recruitment-team/threads/old-semiconductor-thread",
+    );
+
+    const autopilot = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "Find roles for me");
+    await act(async () => autopilot.click());
+
+    expect(streamRecruitmentCommand).toHaveBeenCalledWith(
+      "/api/recruitment-team/threads/stream",
+      expect.objectContaining({ resume_version_id: 19 }),
+      expect.any(Function),
+    );
+    expect(localStorage.getItem("jobhunter:pending-resume-version:42")).toBeNull();
+  });
+
+  it("keeps an accepted derived resume selected across reload", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "source-thread");
+    apiFetch.mockImplementation(async (path, options = {}) => {
+      if (path === "/api/resume/versions") {
+        return response([
+          { id: 7, label: "Hui Shan accounting resume" },
+          { id: 19, label: "Hui Shan tailored for Senior Accountant" },
+        ]);
+      }
+      if (path === "/api/recruitment-team/threads/source-thread") {
+        return response({
+          thread_id: "source-thread",
+          status: "active",
+          workflow_state: "target_selected",
+          case_facts: { resume_version_id: 7, resume_label: "Hui Shan accounting resume" },
+          messages: [],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/source-thread/events") return response([]);
+      if (path === "/api/recruitment-team/threads/source-thread/proposed-edits") {
+        return response([{
+          id: "edit-1",
+          applicable: true,
+          section_key: "experience",
+          original: "Prepared monthly accounts.",
+          rewrite: "Prepared monthly accounts and reconciliations.",
+          evidence_refs: [],
+        }]);
+      }
+      if (
+        path === "/api/recruitment-team/threads/source-thread/proposed-edits/accept"
+        && options.method === "POST"
+      ) {
+        return response({
+          resume_version_id: 19,
+          label: "Hui Shan tailored for Senior Accountant",
+          stale_edit_ids: [],
+        });
+      }
+      if (path === "/api/recruitment-team/threads") return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent === "Accept all 1")
+        .click();
+    });
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent === "Start conversation with this version")
+        .click();
+    });
+
+    expect(localStorage.getItem("jobhunter:recruitment-thread:42")).toBeNull();
+    expect(localStorage.getItem("jobhunter:pending-resume-version:42")).toBe("19");
+    expect(container.querySelector("select").value).toBe("19");
+
+    await act(async () => root.unmount());
+    root = createRoot(container);
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+
+    expect(container.querySelector("select").value).toBe("19");
+    expect(container.textContent).toContain("Hui Shan tailored for Senior Accountant");
+  });
+
+  it("shows the exact resume and ranking provenance after reload and in history", async () => {
+    const savedAt = "2026-08-30T01:02:03Z";
+    const savedDate = new Date(savedAt).toLocaleDateString();
+    const resumeHash = "a".repeat(64);
+    localStorage.setItem("jobhunter:recruitment-thread:42", "accounting-thread");
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") {
+        return response([{ id: 19, label: "Hui Shan accounting resume" }]);
+      }
+      if (path === "/api/recruitment-team/threads/accounting-thread") {
+        return response({
+          thread_id: "accounting-thread",
+          title: "Senior accounting roles",
+          status: "active",
+          workflow_state: "exploring",
+          case_facts: {
+            resume_version_id: 19,
+            resume_label: "Hui Shan accounting resume",
+            resume_sha256: resumeHash,
+            resume_word_count: 1258,
+            resume_created_at: savedAt,
+            latest_ranking_receipt: {
+              candidate_profile_used: true,
+              resume_version_id: 19,
+              resume_sha256: resumeHash,
+              candidate_profile_artifact_id: "profile-accounting-1234",
+            },
+          },
+          messages: [{ role: "assistant", content: "I found accounting roles." }],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/accounting-thread/events") return response([]);
+      if (path === "/api/recruitment-team/threads/accounting-thread/proposed-edits") return response([]);
+      if (path === "/api/recruitment-team/threads") {
+        return response([{
+          thread_id: "accounting-thread",
+          title: "Senior accounting roles",
+          status: "active",
+          last_message: "I found accounting roles.",
+          resume_version_id: 19,
+          resume_label: "Hui Shan accounting resume",
+          resume_sha256: resumeHash,
+          resume_word_count: 1258,
+          resume_created_at: savedAt,
+        }]);
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+
+    expect(container.textContent).toContain(
+      `Resume: Hui Shan accounting resume · v19 · aaaaaaaaaa · 1258 words · saved ${savedDate}`,
+    );
+    expect(container.textContent).toContain("Recommendations use resume v19 · aaaaaaaaaa");
+    expect(container.textContent).toContain("profile profile-");
+
+    await act(async () => {
+      [...container.querySelectorAll("button")]
+        .find((button) => button.textContent.includes("Conversations"))
+        .click();
+    });
+    expect(container.textContent).toContain(
+      `Hui Shan accounting resume · v19 · aaaaaaaaaa · 1258 words · saved ${savedDate}`,
+    );
+  });
+
+  it("recovers a streamed resume-binding conflict without exposing stale jobs", async () => {
+    localStorage.setItem("jobhunter:recruitment-thread:42", "changed-resume-thread");
+    let refreshCount = 0;
+    streamRecruitmentCommand.mockRejectedValue(Object.assign(
+      new Error("This conversation uses a changed resume."),
+      { detail: { code: "resume_binding_mismatch" } },
+    ));
+    apiFetch.mockImplementation(async (path) => {
+      if (path === "/api/resume/versions") {
+        return response([{ id: 7, label: "Original resume" }]);
+      }
+      if (path === "/api/recruitment-team/threads/changed-resume-thread") {
+        refreshCount += 1;
+        return response({
+          thread_id: "changed-resume-thread",
+          title: "Original conversation",
+          status: "active",
+          workflow_state: "exploring",
+          case_facts: refreshCount === 1 ? {
+            resume_version_id: 7,
+            resume_label: "Original resume",
+            resume_binding_status: "verified",
+            recommendations: [{
+              job_id: 91,
+              title: "Stale Semiconductor Engineer",
+              company: "Old Employer",
+              location: "Singapore",
+              source: { source: "fixture", url: "https://example.test/91" },
+            }],
+          } : {
+            resume_version_id: 7,
+            resume_label: "Original resume",
+            resume_binding_status: "mismatch",
+            recommendations: [],
+          },
+          messages: [
+            { role: "user", content: "Find accounting work." },
+            { role: "assistant", content: "Earlier history remains readable." },
+          ],
+        });
+      }
+      if (path === "/api/recruitment-team/threads/changed-resume-thread/events") return response([]);
+      if (path === "/api/recruitment-team/threads/changed-resume-thread/proposed-edits") return response([]);
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await act(async () => root.render(<RecruitmentTeamPanel user={{ id: 42 }} />));
+    expect(container.textContent).toContain("Stale Semiconductor Engineer");
+
+    const textarea = container.querySelector("textarea");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")
+        .set.call(textarea, "Continue with accounting roles.");
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => container.querySelector("form").dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    ));
+
+    expect(refreshCount).toBe(2);
+    expect(container.textContent).toContain("saved resume no longer matches its evidence receipt");
+    expect(container.textContent).toContain("Earlier history remains readable.");
+    expect(container.textContent).not.toContain("Stale Semiconductor Engineer");
+    expect(container.textContent).toContain("Start a new conversation");
   });
 
   it("renders every persisted candidate-profile field and resumes a failed profile", async () => {

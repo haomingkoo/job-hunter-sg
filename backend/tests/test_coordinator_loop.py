@@ -30,7 +30,6 @@ import pytest
 from backend.tests.scripted_deep_agent import (
     ScriptedDeepAgent,
     final,
-    preference,
     submission,
     tool_call,
 )
@@ -237,7 +236,7 @@ def _context(discovery, *, recommendations=(), shortlisted=(), events=None, **ov
         # between two tests that both used thread "1".
         "thread_id": str(uuid.uuid4()),
         "trace_key": "coordinator-loop-trace",
-        "candidate_profile": _candidate_profile_run().profile,
+        "candidate_profile": _candidate_profile_run(RESUME_TEXT).profile,
         "role_profile": None,
         "target_job": None,
         "resume_document": _resume_document(),
@@ -283,7 +282,7 @@ def _team(db, agent, discovery, publisher=None, telemetry=None):
         publisher or RecordedActivityPublisher(),
         edit_evidence_validator=AllowingEditEvidenceValidator(),
         candidate_profiler_factory_provider=lambda: ScriptedCandidateProfilerFactory(
-            [_candidate_profile_run()]
+            [_candidate_profile_run(RESUME_TEXT)]
         ),
     )
 
@@ -614,13 +613,6 @@ def test_a_shortlist_the_model_never_saw_reaches_the_next_conversational_turn():
             submission("Tell me which fabs you have worked with."),
             # Turn 2: the only way to learn what the button found.
             tool_call("read_shortlist", {}, "call-read"),
-            tool_call(
-                "record_preferences",
-                {"updates": [
-                    preference("location", "Singapore", "I want to stay in Singapore")
-                ]},
-                "call-preference",
-            ),
             submission(
                 "Your leadership bullet already matches Yield Enhancement Engineer "
                 "at Micron, so I would lead with it.",
@@ -673,68 +665,9 @@ def test_a_shortlist_the_model_never_saw_reaches_the_next_conversational_turn():
     assert "Micron" in snapshot.messages[-1].content
     assert "paste" not in snapshot.messages[-1].content.lower()
 
-    # The preference carry out of structured_response is live: without it this
-    # whole path drops preference extraction and every existing test stays green,
-    # because they all run through ScriptedConversationModel.
-    assert [(fact.field, fact.value) for fact in snapshot.case_facts.preferences] == [
-        ("location", "Singapore")
-    ]
+    assert snapshot.case_facts.preferences == ()
 
-    assert agent.calls == 4
-
-
-def test_an_unevidenced_preference_is_rejected_then_the_turn_can_continue():
-    from backend.tests.test_recruitment_team_module import _session_factory
-    from recruitment_team.interface import StartThread
-
-    discovery = _RecordingDiscovery([])
-    agent = ScriptedDeepAgent(
-        responses=[
-            tool_call(
-                "record_preferences",
-                {"updates": [
-                    preference("salary", "$15,000", "I need at least fifteen thousand"),
-                    preference("location", "Singapore", "yield engineering role"),
-                ]},
-                "call-invalid-preferences",
-            ),
-            tool_call(
-                "record_preferences",
-                {"updates": [
-                    preference("location", "Singapore", "yield engineering role")
-                ]},
-                "call-valid-preference",
-            ),
-            submission(
-                "Noted.",
-            )
-        ]
-    )
-
-    sessions = _session_factory()
-    owner_id, resume_id = _owner_with_resume(sessions)
-    with sessions() as db:
-        team = _team(db, agent, discovery)
-        receipt = team.execute(
-            owner_id,
-            StartThread(
-                resume_version_id=resume_id,
-                message="Find me a yield engineering role.",
-            ),
-            idempotency_key="turn-1",
-        )
-        snapshot = team.snapshot(owner_id, receipt.thread_id)
-
-    from models import RecruitmentMessage
-
-    with sessions() as db:
-        roles = [row.role for row in db.query(RecruitmentMessage).all()]
-    assert roles == ["user", "assistant"], "the turn survives one unevidenced update"
-
-    assert "Every preference needs an exact quote" in _rendered(agent.requests[1])
-    assert [(fact.field, fact.value) for fact in snapshot.case_facts.preferences] == [
-        ("location", "Singapore")
-    ]
+    assert agent.calls == 3
 
 
 def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results():
@@ -1136,12 +1069,12 @@ def test_repeated_rejected_tool_results_fail_before_the_global_iteration_cap(mon
 
     monkeypatch.setattr(config, "COORDINATOR_MAX_CONSECUTIVE_TOOL_REJECTIONS", 2)
     quote = "I led a platform migration."
-    repeated_call = {"evidence_quotes": [quote]}
+    repeated_call = {"unsupported": True}
     agent = ScriptedDeepAgent(
         responses=[
-            tool_call("record_candidate_evidence", repeated_call, "record-1"),
-            tool_call("record_candidate_evidence", repeated_call, "record-2"),
-            tool_call("record_candidate_evidence", repeated_call, "record-3"),
+            tool_call("unsupported_tool", repeated_call, "reject-1"),
+            tool_call("unsupported_tool", repeated_call, "reject-2"),
+            tool_call("unsupported_tool", repeated_call, "reject-3"),
             submission("This unreachable reply must not be fabricated as success."),
         ]
     )
@@ -1649,8 +1582,8 @@ def test_a_transport_turn_reaches_the_loop_without_overriding_the_dependency(mon
     main.app.dependency_overrides[get_job_discovery] = lambda: discovery
     main.app.dependency_overrides[get_role_success_profiler] = lambda: _role_profiler()
     main.app.dependency_overrides[get_candidate_profiler_factory_provider] = (
-        lambda: lambda: ScriptedCandidateProfilerFactory([_candidate_profile_run()])
-    )
+            lambda: lambda: ScriptedCandidateProfilerFactory([_candidate_profile_run(RESUME_TEXT)])
+        )
     try:
         client = TestClient(main.app)
         started = client.post(
@@ -1717,8 +1650,6 @@ def test_the_coordinator_binds_only_the_tools_it_needs():
         "read_candidate_evidence",
         "read_shortlist",
         "read_target_job",
-        "record_candidate_evidence",
-        "record_preferences",
         "search_jobs",
         "write_plan",
         "write_shortlist",
@@ -1787,6 +1718,7 @@ def test_a_turn_reports_the_prompt_that_actually_ran():
 
     reply = _model(agent).respond([], "", (), _context(discovery))
 
+    assert COORDINATOR_PROMPT_VERSION == "recruitment-coordinator-loop-v21"
     assert reply.prompt_version == COORDINATOR_PROMPT_VERSION
 
 

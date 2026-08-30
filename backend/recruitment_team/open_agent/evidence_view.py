@@ -28,10 +28,7 @@ def candidate_evidence_view(request: TargetAssessmentRequest) -> dict:
                 "evidence_id": fact.evidence_id,
                 "evidence_quote": fact.evidence_quote,
             }
-            for fact in (
-                *request.confirmed_evidence,
-                *getattr(request, "drafted_confirmed_evidence", ()),
-            )
+            for fact in request.confirmed_evidence
         ],
     }
 

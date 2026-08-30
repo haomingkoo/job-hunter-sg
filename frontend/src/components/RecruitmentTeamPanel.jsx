@@ -19,6 +19,10 @@ function storedThreadKey(userId) {
   return `jobhunter:recruitment-thread:${userId}`;
 }
 
+function pendingResumeKey(userId) {
+  return `jobhunter:pending-resume-version:${userId}`;
+}
+
 
 function formatMetricNumber(value) {
   return new Intl.NumberFormat("en-SG").format(Number(value) || 0);
@@ -172,9 +176,15 @@ export default function RecruitmentTeamPanel({
   onInitialRequestHandled,
 }) {
   const [resumeVersions, setResumeVersions] = useState([]);
-  const [resumeVersionId, setResumeVersionId] = useState("");
+  const [resumeVersionId, setResumeVersionId] = useState(
+    () => localStorage.getItem(pendingResumeKey(user.id)) || "",
+  );
   const [threadId, setThreadId] = useState(
-    () => localStorage.getItem(storedThreadKey(user.id)) || "",
+    () => (
+      localStorage.getItem(pendingResumeKey(user.id))
+        ? ""
+        : localStorage.getItem(storedThreadKey(user.id)) || ""
+    ),
   );
   const [snapshot, setSnapshot] = useState(null);
   const [events, setEvents] = useState([]);
@@ -209,6 +219,7 @@ export default function RecruitmentTeamPanel({
     [resumeVersionId, resumeVersions],
   );
   const archived = snapshot?.status === "archived";
+  const bindingMismatch = snapshot?.case_facts?.resume_binding_status === "mismatch";
   const persistedAwaitingAnswer = snapshot?.workflow_state === "awaiting_candidate_answer";
   const answerResuming = persistedAwaitingAnswer && busy;
   const awaitingAnswer = persistedAwaitingAnswer && !busy;
@@ -242,6 +253,7 @@ export default function RecruitmentTeamPanel({
   );
   const allDisplayedJobsRanked = displayedJobs.every((job) => matchRationales.has(job.job_id));
   const profileRankingUsed = snapshot?.case_facts?.latest_ranking_receipt?.candidate_profile_used === true;
+  const rankingReceipt = snapshot?.case_facts?.latest_ranking_receipt;
   const selectedTargetId = snapshot?.case_facts?.selected_target?.job_id;
   const selectedTarget = snapshot?.case_facts?.selected_target;
   const selectedTrackedJobId = snapshot?.case_facts?.tracked_job_ids?.[String(selectedTargetId)];
@@ -350,7 +362,9 @@ export default function RecruitmentTeamPanel({
       return true;
     } catch (turnError) {
       setError(turnError.message || fallbackError);
-      if (refreshOnError) await refreshThread(threadId);
+      if (refreshOnError || turnError.detail?.code === "resume_binding_mismatch") {
+        await refreshThread(threadId);
+      }
       return false;
     } finally {
       setBusy(false);
@@ -408,8 +422,6 @@ export default function RecruitmentTeamPanel({
         const versions = await response.json();
         if (cancelled) return;
         setResumeVersions(versions);
-        const master = versions.find((resume) => resume.is_master) || versions[0];
-        if (master) setResumeVersionId(String(master.id));
       } catch (loadError) {
         if (!cancelled) setError(loadError.message);
       }
@@ -437,7 +449,12 @@ export default function RecruitmentTeamPanel({
   }, [threadId, candidateStudyRunning, persistedRunActive]);
 
   useEffect(() => {
-    if (threadId || suppressAutoResume || initialRequest) return undefined;
+    if (
+      threadId
+      || suppressAutoResume
+      || initialRequest
+      || localStorage.getItem(pendingResumeKey(user.id))
+    ) return undefined;
     let cancelled = false;
     loadThreads().then((threads) => {
       if (cancelled) return;
@@ -488,6 +505,7 @@ export default function RecruitmentTeamPanel({
             },
           );
         const nextThreadId = receipt.thread_id;
+        localStorage.removeItem(pendingResumeKey(user.id));
         localStorage.setItem(storedThreadKey(user.id), nextThreadId);
         await refreshThread(nextThreadId);
         await loadThreads();
@@ -521,6 +539,15 @@ export default function RecruitmentTeamPanel({
   function startNewConversation() {
     if (busy) return;
     clearConversation();
+    setResumeVersionId("");
+  }
+
+  function startConversationWithResume(versionId) {
+    if (busy || !versionId) return;
+    clearConversation();
+    localStorage.setItem(pendingResumeKey(user.id), String(versionId));
+    setResumeVersionId(String(versionId));
+    setEditResult(null);
   }
 
   function selectConversation(id) {
@@ -645,6 +672,7 @@ export default function RecruitmentTeamPanel({
         },
       );
       const nextThreadId = receipt.thread_id;
+      localStorage.removeItem(pendingResumeKey(user.id));
       setThreadId(nextThreadId);
       localStorage.setItem(storedThreadKey(user.id), nextThreadId);
       await refreshThread(nextThreadId);
@@ -690,6 +718,7 @@ export default function RecruitmentTeamPanel({
           },
         );
       const nextThreadId = receipt.thread_id;
+      localStorage.removeItem(pendingResumeKey(user.id));
       localStorage.setItem(storedThreadKey(user.id), nextThreadId);
       const createdThread = nextThreadId !== threadId;
       if (createdThread) setThreadId(nextThreadId);
@@ -710,6 +739,9 @@ export default function RecruitmentTeamPanel({
       }
     } catch (submitError) {
       setError(submitError.message);
+      if (threadId && submitError.detail?.code === "resume_binding_mismatch") {
+        await refreshThread(threadId);
+      }
     } finally {
       setBusy(false);
     }
@@ -831,9 +863,6 @@ export default function RecruitmentTeamPanel({
               <Users size={threadId ? 18 : 22} />
             </div>
             <div>
-              {!threadId && (
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#BDDDFC]">V3</p>
-              )}
               <h1
                 id="recruitment-team-title"
                 className={threadId ? "text-base font-semibold" : "text-2xl font-semibold"}
@@ -841,6 +870,20 @@ export default function RecruitmentTeamPanel({
                 {threadId ? snapshot?.title || "Recruitment conversation" : "AI Recruitment Team"}
               </h1>
               {archived && <p className="text-xs text-[#BDDDFC]">Archived · read only</p>}
+              {threadId && snapshot?.case_facts && (
+                <p className="mt-1 text-xs text-[#BDDDFC]">
+                  Resume: {snapshot.case_facts.resume_label} · v{snapshot.case_facts.resume_version_id}
+                  {snapshot.case_facts.resume_sha256
+                    ? ` · ${snapshot.case_facts.resume_sha256.slice(0, 10)}`
+                    : ""}
+                  {snapshot.case_facts.resume_word_count
+                    ? ` · ${snapshot.case_facts.resume_word_count} words`
+                    : ""}
+                  {snapshot.case_facts.resume_created_at
+                    ? ` · saved ${new Date(snapshot.case_facts.resume_created_at).toLocaleDateString()}`
+                    : ""}
+                </p>
+              )}
             </div>
           </div>
           {(threadId || threadSummaries?.length > 0) && (
@@ -951,6 +994,14 @@ export default function RecruitmentTeamPanel({
                       <span className="mt-1 block truncate text-xs text-[#6A89A7]">
                         {summary.last_message || summary.resume_label}
                       </span>
+                      <span className="mt-1 block truncate text-[11px] text-[#6A89A7]">
+                        {summary.resume_label} · v{summary.resume_version_id}
+                        {summary.resume_sha256 ? ` · ${summary.resume_sha256.slice(0, 10)}` : ""}
+                        {summary.resume_word_count ? ` · ${summary.resume_word_count} words` : ""}
+                        {summary.resume_created_at
+                          ? ` · saved ${new Date(summary.resume_created_at).toLocaleDateString()}`
+                          : ""}
+                      </span>
                     </button>
                     <span className="rounded-full bg-[#f0f5fa] px-2 py-1 text-xs capitalize text-[#384959]">
                       {summary.status}
@@ -1029,6 +1080,19 @@ export default function RecruitmentTeamPanel({
 
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="rounded-3xl border border-[#BDDDFC]/40 bg-white p-5 shadow-sm">
+          {bindingMismatch && (
+            <div className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+              This conversation's saved resume no longer matches its evidence receipt. Its history is
+              still readable, but new analysis is blocked.
+              <button
+                type="button"
+                onClick={startNewConversation}
+                className="ml-2 rounded-lg border border-amber-700 px-2.5 py-1 text-xs font-semibold"
+              >
+                Start a new conversation
+              </button>
+            </div>
+          )}
           {!threadId && (
             <label className="mb-5 block text-sm font-medium text-[#384959]">
               Resume evidence
@@ -1037,15 +1101,39 @@ export default function RecruitmentTeamPanel({
                 onChange={(event) => setResumeVersionId(event.target.value)}
                 className="mt-2 w-full rounded-xl border border-[#BDDDFC] bg-white px-3 py-2 text-sm"
               >
-                {resumeVersions.length === 0 && <option value="">No saved resumes</option>}
+                <option value="">
+                  {resumeVersions.length === 0 ? "No saved resumes" : "Choose a resume…"}
+                </option>
                 {resumeVersions.map((resume) => (
-                  <option key={resume.id} value={resume.id}>{resume.label}</option>
+                  <option key={resume.id} value={resume.id}>
+                    {resume.label} · v{resume.id} · {resume.word_count || 0} words
+                  </option>
                 ))}
               </select>
+              {selectedResume && (
+                <span className="mt-2 block text-xs font-normal text-[#6A89A7]">
+                  v{selectedResume.id} · {selectedResume.word_count || 0} words
+                  {selectedResume.created_at
+                    ? ` · saved ${new Date(selectedResume.created_at).toLocaleString()}`
+                    : ""}
+                  {selectedResume.content_sha256
+                    ? ` · ${selectedResume.content_sha256.slice(0, 10)}`
+                    : ""}
+                </span>
+              )}
             </label>
           )}
 
           <div className="min-h-72 space-y-3" aria-live="polite">
+            {profileRankingUsed && rankingReceipt && (
+              <p className="rounded-xl bg-[#f0f5fa] px-3 py-2 text-xs text-[#4A6785]">
+                Recommendations use resume v{rankingReceipt.resume_version_id}
+                {rankingReceipt.resume_sha256 ? ` · ${rankingReceipt.resume_sha256.slice(0, 10)}` : ""}
+                {rankingReceipt.candidate_profile_artifact_id
+                  ? ` · profile ${rankingReceipt.candidate_profile_artifact_id.slice(0, 8)}`
+                  : ""}
+              </p>
+            )}
             {snapshot?.message_history_has_more && (
               <div className="flex justify-center">
                 <button
@@ -1718,6 +1806,7 @@ export default function RecruitmentTeamPanel({
             edits={proposedEdits}
             onAccept={acceptEdits}
             onReject={rejectEdits}
+            onStartConversation={startConversationWithResume}
             busy={busy || archived}
             result={editResult}
           />

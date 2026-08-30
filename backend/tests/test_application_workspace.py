@@ -670,7 +670,7 @@ def test_application_workspace_submitted_resume_artifact_survives_draft_generati
     assert submitted["notes"] == "Submitted through company portal."
     assert "Submitted resume for GovTech" in submitted["text"]
     assert len(uploaded.json()["role_metadata"]["submitted_resume_artifacts"]) == 1
-    assert uploaded.json()["role_metadata"]["submitted_resume_artifacts"][0]["content_base64"]
+    assert "content_base64" not in uploaded.json()["role_metadata"]["submitted_resume_artifacts"][0]
 
     monkeypatch.setattr(
         main,
@@ -724,6 +724,47 @@ def test_application_workspace_rejects_submitted_resume_over_five_megabytes():
     )
 
     assert response.status_code == 413
+
+
+def test_application_workspace_caps_submitted_resume_history():
+    from docx import Document
+
+    from application_workspace import MAX_SUBMITTED_RESUME_ARTIFACTS
+    from database import init_db
+    from main import app
+
+    init_db()
+    client = TestClient(app)
+    headers = _signup(client)
+    workspace_id = _create_workspace_with_resume(
+        client,
+        headers,
+        role_metadata={
+            "submitted_resume_artifacts": [
+                {"artifact_id": f"existing-{index}"}
+                for index in range(MAX_SUBMITTED_RESUME_ARTIFACTS)
+            ]
+        },
+    )["id"]
+    document = Document()
+    document.add_paragraph("A valid submitted resume with enough text for parsing and storage checks.")
+    output = io.BytesIO()
+    document.save(output)
+
+    response = client.post(
+        f"/api/applications/workspaces/{workspace_id}/submitted-resume",
+        headers=headers,
+        files={
+            "file": (
+                "submitted.docx",
+                output.getvalue(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Submitted resume history limit reached for this application"
 
 
 def test_research_pack_route_persists_through_the_workspace_interface(monkeypatch):

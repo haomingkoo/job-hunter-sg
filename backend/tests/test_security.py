@@ -420,9 +420,25 @@ def test_docx_zip_bomb_is_rejected_before_parsing():
 
     archive_bytes = BytesIO()
     with zipfile.ZipFile(archive_bytes, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", b"<Types />")
         archive.writestr("word/document.xml", b"A" * (2 * 1024 * 1024))
 
     with pytest.raises(ValueError, match="compression ratio is unsafe"):
+        parse_resume(
+            "resume.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            archive_bytes.getvalue(),
+        )
+
+
+def test_arbitrary_zip_is_not_accepted_as_docx():
+    from resume_parser import parse_resume
+
+    archive_bytes = BytesIO()
+    with zipfile.ZipFile(archive_bytes, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("payload.txt", b"not a Word document")
+
+    with pytest.raises(ValueError, match="does not match DOCX format"):
         parse_resume(
             "resume.docx",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",

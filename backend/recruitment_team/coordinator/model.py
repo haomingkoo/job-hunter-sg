@@ -28,8 +28,6 @@ from ..open_agent.tools import (
     read_candidate_evidence,
     read_shortlist,
     read_target_job,
-    record_candidate_evidence,
-    record_preferences,
     search_jobs,
     write_plan,
     write_shortlist,
@@ -180,16 +178,6 @@ _TOOL_CLAIM_RULES = (
         lambda c: bool(c.drafted_matches),
     ),
     (
-        re.compile(r"\b(?:saved|recorded|updated) .{0,40}\bpreferences?\b", re.I),
-        "record_preferences",
-        lambda c: bool(c.drafted_preferences),
-    ),
-    (
-        re.compile(r"\b(?:saved|recorded) .{0,40}\bevidence\b", re.I),
-        "record_candidate_evidence",
-        lambda c: bool(c.drafted_confirmed_evidence),
-    ),
-    (
         re.compile(r"\b(?:created|updated|wrote) .{0,30}\bplan\b", re.I),
         "write_plan",
         lambda c: bool(c.drafted_plan),
@@ -282,8 +270,6 @@ class DeepAgentConversationModel:
         # `middleware` argument only appends, so they cannot be declined.
         tools = [
             read_shortlist,
-            record_candidate_evidence,
-            record_preferences,
             search_jobs,
             write_plan,
             write_shortlist,

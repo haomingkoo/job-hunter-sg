@@ -11,7 +11,7 @@ from recruitment_team.candidate_profile import (
 )
 from recruitment_team.conversation_model import ModelReply, ScriptedConversationModel
 from recruitment_team.discovery import JobSearchResult, ScriptedDiscovery
-from recruitment_team.errors import CandidateProfilingUnavailable, ServiceUnavailable
+from recruitment_team.errors import CandidateProfilingUnavailable, InvalidCommand, ServiceUnavailable
 from recruitment_team.interface import SearchJobs, SendMessage, StartThread
 from recruitment_team.recruitment_team import RecruitmentTeam
 from recruitment_team.recovery import classify_failure
@@ -123,7 +123,7 @@ def test_first_search_uses_profile_and_later_turn_reuses_current_artifact():
         assert db.query(CandidateProfileArtifact).count() == 1
 
 
-def test_new_resume_version_forces_reprofile_before_send_message():
+def test_rebinding_a_thread_to_a_new_resume_fails_closed():
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
     factory = ScriptedCandidateProfilerFactory([
@@ -158,19 +158,18 @@ def test_new_resume_version_forces_reprofile_before_send_message():
         thread.case_facts = facts
         db.commit()
 
-        team.execute(
-            owner_id,
-            SendMessage(thread_id=started.thread_id, message="Use the accepted edit."),
-            "revised-profile",
-        )
+        with pytest.raises(InvalidCommand, match="resume_binding_mismatch"):
+            team.execute(
+                owner_id,
+                SendMessage(thread_id=started.thread_id, message="Use the accepted edit."),
+                "revised-profile",
+            )
 
-        artifacts = db.query(CandidateProfileArtifact).order_by(
-            CandidateProfileArtifact.resume_version_id
-        ).all()
-        assert [artifact.resume_version_id for artifact in artifacts] == [resume_id, revised.id]
+        artifacts = db.query(CandidateProfileArtifact).all()
+        assert [artifact.resume_version_id for artifact in artifacts] == [resume_id]
 
 
-def test_direct_search_on_legacy_profileless_thread_profiles_before_ranking():
+def test_direct_search_on_hashless_legacy_thread_fails_closed():
     sessions = _session_factory()
     owner_id, resume_id = _owner_with_resume(sessions)
     job = _job_snapshot()
@@ -201,15 +200,13 @@ def test_direct_search_on_legacy_profileless_thread_profiles_before_ranking():
             factory,
         )
 
-        team.execute(
-            owner_id,
-            SearchJobs(thread_id=thread.id, query="AI solution architect"),
-            "legacy-direct-search",
-        )
-
-        receipt = thread.case_facts["latest_ranking_receipt"]
-        assert receipt["candidate_profile_used"] is True
-        assert thread.case_facts["candidate_profile_status"] == "completed"
+        with pytest.raises(InvalidCommand, match="resume_binding_mismatch"):
+            team.execute(
+                owner_id,
+                SearchJobs(thread_id=thread.id, query="AI solution architect"),
+                "legacy-direct-search",
+            )
+        assert "latest_ranking_receipt" not in thread.case_facts
 
 
 def test_profile_transport_retry_is_budgeted_and_resumes_profiler_stage():

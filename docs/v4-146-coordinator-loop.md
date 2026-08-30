@@ -392,11 +392,11 @@ unaffected. `create_deep_agent` in the installed `deepagents` 0.6.12 already acc
 
 The coordinator prompt is a new versioned module,
 `recruitment_team/prompts/coordinator.py`, carrying
-`COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v1"`. It inherits the depth
-rules and preference rules verbatim from `CONVERSATION_SYSTEM_PROMPT`
-(`prompts/conversation.py`), drops the search-phrase rules at lines 63-72 (the agent now
-searches for itself), and adds the tool contract. `CONVERSATION_PROMPT_VERSION` and its
-prompt stay where they are, because `LangChainConversationModel` still uses them.
+`COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v21"`. It inherits the depth
+rules from `CONVERSATION_SYSTEM_PROMPT` (`prompts/conversation.py`), makes free-text
+preference and candidate-fact writes non-durable, and adds the bounded tool contract.
+`CONVERSATION_PROMPT_VERSION` and its prompt stay where they are, because
+`LangChainConversationModel` still uses them.
 
 ---
 
@@ -546,15 +546,11 @@ records `detail["failure_type"]` on a failed activity event, and re-raises
 
 ### Preference updates on the new path
 
-**Superseded by the tool-authoritative coordinator contract.** The coordinator now writes
-preferences only through `record_preferences`, which validates exact quotes before placing
-updates in the conversation context. `ConversationReply` carries prose and uncertainty,
-not a second preference-write channel. Adapter `ModelReply.preference_updates` remains for
-non-agent conversation adapters, and the recruitment-team boundary still validates it.
-
-The tool can reject an unevidenced batch without losing the rest of the turn. The model
-may correct the call using the returned validation error, and only accepted tool output
-reaches `case_facts["preferences"]`.
+The deep-agent conversation path does not persist preferences from free text. It may use
+the current message to answer the turn, but durable candidate facts come from the bound
+resume snapshot and validated workflow artifacts. Adapter `ModelReply.preference_updates`
+remains for non-agent conversation adapters, and the recruitment-team boundary validates
+those updates before writing them to `case_facts["preferences"]`.
 
 ### `search_query` stops being a request
 

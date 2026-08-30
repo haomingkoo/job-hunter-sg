@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 from fastapi import HTTPException
@@ -89,7 +90,8 @@ def version_summary(version: ResumeVersion) -> dict:
         "job_title": version.job_title,
         "job_company": version.job_company,
         "score": version.score,
-        "word_count": version.word_count,
+        "word_count": version.word_count if version.word_count is not None else len(version.resume_text.split()),
+        "content_sha256": hashlib.sha256(version.resume_text.encode()).hexdigest(),
         "is_master": version.is_master,
         "created_at": version.created_at.isoformat() if version.created_at else "",
         "updated_at": version.updated_at.isoformat() if version.updated_at else "",
@@ -170,16 +172,14 @@ def create_version(db: Session, user_id: int, body: dict) -> ResumeVersion:
 
 def update_version(db: Session, user_id: int, version_id: int, body: dict) -> ResumeVersion:
     version = get_owned_version(db, user_id, version_id)
+    immutable_fields = {"resume_text", "resume_structured", "source", "job_id", "job_title", "job_company"}
+    if immutable_fields.intersection(body):
+        raise HTTPException(
+            status_code=409,
+            detail="Resume version content is immutable; save changed content as a new version",
+        )
     if "label" in body:
         version.label = _validated_label(body["label"])
-    if "resume_text" in body:
-        version.resume_text = _validated_resume_text(body["resume_text"])
-        version.word_count = len(version.resume_text.split())
-    if "resume_text" in body or "resume_structured" in body:
-        version.resume_structured = _validated_structure(
-            version.resume_text,
-            body.get("resume_structured"),
-        )
     if "score" in body:
         version.score = _validated_score(body["score"])
     if body.get("is_master") is True:

@@ -29,6 +29,7 @@ from .activity_stream import stream_command, stream_retry, stream_run
 from .errors import (
     DiscoveryUnavailable,
     InvalidCommand,
+    ResumeBindingConflict,
     ResumeVersionNotFound,
     RunConcurrencyExceeded,
     ServiceUnavailable,
@@ -270,6 +271,11 @@ def _streaming_team_factory(
 def _raise_http_error(error: Exception) -> None:
     if isinstance(error, (ThreadNotFound, ResumeVersionNotFound)):
         raise HTTPException(status_code=404, detail=str(error)) from None
+    if isinstance(error, ResumeBindingConflict):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": error.code, "message": str(error)},
+        ) from None
     if isinstance(error, InvalidCommand):
         raise HTTPException(status_code=422, detail=str(error)) from None
     if isinstance(error, RunConcurrencyExceeded):

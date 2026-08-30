@@ -188,17 +188,17 @@ def test_removes_completed_read_once_tool_from_the_next_model_request():
     assert observed == [search_jobs]
 
 
-def test_hides_preferences_only_after_an_accepted_batch():
+def test_hides_read_tool_only_after_an_accepted_result():
     guard = ToolCallGuardMiddleware()
-    preferences = SimpleNamespace(name="record_preferences")
+    read_shortlist = SimpleNamespace(name="read_shortlist")
     search_jobs = SimpleNamespace(name="search_jobs")
     model_request = SimpleNamespace(
-        tools=[preferences, search_jobs],
+        tools=[read_shortlist, search_jobs],
         override=lambda **changes: SimpleNamespace(tools=changes["tools"]),
     )
 
     guard.wrap_tool_call(
-        _request("record_preferences", {"updates": []}, "1"),
+        _request("read_shortlist", {}, "1"),
         lambda _request: {"accepted": False},
     )
     before_acceptance = []
@@ -207,7 +207,7 @@ def test_hides_preferences_only_after_an_accepted_batch():
         lambda request: before_acceptance.extend(request.tools),
     )
     guard.wrap_tool_call(
-        _request("record_preferences", {"updates": [{"field": "location"}]}, "2"),
+        _request("read_shortlist", {}, "2"),
         lambda _request: {"accepted": True},
     )
     after_acceptance = []
@@ -216,7 +216,7 @@ def test_hides_preferences_only_after_an_accepted_batch():
         lambda request: after_acceptance.extend(request.tools),
     )
 
-    assert before_acceptance == [preferences, search_jobs]
+    assert before_acceptance == [read_shortlist, search_jobs]
     assert after_acceptance == [search_jobs]
 
 

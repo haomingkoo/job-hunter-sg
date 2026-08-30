@@ -52,7 +52,7 @@ After deployment, submit the site to Google Search Console and Bing Webmaster To
 - Precomputed sector, salary floor, official SSIC fields, and skill-search fields keep filters fast without loading full job tables
 
 ### Resume Builder
-- Upload PDF/DOCX or build from scratch with AI chat
+- Upload PDF/DOCX or build from scratch with AI chat; signed-in uploads are saved as distinct resume versions
 - 8 professional templates (Classic, Modern, SG Professional, Compact, Executive, Creative, Technical, Minimal)
 - Inline click-to-edit with drag-and-drop bullet reordering (Framer Motion)
 - Add/delete sections, entries, bullets with one click
@@ -173,7 +173,8 @@ flow and trust boundaries. This compact map is only an orientation:
 
 ```
 configured sources → sanitize/precompute → scraped_jobs → API ↔ React
-resume upload → isolated parser → canonical browser document
+guest resume upload → isolated parser → canonical browser document
+signed-in resume upload → isolated parser → immutable saved resume version
 saved resume versions → scoring / Power Match / Documents
 classic tailoring or accepted recruitment edits → new derived resume version
 tracked_jobs.role_metadata → latest application cover letters → Documents

@@ -192,7 +192,7 @@ def test_failed_run_replays_the_exact_original_safe_error_without_new_work():
     main.app.dependency_overrides[get_job_discovery] = lambda: None
     main.app.dependency_overrides[get_role_success_profiler] = lambda: None
     main.app.dependency_overrides[get_candidate_profiler_factory_provider] = (
-        lambda: lambda: ScriptedCandidateProfilerFactory([_candidate_profile_run()])
+        lambda: lambda: ScriptedCandidateProfilerFactory([_candidate_profile_run("Evidence")])
     )
     try:
         client = TestClient(main.app)

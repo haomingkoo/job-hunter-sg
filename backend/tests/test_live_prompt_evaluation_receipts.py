@@ -27,7 +27,6 @@ def test_live_prompt_receipt_binds_revision_prompt_fixture_tools_and_result(
     context = SimpleNamespace(
         thread_id="receipt-test-thread",
         drafted_matches=[{"job_id": 41}],
-        drafted_preferences=[],
         proposed_edits=[],
     )
     telemetry = SimpleNamespace(spans=[])
@@ -71,7 +70,6 @@ def test_live_prompt_failure_receipt_is_retained_without_a_reply(tmp_path, monke
     context = SimpleNamespace(
         thread_id="failed-receipt-thread",
         drafted_matches=[],
-        drafted_preferences=[],
         proposed_edits=[],
     )
 

@@ -59,7 +59,7 @@ from .interface import (
     TargetAssessmentArtifactSnapshot,
     confirmed_evidence_fact,
 )
-from .job_recommender import JobRecommender, ranking_receipt_from_dict
+from .job_recommender import JobRecommender, RankingReceipt, ranking_receipt_from_dict
 from .execution_metrics import merge_execution_metrics
 from .model_transport_observer import collect_transport_metrics
 from .errors import (
@@ -67,6 +67,7 @@ from .errors import (
     DiscoveryUnavailable,
     InvalidCommand,
     ResumeVersionNotFound,
+    ResumeBindingConflict,
     RoleProfilingUnavailable,
     RunConcurrencyExceeded,
     ThreadNotFound,
@@ -153,6 +154,17 @@ ARCHIVED_THREAD_STATUS = "archived"
 THREAD_TITLE_MAX_CHARS = 120
 MAX_JOB_FEEDBACK_SIGNALS = 100
 MAX_DERIVED_QUERY_CHARS = 200
+PROFILE_DERIVED_FACT_KEYS = (
+    "latest_ranking_receipt",
+    "recommendations",
+    "match_rationales",
+    "shortlisted_jobs",
+    "shortlisted_job_ids",
+    "selected_target",
+    "role_success_profile",
+    "role_success_metrics",
+    "target_assessment_artifact_id",
+)
 
 
 def _job_hidden_by_feedback(facts: dict, job: JobSnapshot) -> bool:
@@ -567,52 +579,53 @@ class RecruitmentTeam:
                     thread, resume = self._start_thread(owner_id, command)
                 else:
                     thread = self._owned_thread(owner_id, previous.thread_id)
-                    resume = self._owned_resume(owner_id, thread.resume_version_id)
+                    resume = self._bound_resume(owner_id, thread)
                 command_type = "start_thread"
                 message = command.message
             elif isinstance(command, SendMessage):
                 thread = self._owned_thread(owner_id, command.thread_id)
-                resume = self._owned_resume(owner_id, thread.resume_version_id)
+                resume = self._bound_resume(owner_id, thread)
                 command_type = "send_message"
                 message = command.message
             elif isinstance(command, BuildCandidateProfile):
                 thread = self._owned_thread(owner_id, command.thread_id)
-                resume = self._owned_resume(owner_id, thread.resume_version_id)
+                resume = self._bound_resume(owner_id, thread)
                 command_type = "build_candidate_profile"
                 message = BUILD_CANDIDATE_PROFILE_MESSAGE
             elif isinstance(command, SearchJobs):
                 thread = self._owned_thread(owner_id, command.thread_id)
-                resume = self._owned_resume(owner_id, thread.resume_version_id)
+                resume = self._bound_resume(owner_id, thread)
                 command_type = "search_jobs"
                 message = command.query.strip()
                 if not message:
                     raise InvalidCommand("job search requires an explicit query")
             elif isinstance(command, ShortlistJob):
                 thread = self._owned_thread(owner_id, command.thread_id)
-                resume = self._owned_resume(owner_id, thread.resume_version_id)
+                resume = self._bound_resume(owner_id, thread)
                 command_type = "shortlist_job"
                 job = self._known_job(thread, command.job_id)
                 message = f"Shortlist {job.title} at {job.company}."
             elif isinstance(command, SelectTargetJob):
                 thread = self._owned_thread(owner_id, command.thread_id)
-                resume = self._owned_resume(owner_id, thread.resume_version_id)
+                resume = self._bound_resume(owner_id, thread)
                 command_type = "select_target_job"
+                self._completed_candidate_profile(thread, resume)
                 job = self._known_job(thread, command.job_id)
                 message = f"Select {job.title} at {job.company} as my target."
             elif isinstance(command, HideJob):
                 thread = self._owned_thread(owner_id, command.thread_id)
-                resume = self._owned_resume(owner_id, thread.resume_version_id)
+                resume = self._bound_resume(owner_id, thread)
                 command_type = "hide_job"
                 job = self._known_job(thread, command.job_id)
                 message = f"Hide this {command.scope}: {job.title} at {job.company}."
             elif isinstance(command, AssessTargetJob):
                 thread = self._owned_thread(owner_id, command.thread_id)
-                resume = self._owned_resume(owner_id, thread.resume_version_id)
+                resume = self._bound_resume(owner_id, thread)
                 command_type = "assess_target_job"
                 message = ASSESS_TARGET_JOB_MESSAGE
             elif isinstance(command, AnswerAssessmentQuestion):
                 thread = self._owned_thread(owner_id, command.thread_id)
-                resume = self._owned_resume(owner_id, thread.resume_version_id)
+                resume = self._bound_resume(owner_id, thread)
                 command_type = "answer_assessment_question"
                 message = command.answer
             else:
@@ -1231,13 +1244,11 @@ class RecruitmentTeam:
                 raise InvalidCommand("conversation model returned no user-facing reply")
             reply = replace(reply, content=paragraph_reply(reply.content))
             evidenced, unevidenced = evidenced_preference_updates(
-                (*reply.preference_updates, *conversation.drafted_preferences),
+                reply.preference_updates,
                 latest_user.content,
             )
             if evidenced:
                 self._merge_preference_updates(thread, evidenced, latest_user)
-            if conversation.drafted_confirmed_evidence:
-                self._merge_confirmed_evidence(thread, conversation.drafted_confirmed_evidence)
             if reply.search_query:
                 self._remember_search_query(thread, reply.search_query)
             # After _remember_search_query on purpose: a query that really ran
@@ -1427,9 +1438,24 @@ class RecruitmentTeam:
         facts["recommendations"] = [asdict(job) for job in recommendations]
         latest_receipt = results[-1].ranking_receipt
         if latest_receipt is not None:
-            facts["latest_ranking_receipt"] = asdict(latest_receipt)
+            facts["latest_ranking_receipt"] = self._ranking_receipt(thread, latest_receipt)
         facts.pop("match_rationales", None)
         thread.case_facts = facts
+
+    @staticmethod
+    def _ranking_receipt(thread: RecruitmentThread, receipt: RankingReceipt) -> dict:
+        facts = thread.case_facts or {}
+        value = asdict(receipt)
+        value.update({
+            "resume_version_id": thread.resume_version_id,
+            "resume_sha256": str(facts.get("resume_sha256") or ""),
+            "candidate_profile_artifact_id": (
+                str(facts.get("candidate_profile_artifact_id") or "")
+                if receipt.candidate_profile_used
+                else ""
+            ),
+        })
+        return value
 
     def _persist_conversation_matches(
         self,
@@ -1517,7 +1543,7 @@ class RecruitmentTeam:
         )
         facts["latest_search_query"] = result.query
         facts["recommendations"] = [asdict(job) for job in visible_jobs]
-        facts["latest_ranking_receipt"] = asdict(batch.receipt)
+        facts["latest_ranking_receipt"] = self._ranking_receipt(thread, batch.receipt)
         thread.case_facts = facts
         count = len(visible_jobs)
         content = (
@@ -1595,10 +1621,7 @@ class RecruitmentTeam:
                     "recovery": "Resume the candidate profile command.",
                 },
             )
-            facts = dict(thread.case_facts)
-            facts["candidate_profile_artifact_id"] = artifact.id
-            facts["candidate_profile_status"] = artifact.status
-            thread.case_facts = facts
+            self._activate_candidate_profile_artifact(thread, artifact)
             self._merge_run_metrics(
                 command_run,
                 store.execution_metrics(error.checkpoint_id),
@@ -1624,10 +1647,7 @@ class RecruitmentTeam:
                     "recovery": "Correct the failed structured scope before resuming.",
                 },
             )
-            facts = dict(thread.case_facts)
-            facts["candidate_profile_artifact_id"] = artifact.id
-            facts["candidate_profile_status"] = artifact.status
-            thread.case_facts = facts
+            self._activate_candidate_profile_artifact(thread, artifact)
             self._merge_run_metrics(
                 command_run,
                 store.execution_metrics(error.checkpoint_id),
@@ -1664,10 +1684,7 @@ class RecruitmentTeam:
             semantic_limit=config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
         )
         artifact = store.complete(run.checkpoint_id, run.profile, run.evaluation)
-        facts = dict(thread.case_facts)
-        facts["candidate_profile_artifact_id"] = artifact.id
-        facts["candidate_profile_status"] = artifact.status
-        thread.case_facts = facts
+        self._activate_candidate_profile_artifact(thread, artifact)
         thread.workflow_state = "profile_ready"
         return ModelReply(
             content=(
@@ -2570,6 +2587,73 @@ class RecruitmentTeam:
             return profile
         raise InvalidCommand("build the candidate evidence profile before selecting a target job")
 
+    @staticmethod
+    def _profile_artifact_matches(
+        artifact: CandidateProfileArtifact | None,
+        resume: ResumeVersion,
+    ) -> bool:
+        if artifact is None or artifact.status != "completed" or not isinstance(artifact.profile, dict):
+            return False
+        from resume_document import create_resume_document
+
+        document = create_resume_document(resume.resume_text)
+        return (
+            candidate_profile_artifact_is_current(artifact)
+            and artifact.resume_version_id == resume.id
+            and artifact.profile.get("resume_document_id") == document["document_id"]
+            and artifact.profile.get("resume_revision") == document["revision"]
+        )
+
+    def _without_profile_derived_facts(self, facts: dict) -> dict:
+        safe = dict(facts)
+        for key in PROFILE_DERIVED_FACT_KEYS:
+            safe.pop(key, None)
+        safe["target_assessment_status"] = "not_started"
+        return safe
+
+    def _activate_candidate_profile_artifact(
+        self,
+        thread: RecruitmentThread,
+        artifact: CandidateProfileArtifact,
+    ) -> None:
+        facts = dict(thread.case_facts or {})
+        previous_id = str(facts.get("candidate_profile_artifact_id") or "")
+        if artifact.status != "completed" or (previous_id and previous_id != artifact.id):
+            facts = self._without_profile_derived_facts(facts)
+            self._db.query(ProposedResumeEdit).filter(
+                ProposedResumeEdit.user_id == thread.user_id,
+                ProposedResumeEdit.thread_id == thread.id,
+                ProposedResumeEdit.status == "pending",
+            ).update({"status": "stale"})
+        facts["candidate_profile_artifact_id"] = artifact.id
+        facts["candidate_profile_status"] = artifact.status
+        thread.case_facts = facts
+
+    def _validated_case_facts(
+        self,
+        thread: RecruitmentThread,
+        resume: ResumeVersion,
+    ) -> dict:
+        facts = dict(thread.case_facts or {})
+        receipt = facts.get("latest_ranking_receipt")
+        if not isinstance(receipt, dict):
+            return self._without_profile_derived_facts(facts)
+        valid = (
+            receipt.get("resume_version_id") == resume.id
+            and receipt.get("resume_sha256")
+            == hashlib.sha256(resume.resume_text.encode()).hexdigest()
+        )
+        if valid and receipt.get("candidate_profile_used") is True:
+            artifact_id = str(receipt.get("candidate_profile_artifact_id") or "")
+            artifact = self._db.get(CandidateProfileArtifact, artifact_id) if artifact_id else None
+            valid = (
+                artifact_id == str(facts.get("candidate_profile_artifact_id") or "")
+                and artifact is not None
+                and artifact.user_id == thread.user_id
+                and self._profile_artifact_matches(artifact, resume)
+            )
+        return facts if valid else self._without_profile_derived_facts(facts)
+
     def _find_completed_candidate_profile(
         self,
         thread: RecruitmentThread,
@@ -2587,7 +2671,7 @@ class RecruitmentTeam:
             .all()
         )
         artifact = _current_candidate_profile_artifact(artifacts)
-        if artifact is None or artifact.profile is None:
+        if not self._profile_artifact_matches(artifact, resume):
             return None
         if artifact_id != artifact.id or thread.case_facts.get("candidate_profile_status") != "completed":
             facts = dict(thread.case_facts or {})
@@ -2605,7 +2689,13 @@ class RecruitmentTeam:
         before_message_id: int | None = None,
     ) -> ThreadSnapshot:
         thread = self._owned_thread(owner_id, thread_id)
-        facts = thread.case_facts
+        try:
+            self._bound_resume(owner_id, thread)
+            binding_status = "verified"
+            facts = thread.case_facts
+        except (ResumeBindingConflict, ResumeVersionNotFound):
+            binding_status = "mismatch"
+            facts = self._without_profile_derived_facts(thread.case_facts or {})
         messages, message_history_has_more = self._messages(
             thread.id,
             limit=message_limit,
@@ -2617,9 +2707,12 @@ class RecruitmentTeam:
             status=thread.status,
             workflow_state=thread.workflow_state,
             case_facts=CaseFacts(
-                resume_version_id=int(facts["resume_version_id"]),
-                resume_label=str(facts["resume_label"]),
-                resume_sha256=str(facts["resume_sha256"]),
+                resume_version_id=int(facts.get("resume_version_id") or thread.resume_version_id),
+                resume_label=str(facts.get("resume_label") or "Unavailable resume"),
+                resume_sha256=str(facts.get("resume_sha256") or ""),
+                resume_word_count=int(facts.get("resume_word_count") or 0),
+                resume_created_at=str(facts.get("resume_created_at") or ""),
+                resume_binding_status=binding_status,
                 latest_search_query=str(facts.get("latest_search_query") or ""),
                 latest_ranking_receipt=(
                     ranking_receipt_from_dict(facts["latest_ranking_receipt"])
@@ -2685,6 +2778,7 @@ class RecruitmentTeam:
         thread_id: str,
     ) -> CandidateProfileArtifactSnapshot | None:
         thread = self._owned_thread(owner_id, thread_id)
+        resume = self._bound_resume(owner_id, thread)
         artifacts = (
             self._db.query(CandidateProfileArtifact)
             .filter(
@@ -2696,7 +2790,7 @@ class RecruitmentTeam:
             .all()
         )
         artifact = _current_candidate_profile_artifact(artifacts)
-        if artifact is None:
+        if not self._profile_artifact_matches(artifact, resume):
             return None
         return CandidateProfileArtifactSnapshot(
             artifact_id=artifact.id,
@@ -2725,6 +2819,7 @@ class RecruitmentTeam:
         thread_id: str,
     ) -> TargetAssessmentArtifactSnapshot | None:
         thread = self._owned_thread(owner_id, thread_id)
+        resume = self._bound_resume(owner_id, thread)
         artifact_id = thread.case_facts.get("target_assessment_artifact_id")
         if not artifact_id:
             return None
@@ -2737,8 +2832,27 @@ class RecruitmentTeam:
             )
             .first()
         )
-        if artifact is None:
-            raise InvalidCommand("target assessment artifact reference is invalid")
+        selected_target = thread.case_facts.get("selected_target")
+        if artifact is None or not isinstance(selected_target, dict):
+            return None
+        target_sha256 = hashlib.sha256(
+            json.dumps(selected_target, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        profile_artifact = self._db.get(
+            CandidateProfileArtifact,
+            artifact.candidate_profile_artifact_id,
+        )
+        if (
+            artifact.resume_version_id != resume.id
+            or artifact.candidate_profile_artifact_id
+            != str(thread.case_facts.get("candidate_profile_artifact_id") or "")
+            or artifact.target_job_id != int(selected_target.get("job_id") or 0)
+            or artifact.target_snapshot_sha256 != target_sha256
+            or profile_artifact is None
+            or profile_artifact.user_id != owner_id
+            or not self._profile_artifact_matches(profile_artifact, resume)
+        ):
+            return None
         # pending_specialist_runs is resumable coordinator state, not a reviewed
         # candidate-facing result. Only the post-judge specialist_runs field crosses
         # this API boundary.
@@ -2884,6 +2998,9 @@ class RecruitmentTeam:
                     resume_label=str(thread.case_facts["resume_label"]),
                     last_message=last_message.content if last_message else None,
                     updated_at=thread.updated_at,
+                    resume_sha256=str(thread.case_facts.get("resume_sha256") or ""),
+                    resume_word_count=int(thread.case_facts.get("resume_word_count") or 0),
+                    resume_created_at=str(thread.case_facts.get("resume_created_at") or ""),
                 )
             )
         return summaries
@@ -3088,6 +3205,8 @@ class RecruitmentTeam:
                 "resume_version_id": resume.id,
                 "resume_label": resume.label,
                 "resume_sha256": hashlib.sha256(resume.resume_text.encode()).hexdigest(),
+                "resume_word_count": resume.word_count or len(resume.resume_text.split()),
+                "resume_created_at": resume.created_at.isoformat() if resume.created_at else "",
             },
         )
         self._db.add(thread)
@@ -3101,6 +3220,7 @@ class RecruitmentTeam:
         drafted against, so accepting it would silently do nothing.
         """
         thread = self._owned_thread(owner_id, thread_id)
+        resume = self._bound_resume(owner_id, thread)
         edits = (
             self._db.query(ProposedResumeEdit)
             .filter(
@@ -3115,7 +3235,7 @@ class RecruitmentTeam:
             return []
         from resume_document import create_resume_document
 
-        resume_text = self._owned_resume(owner_id, thread.resume_version_id).resume_text or ""
+        resume_text = resume.resume_text or ""
         revision = create_resume_document(resume_text)["revision"]
         evidence_by_id = {
             fact.evidence_id: fact
@@ -3173,7 +3293,7 @@ class RecruitmentTeam:
         if not edits:
             raise InvalidCommand("no pending resume edits to accept")
 
-        source = self._owned_resume(owner_id, thread.resume_version_id)
+        source = self._bound_resume(owner_id, thread)
         text = source.resume_text or ""
         from resume_document import create_resume_document
 
@@ -3209,18 +3329,6 @@ class RecruitmentTeam:
         )
         self._db.add(version)
         self._db.flush()
-        thread.resume_version_id = version.id
-        facts = dict(thread.case_facts or {})
-        facts.update({
-            "resume_version_id": version.id,
-            "resume_label": version.label,
-            "resume_sha256": hashlib.sha256(text.encode()).hexdigest(),
-            "candidate_profile_status": "not_started",
-            "target_assessment_status": "not_started",
-        })
-        facts.pop("candidate_profile_artifact_id", None)
-        facts.pop("target_assessment_artifact_id", None)
-        thread.case_facts = facts
         self._db.commit()
         return {
             "resume_version_id": version.id,
@@ -3284,6 +3392,29 @@ class RecruitmentTeam:
         )
         if resume is None:
             raise ResumeVersionNotFound("resume version not found")
+        return resume
+
+    def _bound_resume(self, owner_id: int, thread: RecruitmentThread) -> ResumeVersion:
+        """Resolve one thread's immutable resume identity or fail closed."""
+        resume = (
+            self._db.query(ResumeVersion)
+            .filter(
+                ResumeVersion.id == thread.resume_version_id,
+                ResumeVersion.user_id == owner_id,
+            )
+            .first()
+        )
+        if resume is None:
+            raise ResumeVersionNotFound("resume version not found")
+        facts = thread.case_facts or {}
+        expected_version_id = facts.get("resume_version_id")
+        expected_sha256 = str(facts.get("resume_sha256") or "")
+        actual_sha256 = hashlib.sha256(resume.resume_text.encode()).hexdigest()
+        if expected_version_id != resume.id or expected_sha256 != actual_sha256:
+            raise ResumeBindingConflict(
+                "resume_binding_mismatch: this conversation's resume changed; start a new conversation"
+            )
+        thread.case_facts = self._validated_case_facts(thread, resume)
         return resume
 
     def _known_job(
