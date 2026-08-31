@@ -4,7 +4,7 @@ from sqlalchemy.pool import StaticPool
 
 import seed_jobs
 from database import Base
-from models import ScrapedJob
+from models import ScrapedJob, UsageLog
 from scraper import CareersGovScraper, Job, MyCareersFutureScraper
 
 
@@ -69,7 +69,7 @@ def test_mcf_growth_circuit_breaker_bounds_new_rows(monkeypatch):
 
 
 def test_successful_crawl_does_not_prune_when_cleanup_is_disabled(monkeypatch):
-    engine, _testing_session = _prepare_crawl(monkeypatch)
+    engine, testing_session = _prepare_crawl(monkeypatch)
     monkeypatch.setattr(seed_jobs.app_config, "CRAWL_LEGACY_HIDDEN_PRUNE_BATCH", 0)
     mcf_job = _job("MyCareersFuture", "mcf-1")
     cgov_job = _job("Careers@Gov", "cgov-1")
@@ -94,6 +94,9 @@ def test_successful_crawl_does_not_prune_when_cleanup_is_disabled(monkeypatch):
     assert stats["errors"] == 0
     assert stats["legacy_hidden_pruned"] == 0
     assert prune_calls == []
+    with testing_session() as db:
+        generation = db.query(UsageLog).filter_by(action="job_corpus_generation").one()
+        assert generation.detail == "full_crawl"
     engine.dispose()
 
 

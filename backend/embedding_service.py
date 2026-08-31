@@ -30,6 +30,8 @@ EMBEDDING_DIMENSION = 384
 EMBEDDING_DEFAULT_BATCH_SIZE = 32
 EMBEDDING_MAX_BATCH_SIZE = 256
 EMBEDDING_REFRESH_PAGE_SIZE = 500
+EMBEDDING_READINESS_MARKER_VERSION = "job-embedding-ready-v3"
+JOB_CORPUS_GENERATION_ACTION = "job_corpus_generation"
 
 
 class EmbeddingIndexUnavailable(RuntimeError):
@@ -182,11 +184,55 @@ def invalidate_job_embedding_if_stale(job) -> bool:
 
 
 def embedding_readiness_marker(db_session: Session) -> str:
-    """Bind a completed exact-provenance scan to this corpus and encoder."""
-    from job_visibility import job_corpus_marker
+    """Bind a completed exact-provenance scan to the mutable corpus generation.
 
-    value = f"{job_corpus_marker(db_session)}\0{EMBEDDING_MODEL_IDENTITY}"
+    Public visibility shrinks continuously as postings age or close. A scan of
+    the larger corpus still proves every row in that smaller subset, so those
+    clock-only removals must not invalidate readiness. New, updated, hidden, or
+    reactivated rows do change this marker and require another complete scan.
+    """
+    from job_visibility import DEFAULT_PUBLIC_JOB_MAX_AGE_DAYS
+    from models import ScrapedJob, UsageLog
+
+    count, max_id, max_scraped_at = (
+        db_session.query(
+            func.count(ScrapedJob.id),
+            func.max(ScrapedJob.id),
+            func.max(ScrapedJob.scraped_at),
+        )
+        .filter(ScrapedJob.hidden == 0)
+        .one()
+    )
+    generation = (
+        db_session.query(UsageLog.id)
+        .filter(UsageLog.action == JOB_CORPUS_GENERATION_ACTION)
+        .order_by(UsageLog.id.desc())
+        .first()
+    )
+    generation_id = int(generation[0]) if generation else 0
+    generation = (
+        f"{EMBEDDING_READINESS_MARKER_VERSION}:"
+        f"max_age_days={DEFAULT_PUBLIC_JOB_MAX_AGE_DAYS}:"
+        f"generation_id={generation_id}:"
+        f"count={int(count or 0)}:max_id={int(max_id or 0)}:"
+        f"max_scraped_at={max_scraped_at or ''}"
+    )
+    value = f"{generation}\0{EMBEDDING_MODEL_IDENTITY}"
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def begin_job_corpus_generation(db_session: Session, source: str) -> int:
+    """Invalidate completed scans before an application-managed corpus write."""
+    from models import UsageLog
+
+    generation = UsageLog(
+        user_id=None,
+        action=JOB_CORPUS_GENERATION_ACTION,
+        detail=source,
+    )
+    db_session.add(generation)
+    db_session.commit()
+    return int(generation.id)
 
 
 def embedding_readiness_is_current(db_session: Session) -> bool:

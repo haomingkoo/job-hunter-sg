@@ -2,7 +2,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import RecruitmentTeamPanel, { ExecutionDetails } from "../RecruitmentTeamPanel.jsx";
+import RecruitmentTeamPanel, { ExecutionDetails, recruitmentErrorMessage } from "../RecruitmentTeamPanel.jsx";
 import { apiFetch } from "../../lib/api.js";
 import { streamRecruitmentCommand } from "../../lib/recruitmentTeamApi.js";
 
@@ -29,6 +29,17 @@ describe("RecruitmentTeamPanel", () => {
     act(() => root.unmount());
     vi.useRealTimers();
     container.remove();
+  });
+
+  it("replaces internal candidate-profile failures with recovery copy", () => {
+    expect(recruitmentErrorMessage(
+      new Error("candidate profile failed semantic validation"),
+      "Could not continue.",
+    )).toBe("The resume profile did not pass its evidence checks. Saved progress is safe.");
+    expect(recruitmentErrorMessage(
+      new Error("candidate profile model transport failed"),
+      "Could not continue.",
+    )).toBe("The resume profiling service did not respond. Saved progress is safe.");
   });
 
   it("separates workflow-reported and transport-observed execution usage", async () => {

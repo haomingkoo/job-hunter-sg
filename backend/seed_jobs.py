@@ -32,7 +32,7 @@ from ats_terms import build_job_ats_terms
 import config as app_config
 from database import init_db, SessionLocal
 from crawl_lease import job_crawl_lease
-from embedding_service import invalidate_job_embedding_if_stale
+from embedding_service import begin_job_corpus_generation, invalidate_job_embedding_if_stale
 from job_precompute import apply_job_precomputes, posted_sort_iso as _posted_sort_iso
 from job_store import (
     backfill_content_hashes,
@@ -164,6 +164,7 @@ def seed_jobs(
     """Scrape jobs for each keyword, cache them in the database, return stats."""
     init_db()
     db = SessionLocal()
+    begin_job_corpus_generation(db, "keyword_seed")
     aggregator = JobAggregator()
 
     stats = {
@@ -269,6 +270,7 @@ def crawl_all_jobs() -> dict:
     """
     init_db()
     db = SessionLocal()
+    begin_job_corpus_generation(db, "full_crawl")
 
     stats = {
         "new": 0,

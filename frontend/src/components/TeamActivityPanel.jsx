@@ -112,6 +112,62 @@ function humanize(item) {
   return capitalize(summary.startsWith(memberPrefix) ? summary.slice(memberPrefix.length) : summary);
 }
 
+function profileStage(scopeId) {
+  if (scopeId === "__global_semantic_merge__" || scopeId === "__global_correction__") {
+    return { key: "combine", label: "Combining overlapping resume evidence" };
+  }
+  if (scopeId === "__independent_evaluation__") {
+    return { key: "evaluate", label: "Checking evidence support" };
+  }
+  return { key: "evidence", label: "Reading resume evidence" };
+}
+
+function profileRecoveryText(detail) {
+  if (detail?.retryable !== true) return "Review the failure details before continuing.";
+  if (["start_thread", "send_message", "answer_assessment_question"].includes(detail?.command_type)) {
+    return "Use Retry this turn to continue from saved progress.";
+  }
+  if (detail?.command_type === "build_candidate_profile") {
+    return "Use Resume profile to continue from saved progress.";
+  }
+  return "Try the available recovery action to continue from saved progress.";
+}
+
+function summarizeProfileProgress(step, terminalDetail) {
+  const transition = step.detail?.transition;
+  const stage = profileStage(step.detail?.scope_id);
+  const completed = Number(step.detail?.completed_scope_count);
+  const total = Number(step.detail?.scope_count);
+  const progress = Number.isInteger(completed) && Number.isInteger(total) && total > 0
+    ? ` · ${Math.min(completed, total)} of ${total} checks complete`
+    : "";
+  let summary = stage.label;
+  if (transition === "correction") summary = `Rechecking ${stage.label.toLowerCase()}`;
+  if (transition === "failure") {
+    summary = `Stopped while ${stage.label.toLowerCase()} · ${profileRecoveryText(terminalDetail)}`;
+  }
+  return { ...step, profileStage: stage.key, summary: `${summary}${progress}` };
+}
+
+function projectCandidateProfilerSteps(steps) {
+  const progressByStage = new Map();
+  const terminal = [];
+  const terminalFailure = [...steps].reverse().find((step) => step.status === "failed");
+  for (const step of steps) {
+    if (step.detail?.transition) {
+      const summary = summarizeProfileProgress(step, terminalFailure?.detail);
+      progressByStage.set(`${step.runId}:${summary.profileStage}`, summary);
+    } else if (step.status !== "running") {
+      terminal.push(step.status === "failed" ? {
+        ...step,
+        summary: `Profile stopped. ${profileRecoveryText(step.detail)}`,
+      } : step);
+    }
+  }
+  if (progressByStage.size === 0) return terminal.length ? terminal : steps;
+  return [...progressByStage.values(), ...terminal].sort((a, b) => a.key - b.key);
+}
+
 /** Preserve the thread's completed work as later runs add new steps. */
 function buildRoster(events) {
   if (!events.length) return [];
@@ -131,6 +187,7 @@ function buildRoster(events) {
       runId: item.run_id,
       summary: humanize(item),
       status: item.status,
+      detail: activityDetail(item),
     });
     byMember.set(item.team_member, existing);
   }
@@ -138,6 +195,7 @@ function buildRoster(events) {
   for (const row of byMember.values()) {
     // Stream order is not arrival order, so sequence decides both trail order and status.
     row.steps.sort((a, b) => a.key - b.key);
+    row.auditSteps = [...row.steps];
     // Collapse repeated narration, but never erase a state transition. A tool
     // call and its accepted result can intentionally share candidate-facing
     // wording while carrying different running/completed states.
@@ -147,6 +205,19 @@ function buildRoster(events) {
       || step.status !== row.steps[i - 1].status
       || step.runId !== row.steps[i - 1].runId
     ));
+    if (row.id === "candidate_profiler") {
+      const latestByProfilerRun = new Map();
+      for (const step of row.steps) latestByProfilerRun.set(step.runId, step);
+      const activeProfilerStep = [...latestByProfilerRun.values()]
+        .filter((step) => (
+          step.status === "running" && !statusFromLifecycle(lifecycleByRun.get(step.runId))
+        ))
+        .reduce((latest, step) => (!latest || step.key > latest.key ? step : latest), null);
+      const latestProfilerRunId = activeProfilerStep?.runId || row.steps.at(-1)?.runId;
+      row.steps = projectCandidateProfilerSteps(
+        row.steps.filter((step) => step.runId === latestProfilerRunId),
+      );
+    }
     const latestByRun = new Map();
     for (const step of row.steps) latestByRun.set(step.runId, step);
     const latestActiveStep = [...latestByRun.values()]
@@ -162,7 +233,9 @@ function buildRoster(events) {
     // A specialist can submit and then be re-engaged, so its verdict is the last completed
     // step rather than the last step. Keep both: the verdict is what the candidate wants,
     // the live step is what reassures them something is still happening.
-    row.conclusion = [...row.steps].reverse().find((step) => step.status === "completed");
+    row.conclusion = row.status === "failed"
+      ? [...row.steps].reverse().find((step) => step.status === "failed")
+      : [...row.steps].reverse().find((step) => step.status === "completed");
     row.liveStep = row.status === "running" ? latestStep : null;
     rows.push(row);
   }
@@ -182,10 +255,12 @@ function statusFromLifecycle(lifecycle) {
 
 function AgentRow({ agent, defaultOpen }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [auditOpen, setAuditOpen] = useState(false);
   const meta = MEMBERS[agent.id] || { name: agent.id.replaceAll("_", " "), remit: "" };
   const state = statusOf(agent.status);
   const panelId = `agent-steps-${agent.id}`;
-  const { conclusion, liveStep, steps: trail } = agent;
+  const { conclusion, liveStep, steps: trail, auditSteps = trail } = agent;
+  const hasCondensedTrail = agent.id === "candidate_profiler" && auditSteps.length > trail.length;
 
   return (
     <li className="overflow-hidden rounded-2xl border border-[#DCE7F2] bg-white">
@@ -227,7 +302,7 @@ function AgentRow({ agent, defaultOpen }) {
           )}
         </span>
 
-        {trail.length > 1 && (
+        {(trail.length > 1 || hasCondensedTrail) && (
           <ChevronDown
             size={14}
             aria-hidden="true"
@@ -236,20 +311,42 @@ function AgentRow({ agent, defaultOpen }) {
         )}
       </button>
 
-      {open && trail.length > 1 && (
-        <ol id={panelId} className="space-y-1.5 border-t border-[#EDF3F9] bg-[#FAFCFE] px-3 py-2.5 pl-[3.25rem]">
-          {trail.map((step) => (
-            <li key={step.key} className="relative text-[11px] leading-relaxed text-[#4A6785]">
-              <span
-                aria-hidden="true"
-                className={`absolute -left-3.5 top-1.5 h-1 w-1 rounded-full ${
-                  step.status === "completed" ? "bg-emerald-500" : "bg-[#BDDDFC]"
-                }`}
-              />
-              {step.summary}
-            </li>
-          ))}
-        </ol>
+      {open && (trail.length > 1 || hasCondensedTrail) && (
+        <div id={panelId} className="border-t border-[#EDF3F9] bg-[#FAFCFE] px-3 py-2.5 pl-[3.25rem]">
+          <ol className="space-y-1.5">
+            {trail.map((step) => (
+              <li key={`${step.runId}-${step.key}`} className="relative text-[11px] leading-relaxed text-[#4A6785]">
+                <span
+                  aria-hidden="true"
+                  className={`absolute -left-3.5 top-1.5 h-1 w-1 rounded-full ${
+                    step.status === "completed" ? "bg-emerald-500" : "bg-[#BDDDFC]"
+                  }`}
+                />
+                {step.summary}
+              </li>
+            ))}
+          </ol>
+          {hasCondensedTrail && (
+            <div className="mt-2 border-t border-[#EDF3F9] pt-2">
+              <button
+                type="button"
+                onClick={() => setAuditOpen((value) => !value)}
+                className="text-[11px] font-medium text-[#33506B] underline decoration-[#BDDDFC] underline-offset-2"
+              >
+                {auditOpen ? "Hide full activity" : `View full activity (${auditSteps.length} events)`}
+              </button>
+              {auditOpen && (
+                <ol className="mt-2 space-y-1.5 border-l border-[#DCE7F2] pl-3">
+                  {auditSteps.map((step) => (
+                    <li key={`audit-${step.runId}-${step.key}`} className="text-[11px] leading-relaxed text-[#4A6785]">
+                      {step.summary}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </li>
   );
