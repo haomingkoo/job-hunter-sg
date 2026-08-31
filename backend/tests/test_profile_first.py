@@ -5,7 +5,6 @@ import pytest
 from models import CandidateProfileArtifact, RecruitmentActivityEvent, RecruitmentRun, RecruitmentThread, ResumeVersion
 from recruitment_team.activity_publisher import IgnoreActivityPublisher, RecordedActivityPublisher
 from recruitment_team.candidate_profile import (
-    CandidateProfileTransportError,
     CandidateProfileValidationError,
     ScriptedCandidateProfilerFactory,
 )
@@ -207,48 +206,6 @@ def test_direct_search_on_hashless_legacy_thread_fails_closed():
                 "legacy-direct-search",
             )
         assert "latest_ranking_receipt" not in thread.case_facts
-
-
-def test_profile_transport_retry_is_budgeted_and_resumes_profiler_stage():
-    sessions = _session_factory()
-    owner_id, resume_id = _owner_with_resume(sessions)
-    factory = ScriptedCandidateProfilerFactory([
-        CandidateProfileTransportError(
-            scope_id="scripted_01",
-            attempt=1,
-            cause_type="APITimeoutError",
-            failure_code="transport_timeout",
-            completed_scope_ids=(),
-            checkpoint_id="d" * 64,
-            model_call_count=1,
-            input_tokens=10,
-            output_tokens=0,
-        ),
-        _candidate_profile_run(),
-    ])
-
-    with sessions() as db:
-        team = _team(
-            db,
-            ScriptedConversationModel(["Recovered."]),
-            ScriptedDiscovery([]),
-            IgnoreActivityPublisher(),
-            factory,
-        )
-        with pytest.raises(CandidateProfilingUnavailable) as caught:
-            team.execute(
-                owner_id,
-                StartThread(resume_version_id=resume_id, message="Find roles."),
-                "profile-transport",
-            )
-        assert caught.value.retryable is True
-        failed = db.query(RecruitmentRun).filter_by(idempotency_key="profile-transport").one()
-
-        receipt = team.retry_conversation_run(owner_id, failed.thread_id, failed.id)
-
-    assert receipt.status == "completed"
-    assert receipt.attempt_ledger["last_attempted_stage"] == "candidate_profile"
-    assert receipt.attempt_ledger["stages"]["candidate_profile"]["workflow_resume"]["used"] == 1
 
 
 def test_coordinator_retry_reuses_completed_profile_without_profiler_work():

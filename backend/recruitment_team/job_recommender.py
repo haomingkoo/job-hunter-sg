@@ -15,6 +15,7 @@ from .discovery import DiscoveryPort, JobSearchResult, JobSnapshot
 
 
 RANKING_POLICY_VERSION = "candidate-evidence-rerank-v1"
+PROFILE_QUERY_SKILL_LIMIT = 12
 RANKING_COMPONENT_ORDER = (
     "profile_term_match_count",
     "profile_term_coverage",
@@ -160,12 +161,9 @@ def _profile_text(profile: CandidateEvidenceProfile | None) -> str:
 def _profile_search_query(profile: CandidateEvidenceProfile | None) -> str:
     """Build a compact role-neutral retrieval view from direct evidence only.
 
-    The embedding encoder truncates long inputs. Feeding every reviewed field
-    would therefore make whichever resume section happened to come first an
-    undocumented recall policy. Preserve explicit domains, skills and
-    credentials, then add known skill phrases extracted across every direct
-    statement. If the profile contains none of those semantics, keep its direct
-    statements rather than inventing a substitute query.
+    Only phrases from the bounded skill taxonomy may leave the resume boundary.
+    Raw statements can contain private prose or prompt-like text and must never
+    become an automatic discovery query or persisted query receipt.
     """
     if profile is None:
         return ""
@@ -175,16 +173,9 @@ def _profile_search_query(profile: CandidateEvidenceProfile | None) -> str:
         if field.evidence_kind == "direct"
         and field.statement.strip()
     ]
-    explicit_terms = [
-        field.statement.strip()
-        for field in profile.fields
-        if field.evidence_kind == "direct"
-        and field.category in {"domain", "stated_skill", "credential"}
-        and field.statement.strip()
-    ]
     extracted_terms = extract_skill_phrases(" ".join(statements))
-    compact_terms = list(dict.fromkeys((*explicit_terms, *extracted_terms)))
-    return " ".join(compact_terms or dict.fromkeys(statements))
+    compact_terms = list(dict.fromkeys(_normalized_phrase(term) for term in extracted_terms))
+    return " ".join(term for term in compact_terms[:PROFILE_QUERY_SKILL_LIMIT] if term)
 
 
 def _merged_search_result(results: tuple[JobSearchResult, ...]) -> JobSearchResult:

@@ -38,7 +38,8 @@ from backend.tests.test_recruitment_team_module import (
 
 
 RESUME_HINT = "semiconductor yield analytics"
-REVIEWED_PROFILE_QUERY = "Built a production agent platform with traced model and tool calls."
+REVIEWED_PROFILE_QUERY = "platform engineering"
+PROFILE_RESUME_QUOTE = "Platform engineering"
 
 
 def _job(job_id: int, title: str, company: str, seniority: str = "Professional"):
@@ -120,8 +121,8 @@ def _ranked_match(job_id: int, *, pay_position: str = "above_peer_median") -> di
         "job_id": job_id,
         "matched": [
             {
-                "statement": "Builds production agent platforms.",
-                "resume_quote": "Built a production agent platform with traced model and tool calls.",
+                "statement": "Has platform engineering experience.",
+                "resume_quote": PROFILE_RESUME_QUOTE,
             }
         ],
         "stretch": [],
@@ -344,8 +345,8 @@ def test_read_shortlist_hides_old_rationales_after_a_new_search():
     new_match = _ranked_match(202)
     current = replace(
         _job(202, "Staff Agent Platform Engineer", "NXP"),
-        description="Build a production agent platform with traced model and tool calls.",
-        skills=("agent platform", "model tracing"),
+        description="Own platform engineering with traced model and tool calls.",
+        skills=("platform engineering", "model tracing"),
         job_terms_preview=(),
         parsed_jd=None,
     )
@@ -728,7 +729,7 @@ def test_write_shortlist_omits_profile_free_distractors_from_general_search():
     context = _context(
         discovery,
         candidate_profile=_candidate_profile("Led quality management across manufacturing sites."),
-        resume_document={"blocks": [{"text": REVIEWED_PROFILE_QUERY}]},
+        resume_document={"blocks": [{"text": PROFILE_RESUME_QUOTE}]},
     )
     matched_rationale = _ranked_match(matched.job_id)
     distractor_rationale = _ranked_match(distractor.job_id)
@@ -974,15 +975,15 @@ def test_agent_publishes_an_ordered_explained_subset_of_search_results():
         _job(501, "AI Engineer I", "Junior Employer"),
         replace(
             _job(502, "Principal Agent Platform Engineer", "Best Employer"),
-            description="Build production agent platforms with traced model and tool calls.",
-            skills=("agent platform", "model tracing"),
+            description="Lead platform engineering with traced model and tool calls.",
+            skills=("platform engineering", "model tracing"),
             job_terms_preview=(),
             parsed_jd=None,
         ),
         replace(
             _job(503, "Senior Agent Platform Engineer", "Second Employer"),
-            description="Own a production agent platform and traced tool calls.",
-            skills=("agent platform", "tool tracing"),
+            description="Own platform engineering and traced tool calls.",
+            skills=("platform engineering", "tool tracing"),
             job_terms_preview=(),
             parsed_jd=None,
         ),
@@ -1013,8 +1014,9 @@ def test_agent_publishes_an_ordered_explained_subset_of_search_results():
 
     assert [job.job_id for job in snapshot.case_facts.recommendations] == [502, 503]
     assert [match["job_id"] for match in snapshot.case_facts.match_rationales] == [502, 503]
-    assert snapshot.case_facts.match_rationales[0]["matched"][0]["resume_quote"] == (
-        "Built a production agent platform with traced model and tool calls."
+    assert (
+        snapshot.case_facts.match_rationales[0]["matched"][0]["resume_quote"]
+        == PROFILE_RESUME_QUOTE
     )
 
     with sessions() as db:

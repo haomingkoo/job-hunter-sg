@@ -9,14 +9,20 @@ from sqlalchemy.pool import StaticPool
 
 from database import Base
 from models import CandidateProfileArtifact, ResumeVersion, User
+from resume_document import create_resume_document
 from recruitment_team.candidate_profile import (
     CandidateEvidenceProfile,
     CandidateProfileEvidence,
     CandidateProfileField,
+    DETERMINISTIC_PROFILE_IMPLEMENTATION,
+    DETERMINISTIC_PROFILE_MODEL,
+    DeterministicCandidateProfilerFactory,
+    exact_extraction_receipt,
 )
 from recruitment_team.candidate_profile_store import (
     SQLAlchemyCandidateProfileStore,
     _profile_evidence_disposition_is_publishable,
+    candidate_profile_artifact_is_current,
 )
 
 
@@ -50,7 +56,7 @@ def _owner_resume(factory, email: str) -> tuple[int, int]:
         return user.id, resume.id
 
 
-def _supported_profile_and_evaluation(*, rejected: bool = False):
+def _supported_profile_and_evaluation():
     field = CandidateProfileField(
         field_id="supported-field",
         category="demonstrated_capability",
@@ -76,30 +82,7 @@ def _supported_profile_and_evaluation(*, rejected: bool = False):
             ),
         ),
     )
-    rows = [{
-        "field_id": field.field_id,
-        "label": "supported",
-        "disposition_source": "supported_field_refs",
-    }]
-    rejected_ids = []
-    if rejected:
-        rows.append({
-            "field_id": "rejected-field",
-            "label": "partially_supported",
-            "disposition_source": "field_evaluation",
-        })
-        rejected_ids.append("rejected-field")
-    evaluation = {
-        "evaluation_version": "review-v1",
-        "result": "revise" if rejected else "pass",
-        "field_evaluations": rows,
-        "evidence_disposition": {
-            "policy": "fully_supported_fields_only",
-            "action": "publish_supported_subset" if rejected else "publish_supported_profile",
-            "supported_field_ids": [field.field_id],
-            "rejected_field_ids": rejected_ids,
-        },
-    }
+    evaluation = exact_extraction_receipt(profile)
     return profile, evaluation
 
 
@@ -138,6 +121,32 @@ def test_candidate_profile_store_persists_scopes_failure_and_completion():
         assert store.completed(checkpoint_id).id == completed.id
 
 
+def test_deterministic_profile_artifact_has_zero_model_provenance():
+    factory = _session_factory()
+    owner_id, resume_id = _owner_resume(factory, "deterministic@example.com")
+    document = create_resume_document(
+        "EXPERIENCE\nFinance Analyst | 2020 - 2024\n- Produced monthly accounts."
+    )
+
+    with factory() as db:
+        store = SQLAlchemyCandidateProfileStore(
+            db,
+            owner_id=owner_id,
+            resume_version_id=resume_id,
+            model_name=DETERMINISTIC_PROFILE_MODEL,
+        )
+        run = DeterministicCandidateProfilerFactory().create(store).profile(document)
+        completed = store.complete(run.checkpoint_id, run.profile, run.evaluation)
+
+        assert completed.model_name == DETERMINISTIC_PROFILE_MODEL
+        assert completed.execution_policy["implementation"] == DETERMINISTIC_PROFILE_IMPLEMENTATION
+        assert completed.execution_metrics["model_call_count"] == 0
+        assert completed.execution_metrics["models"] == []
+        assert completed.execution_metrics["attempts"][0]["event"] == "deterministic_extract"
+        assert completed.evaluation["implementation"] == DETERMINISTIC_PROFILE_IMPLEMENTATION
+        assert candidate_profile_artifact_is_current(completed)
+
+
 def test_candidate_profile_store_fences_checkpoint_writes_before_mutation():
     factory = _session_factory()
     owner_id, resume_id = _owner_resume(factory, "fenced@example.com")
@@ -160,12 +169,12 @@ def test_candidate_profile_store_fences_checkpoint_writes_before_mutation():
         assert db.query(CandidateProfileArtifact).count() == 0
 
 
-def test_candidate_profile_store_accepts_revise_only_as_a_supported_subset():
-    profile, evaluation = _supported_profile_and_evaluation(rejected=True)
+def test_candidate_profile_store_accepts_exact_extraction_receipt():
+    profile, evaluation = _supported_profile_and_evaluation()
 
     assert isinstance(asdict(profile)["fields"], tuple)
     assert _profile_evidence_disposition_is_publishable(asdict(profile), evaluation)
-    assert _profile_evidence_disposition_is_publishable(
+    assert not _profile_evidence_disposition_is_publishable(
         {
             "fields": [
                 {"field_id": field.field_id}
@@ -176,58 +185,18 @@ def test_candidate_profile_store_accepts_revise_only_as_a_supported_subset():
     )
 
 
-def test_candidate_profile_store_rejects_block_and_unfiltered_fields():
-    profile, evaluation = _supported_profile_and_evaluation(rejected=True)
+def test_candidate_profile_store_rejects_receipt_and_profile_mismatch():
+    profile, evaluation = _supported_profile_and_evaluation()
     unfiltered = {
         "fields": [
             {"field_id": profile.fields[0].field_id},
             {"field_id": "rejected-field"},
         ]
     }
-    blocked = {
-        **evaluation,
-        "result": "block",
-        "field_evaluations": [{"field_id": "rejected-field", "label": "unsupported"}],
-        "evidence_disposition": {
-            "policy": "fully_supported_fields_only",
-            "action": "block_no_supported_evidence",
-            "supported_field_ids": [],
-            "rejected_field_ids": ["rejected-field"],
-        },
-    }
+    blocked = {**evaluation, "result": "block"}
 
     assert not _profile_evidence_disposition_is_publishable(unfiltered, evaluation)
     assert not _profile_evidence_disposition_is_publishable({"fields": []}, blocked)
-
-
-def test_candidate_profile_store_keeps_retry_feedback_out_of_completed_scopes():
-    factory = _session_factory()
-    owner_id, resume_id = _owner_resume(factory, "retry-owner@example.com")
-    checkpoint_id = "c" * 64
-    feedback = {
-        "failed_output": {"tool_calls": []},
-        "rejected_payload": {"fields": []},
-        "validation_code": "field:summary:quote_not_found",
-        "next_attempt": 2,
-    }
-
-    with factory() as db:
-        store = SQLAlchemyCandidateProfileStore(
-            db,
-            owner_id=owner_id,
-            resume_version_id=resume_id,
-            model_name="model-a",
-        )
-        store.save(checkpoint_id, "summary_01", {"fields": []})
-        store.save_retry_feedback(checkpoint_id, "experience_01", feedback)
-
-        assert store.load(checkpoint_id) == {"summary_01": {"fields": []}}
-        assert store.load_retry_feedback(checkpoint_id, "experience_01") == feedback
-
-        store.clear_retry_feedback(checkpoint_id, "experience_01")
-
-        assert store.load_retry_feedback(checkpoint_id, "experience_01") is None
-        assert store.load(checkpoint_id) == {"summary_01": {"fields": []}}
 
 
 def test_candidate_profile_execution_metrics_survive_a_new_database_session():

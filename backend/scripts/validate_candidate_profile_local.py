@@ -17,13 +17,11 @@ load_dotenv(BACKEND_DIR / ".env")
 
 from recruitment_team.candidate_profile import (  # noqa: E402
     CandidateProfileCheckpointStore,
-    CandidateProfileTransportError,
     CandidateProfileValidationError,
-    LangChainCandidateProfilerFactory,
+    DeterministicCandidateProfilerFactory,
     candidate_profile_execution_policy,
 )
 from recruitment_team.execution_metrics import merge_execution_event  # noqa: E402
-from recruitment_team.telemetry import RecordedTelemetry  # noqa: E402
 from resume_document import create_resume_document  # noqa: E402
 from resume_parser import parse_resume_isolated  # noqa: E402
 
@@ -50,7 +48,6 @@ class JsonCandidateProfileCheckpointStore(CandidateProfileCheckpointStore):
                 "checkpoint_id": checkpoint_id,
                 "execution_policy": self.execution_policy,
                 "scopes": {},
-                "retry_feedback": {},
                 "execution_metrics": {},
             }
         else:
@@ -65,8 +62,6 @@ class JsonCandidateProfileCheckpointStore(CandidateProfileCheckpointStore):
         scopes = payload.get("scopes")
         if not isinstance(scopes, dict):
             raise ValueError("Candidate profile checkpoint scopes must be an object")
-        if not isinstance(payload.get("retry_feedback", {}), dict):
-            raise ValueError("Candidate profile checkpoint retry feedback must be an object")
         if not isinstance(payload.get("execution_metrics", {}), dict):
             raise ValueError("Candidate profile checkpoint execution metrics must be an object")
         return payload
@@ -91,31 +86,6 @@ class JsonCandidateProfileCheckpointStore(CandidateProfileCheckpointStore):
         scopes = dict(document["scopes"])
         scopes[scope_id] = payload
         document["scopes"] = scopes
-        self._write(document)
-
-    def load_retry_feedback(self, checkpoint_id: str, scope_id: str) -> dict | None:
-        value = self._read(checkpoint_id).get("retry_feedback", {}).get(scope_id)
-        return dict(value) if isinstance(value, dict) else None
-
-    def save_retry_feedback(
-        self,
-        checkpoint_id: str,
-        scope_id: str,
-        feedback: dict,
-    ) -> None:
-        document = self._read(checkpoint_id)
-        retry_feedback = dict(document.get("retry_feedback") or {})
-        retry_feedback[scope_id] = feedback
-        document["retry_feedback"] = retry_feedback
-        self._write(document)
-
-    def clear_retry_feedback(self, checkpoint_id: str, scope_id: str) -> None:
-        document = self._read(checkpoint_id)
-        retry_feedback = dict(document.get("retry_feedback") or {})
-        if scope_id not in retry_feedback:
-            return
-        retry_feedback.pop(scope_id)
-        document["retry_feedback"] = retry_feedback
         self._write(document)
 
     def record_execution_event(self, checkpoint_id: str, event: dict) -> None:
@@ -148,7 +118,6 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--checkpoint and --output must be different paths")
     execution_policy = candidate_profile_execution_policy()
     checkpoint_store = JsonCandidateProfileCheckpointStore(checkpoint_path, execution_policy)
-    telemetry = RecordedTelemetry()
     report = {
         "status": "failed",
         "resume_pdf": str(resume_path),
@@ -158,7 +127,6 @@ def main(argv: list[str] | None = None) -> int:
         "profile": None,
         "evaluation": None,
         "error": None,
-        "spans": [],
         "checkpoint": {
             "path": str(checkpoint_path) if checkpoint_path is not None else None,
             "completed_scope_ids": [],
@@ -189,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
             "content_warnings": parsed["content_warnings"],
             "document_block_count": len(document["blocks"]),
         }
-        run = LangChainCandidateProfilerFactory(telemetry=telemetry).create(
+        run = DeterministicCandidateProfilerFactory().create(
             checkpoint_store
         ).profile(document)
         report["status"] = "completed"
@@ -224,30 +192,12 @@ def main(argv: list[str] | None = None) -> int:
             "checkpoint_id": error.checkpoint_id,
             "completed_scope_ids": list(error.completed_scope_ids),
         }
-    except CandidateProfileTransportError as error:
-        report["error"] = {
-            "type": type(error).__name__,
-            "message": str(error),
-            "failure_type": "transient",
-            "failure_code": error.failure_code,
-            "retryable": False,
-            "cause_type": error.cause_type,
-            "failed_scope_id": error.scope_id,
-            "attempt": error.attempt,
-            "completed_scope_ids": list(error.completed_scope_ids),
-            "checkpoint_id": error.checkpoint_id,
-            "model_call_count": error.model_call_count,
-            "input_tokens": error.input_tokens,
-            "output_tokens": error.output_tokens,
-            "recovery": "Resume with the same explicit checkpoint path.",
-        }
     except Exception as error:
         report["error"] = {
             "type": type(error).__name__,
             "message": str(error),
         }
     finally:
-        report["spans"] = [asdict(span) for span in telemetry.spans]
         if checkpoint_path is not None and checkpoint_path.exists():
             checkpoint_document = json.loads(checkpoint_path.read_text(encoding="utf-8"))
             report["checkpoint"]["completed_scope_ids"] = sorted((checkpoint_document.get("scopes") or {}).keys())
@@ -263,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
                 "status": report["status"],
                 "output": str(output_path),
                 "fields": len((report["profile"] or {}).get("fields") or []),
-                "spans": len(report["spans"]),
+                "model_calls": int((report["run"] or {}).get("model_call_count") or 0),
             },
             separators=(",", ":"),
         )

@@ -15,68 +15,47 @@ from models import CandidateProfileArtifact
 
 from .candidate_profile import (
     CANDIDATE_PROFILE_DECOMPOSITION_VERSION,
+    CANDIDATE_PROFILE_PROMPT_VERSION,
+    CANDIDATE_PROFILE_RECEIPT_VERSION,
+    DETERMINISTIC_PROFILE_IMPLEMENTATION,
     CandidateEvidenceProfile,
     CandidateProfileCheckpointStore,
     candidate_profile_execution_policy,
+    candidate_profile_sha256,
 )
 from .execution_metrics import merge_execution_event, merge_execution_metrics
-from .prompts import CANDIDATE_PROFILE_PROMPT_VERSION, CANDIDATE_PROFILE_REVIEW_VERSION
 
 log = logging.getLogger("jobhunter.recruitment_team")
-
-
-RETRY_FEEDBACK_SCOPE_KEY = "__retry_feedback__"
 
 
 def _profile_evidence_disposition_is_publishable(
     profile: dict | None,
     evaluation: dict | None,
 ) -> bool:
-    """Require the stored profile to equal the evaluator-supported subset."""
+    """Require the stored profile to equal its validated evidence disposition."""
     if not isinstance(profile, dict) or not isinstance(evaluation, dict):
         return False
     profile_fields = profile.get("fields")
-    evaluated_fields = evaluation.get("field_evaluations")
     disposition = evaluation.get("evidence_disposition")
     if (
         not isinstance(profile_fields, (list, tuple))
         or not profile_fields
-        or not isinstance(evaluated_fields, (list, tuple))
-        or not evaluated_fields
         or not isinstance(disposition, dict)
         or not all(isinstance(item, dict) and item.get("field_id") for item in profile_fields)
-        or not all(isinstance(item, dict) and item.get("field_id") for item in evaluated_fields)
     ):
         return False
     profile_ids = [str(item["field_id"]) for item in profile_fields]
-    evaluated_ids = [str(item["field_id"]) for item in evaluated_fields]
-    supported_ids = [
-        str(item["field_id"])
-        for item in evaluated_fields
-        if item.get("label") == "supported"
-        and item.get("disposition_source") == "supported_field_refs"
-    ]
-    rejected_ids = [
-        str(item["field_id"])
-        for item in evaluated_fields
-        if item.get("label") != "supported"
-        or item.get("disposition_source") != "supported_field_refs"
-    ]
-    expected_result = "pass" if not rejected_ids else "revise"
-    expected_action = (
-        "publish_supported_profile"
-        if not rejected_ids
-        else "publish_supported_subset"
-    )
     return (
         len(profile_ids) == len(set(profile_ids))
-        and len(evaluated_ids) == len(set(evaluated_ids))
-        and profile_ids == supported_ids
-        and disposition.get("policy") == "fully_supported_fields_only"
-        and disposition.get("action") == expected_action
-        and disposition.get("supported_field_ids") == supported_ids
-        and disposition.get("rejected_field_ids") == rejected_ids
-        and evaluation.get("result") == expected_result
+        and evaluation.get("receipt_version") == CANDIDATE_PROFILE_RECEIPT_VERSION
+        and evaluation.get("implementation") == DETERMINISTIC_PROFILE_IMPLEMENTATION
+        and evaluation.get("field_count") == len(profile_ids)
+        and evaluation.get("profile_sha256") == candidate_profile_sha256(profile)
+        and evaluation.get("result") == "pass"
+        and disposition.get("policy") == DETERMINISTIC_PROFILE_IMPLEMENTATION
+        and disposition.get("action") == "publish_exact_profile"
+        and disposition.get("supported_field_ids") == profile_ids
+        and disposition.get("rejected_field_ids") == []
     )
 
 
@@ -90,9 +69,8 @@ def candidate_profile_artifact_is_current(record: CandidateProfileArtifact) -> b
         _profile_evidence_disposition_is_publishable(profile, evaluation)
         and record.prompt_version == CANDIDATE_PROFILE_PROMPT_VERSION
         and record.decomposition_version == CANDIDATE_PROFILE_DECOMPOSITION_VERSION
-        and policy.get("review_version") == CANDIDATE_PROFILE_REVIEW_VERSION
+        and policy.get("implementation") == DETERMINISTIC_PROFILE_IMPLEMENTATION
         and policy.get("resume_document_schema_version") == SCHEMA_VERSION
-        and evaluation.get("evaluation_version") == CANDIDATE_PROFILE_REVIEW_VERSION
     )
 
 
@@ -195,12 +173,7 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
 
     def load(self, checkpoint_id: str) -> dict[str, dict[str, Any]]:
         record = self._validated_record(checkpoint_id)
-        scopes = {
-            key: value
-            for key, value in (record.scopes if record is not None else {}).items()
-            if key != RETRY_FEEDBACK_SCOPE_KEY
-        }
-        return scopes
+        return dict(record.scopes) if record is not None else {}
 
     def save(
         self,
@@ -215,55 +188,6 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
         record.scopes = scopes
         record.status = "running"
         record.error = None
-        record.updated_at = _utcnow()
-        self._db.commit()
-
-    def load_retry_feedback(
-        self,
-        checkpoint_id: str,
-        scope_id: str,
-    ) -> dict[str, Any] | None:
-        record = self._validated_record(checkpoint_id)
-        if record is None:
-            return None
-        retry_feedback = record.scopes.get(RETRY_FEEDBACK_SCOPE_KEY) or {}
-        value = retry_feedback.get(scope_id)
-        feedback = dict(value) if isinstance(value, dict) else None
-        return feedback
-
-    def save_retry_feedback(
-        self,
-        checkpoint_id: str,
-        scope_id: str,
-        feedback: dict[str, Any],
-    ) -> None:
-        self._fence_write()
-        record = self._validated_record(checkpoint_id) or self._create(checkpoint_id)
-        scopes = dict(record.scopes)
-        retry_feedback = dict(scopes.get(RETRY_FEEDBACK_SCOPE_KEY) or {})
-        retry_feedback[scope_id] = feedback
-        scopes[RETRY_FEEDBACK_SCOPE_KEY] = retry_feedback
-        record.scopes = scopes
-        record.status = "running"
-        record.error = None
-        record.updated_at = _utcnow()
-        self._db.commit()
-
-    def clear_retry_feedback(self, checkpoint_id: str, scope_id: str) -> None:
-        self._fence_write()
-        record = self._validated_record(checkpoint_id)
-        if record is None:
-            return
-        scopes = dict(record.scopes)
-        retry_feedback = dict(scopes.get(RETRY_FEEDBACK_SCOPE_KEY) or {})
-        if scope_id not in retry_feedback:
-            return
-        retry_feedback.pop(scope_id)
-        if retry_feedback:
-            scopes[RETRY_FEEDBACK_SCOPE_KEY] = retry_feedback
-        else:
-            scopes.pop(RETRY_FEEDBACK_SCOPE_KEY, None)
-        record.scopes = scopes
         record.updated_at = _utcnow()
         self._db.commit()
 
@@ -304,9 +228,6 @@ class SQLAlchemyCandidateProfileStore(CandidateProfileCheckpointStore):
             raise ValueError(
                 "Candidate profile cannot complete without a publishable supported-evidence disposition"
             )
-        scopes = dict(record.scopes)
-        scopes.pop(RETRY_FEEDBACK_SCOPE_KEY, None)
-        record.scopes = scopes
         record.status = "completed"
         record.profile = serialized_profile
         record.evaluation = evaluation

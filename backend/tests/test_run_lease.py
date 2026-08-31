@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from threading import Barrier, Lock, Thread
 
 from sqlalchemy import create_engine, event, inspect, text
@@ -302,46 +298,6 @@ def test_hidden_conversation_model_attempts_renew_between_sequential_calls(tmp_p
         ).replace(tzinfo=None)
         assert db.get(RecruitmentRun, run_id).user_id == owner_id
 
-
-def test_configured_lease_exceeds_full_candidate_profile_attempt_envelope():
-    import config
-
-    maximum_attempt_envelope = (
-        config.CANDIDATE_PROFILE_MODEL_HTTP_TIMEOUT_SECONDS
-        * (config.CANDIDATE_PROFILE_MODEL_TRANSPORT_RETRIES + 1)
-        * max(
-            config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
-            config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS,
-            config.CANDIDATE_PROFILE_CORRECTION_ATTEMPTS,
-        )
-    )
-
-    assert config.RECRUITMENT_RUN_LEASE_SECONDS > maximum_attempt_envelope
-
-
-def test_config_rejects_lease_that_covers_only_one_transport_retry_envelope():
-    env = os.environ.copy()
-    env.update({
-        "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
-        "RECRUITMENT_MODEL_HTTP_TIMEOUT_SECONDS": "10",
-        "RECRUITMENT_MODEL_TRANSPORT_RETRIES": "0",
-        "CANDIDATE_PROFILE_MODEL_HTTP_TIMEOUT_SECONDS": "10",
-        "CANDIDATE_PROFILE_MODEL_TRANSPORT_RETRIES": "2",
-        "CANDIDATE_PROFILE_VALIDATION_ATTEMPTS": "2",
-        "CANDIDATE_PROFILE_REVIEW_ATTEMPTS": "2",
-        "CANDIDATE_PROFILE_CORRECTION_ATTEMPTS": "3",
-        "RECRUITMENT_RUN_LEASE_SECONDS": "61",
-    })
-    rejected = subprocess.run(
-        [sys.executable, "-c", "import config"],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    assert rejected.returncode != 0
-    assert "must exceed the full candidate-profile attempt envelope (90s)" in rejected.stderr
 
 
 def test_two_startups_reconcile_one_hard_kill_once(tmp_path):
