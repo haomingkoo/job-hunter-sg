@@ -99,14 +99,13 @@ from .run_lease import claim_failed_run, reconcile_expired_runs, renew_run_lease
 from .candidate_profile import (
     CandidateEvidenceProfile,
     CandidateProfileProgress,
-    CandidateProfileTransportError,
     CandidateProfileValidationError,
+    DETERMINISTIC_PROFILE_IMPLEMENTATION,
     candidate_profile_progress_event,
     CandidateProfilerFactory,
     candidate_profile_from_dict,
 )
 from .candidate_profile_store import (
-    RETRY_FEEDBACK_SCOPE_KEY,
     CandidateProfileCheckpointMismatch,
     SQLAlchemyCandidateProfileStore,
     candidate_profile_artifact_is_current,
@@ -243,7 +242,7 @@ TRANSPORT_ATTEMPT_LIMIT = FIRST_ATTEMPT + config.RECRUITMENT_MODEL_TRANSPORT_RET
 SEMANTIC_ATTEMPT_LIMITS = {
     "start_thread": config.RECRUITMENT_CONVERSATION_VALIDATION_ATTEMPTS,
     "send_message": config.RECRUITMENT_CONVERSATION_VALIDATION_ATTEMPTS,
-    "build_candidate_profile": config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
+    "build_candidate_profile": FIRST_ATTEMPT,
     "search_jobs": FIRST_ATTEMPT,
     "shortlist_job": FIRST_ATTEMPT,
     "select_target_job": max(
@@ -883,11 +882,7 @@ class RecruitmentTeam:
                 limit = (
                     TRANSPORT_ATTEMPT_LIMIT
                     if layer == "transport"
-                    else (
-                        config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS
-                        if attempted_stage == "candidate_profile"
-                        else SEMANTIC_ATTEMPT_LIMITS[command_type]
-                    )
+                    else SEMANTIC_ATTEMPT_LIMITS[command_type]
                 )
                 remaining = attempts_remaining(
                     run.attempt_ledger,
@@ -1609,29 +1604,6 @@ class RecruitmentTeam:
         profiler = self._candidate_profiler_factory.create(store, publish_progress)
         try:
             run = profiler.profile(document)
-        except CandidateProfileTransportError as error:
-            artifact = store.fail(
-                error.checkpoint_id,
-                {
-                    "failure_type": "transient",
-                    "failure_code": error.failure_code,
-                    "cause_type": error.cause_type,
-                    "failed_scope_id": error.scope_id,
-                    "attempt": error.attempt,
-                    "completed_scope_ids": list(error.completed_scope_ids),
-                    "recovery": "Resume the candidate profile command.",
-                },
-            )
-            self._activate_candidate_profile_artifact(thread, artifact)
-            self._merge_run_metrics(
-                command_run,
-                store.execution_metrics(error.checkpoint_id),
-                semantic_limit=config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
-            )
-            raise CandidateProfilingUnavailable(
-                "candidate profile model transport failed",
-                decision=classify_failure(error.failure_code),
-            ) from error
         except CandidateProfileValidationError as error:
             failure_code = (
                 "information_absent"
@@ -1652,7 +1624,7 @@ class RecruitmentTeam:
             self._merge_run_metrics(
                 command_run,
                 store.execution_metrics(error.checkpoint_id),
-                semantic_limit=config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
+                semantic_limit=FIRST_ATTEMPT,
             )
             raise CandidateProfilingUnavailable(
                 "candidate profile failed semantic validation",
@@ -1675,14 +1647,23 @@ class RecruitmentTeam:
             "input_tokens": 0 if current_metrics else int(run.input_tokens or 0),
             "output_tokens": 0 if current_metrics else int(run.output_tokens or 0),
             "validation_codes": [] if current_metrics else list(run.validation_codes),
-            "models": [] if current_metrics else [run.model_name],
+            "models": (
+                []
+                if run.model_call_count == 0 or current_metrics
+                else [run.model_name]
+            ),
+            **(
+                {"implementation": DETERMINISTIC_PROFILE_IMPLEMENTATION}
+                if run.model_call_count == 0
+                else {}
+            ),
             "attempts": [],
             "terminal_status": "completed",
         })
         self._merge_run_metrics(
             command_run,
             store.execution_metrics(run.checkpoint_id),
-            semantic_limit=config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
+            semantic_limit=FIRST_ATTEMPT,
         )
         artifact = store.complete(run.checkpoint_id, run.profile, run.evaluation)
         self._activate_candidate_profile_artifact(thread, artifact)
@@ -2805,7 +2786,7 @@ class RecruitmentTeam:
             completed_scope_ids=tuple(
                 scope_id
                 for scope_id in artifact.scopes
-                if scope_id != RETRY_FEEDBACK_SCOPE_KEY and not scope_id.startswith("__")
+                if not scope_id.startswith("__")
             ),
             execution_metrics=artifact.execution_metrics or {},
             profile=artifact.profile,

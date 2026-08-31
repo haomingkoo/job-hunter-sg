@@ -8,24 +8,18 @@ import pytest
 from resume_document import create_resume_document
 from recruitment_team.candidate_profile import (
     CandidateEvidenceProfile,
+    CANDIDATE_PROFILE_RECEIPT_VERSION,
     CandidateProfileField,
     CandidateProfileRun,
-    CandidateProfileTransportError,
     CandidateProfileValidationError,
+    DETERMINISTIC_PROFILE_IMPLEMENTATION,
 )
-from recruitment_team.prompts import CANDIDATE_PROFILE_REVIEW_VERSION
 
 
 def _factory(profiler_type):
     class Factory:
-        def __init__(self, *, telemetry):
-            self.telemetry = telemetry
-
         def create(self, checkpoint_store):
-            return profiler_type(
-                telemetry=self.telemetry,
-                checkpoint_store=checkpoint_store,
-            )
+            return profiler_type(checkpoint_store=checkpoint_store)
 
     return Factory
 
@@ -54,7 +48,6 @@ def test_candidate_profile_canary_writes_complete_profile_and_compact_summary(
     tmp_path,
     capsys,
 ):
-    import config
     from resume_document import SCHEMA_VERSION
     from scripts import validate_candidate_profile_local as script
 
@@ -63,8 +56,7 @@ def test_candidate_profile_canary_writes_complete_profile_and_compact_summary(
     block = parsed["document"]["blocks"][-1]
 
     class FakeProfiler:
-        def __init__(self, *, telemetry, checkpoint_store):
-            assert telemetry.spans == []
+        def __init__(self, *, checkpoint_store):
             assert checkpoint_store.path is None
 
         def profile(self, document):
@@ -95,7 +87,7 @@ def test_candidate_profile_canary_writes_complete_profile_and_compact_summary(
             )
 
     monkeypatch.setattr(script, "parse_resume_isolated", lambda *_args: parsed)
-    monkeypatch.setattr(script, "LangChainCandidateProfilerFactory", _factory(FakeProfiler))
+    monkeypatch.setattr(script, "DeterministicCandidateProfilerFactory", _factory(FakeProfiler))
     resume_path = tmp_path / "resume.pdf"
     output_path = tmp_path / "report.json"
     resume_path.write_bytes(b"%PDF-test")
@@ -114,15 +106,10 @@ def test_candidate_profile_canary_writes_complete_profile_and_compact_summary(
     assert result == 0
     assert report["profile"]["fields"][0]["statement"] == long_statement
     assert report["execution_policy"] == {
-        "prompt_version": "candidate-evidence-profile-v3",
-        "validation_feedback_version": "candidate-profile-validation-feedback-v3",
-            "review_version": CANDIDATE_PROFILE_REVIEW_VERSION,
-            "review_attempts": config.CANDIDATE_PROFILE_REVIEW_ATTEMPTS,
-            "correction_attempts": config.CANDIDATE_PROFILE_CORRECTION_ATTEMPTS,
-            "model_timeout_seconds": config.CANDIDATE_PROFILE_MODEL_HTTP_TIMEOUT_SECONDS,
-            "validation_attempts": config.CANDIDATE_PROFILE_VALIDATION_ATTEMPTS,
-            "transport_retries": config.CANDIDATE_PROFILE_MODEL_TRANSPORT_RETRIES,
-            "decomposition_version": "semantic-entity-v4",
+        "prompt_version": "candidate-evidence-profile-v4",
+        "implementation": "deterministic_exact_extract_v1",
+        "field_cap": 48,
+        "decomposition_version": "extractive-whole-document-v5",
         "resume_document_schema_version": SCHEMA_VERSION,
         "checkpoint_enabled": False,
     }
@@ -130,7 +117,7 @@ def test_candidate_profile_canary_writes_complete_profile_and_compact_summary(
         "status": "completed",
         "output": str(output_path),
         "fields": 1,
-        "spans": 0,
+        "model_calls": 0,
     }
     assert long_statement not in summary
 
@@ -146,7 +133,7 @@ def test_candidate_profile_canary_preserves_complete_validation_error(
     rejected = {"content": "rejected " + "y" * 20_000, "tool_calls": []}
 
     class FailingProfiler:
-        def __init__(self, *, telemetry, checkpoint_store):
+        def __init__(self, *, checkpoint_store):
             pass
 
         def profile(self, _document):
@@ -161,7 +148,7 @@ def test_candidate_profile_canary_preserves_complete_validation_error(
             )
 
     monkeypatch.setattr(script, "parse_resume_isolated", lambda *_args: parsed)
-    monkeypatch.setattr(script, "LangChainCandidateProfilerFactory", _factory(FailingProfiler))
+    monkeypatch.setattr(script, "DeterministicCandidateProfilerFactory", _factory(FailingProfiler))
     resume_path = tmp_path / "resume.pdf"
     output_path = tmp_path / "failure.json"
     resume_path.write_bytes(b"%PDF-test")
@@ -198,59 +185,6 @@ def test_json_checkpoint_store_fails_on_identity_mismatch(tmp_path):
     assert json.loads((tmp_path / "checkpoint.json").read_text())["execution_policy"] == execution_policy
     with pytest.raises(ValueError, match="identity does not match"):
         store.load("identity-b")
-
-
-def test_candidate_profile_canary_reports_structured_resumable_transport_failure(
-    monkeypatch,
-    tmp_path,
-):
-    from scripts import validate_candidate_profile_local as script
-
-    parsed = _parsed_resume()
-
-    class FailingProfiler:
-        def __init__(self, *, telemetry, checkpoint_store):
-            pass
-
-        def profile(self, _document):
-            raise CandidateProfileTransportError(
-                scope_id="experience_02",
-                attempt=1,
-                cause_type="APITimeoutError",
-                failure_code="transport_timeout",
-                completed_scope_ids=("summary_01", "experience_01"),
-                checkpoint_id="checkpoint-id",
-                model_call_count=3,
-                input_tokens=100,
-                output_tokens=50,
-            )
-
-    monkeypatch.setattr(script, "parse_resume_isolated", lambda *_args: parsed)
-    monkeypatch.setattr(script, "LangChainCandidateProfilerFactory", _factory(FailingProfiler))
-    resume_path = tmp_path / "resume.pdf"
-    output_path = tmp_path / "failure.json"
-    resume_path.write_bytes(b"%PDF-test")
-
-    result = script.main(["--resume-pdf", str(resume_path), "--output", str(output_path)])
-    error = json.loads(output_path.read_text())["error"]
-
-    assert result == 1
-    assert error == {
-        "type": "CandidateProfileTransportError",
-        "message": ("candidate profile transport failed in scope experience_02: APITimeoutError"),
-        "failure_type": "transient",
-        "failure_code": "transport_timeout",
-        "retryable": False,
-        "cause_type": "APITimeoutError",
-        "failed_scope_id": "experience_02",
-        "attempt": 1,
-        "completed_scope_ids": ["summary_01", "experience_01"],
-        "checkpoint_id": "checkpoint-id",
-        "model_call_count": 3,
-        "input_tokens": 100,
-        "output_tokens": 50,
-        "recovery": "Resume with the same explicit checkpoint path.",
-    }
 
 
 def test_recruitment_canary_imports_only_matching_completed_profile_report(tmp_path):
@@ -293,22 +227,16 @@ def test_recruitment_canary_imports_only_matching_completed_profile_report(tmp_p
                 },
                 "profile": asdict(profile),
                 "evaluation": {
-                    "evaluation_version": CANDIDATE_PROFILE_REVIEW_VERSION,
-                    "profile_version": "candidate-evidence-profile-v3",
-                    "field_evaluations": [{
-                        "field_id": "capability_id",
-                        "strengths": ["The field is directly supported."],
-                        "weaknesses": [],
-                        "score": 100,
-                        "score_reason": "The cited block supports the field.",
-                        "label": "supported",
-                        "cited_evidence_ids": [block["id"]],
-                    }],
-                    "strengths": [],
-                    "weaknesses": [],
-                    "score": 100,
-                    "score_reason": "Fixture evaluation.",
+                    "receipt_version": CANDIDATE_PROFILE_RECEIPT_VERSION,
+                    "implementation": DETERMINISTIC_PROFILE_IMPLEMENTATION,
+                    "field_count": 1,
                     "result": "pass",
+                    "evidence_disposition": {
+                        "policy": DETERMINISTIC_PROFILE_IMPLEMENTATION,
+                        "action": "publish_exact_profile",
+                        "supported_field_ids": ["capability_id"],
+                        "rejected_field_ids": [],
+                    },
                 },
             }
         )

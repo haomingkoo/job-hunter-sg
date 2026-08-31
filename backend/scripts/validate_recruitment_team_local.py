@@ -32,14 +32,13 @@ from recruitment_team import (  # noqa: E402
 from recruitment_team.activity_publisher import RecordedActivityPublisher  # noqa: E402
 from recruitment_team.candidate_profile import (  # noqa: E402
     CandidateProfileRun,
-    LangChainCandidateProfilerFactory,
+    DeterministicCandidateProfilerFactory,
     ScriptedCandidateProfilerFactory,
     candidate_profile_execution_policy,
     candidate_profile_from_dict,
 )
 from recruitment_team.discovery import LangChainJobDiscovery  # noqa: E402
 from recruitment_team.errors import (  # noqa: E402
-    CandidateProfilingUnavailable,
     RoleProfilingUnavailable,
     TargetAssessmentUnavailable,
 )
@@ -187,16 +186,6 @@ def main() -> int:
         help="Explicit query for the real local job corpus used by the full journey.",
     )
     parser.add_argument(
-        "--candidate-profile-resume-attempts",
-        required=True,
-        type=int,
-        help=(
-            "Explicit number of workflow-level checkpoint resumes allowed after a "
-            "retryable candidate-profile transport failure. This is separate from "
-            "model transport retries and is recorded in the report."
-        ),
-    )
-    parser.add_argument(
         "--role-profile-resume-attempts",
         required=True,
         type=int,
@@ -256,8 +245,6 @@ def main() -> int:
         help="Optional path for the complete JSON report.",
     )
     args = parser.parse_args()
-    if args.candidate_profile_resume_attempts < 0:
-        parser.error("--candidate-profile-resume-attempts must be zero or greater")
     if args.role_profile_resume_attempts < 0:
         parser.error("--role-profile-resume-attempts must be zero or greater")
     if args.target_assessment_resume_attempts < 0:
@@ -335,7 +322,7 @@ def main() -> int:
                 enforce_resume_identity=True,
             )
             if imported_profile_run is not None
-            else LangChainCandidateProfilerFactory(telemetry=telemetry)
+            else DeterministicCandidateProfilerFactory()
         )
         team = RecruitmentTeam(
             db,
@@ -475,24 +462,11 @@ def main() -> int:
                 ),
                 "v3-local-second-turn",
             )
-            candidate_profile_resume_count = 0
-            while True:
-                phase = (
-                    "candidate_profile"
-                    if candidate_profile_resume_count == 0
-                    else f"candidate_profile_resume_{candidate_profile_resume_count}"
-                )
-                try:
-                    execute_phase(
-                        phase,
-                        BuildCandidateProfile(thread_id=thread_id),
-                        f"v3-local-{phase.replace('_', '-')}",
-                    )
-                    break
-                except CandidateProfilingUnavailable as error:
-                    if not error.retryable or candidate_profile_resume_count >= args.candidate_profile_resume_attempts:
-                        raise
-                    candidate_profile_resume_count += 1
+            execute_phase(
+                "candidate_profile",
+                BuildCandidateProfile(thread_id=thread_id),
+                "v3-local-candidate-profile",
+            )
             execute_phase(
                 "job_search",
                 SearchJobs(thread_id=thread_id, query=args.search_query),
@@ -684,21 +658,18 @@ def main() -> int:
         assert [span.name for span in telemetry.spans].count("model") == 2
         non_success_spans = [span for span in telemetry.spans if span.status != "success"]
         # A phase that failed once and then succeeded on an explicit resume
-        # (candidate_profile_resume_attempts / role_profile_resume_attempts /
-        # target_assessment_resume_attempts) legitimately leaves the failed
+        # (role_profile_resume_attempts / target_assessment_resume_attempts)
+        # legitimately leaves the failed
         # attempt's top-level "command" span recorded as non-success -- that's
         # the telemetry doing its job, not a bug. What must never happen is a
         # non-success span anywhere else (an unexpected inner failure), or
         # more non-success spans than the resumes actually taken account for.
         assert all(span.name == "command" for span in non_success_spans)
-        total_resumes = candidate_profile_resume_count + role_profile_resume_count + target_assessment_resume_count
+        total_resumes = role_profile_resume_count + target_assessment_resume_count
         assert len(non_success_spans) <= total_resumes
         profile_metrics = candidate_profile_artifact.execution_metrics or {}
-        if int(profile_metrics.get("model_call_count") or 0) > 0:
-            assert any(span.name == "candidate_profile.model_attempt" for span in telemetry.spans)
-        else:
-            assert not any(span.name == "candidate_profile.model_attempt" for span in telemetry.spans)
-            assert int(profile_metrics.get("checkpoint_hit_count") or 0) > 0
+        assert int(profile_metrics.get("model_call_count") or 0) == 0
+        assert not any(span.name == "candidate_profile.model_attempt" for span in telemetry.spans)
         assert any(span.name == "role_definition.model_attempt" for span in telemetry.spans)
         assert any(span.name == "role_evidence_assessment.model_attempt" for span in telemetry.spans)
         # Specialists run as delegated subagents; the mandatory fresh judge
@@ -732,7 +703,6 @@ def main() -> int:
             "assessment_answer": args.assessment_answer,
             "assessment_answer_rounds": assessment_answer_rounds,
             "search_query": args.search_query,
-            "candidate_profile_resume_attempts": args.candidate_profile_resume_attempts,
             "role_profile_resume_attempts": args.role_profile_resume_attempts,
             "target_assessment_resume_attempts": args.target_assessment_resume_attempts,
             "target_job_id": args.target_job_id,
@@ -743,7 +713,9 @@ def main() -> int:
                 "assessment": args.assessment_model,
             },
             "max_output_tokens": args.max_output_tokens,
-            "candidate_profile_source": ("validated_report" if imported_profile_run is not None else "live_model"),
+            "candidate_profile_source": (
+                "validated_report" if imported_profile_run is not None else "deterministic_extract"
+            ),
             "candidate_profile_report": (
                 str(Path(args.candidate_profile_report).expanduser().resolve())
                 if args.candidate_profile_report

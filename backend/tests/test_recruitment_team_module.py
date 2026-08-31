@@ -42,7 +42,10 @@ def _owner_with_resume(session_factory) -> tuple[int, int]:
         resume = ResumeVersion(
             user_id=user.id,
             label="AI engineering resume",
-            resume_text="Built a production agent platform with traced model and tool calls.",
+            resume_text=(
+                "Platform engineering. Built a production agent platform with traced "
+                "model and tool calls."
+            ),
             is_master=True,
         )
         db.add(resume)
@@ -120,38 +123,16 @@ def _role_profiler(runs=None):
     return ScriptedRoleSuccessProfiler(list(runs or []))
 
 
-def _candidate_profile_evaluation():
-    from recruitment_team.prompts import CANDIDATE_PROFILE_REVIEW_VERSION
+def _candidate_profile_evaluation(profile):
+    from recruitment_team.candidate_profile import exact_extraction_receipt
 
-    return {
-        "evaluation_version": CANDIDATE_PROFILE_REVIEW_VERSION,
-        "profile_version": "candidate-evidence-profile-v3",
-        "field_evaluations": [{
-            "field_id": "demonstrated_agent_platform",
-            "strengths": ["The field is directly supported."],
-            "weaknesses": [],
-            "score": 100,
-            "score_reason": "The cited resume block supports the field.",
-            "label": "supported",
-            "disposition_source": "supported_field_refs",
-            "cited_evidence_ids": ["b_test"],
-        }],
-        "strengths": ["The scripted field is source-backed."],
-        "weaknesses": [],
-        "score": 100,
-        "score_reason": "The fixture represents a completed independent review.",
-        "result": "pass",
-        "evidence_disposition": {
-            "policy": "fully_supported_fields_only",
-            "action": "publish_supported_profile",
-            "supported_field_ids": ["demonstrated_agent_platform"],
-            "rejected_field_ids": [],
-        },
-    }
+    return exact_extraction_receipt(profile)
 
 
 def _candidate_profile_run(
-    resume_text: str = "Built a production agent platform with traced model and tool calls.",
+    resume_text: str = (
+        "Platform engineering. Built a production agent platform with traced model and tool calls."
+    ),
 ):
     from recruitment_team.candidate_profile import (
         CandidateEvidenceProfile,
@@ -162,31 +143,32 @@ def _candidate_profile_run(
     from resume_document import create_resume_document
 
     document = create_resume_document(resume_text)
-    return CandidateProfileRun(
-        profile=CandidateEvidenceProfile(
-            profile_version="candidate-evidence-profile-v3",
-            resume_document_id=document["document_id"],
-            resume_revision=document["revision"],
-            fields=(
-                CandidateProfileField(
-                    field_id="demonstrated_agent_platform",
-                    category="demonstrated_capability",
-                    statement="Built a production agent platform with traced model and tool calls.",
-                    resume_evidence_ids=("b_test",),
-                    evidence_quotes=("Built a production agent platform with traced model and tool calls.",),
-                    evidence_kind="direct",
-                    evidence_support_score=100,
-                    score_reason="The resume states the complete action.",
-                ),
+    profile = CandidateEvidenceProfile(
+        profile_version="candidate-evidence-profile-v3",
+        resume_document_id=document["document_id"],
+        resume_revision=document["revision"],
+        fields=(
+            CandidateProfileField(
+                field_id="demonstrated_agent_platform",
+                category="demonstrated_capability",
+                statement="Platform engineering",
+                resume_evidence_ids=("b_test",),
+                evidence_quotes=("Platform engineering",),
+                evidence_kind="direct",
+                evidence_support_score=100,
+                score_reason="The resume states the complete action.",
             ),
-            cited_resume_evidence=(),
         ),
+        cited_resume_evidence=(),
+    )
+    return CandidateProfileRun(
+        profile=profile,
         model_name="scripted-candidate-profiler",
         attempt_count=1,
         scope_count=1,
         model_call_count=1,
         checkpoint_id="d" * 64,
-        evaluation=_candidate_profile_evaluation(),
+        evaluation=_candidate_profile_evaluation(profile),
     )
 
 
@@ -2222,20 +2204,22 @@ def test_target_role_profile_resumes_rejected_correction_after_restart_without_p
     first_model = AssessorModel([invalid, TimeoutError("correction timed out")])
     first_telemetry = RecordedTelemetry()
     candidate_run = _candidate_profile_run()
-    candidate_run = replace(
-        candidate_run,
-        profile=replace(
-            candidate_run.profile,
-            cited_resume_evidence=(
-                CandidateProfileEvidence(
-                    evidence_id="b_test",
-                    kind="bullet",
-                    text="Built a production agent platform.",
-                    source_locator="experience[0].bullets[0]",
-                    section_key="experience",
-                ),
+    candidate_profile = replace(
+        candidate_run.profile,
+        cited_resume_evidence=(
+            CandidateProfileEvidence(
+                evidence_id="b_test",
+                kind="bullet",
+                text="Built a production agent platform.",
+                source_locator="experience[0].bullets[0]",
+                section_key="experience",
             ),
         ),
+    )
+    candidate_run = replace(
+        candidate_run,
+        profile=candidate_profile,
+        evaluation=_candidate_profile_evaluation(candidate_profile),
     )
 
     with sessions() as db:
@@ -4141,11 +4125,10 @@ def test_http_role_profiler_wires_one_telemetry_recorder_to_both_stages(monkeypa
 
 @pytest.mark.parametrize(
     "dependency_name, factory_name",
-    [
-        ("get_conversation_model", "DeepAgentConversationModel"),
-        ("get_role_success_profiler", "LangChainRoleDefinitionGenerator"),
-        ("get_candidate_profiler_factory", "LangChainCandidateProfilerFactory"),
-    ],
+        [
+            ("get_conversation_model", "DeepAgentConversationModel"),
+            ("get_role_success_profiler", "LangChainRoleDefinitionGenerator"),
+        ],
 )
 def test_model_dependencies_report_missing_configuration_as_safe_503(
     monkeypatch,
@@ -4225,20 +4208,21 @@ def test_candidate_profile_command_persists_reusable_artifact_across_restart():
                             ],
                         },
                     )
+                    profile = CandidateEvidenceProfile(
+                        profile_version="candidate-evidence-profile-v3",
+                        resume_document_id=document["document_id"],
+                        resume_revision=document["revision"],
+                        fields=(field,),
+                        cited_resume_evidence=(evidence,),
+                    )
                     return CandidateProfileRun(
-                        profile=CandidateEvidenceProfile(
-                            profile_version="candidate-evidence-profile-v3",
-                            resume_document_id=document["document_id"],
-                            resume_revision=document["revision"],
-                            fields=(field,),
-                            cited_resume_evidence=(evidence,),
-                        ),
+                        profile=profile,
                         model_name=Factory.model_name,
                         attempt_count=1,
                         scope_count=1,
                         model_call_count=1,
                         checkpoint_id=checkpoint_id,
-                        evaluation=_candidate_profile_evaluation(),
+                        evaluation=_candidate_profile_evaluation(profile),
                     )
 
             return Profiler()
@@ -4729,7 +4713,9 @@ def test_handoff_endpoint_starts_resume_agent_session_with_assessment_job_contex
     assert handoff.json() == {"session_id": "handoff-session-1", "status": "queued"}
     assert len(captured_bodies) == 1
     body = captured_bodies[0]
-    assert body["resume_text"] == "Built a production agent platform with traced model and tool calls."
+    assert body["resume_text"] == (
+        "Platform engineering. Built a production agent platform with traced model and tool calls."
+    )
     assert body["job_id"] == job.job_id
     job_context = body["job_context"]
     assert job_context["title"] == job.title
@@ -5349,9 +5335,9 @@ def test_a_paused_assessment_keeps_pre_judge_specialist_work_private():
     from models import CandidateProfileArtifact, RecruitmentThread, TargetAssessmentArtifact
     from recruitment_team.candidate_profile import (
         CANDIDATE_PROFILE_DECOMPOSITION_VERSION,
+        CANDIDATE_PROFILE_PROMPT_VERSION,
         candidate_profile_execution_policy,
     )
-    from recruitment_team.prompts import CANDIDATE_PROFILE_PROMPT_VERSION
     from recruitment_team import RecruitmentTeam, ScriptedConversationModel
     from recruitment_team.activity_publisher import RecordedActivityPublisher
     from recruitment_team.interface import StartThread

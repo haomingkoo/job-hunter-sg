@@ -20,7 +20,7 @@ from .conversation_model import ConversationModel
 from .coordinator.model import DeepAgentConversationModel
 from .candidate_profile import (
     CandidateProfilerFactory,
-    LangChainCandidateProfilerFactory,
+    DeterministicCandidateProfilerFactory,
 )
 from .discovery import DiscoveryPort, LangChainJobDiscovery
 from .activity_publisher import IgnoreActivityPublisher
@@ -152,24 +152,16 @@ def get_role_success_profiler(
         _raise_model_configuration_error()
 
 
-def get_candidate_profiler_factory(
-    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
-) -> CandidateProfilerFactory:
-    try:
-        return LangChainCandidateProfilerFactory(telemetry=telemetry)
-    except ResumeAgentConfigurationError:
-        _raise_model_configuration_error()
+def get_candidate_profiler_factory() -> CandidateProfilerFactory:
+    return DeterministicCandidateProfilerFactory()
 
 
 def _raise_model_configuration_error():
     raise HTTPException(status_code=503, detail="AI service is not configured.") from None
 
 
-def get_candidate_profiler_factory_provider(
-    telemetry: RecruitmentTelemetry = Depends(get_recruitment_telemetry),
-):
-    """Delay model construction until a durable conversation run exists."""
-    return lambda: get_candidate_profiler_factory(telemetry)
+def get_candidate_profiler_factory_provider():
+    return get_candidate_profiler_factory
 
 
 def get_target_assessment_runner(

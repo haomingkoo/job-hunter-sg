@@ -169,7 +169,6 @@ def test_shared_observed_model_factory_counts_a_retry_for_its_stage(monkeypatch)
 
 
 def test_default_recruitment_models_share_the_observed_factory(monkeypatch):
-    import recruitment_team.candidate_profile as candidate_profile
     import recruitment_team.coordinator.model as coordinator_model
     import recruitment_team.resume_edit_evidence as resume_edit_evidence
     import recruitment_team.role_evidence_assessor as role_evidence
@@ -188,7 +187,6 @@ def test_default_recruitment_models_share_the_observed_factory(monkeypatch):
         return sentinel
 
     modules = (
-        candidate_profile,
         coordinator_model,
         resume_edit_evidence,
         role_evidence,
@@ -198,7 +196,6 @@ def test_default_recruitment_models_share_the_observed_factory(monkeypatch):
         monkeypatch.setattr(module, "create_observed_agent_model", observed)
 
     telemetry = RecordedTelemetry()
-    candidate_profile.LangChainCandidateProfiler(telemetry=telemetry)
     coordinator_model.DeepAgentConversationModel(telemetry=telemetry)._build_model()
     resume_edit_evidence.LangChainResumeEditEvidenceValidator(
         telemetry=telemetry
@@ -207,7 +204,6 @@ def test_default_recruitment_models_share_the_observed_factory(monkeypatch):
     role_success.LangChainRoleDefinitionGenerator(telemetry=telemetry)
 
     assert roles == [
-        "candidate_profile",
         "coordinator",
         "resume_edit_evidence",
         "role_evidence",

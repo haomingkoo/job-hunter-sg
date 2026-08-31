@@ -520,9 +520,7 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
                 "title_phrase": "",
         }
     )
-    assert discovery.calls[1]["query"] == (
-        "Built a production agent platform with traced model and tool calls."
-    )
+    assert discovery.calls[1]["query"] == "platform engineering"
 
     # The results landed in the thread, in the shape _known_job resolves against.
     # Without this, the next ShortlistJob click is a 422, not just a stale panel.
@@ -792,9 +790,9 @@ def test_tool_call_guard_rejects_a_materially_identical_repeat_within_a_turn():
     # Only the two allowed calls reached the port. The rejected one never did.
     assert [call["query"] for call in discovery.calls] == [
         same["query"],
-        "Built a production agent platform with traced model and tool calls.",
+        "platform engineering",
         other["query"],
-        "Built a production agent platform with traced model and tool calls.",
+        "platform engineering",
     ]
     assert agent.calls == 4
 
