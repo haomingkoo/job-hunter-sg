@@ -180,6 +180,179 @@ describe("TeamActivityPanel step content", () => {
     expect(text.match(/Searching current postings/g)).toHaveLength(1);
   });
 
+  it("summarizes profiler checkpoints and keeps the full activity opt-in", () => {
+    const events = [];
+    const scopes = [
+      ...Array.from({ length: 10 }, (_, index) => `experience_${String(index + 1).padStart(2, "0")}`),
+      "__global_semantic_merge__",
+      "__independent_evaluation__",
+    ];
+    scopes.forEach((scopeId, index) => {
+      for (const transition of ["start", "checkpoint", "completion"]) {
+        events.push(activity("", {
+          transition,
+          scope_id: scopeId,
+          scope_count: scopes.length,
+          completed_scope_count: transition === "completion" ? index + 1 : index,
+        }, {
+          event_type: "candidate_profile",
+          team_member: "candidate_profiler",
+          summary: `The candidate profiler ${transition} a resume scope.`,
+        }));
+      }
+    });
+    events.push(activity("", {
+      transition: "failure",
+      scope_id: "__independent_evaluation__",
+      scope_count: scopes.length,
+      completed_scope_count: scopes.length - 1,
+    }, {
+      event_type: "candidate_profile",
+      status: "failed",
+      team_member: "candidate_profiler",
+      summary: "The candidate profiler stopped on a resume scope.",
+    }));
+
+    renderEvents(events, { busy: false });
+    const profiler = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Candidate profiler"));
+    act(() => profiler.click());
+
+    expect(container.textContent).toContain("Reading resume evidence");
+    expect(container.textContent).toContain("Combining overlapping resume evidence");
+    expect(container.textContent).toContain("Stopped while checking evidence support");
+    expect(container.textContent).toContain(`View full activity (${events.length} events)`);
+    expect(container.textContent).not.toContain("started a resume scope");
+    expect(container.textContent).not.toContain("experience_01");
+
+    const fullActivity = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("View full activity"));
+    act(() => fullActivity.click());
+
+    expect(container.textContent.match(/resume scope/g)).toHaveLength(events.length);
+  });
+
+  it("shows the newest profiler run instead of historical completed progress", () => {
+    const events = [
+      activity("", {
+        transition: "completion",
+        scope_id: "experience_01",
+        scope_count: 3,
+        completed_scope_count: 1,
+      }, {
+        event_type: "candidate_profile",
+        status: "running",
+        team_member: "candidate_profiler",
+        summary: "The candidate profiler completed a resume scope.",
+      }),
+      activity("", {}, {
+        event_type: "candidate_profile",
+        status: "completed",
+        team_member: "candidate_profiler",
+        summary: "The candidate profiler completed the resume profile.",
+      }),
+      activity("", {}, {
+        run_id: "run-2",
+        event_type: "candidate_profile",
+        status: "running",
+        team_member: "candidate_profiler",
+        summary: "The candidate profiler is checking the current resume evidence profile.",
+      }),
+    ];
+
+    renderEvents(events);
+
+    const profiler = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("Candidate profiler"));
+    expect(profiler.textContent).toContain("Working");
+    expect(profiler.textContent).not.toContain("Reported");
+    expect(container.textContent).not.toContain("Reading resume evidence");
+    expect(container.textContent).toContain(`View full activity (${events.length} events)`);
+  });
+
+  it("keeps identical durable profiler events in the opt-in audit", () => {
+    const events = ["start", "start"].map((transition) => activity("", {
+      transition,
+      scope_id: "experience_01",
+      scope_count: 3,
+      completed_scope_count: 0,
+    }, {
+      event_type: "candidate_profile",
+      team_member: "candidate_profiler",
+      summary: "The candidate profiler started a resume scope.",
+    }));
+
+    renderEvents(events, { busy: false });
+    const fullActivity = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent.includes("View full activity"));
+    expect(fullActivity.textContent).toContain(`${events.length} events`);
+    act(() => fullActivity.click());
+    expect(container.textContent.match(/started a resume scope/g)).toHaveLength(events.length);
+  });
+
+  it("uses the durable profile recovery control and respects retryability", () => {
+    const progress = activity("", {
+      transition: "start",
+      scope_id: "experience_01",
+      scope_count: 3,
+      completed_scope_count: 0,
+    }, {
+      event_type: "candidate_profile",
+      team_member: "candidate_profiler",
+      summary: "The candidate profiler started a resume scope.",
+    });
+    const retryableFailure = activity("", {
+      command_type: "build_candidate_profile",
+      retryable: true,
+      recovery_action: "retry_incomplete_stage",
+    }, {
+      event_type: "run",
+      status: "failed",
+      team_member: "candidate_profiler",
+      summary: "The candidate profiler could not complete the resume study.",
+    });
+
+    let text = renderEvents([progress, retryableFailure], { busy: false });
+    expect(text).toContain("Use Resume profile to continue from saved progress");
+    expect(text).not.toContain("Use Retry this turn");
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    const terminalFailure = {
+      ...retryableFailure,
+      sequence: retryableFailure.sequence + 1,
+      detail: { ...retryableFailure.detail, retryable: false },
+    };
+    text = renderEvents([progress, terminalFailure], { busy: false });
+    expect(text).toContain("Review the failure details before continuing");
+    expect(text).not.toContain("continue from saved progress");
+  });
+
+  it("makes a terminal-only profile failure actionable after reload", () => {
+    const events = [
+      activity("", {}, {
+        event_type: "run",
+        team_member: "candidate_profiler",
+        summary: "The candidate profiler started.",
+      }),
+      activity("", {
+        command_type: "build_candidate_profile",
+        retryable: true,
+        recovery_action: "retry_incomplete_stage",
+      }, {
+        event_type: "run",
+        status: "failed",
+        team_member: "candidate_profiler",
+        summary: "The candidate profiler could not complete the resume study.",
+      }),
+    ];
+
+    const text = renderEvents(events, { busy: false });
+
+    expect(text).toContain("Profile stopped. Use Resume profile to continue from saved progress.");
+    expect(text).not.toContain("could not complete the resume study");
+  });
+
   it("keeps completed steps when a later run starts", () => {
     const text = renderEvents([
       activity("search_jobs", { query: "manufacturing manager" }),

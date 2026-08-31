@@ -24,6 +24,18 @@ function pendingResumeKey(userId) {
 }
 
 
+export function recruitmentErrorMessage(error, fallback) {
+  const message = String(error?.message || "").trim();
+  if (/candidate profile failed semantic validation/i.test(message)) {
+    return "The resume profile did not pass its evidence checks. Saved progress is safe.";
+  }
+  if (/candidate profile model transport failed/i.test(message)) {
+    return "The resume profiling service did not respond. Saved progress is safe.";
+  }
+  return message || fallback;
+}
+
+
 function formatMetricNumber(value) {
   return new Intl.NumberFormat("en-SG").format(Number(value) || 0);
 }
@@ -361,7 +373,7 @@ export default function RecruitmentTeamPanel({
       await refreshThread(threadId);
       return true;
     } catch (turnError) {
-      setError(turnError.message || fallbackError);
+      setError(recruitmentErrorMessage(turnError, fallbackError));
       if (refreshOnError || turnError.detail?.code === "resume_binding_mismatch") {
         await refreshThread(threadId);
       }
@@ -382,7 +394,7 @@ export default function RecruitmentTeamPanel({
       );
       await refreshThread(threadId);
     } catch (retryError) {
-      setError(retryError.message || "Could not retry this turn.");
+      setError(recruitmentErrorMessage(retryError, "Could not retry this turn."));
       await refreshThread(threadId);
     } finally {
       setBusy(false);
@@ -678,7 +690,7 @@ export default function RecruitmentTeamPanel({
       await refreshThread(nextThreadId);
       await loadThreads();
     } catch (autopilotError) {
-      setError(autopilotError.message || "Could not read your resume.");
+      setError(recruitmentErrorMessage(autopilotError, "Could not read your resume."));
     } finally {
       setBusy(false);
     }
@@ -738,7 +750,7 @@ export default function RecruitmentTeamPanel({
         await refreshThread(queuedReceipt.thread_id);
       }
     } catch (submitError) {
-      setError(submitError.message);
+      setError(recruitmentErrorMessage(submitError, "Could not continue this conversation."));
       if (threadId && submitError.detail?.code === "resume_binding_mismatch") {
         await refreshThread(threadId);
       }

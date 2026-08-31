@@ -66,6 +66,108 @@ def test_backfill_embeds_only_current_visible_jobs_and_publishes_generation(monk
         assert db.query(UsageLog).filter_by(action="job_embedding_ready").count() == 1
 
 
+def test_clock_only_expiry_does_not_invalidate_completed_embedding_scan(monkeypatch):
+    import embedding_service
+    import job_visibility
+
+    baseline = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
+
+    class FixedDateTime(datetime):
+        current = baseline
+
+        @classmethod
+        def now(cls, tz=None):
+            current = cls.current
+            return current if tz is not None else current.replace(tzinfo=None)
+
+    monkeypatch.setattr(job_visibility, "datetime", FixedDateTime)
+    monkeypatch.setattr(
+        embedding_service,
+        "encode_texts",
+        lambda texts, batch_size: [_unit_vector() for _text in texts],
+    )
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as db:
+        expiring = _job(1, days_ago=1)
+        expiring.posted_at_sort = (baseline - timedelta(days=59)).isoformat()
+        expiring.scraped_at = baseline.isoformat()
+        current = _job(2, days_ago=1)
+        current.posted_at_sort = (baseline - timedelta(days=1)).isoformat()
+        current.scraped_at = baseline.isoformat()
+        db.add_all([expiring, current])
+        db.commit()
+
+        result = embedding_service.refresh_job_embeddings(db)
+        assert result["searchable"] == 2
+        assert embedding_service.embedding_readiness_is_current(db) is True
+
+        FixedDateTime.current = baseline + timedelta(days=2)
+
+        assert embedding_service.get_job_search_readiness(db)["searchable_jobs"] == 1
+        assert embedding_service.embedding_readiness_is_current(db) is True
+
+
+def test_explicit_corpus_generation_invalidates_same_shape_visibility_swap(monkeypatch):
+    import embedding_service
+
+    monkeypatch.setattr(
+        embedding_service,
+        "encode_texts",
+        lambda texts, batch_size: [_unit_vector() for _text in texts],
+    )
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as db:
+        first = _job(1, days_ago=1)
+        second = _job(2, days_ago=1)
+        second.hidden = 1
+        db.add_all([first, second])
+        db.commit()
+        embedding_service.refresh_job_embeddings(db)
+        previous_marker = embedding_service.embedding_readiness_marker(db)
+        assert embedding_service.embedding_readiness_is_current(db) is True
+
+        embedding_service.begin_job_corpus_generation(db, "test_swap")
+        first.hidden = 1
+        second.hidden = 0
+        db.commit()
+
+        assert embedding_service.embedding_readiness_marker(db) != previous_marker
+        assert embedding_service.embedding_readiness_is_current(db) is False
+
+
+def test_explicit_corpus_generation_invalidates_non_max_content_update(monkeypatch):
+    import embedding_service
+
+    monkeypatch.setattr(
+        embedding_service,
+        "encode_texts",
+        lambda texts, batch_size: [_unit_vector() for _text in texts],
+    )
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as db:
+        older = _job(1, days_ago=1)
+        older.scraped_at = "2026-08-29T00:00:00+00:00"
+        newer = _job(2, days_ago=1)
+        newer.scraped_at = "2026-08-30T00:00:00+00:00"
+        db.add_all([older, newer])
+        db.commit()
+        embedding_service.refresh_job_embeddings(db)
+        previous_marker = embedding_service.embedding_readiness_marker(db)
+
+        embedding_service.begin_job_corpus_generation(db, "test_update")
+        older = db.get(ScrapedJob, 1)
+        older.title = "Finance Transformation Lead"
+        embedding_service.invalidate_job_embedding_if_stale(older)
+        db.commit()
+
+        assert embedding_service.embedding_readiness_marker(db) != previous_marker
+        assert embedding_service.embedding_readiness_is_current(db) is False
+
+
 def test_backfill_reembeds_a_vector_without_current_provenance(monkeypatch):
     import backfill_embeddings
     import embedding_service
