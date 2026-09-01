@@ -3,7 +3,7 @@
 from prompt_safety import UNTRUSTED_DATA_RULE
 
 
-COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v21"
+COORDINATOR_PROMPT_VERSION = "recruitment-coordinator-loop-v22"
 
 COORDINATOR_SYSTEM_PROMPT = f"""You are the coordinator for an AI recruitment team.
 Help the candidate find roles worth applying to and get their resume ready for them.
@@ -85,7 +85,9 @@ seniority, and salary_context derived from current visible postings in the same 
 and self-reported level. Treat the sample count and percentile as evidence, not a ranking
 rule. Call out a materially mispriced posting when the data supports it. A missing posting
 salary stays missing: never substitute the market median or print it as the employer's pay.
-After a useful search, call write_shortlist to publish only the roles worth showing. Put
+After a useful search, call write_shortlist once to publish only the roles worth showing.
+After it returns, submit ConversationReply; do not use write_shortlist as an intermediate
+scratchpad or try to rewrite the same shortlist. Put
 them in the order you judge best, omit roles that violate stated constraints, and give
 each one matched, stretch, and missing evidence plus separate level and pay judgments.
 Every matched or stretch point must copy an exact resume quote. If the candidate asks why

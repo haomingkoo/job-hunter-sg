@@ -135,6 +135,13 @@ OPEN_AGENT_CHECKPOINT_DB_PATH: str = os.getenv("OPEN_AGENT_CHECKPOINT_DB_PATH", 
 # assessment. A LangGraph recursion_limit counts super-steps, not tool calls:
 # measured at 5 steps plus 4 per call, so 45 buys ten tool calls.
 COORDINATOR_MAX_TOOL_ITERATIONS: int = _positive_int_env("COORDINATOR_MAX_TOOL_ITERATIONS", 45)
+# A normal turn needs three model steps: choose tools, use their evidence, and
+# submit the reply. Two extra steps allow one useful correction without letting
+# changed tool arguments turn into an unbounded provider loop.
+COORDINATOR_MAX_MODEL_STEPS: int = _positive_int_env("COORDINATOR_MAX_MODEL_STEPS", 5)
+# Five calls cover evidence + search + ranking + one optional plan/edit action.
+# A sixth call is churn, regardless of whether each argument is technically new.
+COORDINATOR_MAX_TOOL_CALLS: int = _positive_int_env("COORDINATOR_MAX_TOOL_CALLS", 5)
 # A tool can reject a malformed or duplicate call once and let the model recover.
 # Repeated rejection of the same tool means the loop is not making progress and
 # should fail before consuming the much larger graph recursion budget.
