@@ -227,6 +227,62 @@ def test_empty_filtered_resume_never_persists_a_partial_profile():
     assert store.save_calls == []
 
 
+def test_professional_summary_survives_as_cited_coordinator_evidence():
+    """Summary evidence keeps a generic first turn in the candidate's domain."""
+    from types import SimpleNamespace
+
+    from recruitment_team.open_agent.evidence_view import candidate_evidence_view
+
+    headline = "Finance Platform Business Analyst | Chartered Accountant"
+    summary = (
+        "Chartered Accountant and finance business analyst with DBS "
+        "finance-platform experience."
+    )
+    document = create_resume_document(
+        "Hui Shan Ang\n"
+        f"{headline}\n\n"
+        "PROFESSIONAL SUMMARY\n"
+        f"{summary}\n\n"
+        "EXPERIENCE\n"
+        "DBS Bank | AVP Business Analyst, Finance Platform | 2021 - Present\n"
+        "- Produced monthly management accounts.\n"
+    )
+
+    run = DeterministicCandidateProfilerFactory().create(_Store()).profile(document)
+    fields = {field.statement: field for field in run.profile.fields}
+
+    field = fields[summary]
+    assert field.category == "stated_skill"
+    assert field.evidence_kind == "direct"
+    assert field.evidence_quotes == (summary,)
+    assert len(field.resume_evidence_ids) == 1
+    assert headline not in fields
+
+    coordinator_view = candidate_evidence_view(
+        SimpleNamespace(candidate_profile=run.profile, confirmed_evidence=())
+    )
+    rendered = " ".join(field["statement"] for field in coordinator_view["fields"]).casefold()
+    assert "finance business analyst" in rendered
+    assert "chartered accountant" in rendered
+    assert "software engineer" not in rendered
+
+
+def test_professional_summary_still_excludes_contact_and_protected_status():
+    document = create_resume_document(
+        "PROFESSIONAL SUMMARY\n"
+        "Finance analyst. Contact hui@example.com. Singapore citizen.\n\n"
+        "EXPERIENCE\n"
+        "- Produced monthly management accounts.\n"
+    )
+
+    run = DeterministicCandidateProfilerFactory().create(_Store()).profile(document)
+    statements = " ".join(field.statement for field in run.profile.fields)
+
+    assert "hui@example.com" not in statements
+    assert "Singapore citizen" not in statements
+    assert "Produced monthly management accounts." in statements
+
+
 def test_html_entities_remain_exact_source_text_in_profile_and_evidence():
     document = create_resume_document("EXPERIENCE\n- Managed R&amp;D reporting.")
 

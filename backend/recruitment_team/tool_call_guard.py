@@ -20,6 +20,10 @@ ONE_SHOT_CALL_REASON = (
     "tool_already_used_this_turn: this operation is limited to one call per "
     "candidate turn. Use the result already returned and finish the reply."
 )
+PREREQUISITE_CALL_REASON = (
+    "tool_prerequisite_not_completed: read the required evidence successfully "
+    "before starting this operation."
+)
 COMPLETED_SPECIALIST_REASON = (
     "specialist_already_completed_no_new_evidence: this reviewer already returned an "
     "accepted report and no candidate answer has changed the evidence. Use the accepted "
@@ -68,10 +72,10 @@ def _remaining_specialist_guidance(persona_ids: tuple[str, ...]) -> dict[str, An
 
 
 class ToolCallGuardMiddleware(AgentMiddleware):
-    """Reject identical calls within one candidate turn.
+    """Reject duplicate calls and enforce explicit evidence prerequisites.
 
     A fresh instance per turn means new candidate information permits a formerly
-    repeated call. The middleware does not prescribe tool order or availability.
+    repeated call.
     """
 
     def __init__(
@@ -81,16 +85,20 @@ class ToolCallGuardMiddleware(AgentMiddleware):
         enforce_fresh_specialists: bool = False,
         one_shot_tools: set[str] | None = None,
         terminal_tool: str | None = None,
+        required_tools: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self._allowed_tools = frozenset(allowed_tools) if allowed_tools is not None else None
         self._enforce_fresh_specialists = enforce_fresh_specialists
         self._one_shot_tools = frozenset(one_shot_tools or ())
         self._terminal_tool = terminal_tool
+        self._required_tools = dict(required_tools or {})
         self._terminal_required = False
         self._seen: set[str] = set()
         self._started_once: set[str] = set()
         self._hidden_tools: set[str] = set()
+        self._completed_tools: set[str] = set()
+        self._available_tools: set[str] = set()
         self._seen_lock = threading.Lock()
 
     def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
@@ -98,22 +106,33 @@ class ToolCallGuardMiddleware(AgentMiddleware):
         with self._seen_lock:
             exhausted = frozenset(self._hidden_tools)
             terminal_required = self._terminal_required
+            completed = frozenset(self._completed_tools)
         if terminal_required and self._terminal_tool:
             tools = [
                 available_tool
                 for available_tool in (getattr(request, "tools", None) or [])
                 if getattr(available_tool, "name", "") == self._terminal_tool
             ]
+            with self._seen_lock:
+                self._available_tools = {
+                    getattr(available_tool, "name", "") for available_tool in tools
+                }
             return handler(
                 request.override(tools=tools, tool_choice=self._terminal_tool)
             )
-        if not exhausted:
-            return handler(request)
         tools = [
             available_tool
             for available_tool in (getattr(request, "tools", None) or [])
             if getattr(available_tool, "name", "") not in exhausted
+            and (
+                not self._required_tools.get(getattr(available_tool, "name", ""))
+                or self._required_tools[getattr(available_tool, "name", "")] in completed
+            )
         ]
+        with self._seen_lock:
+            self._available_tools = {
+                getattr(available_tool, "name", "") for available_tool in tools
+            }
         return handler(request.override(tools=tools))
 
     def wrap_tool_call(
@@ -125,11 +144,36 @@ class ToolCallGuardMiddleware(AgentMiddleware):
         name = call.get("name") or ""
         args = call.get("args") or {}
         with self._seen_lock:
+            prerequisite = self._required_tools.get(name, "")
             one_shot_repeated = (
                 name in self._one_shot_tools and name in self._started_once
             )
-            if name in self._one_shot_tools:
+            prerequisite_missing = bool(
+                prerequisite
+                and (
+                    prerequisite not in self._completed_tools
+                    or (
+                        name not in self._available_tools
+                        and not one_shot_repeated
+                    )
+                )
+            )
+            if name in self._one_shot_tools and not prerequisite_missing:
                 self._started_once.add(name)
+        if prerequisite_missing:
+            return ToolMessage(
+                content=json.dumps(
+                    {
+                        "ok": False,
+                        "failure_type": "validation",
+                        "reason": PREREQUISITE_CALL_REASON,
+                        "required_tool": prerequisite,
+                        "retry": True,
+                    }
+                ),
+                tool_call_id=call.get("id", ""),
+                name=name,
+            )
         if one_shot_repeated:
             return ToolMessage(
                 content=json.dumps(
@@ -234,6 +278,11 @@ class ToolCallGuardMiddleware(AgentMiddleware):
         ):
             with self._seen_lock:
                 self._hidden_tools.add(name)
+                if _accepted_result(result):
+                    self._completed_tools.add(name)
                 if name in _HIDE_AFTER_RESULT_TOOLS and self._terminal_tool:
                     self._terminal_required = True
+        elif _accepted_result(result):
+            with self._seen_lock:
+                self._completed_tools.add(name)
         return result

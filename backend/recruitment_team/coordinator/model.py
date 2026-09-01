@@ -289,6 +289,7 @@ class DeepAgentConversationModel:
                 ToolCallGuardMiddleware(
                     one_shot_tools={search_jobs.name},
                     terminal_tool=REPLY_TOOL_NAME,
+                    required_tools={search_jobs.name: read_candidate_evidence.name},
                 ),
                 HumanInTheLoopMiddleware(interrupt_on={"ask_candidate": True}),
             ],

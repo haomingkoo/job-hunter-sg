@@ -188,6 +188,64 @@ def test_removes_completed_read_once_tool_from_the_next_model_request():
     assert observed == [search_jobs]
 
 
+def test_hides_search_until_candidate_evidence_completed_successfully():
+    guard = ToolCallGuardMiddleware(
+        one_shot_tools={"search_jobs"},
+        required_tools={"search_jobs": "read_candidate_evidence"},
+    )
+    evidence = SimpleNamespace(name="read_candidate_evidence")
+    search = SimpleNamespace(name="search_jobs")
+    model_request = SimpleNamespace(
+        tools=[evidence, search],
+        override=lambda **changes: SimpleNamespace(tools=changes["tools"]),
+    )
+
+    before = []
+    guard.wrap_model_call(model_request, lambda request: before.extend(request.tools))
+    guard.wrap_tool_call(
+        _request("read_candidate_evidence", {}, "1"),
+        lambda _request: {"ok": True},
+    )
+    after = []
+    guard.wrap_model_call(model_request, lambda request: after.extend(request.tools))
+
+    assert before == [evidence]
+    assert after == [search]
+
+
+def test_parallel_blind_search_is_rejected_without_consuming_one_shot():
+    guard = ToolCallGuardMiddleware(
+        one_shot_tools={"search_jobs"},
+        required_tools={"search_jobs": "read_candidate_evidence"},
+    )
+    calls = []
+    evidence = SimpleNamespace(name="read_candidate_evidence")
+    search = SimpleNamespace(name="search_jobs")
+    model_request = SimpleNamespace(
+        tools=[evidence, search],
+        override=lambda **changes: SimpleNamespace(tools=changes["tools"]),
+    )
+    guard.wrap_model_call(model_request, lambda _request: None)
+
+    refusal = guard.wrap_tool_call(
+        _request("search_jobs", {"query": "software engineer"}, "1"),
+        lambda request: calls.append(request) or {"ok": True},
+    )
+    guard.wrap_tool_call(
+        _request("read_candidate_evidence", {}, "2"),
+        lambda _request: {"ok": True},
+    )
+    guard.wrap_model_call(model_request, lambda _request: None)
+    accepted = guard.wrap_tool_call(
+        _request("search_jobs", {"query": "finance business analyst"}, "3"),
+        lambda request: calls.append(request) or {"ok": True},
+    )
+
+    assert calls and len(calls) == 1
+    assert json.loads(refusal.content)["required_tool"] == "read_candidate_evidence"
+    assert accepted == {"ok": True}
+
+
 def test_hides_read_tool_only_after_an_accepted_result():
     guard = ToolCallGuardMiddleware()
     read_shortlist = SimpleNamespace(name="read_shortlist")

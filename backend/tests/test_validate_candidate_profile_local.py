@@ -109,7 +109,7 @@ def test_candidate_profile_canary_writes_complete_profile_and_compact_summary(
         "prompt_version": "candidate-evidence-profile-v4",
         "implementation": "deterministic_exact_extract_v1",
         "field_cap": 48,
-        "decomposition_version": "extractive-whole-document-v5",
+        "decomposition_version": "extractive-whole-document-v6",
         "resume_document_schema_version": SCHEMA_VERSION,
         "checkpoint_enabled": False,
     }

@@ -24,7 +24,7 @@ ProfileCategory = Literal[
 EvidenceKind = Literal["direct", "transferable_hypothesis"]
 CANDIDATE_PROFILE_PROMPT_VERSION = "candidate-evidence-profile-v4"
 CANDIDATE_PROFILE_RECEIPT_VERSION = "exact-extraction-receipt-v1"
-CANDIDATE_PROFILE_DECOMPOSITION_VERSION = "extractive-whole-document-v5"
+CANDIDATE_PROFILE_DECOMPOSITION_VERSION = "extractive-whole-document-v6"
 DETERMINISTIC_PROFILE_SCOPE = "deterministic_resume_evidence_v1"
 DETERMINISTIC_PROFILE_MODEL = "deterministic-resume-index-v1"
 DETERMINISTIC_PROFILE_IMPLEMENTATION = "deterministic_exact_extract_v1"
@@ -336,7 +336,7 @@ def _whole_resume_blocks(ordered_blocks: list[dict[str, Any]]) -> list[dict[str,
             block.get("kind") == "section_heading"
             or (first_section_index is not None and index < first_section_index)
             or (first_section_index is None and _looks_like_unsectioned_header(block, index))
-            or str(block.get("section_key") or "") in {"summary", "objective", "personal"}
+            or str(block.get("section_key") or "") in {"objective", "personal"}
             or (
                 not block.get("section_key")
                 and text == text.upper()
@@ -360,6 +360,8 @@ def _deterministic_category(block: dict[str, Any]) -> ProfileCategory:
     if section in {"education", "certifications", "awards"}:
         return "credential"
     if section in {"skills", "languages"}:
+        return "stated_skill"
+    if section == "summary":
         return "stated_skill"
     if kind == "entry_heading" or re.search(
         r"\b(?:19|20)\d{2}\s*[-–—]|\b(?:present|current)\b",
