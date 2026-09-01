@@ -668,15 +668,8 @@ def test_a_shortlist_the_model_never_saw_reaches_the_next_conversational_turn():
     assert agent.calls == 3
 
 
-def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results():
-    """The agent decides to search again by reading its own results.
-
-    No exclusion predicate and no ranking formula: what makes the second query
-    different is that the first result set was in the model's context when it
-    chose the second one. The merge is asserted against the persisted thread,
-    which is the only place it matters, and the two result sets overlap so the
-    dedupe has something to do.
-    """
+def test_one_search_per_turn_uses_the_first_result_and_then_replies():
+    """A changed query cannot turn one user request into repeated searches."""
     from backend.tests.test_recruitment_team_module import _session_factory
     from recruitment_team.interface import StartThread
 
@@ -694,18 +687,6 @@ def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results()
                     _job(202, "Intern, Data", "BOK SENG Logistics", seniority="Junior"),
                 ]
             ),
-            _search_result(
-                [
-                    _job(203, "Staff Yield Engineer", "NXP"),
-                    _job(201, "Graduate Trainee, Process", "HRNET Ventures", seniority="Junior"),
-                ]
-            ),
-            _search_result(
-                [
-                    _job(203, "Staff Yield Engineer", "NXP"),
-                    _job(201, "Graduate Trainee, Process", "HRNET Ventures", seniority="Junior"),
-                ]
-            ),
         ]
     )
     agent = ScriptedDeepAgent(
@@ -717,8 +698,7 @@ def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results()
                 "call-2",
             ),
             submission(
-                "Staff Yield Engineer at NXP fits your level; the first pass returned "
-                "trainee roles."
+                "That search returned only junior roles, so I did not publish a senior match."
             ),
         ]
     )
@@ -734,7 +714,7 @@ def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results()
         )
         snapshot = team.snapshot(owner_id, receipt.thread_id)
 
-    assert discovery.search_count == 4
+    assert discovery.search_count == 2
 
     # The first result set was in front of the model when it chose the second
     # query. That, and not the count, is what "read its own results" means.
@@ -742,35 +722,26 @@ def test_a_second_search_in_one_turn_is_chosen_after_reading_the_first_results()
     assert "HRNET Ventures" in second_decision_request
     assert "Graduate Trainee, Process" in second_decision_request
 
-    # Newest search first, deduped by job_id, persisted in the shape _known_job
-    # resolves against.
-    assert [job.job_id for job in snapshot.case_facts.recommendations] == [203, 201, 202]
-    assert snapshot.case_facts.latest_search_query == "staff semiconductor yield engineer"
+    assert [job.job_id for job in snapshot.case_facts.recommendations] == [201, 202]
+    assert snapshot.case_facts.latest_search_query == "data engineer"
     assert agent.calls == 3
 
 
-def test_tool_call_guard_rejects_a_materially_identical_repeat_within_a_turn():
-    """Guardrails limit volume, never choice.
-
-    An identical repeat never reaches the discovery port. A materially different
-    query does, so the guardrail is not quietly blocking a second search.
-    """
-    same = {"query": "semiconductor yield engineer"}
-    other = {"query": "process integration engineer"}
+def test_coordinator_search_guard_rejects_a_changed_second_query():
+    """One logical search is a turn boundary, not an argument fingerprint."""
+    first = {"query": "semiconductor yield engineer"}
+    second = {"query": "process integration engineer"}
     discovery = _RecordingDiscovery(
         [
             _search_result([_job(301, "Yield Engineer", "Micron")]),
             _search_result([_job(301, "Yield Engineer", "Micron")]),
-            _search_result([_job(302, "Process Integration Engineer", "Avago")]),
-            _search_result([_job(302, "Process Integration Engineer", "Avago")]),
         ]
     )
     agent = ScriptedDeepAgent(
         responses=[
-            tool_call("search_jobs", dict(same), "call-1"),
-            tool_call("search_jobs", dict(same), "call-2"),
-            tool_call("search_jobs", dict(other), "call-3"),
-            submission("Two distinct searches; the duplicate added nothing."),
+            tool_call("search_jobs", dict(first), "call-1"),
+            tool_call("search_jobs", dict(second), "call-2"),
+            submission("The first current search is ready to review."),
         ]
     )
     events: list[dict] = []
@@ -778,23 +749,19 @@ def test_tool_call_guard_rejects_a_materially_identical_repeat_within_a_turn():
     _model(agent).respond([], RESUME_TEXT, (), _context(discovery, events=events))
 
     results = _tool_results(events, "search_jobs")
-    assert len(results) == 3
-    assert results[0].get("reason") != "identical_call_no_new_information"
+    assert len(results) == 2
+    assert results[0].get("reason") != "tool_already_used_this_turn"
     assert results[1]["ok"] is False
-    # The middleware now guards every tool, not two by name, and the refusal
-    # says what to do instead: a reason a model cannot act on is one it retries.
-    assert results[1]["reason"].startswith("identical_call_no_new_information")
-    assert "Do not repeat it" in results[1]["reason"]
-    assert results[2].get("reason") != "identical_call_no_new_information"
+    assert results[1]["reason"].startswith("tool_already_used_this_turn")
+    assert "finish the reply" in results[1]["reason"]
 
-    # Only the two allowed calls reached the port. The rejected one never did.
+    # Only the first logical search reached the port. JobRecommender performs
+    # the explicit query plus its bounded profile query inside that one call.
     assert [call["query"] for call in discovery.calls] == [
-        same["query"],
-        "platform engineering",
-        other["query"],
+        first["query"],
         "platform engineering",
     ]
-    assert agent.calls == 4
+    assert agent.calls == 3
 
 
 def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
@@ -1098,6 +1065,147 @@ def test_repeated_rejected_tool_results_fail_before_the_global_iteration_cap(mon
     )
     with sessions() as db:
         assert [row.role for row in db.query(RecruitmentMessage).all()] == ["user"]
+
+
+def test_productive_looking_tool_churn_stops_before_the_eight_call_failure_shape():
+    """Bound useful-looking churn, not only exact duplicates and recursion.
+
+    Production run e3cba09d made eight provider calls, repeatedly searched and
+    wrote state, consumed 368k input tokens, then failed its structured reply.
+    Materially different arguments evade the identical-call guard, so this is
+    the acceptance boundary that run exposed: stop the turn before call seven
+    and classify it as exhausted work, not a late structured-output surprise.
+    """
+    from recruitment_team.errors import ConversationUnavailable
+
+    searches = (
+        "finance platform business analyst",
+        "senior finance systems analyst",
+        "finance transformation business analyst",
+        "management reporting platform analyst",
+    )
+    agent = ScriptedDeepAgent(
+        responses=[
+            tool_call("search_jobs", {"query": searches[0]}, "search-1"),
+            tool_call("search_jobs", {"query": searches[1]}, "search-2"),
+            tool_call(
+                "write_plan",
+                {"steps": [{"step": "Review finance roles", "status": "in_progress"}]},
+                "plan-1",
+            ),
+            tool_call("search_jobs", {"query": searches[2]}, "search-3"),
+            tool_call(
+                "write_plan",
+                {"steps": [{"step": "Compare finance roles", "status": "in_progress"}]},
+                "plan-2",
+            ),
+            tool_call("search_jobs", {"query": searches[3]}, "search-4"),
+            tool_call(
+                "write_plan",
+                {"steps": [{"step": "Explain the shortlist", "status": "in_progress"}]},
+                "plan-3",
+            ),
+            final("I found the strongest finance roles but did not submit the required reply."),
+        ]
+    )
+    one_result = _search_result([_job(801, "Finance Platform Business Analyst", "DBS")])
+    discovery = _RecordingDiscovery([one_result] * 8)
+    events: list[dict] = []
+
+    with pytest.raises(ConversationUnavailable) as error:
+        _model(agent).respond([], RESUME_TEXT, (), _context(discovery, events=events))
+
+    assert error.value.failure_code == "attempt_budget_exhausted"
+    assert agent.calls <= 6
+    assert len(_tool_results(events, "search_jobs")) <= 3
+    assert len(_tool_results(events, "write_plan")) <= 2
+
+
+def test_rejected_shortlist_is_one_shot_and_the_coordinator_still_replies():
+    """A bad ranking draft must not recreate production's five-write loop."""
+    job = _job(802, "Finance Platform Business Analyst", "DBS")
+    agent = ScriptedDeepAgent(
+        responses=[
+            tool_call(
+                "search_jobs",
+                {"query": "finance platform business analyst"},
+                "search-1",
+            ),
+            tool_call(
+                "write_shortlist",
+                {
+                    "matches": [
+                        {
+                            "job_id": 802,
+                            "matched": [
+                                {
+                                    "statement": "Finance platform experience",
+                                    "resume_quote": "not an exact resume quote",
+                                }
+                            ],
+                            "stretch": [],
+                            "missing": [],
+                            "level_fit": "aligned",
+                            "pay_position": "near_peer_median",
+                        }
+                    ]
+                },
+                "shortlist-1",
+            ),
+            submission(
+                "I found a current DBS finance-platform role, but no ranked card passed "
+                "the exact-evidence gate."
+            ),
+        ]
+    )
+    discovery = _RecordingDiscovery([_search_result([job]), _search_result([job])])
+    events: list[dict] = []
+
+    reply = _model(agent).respond([], RESUME_TEXT, (), _context(discovery, events=events))
+
+    assert reply.reply_mode == "structured"
+    assert "DBS" in reply.content
+    assert agent.calls == 3
+    assert len(_tool_results(events, "write_shortlist")) == 1
+    assert agent.bound_tool_names[-1] == ["ConversationReply"]
+
+
+def test_parallel_search_calls_execute_only_one_logical_search():
+    """Sibling calls cannot race past the one-search-per-turn boundary."""
+    from langchain_core.messages import AIMessage
+
+    job = _job(803, "Finance Systems Analyst", "OCBC")
+    agent = ScriptedDeepAgent(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "search_jobs",
+                        "args": {"query": "finance systems analyst"},
+                        "id": "search-1",
+                    },
+                    {
+                        "name": "search_jobs",
+                        "args": {"query": "finance transformation analyst"},
+                        "id": "search-2",
+                    },
+                ],
+            ),
+            submission("I found one current finance-systems role at OCBC."),
+        ]
+    )
+    result = _search_result([job])
+    discovery = _RecordingDiscovery([result, result])
+    events: list[dict] = []
+    context = _context(discovery, events=events)
+
+    reply = _model(agent).respond([], RESUME_TEXT, (), context)
+
+    assert "OCBC" in reply.content
+    assert len(context.search_results) == 1
+    assert len(_tool_results(events, "search_jobs")) == 2
+    assert agent.calls == 2
 
 
 def test_conversation_unavailable_maps_to_503():
@@ -1716,7 +1824,7 @@ def test_a_turn_reports_the_prompt_that_actually_ran():
 
     reply = _model(agent).respond([], "", (), _context(discovery))
 
-    assert COORDINATOR_PROMPT_VERSION == "recruitment-coordinator-loop-v21"
+    assert COORDINATOR_PROMPT_VERSION == "recruitment-coordinator-loop-v22"
     assert reply.prompt_version == COORDINATOR_PROMPT_VERSION
 
 

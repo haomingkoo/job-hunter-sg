@@ -16,6 +16,10 @@ REPEATED_CALL_REASON = (
     "turn and returned the same result. Do not repeat it. Either act on what you "
     "already have, call a different tool, or reply to the candidate."
 )
+ONE_SHOT_CALL_REASON = (
+    "tool_already_used_this_turn: this operation is limited to one call per "
+    "candidate turn. Use the result already returned and finish the reply."
+)
 COMPLETED_SPECIALIST_REASON = (
     "specialist_already_completed_no_new_evidence: this reviewer already returned an "
     "accepted report and no candidate answer has changed the evidence. Use the accepted "
@@ -29,7 +33,9 @@ _HIDE_AFTER_ACCEPTED_TOOLS = frozenset({
     "read_candidate_evidence",
     "read_shortlist",
     "read_target_job",
+    "search_jobs",
 })
+_HIDE_AFTER_RESULT_TOOLS = frozenset({"write_shortlist"})
 
 
 def _fingerprint(name: str, args: dict[str, Any]) -> str:
@@ -73,11 +79,17 @@ class ToolCallGuardMiddleware(AgentMiddleware):
         allowed_tools: set[str] | None = None,
         *,
         enforce_fresh_specialists: bool = False,
+        one_shot_tools: set[str] | None = None,
+        terminal_tool: str | None = None,
     ) -> None:
         super().__init__()
         self._allowed_tools = frozenset(allowed_tools) if allowed_tools is not None else None
         self._enforce_fresh_specialists = enforce_fresh_specialists
+        self._one_shot_tools = frozenset(one_shot_tools or ())
+        self._terminal_tool = terminal_tool
+        self._terminal_required = False
         self._seen: set[str] = set()
+        self._started_once: set[str] = set()
         self._hidden_tools: set[str] = set()
         self._seen_lock = threading.Lock()
 
@@ -85,6 +97,16 @@ class ToolCallGuardMiddleware(AgentMiddleware):
         """Remove exhausted no-argument reads from the next model decision."""
         with self._seen_lock:
             exhausted = frozenset(self._hidden_tools)
+            terminal_required = self._terminal_required
+        if terminal_required and self._terminal_tool:
+            tools = [
+                available_tool
+                for available_tool in (getattr(request, "tools", None) or [])
+                if getattr(available_tool, "name", "") == self._terminal_tool
+            ]
+            return handler(
+                request.override(tools=tools, tool_choice=self._terminal_tool)
+            )
         if not exhausted:
             return handler(request)
         tools = [
@@ -102,6 +124,25 @@ class ToolCallGuardMiddleware(AgentMiddleware):
         call = getattr(request, "tool_call", None) or {}
         name = call.get("name") or ""
         args = call.get("args") or {}
+        with self._seen_lock:
+            one_shot_repeated = (
+                name in self._one_shot_tools and name in self._started_once
+            )
+            if name in self._one_shot_tools:
+                self._started_once.add(name)
+        if one_shot_repeated:
+            return ToolMessage(
+                content=json.dumps(
+                    {
+                        "ok": False,
+                        "failure_type": "validation",
+                        "reason": ONE_SHOT_CALL_REASON,
+                        "retry": False,
+                    }
+                ),
+                tool_call_id=call.get("id", ""),
+                name=name,
+            )
         if self._allowed_tools is not None and name not in self._allowed_tools:
             return ToolMessage(
                 content=json.dumps(
@@ -187,7 +228,12 @@ class ToolCallGuardMiddleware(AgentMiddleware):
                 _specialist_slots.release()
         else:
             result = handler(request)
-        if name in _HIDE_AFTER_ACCEPTED_TOOLS and _accepted_result(result):
+        if (
+            name in _HIDE_AFTER_RESULT_TOOLS
+            or (name in _HIDE_AFTER_ACCEPTED_TOOLS and _accepted_result(result))
+        ):
             with self._seen_lock:
                 self._hidden_tools.add(name)
+                if name in _HIDE_AFTER_RESULT_TOOLS and self._terminal_tool:
+                    self._terminal_required = True
         return result

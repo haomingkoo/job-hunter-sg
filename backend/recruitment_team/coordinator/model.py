@@ -34,7 +34,7 @@ from ..open_agent.tools import (
 )
 from ..prompts import COORDINATOR_PROMPT_VERSION, COORDINATOR_SYSTEM_PROMPT
 from ..model_transport_observer import create_observed_agent_model
-from ..provider_compatibility import provider_message_compatibility
+from ..provider_compatibility import provider_message_compatibility, require_tool_call
 from ..recovery import classify_failure
 from ..telemetry import OpenTelemetryRecorder, RecruitmentTelemetry
 from ..tool_call_guard import ToolCallGuardMiddleware
@@ -285,7 +285,11 @@ class DeepAgentConversationModel:
             tools=tools,
             middleware=[
                 provider_message_compatibility,
-                ToolCallGuardMiddleware(),
+                require_tool_call,
+                ToolCallGuardMiddleware(
+                    one_shot_tools={search_jobs.name},
+                    terminal_tool=REPLY_TOOL_NAME,
+                ),
                 HumanInTheLoopMiddleware(interrupt_on={"ask_candidate": True}),
             ],
             system_prompt=COORDINATOR_SYSTEM_PROMPT,
@@ -391,6 +395,7 @@ class DeepAgentConversationModel:
         pending_question = ""
         submitted = False
         edit_attempted = False
+        tool_call_count = 0
         rejected_tool_name = ""
         consecutive_tool_rejections = 0
         with self._telemetry.operation(
@@ -408,6 +413,41 @@ class DeepAgentConversationModel:
                     for event in iter_progress_events(
                         agent, payload, run_config, skip_tool_call_ids=skip_tool_call_ids
                     ):
+                        if (
+                            event.get("kind") == "model_attempt"
+                            and event.get("team_member") == "coordinator"
+                            and int(event.get("attempt") or 0)
+                            > config.COORDINATOR_MAX_MODEL_STEPS
+                        ):
+                            if context.on_event is not None:
+                                context.on_event(event)
+                            span.set_attribute("failure_type", "business")
+                            span.set_attribute("failure_code", "attempt_budget_exhausted")
+                            span.set_attribute(
+                                "model_step_limit", config.COORDINATOR_MAX_MODEL_STEPS
+                            )
+                            raise ConversationUnavailable(
+                                "coordinator reached its model step limit",
+                                decision=classify_failure("attempt_budget_exhausted"),
+                            )
+                        if event.get("kind") == "tool_call":
+                            tool_call_count += 1
+                            if tool_call_count > config.COORDINATOR_MAX_TOOL_CALLS:
+                                if context.on_event is not None:
+                                    context.on_event(event)
+                                span.set_attribute("failure_type", "business")
+                                span.set_attribute(
+                                    "failure_code", "attempt_budget_exhausted"
+                                )
+                                span.set_attribute(
+                                    "tool_call_limit", config.COORDINATOR_MAX_TOOL_CALLS
+                                )
+                                raise ConversationUnavailable(
+                                    "coordinator reached its tool call limit",
+                                    decision=classify_failure(
+                                        "attempt_budget_exhausted"
+                                    ),
+                                )
                         if event.get("tool_name") == REPLY_TOOL_NAME:
                             # The turn's reply, not a tool the coordinator
                             # called. Publishing it would put "coordinator
