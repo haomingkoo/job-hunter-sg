@@ -481,6 +481,7 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
     )
     agent = ScriptedDeepAgent(
         responses=[
+            tool_call("read_candidate_evidence", {}, "call-evidence"),
             tool_call(
                 "search_jobs",
                 {"query": "semiconductor yield analytics engineer"},
@@ -542,6 +543,7 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
     # Acceptance criterion 4 is "visible in the activity stream", so the stream is
     # asserted rather than assumed.
     assert _tool_summaries(publisher) == [
+        "coordinator called read_candidate_evidence.",
         "coordinator called search_jobs.",
         "coordinator called read_shortlist.",
     ]
@@ -578,7 +580,88 @@ def test_search_then_read_then_reply_persists_the_shortlist_and_names_a_job():
     assert completed.attributes["model"] == "coordinator-deep-agent"
     assert completed.duration_ms is not None
 
-    assert agent.calls == 3
+    assert agent.calls == 4
+
+
+def test_generic_role_search_reads_evidence_before_choosing_the_query():
+    from recruitment_team.candidate_profile import DeterministicCandidateProfilerFactory
+    from resume_document import create_resume_document
+
+    class _ProfileStore:
+        def __init__(self):
+            self.saved = {}
+
+        def load(self, _checkpoint_id):
+            return dict(self.saved)
+
+        def save(self, _checkpoint_id, scope_id, payload):
+            self.saved[scope_id] = payload
+
+        def record_execution_event(self, _checkpoint_id, _event):
+            return None
+
+        def execution_metrics(self, _checkpoint_id):
+            return {}
+
+    finance_resume = (
+        "PROFESSIONAL SUMMARY\n"
+        "Chartered Accountant and finance business analyst with DBS "
+        "finance-platform experience.\n\n"
+        "EXPERIENCE\n"
+        "DBS Bank | AVP Business Analyst, Finance Platform | 2021 - Present\n"
+        "- Produced monthly management accounts.\n"
+    )
+    finance_document = create_resume_document(finance_resume)
+    finance_profile = (
+        DeterministicCandidateProfilerFactory()
+        .create(_ProfileStore())
+        .profile(finance_document)
+        .profile
+    )
+    discovery = _RecordingDiscovery(
+        [
+            _search_result([_job(111, "Finance Business Analyst", "DBS")]),
+            _search_result([_job(111, "Finance Business Analyst", "DBS")]),
+        ]
+    )
+    events = []
+    agent = ScriptedDeepAgent(
+        responses=[
+            tool_call("read_candidate_evidence", {}, "call-evidence"),
+            tool_call(
+                "search_jobs",
+                {"query": "finance business analyst"},
+                "call-search",
+            ),
+            submission("I found a finance business-analysis direction grounded in your resume."),
+        ]
+    )
+
+    reply = _model(agent).respond(
+        [],
+        finance_resume,
+        (),
+        _context(
+            discovery,
+            events=events,
+            latest_user_message="Find roles for me.",
+            candidate_profile=finance_profile,
+            resume_document=finance_document,
+        ),
+    )
+
+    calls = [
+        event["tool_name"]
+        for event in events
+        if event.get("kind") == "tool_call"
+    ]
+    assert calls == ["read_candidate_evidence", "search_jobs"]
+    evidence_seen_before_search = _rendered(agent.requests[1]).casefold()
+    assert "finance business analyst" in evidence_seen_before_search
+    assert "chartered accountant" in evidence_seen_before_search
+    assert "software engineer" not in evidence_seen_before_search
+    assert discovery.calls[0]["query"] == "finance business analyst"
+    assert reply.search_query == "finance business analyst"
 
 
 def test_a_shortlist_the_model_never_saw_reaches_the_next_conversational_turn():
@@ -691,6 +774,7 @@ def test_one_search_per_turn_uses_the_first_result_and_then_replies():
     )
     agent = ScriptedDeepAgent(
         responses=[
+            tool_call("read_candidate_evidence", {}, "call-evidence"),
             tool_call("search_jobs", {"query": "data engineer"}, "call-1"),
             tool_call(
                 "search_jobs",
@@ -718,13 +802,13 @@ def test_one_search_per_turn_uses_the_first_result_and_then_replies():
 
     # The first result set was in front of the model when it chose the second
     # query. That, and not the count, is what "read its own results" means.
-    second_decision_request = _rendered(agent.requests[1])
+    second_decision_request = _rendered(agent.requests[2])
     assert "HRNET Ventures" in second_decision_request
     assert "Graduate Trainee, Process" in second_decision_request
 
     assert [job.job_id for job in snapshot.case_facts.recommendations] == [201, 202]
     assert snapshot.case_facts.latest_search_query == "data engineer"
-    assert agent.calls == 3
+    assert agent.calls == 4
 
 
 def test_coordinator_search_guard_rejects_a_changed_second_query():
@@ -739,6 +823,7 @@ def test_coordinator_search_guard_rejects_a_changed_second_query():
     )
     agent = ScriptedDeepAgent(
         responses=[
+            tool_call("read_candidate_evidence", {}, "call-evidence"),
             tool_call("search_jobs", dict(first), "call-1"),
             tool_call("search_jobs", dict(second), "call-2"),
             submission("The first current search is ready to review."),
@@ -761,7 +846,7 @@ def test_coordinator_search_guard_rejects_a_changed_second_query():
         first["query"],
         "platform engineering",
     ]
-    assert agent.calls == 3
+    assert agent.calls == 4
 
 
 def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
@@ -789,6 +874,7 @@ def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
     agent = ScriptedDeepAgent(
         responses=[
             submission("Tell me more about the fabs you have run."),
+            tool_call("read_candidate_evidence", {}, "call-evidence"),
             tool_call(
                 "search_jobs",
                 {"query": "quantum photonics architect"},
@@ -829,7 +915,7 @@ def test_a_search_that_returns_nothing_leaves_the_existing_shortlist_alone():
     assert [job.job_id for job in snapshot.case_facts.recommendations] == [501, 502]
     assert snapshot.case_facts.latest_search_query == "semiconductor yield analytics"
     # The agent was told the search was fine and simply matched nothing.
-    assert "valid_empty" in _rendered(agent.requests[2])
+    assert "valid_empty" in _rendered(agent.requests[3])
 
 
 def test_a_failed_search_is_surfaced_to_the_agent_and_leaves_the_shortlist_alone():
@@ -847,6 +933,7 @@ def test_a_failed_search_is_surfaced_to_the_agent_and_leaves_the_shortlist_alone
     agent = ScriptedDeepAgent(
         responses=[
             submission("Hello, tell me what you are aiming for."),
+            tool_call("read_candidate_evidence", {}, "call-evidence"),
             tool_call(
                 "search_jobs",
                 {"query": "staff yield engineer"},
@@ -887,7 +974,7 @@ def test_a_failed_search_is_surfaced_to_the_agent_and_leaves_the_shortlist_alone
     }
     assert [job.job_id for job in snapshot.case_facts.recommendations] == [601]
     assert snapshot.case_facts.latest_search_query == "semiconductor yield analytics"
-    assert "connection_failure" in _rendered(agent.requests[2])
+    assert "connection_failure" in _rendered(agent.requests[3])
 
 
 def test_search_query_records_the_query_that_ran_not_the_one_the_model_asked_for():
@@ -912,6 +999,7 @@ def test_search_query_records_the_query_that_ran_not_the_one_the_model_asked_for
     ])
     agent = ScriptedDeepAgent(
         responses=[
+            tool_call("read_candidate_evidence", {}, "call-evidence"),
             tool_call("search_jobs", {"query": executed}, "call-1"),
             submission("Staff Yield Engineer at NXP is the strongest current match."),
         ]
@@ -1086,6 +1174,7 @@ def test_productive_looking_tool_churn_stops_before_the_eight_call_failure_shape
     )
     agent = ScriptedDeepAgent(
         responses=[
+            tool_call("read_candidate_evidence", {}, "evidence-1"),
             tool_call("search_jobs", {"query": searches[0]}, "search-1"),
             tool_call("search_jobs", {"query": searches[1]}, "search-2"),
             tool_call(
@@ -1126,6 +1215,7 @@ def test_rejected_shortlist_is_one_shot_and_the_coordinator_still_replies():
     job = _job(802, "Finance Platform Business Analyst", "DBS")
     agent = ScriptedDeepAgent(
         responses=[
+            tool_call("read_candidate_evidence", {}, "evidence-1"),
             tool_call(
                 "search_jobs",
                 {"query": "finance platform business analyst"},
@@ -1165,7 +1255,7 @@ def test_rejected_shortlist_is_one_shot_and_the_coordinator_still_replies():
 
     assert reply.reply_mode == "structured"
     assert "DBS" in reply.content
-    assert agent.calls == 3
+    assert agent.calls == 4
     assert len(_tool_results(events, "write_shortlist")) == 1
     assert agent.bound_tool_names[-1] == ["ConversationReply"]
 
@@ -1177,6 +1267,7 @@ def test_parallel_search_calls_execute_only_one_logical_search():
     job = _job(803, "Finance Systems Analyst", "OCBC")
     agent = ScriptedDeepAgent(
         responses=[
+            tool_call("read_candidate_evidence", {}, "evidence-1"),
             AIMessage(
                 content="",
                 tool_calls=[
@@ -1205,7 +1296,7 @@ def test_parallel_search_calls_execute_only_one_logical_search():
     assert "OCBC" in reply.content
     assert len(context.search_results) == 1
     assert len(_tool_results(events, "search_jobs")) == 2
-    assert agent.calls == 2
+    assert agent.calls == 3
 
 
 def test_conversation_unavailable_maps_to_503():
@@ -1304,6 +1395,7 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
                 "call-ask",
             ),
             # Scripted next, and must NOT run during turn 1.
+            tool_call("read_candidate_evidence", {}, "call-evidence"),
             tool_call(
                 "search_jobs",
                 {"query": "staff yield engineer semiconductor"},
@@ -1356,7 +1448,7 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
     assert discovery.search_count == 2
     assert [job.job_id for job in resumed.case_facts.recommendations] == [401]
     assert "NXP" in resumed.messages[-1].content
-    assert agent.calls == 3
+    assert agent.calls == 4
 
     # Every assertion above is also satisfied by a turn 2 that ignored the pause
     # and started a brand new graph, because the script would play out
@@ -1371,7 +1463,10 @@ def test_ask_candidate_pauses_before_any_further_tool_runs_and_the_answer_resume
     # Resuming replays the interrupted AIMessage with its tool_calls intact
     # (streaming.py:44-50). Without skip_tool_call_ids the candidate sees the same
     # question published twice.
-    assert _tool_summaries(second_publisher) == ["coordinator called search_jobs."]
+    assert _tool_summaries(second_publisher) == [
+        "coordinator called read_candidate_evidence.",
+        "coordinator called search_jobs.",
+    ]
     assert len(deleted_checkpoints) == 1
     assert deleted_checkpoints[0].startswith(f"coordinator-{first.thread_id}-")
 
@@ -1656,6 +1751,7 @@ def test_a_transport_turn_reaches_the_loop_without_overriding_the_dependency(mon
     )
     agent = ScriptedDeepAgent(
         responses=[
+            tool_call("read_candidate_evidence", {}, "call-evidence"),
             tool_call(
                 "search_jobs",
                 {"query": "semiconductor yield analytics"},
@@ -1718,7 +1814,7 @@ def test_a_transport_turn_reaches_the_loop_without_overriding_the_dependency(mon
     assert discovery.search_count == 2
     assert [job["job_id"] for job in body["case_facts"]["recommendations"]] == [801]
     assert "Micron" in body["messages"][-1]["content"]
-    assert agent.calls == 2
+    assert agent.calls == 3
 
 
 def test_the_coordinator_binds_only_the_tools_it_needs():
@@ -1824,7 +1920,7 @@ def test_a_turn_reports_the_prompt_that_actually_ran():
 
     reply = _model(agent).respond([], "", (), _context(discovery))
 
-    assert COORDINATOR_PROMPT_VERSION == "recruitment-coordinator-loop-v22"
+    assert COORDINATOR_PROMPT_VERSION == "recruitment-coordinator-loop-v23"
     assert reply.prompt_version == COORDINATOR_PROMPT_VERSION
 
 
@@ -1930,6 +2026,7 @@ def test_failed_search_cannot_be_reported_as_found_matches():
     from recruitment_team.errors import ConversationUnavailable
 
     agent = ScriptedDeepAgent(responses=[
+        tool_call("read_candidate_evidence", {}, "call-evidence"),
         tool_call("search_jobs", {"query": "quality manager"}, "call-failed-search"),
         final("I found five matching roles for you."),
     ])
@@ -1966,6 +2063,7 @@ def test_failed_search_rejects_paraphrased_positive_result_claims(claim):
     from recruitment_team.errors import ConversationUnavailable
 
     agent = ScriptedDeepAgent(responses=[
+        tool_call("read_candidate_evidence", {}, "call-evidence"),
         tool_call("search_jobs", {"query": "quality manager"}, "call-failed-search"),
         submission(claim),
     ])
