@@ -938,3 +938,13 @@ def test_saved_resume_and_story_counts_are_bounded():
         db.query(User).filter(User.id == user.id).delete()
         db.commit()
         db.close()
+
+
+def test_csp_allows_only_the_cloudflare_analytics_beacon_host():
+    from security import SecurityHeadersMiddleware
+
+    policy = SecurityHeadersMiddleware._CONTENT_SECURITY_POLICY.decode()
+    script_src = next(part for part in policy.split(";") if part.strip().startswith("script-src"))
+
+    assert "https://static.cloudflareinsights.com" in script_src.split()
+    assert "'unsafe-inline'" not in script_src

@@ -114,7 +114,9 @@ class SecurityHeadersMiddleware:
         "default-src 'self'; base-uri 'self'; object-src 'none'; "
         "frame-ancestors 'none'; form-action 'self'; img-src 'self' data: https:; "
         "style-src 'self' 'unsafe-inline'; "
-        f"script-src 'self' {' '.join(_INLINE_SCRIPT_HASHES)}; connect-src 'self' https:; "
+        # Cloudflare injects its cookieless Web Analytics beacon at the edge (see Privacy Notice).
+        f"script-src 'self' https://static.cloudflareinsights.com {' '.join(_INLINE_SCRIPT_HASHES)}; "
+        "connect-src 'self' https:; "
         "font-src 'self' data:"
     ).encode()
 
