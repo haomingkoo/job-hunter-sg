@@ -229,8 +229,8 @@ contractual data protection commitments to give your data a standard of protecti
   sit with Railway.</li>
   <li><strong>Resend, United States.</strong> Sends verification, password-reset, and job alert emails.
   It receives your name, email address, and the email content.</li>
-  <li><strong>Google (Google Workspace and Gmail), United States.</strong> Hosts the mailboxes that receive
-  privacy requests and contact form messages.</li>
+  <li><strong>Google (Gmail), United States.</strong> Cloudflare Email Routing forwards privacy requests
+  to the operator's Gmail (Google).</li>
   <li><strong>Cloudflare, United States.</strong> Provides DNS, network security, and content delivery for our
   domain. All web traffic passes through Cloudflare, which processes your IP address and request details.
   We also use Cloudflare Web Analytics, which counts page views without cookies or cross-site tracking.</li>
