@@ -221,8 +221,7 @@ def test_direct_employer_alert_does_not_advance_while_index_is_incomplete(
 def test_expired_unclassified_row_neither_blocks_nor_enters_direct_alerts(monkeypatch):
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
-    # Readiness checks real-time visibility, so the fixture must stay current.
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    now = datetime(2026, 8, 25, tzinfo=timezone.utc)
     with Session(engine) as db:
         user = User(email="closed@example.test", password_hash="unused", name="Closed")
         db.add(user)
