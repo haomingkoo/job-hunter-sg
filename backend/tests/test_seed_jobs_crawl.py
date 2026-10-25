@@ -1,7 +1,8 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import embedding_service
 import seed_jobs
 from database import Base
 from models import ScrapedJob, UsageLog
@@ -28,6 +29,16 @@ def _prepare_crawl(monkeypatch):
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    # pysqlite drops savepoint rollbacks unless SQLAlchemy owns BEGIN.
+    @event.listens_for(engine, "connect")
+    def _no_driver_begin(dbapi_connection, _record):
+        dbapi_connection.isolation_level = None
+
+    @event.listens_for(engine, "begin")
+    def _emit_begin(connection):
+        connection.exec_driver_sql("BEGIN")
+
     testing_session = sessionmaker(bind=engine)
     Base.metadata.create_all(engine)
 
@@ -41,7 +52,69 @@ def _prepare_crawl(monkeypatch):
     monkeypatch.setattr(seed_jobs.app_config, "CRAWL_VISIBLE_HASH_BACKFILL_BATCH", 5000)
     monkeypatch.setattr(seed_jobs.app_config, "CRAWL_LEGACY_HIDDEN_PRUNE_BATCH", 5000)
     monkeypatch.setattr(seed_jobs.time, "sleep", lambda _: None)
+    monkeypatch.setattr(embedding_service, "encode_texts", _fake_encode_texts)
     return engine, testing_session
+
+
+def _fake_encode_texts(texts, batch_size):
+    vector = [0.0] * embedding_service.EMBEDDING_DIMENSION
+    vector[0] = 1.0
+    return [vector for _text in texts]
+
+
+def test_crawl_commits_vectors_with_new_and_changed_rows(monkeypatch):
+    engine, testing_session = _prepare_crawl(monkeypatch)
+    changed = _job("MyCareersFuture", "changed")
+    changed.description = "Old text."
+    with testing_session() as db:
+        _seed(db, changed)
+    mcf_new = _job("MyCareersFuture", "mcf-new")
+    mcf_changed = _job("MyCareersFuture", "changed")
+    cgov_new = _job("Careers@Gov", "cgov-new")
+    mcf_new.description = "Build a data platform."
+    mcf_changed.description = "New text."
+    cgov_new.description = "Run a public service."
+    monkeypatch.setattr(
+        MyCareersFutureScraper,
+        "search",
+        lambda self, keyword, limit, page: [mcf_new, mcf_changed] if page == 0 else [],
+    )
+    monkeypatch.setattr(CareersGovScraper, "fetch_all", lambda self: [cgov_new])
+    monkeypatch.setattr(seed_jobs, "CAREERSGOV_MIN_HEALTHY_JOBS", 1)
+
+    stats = seed_jobs.crawl_all_jobs()
+
+    assert stats["embedded"] == 3
+    with testing_session() as db:
+        rows = db.query(ScrapedJob).all()
+        assert len(rows) == 3
+        assert all(embedding_service.embedding_is_current(row) for row in rows)
+    engine.dispose()
+
+
+def test_crawl_encoder_failure_fails_page_without_unembedded_rows(monkeypatch):
+    engine, testing_session = _prepare_crawl(monkeypatch)
+    job = _job("MyCareersFuture", "mcf-1")
+    job.description = "Build a data platform."
+    monkeypatch.setattr(
+        MyCareersFutureScraper,
+        "search",
+        lambda self, keyword, limit, page: [job] if page == 0 else [],
+    )
+    monkeypatch.setattr(CareersGovScraper, "fetch_all", lambda self: [])
+
+    def broken_encoder(texts, batch_size):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(embedding_service, "encode_texts", broken_encoder)
+
+    stats = seed_jobs.crawl_all_jobs()
+
+    assert stats["errors"] >= 1
+    assert stats["embedded"] == 0
+    with testing_session() as db:
+        assert db.query(ScrapedJob).count() == 0
+    engine.dispose()
 
 
 def test_mcf_growth_circuit_breaker_bounds_new_rows(monkeypatch):

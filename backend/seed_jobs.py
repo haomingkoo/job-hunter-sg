@@ -32,7 +32,11 @@ from ats_terms import build_job_ats_terms
 import config as app_config
 from database import init_db, SessionLocal
 from crawl_lease import job_crawl_lease
-from embedding_service import begin_job_corpus_generation, invalidate_job_embedding_if_stale
+from embedding_service import (
+    begin_job_corpus_generation,
+    embed_jobs_without_current_vectors,
+    invalidate_job_embedding_if_stale,
+)
 from job_precompute import apply_job_precomputes, posted_sort_iso as _posted_sort_iso
 from job_store import (
     backfill_content_hashes,
@@ -174,6 +178,7 @@ def seed_jobs(
         "new_jobs": 0,
         "updated_jobs": 0,
         "errors": 0,
+        "embedded": 0,
         "duration_seconds": 0,
     }
     start = time.time()
@@ -196,6 +201,7 @@ def seed_jobs(
                 f"(raw: {results['total_raw']}, dupes removed: {results['duplicates_removed']})"
             )
 
+            keyword_rows: list[ScrapedJob] = []
             for job in results["jobs"]:
                 raw = asdict(job)
                 raw["dedup_key"] = job.dedup_key  # Property not included by asdict()
@@ -216,6 +222,7 @@ def seed_jobs(
                             skills=existing.skills if isinstance(existing.skills, list) else [],
                         )
                     _build_term_preview(existing, db)
+                    keyword_rows.append(existing)
                     stats["updated_jobs"] += 1
                 else:
                     job_row = ScrapedJob(**clean)
@@ -227,10 +234,12 @@ def seed_jobs(
                     db.add(job_row)
                     db.flush()  # get ID assigned for term preview
                     _build_term_preview(job_row, db)
+                    keyword_rows.append(job_row)
                     stats["new_jobs"] += 1
 
                 stats["total_cached"] += 1
 
+            stats["embedded"] += embed_jobs_without_current_vectors(keyword_rows)
             db.commit()
             db.expunge_all()  # Release ORM objects to free memory
 
@@ -253,6 +262,7 @@ def seed_jobs(
     log.info(f"  Total raw results:  {stats['total_raw']}")
     log.info(f"  New jobs added:     {stats['new_jobs']}")
     log.info(f"  Jobs updated:       {stats['updated_jobs']}")
+    log.info(f"  Jobs embedded:      {stats['embedded']}")
     log.info(f"  Errors:             {stats['errors']}")
     log.info(f"  Duration:           {stats['duration_seconds']}s")
     log.info(f"  Total jobs in DB:   {total_in_db}")
@@ -282,6 +292,7 @@ def crawl_all_jobs() -> dict:
         "duplicates_collapsed": 0,
         "hashes_backfilled": 0,
         "legacy_hidden_pruned": 0,
+        "embedded": 0,
     }
     start = time.time()
 
@@ -338,6 +349,7 @@ def crawl_all_jobs() -> dict:
             page_new = 0
             page_updated = 0
             page_reactivated = 0
+            page_rows: list[ScrapedJob] = []
             for job in jobs:
                 semantic_key = _crawl_semantic_key(job)
                 if semantic_key and semantic_key in mcf_seen_semantic_keys:
@@ -368,6 +380,7 @@ def crawl_all_jobs() -> dict:
                             existing.retirement_reason = ""
                             existing.retired_at = ""
                             _build_term_preview(existing, db)
+                            row = existing
                         else:
                             if stats["new"] + page_new >= app_config.CRAWL_MAX_NEW_JOBS_PER_SOURCE:
                                 raise CrawlGrowthLimitExceeded(
@@ -378,7 +391,9 @@ def crawl_all_jobs() -> dict:
                             db.add(job_row)
                             db.flush()
                             _build_term_preview(job_row, db)
+                            row = job_row
                             is_new = True
+                    page_rows.append(row)
                     if semantic_key:
                         mcf_seen_semantic_keys.add(semantic_key)
                     page_new += int(is_new)
@@ -400,8 +415,11 @@ def crawl_all_jobs() -> dict:
                 page_transaction.rollback()
                 break
 
+            # A crawl can be stopped mid-run, so vectors commit with their rows.
+            page_embedded = embed_jobs_without_current_vectors(page_rows)
             page_transaction.commit()
             db.expunge_all()
+            stats["embedded"] += page_embedded
             stats["new"] += page_new
             stats["updated"] += page_updated
             stats["reactivated"] += page_reactivated
@@ -478,6 +496,7 @@ def crawl_all_jobs() -> dict:
         cgov_updated = 0
         cgov_reactivated = 0
         cgov_retired = 0
+        cgov_rows: list[ScrapedJob] = []
         for job in cgov_jobs:
             semantic_key = _crawl_semantic_key(job)
             if semantic_key and semantic_key in seen_semantic_keys:
@@ -516,6 +535,7 @@ def crawl_all_jobs() -> dict:
                         existing.retirement_reason = ""
                         existing.retired_at = ""
                         _build_term_preview(existing, db)
+                        row = existing
                     else:
                         if cgov_new >= app_config.CRAWL_MAX_NEW_JOBS_PER_SOURCE:
                             raise CrawlGrowthLimitExceeded(
@@ -525,7 +545,9 @@ def crawl_all_jobs() -> dict:
                         job_row = ScrapedJob(**clean)
                         db.add(job_row)
                         _build_term_preview(job_row, db)
+                        row = job_row
                         is_new = True
+                cgov_rows.append(row)
                 if semantic_key:
                     seen_semantic_keys.add(semantic_key)
                 cgov_new += int(is_new)
@@ -540,12 +562,14 @@ def crawl_all_jobs() -> dict:
             cgov_retired = _retire_stale_jobs(db, "Careers@Gov", cgov_crawl_marker)
             log.info(f"[CareersGov] Retired {cgov_retired} stale jobs")
 
+        cgov_embedded = embed_jobs_without_current_vectors(cgov_rows)
         db.commit()
         db.expunge_all()
         stats["new"] += cgov_new
         stats["updated"] += cgov_updated
         stats["reactivated"] += cgov_reactivated
         stats["retired"] += cgov_retired
+        stats["embedded"] += cgov_embedded
         stats["pages"] += int(cgov_complete)
         log.info(f"[CareersGov] Loaded {len(cgov_jobs)} jobs (new: {stats['new']}, updated: {stats['updated']})")
 
@@ -580,6 +604,7 @@ def crawl_all_jobs() -> dict:
     log.info(f"  Duplicates hidden: {stats['duplicates_collapsed']}")
     log.info(f"  Hashes backfilled: {stats['hashes_backfilled']}")
     log.info(f"  Legacy rows pruned: {stats['legacy_hidden_pruned']}")
+    log.info(f"  Jobs embedded:    {stats['embedded']}")
     log.info(f"  Errors:           {stats['errors']}")
     log.info(f"  Duration:         {duration}s ({round(duration/60, 1)} min)")
     log.info(f"  Total jobs in DB: {total_in_db}")
