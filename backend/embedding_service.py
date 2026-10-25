@@ -173,6 +173,22 @@ def stamp_job_embedding(job, vector: list[float]) -> bool:
     return vector_changed
 
 
+def embed_jobs_without_current_vectors(jobs: list) -> int:
+    """Encode and stamp rows lacking a current vector; encoder errors propagate."""
+    pending = [job for job in jobs if not embedding_is_current(job)]
+    if not pending:
+        return 0
+    vectors = encode_texts(
+        [build_job_embed_text(job.title, job.description, job.skills) for job in pending],
+        batch_size=EMBEDDING_DEFAULT_BATCH_SIZE,
+    )
+    if len(vectors) != len(pending):
+        raise ValueError("embedding encoder returned an unexpected vector count")
+    for job, vector in zip(pending, vectors):
+        stamp_job_embedding(job, vector)
+    return len(pending)
+
+
 def invalidate_job_embedding_if_stale(job) -> bool:
     """Clear a vector whose text or pinned model provenance no longer matches."""
     if embedding_is_current(job):
