@@ -2,9 +2,9 @@ import { useState, useEffect, useMemo, useCallback, useRef, Fragment, memo } fro
 import {
   Search, FileText, Plus, X, ChevronRight,
   CheckCircle, AlertCircle, Trash2, Edit3,
-  RefreshCw, Zap, Download, Star,
-  Loader2, Sparkles, UploadCloud, Printer,
-  Check, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, List, Type, GripVertical,
+  RefreshCw, Download, Star,
+  Loader2, UploadCloud, Printer,
+  Check, ArrowUp, ArrowDown, List, Type, GripVertical,
   Send,
 } from "lucide-react";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
@@ -196,7 +196,7 @@ const SortableBulletItem = memo(function SortableBulletItem({ id, children }) {
         <button
           type="button"
           {...listeners}
-          className="cursor-grab active:cursor-grabbing opacity-0 group-hover/section:opacity-60 transition-opacity mt-2 -ml-4 px-0.5 text-[#6A89A7]/60 hover:text-[#6A89A7] shrink-0"
+          className="cursor-grab active:cursor-grabbing opacity-0 group-hover/section:opacity-60 transition-opacity mt-2 -ml-4 px-0.5 text-[#6A89A7]/60 hover:text-muted shrink-0"
           aria-label="Drag to reorder bullet"
           title="Drag to reorder"
         >
@@ -322,6 +322,8 @@ export default function ResumeTab({
 
   const fileInputRef = useRef(null);
   const [uploadConsent, setUploadConsent] = useState(false);
+  const [consentPromptVisible, setConsentPromptVisible] = useState(false);
+  const uploadConsentRef = useRef(null);
   const scorePanelRef = useRef(null);
   const selectedFeedbackRef = useRef(null);
   const initialScoredRef = useRef(false);
@@ -1034,9 +1036,16 @@ export default function ResumeTab({
 
   const needsUploadConsent = !user && !uploadConsent;
 
+  // Show the consent message beside the checkbox, not in the error list below the fold.
+  const promptForUploadConsent = () => {
+    setConsentPromptVisible(true);
+    uploadConsentRef.current?.focus();
+    uploadConsentRef.current?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+  };
+
   const openFilePicker = () => {
     if (needsUploadConsent) {
-      setUploadError("Please tick the box to agree to how your resume is processed before uploading.");
+      promptForUploadConsent();
       return;
     }
     fileInputRef.current?.click();
@@ -1045,7 +1054,7 @@ export default function ResumeTab({
   const handleFileUpload = async (file) => {
     if (!file) return;
     if (needsUploadConsent) {
-      setUploadError("Please tick the box to agree to how your resume is processed before uploading.");
+      promptForUploadConsent();
       return;
     }
 
@@ -1890,7 +1899,7 @@ export default function ResumeTab({
   const wordCount = resumeText.split(/\s+/).filter(Boolean).length;
   const overallScore = Number.isFinite(scoreData?.overall_score) ? scoreData.overall_score : null;
   const scoreTheme = getScoreTheme(overallScore ?? 0);
-  const scorePillClass = scoreData ? scoreTheme.pill : "bg-[#BDDDFC]/10 text-[#6A89A7]";
+  const scorePillClass = scoreData ? scoreTheme.pill : "bg-[#BDDDFC]/10 text-muted";
   const scoreDisplayValue = overallScore ?? "--";
   const matchedKeywords = scoreData?.keyword_match?.matched || [];
   const missingKeywords = scoreData?.keyword_match?.missing || [];
@@ -2432,7 +2441,7 @@ export default function ResumeTab({
                   ? "bg-[#384959] text-white"
                   : isComplete
                     ? "bg-blue-100 text-blue-700 cursor-pointer hover:bg-blue-200"
-                    : "bg-[#BDDDFC]/10 text-[#6A89A7] cursor-default"
+                    : "bg-[#BDDDFC]/10 text-muted cursor-default"
               }`}
             >
               {isComplete ? <Check size={12} /> : <span>{step}</span>}
@@ -2483,7 +2492,7 @@ export default function ResumeTab({
         <div className="mx-auto max-w-3xl space-y-6">
           <div>
             <h2 className="text-xl font-bold text-[#384959]">How would you like to start?</h2>
-            <p className="mt-1 text-sm text-[#6A89A7]">Choose the option that fits your situation.</p>
+            <p className="mt-1 text-sm text-muted">Choose the option that fits your situation.</p>
           </div>
 
           <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
@@ -2503,7 +2512,7 @@ export default function ResumeTab({
                 <UploadCloud size={28} className="text-[#88BDF2]" />
               )}
               <h3 className="mt-3 text-base font-semibold text-[#384959]">Upload Resume</h3>
-              <p className="mt-1.5 text-sm text-[#6A89A7]">
+              <p className="mt-1.5 text-sm text-muted">
                 {uploading ? "Extracting text..." : "Drop a PDF or DOCX, or click to browse"}
               </p>
             </button>
@@ -2518,7 +2527,7 @@ export default function ResumeTab({
             >
               <FileText size={28} className="text-emerald-600" />
               <h3 className="mt-3 text-base font-semibold text-[#384959]">Paste Text</h3>
-              <p className="mt-1.5 text-sm text-[#6A89A7]">Copy-paste your resume from any source</p>
+              <p className="mt-1.5 text-sm text-muted">Copy-paste your resume from any source</p>
             </button>
 
             <button
@@ -2536,9 +2545,8 @@ export default function ResumeTab({
               }}
               className="group text-left rounded-2xl border-2 border-[#BDDDFC]/30 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-violet-300"
             >
-              <Sparkles size={28} className="text-violet-600" />
               <h3 className="mt-3 text-base font-semibold text-[#384959]">Start Fresh</h3>
-              <p className="mt-1.5 text-sm text-[#6A89A7]">Build from scratch with AI-guided chat, or switch to a blank starter if you want to move faster</p>
+              <p className="mt-1.5 text-sm text-muted">Build from scratch with AI-guided chat, or switch to a blank starter if you want to move faster</p>
             </button>
 
             <button
@@ -2589,12 +2597,12 @@ CERTIFICATIONS
             >
               <Star size={28} className="text-emerald-500" />
               <h3 className="mt-3 text-base font-semibold text-[#384959]">Try Demo</h3>
-              <p className="mt-1.5 text-sm text-[#6A89A7]">Load a sample resume to explore features</p>
+              <p className="mt-1.5 text-sm text-muted">Load a sample resume to explore features</p>
             </button>
           </div>
 
           {user ? (
-            <p className="text-xs text-[#6A89A7]">
+            <p className="text-xs text-muted">
               Uploaded resumes are saved to your account and sent to AI Singapore&apos;s SEA-LION API when you use AI
               features. See the{" "}
               <a href={`${API_BASE}/api/privacy`} target="_blank" rel="noopener" className="font-medium text-[#384959] underline">
@@ -2603,18 +2611,24 @@ CERTIFICATIONS
               for retention and deletion.
             </p>
           ) : (
-            <label className="flex items-start gap-3 rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 text-left">
+            <div>
+            <label className={`flex items-start gap-3 rounded-2xl border bg-white p-4 text-left ${consentPromptVisible && !uploadConsent ? "border-rose-300" : "border-[#BDDDFC]/30"}`}>
               <input
+                ref={uploadConsentRef}
                 type="checkbox"
                 checked={uploadConsent}
                 onChange={(event) => {
                   setUploadConsent(event.target.checked);
-                  if (event.target.checked) setUploadError("");
+                  if (event.target.checked) {
+                    setUploadError("");
+                    setConsentPromptVisible(false);
+                  }
                 }}
-                className="mt-0.5 h-4 w-4 shrink-0 accent-[#384959]"
-                aria-describedby="resume-upload-notice"
+                className="mt-0.5 h-5 w-5 shrink-0 accent-[#384959]"
+                aria-describedby={consentPromptVisible && !uploadConsent ? "resume-upload-consent-error resume-upload-notice" : "resume-upload-notice"}
+                aria-invalid={consentPromptVisible && !uploadConsent}
               />
-              <span id="resume-upload-notice" className="text-xs leading-relaxed text-[#6A89A7]">
+              <span id="resume-upload-notice" className="text-xs leading-relaxed text-muted">
                 I agree that Job Hunter SG may process my resume to extract its text and run the features I use.
                 Without an account the text is not saved on our servers. It stays in this browser tab. If I use an AI
                 feature, the relevant text is sent to AI Singapore&apos;s SEA-LION API. Details are in the{" "}
@@ -2624,6 +2638,13 @@ CERTIFICATIONS
                 .
               </span>
             </label>
+            {consentPromptVisible && !uploadConsent && (
+              <p id="resume-upload-consent-error" role="alert" className="mt-2 flex items-center gap-2 px-1 text-sm text-rose-700">
+                <AlertCircle size={14} aria-hidden="true" className="shrink-0" />
+                Please tick the box to agree to how your resume is processed before uploading.
+              </p>
+            )}
+            </div>
           )}
 
           <div id="resume-paste-area" className="hidden rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
@@ -2646,7 +2667,7 @@ CERTIFICATIONS
               <button
                 type="button"
                 onClick={() => document.getElementById("resume-paste-area")?.classList.add("hidden")}
-                className="rounded-xl border border-[#BDDDFC]/30 px-4 py-2 text-sm font-medium text-[#6A89A7] hover:bg-[#f0f4f8]"
+                className="rounded-xl border border-[#BDDDFC]/30 px-4 py-2 text-sm font-medium text-muted hover:bg-[#f0f4f8]"
               >
                 Cancel
               </button>
@@ -2657,13 +2678,12 @@ CERTIFICATIONS
             <div className="rounded-2xl border border-violet-200 bg-white shadow-sm overflow-hidden flex flex-col" style={{ height: "480px" }}>
               <div className="flex items-center justify-between border-b border-violet-100 bg-gradient-to-r from-violet-50 to-white px-5 py-3">
                 <div className="flex items-center gap-2">
-                  <Sparkles size={18} className="text-violet-600" />
                   <span className="text-sm font-semibold text-[#384959]">AI Resume Builder</span>
                 </div>
                 <button
                   type="button"
                   onClick={resetResumeChat}
-                  className="rounded-lg p-1 text-[#6A89A7] hover:bg-[#f0f4f8] transition"
+                  className="rounded-lg p-1 text-muted hover:bg-[#f0f4f8] transition"
                   aria-label="Close chat"
                 >
                   <X size={16} />
@@ -2673,11 +2693,6 @@ CERTIFICATIONS
               <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
                 {chatMessages.map((msg, i) => (
                   <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                    {msg.role === "assistant" && (
-                      <div className="mr-2 mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-100">
-                        <Sparkles size={14} className="text-violet-600" />
-                      </div>
-                    )}
                     <div
                       className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
                         msg.role === "user"
@@ -2691,10 +2706,7 @@ CERTIFICATIONS
                 ))}
                 {chatLoading && (
                   <div className="flex justify-start">
-                    <div className="mr-2 mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-100">
-                      <Sparkles size={14} className="text-violet-600" />
-                    </div>
-                    <div className="rounded-2xl bg-[#f0f4f8] px-4 py-2.5 text-sm text-[#6A89A7]">
+                    <div className="rounded-2xl bg-[#f0f4f8] px-4 py-2.5 text-sm text-muted">
                       <Loader2 size={16} className="inline animate-spin mr-1.5" />
                       Thinking...
                     </div>
@@ -2708,7 +2720,7 @@ CERTIFICATIONS
                   <span className="font-semibold uppercase tracking-wide text-violet-600">{chatStageMeta.label}</span>
                   <span className="text-[#BDDDFC]">/</span>
                   {chatStageMeta.remaining.length > 0 ? (
-                    <span className="text-[#6A89A7]">Next: {chatStageMeta.remaining.join(", ")}</span>
+                    <span className="text-muted">Next: {chatStageMeta.remaining.join(", ")}</span>
                   ) : (
                     <span className="font-semibold text-emerald-600">Ready to generate</span>
                   )}
@@ -2765,7 +2777,6 @@ CERTIFICATIONS
                       }}
                       className="w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 transition flex items-center justify-center gap-2"
                     >
-                      <Sparkles size={16} />
                       Generate My Resume
                     </button>
                   </div>
@@ -2783,7 +2794,7 @@ CERTIFICATIONS
                     type="button"
                     disabled={chatLoading}
                     onClick={generateWithWhatWeHave}
-                    className="mb-3 text-xs text-[#6A89A7] hover:text-[#384959] underline underline-offset-2 transition disabled:opacity-50"
+                    className="mb-3 text-xs text-muted hover:text-[#384959] underline underline-offset-2 transition disabled:opacity-50"
                   >
                     or just draft with what I have
                   </button>
@@ -2848,7 +2859,7 @@ CERTIFICATIONS
                     onFocus={(e) => {
                       setTimeout(() => e.target.closest('[class*="rounded-2xl"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
                     }}
-                    className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2.5 text-sm text-[#384959] placeholder-[#6A89A7]/60 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:opacity-50 resize-none"
+                    className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2.5 text-sm text-[#384959] placeholder-muted/60 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:opacity-50 resize-none"
                   />
                   <button
                     type="submit"
@@ -2887,7 +2898,7 @@ CERTIFICATIONS
                         <button
                           type="button"
                           onClick={() => setDeletingVersionId(null)}
-                          className="rounded-lg border border-[#BDDDFC]/30 bg-white px-3 py-1 text-xs font-medium text-[#6A89A7] hover:bg-[#f0f4f8] transition"
+                          className="rounded-lg border border-[#BDDDFC]/30 bg-white px-3 py-1 text-xs font-medium text-muted hover:bg-[#f0f4f8] transition"
                         >
                           Cancel
                         </button>
@@ -2915,7 +2926,7 @@ CERTIFICATIONS
                         <button
                           type="button"
                           onClick={() => { setRenamingVersionId(null); setRenamingVersionLabel(""); }}
-                          className="rounded-lg border border-[#BDDDFC]/30 p-1.5 text-[#6A89A7] hover:text-[#6A89A7] transition"
+                          className="rounded-lg border border-[#BDDDFC]/30 p-1.5 text-muted hover:text-muted transition"
                         >
                           <X size={12} />
                         </button>
@@ -2928,7 +2939,7 @@ CERTIFICATIONS
                       >
                         <div className="min-w-0 flex-1">
                           <div className="font-medium text-[#384959] truncate">{v.label}</div>
-                          <div className="text-xs text-[#6A89A7]">
+                          <div className="text-xs text-muted">
                             {v.score ? `Score ${v.score}` : ""}{v.word_count ? ` · ${v.word_count}w` : ""}
                           </div>
                         </div>
@@ -2938,7 +2949,7 @@ CERTIFICATIONS
                             tabIndex={0}
                             onClick={(e) => { e.stopPropagation(); setRenamingVersionId(v.id); setRenamingVersionLabel(v.label); }}
                             onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); setRenamingVersionId(v.id); setRenamingVersionLabel(v.label); } }}
-                            className="rounded p-1 text-[#6A89A7] opacity-0 group-hover/version:opacity-100 hover:text-[#384959] hover:bg-[#BDDDFC]/10 transition"
+                            className="rounded p-1 text-muted opacity-0 group-hover/version:opacity-100 hover:text-[#384959] hover:bg-[#BDDDFC]/10 transition"
                             title="Rename"
                           >
                             <Edit3 size={13} />
@@ -2948,12 +2959,12 @@ CERTIFICATIONS
                             tabIndex={0}
                             onClick={(e) => { e.stopPropagation(); setDeletingVersionId(v.id); }}
                             onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); setDeletingVersionId(v.id); } }}
-                            className="rounded p-1 text-[#6A89A7] opacity-0 group-hover/version:opacity-100 hover:text-rose-500 hover:bg-rose-50 transition"
+                            className="rounded p-1 text-muted opacity-0 group-hover/version:opacity-100 hover:text-rose-500 hover:bg-rose-50 transition"
                             title="Delete"
                           >
                             <Trash2 size={13} />
                           </span>
-                          <ChevronRight size={14} className="text-[#6A89A7]" />
+                          <ChevronRight size={14} className="text-muted" />
                         </div>
                       </button>
                     )}
@@ -2970,7 +2981,7 @@ CERTIFICATIONS
 
           <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-[#384959]">Your Details</div>
-            <p className="mt-1 text-xs text-[#6A89A7]">Used for the resume header. Auto-detected from uploaded files.</p>
+            <p className="mt-1 text-xs text-muted">Used for the resume header. Auto-detected from uploaded files.</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {[
                 { key: "name", label: "Name", value: profile.name, placeholder: "Full name" },
@@ -2979,7 +2990,7 @@ CERTIFICATIONS
                 { key: "location", label: "Location", value: profile.location, placeholder: "Location" },
               ].map((field) => (
                 <label key={field.key} className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
-                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">{field.label}</div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">{field.label}</div>
                   <input
                     value={field.value}
                     placeholder={field.placeholder}
@@ -3023,7 +3034,6 @@ CERTIFICATIONS
               className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Next: Pick Template
-              <ArrowRight size={14} />
             </button>
           </div>
         </div>
@@ -3033,11 +3043,11 @@ CERTIFICATIONS
         <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
-              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Setup Complete</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Setup Complete</div>
               <div className="mt-1 text-sm text-[#384959] truncate">
                 {profile.name || "Resume loaded"}{profile.email ? ` • ${profile.email}` : ""}{profile.phone ? ` • ${profile.phone}` : ""}
               </div>
-              <div className="mt-1 text-xs text-[#6A89A7]">
+              <div className="mt-1 text-xs text-muted">
                 {wordCount} words • {scorePhaseLabel}
               </div>
             </div>
@@ -3057,9 +3067,9 @@ CERTIFICATIONS
                     {showVersionDropdown && (
                       <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-[#BDDDFC]/30 bg-white p-2 shadow-lg">
                         {versionsLoading ? (
-                          <div className="flex items-center gap-2 px-3 py-2 text-xs text-[#6A89A7]"><Loader2 size={12} className="animate-spin" />Loading...</div>
+                          <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted"><Loader2 size={12} className="animate-spin" />Loading...</div>
                         ) : resumeVersions.length === 0 ? (
-                          <div className="px-3 py-2 text-xs text-[#6A89A7]">No saved versions yet.</div>
+                          <div className="px-3 py-2 text-xs text-muted">No saved versions yet.</div>
                         ) : (
                           <div className="max-h-48 overflow-y-auto space-y-0.5">
                             {resumeVersions.map((v) => (
@@ -3069,7 +3079,7 @@ CERTIFICATIONS
                                     <span className="text-xs font-medium text-[#384959]">Delete?</span>
                                     <div className="flex gap-1">
                                       <button type="button" onClick={() => { deleteVersion(v.id); }} className="rounded-md bg-[#384959] px-2 py-0.5 text-[10px] font-medium text-white hover:bg-[#2a3744]">Yes</button>
-                                      <button type="button" onClick={() => setDeletingVersionId(null)} className="rounded-md border border-[#BDDDFC]/30 px-2 py-0.5 text-[10px] font-medium text-[#6A89A7] hover:bg-white">No</button>
+                                      <button type="button" onClick={() => setDeletingVersionId(null)} className="rounded-md border border-[#BDDDFC]/30 px-2 py-0.5 text-[10px] font-medium text-muted hover:bg-white">No</button>
                                     </div>
                                   </div>
                                 ) : renamingVersionId === v.id ? (
@@ -3085,7 +3095,7 @@ CERTIFICATIONS
                                       className="flex-1 min-w-0 rounded-md border border-[#BDDDFC]/30 px-2 py-0.5 text-xs text-[#384959] focus:outline-none focus:ring-1 focus:ring-[#6A89A7]/30"
                                     />
                                     <button type="button" onClick={() => renameVersion(v.id, renamingVersionLabel)} className="rounded-md bg-[#384959] p-1 text-white hover:bg-[#2a3744]"><Check size={10} /></button>
-                                    <button type="button" onClick={() => { setRenamingVersionId(null); setRenamingVersionLabel(""); }} className="rounded-md border border-[#BDDDFC]/30 p-1 text-[#6A89A7]"><X size={10} /></button>
+                                    <button type="button" onClick={() => { setRenamingVersionId(null); setRenamingVersionLabel(""); }} className="rounded-md border border-[#BDDDFC]/30 p-1 text-muted"><X size={10} /></button>
                                   </div>
                                 ) : (
                                   <div className="flex items-center">
@@ -3095,7 +3105,7 @@ CERTIFICATIONS
                                       className="flex-1 min-w-0 text-left px-3 py-2 text-xs"
                                     >
                                       <div className="font-medium text-[#384959] truncate">{v.label}</div>
-                                      <div className="text-[#6A89A7] mt-0.5">
+                                      <div className="text-muted mt-0.5">
                                         {v.score ? `Score ${v.score}` : ""}{v.job_title ? ` • ${v.job_title}` : ""}
                                         {v.word_count ? ` • ${v.word_count}w` : ""}
                                       </div>
@@ -3104,7 +3114,7 @@ CERTIFICATIONS
                                       <button
                                         type="button"
                                         onClick={(e) => { e.stopPropagation(); setRenamingVersionId(v.id); setRenamingVersionLabel(v.label); }}
-                                        className="rounded p-1 text-[#6A89A7] hover:text-[#384959] hover:bg-[#BDDDFC]/10"
+                                        className="rounded p-1 text-muted hover:text-[#384959] hover:bg-[#BDDDFC]/10"
                                         title="Rename"
                                       >
                                         <Edit3 size={11} />
@@ -3112,7 +3122,7 @@ CERTIFICATIONS
                                       <button
                                         type="button"
                                         onClick={(e) => { e.stopPropagation(); setDeletingVersionId(v.id); }}
-                                        className="rounded p-1 text-[#6A89A7] hover:text-rose-500 hover:bg-rose-50"
+                                        className="rounded p-1 text-muted hover:text-rose-500 hover:bg-rose-50"
                                         title="Delete"
                                       >
                                         <Trash2 size={11} />
@@ -3134,7 +3144,7 @@ CERTIFICATIONS
                       onChange={(e) => setSaveVersionLabel(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") saveCurrentVersion(); }}
                       placeholder="Name this version..."
-                      className="w-36 rounded-lg bg-transparent px-2.5 py-1.5 text-sm text-[#384959] placeholder-[#6A89A7]/60 focus:outline-none"
+                      className="w-36 rounded-lg bg-transparent px-2.5 py-1.5 text-sm text-[#384959] placeholder-muted/60 focus:outline-none"
                     />
                     <button
                       type="button"
@@ -3198,9 +3208,9 @@ CERTIFICATIONS
         <div className="flex items-center justify-between gap-4">
           <div>
             <div className="text-sm font-semibold text-[#384959]">Templates</div>
-            <div className="text-xs text-[#6A89A7]">Pick a layout to get started. You can change this anytime from the editor.</div>
+            <div className="text-xs text-muted">Pick a layout to get started. You can change this anytime from the editor.</div>
           </div>
-          <div className="hidden lg:flex items-center gap-2 rounded-full bg-[#BDDDFC]/10 px-3 py-1 text-xs font-medium text-[#6A89A7]">
+          <div className="hidden lg:flex items-center gap-2 rounded-full bg-[#BDDDFC]/10 px-3 py-1 text-xs font-medium text-muted">
             <span>{templateMeta?.name || "Modern"}</span>
           </div>
         </div>
@@ -3227,7 +3237,7 @@ CERTIFICATIONS
                     </span>
                   )}
                 </div>
-                <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{template.description}</div>
+                <div className="mt-1 text-xs leading-relaxed text-muted">{template.description}</div>
               </button>
             );
           })}
@@ -3240,7 +3250,6 @@ CERTIFICATIONS
           onClick={() => { setShowSetupPanel(true); setWizardStep(1); }}
           className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
         >
-          <ArrowLeft size={14} />
           Back
         </button>
         <button
@@ -3249,7 +3258,6 @@ CERTIFICATIONS
           className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
         >
           Next: Review & Edit
-          <ArrowRight size={14} />
         </button>
       </div>
       </>)}
@@ -3259,14 +3267,14 @@ CERTIFICATIONS
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="text-sm font-semibold text-[#384959]">Resume Workspace</div>
-            <div className="mt-0.5 text-xs text-[#6A89A7]">Edit directly or review evidence-safe bullet proposals.</div>
+            <div className="mt-0.5 text-xs text-muted">Edit directly or review evidence-safe bullet proposals.</div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-1" role="tablist" aria-label="Resume editor mode">
               {[
                 ["classic", "Classic editor", Edit3],
-                ["agent", "Agent review", Sparkles],
+                ["agent", "Agent review", List],
               ].map(([mode, label, Icon]) => {
                 const active = editorMode === mode;
                 return (
@@ -3276,7 +3284,7 @@ CERTIFICATIONS
                     onClick={() => setEditorMode(mode)}
                     aria-pressed={active}
                     className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
-                      active ? "bg-[#384959] text-white" : "text-[#6A89A7] hover:bg-[#f0f4f8] hover:text-[#384959]"
+                      active ? "bg-[#384959] text-white" : "text-muted hover:bg-[#f0f4f8] hover:text-[#384959]"
                     }`}
                   >
                     <Icon size={13} />
@@ -3286,12 +3294,12 @@ CERTIFICATIONS
               })}
             </div>
 
-            <div className="inline-flex items-center gap-2 rounded-2xl bg-[#f0f4f8] px-3 py-2 text-sm text-[#6A89A7]">
+            <div className="inline-flex items-center gap-2 rounded-2xl bg-[#f0f4f8] px-3 py-2 text-sm text-muted">
               <span className={`inline-flex h-8 min-w-8 items-center justify-center rounded-xl px-2 text-base font-bold ${scorePillClass}`}>
                 {scoreDisplayValue}
               </span>
               <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Resume Score</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Resume Score</div>
                 <div className="text-xs">{scorePhaseLabel}</div>
               </div>
             </div>
@@ -3314,7 +3322,7 @@ CERTIFICATIONS
                   onChange={(e) => setSaveVersionLabel(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") saveCurrentVersion(); }}
                   placeholder="Version name..."
-                  className="w-32 rounded-lg bg-transparent px-2.5 py-1.5 text-sm text-[#384959] placeholder-[#6A89A7]/60 focus:outline-none"
+                  className="w-32 rounded-lg bg-transparent px-2.5 py-1.5 text-sm text-[#384959] placeholder-muted/60 focus:outline-none"
                 />
                 <button
                   type="button"
@@ -3337,11 +3345,11 @@ CERTIFICATIONS
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-semibold text-[#384959]">Agent Review</div>
-                <div className="mt-1 text-xs text-[#6A89A7]">
+                <div className="mt-1 text-xs text-muted">
                   {selectedJob?.title ? `Targeting ${selectedJob.title} at ${selectedJob.company || "target company"}` : "General resume strengthening"}
                 </div>
               </div>
-              {agentLoading && <Loader2 size={16} className="animate-spin text-[#6A89A7]" />}
+              {agentLoading && <Loader2 size={16} className="animate-spin text-muted" />}
             </div>
 
             <div className="mt-4 min-h-40 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3">
@@ -3363,9 +3371,8 @@ CERTIFICATIONS
               ) : (
                 <div className="flex min-h-32 items-center justify-center text-center">
                   <div className="max-w-sm">
-                    <Sparkles size={18} className="mx-auto text-[#88BDF2]" />
                     <div className="mt-2 text-sm font-semibold text-[#384959]">Ask for a review pass</div>
-                    <div className="mt-1 text-sm leading-relaxed text-[#6A89A7]">
+                    <div className="mt-1 text-sm leading-relaxed text-muted">
                       Several reviewers critique your resume, then return evidence-backed edits for you to approve.
                       This usually takes 30 seconds to 2 minutes.
                     </div>
@@ -3376,10 +3383,10 @@ CERTIFICATIONS
 
             {agentLoading && (
               <div className="mt-3 flex items-center gap-3 rounded-2xl border border-[#BDDDFC]/30 bg-[#f7fafc] px-3 py-2.5" role="status" aria-live="polite">
-                <Loader2 size={16} className="shrink-0 animate-spin text-[#6A89A7]" />
+                <Loader2 size={16} className="shrink-0 animate-spin text-muted" />
                 <div className="min-w-0">
                   <div className="text-sm font-medium text-[#384959]">{agentProgress || "Reviewing your resume"}</div>
-                  <div className="mt-0.5 text-xs text-[#6A89A7]">
+                  <div className="mt-0.5 text-xs text-muted">
                     {agentElapsedSeconds}s elapsed. You can switch pages and return while this continues.
                   </div>
                 </div>
@@ -3399,7 +3406,7 @@ CERTIFICATIONS
                 onChange={(event) => setAgentInput(event.target.value)}
                 rows={3}
                 disabled={!resumeText.trim()}
-                className="min-h-20 flex-1 resize-y rounded-2xl border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959] outline-none transition focus:border-[#88BDF2] focus:ring-2 focus:ring-[#88BDF2]/20 disabled:bg-[#f0f4f8] disabled:text-[#6A89A7]"
+                className="min-h-20 flex-1 resize-y rounded-2xl border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959] outline-none transition focus:border-[#88BDF2] focus:ring-2 focus:ring-[#88BDF2]/20 disabled:bg-[#f0f4f8] disabled:text-muted"
                 placeholder={resumeText.trim() ? "Ask for ATS gaps, unsupported claims, or safer bullet rewrites..." : "Upload or paste a resume before using Agent Review."}
               />
               <button
@@ -3424,7 +3431,7 @@ CERTIFICATIONS
                 className="mt-3 min-h-24 w-full resize-y rounded-xl border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959] outline-none transition focus:border-[#88BDF2] focus:ring-2 focus:ring-[#88BDF2]/20"
                 placeholder="Paste LinkedIn About/Experience or profile notes. The agent uses this for consistency checks and questions, not unsupported resume claims."
               />
-              <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">
+              <div className="mt-2 text-xs leading-relaxed text-muted">
                 Profile-only details stay as gaps to verify unless your resume already supports them.
               </div>
             </details>
@@ -3435,7 +3442,7 @@ CERTIFICATIONS
               <div className="text-sm font-semibold text-[#384959]">Worklist</div>
               <div className="mt-3 space-y-2">
                 {(agentTodos.length ? agentTodos : ["Read resume evidence", "Check role fit", "Prepare reviewable bullet edits"]).map((todo) => (
-                  <div key={todo} className="flex items-start gap-2 text-sm text-[#6A89A7]">
+                  <div key={todo} className="flex items-start gap-2 text-sm text-muted">
                     <CheckCircle size={14} className="mt-0.5 shrink-0 text-emerald-600" />
                     <span>{todo}</span>
                   </div>
@@ -3447,7 +3454,7 @@ CERTIFICATIONS
               <summary className="cursor-pointer text-sm font-semibold text-[#384959]">Agent spans</summary>
               <div className="mt-3 space-y-2">
                 {agentToolSpans.length > 0 ? agentToolSpans.map((span, index) => (
-                  <div key={`${span.name || "tool"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-xs text-[#6A89A7]">
+                  <div key={`${span.name || "tool"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-xs text-muted">
                     <div className="flex items-center justify-between gap-3">
                       <span className="font-semibold text-[#384959]">
                         {span.worker && span.worker !== "orchestrator" ? `${String(span.worker).replaceAll("_", " ")} · ` : ""}{span.kind === "llm" ? `${span.phase || "model"} · ` : ""}{span.name || span.kind || "span"}
@@ -3462,7 +3469,7 @@ CERTIFICATIONS
                     )}
                   </div>
                 )) : (
-                  <div className="text-xs leading-relaxed text-[#6A89A7]">
+                  <div className="text-xs leading-relaxed text-muted">
                     Model and tool spans will appear as each independent reviewer completes its research and assessment.
                   </div>
                 )}
@@ -3493,8 +3500,8 @@ CERTIFICATIONS
                   <div key={`${finding.persona || "persona"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-sm text-[#384959]">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold capitalize">{String(finding.persona || "reviewer").replaceAll("_", " ")}</span>
-                      {finding.category && <span className="text-xs text-[#6A89A7]">{finding.category}</span>}
-                      {Number.isFinite(finding.duration_ms) && <span className="text-xs text-[#6A89A7]">{Math.round(finding.duration_ms / 100) / 10}s</span>}
+                      {finding.category && <span className="text-xs text-muted">{finding.category}</span>}
+                      {Number.isFinite(finding.duration_ms) && <span className="text-xs text-muted">{Math.round(finding.duration_ms / 100) / 10}s</span>}
                       {Number.isFinite(finding.score) && <span className="ml-auto text-xs font-semibold text-[#384959]">{finding.score}/100</span>}
                     </div>
                     {finding.summary && <div className="mt-2 text-sm font-medium leading-relaxed text-[#384959]">{finding.summary}</div>}
@@ -3504,10 +3511,10 @@ CERTIFICATIONS
                     {Array.isArray(finding.weaknesses) && finding.weaknesses.length > 0 && (
                       <div className="mt-1 text-xs leading-relaxed text-rose-700"><span className="font-semibold">Weakness:</span> {finding.weaknesses.join(" ")}</div>
                     )}
-                    {(finding.reasoning || finding.rationale) && <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]"><span className="font-semibold">Reasoning:</span> {finding.reasoning || finding.rationale}</div>}
+                    {(finding.reasoning || finding.rationale) && <div className="mt-1 text-xs leading-relaxed text-muted"><span className="font-semibold">Reasoning:</span> {finding.reasoning || finding.rationale}</div>}
                     {(finding.suggested_actions?.[0] || finding.suggested_action) && <div className="mt-1 text-xs leading-relaxed text-[#384959]"><span className="font-semibold">Next:</span> {(finding.suggested_actions || [finding.suggested_action]).join(" ")}</div>}
                     {Array.isArray(finding.findings) && finding.findings.length > 0 && (
-                      <details className="mt-2 border-t border-[#BDDDFC]/30 pt-2 text-xs text-[#6A89A7]">
+                      <details className="mt-2 border-t border-[#BDDDFC]/30 pt-2 text-xs text-muted">
                         <summary className="cursor-pointer font-semibold">Evidence methods</summary>
                         <div className="mt-2 space-y-2">
                           {finding.findings.map((item, itemIndex) => (
@@ -3546,7 +3553,7 @@ CERTIFICATIONS
                       </div>
                     )}
                     {Array.isArray(finding.evidence_ids) && finding.evidence_ids.length > 0 && (
-                      <div className="mt-2 border-t border-[#BDDDFC]/30 pt-2 text-xs leading-relaxed text-[#6A89A7]">
+                      <div className="mt-2 border-t border-[#BDDDFC]/30 pt-2 text-xs leading-relaxed text-muted">
                         <span className="font-semibold">Resume evidence:</span>{" "}
                         {finding.evidence_ids
                           .map((id) => agentEvidenceById.get(id)?.text)
@@ -3557,17 +3564,17 @@ CERTIFICATIONS
                       </div>
                     )}
                     {Array.isArray(finding.target_job_fields) && finding.target_job_fields.length > 0 && (
-                      <div className="mt-1 text-xs text-[#6A89A7]">
+                      <div className="mt-1 text-xs text-muted">
                         <span className="font-semibold">Target-job evidence:</span>{" "}
                         {finding.target_job_fields.join(", ")}
                       </div>
                     )}
                     {Array.isArray(finding.research_job_ids) && finding.research_job_ids.length > 0 && (
-                      <div className="mt-1 text-xs text-[#6A89A7]"><span className="font-semibold">Compared jobs:</span> {finding.research_job_ids.join(", ")}</div>
+                      <div className="mt-1 text-xs text-muted"><span className="font-semibold">Compared jobs:</span> {finding.research_job_ids.join(", ")}</div>
                     )}
                   </div>
                 )) : (
-                  <div className="text-sm text-[#6A89A7]">Findings will appear after the agent reviews the draft.</div>
+                  <div className="text-sm text-muted">Findings will appear after the agent reviews the draft.</div>
                 )}
               </div>
             </div>
@@ -3591,11 +3598,11 @@ CERTIFICATIONS
                   <div className="text-sm font-medium text-[#384959]">{agentJudgeAssessment.verdict}</div>
                   <div className="text-emerald-700"><span className="font-semibold">Strengths:</span> {(agentJudgeAssessment.strengths || []).map((item) => `${item.finding}${Number.isFinite(item.confidence) ? ` (${Math.round(item.confidence * 100)}% confidence)` : ""}`).join(" ")}</div>
                   <div className="text-rose-700"><span className="font-semibold">Weaknesses:</span> {(agentJudgeAssessment.weaknesses || []).map((item) => `${item.finding}${Number.isFinite(item.confidence) ? ` (${Math.round(item.confidence * 100)}% confidence)` : ""}`).join(" ")}</div>
-                  <div className="text-[#6A89A7]"><span className="font-semibold">Reasoning:</span> {agentJudgeAssessment.reasoning}</div>
+                  <div className="text-muted"><span className="font-semibold">Reasoning:</span> {agentJudgeAssessment.reasoning}</div>
                   {Array.isArray(agentJudgeAssessment.evidence_gaps) && agentJudgeAssessment.evidence_gaps.length > 0 && (
                     <div className="text-amber-800"><span className="font-semibold">Unavailable or unverified:</span> {agentJudgeAssessment.evidence_gaps.join(" ")}</div>
                   )}
-                  <details className="border-t border-[#BDDDFC]/30 pt-2 text-[#6A89A7]">
+                  <details className="border-t border-[#BDDDFC]/30 pt-2 text-muted">
                     <summary className="cursor-pointer font-semibold">Judge citations</summary>
                     <div className="mt-1">
                       {[...(agentJudgeAssessment.strengths || []), ...(agentJudgeAssessment.weaknesses || [])]
@@ -3607,7 +3614,7 @@ CERTIFICATIONS
                   </details>
                 </div>
               ) : (
-                <div className="mt-3 text-sm leading-relaxed text-[#6A89A7]">
+                <div className="mt-3 text-sm leading-relaxed text-muted">
                   The judge runs after the final assessment and grades its evidence, balance, honesty, usefulness, and clarity.
                 </div>
               )}
@@ -3621,10 +3628,10 @@ CERTIFICATIONS
               <div className="mt-3 space-y-3">
                 {agentPendingDiffs.length > 0 ? agentPendingDiffs.map((diff, index) => (
                   <div key={diff.bullet_id} className="rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Edit {index + 1}</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Edit {index + 1}</div>
                     <div className="mt-2 rounded-xl bg-white px-3 py-2">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Current</div>
-                      <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{diff.original}</div>
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">Current</div>
+                      <div className="mt-1 text-xs leading-relaxed text-muted">{diff.original}</div>
                     </div>
                     <div className="mt-2 rounded-xl bg-white px-3 py-2">
                       <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Proposed</div>
@@ -3652,7 +3659,7 @@ CERTIFICATIONS
                     </div>
                   </div>
                 )) : (
-                  <div className="text-sm leading-relaxed text-[#6A89A7]">Per-bullet edits will appear here for review before they change the draft.</div>
+                  <div className="text-sm leading-relaxed text-muted">Per-bullet edits will appear here for review before they change the draft.</div>
                 )}
               </div>
             </div>
@@ -3671,7 +3678,7 @@ CERTIFICATIONS
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-semibold text-[#384959]">Next Fixes</div>
-                  <div className="mt-1 text-xs text-[#6A89A7]">Pick the next fix without leaving the document.</div>
+                  <div className="mt-1 text-xs text-muted">Pick the next fix without leaving the document.</div>
                 </div>
                 <span className="inline-flex h-9 min-w-9 items-center justify-center rounded-2xl bg-[#384959] px-2 text-sm font-bold text-white">
                   {improvementCount}
@@ -3694,9 +3701,9 @@ CERTIFICATIONS
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <div className="text-sm font-semibold text-[#384959]">{item.title}</div>
-                            <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{item.detail}</div>
+                            <div className="mt-1 text-xs leading-relaxed text-muted">{item.detail}</div>
                           </div>
-                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6A89A7]">
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">
                             {label}
                           </span>
                         </div>
@@ -3723,7 +3730,7 @@ CERTIFICATIONS
                           </span>
                         )}
                       </div>
-                      <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{item.detail}</div>
+                      <div className="mt-1 text-xs leading-relaxed text-muted">{item.detail}</div>
                       {isActive && <div className="mt-2 text-[10px] font-medium text-indigo-600">Active - select a bullet and rewrite to apply</div>}
                     </button>
                   );
@@ -3738,12 +3745,12 @@ CERTIFICATIONS
           <div ref={scorePanelRef} className={`rounded-3xl border p-5 shadow-sm ${scoreData ? scoreTheme.panel : "border-[#BDDDFC]/30 bg-white"}`}>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6A89A7]">Rule-based Resume Score</div>
-                <div className={`mt-2 text-4xl font-bold ${scoreData ? scoreTheme.text : "text-[#6A89A7]"}`}>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Rule-based Resume Score</div>
+                <div className={`mt-2 text-4xl font-bold ${scoreData ? scoreTheme.text : "text-muted"}`}>
                   {scoring ? "..." : scoreDisplayValue}
-                  <span className="ml-1 text-base font-medium text-[#6A89A7]">{scoreData ? "/100" : ""}</span>
+                  <span className="ml-1 text-base font-medium text-muted">{scoreData ? "/100" : ""}</span>
                 </div>
-                <div className="mt-1 text-sm text-[#6A89A7]">
+                <div className="mt-1 text-sm text-muted">
                   {scoreData
                     ? "Impact 40 + presentation 30 + competencies 30. Target-job term match is shown separately."
                     : scoreError
@@ -3759,15 +3766,15 @@ CERTIFICATIONS
 
             <div className="mt-4 grid grid-cols-3 gap-2">
               <div className="rounded-2xl bg-white/85 px-3 py-2">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#6A89A7]">Solid</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Solid</div>
                 <div className="mt-1 text-lg font-semibold text-emerald-700">{annotationCounts.emerald || 0}</div>
               </div>
               <div className="rounded-2xl bg-white/85 px-3 py-2">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#6A89A7]">Review</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Review</div>
                 <div className="mt-1 text-lg font-semibold text-amber-700">{annotationCounts.amber || 0}</div>
               </div>
               <div className="rounded-2xl bg-white/85 px-3 py-2">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#6A89A7]">Verb Check</div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Verb Check</div>
                 <div className="mt-1 text-lg font-semibold text-rose-700">{annotationCounts.rose || 0}</div>
               </div>
             </div>
@@ -3796,7 +3803,7 @@ CERTIFICATIONS
                     <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4">
                       <div>
                         <div className="text-sm font-semibold text-[#384959]">{titleCase(name)}</div>
-                        <div className="text-xs text-[#6A89A7]">{displayDimensionScore}/{dimension.max}</div>
+                        <div className="text-xs text-muted">{displayDimensionScore}/{dimension.max}</div>
                       </div>
                       <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${statusMeta.className}`}>
                         {statusMeta.icon}
@@ -3819,7 +3826,7 @@ CERTIFICATIONS
                                 <div className="flex items-start justify-between gap-2">
                                   <div>
                                     <div className="text-sm font-medium text-[#384959]">{titleCase(itemName)}</div>
-                                    <div className="mt-1 text-xs text-[#6A89A7]">{item.detail}</div>
+                                    <div className="mt-1 text-xs text-muted">{item.detail}</div>
                                   </div>
                                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold ${itemStatus.className}`}>
                                     {itemStatus.icon}
@@ -3827,7 +3834,7 @@ CERTIFICATIONS
                                   </span>
                                 </div>
                                 {item.suggestions?.length > 0 && (
-                                  <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">
+                                  <div className="mt-2 text-xs leading-relaxed text-muted">
                                     {item.suggestions[0]}
                                   </div>
                                 )}
@@ -3850,7 +3857,7 @@ CERTIFICATIONS
                               <div className="border-t border-[#BDDDFC]/30 px-3 pb-3 pt-2">
                                 {item.matched_keywords?.length > 0 && (
                                   <div className="mb-2">
-                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[#6A89A7] mb-1">Matched</div>
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">Matched</div>
                                     <div className="flex flex-wrap gap-1">
                                       {item.matched_keywords.map((kw) => (
                                         <span key={kw} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">{kw}</span>
@@ -3860,7 +3867,7 @@ CERTIFICATIONS
                                 )}
                                 {item.missing_keywords?.length > 0 && (
                                   <div>
-                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[#6A89A7] mb-1">Try adding</div>
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">Try adding</div>
                                     <div className="flex flex-wrap gap-1">
                                       {item.missing_keywords.map((kw) => (
                                         <span key={kw} className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] text-rose-600">{kw}</span>
@@ -3892,7 +3899,7 @@ CERTIFICATIONS
                     <summary className="flex cursor-pointer list-none items-center gap-3 px-5 py-4">
                       <span className="text-base">{blockIcon}</span>
                       <div className="text-sm font-semibold text-[#384959]">{block.title}</div>
-                      <span className="ml-auto rounded-full bg-[#BDDDFC]/15 px-2.5 py-0.5 text-[11px] font-medium text-[#6A89A7]">
+                      <span className="ml-auto rounded-full bg-[#BDDDFC]/15 px-2.5 py-0.5 text-[11px] font-medium text-muted">
                         {block.items.length} {block.items.length === 1 ? "item" : "items"}
                       </span>
                     </summary>
@@ -3919,7 +3926,7 @@ CERTIFICATIONS
                               className={`rounded-xl border-l-[3px] px-3.5 py-2.5 ${accentClass}`}
                             >
                               <div className={`text-sm font-medium ${labelColor}`}>{item.label}</div>
-                              <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{item.detail}</div>
+                              <div className="mt-1 text-xs leading-relaxed text-muted">{item.detail}</div>
                             </div>
                           );
                         })}
@@ -3937,7 +3944,7 @@ CERTIFICATIONS
           >
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6A89A7]">Selected Bullet</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Selected Bullet</div>
                 <div className="mt-1 text-sm font-semibold text-[#384959]">
                   {selectedBullet ? "Focused feedback" : "Choose a highlighted bullet"}
                 </div>
@@ -3994,7 +4001,7 @@ CERTIFICATIONS
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <div className="text-sm font-semibold text-[#384959]">{activeBulletTab.title}</div>
-                            <div className="mt-1 text-sm leading-relaxed text-[#6A89A7]">{activeBulletTab.summary}</div>
+                            <div className="mt-1 text-sm leading-relaxed text-muted">{activeBulletTab.summary}</div>
                           </div>
                           <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
                             activeBulletTab.status === "good"
@@ -4038,7 +4045,7 @@ CERTIFICATIONS
 
                         {selectedBullet.annotation?.keywordMatches?.length > 0 && (
                           <div className="mt-4">
-                            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Matched Keywords</div>
+                            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Matched Keywords</div>
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {selectedBullet.annotation.keywordMatches.map((keyword) => (
                                 <span key={keyword} className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-700">
@@ -4066,7 +4073,7 @@ CERTIFICATIONS
                   if (!ranked.length || activeSuggestionHint) return null;
                   return (
                     <div>
-                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#6A89A7]">Inject keyword</div>
+                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">Inject keyword</div>
                       <div className="flex flex-wrap gap-1.5">
                         {ranked.map((label) => {
                           const active = selectedInjectKeyword === label;
@@ -4100,14 +4107,14 @@ CERTIFICATIONS
                   disabled={rewriteLoading[selectedBullet.id]}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-black disabled:opacity-50"
                 >
-                  {rewriteLoading[selectedBullet.id] ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  {rewriteLoading[selectedBullet.id] ? <Loader2 size={14} className="animate-spin" /> : null}
                   {rewriteLoading[selectedBullet.id]
                     ? "Rewriting..."
                     : selectedRewrite
                       ? "Rewrites ready below"
                       : getRewriteButtonLabel(activeBulletTab, selectedBullet)}
                 </button>
-                <div className="rounded-2xl bg-[#f0f4f8] px-3 py-3 text-xs leading-relaxed text-[#6A89A7]">
+                <div className="rounded-2xl bg-[#f0f4f8] px-3 py-3 text-xs leading-relaxed text-muted">
                   {activeBulletTab?.id === "bullet_length" && activeBulletTab.status === "issue"
                     ? "This will ask AI for a tighter bullet that keeps the existing facts, numbers, and scope but lands the result earlier."
                     : "Keep only claims, numbers, and scope that you can defend in interview. Treat rewrites as drafting help, not fact generation."}
@@ -4134,7 +4141,7 @@ CERTIFICATIONS
 
                 {selectedRewrite && (
                   <div className="space-y-3 rounded-2xl border border-indigo-200 bg-white p-4">
-                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Suggested Rewrite</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Suggested Rewrite</div>
                     {selectedRewrite.no_change ? (
                       <>
                         <div className="rounded-xl bg-amber-50 p-3 text-sm leading-relaxed text-amber-900">
@@ -4158,10 +4165,10 @@ CERTIFICATIONS
                               const optionMeta = getRewriteOptionMeta(optionIndex, selectedRewrite.rewrite_focus, optionEvaluation);
                               return (
                                 <div key={`${selectedBullet.id}-rewrite-${optionIndex}`} className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3">
-                                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">
+                                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
                                     {optionMeta.label}
                                   </div>
-                                  <div className="mt-1 text-[11px] leading-relaxed text-[#6A89A7]">
+                                  <div className="mt-1 text-[11px] leading-relaxed text-muted">
                                     {optionMeta.detail}
                                   </div>
                                   <div className="mt-2 text-sm leading-relaxed text-[#384959]">{option}</div>
@@ -4197,7 +4204,7 @@ CERTIFICATIONS
                 )}
               </div>
             ) : (
-              <div className="mt-4 text-sm leading-relaxed text-[#6A89A7]">
+              <div className="mt-4 text-sm leading-relaxed text-muted">
                 Click a bullet in the document to review its annotation here, then rewrite it or edit the line directly on the page.
               </div>
             )}
@@ -4205,18 +4212,18 @@ CERTIFICATIONS
 
           <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
             <div className="text-sm font-semibold text-[#384959]">Resume Targets</div>
-            <div className="mt-1 text-xs text-[#6A89A7]">Recommended ranges for this template and experience level.</div>
+            <div className="mt-1 text-xs text-muted">Recommended ranges for this template and experience level.</div>
             <div className="mt-4 space-y-2">
               {benchmarkRows.map((row) => (
                 <div key={row.label} className="rounded-2xl border border-[#BDDDFC]/20 bg-[#f0f4f8] px-3 py-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-sm font-semibold text-[#384959]">{row.label}</div>
-                      <div className="mt-1 text-xs text-[#6A89A7]">{row.note}</div>
+                      <div className="mt-1 text-xs text-muted">{row.note}</div>
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-semibold text-[#384959]">{row.current}</div>
-                      <div className="text-[11px] text-[#6A89A7]">Target {row.target}</div>
+                      <div className="text-[11px] text-muted">Target {row.target}</div>
                     </div>
                   </div>
                   <div className="mt-3">
@@ -4237,7 +4244,7 @@ CERTIFICATIONS
             {scoreData ? (
               <>
                 {relevantTermsMode === "no_job" && (
-                  <div className="mt-2 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-[#6A89A7]">
+                  <div className="mt-2 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-muted">
                     Attach a job or open this workspace from a selected role to see matched and missing terms.
                   </div>
                 )}
@@ -4249,10 +4256,10 @@ CERTIFICATIONS
                 )}
                 {relevantTermsMode !== "no_job" && (
                   <>
-                    <div className="mt-2 text-sm text-[#6A89A7]">
+                    <div className="mt-2 text-sm text-muted">
                       Matched {relevantMatchedKeywords.length} term{relevantMatchedKeywords.length === 1 ? "" : "s"}{relevantTermTotal > 0 ? ` of ${relevantTermTotal}` : ""}.
                     </div>
-                    <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">
+                    <div className="mt-2 text-xs leading-relaxed text-muted">
                       {relevantTermsMode === "job_match"
                         ? "Matched against the selected job description."
                         : relevantTermsMode === "skills_fallback"
@@ -4264,7 +4271,7 @@ CERTIFICATIONS
                   </>
                 )}
                 {(relevantTermsMode === "empty" || relevantTermsMode === "match_error") && (
-                  <div className="mt-3 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-[#6A89A7]">
+                  <div className="mt-3 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-muted">
                     {relevantTermsMode === "match_error"
                       ? (jobMatchError || "We couldn't load job-specific alignment terms right now.")
                       : "We couldn’t extract reliable alignment terms from this job yet. Try another role or rescore after the JD loads fully."}
@@ -4285,8 +4292,8 @@ CERTIFICATIONS
                 {relevantMissingKeywords.length > 0 && (
                   <>
                     <div className="mt-4 flex items-center gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Missing Terms</span>
-                      <span className="text-[10px] text-[#6A89A7]">Use naturally</span>
+                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Missing Terms</span>
+                      <span className="text-[10px] text-muted">Use naturally</span>
                     </div>
                     <div className="relative mt-2 flex flex-wrap gap-1.5">
                       {relevantMissingKeywords.slice(0, 12).map((keyword, idx) => {
@@ -4320,7 +4327,7 @@ CERTIFICATIONS
                           <button
                             type="button"
                             onClick={() => setInsertKeywordPopup(null)}
-                            className="rounded-full p-0.5 text-[#6A89A7] hover:bg-[#BDDDFC]/10 hover:text-[#6A89A7]"
+                            className="rounded-full p-0.5 text-muted hover:bg-[#BDDDFC]/10 hover:text-muted"
                           >
                             <X size={12} />
                           </button>
@@ -4333,7 +4340,7 @@ CERTIFICATIONS
                                 className="group flex items-start gap-2 rounded-xl border border-[#BDDDFC]/20 bg-[#f0f4f8] px-2.5 py-2 transition hover:border-indigo-200 hover:bg-indigo-50"
                               >
                                 <div className="min-w-0 flex-1">
-                                  <div className="text-[10px] font-medium uppercase tracking-wider text-[#6A89A7]">
+                                  <div className="text-[10px] font-medium uppercase tracking-wider text-muted">
                                     {bullet.sectionKey || "section"}
                                   </div>
                                   <div className="mt-0.5 truncate text-xs text-[#384959]" title={bullet.text}>
@@ -4351,7 +4358,7 @@ CERTIFICATIONS
                             ))}
                           </div>
                         ) : (
-                          <div className="mt-2 text-xs text-[#6A89A7]">
+                          <div className="mt-2 text-xs text-muted">
                             No bullet points found. Add experience bullets to your resume first.
                           </div>
                         )}
@@ -4361,7 +4368,7 @@ CERTIFICATIONS
                 )}
               </>
             ) : (
-              <div className="mt-2 text-sm text-[#6A89A7]">Score the resume to see matched and missing keywords.</div>
+              <div className="mt-2 text-sm text-muted">Score the resume to see matched and missing keywords.</div>
             )}
           </div>
 
@@ -4384,7 +4391,7 @@ CERTIFICATIONS
                   disabled={formatting || !resumeText.trim()}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#384959] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
                 >
-                  {formatting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  {formatting ? <Loader2 size={14} className="animate-spin" /> : null}
                   {formatting ? "Polishing..." : "Quick Polish"}
                 </button>
               )}
@@ -4394,7 +4401,7 @@ CERTIFICATIONS
                 disabled={tailoringLoading || !resumeText.trim() || !jobDescription.trim()}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-700 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-800 disabled:opacity-40"
               >
-                {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+                {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : null}
                 {tailoringLoading ? "Tailoring..." : "Run Full Tailor"}
               </button>
               {(selectedSection?.sectionKey === "summary" || !hasSummarySection) && (
@@ -4404,7 +4411,7 @@ CERTIFICATIONS
                   disabled={tailoringLoading || !resumeText.trim()}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-medium text-violet-800 transition hover:bg-violet-100 disabled:opacity-40"
                 >
-                  {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : null}
                   {hasSummarySection ? "Optimise Summary" : "Generate Summary"}
                 </button>
               )}
@@ -4425,7 +4432,7 @@ CERTIFICATIONS
                 disabled={coachLoading || !resumeText.trim()}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-black disabled:opacity-40"
               >
-                {coachLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                {coachLoading ? <Loader2 size={14} className="animate-spin" /> : null}
                 {coachLoading ? "Opening Coach..." : "AI Coach"}
               </button>
             </div>
@@ -4440,12 +4447,12 @@ CERTIFICATIONS
               </div>
             )}
             {!jobDescription.trim() && (
-              <div className="mt-3 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-2 text-xs text-[#6A89A7]">
+              <div className="mt-3 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-2 text-xs text-muted">
                 Select a job first if you want the full tailor run to rewrite bullets, sections, and the summary against a specific JD. Summary generation can still run without one.
               </div>
             )}
             {aiStatus && (
-              <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#BDDDFC]/10 px-3 py-1 text-xs font-medium text-[#6A89A7]">
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#BDDDFC]/10 px-3 py-1 text-xs font-medium text-muted">
                 <span className={`inline-block h-2 w-2 rounded-full ${aiStatus.status === "ready" ? "bg-emerald-500" : aiStatus.status === "busy" ? "bg-amber-500" : "bg-rose-500"}`} />
                 {aiStatus.status === "ready" ? "Assistant ready" : aiStatus.status === "busy" ? "Assistant busy" : aiStatus.wait_seconds >= 0 ? `Wait about ${Math.round(aiStatus.wait_seconds)}s` : "Assistant unavailable"}
               </div>
@@ -4457,7 +4464,7 @@ CERTIFICATIONS
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="text-sm font-semibold text-[#384959]">Tailor Resume</div>
-                  <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
+                  <div className="mt-1 text-xs leading-relaxed text-muted">
                     Reviews bullets, sections, and summary against the selected job.
                   </div>
                 </div>
@@ -4490,7 +4497,7 @@ CERTIFICATIONS
                                 ? "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300"
                                 : isActive
                                   ? "bg-violet-600 text-white shadow-sm shadow-violet-200 ring-2 ring-violet-300 ring-offset-1"
-                                  : "bg-[#f0f4f8] text-[#6A89A7] ring-1 ring-[#BDDDFC]/40"
+                                  : "bg-[#f0f4f8] text-muted ring-1 ring-[#BDDDFC]/40"
                             }`}
                           >
                             {isComplete ? "✓" : stageIndex + 1}
@@ -4507,12 +4514,12 @@ CERTIFICATIONS
                       {TAILOR_STAGE_LABELS.find((s) => s.id === tailoringStatus.stage)?.label
                         || titleCase(String(tailoringStatus.stage || "Queued").replace(/_/g, " "))}
                       {tailoringStatus.progress?.total ? (
-                        <span className="ml-2 text-xs font-normal text-[#6A89A7]">
+                        <span className="ml-2 text-xs font-normal text-muted">
                           {tailoringStatus.progress.completed}/{tailoringStatus.progress.total} bullets
                         </span>
                       ) : null}
                     </div>
-                    <div className="shrink-0 text-xs text-[#6A89A7]">
+                    <div className="shrink-0 text-xs text-muted">
                       {(() => {
                         const total = tailoringStatus.total_stages || TAILOR_STAGE_LABELS.length;
                         const current = tailoringResult
@@ -4522,7 +4529,7 @@ CERTIFICATIONS
                       })()}
                     </div>
                   </div>
-                  <div className="mt-1 text-sm leading-relaxed text-[#6A89A7]">{tailoringStatus.message}</div>
+                  <div className="mt-1 text-sm leading-relaxed text-muted">{tailoringStatus.message}</div>
                 </div>
               )}
 
@@ -4536,13 +4543,13 @@ CERTIFICATIONS
 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="rounded-2xl border border-violet-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Score Lift</div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Score Lift</div>
                       <div className="mt-2 text-sm leading-relaxed text-[#384959]">
                         {Number.isFinite(tailoringResult?.score?.before) ? tailoringResult.score.before : "--"} → {Number.isFinite(tailoringResult?.score?.after) ? tailoringResult.score.after : "--"}
                       </div>
                     </div>
                     <div className="rounded-2xl border border-violet-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Tailor Changes</div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Tailor Changes</div>
                       <div className="mt-2 text-sm leading-relaxed text-[#384959]">
                         {tailoringResult.total_changes || 0} updates across bullets, sections, and summary.
                       </div>
@@ -4561,7 +4568,7 @@ CERTIFICATIONS
 
                   {Array.isArray(tailoringResult.pipeline_notes) && tailoringResult.pipeline_notes.length > 0 && (
                     <div className="space-y-2 rounded-2xl border border-amber-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Pipeline Notes</div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Pipeline Notes</div>
                       {tailoringResult.pipeline_notes.map((note, index) => (
                         <div key={`${note.type || "note"}-${index}`} className="rounded-xl bg-amber-50 px-3 py-2 text-sm leading-relaxed text-amber-900">
                           {note.message}
@@ -4572,7 +4579,7 @@ CERTIFICATIONS
 
                   {tailoringResult.skill_match && (
                     <div className="rounded-2xl border border-violet-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Job Match</div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Job Match</div>
                       <div className="mt-2 text-sm leading-relaxed text-[#384959]">
                         Matched {tailoringResult.skill_match.before} job term{tailoringResult.skill_match.before === 1 ? "" : "s"} before rewrite.
                         {tailoringResult.skill_match.injectable?.length > 0
@@ -4586,7 +4593,7 @@ CERTIFICATIONS
                     <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-4">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Review Tailor Changes</div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Review Tailor Changes</div>
                           <div className="mt-1 text-sm text-[#384959]">Accept, reject, or edit each proposed change before applying them to the draft.</div>
                         </div>
                         <div className="flex flex-wrap gap-2 text-xs">
@@ -4603,7 +4610,7 @@ CERTIFICATIONS
                           return (
                             <div key={`${changeKey}-${index}`} className="rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
                               <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">
+                                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">
                                   {titleCase(String(change.type || "change").replace(/_/g, " "))}
                                 </div>
                                 <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
@@ -4618,7 +4625,7 @@ CERTIFICATIONS
                               </div>
                               <div className="mt-3 grid gap-3 lg:grid-cols-2">
                                 <div className="rounded-xl border border-[#BDDDFC]/30 bg-white p-3">
-                                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Original</div>
+                                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Original</div>
                                   <div className="mt-2 text-sm leading-relaxed text-[#384959]">{change.original}</div>
                                 </div>
                                 <div className="rounded-xl border border-violet-200 bg-violet-50 p-3">
@@ -4672,7 +4679,7 @@ CERTIFICATIONS
                   {Array.isArray(tailoringResult.ats_gaps) && tailoringResult.ats_gaps.length > 0 && (
                     <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-4">
                       <div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">ATS Gap Report</div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">ATS Gap Report</div>
                         <div className="mt-1 text-sm text-[#384959]">These skills are still missing or underrepresented after the tailor run.</div>
                       </div>
                       <div className="space-y-3">
@@ -4687,11 +4694,11 @@ CERTIFICATIONS
                                   {gap.required ? "Required" : "Preferred"}
                                 </span>
                               </div>
-                              <div className="mt-2 text-sm leading-relaxed text-[#6A89A7]">
+                              <div className="mt-2 text-sm leading-relaxed text-muted">
                                 Suggested placement: <span className="font-medium text-[#384959]">{RESUME_SECTION_LABELS[gap.suggested_section] || titleCase(gap.suggested_section || "experience")}</span>
                               </div>
                               {gap.action && (
-                                <div className="mt-1 text-sm leading-relaxed text-[#6A89A7]">
+                                <div className="mt-1 text-sm leading-relaxed text-muted">
                                   Suggested action: {gap.action}
                                 </div>
                               )}
@@ -4757,7 +4764,6 @@ CERTIFICATIONS
                       onClick={applyTailoredDraft}
                       className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-medium text-violet-700 transition hover:bg-violet-50"
                     >
-                      <Zap size={14} />
                       Apply All Suggested Changes
                     </button>
                     <button
@@ -4789,7 +4795,7 @@ CERTIFICATIONS
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <div className="text-sm font-semibold text-[#384959]">AI Improve All Review</div>
-                  <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
+                  <div className="mt-1 text-xs leading-relaxed text-muted">
                     {reviewAllSummary?.message || `${reviewAllSuggestions.length} bullet suggestions ready for review.`}
                   </div>
                 </div>
@@ -4800,7 +4806,7 @@ CERTIFICATIONS
                     setReviewAllSummary(null);
                     setReviewDecisions({});
                   }}
-                  className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-[#6A89A7] hover:bg-[#f0f4f8]"
+                  className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-muted hover:bg-[#f0f4f8]"
                 >
                   Close
                 </button>
@@ -4830,7 +4836,7 @@ CERTIFICATIONS
                           <CheckCircle size={15} />
                           Keep
                         </div>
-                        <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Current bullet</div>
+                        <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Current bullet</div>
                         <div className="mt-1 text-sm leading-relaxed text-[#384959]">{suggestion.original}</div>
                         {suggestion.reason && (
                           <div className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-800">
@@ -4845,20 +4851,19 @@ CERTIFICATIONS
                   return (
                     <div key={suggestion.id} className="rounded-2xl border border-amber-200 bg-white p-4">
                       <div className="flex items-center gap-2 text-sm font-semibold text-amber-800">
-                        <Sparkles size={15} />
                         Improve
                       </div>
-                      <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Current bullet</div>
+                      <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Current bullet</div>
                       <div className="mt-1 text-sm leading-relaxed text-[#384959]">{suggestion.original}</div>
                       {suggestion.issue && (
                         <>
-                          <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Issue</div>
+                          <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Issue</div>
                           <div className="mt-1 text-sm leading-relaxed text-amber-800">{suggestion.issue}</div>
                         </>
                       )}
                       {suggestion.suggested && (
                         <>
-                          <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Suggested rewrite</div>
+                          <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Suggested rewrite</div>
                           <div className="mt-1 text-sm leading-relaxed text-[#384959]">{suggestion.suggested}</div>
                         </>
                       )}
@@ -4899,7 +4904,7 @@ CERTIFICATIONS
               </div>
 
               <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-xs leading-relaxed text-[#6A89A7]">
+                <div className="text-xs leading-relaxed text-muted">
                   {pendingReviewCount > 0
                     ? `Review ${pendingReviewCount} more suggestion${pendingReviewCount === 1 ? "" : "s"} before applying accepted changes.`
                     : acceptedReviewCount > 0
@@ -4927,7 +4932,7 @@ CERTIFICATIONS
                 "List concrete tools and platforms. Skills-based matching matters.",
                 "Keep the final layout ATS-friendly and easy to scan on mobile.",
               ]).map((tip, index) => (
-                <li key={`${tip}-${index}`} className="flex items-start gap-2 text-sm leading-relaxed text-[#6A89A7]">
+                <li key={`${tip}-${index}`} className="flex items-start gap-2 text-sm leading-relaxed text-muted">
                   <ChevronRight size={14} className="mt-0.5 flex-shrink-0 text-indigo-500" />
                   <span>{tip}</span>
                 </li>
@@ -4939,7 +4944,6 @@ CERTIFICATIONS
             <details open className="overflow-hidden rounded-3xl border border-purple-200 bg-purple-50 shadow-sm">
               <summary className="cursor-pointer list-none px-5 py-4">
                 <div className="flex items-center gap-2 text-sm font-semibold text-purple-900">
-                  <Sparkles size={15} />
                   AI Coach
                 </div>
               </summary>
@@ -4970,8 +4974,8 @@ CERTIFICATIONS
           <div className="rounded-[2rem] border border-slate-200 bg-[#f3f5f8] p-4 shadow-sm sm:p-5">
             <div className="flex flex-col gap-3 border-b border-[#BDDDFC]/30/70 px-1 pb-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6A89A7]">Document Preview</div>
-                <div className="mt-1 text-sm text-[#6A89A7]">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Document Preview</div>
+                <div className="mt-1 text-sm text-muted">
                   {wordCount} words
                   {resumeText.trim() ? " • click any line to edit inline" : " • upload or paste a resume to begin"}
                 </div>
@@ -4982,7 +4986,7 @@ CERTIFICATIONS
                     type="button"
                     onClick={handleUndo}
                     disabled={undoStackRef.current.length === 0}
-                    className="inline-flex items-center gap-1 px-2 py-1.5 text-xs text-[#6A89A7] transition hover:text-[#384959] disabled:opacity-30"
+                    className="inline-flex items-center gap-1 px-2 py-1.5 text-xs text-muted transition hover:text-[#384959] disabled:opacity-30"
                     title="Undo (Ctrl+Z)"
                   >
                     <RefreshCw size={12} className="scale-x-[-1]" /> Undo
@@ -4992,7 +4996,7 @@ CERTIFICATIONS
                     type="button"
                     onClick={handleRedo}
                     disabled={redoStackRef.current.length === 0}
-                    className="inline-flex items-center gap-1 px-2 py-1.5 text-xs text-[#6A89A7] transition hover:text-[#384959] disabled:opacity-30"
+                    className="inline-flex items-center gap-1 px-2 py-1.5 text-xs text-muted transition hover:text-[#384959] disabled:opacity-30"
                     title="Redo (Ctrl+Shift+Z)"
                   >
                     Redo <RefreshCw size={12} />
@@ -5001,9 +5005,8 @@ CERTIFICATIONS
                 <button
                   type="button"
                   onClick={() => setAnnotationsOn((current) => !current)}
-                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${annotationsOn ? "bg-[#384959] text-white" : "bg-white text-[#6A89A7] ring-1 ring-[#BDDDFC]/30"}`}
+                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${annotationsOn ? "bg-[#384959] text-white" : "bg-white text-muted ring-1 ring-[#BDDDFC]/30"}`}
                 >
-                  <Zap size={12} />
                   {annotationsOn ? "Inline Tips On" : "Inline Tips Off"}
                 </button>
                 <button
@@ -5028,7 +5031,7 @@ CERTIFICATIONS
                     <div className="mb-4 border-b border-[#BDDDFC]/30 pb-2 text-center">
                       <div className={templateStyles.nameClass} style={templateStyles.nameStyle}>{displayHeaderLines[0]}</div>
                       {displayDetailLines.map((line, index) => (
-                        <div key={`${line}-${index}`} className="mx-auto mt-0.5 max-w-[34rem] text-[#6A89A7]" style={templateStyles.contactStyle}>{line}</div>
+                        <div key={`${line}-${index}`} className="mx-auto mt-0.5 max-w-[34rem] text-muted" style={templateStyles.contactStyle}>{line}</div>
                       ))}
                     </div>
                   )}
@@ -5125,25 +5128,25 @@ CERTIFICATIONS
                                 )}
                               </div>
                               {section.fields.dateRange && (
-                                <div className="mt-0.5 text-[0.9em] text-[#6A89A7]">
+                                <div className="mt-0.5 text-[0.9em] text-muted">
                                   {section.fields.dateRange}
                                 </div>
                               )}
                               {section.fields.degree && section.fields.institution && (
-                                <div className="mt-0.5 text-[0.93em] leading-snug text-[#6A89A7]">
+                                <div className="mt-0.5 text-[0.93em] leading-snug text-muted">
                                   {section.fields.institution}
                                 </div>
                               )}
                               {(section.fields.gpa || section.fields.honors.length > 0 || section.fields.details.length > 0) && (
-                                <div className="mt-1 text-[0.85em] text-[#6A89A7]">
+                                <div className="mt-1 text-[0.85em] text-muted">
                                   {[section.fields.gpa, ...section.fields.honors, ...section.fields.details].filter(Boolean).join(" · ")}
                                 </div>
                               )}
                               {section.fields.bullets.length > 0 && (
                                 <div className="mt-1.5 space-y-0.5">
                                   {section.fields.bullets.map((bullet) => (
-                                    <div key={bullet.id} className="flex gap-2 text-[0.88em] text-[#6A89A7]">
-                                      <span className="text-[#6A89A7]">•</span>
+                                    <div key={bullet.id} className="flex gap-2 text-[0.88em] text-muted">
+                                      <span className="text-muted">•</span>
                                       <span>{renderHighlightedText(bullet.text, section.keywordMatches || [])}</span>
                                     </div>
                                   ))}
@@ -5168,13 +5171,13 @@ CERTIFICATIONS
                                           )}
                                         </div>
                                         {meta.secondary && (
-                                          <div className="shrink-0 text-[0.9em] text-[#6A89A7] whitespace-nowrap">
+                                          <div className="shrink-0 text-[0.9em] text-muted whitespace-nowrap">
                                             {meta.secondary}
                                           </div>
                                         )}
                                       </div>
                                       {meta.primary && (
-                                        <div className="mt-0.5 text-[0.93em] leading-snug text-[#6A89A7]">
+                                        <div className="mt-0.5 text-[0.93em] leading-snug text-muted">
                                           {meta.primary}
                                         </div>
                                       )}
@@ -5183,7 +5186,7 @@ CERTIFICATIONS
                                 })()}
                               </div>
                             ) : section.variant === "education_detail" ? (
-                              <div className="-mt-0.5 mb-2 ml-3 flex items-baseline justify-between gap-4 text-[0.88em] text-[#6A89A7]">
+                              <div className="-mt-0.5 mb-2 ml-3 flex items-baseline justify-between gap-4 text-[0.88em] text-muted">
                                 <div className="leading-snug">
                                   {renderHighlightedText(
                                     getDisplaySubheadingText(section.left, section.sectionKey, section.variant),
@@ -5203,7 +5206,7 @@ CERTIFICATIONS
                                   )}
                                 </div>
                                 {section.right && (
-                                  <div className="text-sm text-[#6A89A7] mt-0.5">
+                                  <div className="text-sm text-muted mt-0.5">
                                     {getDisplaySubheadingText(section.right, section.sectionKey, section.variant)}
                                   </div>
                                 )}
@@ -5231,7 +5234,7 @@ CERTIFICATIONS
 
                               if (section.sectionKey === "education") {
                                 return (
-                                  <p className="-mt-0.5 mb-2 ml-3 text-[0.88em] leading-snug text-[#6A89A7]" style={templateStyles.bodyStyle}>
+                                  <p className="-mt-0.5 mb-2 ml-3 text-[0.88em] leading-snug text-muted" style={templateStyles.bodyStyle}>
                                     {renderHighlightedText(getDisplayParagraphText(section), section.keywordMatches || [])}
                                   </p>
                                 );
@@ -5249,9 +5252,9 @@ CERTIFICATIONS
                           )}
                           {section.type === "bullet" && (
                             <div className={`flex gap-3 ${["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "ml-2" : ""}`}>
-                              <div className={`pt-1 text-[#6A89A7] ${["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.85rem]" : "text-[1rem]"}`}>•</div>
+                              <div className={`pt-1 text-muted ${["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.85rem]" : "text-[1rem]"}`}>•</div>
                               <div className="flex-1">
-                                <p className={["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.88em] text-[#6A89A7]" : "text-[#384959]"} style={templateStyles.bodyStyle}>
+                                <p className={["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.88em] text-muted" : "text-[#384959]"} style={templateStyles.bodyStyle}>
                                   {renderHighlightedText(section.text, annotation?.keywordMatches || [])}
                                 </p>
                                 {annotationsOn && annotation && (
@@ -5279,7 +5282,7 @@ CERTIFICATIONS
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handlePromoteToPosition(section); }}
-                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-[#6A89A7] hover:text-[#384959] hover:bg-indigo-50 transition"
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted hover:text-[#384959] hover:bg-indigo-50 transition"
                               title="Convert to position/entry heading"
                             >
                               <ArrowUp size={9} />
@@ -5290,7 +5293,7 @@ CERTIFICATIONS
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handlePromoteToSection(section); }}
-                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-[#6A89A7] hover:text-violet-600 hover:bg-violet-50 transition"
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted hover:text-violet-600 hover:bg-violet-50 transition"
                               title="Convert to section heading"
                             >
                               <Type size={9} />
@@ -5301,7 +5304,7 @@ CERTIFICATIONS
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleDemoteToBullet(section); }}
-                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-[#6A89A7] hover:text-amber-600 hover:bg-amber-50 transition"
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted hover:text-amber-600 hover:bg-amber-50 transition"
                               title="Convert to bullet point"
                             >
                               <List size={9} />
@@ -5312,7 +5315,7 @@ CERTIFICATIONS
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleDeleteSection(section); }}
-                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-[#6A89A7] hover:text-rose-600 hover:bg-rose-50 transition"
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted hover:text-rose-600 hover:bg-rose-50 transition"
                               title={section.type === "education_entry" ? "Delete education entry" : "Delete entry and its bullets"}
                             >
                               <Trash2 size={9} />
@@ -5327,7 +5330,7 @@ CERTIFICATIONS
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); handleMoveSection(section.id, -1); }}
-                            className="rounded p-0.5 text-[#6A89A7]/60 hover:text-[#6A89A7] hover:bg-[#BDDDFC]/10 transition"
+                            className="rounded p-0.5 text-[#6A89A7]/60 hover:text-muted hover:bg-[#BDDDFC]/10 transition"
                             title="Move section up"
                           >
                             <ArrowUp size={12} />
@@ -5335,7 +5338,7 @@ CERTIFICATIONS
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); handleMoveSection(section.id, 1); }}
-                            className="rounded p-0.5 text-[#6A89A7]/60 hover:text-[#6A89A7] hover:bg-[#BDDDFC]/10 transition"
+                            className="rounded p-0.5 text-[#6A89A7]/60 hover:text-muted hover:bg-[#BDDDFC]/10 transition"
                             title="Move section down"
                           >
                             <ArrowDown size={12} />
@@ -5381,7 +5384,6 @@ CERTIFICATIONS
                                     onClick={() => setShowSummaryPrompt((v) => !v)}
                                     className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100"
                                   >
-                                    <Sparkles size={12} />
                                     {showSummaryPrompt ? "Hide" : "Rewrite Summary"}
                                   </button>
                                 </div>
@@ -5537,7 +5539,7 @@ CERTIFICATIONS
                 <div className="flex min-h-[700px] flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-[#BDDDFC]/30 bg-[#f0f4f8] px-8 text-center">
                   <FileText size={36} className="text-[#6A89A7]/60" />
                   <div className="mt-4 text-lg font-semibold text-[#384959]">Your resume document will appear here</div>
-                  <p className="mt-2 max-w-md text-sm leading-relaxed text-[#6A89A7]">
+                  <p className="mt-2 max-w-md text-sm leading-relaxed text-muted">
                     Upload a PDF or DOCX, or paste your resume text above. Once it lands here, you’ll be able to edit line by line and review feedback beside it.
                   </p>
                 </div>
@@ -5559,7 +5561,7 @@ CERTIFICATIONS
           </button>
 
           <div className="hidden lg:flex items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Template</span>
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Template</span>
             <select
               value={selectedTemplate}
               onChange={(event) => setSelectedTemplate(event.target.value)}
@@ -5596,7 +5598,7 @@ CERTIFICATIONS
                   onChange={(e) => setSaveVersionLabel(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && saveVersionLabel.trim()) saveCurrentVersion(); }}
                   placeholder="Version name..."
-                  className="w-32 rounded-lg bg-transparent px-2.5 py-1.5 text-sm text-[#384959] placeholder-[#6A89A7]/60 focus:outline-none"
+                  className="w-32 rounded-lg bg-transparent px-2.5 py-1.5 text-sm text-[#384959] placeholder-muted/60 focus:outline-none"
                 />
                 <button
                   type="button"
@@ -5613,8 +5615,7 @@ CERTIFICATIONS
               onClick={() => setWizardStep(2)}
               className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] transition hover:bg-[#f0f4f8]"
             >
-              <ArrowLeft size={14} />
-              Templates
+              Back to templates
             </button>
             <button
               type="button"
@@ -5632,10 +5633,10 @@ CERTIFICATIONS
       {wizardStep === 4 && (
         <div className="mx-auto max-w-2xl space-y-6">
           <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-6 shadow-sm text-center">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#6A89A7]">Final Score</div>
-            <div className={`mt-3 text-5xl font-bold ${scoreData ? scoreTheme.text : "text-[#6A89A7]"}`}>
+            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Final Score</div>
+            <div className={`mt-3 text-5xl font-bold ${scoreData ? scoreTheme.text : "text-muted"}`}>
               {scoring ? "..." : scoreDisplayValue}
-              <span className="ml-1 text-lg font-medium text-[#6A89A7]">{scoreData ? "/100" : ""}</span>
+              <span className="ml-1 text-lg font-medium text-muted">{scoreData ? "/100" : ""}</span>
             </div>
             <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-[#BDDDFC]/10 mx-auto max-w-xs">
               <div className={`h-full rounded-full transition-all ${scoreTheme.bar}`} style={{ width: `${scoreData && overallScore !== null ? overallScore : 0}%` }} />
@@ -5660,7 +5661,7 @@ CERTIFICATIONS
 
           <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-6 shadow-sm space-y-4">
             <div className="text-sm font-semibold text-[#384959]">Download Your Resume</div>
-            <p className="text-sm text-[#6A89A7]">
+            <p className="text-sm text-muted">
               Template: <span className="font-medium text-[#384959]">{templateMeta?.name || "Modern"}</span>
             </p>
             <div className="flex flex-wrap gap-3">
@@ -5752,7 +5753,6 @@ CERTIFICATIONS
               onClick={() => setWizardStep(3)}
               className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
             >
-              <ArrowLeft size={14} />
               Back to Editor
             </button>
             <button
@@ -5792,12 +5792,12 @@ CERTIFICATIONS
                 </span>
               </div>
 
-              <p className="text-sm text-[#6A89A7] leading-relaxed">
+              <p className="text-sm text-muted leading-relaxed">
                 {mobileBulletSheet.annotation?.message || "Review this bullet for improvements."}
               </p>
 
               <div className="rounded-xl bg-[#f0f4f8] p-4">
-                <div className="text-xs font-semibold uppercase tracking-wider text-[#6A89A7] mb-2">Current Bullet</div>
+                <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-2">Current Bullet</div>
                 <p className="text-sm text-[#384959] leading-relaxed">{mobileBulletSheet.text}</p>
               </div>
 
@@ -5838,7 +5838,7 @@ CERTIFICATIONS
                 jobDescription,
               }) && (
                 <div className="space-y-2">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-[#6A89A7]">Pick a rewrite</div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-muted">Pick a rewrite</div>
                   {rewriteResults[mobileBulletSheet.id].options.map((option, idx) => (
                     <button
                       key={idx}
@@ -5858,7 +5858,7 @@ CERTIFICATIONS
               <button
                 type="button"
                 onClick={() => setMobileBulletSheet(null)}
-                className="w-full rounded-xl border border-[#BDDDFC]/30 min-h-[44px] py-2.5 text-sm text-[#6A89A7] hover:bg-[#f0f4f8] transition"
+                className="w-full rounded-xl border border-[#BDDDFC]/30 min-h-[44px] py-2.5 text-sm text-muted hover:bg-[#f0f4f8] transition"
               >
                 Dismiss
               </button>

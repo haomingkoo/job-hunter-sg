@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   User, LogOut, Mail, Loader2, Bell, Save, ShieldCheck,
-  FileText, Sparkles, BookOpen, BarChart2, KeyRound, Trash2,
+  FileText, Target, BookOpen, BarChart2, KeyRound, Trash2,
 } from "lucide-react";
 import { API_BASE, apiFetch, clearResumeDraftStorage, downloadBlob } from "../lib/api.js";
 import { PRIVACY_CONTACT_EMAIL } from "../lib/constants.js";
@@ -235,7 +235,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
     <div className="space-y-6">
       <div className="rounded-xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
         <h2 className="font-semibold text-[#384959] flex items-center gap-2"><User size={18} /> Account</h2>
-        <p className="text-sm text-[#6A89A7] mt-1">Manage your account, saved work, alerts, and support.</p>
+        <p className="text-sm text-muted mt-1">Manage your account, saved work, alerts, and support.</p>
         <div className="mt-4 flex flex-wrap gap-2">
           {accountSections.map(({ id, label, icon: Icon }) => {
             const selected = accountView === id;
@@ -247,7 +247,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
                 className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition active:scale-[0.98] ${
                   selected
                     ? "border-[#384959] bg-[#384959] text-white"
-                    : "border-[#BDDDFC]/30 bg-[#f0f4f8] text-[#6A89A7] hover:bg-white hover:text-[#384959]"
+                    : "border-[#BDDDFC]/30 bg-[#f0f4f8] text-muted hover:bg-white hover:text-[#384959]"
                 }`}
               >
                 <Icon size={14} />
@@ -264,15 +264,15 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
         <h3 className="font-semibold text-[#384959] mb-4">Profile</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
           <div>
-            <div className="text-[#6A89A7] text-xs uppercase tracking-wide mb-1">Name</div>
+            <div className="text-muted text-xs uppercase tracking-wide mb-1">Name</div>
             <div className="text-[#384959] font-medium">{user?.name || "\u2014"}</div>
           </div>
           <div>
-            <div className="text-[#6A89A7] text-xs uppercase tracking-wide mb-1">Email</div>
+            <div className="text-muted text-xs uppercase tracking-wide mb-1">Email</div>
             <div className="text-[#384959]">{user?.email || "\u2014"}</div>
           </div>
           <div>
-            <div className="text-[#6A89A7] text-xs uppercase tracking-wide mb-1">Member Since</div>
+            <div className="text-muted text-xs uppercase tracking-wide mb-1">Member Since</div>
             <div className="text-[#384959]">{user?.created_at ? new Date(user.created_at).toLocaleDateString() : "\u2014"}</div>
           </div>
         </div>
@@ -283,14 +283,14 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
         <h3 className="font-semibold text-[#384959] mb-1 flex items-center gap-2">
           <KeyRound size={17} /> Change Password
         </h3>
-        <p className="mb-4 text-sm text-[#6A89A7]">Use at least 8 characters for your new password.</p>
+        <p className="mb-4 text-sm text-muted">Use at least 8 characters for your new password.</p>
         {passwordError && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{passwordError}</div>}
         {passwordMessage && <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{passwordMessage}</div>}
         <form onSubmit={changePassword} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <input
             type="password"
             required
-            placeholder="Current password"
+            aria-label="Current password" placeholder="Current password"
             autoComplete="current-password"
             value={passwordForm.current}
             onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })}
@@ -300,7 +300,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
             type="password"
             required
             minLength={8}
-            placeholder="New password"
+            aria-label="New password" placeholder="New password"
             autoComplete="new-password"
             value={passwordForm.next}
             onChange={(e) => setPasswordForm({ ...passwordForm, next: e.target.value })}
@@ -310,7 +310,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
             type="password"
             required
             minLength={8}
-            placeholder="Confirm new password"
+            aria-label="Confirm new password" placeholder="Confirm new password"
             autoComplete="new-password"
             value={passwordForm.confirm}
             onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
@@ -331,33 +331,33 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
       <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
         <h3 className="font-semibold text-[#384959] mb-4">Usage</h3>
         {usageLoading ? (
-          <div className="flex items-center gap-2 text-sm text-[#6A89A7]"><Loader2 size={14} className="animate-spin" /> Loading usage...</div>
+          <div className="flex items-center gap-2 text-sm text-muted"><Loader2 size={14} className="animate-spin" /> Loading usage...</div>
         ) : usage ? (
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-blue-50 rounded-xl p-4 text-center">
               <div className="text-2xl font-bold text-[#384959]">{usage.searches_today ?? 0}</div>
-              <div className="text-xs text-[#6A89A7] mt-1">Searches today</div>
+              <div className="text-xs text-muted mt-1">Searches today</div>
               {usage.searches_limit != null && (
-                <div className="text-xs text-[#6A89A7] mt-0.5">{formatLimitLabel(usage.searches_limit)}</div>
+                <div className="text-xs text-muted mt-0.5">{formatLimitLabel(usage.searches_limit)}</div>
               )}
             </div>
             <div className="bg-emerald-50 rounded-xl p-4 text-center">
               <div className="text-2xl font-bold text-[#384959]">{usage.ai_today ?? 0}</div>
-              <div className="text-xs text-[#6A89A7] mt-1">AI requests today</div>
+              <div className="text-xs text-muted mt-1">AI requests today</div>
               {usage.ai_limit != null && (
-                <div className="text-xs text-[#6A89A7] mt-0.5">{formatLimitLabel(usage.ai_limit)}</div>
+                <div className="text-xs text-muted mt-0.5">{formatLimitLabel(usage.ai_limit)}</div>
               )}
             </div>
             <div className="bg-purple-50 rounded-xl p-4 text-center">
               <div className="text-2xl font-bold text-[#384959]">{usage.tracked_jobs ?? 0}</div>
-              <div className="text-xs text-[#6A89A7] mt-1">Tracked jobs</div>
+              <div className="text-xs text-muted mt-1">Tracked jobs</div>
               {usage.tracked_limit != null && (
-                <div className="text-xs text-[#6A89A7] mt-0.5">{formatLimitLabel(usage.tracked_limit)}</div>
+                <div className="text-xs text-muted mt-0.5">{formatLimitLabel(usage.tracked_limit)}</div>
               )}
             </div>
           </div>
         ) : (
-          <div className="text-sm text-[#6A89A7]">Could not load usage data.</div>
+          <div className="text-sm text-muted">Could not load usage data.</div>
         )}
       </div>
 
@@ -366,7 +366,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
             { label: "Review Resume", detail: "Edit and export your resume.", icon: FileText, tab: "resume" },
-            { label: "Smart Match", detail: "Find roles and skill gaps.", icon: Sparkles, tab: "power" },
+            { label: "Smart Match", detail: "Find roles and skill gaps.", icon: Target, tab: "power" },
             { label: "Story Bank", detail: "Save interview examples.", icon: BookOpen, tab: "stories" },
             { label: "Market Insights", detail: "Explore skill and salary trends.", icon: BarChart2, tab: "analytics" },
           ].map(({ label, detail, icon: Icon, tab }) => (
@@ -380,7 +380,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
                 <Icon size={15} />
                 {label}
               </div>
-              <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{detail}</div>
+              <div className="mt-1 text-xs leading-relaxed text-muted">{detail}</div>
             </button>
           ))}
         </div>
@@ -392,7 +392,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
             <h3 className="font-semibold text-[#384959] flex items-center gap-2">
               <Bell size={17} /> Job Match Alerts
             </h3>
-            <p className="mt-1 text-sm text-[#6A89A7]">
+            <p className="mt-1 text-sm text-muted">
               Get email digests for roles that match your saved resume.
             </p>
           </div>
@@ -428,14 +428,14 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
         )}
 
         {alertsLoading ? (
-          <div className="mt-4 flex items-center gap-2 text-sm text-[#6A89A7]">
+          <div className="mt-4 flex items-center gap-2 text-sm text-muted">
             <Loader2 size={14} className="animate-spin" /> Loading alert settings...
           </div>
         ) : (
           <form onSubmit={saveAlertPrefs} className="mt-5 space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <label className="block">
-                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Match Score</span>
+                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">Match Score</span>
                 <input
                   type="number"
                   min="35"
@@ -446,7 +446,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
                 />
               </label>
               <label className="block">
-                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Frequency</span>
+                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">Frequency</span>
                 <select
                   value={alertPrefs.frequency}
                   onChange={(e) => setAlertPrefs((prev) => ({ ...prev, frequency: e.target.value }))}
@@ -457,7 +457,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
                 </select>
               </label>
               <label className="block">
-                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Jobs Per Email</span>
+                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">Jobs Per Email</span>
                 <input
                   type="number"
                   min="1"
@@ -470,7 +470,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
               <label className="flex items-center justify-between gap-3 rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-2">
                 <span>
                   <span className="block text-sm font-medium text-[#384959]">Hide known recruiters</span>
-                  <span className="block text-xs text-[#6A89A7]">
+                  <span className="block text-xs text-muted">
                     Verified direct and unverified employers remain eligible.
                   </span>
                 </span>
@@ -484,7 +484,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
             </div>
 
             <label className="block">
-              <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Keywords</span>
+              <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">Keywords</span>
               <input
                 value={alertPrefs.keywords || ""}
                 onChange={(e) => setAlertPrefs((prev) => ({ ...prev, keywords: e.target.value }))}
@@ -494,7 +494,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
             </label>
 
             <div className="flex flex-col gap-3 border-t border-[#BDDDFC]/20 pt-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-xs text-[#6A89A7]">
+              <div className="text-xs text-muted">
                 {alertPrefs.last_run_at
                   ? `Last checked ${new Date(alertPrefs.last_run_at).toLocaleString()}`
                   : "Alerts start after you turn them on."}
@@ -524,7 +524,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
           <div className="flex items-center justify-between gap-3 mb-4">
             <div>
               <h3 className="font-semibold text-[#384959]">Admin Metrics</h3>
-              <p className="text-sm text-[#6A89A7] mt-1">Signups, resume activity, and usage.</p>
+              <p className="text-sm text-muted mt-1">Signups, resume activity, and usage.</p>
             </div>
             <button
               type="button"
@@ -540,14 +540,14 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
                   setAdminLoading(false);
                 }
               }}
-              className="rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs text-[#6A89A7] hover:bg-[#f0f4f8]"
+              className="rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs text-muted hover:bg-[#f0f4f8]"
             >
               Refresh
             </button>
           </div>
 
           {adminLoading ? (
-            <div className="flex items-center gap-2 text-sm text-[#6A89A7]"><Loader2 size={14} className="animate-spin" /> Loading admin metrics...</div>
+            <div className="flex items-center gap-2 text-sm text-muted"><Loader2 size={14} className="animate-spin" /> Loading admin metrics...</div>
           ) : adminError ? (
             <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">
               {adminError}
@@ -557,35 +557,35 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div className="rounded-xl bg-slate-50 p-4">
                   <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.total_users?.toLocaleString?.() ?? adminMetrics.overview.total_users}</div>
-                  <div className="text-xs text-[#6A89A7] mt-1">Total users</div>
+                  <div className="text-xs text-muted mt-1">Total users</div>
                 </div>
                 <div className="rounded-xl bg-blue-50 p-4">
                   <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.signups_7d?.toLocaleString?.() ?? adminMetrics.overview.signups_7d}</div>
-                  <div className="text-xs text-[#6A89A7] mt-1">Signups last 7 days</div>
+                  <div className="text-xs text-muted mt-1">Signups last 7 days</div>
                 </div>
                 <div className="rounded-xl bg-emerald-50 p-4">
                   <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.active_users_7d?.toLocaleString?.() ?? adminMetrics.overview.active_users_7d}</div>
-                  <div className="text-xs text-[#6A89A7] mt-1">Active users last 7 days</div>
+                  <div className="text-xs text-muted mt-1">Active users last 7 days</div>
                 </div>
                 <div className="rounded-xl bg-violet-50 p-4">
                   <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.total_saved_resumes?.toLocaleString?.() ?? adminMetrics.overview.total_saved_resumes}</div>
-                  <div className="text-xs text-[#6A89A7] mt-1">Saved resumes</div>
+                  <div className="text-xs text-muted mt-1">Saved resumes</div>
                 </div>
                 <div className="rounded-xl bg-amber-50 p-4">
                   <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.tailored_resumes_total?.toLocaleString?.() ?? adminMetrics.overview.tailored_resumes_total}</div>
-                  <div className="text-xs text-[#6A89A7] mt-1">Tailored resumes</div>
+                  <div className="text-xs text-muted mt-1">Tailored resumes</div>
                 </div>
                 <div className="rounded-xl bg-cyan-50 p-4">
                   <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.tracked_jobs_total?.toLocaleString?.() ?? adminMetrics.overview.tracked_jobs_total}</div>
-                  <div className="text-xs text-[#6A89A7] mt-1">Tracked jobs</div>
+                  <div className="text-xs text-muted mt-1">Tracked jobs</div>
                 </div>
                 <div className="rounded-xl bg-rose-50 p-4">
                   <div className="text-2xl font-bold text-[#384959]">{adminMetrics.activity.resume_chat_starts_7d?.toLocaleString?.() ?? adminMetrics.activity.resume_chat_starts_7d}</div>
-                  <div className="text-xs text-[#6A89A7] mt-1">Resume chat starts, 7d</div>
+                  <div className="text-xs text-muted mt-1">Resume chat starts, 7d</div>
                 </div>
                 <div className="rounded-xl bg-indigo-50 p-4">
                   <div className="text-2xl font-bold text-[#384959]">{adminMetrics.activity.resume_downloads_7d?.toLocaleString?.() ?? adminMetrics.activity.resume_downloads_7d}</div>
-                  <div className="text-xs text-[#6A89A7] mt-1">Resume downloads, 7d</div>
+                  <div className="text-xs text-muted mt-1">Resume downloads, 7d</div>
                 </div>
               </div>
 
@@ -628,7 +628,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
                     <div className="flex items-center justify-between"><span>Good / Check / Review</span><span className="font-medium">{adminMetrics.resume_parse_quality?.labels?.good ?? 0} / {adminMetrics.resume_parse_quality?.labels?.check ?? 0} / {adminMetrics.resume_parse_quality?.labels?.review ?? 0}</span></div>
                   </div>
                   {(adminMetrics.resume_parse_quality?.top_warnings || []).length > 0 && (
-                    <div className="mt-3 space-y-1 border-t border-[#BDDDFC]/30 pt-3 text-xs text-[#6A89A7]">
+                    <div className="mt-3 space-y-1 border-t border-[#BDDDFC]/30 pt-3 text-xs text-muted">
                       {adminMetrics.resume_parse_quality.top_warnings.slice(0, 2).map((item) => (
                         <div key={item.warning} className="flex gap-2">
                           <span className="font-semibold text-[#384959]">{item.count}</span>
@@ -643,16 +643,16 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
               <div className="mt-5 rounded-xl border border-[#BDDDFC]/30 bg-white overflow-hidden">
                 <div className="px-4 py-3 border-b border-[#BDDDFC]/20">
                   <div className="text-sm font-semibold text-[#384959]">Last 14 Days</div>
-                  <div className="text-xs text-[#6A89A7] mt-1">Check whether product changes improve signups and resume activity.</div>
+                  <div className="text-xs text-muted mt-1">Check whether product changes improve signups and resume activity.</div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-[#f0f4f8]">
                       <tr>
-                        <th className="text-left px-4 py-2 text-[#6A89A7] text-xs uppercase">Date</th>
-                        <th className="text-right px-4 py-2 text-[#6A89A7] text-xs uppercase">Signups</th>
-                        <th className="text-right px-4 py-2 text-[#6A89A7] text-xs uppercase">Resumes Saved</th>
-                        <th className="text-right px-4 py-2 text-[#6A89A7] text-xs uppercase">Downloads</th>
+                        <th className="text-left px-4 py-2 text-muted text-xs uppercase">Date</th>
+                        <th className="text-right px-4 py-2 text-muted text-xs uppercase">Signups</th>
+                        <th className="text-right px-4 py-2 text-muted text-xs uppercase">Resumes Saved</th>
+                        <th className="text-right px-4 py-2 text-muted text-xs uppercase">Downloads</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#BDDDFC]/20">
@@ -670,7 +670,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
               </div>
             </>
           ) : (
-            <div className="text-sm text-[#6A89A7]">No admin metrics yet.</div>
+            <div className="text-sm text-muted">No admin metrics yet.</div>
           )}
         </div>
       )}
@@ -680,7 +680,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
         <h3 className="font-semibold text-[#384959] mb-3 flex items-center gap-2">
           <ShieldCheck size={17} /> Legal & Privacy
         </h3>
-        <p className="text-sm text-[#6A89A7] mb-4">
+        <p className="text-sm text-muted mb-4">
           Review how your data is handled and the terms for using Job Hunter SG.
         </p>
         <div className="flex flex-col gap-3 sm:flex-row">
@@ -701,7 +701,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
         </div>
         <div className="mt-5 border-t border-[#BDDDFC]/30 pt-4">
           <h4 className="text-sm font-semibold text-[#384959]">Your data</h4>
-          <p className="mt-1 text-sm text-[#6A89A7]">
+          <p className="mt-1 text-sm text-muted">
             Download everything stored for your account as a JSON file. For corrections or other requests, email{" "}
             <a href={`mailto:${PRIVACY_CONTACT_EMAIL}`} className="font-medium text-[#384959] underline">{PRIVACY_CONTACT_EMAIL}</a>.
           </p>
@@ -724,7 +724,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
         <h3 className="font-semibold text-[#384959] mb-4">Contact</h3>
 
         <div className="flex flex-wrap gap-3 mb-5">
-          <span className="text-sm text-[#6A89A7]">Send a message or report an issue.</span>
+          <span className="text-sm text-muted">Send a message or report an issue.</span>
         </div>
 
         {contactSent && (
@@ -740,12 +740,12 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
 
         <form onSubmit={sendContact} className="space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <input placeholder="Name" value={contactForm.name} onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })}
+            <input aria-label="Your name" placeholder="Name" value={contactForm.name} onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })}
               className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm" />
-            <input placeholder="Email" type="email" value={contactForm.email} onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })}
+            <input aria-label="Your email" placeholder="Email" type="email" value={contactForm.email} onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })}
               className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm" />
           </div>
-          <textarea placeholder="Your message..." value={contactForm.message} onChange={(e) => setContactForm({ ...contactForm, message: e.target.value })}
+          <textarea aria-label="Message" placeholder="Your message..." value={contactForm.message} onChange={(e) => setContactForm({ ...contactForm, message: e.target.value })}
             className="w-full border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm" rows={3} />
           <button type="submit" disabled={contactSending || !contactForm.message.trim()}
             className="flex items-center gap-2 bg-[#384959] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2d3a47] disabled:opacity-40 transition">
@@ -761,7 +761,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
         <h3 className="flex items-center gap-2 font-semibold text-red-700">
           <Trash2 size={17} /> Delete Account
         </h3>
-        <p className="mt-1 text-sm text-[#6A89A7]">
+        <p className="mt-1 text-sm text-muted">
           Permanently remove your saved resumes and tailored results, tracked jobs, stories,
           alerts, Agent memory and history, and usage records. Shared public job listings remain.
           This cannot be undone.
@@ -771,7 +771,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
           <input
             type="email"
             required
-            placeholder={`Type ${user?.email || "your email"}`}
+            aria-label="Type your email to confirm" placeholder={`Type ${user?.email || "your email"}`}
             value={deleteEmail}
             onChange={(e) => setDeleteEmail(e.target.value)}
             className="rounded-lg border border-red-200 px-3 py-2 text-sm"
@@ -780,7 +780,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
             <input
               type="password"
               required
-              placeholder="Current password"
+              aria-label="Current password" placeholder="Current password"
               autoComplete="current-password"
               value={deletePassword}
               onChange={(e) => setDeletePassword(e.target.value)}

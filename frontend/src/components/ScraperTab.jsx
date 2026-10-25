@@ -5,7 +5,7 @@ import {
   ExternalLink, Filter, Loader2, FileText,
   MapPin, DollarSign, Building2, X, SlidersHorizontal,
   PanelLeftClose, PanelLeftOpen, CheckCircle2, Bot, Copy,
-  Sparkles, RefreshCw,
+  RefreshCw,
 } from "lucide-react";
 import { apiFetch, downloadBlob } from "../lib/api.js";
 import { todayStr } from "../lib/helpers.js";
@@ -740,12 +740,13 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const sidebarContent = (
     <div className="space-y-5">
       <div>
-        <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-1.5">Search</label>
+        <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Search</label>
         <div className="flex gap-2">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Role, skill, company..."
+            aria-label="Search jobs"
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
             className="flex-1 border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2] bg-white"
           />
@@ -762,7 +763,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
       {(filterMeta.sources || []).length > 0 && (
         <div>
-          <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Data Source</label>
+          <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Data Source</label>
           <div className="space-y-0.5">
             <FilterOption
               name="source"
@@ -785,7 +786,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 }}
               >
                 <span className="flex-1">{source.label || source.value}</span>
-                <span className="text-[11px] tabular-nums text-[#6A89A7]">{Number(source.count || 0).toLocaleString()}</span>
+                <span className="text-[11px] tabular-nums text-muted">{Number(source.count || 0).toLocaleString()}</span>
               </FilterOption>
             ))}
           </div>
@@ -793,7 +794,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       )}
 
       <div>
-        <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Employer Type</label>
+        <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Employer Type</label>
         <button
           type="button"
           onClick={() => {
@@ -815,14 +816,14 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             <span className={`block h-4 w-4 rounded-full bg-white transition-transform ${directEmployersOnly ? "translate-x-4" : "translate-x-0"}`} />
           </span>
         </button>
-        <p className="mt-1.5 text-[11px] leading-tight text-[#6A89A7]">
+        <p className="mt-1.5 text-[11px] leading-tight text-muted">
           Verified direct and unverified employers remain eligible.
         </p>
       </div>
 
       {user && jobsView === "active" && (
         <div>
-          <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-1.5">Minimum Power Match</label>
+          <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Minimum Power Match</label>
           <select
             aria-label="Minimum Power Match score"
             value={minMatchScore}
@@ -840,13 +841,13 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             <option value="75">75+ · Strong</option>
           </select>
           {powerMatch?.status !== "ready" && (
-            <p className="mt-1.5 text-[11px] leading-tight text-[#6A89A7]">Generate scores for this resume, corpus, and employer mode first.</p>
+            <p className="mt-1.5 text-[11px] leading-tight text-muted">Generate scores for this resume, corpus, and employer mode first.</p>
           )}
         </div>
       )}
 
       <div>
-        <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Seniority</label>
+        <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Seniority</label>
         <div className="space-y-0.5">
           {levelOptions.map(({ value, label }) => {
             const active = levelFilter === value;
@@ -870,7 +871,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
       {employmentTypeOptions.length > 0 && (
         <div>
-          <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Job Type</label>
+          <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Job Type</label>
           <div className="space-y-0.5">
             {employmentTypeOptions.map((option) => {
               const active = employmentFilter.has(option.value);
@@ -895,7 +896,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
       {(filterMeta.sectors || []).length > 0 && (
         <div>
-          <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Industry</label>
+          <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Industry</label>
           <div className="space-y-0.5">
             <FilterOption
               name="sector"
@@ -920,7 +921,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
       {locationOptions.length > 0 && (
         <div>
-          <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Location</label>
+          <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Location</label>
           <div className="space-y-0.5">
             {locationOptions.map((location) => {
               const active = locationFilter.has(location.value);
@@ -936,7 +937,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   }}
                 >
                   <span className="flex-1">{location.label || location.value}</span>
-                  <span className="text-[11px] tabular-nums text-[#6A89A7]">{Number(location.count || 0).toLocaleString()}</span>
+                  <span className="text-[11px] tabular-nums text-muted">{Number(location.count || 0).toLocaleString()}</span>
                 </CheckboxFilter>
               );
             })}
@@ -945,7 +946,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       )}
 
       <div>
-        <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Experience</label>
+        <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Experience</label>
         <div className="space-y-0.5">
           {["0-2 yrs", "3-5 yrs", "6-10 yrs", "10+ yrs"].map((label) => {
             const active = expYearsFilter.has(label);
@@ -966,17 +967,18 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           })}
         </div>
         {expYearsFilter.size > 0 && (
-          <p className="mt-1.5 text-[11px] text-[#6A89A7] leading-tight">
+          <p className="mt-1.5 text-[11px] text-muted leading-tight">
             Jobs without a stated requirement stay visible.
           </p>
         )}
       </div>
 
       <div>
-        <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-1.5">Minimum Salary</label>
+        <label htmlFor="jobs-min-salary" className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Minimum Salary</label>
         <div className="flex items-center gap-2">
-          <DollarSign size={14} className="text-[#6A89A7] flex-shrink-0" />
+          <DollarSign size={14} className="text-muted flex-shrink-0" />
           <input
+            id="jobs-min-salary"
             type="number"
             min="0"
             value={minSalaryFilter}
@@ -990,16 +992,16 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           />
         </div>
         {minSalaryFilter && (
-          <p className="mt-1.5 text-[11px] text-[#6A89A7] leading-tight">
+          <p className="mt-1.5 text-[11px] text-muted leading-tight">
             Jobs with no salary posted stay visible.
           </p>
         )}
       </div>
 
       <div>
-        <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-2">Posted date</label>
+        <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Posted date</label>
         <div className="grid grid-cols-2 gap-2">
-          <label className="min-w-0 text-[11px] text-[#6A89A7]">
+          <label className="min-w-0 text-[11px] text-muted">
             From
             <input
               type="date"
@@ -1014,7 +1016,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               className="mt-1 w-full min-w-0 rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-2 text-xs text-[#384959]"
             />
           </label>
-          <label className="min-w-0 text-[11px] text-[#6A89A7]">
+          <label className="min-w-0 text-[11px] text-muted">
             To
             <input
               type="date"
@@ -1034,7 +1036,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
-          <label className="text-xs font-semibold uppercase tracking-wide text-[#6A89A7]">Scraped date</label>
+          <label className="text-xs font-semibold uppercase tracking-wide text-muted">Scraped date</label>
           <button
             type="button"
             onClick={() => {
@@ -1049,7 +1051,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           </button>
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <label className="min-w-0 text-[11px] text-[#6A89A7]">
+          <label className="min-w-0 text-[11px] text-muted">
             From
             <input
               type="date"
@@ -1064,7 +1066,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               className="mt-1 w-full min-w-0 rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-2 text-xs text-[#384959]"
             />
           </label>
-          <label className="min-w-0 text-[11px] text-[#6A89A7]">
+          <label className="min-w-0 text-[11px] text-muted">
             To
             <input
               type="date"
@@ -1083,8 +1085,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       </div>
 
       <div>
-        <label className="block text-xs font-semibold text-[#6A89A7] uppercase tracking-wide mb-1.5">Sort By</label>
+        <label htmlFor="jobs-sort" className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Sort By</label>
         <select
+          id="jobs-sort"
           value={sortBy}
           onChange={(e) => {
             setSortBy(e.target.value);
@@ -1101,7 +1104,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       {activeFilterCount > 0 && (
         <button
           onClick={clearFilters}
-          className="w-full text-sm font-medium text-[#6A89A7] border border-[#BDDDFC]/30 rounded-lg px-3 py-2 bg-white hover:bg-[#f0f4f8] transition"
+          className="w-full text-sm font-medium text-muted border border-[#BDDDFC]/30 rounded-lg px-3 py-2 bg-white hover:bg-[#f0f4f8] transition"
         >
           Clear all filters ({activeFilterCount})
         </button>
@@ -1114,12 +1117,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       <div className="rounded-2xl bg-white border border-[#BDDDFC]/25 p-6 shadow-sm">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#384959]">
-              <Search size={18} className="text-white" />
-            </div>
             <div>
-              <h2 className="font-bold text-[#384959] text-lg">Singapore Jobs</h2>
-              <p className="text-sm text-[#6A89A7]">
+              <h1 className="font-bold tracking-[-0.01em] text-[#384959] text-xl">Singapore Jobs</h1>
+              <p className="text-sm text-muted">
                 {jobsView === "expired"
                   ? "Inspect listings with a known expiry reason. Application actions are disabled."
                   : "Browse jobs from MyCareersFuture and Careers@Gov."}
@@ -1136,7 +1136,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   setJobsView(option.value);
                   loadJobs(activeSearchQuery, 1, { jobsView: option.value });
                 }}
-                className={`flex-1 whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold transition sm:flex-none ${jobsView === option.value ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7] hover:text-[#384959]"}`}
+                className={`flex-1 whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold transition sm:flex-none ${jobsView === option.value ? "bg-white text-[#384959] shadow-sm" : "text-muted hover:text-[#384959]"}`}
               >
                 {option.label}
               </button>
@@ -1144,13 +1144,13 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           </div>
         </div>
         <div className="mt-4 rounded-lg border border-[#88BDF2]/20 bg-[#BDDDFC]/10 px-3 py-2 text-xs text-[#384959]">
-          <strong>Beta</strong> -- Free to use with 500 AI requests/day to help fund hosting and API costs. Data refreshes nightly.
+          <strong>Beta.</strong> Free to use, with 500 AI requests a day to cover hosting and API costs. Job data refreshes nightly.
         </div>
         {user && jobsView === "active" && (
           <div className="mt-4 flex flex-col gap-3 rounded-xl border border-[#BDDDFC]/30 bg-[#f7fafc] p-3 sm:flex-row sm:items-center sm:justify-between" data-testid="browse-power-match-state">
             <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]"><Sparkles size={15} /> Power Match scores</div>
-              <p className="mt-1 text-xs text-[#6A89A7]">
+              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">Power Match scores</div>
+              <p className="mt-1 text-xs text-muted">
                 {powerMatch?.message || "Checking for scores saved for this exact resume and job view."}
               </p>
               {powerError && <p className="mt-1 text-xs text-red-600">{powerError}</p>}
@@ -1161,19 +1161,46 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               disabled={powerGenerating}
               className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[#384959] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
-              {powerGenerating ? <Loader2 size={14} className="animate-spin" /> : powerMatch?.status === "ready" ? <RefreshCw size={14} /> : <Sparkles size={14} />}
+              {powerGenerating ? <Loader2 size={14} className="animate-spin" /> : powerMatch?.status === "ready" ? <RefreshCw size={14} /> : null}
               {powerGenerating ? "Generating..." : (powerMatch?.generate_action || "Generate Power Match scores")}
             </button>
           </div>
         )}
       </div>
 
-      <div className="lg:hidden">
-        <button
-          onClick={() => setSidebarOpen(true)}
-          className="flex items-center gap-2 border border-[#BDDDFC]/30 bg-white rounded-lg px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] transition w-full justify-center"
+      <div className="lg:hidden space-y-2">
+        <form
+          role="search"
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleSearch();
+          }}
         >
-          <SlidersHorizontal size={16} />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Role, skill, company..."
+            aria-label="Search jobs"
+            enterKeyHint="search"
+            className="min-h-11 min-w-0 flex-1 rounded-lg border border-[#BDDDFC]/60 bg-white px-3 text-sm focus:border-[#88BDF2] focus:outline-none focus:ring-2 focus:ring-[#BDDDFC]"
+          />
+          <button
+            type="submit"
+            disabled={loading}
+            aria-label="Search"
+            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[#384959] text-white transition hover:bg-[#2d3a47] active:scale-[0.97] disabled:opacity-40"
+          >
+            {loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+          </button>
+        </form>
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(true)}
+          className="flex min-h-11 items-center gap-2 border border-[#BDDDFC]/60 bg-white rounded-lg px-4 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] transition w-full justify-center"
+        >
+          <SlidersHorizontal size={16} aria-hidden="true" />
           Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
         </button>
       </div>
@@ -1188,7 +1215,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               </span>
               <button
                 onClick={() => setSidebarOpen(false)}
-                className="p-1.5 rounded-lg hover:bg-[#BDDDFC]/20 transition text-[#6A89A7]"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-lg hover:bg-[#BDDDFC]/20 transition text-muted"
                 aria-label="Close filters"
               >
                 <X size={18} />
@@ -1207,14 +1234,14 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             <div className="bg-[#f0f4f8] border border-[#BDDDFC]/30 rounded-xl p-2 shadow-sm flex flex-col items-center gap-3">
               <button
                 onClick={() => setSidebarCollapsed(false)}
-                className="p-2 rounded-lg hover:bg-[#BDDDFC]/20 transition text-[#6A89A7]"
+                className="p-2 rounded-lg hover:bg-[#BDDDFC]/20 transition text-muted"
                 aria-label="Expand filters"
               >
                 <PanelLeftOpen size={16} />
               </button>
-              <Filter size={14} className="text-[#6A89A7]" />
+              <Filter size={14} className="text-muted" />
               {activeFilterCount > 0 && (
-                <span className="bg-[#BDDDFC]/30 text-[#384959] text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                <span className="bg-[#BDDDFC]/30 text-[#384959] text-[11px] font-bold px-1.5 py-0.5 rounded-full">
                   {activeFilterCount}
                 </span>
               )}
@@ -1222,16 +1249,16 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           ) : (
             <div className="bg-[#f0f4f8] border border-[#BDDDFC]/30 rounded-xl p-4 shadow-sm">
               <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[#BDDDFC]/30">
-                <Filter size={14} className="text-[#6A89A7]" />
+                <Filter size={14} className="text-muted" />
                 <span className="text-sm font-semibold text-[#384959]">Filters</span>
                 {activeFilterCount > 0 && (
-                  <span className="ml-auto bg-[#BDDDFC]/30 text-[#384959] text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                  <span className="ml-auto bg-[#BDDDFC]/30 text-[#384959] text-[11px] font-bold px-1.5 py-0.5 rounded-full">
                     {activeFilterCount}
                   </span>
                 )}
                 <button
                   onClick={() => setSidebarCollapsed(true)}
-                  className="ml-auto p-1 rounded-lg hover:bg-[#BDDDFC]/20 transition text-[#6A89A7]"
+                  className="ml-auto p-1 rounded-lg hover:bg-[#BDDDFC]/20 transition text-muted"
                   aria-label="Collapse filters"
                 >
                   <PanelLeftClose size={14} />
@@ -1245,13 +1272,13 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         <div className="flex-1 min-w-0 space-y-4">
           {totalLabel && (
             <div className="space-y-1">
-              <p className="text-sm text-[#6A89A7]">
+              <p className="text-sm text-muted">
                 <span className="font-medium text-[#384959]">{totalLabel}</span>
                 {activeSearchQuery ? ` matching "${activeSearchQuery}"` : " across Singapore"}
-                {results.length > 0 && ` -- page ${page}`}
+                {results.length > 0 && totalPages > 1 && ` · page ${page} of ${totalPages}`}
               </p>
               {(postedFromFilter || postedToFilter || scrapedFromFilter || scrapedToFilter) && (
-                <p className="text-xs text-[#6A89A7]" aria-live="polite">
+                <p className="text-xs text-muted" aria-live="polite">
                   {dateRangeLabel(postedFromFilter, postedToFilter) && `Posted ${dateRangeLabel(postedFromFilter, postedToFilter)}`}
                   {dateRangeLabel(postedFromFilter, postedToFilter) && dateRangeLabel(scrapedFromFilter, scrapedToFilter) && " · "}
                   {dateRangeLabel(scrapedFromFilter, scrapedToFilter) && `Scraped ${dateRangeLabel(scrapedFromFilter, scrapedToFilter)}`}
@@ -1263,9 +1290,22 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           {loading && <JobCardSkeleton count={5} />}
 
           {!loading && error && (
-            <div className="text-center py-8">
-              <AlertCircle size={32} className="mx-auto mb-2 text-red-400" />
-              <p className="text-sm text-red-600">{error}</p>
+            <div className="rounded-xl border border-red-200 bg-white px-6 py-10 text-center" role="alert">
+              <AlertCircle size={28} aria-hidden="true" className="mx-auto mb-3 text-red-500" />
+              <p className="font-semibold text-[#384959]">Jobs could not load</p>
+              <p className="mx-auto mt-1 max-w-md text-sm text-muted">
+                {/internal server error|bad gateway|service unavailable|gateway timeout/i.test(error)
+                  ? "The job search service is not responding."
+                  : error}
+              </p>
+              <p className="mx-auto mt-1 max-w-md text-sm text-muted">Your search and filters are kept.</p>
+              <button
+                type="button"
+                onClick={() => loadJobs(activeSearchQuery, page)}
+                className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-lg bg-[#384959] px-5 text-sm font-medium text-white transition hover:bg-[#2d3a47] active:scale-[0.97]"
+              >
+                <RefreshCw size={14} aria-hidden="true" /> Try again
+              </button>
             </div>
           )}
 
@@ -1276,9 +1316,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           )}
 
           {!loading && !error && results.length === 0 && (
-            <div className="text-center py-12 text-[#6A89A7]">
-              <Search size={32} className="mx-auto mb-2 opacity-40" />
-              <p>{jobsView === "expired"
+            <div className="rounded-xl border border-[#BDDDFC]/40 bg-white px-6 py-12 text-center text-muted">
+              <Search size={28} aria-hidden="true" className="mx-auto mb-3 text-[#6A89A7]" />
+              <p className="mx-auto max-w-md">{jobsView === "expired"
                 ? "No known expired jobs match these filters."
                 : query ? "No jobs matched your search. Try broader keywords." : "No jobs available yet. Please check back later."}</p>
             </div>
@@ -1320,41 +1360,54 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               <div className="flex justify-between items-start">
                 <div className="flex-1">
                   <div className="flex min-w-0 flex-wrap items-center gap-2 mb-1" data-testid={`job-badge-row-${job.id}`}>
-                    <h3 className="min-w-0 break-words font-semibold text-[#384959]">{job.title}</h3>
-                    {job.level && <span className="shrink-0 text-[10px] bg-[#f0f4f8] text-[#6A89A7] px-2 py-0.5 rounded-full">{job.level}</span>}
-                    {jobsView === "expired" && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700 ring-1 ring-amber-200">Expired</span>}
+                    <h3 className="min-w-0 break-words font-semibold text-[#384959]">
+                      <button
+                        type="button"
+                        aria-expanded={isExpanded}
+                        aria-controls={`job-details-${job.id}`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleExpandedJob(job.id);
+                        }}
+                        className="rounded text-left hover:underline hover:underline-offset-2"
+                      >
+                        {job.title}
+                      </button>
+                    </h3>
+                    {job.level && <span className="shrink-0 text-[11px] bg-[#f0f4f8] text-muted px-2 py-0.5 rounded-full">{job.level}</span>}
+                    {jobsView === "expired" && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">Expired</span>}
                     {job.sector && job.sector !== "Other" && (
                       <span
                         title={job.companySsicSource === "acra" ? `${job.companySsicCode} ${job.companySsicDescription}` : "Inferred sector"}
-                        className={`shrink-0 text-[10px] border px-2 py-0.5 rounded-full ${job.companySsicSource === "acra" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-violet-50 text-violet-700 border-violet-200"}`}
+                        className={`shrink-0 text-[11px] border px-2 py-0.5 rounded-full ${job.companySsicSource === "acra" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-violet-50 text-violet-700 border-violet-200"}`}
                       >
                         {job.sector}
                       </span>
                     )}
-                    {job.archetype && job.archetype !== "Generalist" && <span className={`shrink-0 text-[10px] border px-2 py-0.5 rounded-full ${ARCHETYPE_COLORS[job.archetype] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{job.archetype}</span>}
+                    {job.archetype && job.archetype !== "Generalist" && <span className={`shrink-0 text-[11px] border px-2 py-0.5 rounded-full ${ARCHETYPE_COLORS[job.archetype] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{job.archetype}</span>}
                     {Number.isFinite(job.powerMatchScore) && (
-                      <span className="shrink-0 text-[10px] border border-indigo-200 bg-indigo-50 px-2 py-0.5 rounded-full font-semibold text-indigo-700" data-testid={`power-match-score-${job.id}`}>
+                      <span className="shrink-0 text-[11px] border border-indigo-200 bg-indigo-50 px-2 py-0.5 rounded-full font-semibold text-indigo-700" data-testid={`power-match-score-${job.id}`}>
                         {job.powerMatchScore} · {job.powerMatchLabel}
                       </span>
                     )}
-                    {(trackedJobIds.has(job.id) || trackedJobIds.has(`${job.title}|${job.company}`.toLowerCase())) && <span className="flex shrink-0 items-center gap-0.5 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700"><CheckCircle2 size={10} />Tracked</span>}
-                    <ChevronRight size={14} className={`ml-auto shrink-0 text-[#6A89A7] transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                    {(trackedJobIds.has(job.id) || trackedJobIds.has(`${job.title}|${job.company}`.toLowerCase())) && <span className="flex shrink-0 items-center gap-0.5 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700"><CheckCircle2 size={10} />Tracked</span>}
+                    <ChevronRight size={14} aria-hidden="true" className={`ml-auto shrink-0 text-muted transition-transform ${isExpanded ? "rotate-90" : ""}`} />
                   </div>
-                  <div className="flex items-center gap-4 text-sm text-[#6A89A7] mb-2 flex-wrap">
+                  <div className="flex items-center gap-4 text-sm text-muted mb-2 flex-wrap">
                     <span className="flex items-center gap-1"><Building2 size={13} />{job.company}</span>
                     {job.location && <span className="flex items-center gap-1"><MapPin size={13} />{job.location}</span>}
                     {job.salary && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
                     {job.experienceYears && <span className="flex items-center gap-1"><Clock size={13} />{job.experienceYears} yrs</span>}
                   </div>
                   {(summaryText || job.description) && !isExpanded && (
-                    <p className="text-sm text-[#6A89A7] mb-3 line-clamp-2">{summaryText || job.description}</p>
+                    <p className="text-sm text-muted mb-3 line-clamp-2">{summaryText || job.description}</p>
                   )}
                   {!isExpanded && previewSkills.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mb-3">
                       {previewSkills.map((skill) => (
                         <span key={skill} className="bg-[#BDDDFC]/15 text-[#384959] px-2 py-0.5 rounded-full text-xs">{skill}</span>
                       ))}
-                      {effectiveSkillDisplay.visibleSkills.length > previewSkills.length && <span className="text-xs text-[#6A89A7]">+{effectiveSkillDisplay.visibleSkills.length - previewSkills.length} more</span>}
+                      {effectiveSkillDisplay.visibleSkills.length > previewSkills.length && <span className="text-xs text-muted">+{effectiveSkillDisplay.visibleSkills.length - previewSkills.length} more</span>}
                     </div>
                   )}
                   {jobsView === "expired" && (
@@ -1377,26 +1430,27 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   exit={{ opacity: 0, height: 0 }}
                   transition={{ duration: 0.25 }}
                   className="overflow-hidden"
+                  id={`job-details-${job.id}`}
                 >
                 <div className="mt-4 rounded-2xl border border-[#BDDDFC]/20 bg-[#f0f4f8] p-4">
                   {summaryText && (
                     <>
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Job Summary</div>
-                      <p className="mt-2 text-sm leading-relaxed text-[#384959]">{summaryText}</p>
-                      <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Full Description</div>
+                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Job Summary</div>
+                      <p className="mt-2 max-w-[75ch] text-sm leading-relaxed text-[#384959]">{summaryText}</p>
+                      <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Full Description</div>
                     </>
                   )}
-                  {!summaryText && <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Description</div>}
+                  {!summaryText && <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Description</div>}
                   {job.description ? (
-                    <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-[#384959]">{job.description}</p>
+                    <p className="mt-2 max-w-[75ch] whitespace-pre-line text-sm leading-relaxed text-[#384959]">{job.description}</p>
                   ) : (
-                    <p className="mt-2 text-sm text-[#6A89A7]">
+                    <p className="mt-2 text-sm text-muted">
                       This source did not provide a structured description in our cache.
                       {job.url && " Open the listing to inspect the full posting."}
                     </p>
                   )}
 
-                  <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Skills Found</div>
+                  <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Skills Found</div>
                   {effectiveSkillDisplay.visibleSkills.length > 0 ? (
                     <>
                       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1406,7 +1460,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                           </span>
                         ))}
                       </div>
-                      <div className="mt-3 text-xs text-[#6A89A7]">
+                      <div className="mt-3 text-xs text-muted">
                         {parsedDisplay.visibleSkills.length > 0
                           ? `${effectiveSkillDisplay.visibleSkills.length} useful term${effectiveSkillDisplay.visibleSkills.length === 1 ? "" : "s"} found in the job description.`
                           : `${effectiveSkillDisplay.visibleSkills.length} useful term${effectiveSkillDisplay.visibleSkills.length === 1 ? "" : "s"} found in ${effectiveSkillDisplay.sourceTagCount} source tag${effectiveSkillDisplay.sourceTagCount === 1 ? "" : "s"}.`}
@@ -1418,28 +1472,28 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                       )}
                     </>
                   ) : parsedMeta?.loading && !longCueLoad && !cuesWereAlreadyChecked ? (
-                    <div className="mt-2 flex items-center gap-2 text-sm text-[#6A89A7]">
+                    <div className="mt-2 flex items-center gap-2 text-sm text-muted">
                       <Loader2 size={14} className="animate-spin" />
                       Reading job description...
                     </div>
                   ) : parsedMeta?.loading && longCueLoad && !cuesWereAlreadyChecked ? (
-                    <div className="mt-2 text-sm text-[#6A89A7]">
+                    <div className="mt-2 text-sm text-muted">
                       Skill extraction is taking longer than expected. Collapse and reopen the card to retry, or open the full listing.
                     </div>
                   ) : parsedMeta?.error ? (
-                    <div className="mt-2 text-sm text-[#6A89A7]">
+                    <div className="mt-2 text-sm text-muted">
                       {parsedMeta.error}
                     </div>
                   ) : cuesWereAlreadyChecked ? (
-                    <div className="mt-2 text-sm text-[#6A89A7]">
+                    <div className="mt-2 text-sm text-muted">
                       We checked this posting but did not find enough reliable skill terms to show yet.
                     </div>
                   ) : job.skills.length > 0 ? (
-                    <div className="mt-2 text-sm text-[#6A89A7]">
+                    <div className="mt-2 text-sm text-muted">
                       This listing only exposed broad tags, so no focused skill terms are shown.
                     </div>
                   ) : (
-                    <div className="mt-2 text-sm text-[#6A89A7]">
+                    <div className="mt-2 text-sm text-muted">
                       No reliable skill terms were found for this posting yet.
                     </div>
                   )}
@@ -1448,7 +1502,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               )}
               </AnimatePresence>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between border-t border-[#BDDDFC]/20 pt-3 mt-1 gap-2">
-                <div className="flex flex-wrap items-center gap-3 text-xs text-[#6A89A7]">
+                <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
                   {job.source && <span>{job.source}</span>}
                   {job.posted && <span>Posted {job.posted}</span>}
                   {scrapedDate && <span>Scraped {scrapedDate}</span>}
@@ -1484,7 +1538,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   )}
                   {job.url && (
                     <a href={job.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}
-                      className="flex items-center gap-1.5 border border-[#BDDDFC]/30 text-[#6A89A7] px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#f0f4f8] transition">
+                      className="flex items-center gap-1.5 border border-[#BDDDFC]/30 text-muted px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#f0f4f8] transition">
                       <ExternalLink size={12} /> View
                     </a>
                   )}
@@ -1502,7 +1556,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               {page > 1 && (
                 <button onClick={() => loadJobs(activeSearchQuery, page - 1)} className="px-4 py-2 text-sm border border-[#BDDDFC]/30 rounded-lg text-[#384959] hover:bg-[#BDDDFC]/10 transition-colors">Previous</button>
               )}
-              <span className="px-4 py-2 text-sm text-[#6A89A7]">Page {page} of {totalPages}</span>
+              <span className="px-4 py-2 text-sm text-muted">Page {page} of {totalPages}</span>
               {page < totalPages && (
                 <button onClick={() => loadJobs(activeSearchQuery, page + 1)} className="px-4 py-2 text-sm border border-[#BDDDFC]/30 rounded-lg text-[#384959] hover:bg-[#BDDDFC]/10 transition-colors">Next</button>
               )}
@@ -1530,12 +1584,12 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
                 <div>
                   <h3 className="text-lg font-semibold text-[#384959]">Generate Cover Letter</h3>
-                  <p className="text-sm text-[#6A89A7] mt-0.5">
+                  <p className="text-sm text-muted mt-0.5">
                     {coverLetterModal.job?.title} at {coverLetterModal.job?.company}
                   </p>
                 </div>
                 <button onClick={closeCoverLetterModal} className="p-1 hover:bg-gray-100 rounded-lg transition">
-                  <X size={20} className="text-[#6A89A7]" />
+                  <X size={20} className="text-muted" />
                 </button>
               </div>
 
@@ -1573,7 +1627,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 {coverLetterLoading && (
                   <div className="flex flex-col items-center justify-center py-12 gap-3">
                     <Loader2 size={28} className="animate-spin text-blue-600" />
-                    <p className="text-sm text-[#6A89A7]">Generating your cover letter...</p>
+                    <p className="text-sm text-muted">Generating your cover letter...</p>
                   </div>
                 )}
 
@@ -1587,7 +1641,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                       }}
                       className="w-full h-80 px-4 py-3 border border-gray-200 rounded-lg text-sm leading-relaxed resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-[system-ui]"
                     />
-                    <p className={`text-xs ${coverLetterSaveState === "dirty" ? "text-amber-700" : "text-[#6A89A7]"}`}>
+                    <p className={`text-xs ${coverLetterSaveState === "dirty" ? "text-amber-700" : "text-muted"}`}>
                       {coverLetterSaveState === "saved" && "Saved to Documents."}
                       {coverLetterSaveState === "dirty" && "You have unsaved changes."}
                       {coverLetterSaveState === "unsaved" && "Not saved. Track this job to save future letters in Documents."}
@@ -1599,7 +1653,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               <div className="flex items-center justify-between px-6 py-4 border-t border-gray-200 bg-gray-50">
                 {coverLetterText ? (
                   <>
-                    <span className="text-xs text-[#6A89A7]">
+                    <span className="text-xs text-muted">
                       {coverLetterText.split(/\s+/).length} words
                     </span>
                     <div className="flex gap-2">
@@ -1666,12 +1720,12 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                     <Bot size={18} className="text-[#384959]" />
                     <h3 className="text-lg font-semibold text-[#384959]">Application Pack</h3>
                   </div>
-                  <p className="mt-0.5 truncate text-sm text-[#6A89A7]">
+                  <p className="mt-0.5 truncate text-sm text-muted">
                     {applicationPackModal.job?.title} at {applicationPackModal.job?.company}
                   </p>
                 </div>
                 <button onClick={closeApplicationPackModal} className="p-1 hover:bg-gray-100 rounded-lg transition">
-                  <X size={20} className="text-[#6A89A7]" />
+                  <X size={20} className="text-muted" />
                 </button>
               </div>
 
@@ -1709,7 +1763,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 {applicationPackLoading && (
                   <div className="flex flex-col items-center justify-center py-14 gap-3">
                     <Loader2 size={30} className="animate-spin text-[#384959]" />
-                    <p className="text-sm text-[#6A89A7]">Analysing the role, resume evidence, gaps, and interview angles...</p>
+                    <p className="text-sm text-muted">Analysing the role, resume evidence, gaps, and interview angles...</p>
                   </div>
                 )}
 
@@ -1732,11 +1786,11 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
                     <div className="grid gap-3 md:grid-cols-3">
                       <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f8fbff] p-4">
-                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Verdict</div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Verdict</div>
                         <div className="mt-1 text-xl font-bold text-[#384959]">
                           {APPLICATION_VERDICT_LABELS[applicationPack.verdict?.decision] || "Maybe"}
                         </div>
-                        <div className="mt-1 text-sm text-[#6A89A7]">{applicationPack.verdict?.fit_score || 0}/100 fit</div>
+                        <div className="mt-1 text-sm text-muted">{applicationPack.verdict?.fit_score || 0}/100 fit</div>
                       </div>
                       <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
                         <div className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-700">Matched</div>
@@ -1787,7 +1841,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                           {applicationPack.evidence_questions.map((item, index) => (
                             <div key={item.id || index} className="rounded-lg border border-[#BDDDFC]/25 bg-[#f0f4f8] px-3 py-2">
                               <div className="text-sm font-medium text-[#384959]">{item.prompt}</div>
-                              {item.why_it_matters && <div className="mt-1 text-xs text-[#6A89A7]">{item.why_it_matters}</div>}
+                              {item.why_it_matters && <div className="mt-1 text-xs text-muted">{item.why_it_matters}</div>}
                             </div>
                           ))}
                         </div>
@@ -1820,9 +1874,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                         <div className="mt-2 space-y-3">
                           {applicationPack.resume.bullet_upgrades.map((item, index) => (
                             <div key={index} className="rounded-lg border border-[#BDDDFC]/25 p-3">
-                              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Original</div>
-                              <p className="mt-1 text-sm text-[#6A89A7]">{item.original}</p>
-                              <div className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Rewrite</div>
+                              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Original</div>
+                              <p className="mt-1 text-sm text-muted">{item.original}</p>
+                              <div className="mt-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted">Rewrite</div>
                               <p className="mt-1 text-sm font-medium leading-relaxed text-[#384959]">{item.rewrite}</p>
                               {item.needs_user_fact && (
                                 <div className="mt-2 rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800">
@@ -1866,7 +1920,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                         <div className="mt-2 grid gap-4 md:grid-cols-2">
                           {(applicationPack.interview?.likely_questions || []).length > 0 && (
                             <div>
-                              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Likely Questions</div>
+                              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Likely Questions</div>
                               <ul className="mt-2 space-y-1.5 text-sm text-[#384959]">
                                 {applicationPack.interview.likely_questions.map((item, index) => <li key={index}>• {item}</li>)}
                               </ul>
@@ -1874,7 +1928,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                           )}
                           {(applicationPack.interview?.interviewer_questions || []).length > 0 && (
                             <div>
-                              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Ask Them</div>
+                              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Ask Them</div>
                               <ul className="mt-2 space-y-1.5 text-sm text-[#384959]">
                                 {applicationPack.interview.interviewer_questions.map((item, index) => <li key={index}>• {item}</li>)}
                               </ul>
@@ -1888,7 +1942,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               </div>
 
               <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
-                <span className="text-xs text-[#6A89A7]">
+                <span className="text-xs text-muted">
                   {applicationPack?.agent?.workflow || "application_pack_v1"}
                 </span>
                 {applicationPack ? (

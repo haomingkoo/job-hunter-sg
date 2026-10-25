@@ -258,14 +258,14 @@ export default function AuthModal({
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}>
       <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-8 relative">
-        {onClose && <button type="button" aria-label="Close" onClick={onClose} className="absolute top-4 right-4 text-[#6A89A7] hover:text-[#384959]"><X size={20} /></button>}
+        {onClose && <button type="button" aria-label="Close" onClick={onClose} className="absolute top-4 right-4 text-muted hover:text-[#384959]"><X size={20} /></button>}
         <div className="text-center mb-6">
           <div className="flex items-center justify-center gap-2 mb-2">
             <Icon size={24} className="text-[#384959]" />
             <h1 className="text-xl font-bold text-[#384959]">Job Hunter SG</h1>
           </div>
           <p className="text-sm font-medium text-[#384959]">{copy.title}</p>
-          <p className="text-xs text-[#6A89A7] mt-1">{copy.subtitle}</p>
+          <p className="text-xs text-muted mt-1">{copy.subtitle}</p>
         </div>
 
         {error && (
@@ -369,7 +369,7 @@ export default function AuthModal({
                 className="mt-0.5 h-4 w-4 shrink-0 accent-[#384959]"
                 required
               />
-              <span className="text-xs leading-relaxed text-[#6A89A7]">
+              <span className="text-xs leading-relaxed text-muted">
                 I agree to the{" "}
                 <button type="button" onClick={() => window.open(`${API_BASE}/api/terms`, "_blank")} className="font-medium text-[#384959] hover:underline">
                   Terms
@@ -397,7 +397,7 @@ export default function AuthModal({
         )}
 
         {(mode === "signup" || (authConfig.mode === "cloudflare" && (cloudflareIdentityReady || !authConfig.cloudflare_login_url))) && (
-          <p className="text-xs text-[#6A89A7] text-center mt-3">
+          <p className="text-xs text-muted text-center mt-3">
             This is a hobby project. Resume feedback, job matching, and alerts are informational and may be wrong.
           </p>
         )}
@@ -405,7 +405,7 @@ export default function AuthModal({
         {authConfig.mode === "password" && mode !== "verify" && mode !== "signup-sent" && (
         <div className="text-center mt-4 space-y-2">
           {mode === "login" && (
-            <button onClick={() => switchMode("forgot")} className="block w-full text-sm text-[#6A89A7] hover:text-[#384959] hover:underline">
+            <button onClick={() => switchMode("forgot")} className="block w-full text-sm text-muted hover:text-[#384959] hover:underline">
               Forgot password?
             </button>
           )}

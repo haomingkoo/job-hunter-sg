@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Plus, AlertCircle, ExternalLink, RefreshCw,
-  Loader2, Sparkles, FileText, MapPin, DollarSign, Building2,
+  Loader2, FileText, MapPin, DollarSign, Building2,
   Info, ShieldCheck, Target, Gauge, GraduationCap, Star, Clock3,
 } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
@@ -175,12 +175,11 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
       <div className="rounded-3xl border border-[#BDDDFC]/30 bg-[linear-gradient(135deg,_rgba(189,221,252,0.15)_0%,_rgba(255,255,255,1)_42%,_rgba(240,244,248,1)_100%)] p-6 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6A89A7]">Power Match</div>
+            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Power Match</div>
             <h2 className="mt-2 flex items-center gap-2 text-2xl font-semibold text-[#384959]">
-              <Sparkles size={20} />
               Suitability, gaps, and bridge paths
             </h2>
-            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[#6A89A7]">
+            <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">
               This view uses your latest stored resume snapshot. We show exactly which resume was used, what matched, what is missing, and where the job data itself is incomplete instead of guessing.
             </p>
           </div>
@@ -199,7 +198,7 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                 <ShieldCheck size={14} />
                 Hide known recruiters
               </button>
-              <p className="mt-1 max-w-56 text-[11px] leading-tight text-[#6A89A7]">
+              <p className="mt-1 max-w-56 text-[11px] leading-tight text-muted">
                 Verified direct and unverified employers remain eligible.
               </p>
             </div>
@@ -228,7 +227,7 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                 <Icon size={15} />
                 {label}
               </div>
-              <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">{detail}</div>
+              <div className="mt-2 text-xs leading-relaxed text-muted">{detail}</div>
             </div>
           ))}
         </div>
@@ -252,8 +251,8 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
 
       {loading && (
         <div className="text-center py-12">
-          <Loader2 size={32} className="animate-spin text-[#6A89A7] mx-auto" />
-          <p className="mt-3 text-sm text-[#6A89A7]">Building power matches from your stored resume...</p>
+          <Loader2 size={32} className="animate-spin text-muted mx-auto" />
+          <p className="mt-3 text-sm text-muted">Building power matches from your stored resume...</p>
         </div>
       )}
 
@@ -266,7 +265,7 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
       {!loading && !error && data && !data.resume_ready && (
         <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-6 shadow-sm">
           <div className="text-lg font-semibold text-[#384959]">Resume needed for Power Match</div>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[#6A89A7]">
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
             Upload or score a resume first. Once we have that version on file, we can shortlist roles, score suitability, and show the gaps worth bridging.
           </p>
           <button
@@ -287,16 +286,16 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm font-semibold text-[#384959]">Resume Snapshot Used</div>
-                  <div className="mt-1 text-xs text-[#6A89A7]">
+                  <div className="mt-1 text-xs text-muted">
                     {data.resume_source_label || "Latest stored resume"}
                     {resumeUpdatedLabel ? ` · updated ${resumeUpdatedLabel}` : ""}
                     {data.resume_word_count ? ` · ${data.resume_word_count.toLocaleString()} words` : ""}
                     {data.resume_snapshot ? ` · snapshot ${data.resume_snapshot}` : ""}
                   </div>
                   {data.resume_source_detail && (
-                    <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{data.resume_source_detail}</div>
+                    <div className="mt-1 text-xs leading-relaxed text-muted">{data.resume_source_detail}</div>
                   )}
-                  <div className="mt-2 text-xs leading-relaxed text-[#6A89A7]">
+                  <div className="mt-2 text-xs leading-relaxed text-muted">
                     {data.resume_signal_mode === "skill_corpus"
                       ? "Skills were matched against the roles in our current job dataset."
                       : "No trusted skill-corpus matches were detected in this stored resume yet."}
@@ -322,7 +321,7 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                     </span>
                   ))
                 ) : (
-                  <span className="rounded-xl bg-[#f0f4f8] px-3 py-2 text-xs leading-relaxed text-[#6A89A7]">
+                  <span className="rounded-xl bg-[#f0f4f8] px-3 py-2 text-xs leading-relaxed text-muted">
                     Add explicit tools, certifications, and domain skills to improve match quality.
                   </span>
                 )}
@@ -331,7 +330,7 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
 
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
               <div className="text-sm font-semibold text-[#384959]">Repeated Gaps</div>
-              <div className="mt-1 text-xs text-[#6A89A7]">These appear most often across the better-fit roles.</div>
+              <div className="mt-1 text-xs text-muted">These appear most often across the better-fit roles.</div>
               <div className="mt-4 space-y-2">
                 {(data.top_gaps || []).length > 0 ? data.top_gaps.map((gap) => (
                   <div key={gap.skill} className="flex items-center justify-between rounded-2xl bg-[#f0f4f8] px-3 py-2">
@@ -352,7 +351,7 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
           {data.recommended_queries?.length > 0 && (
             <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
               <div className="text-sm font-semibold text-[#384959]">Suggested Role Directions</div>
-              <div className="mt-1 text-xs text-[#6A89A7]">Useful titles to explore further while searching.</div>
+              <div className="mt-1 text-xs text-muted">Useful titles to explore further while searching.</div>
               <div className="mt-4 flex flex-wrap gap-2">
                 {data.recommended_queries.map((query) => (
                   <span key={query} className="rounded-full bg-[#BDDDFC]/10 px-3 py-1 text-sm text-[#384959]">
@@ -371,12 +370,12 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                     <GraduationCap size={16} />
                     Close The Gap
                   </div>
-                  <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
+                  <div className="mt-1 text-xs leading-relaxed text-muted">
                     Official MySkillsFuture courses mapped to repeated missing skills, ranked by relevance, rating, career impact, and response count.
                   </div>
                 </div>
                 {courseLoading && (
-                  <span className="inline-flex items-center gap-2 rounded-full bg-[#f0f4f8] px-3 py-1 text-xs text-[#6A89A7]">
+                  <span className="inline-flex items-center gap-2 rounded-full bg-[#f0f4f8] px-3 py-1 text-xs text-muted">
                     <Loader2 size={12} className="animate-spin" />
                     Finding courses
                   </span>
@@ -405,7 +404,7 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                       <div key={skill} className="rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
                         <div className="mb-3 flex items-center justify-between gap-3">
                           <div className="text-sm font-semibold text-[#384959]">{skill}</div>
-                          <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-[#6A89A7]">
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-muted">
                             {courses.length ? `${courses.length} course${courses.length === 1 ? "" : "s"}` : "No strong course match"}
                           </span>
                         </div>
@@ -420,22 +419,22 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                                 className="block rounded-2xl bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
                               >
                                 <div className="line-clamp-2 text-sm font-semibold leading-snug text-[#384959]">{course.title}</div>
-                                <div className="mt-1 line-clamp-1 text-xs text-[#6A89A7]">{course.provider || "Training provider n/a"}</div>
+                                <div className="mt-1 line-clamp-1 text-xs text-muted">{course.provider || "Training provider n/a"}</div>
                                 <div className="mt-3 flex flex-wrap gap-1.5">
                                   <RatingPill value={course.course_rating_stars} responses={course.course_rating_respondents} label="Course" />
                                   <RatingPill value={course.career_impact_stars} responses={course.career_impact_respondents} label="Impact" />
                                 </div>
-                                <div className="mt-3 flex flex-wrap gap-2 text-xs text-[#6A89A7]">
+                                <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted">
                                   <span className="inline-flex items-center gap-1"><DollarSign size={12} />{formatMoney(course.net_course_fee || course.full_course_fee)}</span>
                                   <span className="inline-flex items-center gap-1"><Clock3 size={12} />{formatHours(course.hours)}</span>
                                   <span className="inline-flex items-center gap-1"><ExternalLink size={12} />MySkillsFuture</span>
                                 </div>
-                                <div className="mt-2 text-[11px] leading-relaxed text-[#6A89A7]">{course.reason}</div>
+                                <div className="mt-2 text-[11px] leading-relaxed text-muted">{course.reason}</div>
                               </a>
                             ))}
                           </div>
                         ) : (
-                          <div className="rounded-xl bg-white px-3 py-3 text-sm text-[#6A89A7]">
+                          <div className="rounded-xl bg-white px-3 py-3 text-sm text-muted">
                             No high-confidence SkillsFuture course match for this gap yet. Try a more specific tool or certification keyword.
                           </div>
                         )}
@@ -460,18 +459,18 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                           {item.suitability_label}
                         </span>
                       </div>
-                      <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-[#6A89A7]">
+                      <div className="mt-2 flex flex-wrap items-center gap-4 text-sm text-muted">
                         <span className="flex items-center gap-1"><Building2 size={13} />{item.job.company}</span>
                         <span className="flex items-center gap-1"><MapPin size={13} />{item.job.location || "Location unavailable"}</span>
                         <span className="flex items-center gap-1"><DollarSign size={13} />{item.job.salary || "Salary unavailable"}</span>
                         <span>{item.job.employment_type || "Employment type unavailable"}</span>
                         {item.job.seniority && <span>{item.job.seniority}</span>}
                       </div>
-                      <div className="mt-3 text-sm leading-relaxed text-[#6A89A7]">{item.why}</div>
+                      <div className="mt-3 text-sm leading-relaxed text-muted">{item.why}</div>
                     </div>
 
                     <div className={`rounded-2xl border px-4 py-3 text-center shadow-sm ${theme.panel}`}>
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Suitability</div>
+                      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">Suitability</div>
                       <div className={`mt-1 text-3xl font-bold ${theme.text}`}>{item.suitability_score}</div>
                       <div className="mt-2 h-2 w-36 overflow-hidden rounded-full bg-white/80">
                         <div className={`h-full rounded-full ${theme.bar}`} style={{ width: `${item.suitability_score}%` }} />
@@ -482,27 +481,27 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                   <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.95fr)]">
                     <div className="space-y-4">
                       <div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Matched Skills</div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Matched Skills</div>
                         <div className="mt-2 flex flex-wrap gap-2">
                           {(item.matched_skills || []).length > 0 ? item.matched_skills.map((skill) => (
                             <span key={skill} className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">
                               {skill}
                             </span>
                           )) : (
-                            <span className="text-sm text-[#6A89A7]">No strong overlap detected yet.</span>
+                            <span className="text-sm text-muted">No strong overlap detected yet.</span>
                           )}
                         </div>
                       </div>
 
                       <div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6A89A7]">Missing Skills</div>
+                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Missing Skills</div>
                         <div className="mt-2 flex flex-wrap gap-2">
                           {(item.missing_skills || []).length > 0 ? item.missing_skills.map((skill) => (
                             <span key={skill} className="rounded-full bg-rose-100 px-2.5 py-1 text-xs font-medium text-rose-700">
                               {skill}
                             </span>
                           )) : (
-                            <span className="text-sm text-[#6A89A7]">No clear named gap surfaced on this role.</span>
+                            <span className="text-sm text-muted">No clear named gap surfaced on this role.</span>
                           )}
                         </div>
                       </div>
@@ -519,10 +518,10 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
                                 {bridge.pathway}
                               </span>
                             </div>
-                            <div className="mt-2 text-sm leading-relaxed text-[#6A89A7]">{bridge.suggestion}</div>
+                            <div className="mt-2 text-sm leading-relaxed text-muted">{bridge.suggestion}</div>
                           </div>
                         )) : (
-                          <div className="text-sm text-[#6A89A7]">
+                          <div className="text-sm text-muted">
                             No specific bridge path needed yet. This one already looks relatively aligned.
                           </div>
                         )}

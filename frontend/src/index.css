@@ -12,6 +12,25 @@
 @layer base {
   .font-display { font-family: 'DM Serif Display', Georgia, serif; }
   .font-body { font-family: 'DM Sans', system-ui, sans-serif; }
+
+  body {
+    font-family: 'DM Sans', system-ui, sans-serif;
+    color: #384959;
+    background: #f0f4f8;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection { background: #BDDDFC; color: #1f2831; }
+
+  /* One visible focus ring for every keyboard stop; inputs keep their own ring. */
+  :focus-visible {
+    outline: 2px solid #384959;
+    outline-offset: 2px;
+  }
+
+  input::placeholder,
+  textarea::placeholder { color: #5f7a94; opacity: 1; }
 }
 
 /* Shimmer skeleton loader animation */
