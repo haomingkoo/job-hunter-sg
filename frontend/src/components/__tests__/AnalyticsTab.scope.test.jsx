@@ -72,4 +72,28 @@ describe("AnalyticsTab sample scope", () => {
     expect(container.textContent).toContain("Roles analysed");
     expect(container.textContent).not.toContain("Sample roles analysed");
   });
+
+  it("shows a plain error with a retry that reloads the figures", async () => {
+    apiFetch.mockRejectedValueOnce(new Error("The server is temporarily unavailable. Please try again shortly."));
+    await act(async () => root.render(<AnalyticsTab />));
+
+    expect(container.querySelector("[role='alert']").textContent).toContain("Market insights could not load");
+    expect(container.textContent).toContain("The figures are not available right now.");
+
+    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent.includes("Try again"));
+    await act(async () => retry.click());
+    expect(container.querySelector("[role='alert']")).toBeNull();
+    expect(container.textContent).toContain("Sample roles analysed");
+  });
+
+  it("keeps the figures when only the trend query fails", async () => {
+    apiFetch.mockImplementation((url) => (url.includes("/trends?")
+      ? Promise.reject(new Error("The server is temporarily unavailable. Please try again shortly."))
+      : Promise.resolve({ ok: true, json: () => Promise.resolve(analyticsPayload(true)) })));
+    await act(async () => root.render(<AnalyticsTab />));
+
+    expect(container.querySelector("[role='alert']")).toBeNull();
+    expect(container.textContent).toContain("Sample roles analysed");
+    expect(container.textContent).not.toContain("Hiring trend");
+  });
 });
