@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Search, ArrowRight, Shield, Zap, MapPin, Building2, BarChart2 } from "lucide-react";
+import { Search, Building2, BarChart2 } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 
 const EASE_OUT = [0.23, 1, 0.32, 1];
@@ -74,11 +74,10 @@ function LatestRoles({ status, jobs, onNavigate }) {
   );
 }
 
-function Step({ number, title, children, action }) {
+function Task({ title, children, action }) {
   return (
     <div>
-      <div className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#BDDDFC]/50 text-[13px] font-bold text-[#384959]" aria-hidden="true">{number}</div>
-      <h3 className="font-display mt-4 text-[1.625rem] leading-tight tracking-[-0.01em] text-[#384959]">{title}</h3>
+      <h3 className="font-display text-[1.5rem] leading-tight tracking-[-0.01em] text-[#384959]">{title}</h3>
       <p className="mt-3 max-w-[46ch] text-[15px] leading-relaxed text-muted">{children}</p>
       {action}
     </div>
@@ -170,129 +169,25 @@ export default function HomePage({ onNavigate }) {
         <div className="mx-auto max-w-5xl">
           <h2 className="font-display text-[2rem] leading-tight tracking-[-0.015em] text-[#384959] sm:text-[2.5rem]">From search to application</h2>
 
-          <div className="mt-14 grid items-center gap-10 lg:grid-cols-2">
-            <Step
-              number="1"
-              title="Explore what's out there"
-              action={(
-                <button type="button" onClick={() => onNavigate("jobs")} className={`mt-5 ${primaryButton}`}>
-                  Search jobs <ArrowRight size={14} aria-hidden="true" />
-                </button>
-              )}
+          <div className="mt-12 grid gap-12 md:grid-cols-3 md:gap-10">
+            <Task
+              title="Search current roles"
+              action={<button type="button" onClick={() => onNavigate("jobs")} className={`mt-5 ${secondaryButton}`}>Search jobs</button>}
             >
-              Browse {count ? `${count} roles` : "live roles"} from Singapore's public job sources. Every listing shows the skills the employer asks for.
-            </Step>
-            <figure>
-              <div className="rounded-2xl border border-[#BDDDFC]/50 bg-[#f7fafc] p-5">
-                <div className="flex items-center gap-2 rounded-lg border border-[#BDDDFC]/40 bg-white px-3 py-2.5">
-                  <Search size={14} className="text-muted" aria-hidden="true" />
-                  <span className="text-[13px] text-muted">Software Engineer, Singapore</span>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {["Full-time", "3-5 yrs", "Technology", "$5K+"].map((t) => (
-                    <span key={t} className="rounded-full border border-[#BDDDFC]/60 bg-white px-2.5 py-0.5 text-[11px] font-medium text-[#384959]">{t}</span>
-                  ))}
-                </div>
-                <div className="mt-3 space-y-2">
-                  {[
-                    { t: "Senior Software Engineer", c: "DBS Bank", s: ["Python", "AWS", "SQL"], match: 92 },
-                    { t: "Data Analyst", c: "GovTech", s: ["Tableau", "Python"], match: 85 },
-                  ].map((j) => (
-                    <div key={j.t} className="rounded-xl border border-[#BDDDFC]/40 bg-white p-3.5">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="text-[13px] font-semibold text-[#384959]">{j.t}</div>
-                          <div className="mt-0.5 text-[12px] text-muted">{j.c}</div>
-                        </div>
-                        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold tabular-nums text-emerald-700">{j.match}%</span>
-                      </div>
-                      <div className="mt-2 flex gap-1">{j.s.map((s) => <span key={s} className="rounded bg-[#BDDDFC]/30 px-1.5 py-0.5 text-[10px] font-medium text-[#384959]">{s}</span>)}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <figcaption className="mt-2 text-xs text-muted">Illustrative example</figcaption>
-            </figure>
-          </div>
-
-          <div className="mt-20 grid items-center gap-10 lg:grid-cols-2">
-            <figure className="order-2 lg:order-1">
-              <div className="rounded-2xl border border-[#BDDDFC]/50 bg-[#f7fafc] p-6">
-                <div className="flex items-start gap-5">
-                  <div className="shrink-0 text-center">
-                    <div className="relative h-[72px] w-[72px]">
-                      <svg viewBox="0 0 36 36" className="h-[72px] w-[72px] -rotate-90" aria-hidden="true">
-                        <circle cx="18" cy="18" r="15.5" fill="none" stroke="#BDDDFC" strokeWidth="2.5" />
-                        <circle cx="18" cy="18" r="15.5" fill="none" stroke="#6A89A7" strokeWidth="2.5" strokeDasharray="85 100" strokeLinecap="round" />
-                      </svg>
-                      <span className="absolute inset-0 flex items-center justify-center text-xl font-bold tabular-nums text-[#384959]">87</span>
-                    </div>
-                    <div className="mt-1.5 text-[11px] font-semibold text-muted">Score</div>
-                  </div>
-                  <div className="flex-1 space-y-3 pt-1">
-                    {[
-                      { l: "Impact", p: 91, c: "bg-[#6A89A7]" },
-                      { l: "Presentation", p: 84, c: "bg-[#88BDF2]" },
-                      { l: "Competencies", p: 80, c: "bg-emerald-500" },
-                    ].map((d) => (
-                      <div key={d.l}>
-                        <div className="flex justify-between text-[12px]"><span className="text-muted">{d.l}</span><span className="font-bold tabular-nums text-[#384959]">{d.p}%</span></div>
-                        <div className="mt-1 h-2 rounded-full bg-[#BDDDFC]/40"><div className={`h-2 rounded-full ${d.c}`} style={{ width: `${d.p}%` }} /></div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <figcaption className="mt-2 text-xs text-muted">Illustrative example</figcaption>
-            </figure>
-            <div className="order-1 lg:order-2">
-              <Step
-                number="2"
-                title="See how ready you are"
-                action={(
-                  <button type="button" onClick={() => onNavigate("resume")} className={`mt-5 ${primaryButton}`}>
-                    Score my resume <ArrowRight size={14} aria-hidden="true" />
-                  </button>
-                )}
-              >
-                Upload your resume and see where you stand: what is working, what is missing, and what would close the gap.
-              </Step>
-            </div>
-          </div>
-
-          <div className="mt-20 grid items-center gap-10 lg:grid-cols-2">
-            <Step
-              number="3"
-              title="Apply with confidence"
-              action={(
-                <button type="button" onClick={() => onNavigate("resume")} className={`mt-5 ${primaryButton}`}>
-                  Tailor my resume <ArrowRight size={14} aria-hidden="true" />
-                </button>
-              )}
+              Browse {count ? `${count} roles` : "live roles"} from MyCareersFuture and Careers@Gov. Every listing shows the skills the employer asks for.
+            </Task>
+            <Task
+              title="Score your resume"
+              action={<button type="button" onClick={() => onNavigate("resume")} className={`mt-5 ${secondaryButton}`}>Score my resume</button>}
             >
-              Tailor your resume for each role, keeping every claim tied to your own experience. Download it and apply.
-            </Step>
-            <figure>
-              <div className="rounded-2xl border border-[#BDDDFC]/50 bg-[#f7fafc] p-5">
-                <div className="mb-3 flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] font-semibold text-emerald-800">Matched</span>
-                  {["Python", "Agile", "SQL", "AWS"].map((k) => <span key={k} className="rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-800">{k}</span>)}
-                </div>
-                <div className="mb-4 flex flex-wrap items-center gap-2">
-                  <span className="text-[11px] font-semibold text-rose-800">Gaps</span>
-                  {["Cloud", "CI/CD"].map((k) => <span key={k} className="rounded bg-rose-50 px-1.5 py-0.5 text-[11px] font-medium text-rose-800">{k}</span>)}
-                </div>
-                <div className="space-y-2">
-                  <div className="rounded-xl border border-[#BDDDFC]/50 bg-white p-3 text-[12px] leading-relaxed text-[#384959]">
-                    Led global Conversion Accelerator Program, integrating <strong>automation</strong> to optimise fab yield across 4 fabs...
-                  </div>
-                  <div className="rounded-xl border border-emerald-200 bg-white p-3 text-[12px] leading-relaxed text-[#384959]">
-                    Deployed <strong className="text-emerald-800">deep learning</strong> model (ResNet-50) for wafer misplacement detection, reducing downtime 40%...
-                  </div>
-                </div>
-              </div>
-              <figcaption className="mt-2 text-xs text-muted">Illustrative example</figcaption>
-            </figure>
+              Upload your resume and see which of a posting's keywords it already covers and which are missing.
+            </Task>
+            <Task
+              title="Tailor it to one posting"
+              action={<button type="button" onClick={() => onNavigate("resume")} className={`mt-5 ${secondaryButton}`}>Tailor my resume</button>}
+            >
+              Rewrite your resume for a specific role, keeping every claim tied to your own experience. Download it and apply.
+            </Task>
           </div>
         </div>
       </section>
@@ -300,16 +195,13 @@ export default function HomePage({ onNavigate }) {
       <section className="border-t border-[#BDDDFC]/50 bg-[#f0f4f8] px-6 py-14">
         <ul className="mx-auto grid max-w-5xl gap-8 sm:grid-cols-3">
           {[
-            { icon: MapPin, title: "Built for Singapore", desc: "Skills taxonomy and resume conventions tailored to the SG job market." },
-            { icon: Zap, title: "Scoring you can check", desc: "ATS keyword extraction and resume scoring that show which words matched." },
-            { icon: Shield, title: "Private and free", desc: "Signed-in resume uploads are saved as private versions you explicitly choose for analysis and tailoring." },
+            { title: "Built for Singapore", desc: "Skills taxonomy and resume conventions tailored to the SG job market." },
+            { title: "Scoring you can check", desc: "ATS keyword extraction and resume scoring that show which words matched." },
+            { title: "Private and free", desc: "Signed-in resume uploads are saved as private versions you explicitly choose for analysis and tailoring." },
           ].map((t) => (
-            <li key={t.title} className="flex items-start gap-3.5">
-              <t.icon size={18} strokeWidth={1.8} aria-hidden="true" className="mt-0.5 shrink-0 text-[#384959]" />
-              <div>
-                <h3 className="text-sm font-bold text-[#384959]">{t.title}</h3>
-                <p className="mt-1 max-w-[40ch] text-[13px] leading-relaxed text-muted">{t.desc}</p>
-              </div>
+            <li key={t.title}>
+              <h3 className="text-sm font-bold text-[#384959]">{t.title}</h3>
+              <p className="mt-1 max-w-[40ch] text-[13px] leading-relaxed text-muted">{t.desc}</p>
             </li>
           ))}
         </ul>
@@ -329,7 +221,7 @@ export default function HomePage({ onNavigate }) {
               onClick={() => onNavigate("jobs")}
               className="inline-flex min-h-11 items-center gap-2 rounded-full bg-[#88BDF2] px-7 py-3 text-sm font-bold text-[#1f2831] transition-[background-color,transform] duration-100 hover:bg-[#BDDDFC] active:scale-[0.97]"
             >
-              Search jobs <ArrowRight size={15} aria-hidden="true" />
+              Search jobs
             </button>
             <button
               type="button"
