@@ -181,10 +181,16 @@ def _resume_hash(resume_text: str) -> str:
 
 
 def _unsubscribe_secret() -> str:
-    secret = os.environ.get("ALERT_UNSUBSCRIBE_SECRET") or os.environ.get("JWT_SECRET")
+    secret = os.environ.get("ALERT_UNSUBSCRIBE_SECRET")
     if not secret:
-        raise RuntimeError("JWT_SECRET or ALERT_UNSUBSCRIBE_SECRET is required for unsubscribe links")
+        raise RuntimeError("ALERT_UNSUBSCRIBE_SECRET is required for unsubscribe links")
     return secret
+
+
+def _unsubscribe_verify_secrets() -> list[str]:
+    # TODO: remove ALERT_UNSUBSCRIBE_LEGACY_SECRET after 2026-12-25; it verifies links signed with the old JWT_SECRET.
+    legacy = os.environ.get("ALERT_UNSUBSCRIBE_LEGACY_SECRET")
+    return [_unsubscribe_secret(), *([legacy] if legacy else [])]
 
 
 def create_unsubscribe_token(user: User) -> str:
@@ -211,14 +217,15 @@ def verify_unsubscribe_token(token: str, db: Session) -> int | None:
     user = db.query(User).filter(User.id == user_id).populate_existing().first()
     if not user:
         return None
-    expected = hmac.new(
-        _unsubscribe_secret().encode("utf-8"),
-        f"{payload}:{user.api_key}".encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    if not hmac.compare_digest(signature, expected):
-        return None
-    return user_id
+    for secret in _unsubscribe_verify_secrets():
+        expected = hmac.new(
+            secret.encode("utf-8"),
+            f"{payload}:{user.api_key}".encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        if hmac.compare_digest(signature, expected):
+            return user_id
+    return None
 
 
 def _normalise_text(value: str) -> str:
