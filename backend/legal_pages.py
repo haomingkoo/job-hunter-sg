@@ -12,7 +12,8 @@ LEGAL_UPDATED = "25 October 2026"
 OPERATOR = "Koo Haoming (individual, Singapore)"
 
 
-def _page(title: str, body: str) -> str:
+def _page(title: str, body: str, contact_email: str) -> str:
+    contact = _mailto(contact_email)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -44,7 +45,20 @@ def _page(title: str, body: str) -> str:
     table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
     th, td {{ text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid #dbe7f3; }}
     .table-wrap {{ overflow-x: auto; }}
-    .updated {{ margin: 0 0 24px; color: #6a89a7; font-size: 13px; }}
+    .updated {{ margin: 0 0 24px; color: #4f6b85; font-size: 13px; }}
+    .site-header, .site-footer {{ background: #fff; border-color: #dbe7f3; border-style: solid; border-width: 0; }}
+    .site-header {{ border-bottom-width: 1px; }}
+    .site-footer {{ border-top-width: 1px; }}
+    .bar {{ max-width: 820px; margin: 0 auto; padding: 0 28px; display: flex; flex-wrap: wrap;
+      align-items: center; justify-content: space-between; gap: 4px 16px; }}
+    .site-header .bar {{ min-height: 56px; }}
+    .site-header a {{ color: #384959; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; min-height: 44px; }}
+    .site-header a:hover {{ text-decoration: underline; }}
+    .site-footer .bar {{ padding-top: 16px; padding-bottom: 16px; color: #4f6b85; font-size: 13px; }}
+    .site-footer p {{ margin: 0; font-size: 13px; }}
+    .site-footer nav {{ display: flex; flex-wrap: wrap; gap: 4px 16px; }}
+    .site-footer a {{ color: #4f6b85; }}
+    a:focus-visible {{ outline: 2px solid #2563eb; outline-offset: 2px; border-radius: 2px; }}
     .notice {{
       margin-top: 22px;
       padding: 14px 16px;
@@ -55,11 +69,22 @@ def _page(title: str, body: str) -> str:
       font-size: 14px;
     }}
     @media (max-width: 700px) {{
-      main {{ margin: 0; min-height: 100vh; border: 0; border-radius: 0; padding: 22px; }}
+      main {{ margin: 0; border: 0; border-radius: 0; padding: 22px; }}
+      .bar {{ padding-left: 22px; padding-right: 22px; }}
     }}
   </style>
 </head>
-<body><main>{body}</main></body>
+<body>
+<header class="site-header"><div class="bar">
+  <a href="/">Job Hunter SG</a>
+  <a href="/#jobs">Search jobs</a>
+</div></header>
+<main>{body}</main>
+<footer class="site-footer"><div class="bar">
+  <p>Job Hunter SG is run by {OPERATOR}.</p>
+  <nav aria-label="Legal"><a href="/api/privacy">Privacy</a><a href="/api/terms">Terms</a>{contact}</nav>
+</div></footer>
+</body>
 </html>"""
 
 
@@ -149,7 +174,7 @@ amount you paid to use the service in the three months before the claim, or SGD 
 <p>For questions, privacy requests, or support, email {contact}.</p>
 
 """
-    return _page("Terms of Service", body)
+    return _page("Terms of Service", body, contact_email)
 
 
 def render_privacy_html(contact_email: str, *, llm_tracing_enabled: bool = False) -> str:
@@ -300,4 +325,4 @@ that a job application does not need.</p>
 tell signed-in users in the app or by email.</p>
 
 """
-    return _page("Privacy Notice", body)
+    return _page("Privacy Notice", body, contact_email)
