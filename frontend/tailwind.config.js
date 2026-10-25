@@ -4,8 +4,14 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Secondary text on white and #f0f4f8 (>=5:1); #6A89A7 measured 3.3-3.6:1.
+        // Tokens from DESIGN.md. muted is >=5:1 on white and paper.
         muted: "#4f6b85",
+        ink: "#384959",
+        paper: "#f0f4f8",
+        line: "#d3dde7",
+        field: "#6f88a0",
+        accent: { DEFAULT: "#1f5f99", hover: "#184d7d" },
+        tint: "#e8f1fa",
       },
       animation: {
         shimmer: "shimmer 1.8s ease-in-out infinite",

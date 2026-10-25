@@ -324,7 +324,7 @@ export default function AnalyticsTab() {
         <StatTile icon={Briefcase} label={data?.partial ? "Sample roles analysed" : "Roles analysed"} value={data?.total_jobs_with_terms ? formatNumber(data.total_jobs_with_terms) : "..."} />
         <StatTile icon={Tags} label="Skill terms" value={data?.skill_signal_count ? formatNumber(data.skill_signal_count) : "..."} />
         <StatTile icon={Building2} label="Hiring orgs" value={data?.company_count ? formatNumber(data.company_count) : "..."} />
-        <StatTile icon={ShieldCheck} label="Industry mapped" value={`${industryMappedPercent}%`} />
+        <StatTile icon={ShieldCheck} label="Industry mapped" value={data?.total_jobs_with_terms ? `${industryMappedPercent}%` : "..."} />
       </div>
 
       <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">

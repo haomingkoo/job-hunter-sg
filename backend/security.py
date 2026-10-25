@@ -107,8 +107,7 @@ class SecurityHeadersMiddleware:
     """Add browser hardening headers without buffering response bodies."""
 
     _INLINE_SCRIPT_HASHES = (
-        "'sha256-dcTEVEoKdqF+uPHaS+qqc2wX5aL9IJ/t7LB/pZgrnms='",  # pragma: allowlist secret
-        "'sha256-MUR+DfZdT3WqUYsRBvg17GSufh4pf36A2/35CsV5Gts='",  # pragma: allowlist secret
+        "'sha256-uZQ3XdLIQb9SuDAr+hp7Za8ZdV+xUb2iLkf2WxG8U2A='",  # pragma: allowlist secret
     )
     _CONTENT_SECURITY_POLICY = (
         "default-src 'self'; base-uri 'self'; object-src 'none'; "

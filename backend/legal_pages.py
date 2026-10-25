@@ -20,69 +20,81 @@ def _page(title: str, body: str, contact_email: str) -> str:
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{html.escape(title)} - Job Hunter SG</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <style>
+    @font-face {{ font-family: "DM Sans"; font-weight: 400; font-display: swap; src: url("/fonts/dm-sans-latin-400-normal.woff2") format("woff2"); }}
+    @font-face {{ font-family: "DM Sans"; font-weight: 600; font-display: swap; src: url("/fonts/dm-sans-latin-600-normal.woff2") format("woff2"); }}
+    @font-face {{ font-family: "DM Sans"; font-weight: 700; font-display: swap; src: url("/fonts/dm-sans-latin-700-normal.woff2") format("woff2"); }}
     :root {{ color-scheme: light; }}
     body {{
       margin: 0;
-      background: #f6f9fc;
-      color: #243447;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f0f4f8;
+      color: #384959;
+      font-family: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
       line-height: 1.65;
     }}
     main {{
-      max-width: 820px;
+      max-width: 760px;
       margin: 32px auto;
-      padding: 28px;
+      padding: 32px;
       background: #fff;
-      border: 1px solid #dbe7f3;
-      border-radius: 12px;
+      border: 1px solid #d3dde7;
+      border-radius: 16px;
     }}
-    h1 {{ margin: 0 0 4px; font-size: 28px; color: #243447; }}
-    h2 {{ margin: 28px 0 8px; font-size: 18px; color: #243447; }}
-    p, li {{ font-size: 15px; }}
+    h1 {{ margin: 0 0 4px; font-size: 28px; line-height: 1.2; color: #384959; }}
+    h2 {{ margin: 32px 0 8px; font-size: 18px; color: #384959; }}
+    p, li {{ font-size: 16px; max-width: 70ch; }}
     ul {{ padding-left: 22px; }}
-    a {{ color: #2563eb; }}
+    a {{ color: #1f5f99; text-underline-offset: 2px; }}
     table {{ width: 100%; border-collapse: collapse; font-size: 14px; }}
-    th, td {{ text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid #dbe7f3; }}
+    th, td {{ text-align: left; vertical-align: top; padding: 8px; border-bottom: 1px solid #d3dde7; }}
     .table-wrap {{ overflow-x: auto; }}
-    .updated {{ margin: 0 0 24px; color: #4f6b85; font-size: 13px; }}
-    .site-header, .site-footer {{ background: #fff; border-color: #dbe7f3; border-style: solid; border-width: 0; }}
+    .updated {{ margin: 0 0 24px; color: #4f6b85; font-size: 14px; }}
+    .site-header, .site-footer {{ background: #fff; border: 0 solid #d3dde7; }}
     .site-header {{ border-bottom-width: 1px; }}
     .site-footer {{ border-top-width: 1px; }}
-    .bar {{ max-width: 820px; margin: 0 auto; padding: 0 28px; display: flex; flex-wrap: wrap;
-      align-items: center; justify-content: space-between; gap: 4px 16px; }}
-    .site-header .bar {{ min-height: 56px; }}
-    .site-header a {{ color: #384959; text-decoration: none; font-weight: 600; display: inline-flex; align-items: center; min-height: 44px; }}
-    .site-header a:hover {{ text-decoration: underline; }}
-    .site-footer .bar {{ padding-top: 16px; padding-bottom: 16px; color: #4f6b85; font-size: 13px; }}
-    .site-footer p {{ margin: 0; font-size: 13px; }}
-    .site-footer nav {{ display: flex; flex-wrap: wrap; gap: 4px 16px; }}
-    .site-footer a {{ color: #4f6b85; }}
-    a:focus-visible {{ outline: 2px solid #2563eb; outline-offset: 2px; border-radius: 2px; }}
+    .bar {{ max-width: 1280px; margin: 0 auto; padding: 0 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }}
+    .site-header .bar {{ min-height: 56px; justify-content: space-between; }}
+    .site-header a {{ color: #4f6b85; text-decoration: none; font-size: 14px; font-weight: 500;
+      display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; }}
+    .site-header a:hover {{ color: #384959; }}
+    .site-header .wordmark {{ color: #384959; font-size: 16px; font-weight: 700; padding: 0; }}
+    .site-header nav {{ display: flex; flex-wrap: wrap; }}
+    .site-header .primary {{ background: #1f5f99; color: #fff; border-radius: 6px; font-weight: 600; padding: 0 16px; min-height: 40px; }}
+    .site-header .primary:hover {{ background: #184d7d; color: #fff; }}
+    .site-footer .bar {{ padding-top: 20px; padding-bottom: 20px; color: #4f6b85; font-size: 14px; gap: 4px 8px; }}
+    .site-footer a {{ color: #4f6b85; display: inline-flex; align-items: center; min-height: 24px; }}
+    .site-footer a:hover {{ color: #384959; }}
+    a:focus-visible {{ outline: 2px solid #1f5f99; outline-offset: 2px; border-radius: 2px; }}
     .notice {{
       margin-top: 22px;
       padding: 14px 16px;
-      border: 1px solid #fde68a;
+      border: 1px solid #f3d38a;
       background: #fffbeb;
       border-radius: 10px;
-      color: #854d0e;
-      font-size: 14px;
+      color: #92400e;
+      font-size: 15px;
     }}
-    @media (max-width: 700px) {{
-      main {{ margin: 0; border: 0; border-radius: 0; padding: 22px; }}
-      .bar {{ padding-left: 22px; padding-right: 22px; }}
+    @media (max-width: 760px) {{
+      main {{ margin: 0; border: 0; border-radius: 0; padding: 24px 16px; }}
+      .bar {{ padding-left: 16px; padding-right: 16px; }}
+      .site-header nav {{ order: 3; width: 100%; margin: 0 -12px; }}
     }}
   </style>
 </head>
 <body>
 <header class="site-header"><div class="bar">
-  <a href="/">Job Hunter SG</a>
-  <a href="/#jobs">Search jobs</a>
+  <a class="wordmark" href="/">Job Hunter SG</a>
+  <nav aria-label="Sections"><a href="/#jobs">Jobs</a><a href="/#resume">Resume</a><a href="/#tracker">Applications</a><a href="/#account">Account</a></nav>
+  <a class="primary" href="/#jobs">Search jobs</a>
 </div></header>
 <main>{body}</main>
 <footer class="site-footer"><div class="bar">
-  <p>Job Hunter SG is run by {OPERATOR}.</p>
-  <nav aria-label="Legal"><a href="/api/privacy">Privacy</a><a href="/api/terms">Terms</a>{contact}</nav>
+  <span>© 2026 Haoming Koo</span><span aria-hidden="true">·</span>
+  <a href="/api/privacy">Privacy</a><span aria-hidden="true">·</span>
+  <a href="/api/terms">Terms</a><span aria-hidden="true">·</span>
+  <span>Contact ({contact})</span><span aria-hidden="true">·</span>
+  <span>More projects → <a href="https://kooexperience.com/">kooexperience.com</a></span>
 </div></footer>
 </body>
 </html>"""

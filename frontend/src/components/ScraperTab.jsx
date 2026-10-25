@@ -1,30 +1,22 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Search, Plus, ChevronRight, Clock, AlertCircle,
-  ExternalLink, Filter, Loader2, FileText,
-  MapPin, DollarSign, Building2, X, SlidersHorizontal,
-  PanelLeftClose, PanelLeftOpen, CheckCircle2, Bot, Copy,
+  Search, Plus, ChevronRight, AlertCircle,
+  ExternalLink, Loader2, FileText,
+  DollarSign, X, SlidersHorizontal,
+  PanelLeftClose, PanelLeftOpen, CheckCircle2, Copy,
   RefreshCw,
 } from "lucide-react";
 import { apiFetch, downloadBlob } from "../lib/api.js";
-import { todayStr } from "../lib/helpers.js";
+import { displayJobTitle, formatPostingDate, todayStr } from "../lib/helpers.js";
 import { buildJobSkillDisplay, normalizeJobTermLabels } from "../lib/jobSkillHelpers.js";
 import JobCardSkeleton from "./JobCardSkeleton.jsx";
 import InterviewPrep from "./InterviewPrep.jsx";
 
-const ARCHETYPE_COLORS = {
-  Builder: "bg-amber-50 text-amber-700 border-amber-200",
-  Scaler: "bg-blue-50 text-blue-700 border-blue-200",
-  Operator: "bg-slate-100 text-slate-700 border-slate-200",
-  Specialist: "bg-purple-50 text-purple-700 border-purple-200",
-  Leader: "bg-emerald-50 text-emerald-700 border-emerald-200",
-};
-
 const ARCHIVE_REASON_COPY = {
-  source_retired: "No longer present in a completed source crawl.",
-  age_retired: "Retired after it was not refreshed for 30 days.",
-  closing_date: "Closing date has passed.",
+  source_retired: "The job site no longer lists it.",
+  age_retired: "Removed after 30 days without an update.",
+  closing_date: "The closing date has passed.",
 };
 
 const EMPLOYMENT_TYPE_GROUPS = [
@@ -128,18 +120,18 @@ const formatApplicationPack = (pack) => {
   return lines.join("\n");
 };
 
-const filterOptionClass = (active) => `flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg cursor-pointer transition text-sm ${active ? "bg-[#BDDDFC]/20 text-[#384959] font-medium" : "text-[#384959] hover:bg-[#BDDDFC]/10"}`;
+const filterOptionClass = (active) => `flex min-h-9 items-center gap-2.5 rounded-md px-2.5 py-1.5 cursor-pointer transition-colors text-sm text-ink ${active ? "bg-tint font-medium" : "hover:bg-tint/60"}`;
 
 const FilterOption = ({ name, active, onChange, children }) => (
   <label className={filterOptionClass(active)}>
-    <input type="radio" name={name} checked={active} onChange={onChange} className="w-3.5 h-3.5 accent-[#384959]" />
+    <input type="radio" name={name} checked={active} onChange={onChange} className="h-4 w-4 accent-[#1f5f99]" />
     {children}
   </label>
 );
 
 const CheckboxFilter = ({ active, onChange, children }) => (
   <label className={filterOptionClass(active)}>
-    <input type="checkbox" checked={active} onChange={onChange} className="w-3.5 h-3.5 accent-[#384959] rounded" />
+    <input type="checkbox" checked={active} onChange={onChange} className="h-4 w-4 rounded accent-[#1f5f99]" />
     {children}
   </label>
 );
@@ -148,8 +140,8 @@ export const trackedWorkspaceFor = (trackedJobs, job) => (trackedJobs || []).fin
   tracked.scraped_job_id != null && String(tracked.scraped_job_id) === String(job.id)
 ));
 
-export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, setSelectedJob, onSignIn }) {
-  const [query, setQuery] = useState("");
+export default function ScraperTab({ user, initialQuery = "", trackedJobs, onTrack, setActiveTab, setSelectedJob, onSignIn }) {
+  const [query, setQuery] = useState(initialQuery);
   const [submittedQuery, setSubmittedQuery] = useState("");
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -215,7 +207,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
   const [applicationPackCopied, setApplicationPackCopied] = useState(false);
 
   useEffect(() => {
-    loadJobs("");
+    loadJobs(initialQuery);
     return () => jobsRequestRef.current.controller?.abort();
   }, []);
 
@@ -327,9 +319,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       setExpandedJobId(null);
       const totalCountValue = Number(data.total);
       const totalCount = Number.isFinite(totalCountValue) && totalCountValue >= 0 ? totalCountValue : mapped.length;
-      const total = activeView === "expired"
-        ? `${Math.max(totalCount, 0).toLocaleString()} known expired postings`
-        : `${Math.max(totalCount, 0).toLocaleString()} unique active postings`;
+      const countText = Math.max(totalCount, 0).toLocaleString("en-SG");
+      const plural = totalCount === 1 ? "" : "s";
+      const total = activeView === "expired" ? `${countText} expired job${plural}` : `${countText} job${plural}`;
       setTotalLabel(total);
     } catch (err) {
       if (controller.signal.aborted || jobsRequestRef.current.id !== requestId) return;
@@ -739,31 +731,9 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
   const sidebarContent = (
     <div className="space-y-5">
-      <div>
-        <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Search</label>
-        <div className="flex gap-2">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Role, skill, company..."
-            aria-label="Search jobs"
-            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-            className="flex-1 border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2] bg-white"
-          />
-          <button
-            onClick={handleSearch}
-            disabled={loading}
-            className="flex items-center justify-center bg-[#384959] text-white px-3 py-2 rounded-lg text-sm hover:bg-[#2d3a47] disabled:opacity-40 transition"
-            aria-label="Search"
-          >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
-          </button>
-        </div>
-      </div>
-
       {(filterMeta.sources || []).length > 0 && (
         <div>
-          <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Data Source</label>
+          <h3 className="mb-2 text-sm font-semibold text-ink">Source</h3>
           <div className="space-y-0.5">
             <FilterOption
               name="source"
@@ -786,7 +756,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 }}
               >
                 <span className="flex-1">{source.label || source.value}</span>
-                <span className="text-[11px] tabular-nums text-muted">{Number(source.count || 0).toLocaleString()}</span>
+                <span className="text-xs tabular-nums text-muted">{Number(source.count || 0).toLocaleString()}</span>
               </FilterOption>
             ))}
           </div>
@@ -794,7 +764,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       )}
 
       <div>
-        <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Employer Type</label>
+        <h3 className="mb-2 text-sm font-semibold text-ink">Employer type</h3>
         <button
           type="button"
           onClick={() => {
@@ -805,25 +775,23 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             loadJobs(activeSearchQuery, 1, { directEmployersOnly: next, minMatchScore: "" });
           }}
           aria-pressed={directEmployersOnly}
-          className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition active:scale-[0.99] ${
-            directEmployersOnly
-              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-              : "border-[#BDDDFC]/30 bg-white text-[#384959] hover:bg-[#f0f4f8]"
+          className={`flex min-h-10 w-full items-center justify-between gap-3 rounded-md border px-3 text-left text-sm font-medium text-ink transition-colors ${
+            directEmployersOnly ? "border-accent bg-tint" : "border-field bg-white hover:bg-tint"
           }`}
         >
           <span>Hide known recruiters</span>
-          <span className={`h-5 w-9 rounded-full p-0.5 transition ${directEmployersOnly ? "bg-emerald-600" : "bg-[#BDDDFC]"}`}>
+          <span aria-hidden="true" className={`h-5 w-9 rounded-full p-0.5 transition-colors ${directEmployersOnly ? "bg-accent" : "bg-field"}`}>
             <span className={`block h-4 w-4 rounded-full bg-white transition-transform ${directEmployersOnly ? "translate-x-4" : "translate-x-0"}`} />
           </span>
         </button>
-        <p className="mt-1.5 text-[11px] leading-tight text-muted">
+        <p className="mt-1.5 text-xs leading-snug text-muted">
           Verified direct and unverified employers remain eligible.
         </p>
       </div>
 
       {user && jobsView === "active" && (
         <div>
-          <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Minimum Power Match</label>
+          <label className="block text-sm font-semibold text-ink mb-1.5">Minimum Power Match score</label>
           <select
             aria-label="Minimum Power Match score"
             value={minMatchScore}
@@ -833,7 +801,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               setMinMatchScore(next);
               loadJobs(activeSearchQuery, 1, { minMatchScore: next });
             }}
-            className="w-full rounded-lg border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+            className="min-h-10 w-full rounded-md border border-field bg-white px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
           >
             <option value="">Any score</option>
             <option value="35">35+ · Stretch</option>
@@ -841,13 +809,13 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             <option value="75">75+ · Strong</option>
           </select>
           {powerMatch?.status !== "ready" && (
-            <p className="mt-1.5 text-[11px] leading-tight text-muted">Generate scores for this resume, corpus, and employer mode first.</p>
+            <p className="mt-1.5 text-xs leading-snug text-muted">Generate scores for this resume, corpus, and employer mode first.</p>
           )}
         </div>
       )}
 
       <div>
-        <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Seniority</label>
+        <h3 className="mb-2 text-sm font-semibold text-ink">Seniority</h3>
         <div className="space-y-0.5">
           {levelOptions.map(({ value, label }) => {
             const active = levelFilter === value;
@@ -871,7 +839,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
       {employmentTypeOptions.length > 0 && (
         <div>
-          <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Job Type</label>
+          <h3 className="mb-2 text-sm font-semibold text-ink">Job type</h3>
           <div className="space-y-0.5">
             {employmentTypeOptions.map((option) => {
               const active = employmentFilter.has(option.value);
@@ -896,14 +864,14 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
       {(filterMeta.sectors || []).length > 0 && (
         <div>
-          <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Industry</label>
+          <h3 className="mb-2 text-sm font-semibold text-ink">Industry</h3>
           <div className="space-y-0.5">
             <FilterOption
               name="sector"
               active={!sectorFilter}
               onChange={() => { setSectorFilter(""); loadJobs(activeSearchQuery, 1, { sectorFilter: "" }); }}
             >
-              All Industries
+              All industries
             </FilterOption>
             {filterMeta.sectors.slice(0, 12).map((s) => (
               <FilterOption
@@ -921,7 +889,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
       {locationOptions.length > 0 && (
         <div>
-          <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Location</label>
+          <h3 className="mb-2 text-sm font-semibold text-ink">Location</h3>
           <div className="space-y-0.5">
             {locationOptions.map((location) => {
               const active = locationFilter.has(location.value);
@@ -937,7 +905,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   }}
                 >
                   <span className="flex-1">{location.label || location.value}</span>
-                  <span className="text-[11px] tabular-nums text-muted">{Number(location.count || 0).toLocaleString()}</span>
+                  <span className="text-xs tabular-nums text-muted">{Number(location.count || 0).toLocaleString()}</span>
                 </CheckboxFilter>
               );
             })}
@@ -946,7 +914,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       )}
 
       <div>
-        <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Experience</label>
+        <h3 className="mb-2 text-sm font-semibold text-ink">Experience</h3>
         <div className="space-y-0.5">
           {["0-2 yrs", "3-5 yrs", "6-10 yrs", "10+ yrs"].map((label) => {
             const active = expYearsFilter.has(label);
@@ -967,14 +935,14 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           })}
         </div>
         {expYearsFilter.size > 0 && (
-          <p className="mt-1.5 text-[11px] text-muted leading-tight">
+          <p className="mt-1.5 text-xs leading-snug text-muted">
             Jobs without a stated requirement stay visible.
           </p>
         )}
       </div>
 
       <div>
-        <label htmlFor="jobs-min-salary" className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Minimum Salary</label>
+        <label htmlFor="jobs-min-salary" className="block text-sm font-semibold text-ink mb-1.5">Minimum monthly salary</label>
         <div className="flex items-center gap-2">
           <DollarSign size={14} className="text-muted flex-shrink-0" />
           <input
@@ -988,20 +956,20 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               if (e.key === "Enter") loadJobs(activeSearchQuery, 1, { minSalaryFilter });
             }}
             placeholder="e.g. 4000"
-            className="flex-1 border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
+            className="min-h-10 flex-1 rounded-md border border-field bg-white px-3 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
           />
         </div>
         {minSalaryFilter && (
-          <p className="mt-1.5 text-[11px] text-muted leading-tight">
+          <p className="mt-1.5 text-xs leading-snug text-muted">
             Jobs with no salary posted stay visible.
           </p>
         )}
       </div>
 
       <div>
-        <label className="block text-xs font-semibold text-muted uppercase tracking-wide mb-2">Posted date</label>
+        <h3 className="mb-2 text-sm font-semibold text-ink">Posted date</h3>
         <div className="grid grid-cols-2 gap-2">
-          <label className="min-w-0 text-[11px] text-muted">
+          <label className="min-w-0 text-xs text-muted">
             From
             <input
               type="date"
@@ -1013,10 +981,10 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 setPostedFromFilter(next);
                 loadJobs(activeSearchQuery, 1, { postedFromFilter: next });
               }}
-              className="mt-1 w-full min-w-0 rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-2 text-xs text-[#384959]"
+              className="mt-1 w-full min-w-0 rounded-md border border-field bg-white px-2 py-2 text-xs text-ink"
             />
           </label>
-          <label className="min-w-0 text-[11px] text-muted">
+          <label className="min-w-0 text-xs text-muted">
             To
             <input
               type="date"
@@ -1028,7 +996,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 setPostedToFilter(next);
                 loadJobs(activeSearchQuery, 1, { postedToFilter: next });
               }}
-              className="mt-1 w-full min-w-0 rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-2 text-xs text-[#384959]"
+              className="mt-1 w-full min-w-0 rounded-md border border-field bg-white px-2 py-2 text-xs text-ink"
             />
           </label>
         </div>
@@ -1036,7 +1004,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
-          <label className="text-xs font-semibold uppercase tracking-wide text-muted">Scraped date</label>
+          <h3 className="text-sm font-semibold text-ink">Date added</h3>
           <button
             type="button"
             onClick={() => {
@@ -1045,17 +1013,17 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               setScrapedToFilter(today);
               loadJobs(activeSearchQuery, 1, { scrapedFromFilter: today, scrapedToFilter: today });
             }}
-            className="rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-1 text-[11px] font-medium text-[#384959] hover:bg-[#f0f4f8]"
+            className="min-h-9 rounded-md border border-field bg-white px-2.5 text-xs font-medium text-ink hover:bg-tint"
           >
-            Scraped today
+            Added today
           </button>
         </div>
         <div className="grid grid-cols-2 gap-2">
-          <label className="min-w-0 text-[11px] text-muted">
+          <label className="min-w-0 text-xs text-muted">
             From
             <input
               type="date"
-              aria-label="Scraped from"
+              aria-label="Added from"
               value={scrapedFromFilter}
               max={scrapedToFilter || undefined}
               onChange={(event) => {
@@ -1063,14 +1031,14 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 setScrapedFromFilter(next);
                 loadJobs(activeSearchQuery, 1, { scrapedFromFilter: next });
               }}
-              className="mt-1 w-full min-w-0 rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-2 text-xs text-[#384959]"
+              className="mt-1 w-full min-w-0 rounded-md border border-field bg-white px-2 py-2 text-xs text-ink"
             />
           </label>
-          <label className="min-w-0 text-[11px] text-muted">
+          <label className="min-w-0 text-xs text-muted">
             To
             <input
               type="date"
-              aria-label="Scraped to"
+              aria-label="Added to"
               value={scrapedToFilter}
               min={scrapedFromFilter || undefined}
               onChange={(event) => {
@@ -1078,14 +1046,14 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 setScrapedToFilter(next);
                 loadJobs(activeSearchQuery, 1, { scrapedToFilter: next });
               }}
-              className="mt-1 w-full min-w-0 rounded-lg border border-[#BDDDFC]/30 bg-white px-2 py-2 text-xs text-[#384959]"
+              className="mt-1 w-full min-w-0 rounded-md border border-field bg-white px-2 py-2 text-xs text-ink"
             />
           </label>
         </div>
       </div>
 
       <div>
-        <label htmlFor="jobs-sort" className="block text-xs font-semibold text-muted uppercase tracking-wide mb-1.5">Sort By</label>
+        <label htmlFor="jobs-sort" className="block text-sm font-semibold text-ink mb-1.5">Sort by</label>
         <select
           id="jobs-sort"
           value={sortBy}
@@ -1093,7 +1061,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             setSortBy(e.target.value);
             loadJobs(activeSearchQuery, 1, { sortBy: e.target.value });
           }}
-          className="w-full text-sm border border-[#BDDDFC]/30 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#BDDDFC] focus:border-[#88BDF2]"
+          className="min-h-10 w-full rounded-md border border-field bg-white px-3 text-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
         >
           <option value="balanced">Best mix</option>
           <option value="newest">Newest first</option>
@@ -1104,7 +1072,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       {activeFilterCount > 0 && (
         <button
           onClick={clearFilters}
-          className="w-full text-sm font-medium text-muted border border-[#BDDDFC]/30 rounded-lg px-3 py-2 bg-white hover:bg-[#f0f4f8] transition"
+          className="min-h-10 w-full rounded-md border border-field bg-white px-3 text-sm font-medium text-ink transition-colors hover:bg-tint"
         >
           Clear all filters ({activeFilterCount})
         </button>
@@ -1112,93 +1080,76 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
     </div>
   );
 
+  const isTracked = (job) => trackedJobIds.has(job.id) || trackedJobIds.has(`${job.title}|${job.company}`.toLowerCase());
+
   return (
     <div className="space-y-4">
-      <div className="rounded-2xl bg-white border border-[#BDDDFC]/25 p-6 shadow-sm">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <div>
-              <h1 className="font-bold tracking-[-0.01em] text-[#384959] text-xl">Singapore Jobs</h1>
-              <p className="text-sm text-muted">
-                {jobsView === "expired"
-                  ? "Inspect listings with a known expiry reason. Application actions are disabled."
-                  : "Browse jobs from MyCareersFuture and Careers@Gov."}
-              </p>
-            </div>
-          </div>
-          <div className="inline-flex w-full rounded-lg bg-[#f0f4f8] p-1 sm:w-auto" aria-label="Job listing view">
-            {[{ value: "active", label: "Active jobs" }, { value: "expired", label: "Expired archive" }].map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                aria-pressed={jobsView === option.value}
-                onClick={() => {
-                  setJobsView(option.value);
-                  loadJobs(activeSearchQuery, 1, { jobsView: option.value });
-                }}
-                className={`flex-1 whitespace-nowrap rounded-md px-3 py-2 text-xs font-semibold transition sm:flex-none ${jobsView === option.value ? "bg-white text-[#384959] shadow-sm" : "text-muted hover:text-[#384959]"}`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="mt-4 rounded-lg border border-[#88BDF2]/20 bg-[#BDDDFC]/10 px-3 py-2 text-xs text-[#384959]">
-          <strong>Beta.</strong> Free to use, with 500 AI requests a day to cover hosting and API costs. Job data refreshes nightly.
-        </div>
-        {user && jobsView === "active" && (
-          <div className="mt-4 flex flex-col gap-3 rounded-xl border border-[#BDDDFC]/30 bg-[#f7fafc] p-3 sm:flex-row sm:items-center sm:justify-between" data-testid="browse-power-match-state">
-            <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">Power Match scores</div>
-              <p className="mt-1 text-xs text-muted">
-                {powerMatch?.message || "Checking for scores saved for this exact resume and job view."}
-              </p>
-              {powerError && <p className="mt-1 text-xs text-red-600">{powerError}</p>}
-            </div>
-            <button
-              type="button"
-              onClick={generateBrowseScores}
-              disabled={powerGenerating}
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[#384959] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-            >
-              {powerGenerating ? <Loader2 size={14} className="animate-spin" /> : powerMatch?.status === "ready" ? <RefreshCw size={14} /> : null}
-              {powerGenerating ? "Generating..." : (powerMatch?.generate_action || "Generate Power Match scores")}
-            </button>
-          </div>
-        )}
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl font-bold tracking-[-0.01em] text-ink">
+          {jobsView === "expired" ? "Expired jobs" : "Singapore jobs"}
+        </h1>
+        <p className="text-sm text-muted">
+          {jobsView === "expired"
+            ? "Postings that have closed or left their source. You can read them but not apply."
+            : "Current postings from MyCareersFuture and Careers@Gov. New jobs are added every night."}
+        </p>
       </div>
 
-      <div className="lg:hidden space-y-2">
-        <form
-          role="search"
-          className="flex gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            handleSearch();
-          }}
+      <form
+        role="search"
+        className="flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          handleSearch();
+        }}
+      >
+        <label htmlFor="jobs-search" className="sr-only">Search jobs</label>
+        <input
+          id="jobs-search"
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Role, skill or company"
+          enterKeyHint="search"
+          className="min-h-11 min-w-0 flex-1 rounded-md border border-field bg-white px-3 text-base text-ink focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
+        />
+        <button
+          type="submit"
+          disabled={loading}
+          className="inline-flex min-h-11 shrink-0 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:opacity-60"
         >
-          <input
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Role, skill, company..."
-            aria-label="Search jobs"
-            enterKeyHint="search"
-            className="min-h-11 min-w-0 flex-1 rounded-lg border border-[#BDDDFC]/60 bg-white px-3 text-sm focus:border-[#88BDF2] focus:outline-none focus:ring-2 focus:ring-[#BDDDFC]"
-          />
+          {loading ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Search size={16} aria-hidden="true" />}
+          <span className="hidden sm:inline">Search</span>
+          <span className="sr-only sm:hidden">Search</span>
+        </button>
+      </form>
+
+      {user && jobsView === "active" && (
+        <div className="flex flex-col gap-3 rounded-[10px] border border-line bg-white p-4 sm:flex-row sm:items-center sm:justify-between" data-testid="browse-power-match-state">
+          <div>
+            <h2 className="text-sm font-semibold text-ink">Power Match scores</h2>
+            <p className="mt-1 text-sm text-muted">
+              {powerMatch?.message || "Checking for scores saved for this exact resume and job view."}
+            </p>
+            {powerError && <p className="mt-1 text-sm text-[#b42318]" role="alert">{powerError}</p>}
+          </div>
           <button
-            type="submit"
-            disabled={loading}
-            aria-label="Search"
-            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[#384959] text-white transition hover:bg-[#2d3a47] active:scale-[0.97] disabled:opacity-40"
+            type="button"
+            onClick={generateBrowseScores}
+            disabled={powerGenerating}
+            className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-md border border-field bg-white px-4 text-sm font-medium text-ink transition-colors hover:bg-tint disabled:opacity-60"
           >
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
+            {powerGenerating ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : powerMatch?.status === "ready" ? <RefreshCw size={14} aria-hidden="true" /> : null}
+            {powerGenerating ? "Generating..." : (powerMatch?.generate_action || "Generate Power Match scores")}
           </button>
-        </form>
+        </div>
+      )}
+
+      <div className="lg:hidden">
         <button
           type="button"
           onClick={() => setSidebarOpen(true)}
-          className="flex min-h-11 items-center gap-2 border border-[#BDDDFC]/60 bg-white rounded-lg px-4 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] transition w-full justify-center"
+          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-field bg-white px-4 text-sm font-medium text-ink transition-colors hover:bg-tint"
         >
           <SlidersHorizontal size={16} aria-hidden="true" />
           Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
@@ -1206,19 +1157,19 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
       </div>
 
       {sidebarOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 bg-black/30" onClick={() => setSidebarOpen(false)} />
-          <div className="absolute inset-y-0 left-0 w-full max-w-sm bg-[#f0f4f8] shadow-xl overflow-y-auto">
-            <div className="sticky top-0 bg-[#f0f4f8] border-b border-[#BDDDFC]/30 px-5 py-3 flex items-center justify-between z-10">
-              <span className="text-sm font-semibold text-[#384959] flex items-center gap-2">
-                <Filter size={14} /> Filters
-              </span>
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Filters" onKeyDown={(event) => event.key === "Escape" && setSidebarOpen(false)}>
+          <div className="absolute inset-0 bg-black/40" onClick={() => setSidebarOpen(false)} />
+          <div className="absolute inset-y-0 left-0 w-full max-w-sm overflow-y-auto bg-white shadow-xl">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-line bg-white px-5 py-2">
+              <h2 className="text-base font-semibold text-ink">Filters</h2>
               <button
+                type="button"
                 onClick={() => setSidebarOpen(false)}
-                className="inline-flex h-11 w-11 items-center justify-center rounded-lg hover:bg-[#BDDDFC]/20 transition text-muted"
+                className="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted transition-colors hover:bg-tint hover:text-ink"
                 aria-label="Close filters"
+                autoFocus
               >
-                <X size={18} />
+                <X size={18} aria-hidden="true" />
               </button>
             </div>
             <div className="p-5">
@@ -1228,40 +1179,36 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         </div>
       )}
 
-      <div className="flex gap-6 items-start">
-        <aside className={`hidden lg:block flex-shrink-0 sticky top-20 max-h-[calc(100vh-5rem)] overscroll-contain transition-all duration-200 ${sidebarCollapsed ? "w-12 overflow-visible" : "w-[280px] overflow-y-auto pr-1"}`}>
+      <div className="flex items-start gap-6">
+        <aside className={`sticky top-20 hidden max-h-[calc(100vh-6rem)] flex-shrink-0 overscroll-contain lg:block ${sidebarCollapsed ? "w-12 overflow-visible" : "w-[272px] overflow-y-auto pr-1"}`}>
           {sidebarCollapsed ? (
-            <div className="bg-[#f0f4f8] border border-[#BDDDFC]/30 rounded-xl p-2 shadow-sm flex flex-col items-center gap-3">
+            <div className="flex flex-col items-center gap-2 rounded-[10px] border border-line bg-white p-1">
               <button
+                type="button"
                 onClick={() => setSidebarCollapsed(false)}
-                className="p-2 rounded-lg hover:bg-[#BDDDFC]/20 transition text-muted"
-                aria-label="Expand filters"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-md text-muted transition-colors hover:bg-tint hover:text-ink"
+                aria-label="Show filters"
               >
-                <PanelLeftOpen size={16} />
+                <PanelLeftOpen size={16} aria-hidden="true" />
               </button>
-              <Filter size={14} className="text-muted" />
               {activeFilterCount > 0 && (
-                <span className="bg-[#BDDDFC]/30 text-[#384959] text-[11px] font-bold px-1.5 py-0.5 rounded-full">
-                  {activeFilterCount}
-                </span>
+                <span className="pb-1 text-xs font-semibold tabular-nums text-ink" aria-label={`${activeFilterCount} filters on`}>{activeFilterCount}</span>
               )}
             </div>
           ) : (
-            <div className="bg-[#f0f4f8] border border-[#BDDDFC]/30 rounded-xl p-4 shadow-sm">
-              <div className="flex items-center gap-2 mb-4 pb-3 border-b border-[#BDDDFC]/30">
-                <Filter size={14} className="text-muted" />
-                <span className="text-sm font-semibold text-[#384959]">Filters</span>
+            <div className="rounded-[10px] border border-line bg-white p-4">
+              <div className="mb-4 flex items-center gap-2 border-b border-line pb-2">
+                <h2 className="text-base font-semibold text-ink">Filters</h2>
                 {activeFilterCount > 0 && (
-                  <span className="ml-auto bg-[#BDDDFC]/30 text-[#384959] text-[11px] font-bold px-1.5 py-0.5 rounded-full">
-                    {activeFilterCount}
-                  </span>
+                  <span className="text-sm tabular-nums text-muted">({activeFilterCount} on)</span>
                 )}
                 <button
+                  type="button"
                   onClick={() => setSidebarCollapsed(true)}
-                  className="ml-auto p-1 rounded-lg hover:bg-[#BDDDFC]/20 transition text-muted"
-                  aria-label="Collapse filters"
+                  className="ml-auto inline-flex h-10 w-10 items-center justify-center rounded-md text-muted transition-colors hover:bg-tint hover:text-ink"
+                  aria-label="Hide filters"
                 >
-                  <PanelLeftClose size={14} />
+                  <PanelLeftClose size={16} aria-hidden="true" />
                 </button>
               </div>
               {sidebarContent}
@@ -1269,40 +1216,58 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           )}
         </aside>
 
-        <div className="flex-1 min-w-0 space-y-4">
-          {totalLabel && (
-            <div className="space-y-1">
-              <p className="text-sm text-muted">
-                <span className="font-medium text-[#384959]">{totalLabel}</span>
-                {activeSearchQuery ? ` matching "${activeSearchQuery}"` : " across Singapore"}
-                {results.length > 0 && totalPages > 1 && ` · page ${page} of ${totalPages}`}
-              </p>
-              {(postedFromFilter || postedToFilter || scrapedFromFilter || scrapedToFilter) && (
-                <p className="text-xs text-muted" aria-live="polite">
-                  {dateRangeLabel(postedFromFilter, postedToFilter) && `Posted ${dateRangeLabel(postedFromFilter, postedToFilter)}`}
-                  {dateRangeLabel(postedFromFilter, postedToFilter) && dateRangeLabel(scrapedFromFilter, scrapedToFilter) && " · "}
-                  {dateRangeLabel(scrapedFromFilter, scrapedToFilter) && `Scraped ${dateRangeLabel(scrapedFromFilter, scrapedToFilter)}`}
-                </p>
+        <div className="min-w-0 flex-1 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <p className="text-sm text-muted" aria-live="polite">
+              {totalLabel && (
+                <>
+                  <span className="font-semibold tabular-nums text-ink">{totalLabel}</span>
+                  {activeSearchQuery ? ` matching "${activeSearchQuery}"` : ""}
+                  {results.length > 0 && totalPages > 1 && <span className="tabular-nums">{` · page ${page} of ${totalPages.toLocaleString("en-SG")}`}</span>}
+                </>
               )}
+            </p>
+            <div className="inline-flex rounded-md border border-field bg-white p-0.5" role="group" aria-label="Job listing view">
+              {[{ value: "active", label: "Current jobs" }, { value: "expired", label: "Expired archive" }].map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={jobsView === option.value}
+                  onClick={() => {
+                    setJobsView(option.value);
+                    loadJobs(activeSearchQuery, 1, { jobsView: option.value });
+                  }}
+                  className={`min-h-9 whitespace-nowrap rounded px-3 text-xs font-semibold transition-colors ${jobsView === option.value ? "bg-ink text-white" : "text-muted hover:text-ink"}`}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
+          </div>
+          {(postedFromFilter || postedToFilter || scrapedFromFilter || scrapedToFilter) && (
+            <p className="text-xs text-muted">
+              {dateRangeLabel(postedFromFilter, postedToFilter) && `Posted ${dateRangeLabel(postedFromFilter, postedToFilter)}`}
+              {dateRangeLabel(postedFromFilter, postedToFilter) && dateRangeLabel(scrapedFromFilter, scrapedToFilter) && " · "}
+              {dateRangeLabel(scrapedFromFilter, scrapedToFilter) && `Added ${dateRangeLabel(scrapedFromFilter, scrapedToFilter)}`}
+            </p>
           )}
 
           {loading && <JobCardSkeleton count={5} />}
 
           {!loading && error && (
-            <div className="rounded-xl border border-red-200 bg-white px-6 py-10 text-center" role="alert">
-              <AlertCircle size={28} aria-hidden="true" className="mx-auto mb-3 text-red-500" />
-              <p className="font-semibold text-[#384959]">Jobs could not load</p>
+            <div className="rounded-[10px] border border-line bg-white px-6 py-10 text-center" role="alert">
+              <AlertCircle size={24} aria-hidden="true" className="mx-auto mb-3 text-[#b42318]" />
+              <p className="font-semibold text-ink">Jobs could not load</p>
               <p className="mx-auto mt-1 max-w-md text-sm text-muted">
                 {/internal server error|bad gateway|service unavailable|gateway timeout/i.test(error)
-                  ? "The job search service is not responding."
+                  ? "The job search is not responding right now."
                   : error}
               </p>
               <p className="mx-auto mt-1 max-w-md text-sm text-muted">Your search and filters are kept.</p>
               <button
                 type="button"
                 onClick={() => loadJobs(activeSearchQuery, page)}
-                className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-lg bg-[#384959] px-5 text-sm font-medium text-white transition hover:bg-[#2d3a47] active:scale-[0.97]"
+                className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-md bg-accent px-5 text-sm font-semibold text-white transition-colors hover:bg-accent-hover"
               >
                 <RefreshCw size={14} aria-hidden="true" /> Try again
               </button>
@@ -1310,28 +1275,32 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
           )}
 
           {trackError && (
-            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center gap-2">
-              <AlertCircle size={14} className="flex-shrink-0" />{trackError}
+            <div className="flex items-center gap-2 rounded-md border border-[#b42318]/30 bg-white p-3 text-sm text-[#b42318]" role="alert">
+              <AlertCircle size={14} className="flex-shrink-0" aria-hidden="true" />{trackError}
             </div>
           )}
 
           {!loading && !error && results.length === 0 && (
-            <div className="rounded-xl border border-[#BDDDFC]/40 bg-white px-6 py-12 text-center text-muted">
-              <Search size={28} aria-hidden="true" className="mx-auto mb-3 text-[#6A89A7]" />
-              <p className="mx-auto max-w-md">{jobsView === "expired"
-                ? "No known expired jobs match these filters."
-                : query ? "No jobs matched your search. Try broader keywords." : "No jobs available yet. Please check back later."}</p>
+            <div className="rounded-[10px] border border-line bg-white px-6 py-12 text-center">
+              <p className="font-semibold text-ink">
+                {jobsView === "expired" ? "No expired jobs match these filters." : query ? "No jobs match that search." : "No jobs to show yet."}
+              </p>
+              <p className="mx-auto mt-1 max-w-md text-sm text-muted">
+                {jobsView === "expired"
+                  ? "Try removing a filter."
+                  : query ? (activeFilterCount > 0 ? "Try fewer or broader words, or clear the filters." : "Try fewer or broader words.") : "New jobs are added every night. Check back tomorrow."}
+              </p>
+              {activeFilterCount > 0 && (
+                <button type="button" onClick={clearFilters} className="mt-4 min-h-11 text-sm font-semibold text-accent underline-offset-2 hover:underline">
+                  Clear all filters
+                </button>
+              )}
             </div>
           )}
 
-          {!loading && (
-          <motion.div
-            initial="hidden"
-            animate="visible"
-            variants={{ visible: { transition: { staggerChildren: 0.04 } } }}
-            className="space-y-4"
-          >
-          {results.map((job, index) => {
+          {!loading && results.length > 0 && (
+          <ul className="space-y-3">
+          {results.map((job) => {
             const isExpanded = expandedJobId === job.id;
             const skillDisplay = buildJobSkillDisplay(job.jobTermsPreview?.length ? job.jobTermsPreview : job.skills, job.description);
             const parsedMeta = parsedJobMeta[job.id] || null;
@@ -1342,225 +1311,208 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               job.description,
             );
             const effectiveSkillDisplay = parsedDisplay.visibleSkills.length > 0 ? parsedDisplay : skillDisplay;
-            const previewSkills = effectiveSkillDisplay.visibleSkills.slice(0, 6);
+            const previewSkills = effectiveSkillDisplay.visibleSkills.slice(0, 5);
             const summaryText = (parsedMeta?.jdSummary || job.jdSummary || "").trim();
             const longCueLoad = Boolean(parsedMeta?.loading && parsedMeta?.stalled);
             const cuesWereAlreadyChecked = Boolean(job.jobTermsPreviewReady || parsedMeta?.previewReady);
-            const scrapedDate = formatScrapedDate(job.scrapedAt);
+            const addedDate = formatScrapedDate(job.scrapedAt);
+            const postedDate = formatPostingDate(job.posted);
+            const tracked = isTracked(job);
+            const facts = [
+              job.company,
+              job.location,
+              job.level,
+              job.experienceYears && `${job.experienceYears} yrs experience`,
+            ].filter(Boolean);
+            const meta = [
+              job.source,
+              postedDate && `Posted ${postedDate}`,
+              addedDate && `Added ${addedDate}`,
+              job.type,
+            ].filter(Boolean);
 
             return (
-            <motion.div
-              key={job.id}
-              variants={{ hidden: { opacity: 0, y: 16 }, visible: { opacity: 1, y: 0 } }}
-              whileHover={{ y: -2, boxShadow: "0 8px 24px rgba(56,73,89,0.08)" }}
-              transition={{ duration: 0.25 }}
-              onClick={() => toggleExpandedJob(job.id)}
-              className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5 transition cursor-pointer"
-            >
-              <div className="flex justify-between items-start">
-                <div className="flex-1">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2 mb-1" data-testid={`job-badge-row-${job.id}`}>
-                    <h3 className="min-w-0 break-words font-semibold text-[#384959]">
+            <li key={job.id} className="rounded-[10px] border border-line bg-white">
+              <div className="p-4 sm:p-5">
+                <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1">
+                  <h3 className="min-w-0 text-base font-semibold leading-6 text-ink">
+                    <button
+                      type="button"
+                      aria-expanded={isExpanded}
+                      aria-controls={`job-details-${job.id}`}
+                      onClick={() => toggleExpandedJob(job.id)}
+                      className="line-clamp-2 rounded-sm text-left [overflow-wrap:anywhere] underline-offset-2 hover:underline"
+                    >
+                      {displayJobTitle(job.title)}
+                    </button>
+                  </h3>
+                  {job.salary ? (
+                    <p className="whitespace-nowrap text-right text-sm font-semibold tabular-nums text-ink">{job.salary}</p>
+                  ) : <span />}
+                  <p className="col-span-2 text-sm text-muted [overflow-wrap:anywhere]">{facts.join(" · ")}</p>
+                </div>
+
+                {(summaryText || job.description) && !isExpanded && (
+                  <p className="mt-2 line-clamp-2 max-w-[75ch] text-sm leading-relaxed text-muted">{summaryText || job.description}</p>
+                )}
+                {!isExpanded && previewSkills.length > 0 && (
+                  <p className="mt-2 text-sm text-muted">
+                    <span className="font-medium text-ink">Skills: </span>
+                    {previewSkills.join(", ")}
+                    {effectiveSkillDisplay.visibleSkills.length > previewSkills.length && `, +${effectiveSkillDisplay.visibleSkills.length - previewSkills.length} more`}
+                  </p>
+                )}
+
+                {jobsView === "expired" && (
+                  <div className="mt-3 rounded-md border border-[#92400e]/25 bg-[#fffbeb] px-3 py-2 text-sm text-[#92400e]">
+                    <p className="font-medium">{ARCHIVE_REASON_COPY[job.archiveReason] || "This listing has expired."}</p>
+                    <p className="mt-1">
+                      {job.lastSeen && `Last seen ${formatScrapedDate(job.lastSeen)}`}
+                      {job.retiredAt && ` · Removed ${formatScrapedDate(job.retiredAt)}`}
+                      {!job.retiredAt && job.closingDate && ` · Closed ${job.closingDate}`}
+                    </p>
+                  </div>
+                )}
+
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+                  <p className="text-xs tabular-nums text-muted">
+                    {meta.join(" · ")}
+                    {Number.isFinite(job.powerMatchScore) && (
+                      <span data-testid={`power-match-score-${job.id}`}>{` · Power Match ${job.powerMatchScore} (${job.powerMatchLabel})`}</span>
+                    )}
+                  </p>
+                  <div className="flex items-center gap-1">
+                    {jobsView === "active" && (tracked ? (
+                      <span className="inline-flex min-h-9 items-center gap-1 px-2 text-sm font-medium text-[#166534]">
+                        <CheckCircle2 size={14} aria-hidden="true" /> Saved
+                      </span>
+                    ) : (
                       <button
                         type="button"
-                        aria-expanded={isExpanded}
-                        aria-controls={`job-details-${job.id}`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          toggleExpandedJob(job.id);
-                        }}
-                        className="rounded text-left hover:underline hover:underline-offset-2"
+                        onClick={() => trackJob(job)}
+                        className="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-sm font-medium text-accent transition-colors hover:bg-tint"
                       >
-                        {job.title}
+                        <Plus size={14} aria-hidden="true" /> Save
                       </button>
-                    </h3>
-                    {job.level && <span className="shrink-0 text-[11px] bg-[#f0f4f8] text-muted px-2 py-0.5 rounded-full">{job.level}</span>}
-                    {jobsView === "expired" && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">Expired</span>}
-                    {job.sector && job.sector !== "Other" && (
-                      <span
-                        title={job.companySsicSource === "acra" ? `${job.companySsicCode} ${job.companySsicDescription}` : "Inferred sector"}
-                        className={`shrink-0 text-[11px] border px-2 py-0.5 rounded-full ${job.companySsicSource === "acra" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-violet-50 text-violet-700 border-violet-200"}`}
-                      >
-                        {job.sector}
-                      </span>
-                    )}
-                    {job.archetype && job.archetype !== "Generalist" && <span className={`shrink-0 text-[11px] border px-2 py-0.5 rounded-full ${ARCHETYPE_COLORS[job.archetype] || "bg-gray-50 text-gray-600 border-gray-200"}`}>{job.archetype}</span>}
-                    {Number.isFinite(job.powerMatchScore) && (
-                      <span className="shrink-0 text-[11px] border border-indigo-200 bg-indigo-50 px-2 py-0.5 rounded-full font-semibold text-indigo-700" data-testid={`power-match-score-${job.id}`}>
-                        {job.powerMatchScore} · {job.powerMatchLabel}
-                      </span>
-                    )}
-                    {(trackedJobIds.has(job.id) || trackedJobIds.has(`${job.title}|${job.company}`.toLowerCase())) && <span className="flex shrink-0 items-center gap-0.5 rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[11px] text-emerald-700"><CheckCircle2 size={10} />Tracked</span>}
-                    <ChevronRight size={14} aria-hidden="true" className={`ml-auto shrink-0 text-muted transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                    ))}
+                    <button
+                      type="button"
+                      aria-expanded={isExpanded}
+                      aria-controls={`job-details-${job.id}`}
+                      onClick={() => toggleExpandedJob(job.id)}
+                      className="inline-flex min-h-9 items-center gap-1 rounded-md px-2 text-sm font-medium text-ink transition-colors hover:bg-tint"
+                    >
+                      {isExpanded ? "Hide details" : "Details"}
+                      <ChevronRight size={14} aria-hidden="true" className={`transition-transform ${isExpanded ? "-rotate-90" : "rotate-90"}`} />
+                    </button>
                   </div>
-                  <div className="flex items-center gap-4 text-sm text-muted mb-2 flex-wrap">
-                    <span className="flex items-center gap-1"><Building2 size={13} />{job.company}</span>
-                    {job.location && <span className="flex items-center gap-1"><MapPin size={13} />{job.location}</span>}
-                    {job.salary && <span className="flex items-center gap-1"><DollarSign size={13} />{job.salary}</span>}
-                    {job.experienceYears && <span className="flex items-center gap-1"><Clock size={13} />{job.experienceYears} yrs</span>}
-                  </div>
-                  {(summaryText || job.description) && !isExpanded && (
-                    <p className="text-sm text-muted mb-3 line-clamp-2">{summaryText || job.description}</p>
-                  )}
-                  {!isExpanded && previewSkills.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mb-3">
-                      {previewSkills.map((skill) => (
-                        <span key={skill} className="bg-[#BDDDFC]/15 text-[#384959] px-2 py-0.5 rounded-full text-xs">{skill}</span>
-                      ))}
-                      {effectiveSkillDisplay.visibleSkills.length > previewSkills.length && <span className="text-xs text-muted">+{effectiveSkillDisplay.visibleSkills.length - previewSkills.length} more</span>}
-                    </div>
-                  )}
-                  {jobsView === "expired" && (
-                    <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
-                      <p className="font-medium">{ARCHIVE_REASON_COPY[job.archiveReason] || "This listing has expired."}</p>
-                      <p className="mt-1 text-amber-800">
-                        {job.lastSeen && `Last seen ${formatScrapedDate(job.lastSeen)}`}
-                        {job.retiredAt && ` · Retired ${formatScrapedDate(job.retiredAt)}`}
-                        {!job.retiredAt && job.closingDate && ` · Closed ${job.closingDate}`}
-                      </p>
-                    </div>
-                  )}
                 </div>
               </div>
-              <AnimatePresence>
+
               {isExpanded && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.25 }}
-                  className="overflow-hidden"
-                  id={`job-details-${job.id}`}
-                >
-                <div className="mt-4 rounded-2xl border border-[#BDDDFC]/20 bg-[#f0f4f8] p-4">
-                  {summaryText && (
-                    <>
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Job Summary</div>
-                      <p className="mt-2 max-w-[75ch] text-sm leading-relaxed text-[#384959]">{summaryText}</p>
-                      <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Full Description</div>
-                    </>
-                  )}
-                  {!summaryText && <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Description</div>}
-                  {job.description ? (
-                    <p className="mt-2 max-w-[75ch] whitespace-pre-line text-sm leading-relaxed text-[#384959]">{job.description}</p>
+                <div id={`job-details-${job.id}`} className="border-t border-line bg-paper/60 px-4 py-4 sm:px-5">
+                  {jobsView === "expired" ? (
+                    <p className="text-sm font-medium text-[#92400e]">This job has closed, so you can no longer apply.</p>
                   ) : (
-                    <p className="mt-2 text-sm text-muted">
-                      This source did not provide a structured description in our cache.
-                      {job.url && " Open the listing to inspect the full posting."}
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+                      <button
+                        type="button"
+                        onClick={() => generateResume(job)}
+                        className="inline-flex min-h-10 items-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-hover"
+                      >
+                        <FileText size={14} aria-hidden="true" /> Tailor resume
+                      </button>
+                      <button type="button" onClick={() => openCoverLetterModal(job)} className="inline-flex min-h-10 items-center rounded-md px-3 text-sm font-medium text-accent transition-colors hover:bg-tint">
+                        Cover letter
+                      </button>
+                      <button type="button" onClick={() => openApplicationPackModal(job)} className="inline-flex min-h-10 items-center rounded-md px-3 text-sm font-medium text-accent transition-colors hover:bg-tint">
+                        Application pack
+                      </button>
+                      {job.url && (
+                        <a href={job.url} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-1 rounded-md px-3 text-sm font-medium text-accent transition-colors hover:bg-tint">
+                          Open on {job.source || "source site"} <ExternalLink size={13} aria-hidden="true" />
+                          <span className="sr-only">(opens in a new tab)</span>
+                        </a>
+                      )}
+                    </div>
+                  )}
+
+                  {job.sector && job.sector !== "Other" && (
+                    <p className="mt-4 text-sm text-muted">
+                      <span className="font-medium text-ink">Industry: </span>
+                      {job.sector}
+                      {job.companySsicSource === "acra" ? " (from the company's ACRA registration)" : " (estimated from the posting)"}
                     </p>
                   )}
 
-                  <div className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Skills Found</div>
+                  {summaryText && (
+                    <>
+                      <h4 className="mt-4 text-sm font-semibold text-ink">Summary</h4>
+                      <p className="mt-1 max-w-[75ch] text-sm leading-relaxed text-ink">{summaryText}</p>
+                    </>
+                  )}
+                  <h4 className="mt-4 text-sm font-semibold text-ink">{summaryText ? "Full description" : "Description"}</h4>
+                  {job.description ? (
+                    <p className="mt-1 max-w-[75ch] whitespace-pre-line text-sm leading-relaxed text-ink [overflow-wrap:anywhere]">{job.description}</p>
+                  ) : (
+                    <p className="mt-1 text-sm text-muted">
+                      This posting has no description here.
+                      {job.url && " Open it on the source site to read the full posting."}
+                    </p>
+                  )}
+
+                  <h4 className="mt-4 text-sm font-semibold text-ink">Skills in this posting</h4>
                   {effectiveSkillDisplay.visibleSkills.length > 0 ? (
                     <>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {effectiveSkillDisplay.visibleSkills.map((skill) => (
-                          <span key={skill} className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-[#384959] ring-1 ring-[#BDDDFC]/30">
-                            {skill}
-                          </span>
-                        ))}
-                      </div>
-                      <div className="mt-3 text-xs text-muted">
-                        {parsedDisplay.visibleSkills.length > 0
-                          ? `${effectiveSkillDisplay.visibleSkills.length} useful term${effectiveSkillDisplay.visibleSkills.length === 1 ? "" : "s"} found in the job description.`
-                          : `${effectiveSkillDisplay.visibleSkills.length} useful term${effectiveSkillDisplay.visibleSkills.length === 1 ? "" : "s"} found in ${effectiveSkillDisplay.sourceTagCount} source tag${effectiveSkillDisplay.sourceTagCount === 1 ? "" : "s"}.`}
-                      </div>
+                      <p className="mt-1 max-w-[75ch] text-sm leading-relaxed text-ink">{effectiveSkillDisplay.visibleSkills.join(", ")}</p>
                       {effectiveSkillDisplay.hiddenStudyAreas.length > 0 && (
-                        <div className="mt-2 text-xs text-amber-700">
-                          Hidden: {effectiveSkillDisplay.hiddenStudyAreas.length} broad category label{effectiveSkillDisplay.hiddenStudyAreas.length === 1 ? "" : "s"} like {effectiveSkillDisplay.hiddenStudyAreas.slice(0, 2).join(", ")}.
-                        </div>
+                        <p className="mt-2 text-xs text-muted">
+                          Left out {effectiveSkillDisplay.hiddenStudyAreas.length} broad label{effectiveSkillDisplay.hiddenStudyAreas.length === 1 ? "" : "s"} such as {effectiveSkillDisplay.hiddenStudyAreas.slice(0, 2).join(", ")}.
+                        </p>
                       )}
                     </>
                   ) : parsedMeta?.loading && !longCueLoad && !cuesWereAlreadyChecked ? (
-                    <div className="mt-2 flex items-center gap-2 text-sm text-muted">
-                      <Loader2 size={14} className="animate-spin" />
-                      Reading job description...
-                    </div>
+                    <p className="mt-1 flex items-center gap-2 text-sm text-muted">
+                      <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                      Reading the job description...
+                    </p>
                   ) : parsedMeta?.loading && longCueLoad && !cuesWereAlreadyChecked ? (
-                    <div className="mt-2 text-sm text-muted">
-                      Skill extraction is taking longer than expected. Collapse and reopen the card to retry, or open the full listing.
-                    </div>
+                    <p className="mt-1 text-sm text-muted">
+                      This is taking longer than usual. Close and reopen the details to try again, or open the posting.
+                    </p>
                   ) : parsedMeta?.error ? (
-                    <div className="mt-2 text-sm text-muted">
-                      {parsedMeta.error}
-                    </div>
+                    <p className="mt-1 text-sm text-muted">{parsedMeta.error}</p>
                   ) : cuesWereAlreadyChecked ? (
-                    <div className="mt-2 text-sm text-muted">
-                      We checked this posting but did not find enough reliable skill terms to show yet.
-                    </div>
+                    <p className="mt-1 text-sm text-muted">We read this posting but found no clear skills to list.</p>
                   ) : job.skills.length > 0 ? (
-                    <div className="mt-2 text-sm text-muted">
-                      This listing only exposed broad tags, so no focused skill terms are shown.
-                    </div>
+                    <p className="mt-1 text-sm text-muted">This posting only lists broad categories, so no specific skills are shown.</p>
                   ) : (
-                    <div className="mt-2 text-sm text-muted">
-                      No reliable skill terms were found for this posting yet.
-                    </div>
+                    <p className="mt-1 text-sm text-muted">No clear skills were found in this posting.</p>
                   )}
-                </div>
-                </motion.div>
-              )}
-              </AnimatePresence>
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-t border-[#BDDDFC]/20 pt-3 mt-1 gap-2">
-                <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
-                  {job.source && <span>{job.source}</span>}
-                  {job.posted && <span>Posted {job.posted}</span>}
-                  {scrapedDate && <span>Scraped {scrapedDate}</span>}
-                  {job.type && <span>{job.type}</span>}
-                </div>
-                {jobsView === "active" && user && isExpanded && (
-                  <div className="mb-3" onClick={(e) => e.stopPropagation()}>
-                    <InterviewPrep jobId={job.id} user={user} onNavigateToStories={() => setActiveTab("stories")} />
-                  </div>
-                )}
 
-                {jobsView === "expired" ? (
-                  <p className="text-xs font-medium text-amber-700">Archived listing — application actions are unavailable.</p>
-                ) : (
-                <div className="flex flex-wrap gap-2">
-                  <button onClick={(event) => { event.stopPropagation(); openApplicationPackModal(job); }} className="flex items-center gap-1.5 bg-[#384959] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#2d3a47] transition">
-                    <Bot size={12} /> Application Pack
-                  </button>
-                  <button onClick={(event) => { event.stopPropagation(); generateResume(job); }} className="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-emerald-700 transition">
-                    <FileText size={12} /> Tailor Resume
-                  </button>
-                  <button onClick={(event) => { event.stopPropagation(); openCoverLetterModal(job); }} className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-blue-700 transition">
-                    <FileText size={12} /> Cover Letter
-                  </button>
-                  {(trackedJobIds.has(job.id) || trackedJobIds.has(`${job.title}|${job.company}`.toLowerCase())) ? (
-                    <span className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1.5 rounded-lg text-xs font-medium">
-                      <CheckCircle2 size={12} /> Tracked
-                    </span>
-                  ) : (
-                    <button onClick={(event) => { event.stopPropagation(); trackJob(job); }} className="flex items-center gap-1.5 bg-[#384959] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#2d3a47] transition">
-                      <Plus size={12} /> Track
-                    </button>
-                  )}
-                  {job.url && (
-                    <a href={job.url} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}
-                      className="flex items-center gap-1.5 border border-[#BDDDFC]/30 text-muted px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#f0f4f8] transition">
-                      <ExternalLink size={12} /> View
-                    </a>
+                  {jobsView === "active" && user && (
+                    <div className="mt-4">
+                      <InterviewPrep jobId={job.id} user={user} onNavigateToStories={() => setActiveTab("stories")} />
+                    </div>
                   )}
                 </div>
-                )}
-              </div>
-            </motion.div>
+              )}
+            </li>
           );
           })}
-          </motion.div>
+          </ul>
           )}
 
           {totalPages > 1 && (
-            <div className="flex justify-center gap-3">
+            <nav aria-label="Pages" className="flex items-center justify-center gap-3 pt-2">
               {page > 1 && (
-                <button onClick={() => loadJobs(activeSearchQuery, page - 1)} className="px-4 py-2 text-sm border border-[#BDDDFC]/30 rounded-lg text-[#384959] hover:bg-[#BDDDFC]/10 transition-colors">Previous</button>
+                <button type="button" onClick={() => loadJobs(activeSearchQuery, page - 1)} className="min-h-11 rounded-md border border-field bg-white px-4 text-sm font-medium text-ink transition-colors hover:bg-tint">Previous</button>
               )}
-              <span className="px-4 py-2 text-sm text-muted">Page {page} of {totalPages}</span>
+              <span className="px-2 text-sm tabular-nums text-muted">Page {page} of {totalPages.toLocaleString("en-SG")}</span>
               {page < totalPages && (
-                <button onClick={() => loadJobs(activeSearchQuery, page + 1)} className="px-4 py-2 text-sm border border-[#BDDDFC]/30 rounded-lg text-[#384959] hover:bg-[#BDDDFC]/10 transition-colors">Next</button>
+                <button type="button" onClick={() => loadJobs(activeSearchQuery, page + 1)} className="min-h-11 rounded-md border border-field bg-white px-4 text-sm font-medium text-ink transition-colors hover:bg-tint">Next</button>
               )}
-            </div>
+            </nav>
           )}
         </div>
       </div>
@@ -1573,23 +1525,27 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
             onClick={closeCoverLetterModal}
+            onKeyDown={(event) => event.key === "Escape" && closeCoverLetterModal()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Cover letter"
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
                 <div>
-                  <h3 className="text-lg font-semibold text-[#384959]">Generate Cover Letter</h3>
+                  <h3 className="text-lg font-semibold text-ink">Cover letter</h3>
                   <p className="text-sm text-muted mt-0.5">
                     {coverLetterModal.job?.title} at {coverLetterModal.job?.company}
                   </p>
                 </div>
-                <button onClick={closeCoverLetterModal} className="p-1 hover:bg-gray-100 rounded-lg transition">
-                  <X size={20} className="text-muted" />
+                <button type="button" onClick={closeCoverLetterModal} aria-label="Close" className="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted transition-colors hover:bg-tint hover:text-ink">
+                  <X size={20} aria-hidden="true" />
                 </button>
               </div>
 
@@ -1605,7 +1561,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                         value={coverLetterDirection}
                         onChange={(e) => setCoverLetterDirection(e.target.value)}
                         placeholder="e.g. 'emphasize leadership experience' or 'keep it concise'"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-accent/30 focus:border-accent outline-none"
                         maxLength={500}
                       />
                     </div>
@@ -1626,7 +1582,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
 
                 {coverLetterLoading && (
                   <div className="flex flex-col items-center justify-center py-12 gap-3">
-                    <Loader2 size={28} className="animate-spin text-blue-600" />
+                    <Loader2 size={28} className="animate-spin text-accent" />
                     <p className="text-sm text-muted">Generating your cover letter...</p>
                   </div>
                 )}
@@ -1639,7 +1595,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                         setCoverLetterText(e.target.value);
                         if (coverLetterWorkspaceId) setCoverLetterSaveState("dirty");
                       }}
-                      className="w-full h-80 px-4 py-3 border border-gray-200 rounded-lg text-sm leading-relaxed resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none font-[system-ui]"
+                      className="w-full h-80 px-4 py-3 border border-gray-200 rounded-lg text-sm leading-relaxed resize-none focus:ring-2 focus:ring-accent/30 focus:border-accent outline-none font-[system-ui]"
                     />
                     <p className={`text-xs ${coverLetterSaveState === "dirty" ? "text-amber-700" : "text-muted"}`}>
                       {coverLetterSaveState === "saved" && "Saved to Documents."}
@@ -1661,7 +1617,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                         <button
                           onClick={saveCoverLetterChanges}
                           disabled={coverLetterSaving}
-                          className="px-4 py-2 text-sm border border-blue-300 rounded-lg text-blue-700 hover:bg-blue-50 transition disabled:opacity-50"
+                          className="px-4 py-2 text-sm border border-field rounded-md text-ink hover:bg-tint transition disabled:opacity-50"
                         >
                           {coverLetterSaving ? "Saving..." : "Save changes"}
                         </button>
@@ -1674,7 +1630,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                       </button>
                       <button
                         onClick={copyCoverLetter}
-                        className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
+                        className="px-4 py-2 text-sm bg-accent text-white rounded-md hover:bg-accent-hover transition font-medium"
                       >
                         {coverLetterCopied ? "Copied!" : "Copy"}
                       </button>
@@ -1686,7 +1642,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                     <button
                       onClick={generateCoverLetter}
                       disabled={coverLetterLoading}
-                      className="px-5 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-5 py-2 text-sm bg-accent text-white rounded-md hover:bg-accent-hover transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {coverLetterLoading ? "Generating..." : "Generate"}
                     </button>
@@ -1706,26 +1662,29 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
             onClick={closeApplicationPackModal}
+            onKeyDown={(event) => event.key === "Escape" && closeApplicationPackModal()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Application pack"
           >
             <motion.div
               initial={{ scale: 0.96, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.96, opacity: 0 }}
-              className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden"
+              className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <Bot size={18} className="text-[#384959]" />
-                    <h3 className="text-lg font-semibold text-[#384959]">Application Pack</h3>
+                    <h3 className="text-lg font-semibold text-ink">Application pack</h3>
                   </div>
                   <p className="mt-0.5 truncate text-sm text-muted">
                     {applicationPackModal.job?.title} at {applicationPackModal.job?.company}
                   </p>
                 </div>
-                <button onClick={closeApplicationPackModal} className="p-1 hover:bg-gray-100 rounded-lg transition">
-                  <X size={20} className="text-muted" />
+                <button type="button" onClick={closeApplicationPackModal} aria-label="Close" className="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted transition-colors hover:bg-tint hover:text-ink">
+                  <X size={20} aria-hidden="true" />
                 </button>
               </div>
 
@@ -1763,7 +1722,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                 {applicationPackLoading && (
                   <div className="flex flex-col items-center justify-center py-14 gap-3">
                     <Loader2 size={30} className="animate-spin text-[#384959]" />
-                    <p className="text-sm text-muted">Analysing the role, resume evidence, gaps, and interview angles...</p>
+                    <p className="text-sm text-muted">Reading the posting and your resume...</p>
                   </div>
                 )}
 
@@ -1771,7 +1730,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
                   <div className="space-y-5">
                     {applicationPack.degraded && (
                       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                        The model was unavailable, so this pack uses local ATS signals. Rerun before using final copy.
+                        The writing service was busy, so this pack is based on keyword matching only. Try again before you use the wording.
                       </div>
                     )}
 
@@ -1942,25 +1901,23 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               </div>
 
               <div className="flex items-center justify-between gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
-                <span className="text-xs text-muted">
-                  {applicationPack?.agent?.workflow || "application_pack_v1"}
-                </span>
+                <span />
                 {applicationPack ? (
                   <button
                     onClick={copyApplicationPack}
-                    className="flex items-center gap-1.5 px-4 py-2 text-sm bg-[#384959] text-white rounded-lg hover:bg-[#2d3a47] transition font-medium"
+                    className="flex min-h-10 items-center gap-1.5 rounded-md bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-hover"
                   >
-                    <Copy size={14} />
-                    {applicationPackCopied ? "Copied" : "Copy Pack"}
+                    <Copy size={14} aria-hidden="true" />
+                    {applicationPackCopied ? "Copied" : "Copy pack"}
                   </button>
                 ) : (
                   <button
                     onClick={generateApplicationPack}
                     disabled={applicationPackLoading}
-                    className="flex items-center gap-1.5 px-5 py-2 text-sm bg-[#384959] text-white rounded-lg hover:bg-[#2d3a47] transition font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex min-h-10 items-center gap-1.5 rounded-md bg-accent px-5 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {applicationPackLoading ? <Loader2 size={14} className="animate-spin" /> : <Bot size={14} />}
-                    {applicationPackLoading ? "Building..." : "Build Pack"}
+                    {applicationPackLoading && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
+                    {applicationPackLoading ? "Building..." : "Build pack"}
                   </button>
                 )}
               </div>

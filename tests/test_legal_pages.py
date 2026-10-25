@@ -60,7 +60,8 @@ def test_privacy_notice_lists_llm_tracing_only_when_enabled():
 def test_legal_pages_have_site_header_and_footer():
     for page in (render_terms_html(CONTACT), render_privacy_html(CONTACT)):
         assert '<header class="site-header">' in page
-        assert '<a href="/#jobs">Search jobs</a>' in page
+        assert '<a class="primary" href="/#jobs">Search jobs</a>' in page
+        assert "© 2026 Haoming Koo" in page and "kooexperience.com" in page
         assert '<footer class="site-footer">' in page
         assert 'href="/api/privacy"' in page and 'href="/api/terms"' in page
         assert f'href="mailto:{CONTACT}"' in page

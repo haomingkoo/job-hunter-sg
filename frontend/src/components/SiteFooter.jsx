@@ -1,19 +1,29 @@
 import { API_BASE } from "../lib/api.js";
 import { PRIVACY_CONTACT_EMAIL } from "../lib/constants.js";
 
-const linkClass = "underline-offset-2 hover:text-[#384959] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#88BDF2] rounded";
+const linkClass = "inline-flex min-h-6 items-center rounded-sm underline-offset-2 hover:text-ink hover:underline";
 
+// Shared kooexperience footer: identical wording on every app.
 export default function SiteFooter() {
   return (
-    <footer className="border-t border-[#BDDDFC]/30 bg-white">
-      <div className="mx-auto flex max-w-7xl flex-col gap-2 px-4 py-5 text-xs text-muted sm:flex-row sm:items-center sm:justify-between sm:px-6">
-        <p>Job Hunter SG is run by Koo Haoming (individual, Singapore).</p>
-        <nav aria-label="Legal" className="flex flex-wrap gap-x-4 gap-y-1">
-          <a href={`${API_BASE}/api/privacy`} target="_blank" rel="noopener" className={linkClass}>Privacy</a>
-          <a href={`${API_BASE}/api/terms`} target="_blank" rel="noopener" className={linkClass}>Terms</a>
-          <a href={`mailto:${PRIVACY_CONTACT_EMAIL}`} className={linkClass}>{PRIVACY_CONTACT_EMAIL}</a>
-        </nav>
-      </div>
+    <footer className="border-t border-line bg-white">
+      <nav aria-label="Site" className="mx-auto max-w-7xl px-4 py-5 text-sm text-muted sm:px-6">
+        <ul className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <li>© 2026 Haoming Koo</li>
+          <li aria-hidden="true">·</li>
+          <li><a href={`${API_BASE}/api/privacy`} className={linkClass}>Privacy</a></li>
+          <li aria-hidden="true">·</li>
+          <li><a href={`${API_BASE}/api/terms`} className={linkClass}>Terms</a></li>
+          <li aria-hidden="true">·</li>
+          <li>
+            Contact (<a href={`mailto:${PRIVACY_CONTACT_EMAIL}`} className={linkClass}>{PRIVACY_CONTACT_EMAIL}</a>)
+          </li>
+          <li aria-hidden="true">·</li>
+          <li>
+            More projects → <a href="https://kooexperience.com/" className={linkClass}>kooexperience.com</a>
+          </li>
+        </ul>
+      </nav>
     </footer>
   );
 }
