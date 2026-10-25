@@ -201,6 +201,12 @@ export default function JobHunterSG() {
     const isCurrentIdentity = () => (
       !cancelled && identityGenerationRef.current === expectedGeneration
     );
+    // Password sessions live only in the bearer token, so no token means signed out.
+    if (authConfig.mode !== "cloudflare" && !token) {
+      bindResumeDraftStorageToUser(null);
+      setAuthLoading(false);
+      return undefined;
+    }
     setAuthLoading(true);
     (async () => {
       try {
