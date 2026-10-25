@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 import config as app_config
 from deepagents import (
@@ -11,32 +11,68 @@ from deepagents import (
     register_harness_profile,
 )
 from deepagents.middleware.subagents import CompiledSubAgent, SubAgent
+from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import ToolMessage
 from langgraph.errors import GraphRecursionError
 
 from .models import create_agent_model
 from .prompts import ORCHESTRATOR_SYSTEM_PROMPT
 
 
-# DeepAgents otherwise adds a general-purpose agent plus planning, filesystem,
-# and shell tools to every graph. Job Hunter supplies its own named personas and
-# domain tools; exposing the unrelated defaults makes the runtime interface wider
-# than the declared execution policy and distracts the model with unusable tools.
+# DeepAgents adds a general-purpose subagent plus planning, filesystem (including
+# delete) and shell tools to every graph, and new releases add more. Job Hunter
+# supplies its own named personas and domain tools, so the graph is limited to an
+# explicit allowlist instead of a denylist that each upgrade can outgrow.
 register_harness_profile(
     "openai",
     HarnessProfile(
-        excluded_tools=frozenset({
-            "write_todos",
-            "ls",
-            "read_file",
-            "write_file",
-            "edit_file",
-            "glob",
-            "grep",
-            "execute",
-        }),
         general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
     ),
 )
+
+
+def _tool_name(tool: Any) -> str | None:
+    if isinstance(tool, dict):
+        name = tool.get("name")
+    else:
+        name = getattr(tool, "name", None) or getattr(tool, "__name__", None)
+    return name if isinstance(name, str) else None
+
+
+class ToolAllowlistMiddleware(AgentMiddleware):
+    """Expose and execute only the tools the caller declared."""
+
+    def __init__(self, allowed: frozenset[str]) -> None:
+        super().__init__()
+        self.allowed = allowed
+
+    def _filter(self, request: Any) -> Any:
+        return request.override(
+            tools=[tool for tool in request.tools if _tool_name(tool) in self.allowed]
+        )
+
+    def _refusal(self, request: Any) -> ToolMessage | None:
+        call = request.tool_call
+        if call.get("name") in self.allowed:
+            return None
+        return ToolMessage(
+            content="tool_not_available_for_this_workflow",
+            tool_call_id=call.get("id", ""),
+            name=call.get("name"),
+            status="error",
+        )
+
+    def wrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        return handler(self._filter(request))
+
+    async def awrap_model_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        return await handler(self._filter(request))
+
+    def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        return self._refusal(request) or handler(request)
+
+    async def awrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+        return self._refusal(request) or await handler(request)
 
 
 def create_resume_agent(
@@ -60,6 +96,9 @@ def create_resume_agent(
     """
     from deepagents import create_deep_agent
 
+    allowed = frozenset(name for tool in tools if (name := _tool_name(tool)))
+    if subagents:
+        allowed |= {"task"}
     return create_deep_agent(
         model=model or create_agent_model(),
         tools=list(tools),
@@ -68,7 +107,7 @@ def create_resume_agent(
         checkpointer=checkpointer,
         interrupt_on=interrupt_on,
         response_format=response_format,
-        middleware=list(middleware),
+        middleware=[ToolAllowlistMiddleware(allowed), *middleware],
     )
 
 

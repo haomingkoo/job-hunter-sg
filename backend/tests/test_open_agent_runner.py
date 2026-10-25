@@ -299,7 +299,34 @@ def test_target_runtime_exposes_only_declared_domain_tools_and_named_personas():
         "glob",
         "grep",
         "execute",
+        "delete",
     } & model.exposed_tool_names
+
+
+def test_deep_agent_without_declared_tools_exposes_and_runs_none():
+    from resume_agent.agent import create_resume_agent
+
+    model = _OpenAIToolCapturingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "delete", "args": {"path": "/notes.md"}, "id": "call-delete"},
+                    {"name": "execute", "args": {"command": "rm -rf /"}, "id": "call-execute"},
+                ],
+            ),
+            AIMessage(content="Done."),
+        ]
+    )
+    graph = create_resume_agent(model=model, tools=[], subagents=[])
+    state = graph.invoke({"messages": [{"role": "user", "content": "Synthesize."}]})
+
+    assert model.exposed_tool_names == set()
+    refusals = [m for m in state["messages"] if isinstance(m, ToolMessage)]
+    assert [(m.tool_call_id, m.status, m.content) for m in refusals] == [
+        ("call-delete", "error", "tool_not_available_for_this_workflow"),
+        ("call-execute", "error", "tool_not_available_for_this_workflow"),
+    ]
 
 
 def test_accepted_specialist_report_reaches_the_next_coordinator_model_request(monkeypatch):
