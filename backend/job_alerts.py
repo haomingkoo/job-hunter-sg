@@ -438,7 +438,8 @@ def find_alert_matches(
         )
         .filter(
             or_(ScrapedJob.scraped_at >= since_iso, ScrapedJob.posted_at_sort >= since_iso),
-        )
+        ),
+        now=now,
     )
 
     if pref.direct_employers_only:
