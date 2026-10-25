@@ -74,29 +74,29 @@ export default function DocumentsTab({ onOpenResume }) {
     downloadBlob(new Blob([document.content], { type: "text/plain;charset=utf-8" }), `Cover_Letter_${safe}.txt`);
   };
 
-  if (loading) return <div className="flex items-center gap-2 py-16 text-[#6A89A7]"><Loader2 className="animate-spin" size={18} /> Loading documents...</div>;
+  if (loading) return <div className="flex items-center gap-2 py-16 text-muted"><Loader2 className="animate-spin" size={18} /> Loading documents...</div>;
 
   return (
     <div className="space-y-5">
       <div>
         <h2 className="text-2xl font-bold text-[#384959]">Documents</h2>
-        <p className="mt-1 text-sm text-[#6A89A7]">Saved resume versions and the latest cover letter for each tracked application.</p>
+        <p className="mt-1 text-sm text-muted">Saved resume versions and the latest cover letter for each tracked application.</p>
       </div>
       <label className="flex max-w-xl items-center gap-2 rounded-lg border border-[#BDDDFC]/40 bg-white px-3 py-2">
-        <Search size={16} className="text-[#6A89A7]" />
+        <Search size={16} className="text-muted" />
         <input aria-label="Search documents" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search type, label, company, or role" className="w-full bg-transparent text-sm outline-none" />
       </label>
       {error && <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-      {!error && visibleDocuments.length === 0 && <div className="rounded-xl border border-dashed border-[#BDDDFC] p-10 text-center text-sm text-[#6A89A7]">No matching documents.</div>}
+      {!error && visibleDocuments.length === 0 && <div className="rounded-xl border border-dashed border-[#BDDDFC] p-10 text-center text-sm text-muted">No matching documents.</div>}
       <div className="grid gap-4 md:grid-cols-2">
         {visibleDocuments.map((document) => (
           <article key={document.documentId} className="rounded-xl border border-[#BDDDFC]/40 bg-white p-4 shadow-sm">
             <div className="flex items-start gap-3">
-              <FileText size={18} className="mt-0.5 text-[#6A89A7]" />
+              <FileText size={18} className="mt-0.5 text-muted" />
               <div className="min-w-0 flex-1">
-                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">{document.type}</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">{document.type}</div>
                 <h3 className="mt-1 truncate font-semibold text-[#384959]">{document.label}</h3>
-                {(document.company || document.role) && <p className="mt-1 text-xs text-[#6A89A7]">{[document.role, document.company].filter(Boolean).join(" at ")}</p>}
+                {(document.company || document.role) && <p className="mt-1 text-xs text-muted">{[document.role, document.company].filter(Boolean).join(" at ")}</p>}
               </div>
             </div>
             {document.type === "resume" ? (

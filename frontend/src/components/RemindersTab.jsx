@@ -46,12 +46,12 @@ export default function RemindersTab({ jobs, onUpdateJob }) {
         <div className="flex justify-between items-start">
           <div>
             <div className="font-semibold text-[#384959]">{job.company}</div>
-            <div className="text-sm text-[#6A89A7]">{job.role}</div>
-            {job.notes && <div className="text-xs text-[#6A89A7] mt-1">{job.notes}</div>}
+            <div className="text-sm text-muted">{job.role}</div>
+            {job.notes && <div className="text-xs text-muted mt-1">{job.notes}</div>}
           </div>
           <div className="text-right">
             <StatusBadge status={job.status} />
-            <div className="text-xs text-[#6A89A7] mt-2">
+            <div className="text-xs text-muted mt-2">
               {job.daysUntil < 0 ? `${Math.abs(job.daysUntil)} days overdue` : job.daysUntil === 0 ? "Due today!" : `In ${job.daysUntil} days`}
             </div>
           </div>
@@ -66,7 +66,7 @@ export default function RemindersTab({ jobs, onUpdateJob }) {
 
   const Section = ({ title, items, urgency }) => items.length > 0 && (
     <div>
-      <h3 className="text-sm font-semibold text-[#6A89A7] uppercase tracking-wide mb-3">{title} ({items.length})</h3>
+      <h3 className="text-sm font-semibold text-muted uppercase tracking-wide mb-3">{title} ({items.length})</h3>
       <div className="space-y-3">{items.map((j) => <Card key={j.id} job={j} urgency={urgency} />)}</div>
     </div>
   );
@@ -75,7 +75,7 @@ export default function RemindersTab({ jobs, onUpdateJob }) {
     <div className="space-y-8">
       <div className="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-xl p-5">
         <h2 className="font-semibold text-[#384959] flex items-center gap-2"><Bell size={18} /> Follow-up Reminders</h2>
-        <p className="text-sm text-[#6A89A7] mt-1">Never let an application go cold. Follow up within 14 days of applying.</p>
+        <p className="text-sm text-muted mt-1">Never let an application go cold. Follow up within 14 days of applying.</p>
       </div>
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center justify-between">
@@ -84,7 +84,7 @@ export default function RemindersTab({ jobs, onUpdateJob }) {
         </div>
       )}
       {pending.length === 0 ? (
-        <div className="text-center py-12 text-[#6A89A7]">No follow-ups scheduled. Add follow-up dates in Tracker.</div>
+        <div className="text-center py-12 text-muted">No follow-ups scheduled. Add follow-up dates in Tracker.</div>
       ) : (
         <>
           <Section title="Overdue" items={overdue} urgency="overdue" />

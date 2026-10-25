@@ -53,7 +53,7 @@ function EmptyState({ onStart, onGenerate, generating, generationStatus }) {
         <BookOpen size={32} className="text-violet-600" />
       </div>
       <h2 className="text-xl font-bold text-[#384959] text-center">Build Your Interview Story Bank</h2>
-      <p className="mt-2 max-w-md text-center text-sm text-[#6A89A7] leading-relaxed">
+      <p className="mt-2 max-w-md text-center text-sm text-muted leading-relaxed">
         Create reusable STAR+R stories that flex across any behavioral interview.
         Generate from your resume or start with the Big Three.
       </p>
@@ -66,10 +66,10 @@ function EmptyState({ onStart, onGenerate, generating, generationStatus }) {
         {generating ? <Loader2 size={16} className="animate-spin" /> : <Wand2 size={16} />}
         {generating ? "Extracting stories from resume..." : "Generate from My Resume"}
       </button>
-      <p className="mt-2 text-[10px] text-[#6A89A7]">Uses only facts from your uploaded resume. No hallucination.</p>
+      <p className="mt-2 text-[10px] text-muted">Uses only facts from your uploaded resume. No hallucination.</p>
       {generating && <StoryGenerationProgress status={generationStatus} />}
 
-      <div className="mt-6 flex items-center gap-3 text-xs text-[#6A89A7]">
+      <div className="mt-6 flex items-center gap-3 text-xs text-muted">
         <div className="h-px flex-1 bg-[#BDDDFC]/30" />
         or start manually
         <div className="h-px flex-1 bg-[#BDDDFC]/30" />
@@ -87,7 +87,7 @@ function EmptyState({ onStart, onGenerate, generating, generationStatus }) {
             >
               <Icon size={24} className="text-violet-600" />
               <h3 className="mt-3 text-sm font-semibold text-[#384959]">{prompt.title}</h3>
-              <p className="mt-1 text-xs text-[#6A89A7] leading-relaxed">{prompt.hint}</p>
+              <p className="mt-1 text-xs text-muted leading-relaxed">{prompt.hint}</p>
               <div className="mt-3 flex flex-wrap gap-1">
                 {prompt.defaultTags.map((t) => <TagPill key={t} tagId={t} small />)}
               </div>
@@ -105,7 +105,7 @@ function GeneratedStoryCard({ story, onAccept, onDiscard }) {
       <div className="flex items-start justify-between">
         <div>
           <h3 className="text-sm font-semibold text-[#384959]">{story.title}</h3>
-          {story.project_name && <p className="text-xs text-[#6A89A7]">{story.project_name}</p>}
+          {story.project_name && <p className="text-xs text-muted">{story.project_name}</p>}
         </div>
         {!story.verified && (
           <span className="text-[10px] rounded-full bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 flex items-center gap-1">
@@ -129,14 +129,14 @@ function GeneratedStoryCard({ story, onAccept, onDiscard }) {
         if (!val) return null;
         return (
           <div key={field.key}>
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-[#6A89A7]">{field.label}</div>
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted">{field.label}</div>
             <p className="text-xs text-[#384959] leading-relaxed">{val}</p>
           </div>
         );
       })}
 
       {story.source_bullets?.length > 0 && (
-        <details className="text-[10px] text-[#6A89A7]">
+        <details className="text-[10px] text-muted">
           <summary className="cursor-pointer hover:text-[#384959]">Source bullets from resume</summary>
           <ul className="mt-1 space-y-0.5 pl-3 list-disc">
             {story.source_bullets.map((b, i) => <li key={i}>{b}</li>)}
@@ -148,7 +148,7 @@ function GeneratedStoryCard({ story, onAccept, onDiscard }) {
         <button onClick={onAccept} className="flex items-center gap-1.5 rounded-lg bg-[#384959] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#2d3a47] transition">
           <Save size={12} /> Save & Edit
         </button>
-        <button onClick={onDiscard} className="rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs font-medium text-[#6A89A7] hover:bg-[#f0f4f8] transition">
+        <button onClick={onDiscard} className="rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs font-medium text-muted hover:bg-[#f0f4f8] transition">
           Discard
         </button>
       </div>
@@ -183,7 +183,7 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
     <div className="mx-auto max-w-2xl">
       <button
         onClick={onCancel}
-        className="mb-4 flex items-center gap-1 text-sm text-[#6A89A7] hover:text-[#384959] transition"
+        className="mb-4 flex items-center gap-1 text-sm text-muted hover:text-[#384959] transition"
       >
         <ChevronLeft size={16} /> Back to stories
       </button>
@@ -191,7 +191,7 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
       <div className="space-y-5">
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6A89A7] mb-1">Story Title *</label>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-muted mb-1">Story Title *</label>
             <input
               value={form.title}
               onChange={(e) => setField("title", e.target.value)}
@@ -200,7 +200,7 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
             />
           </div>
           <div>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6A89A7] mb-1">Project / Company</label>
+            <label className="block text-xs font-semibold uppercase tracking-wide text-muted mb-1">Project / Company</label>
             <input
               value={form.project_name}
               onChange={(e) => setField("project_name", e.target.value)}
@@ -212,7 +212,7 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
 
         {STAR_FIELDS.map((field) => (
           <div key={field.key}>
-            <label className="block text-xs font-semibold uppercase tracking-wide text-[#6A89A7] mb-1">
+            <label className="block text-xs font-semibold uppercase tracking-wide text-muted mb-1">
               {field.label}
               {field.key === "reflection" && <span className="ml-1 normal-case font-normal">(the +R)</span>}
             </label>
@@ -227,7 +227,7 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
         ))}
 
         <div>
-          <label className="block text-xs font-semibold uppercase tracking-wide text-[#6A89A7] mb-2">Behavioral Tags</label>
+          <label className="block text-xs font-semibold uppercase tracking-wide text-muted mb-2">Behavioral Tags</label>
           <div className="flex flex-wrap gap-2">
             {BEHAVIORAL_TAGS.map((tag) => {
               const active = form.tags.includes(tag.id);
@@ -237,7 +237,7 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
                   type="button"
                   onClick={() => toggleTag(tag.id)}
                   className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
-                    active ? tag.color : "border-[#BDDDFC]/30 text-[#6A89A7] bg-white hover:bg-[#f0f4f8]"
+                    active ? tag.color : "border-[#BDDDFC]/30 text-muted bg-white hover:bg-[#f0f4f8]"
                   }`}
                   title={tag.description}
                 >
@@ -249,7 +249,7 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
         </div>
 
         <div>
-          <label className="block text-xs font-semibold uppercase tracking-wide text-[#6A89A7] mb-2">Seniority Level</label>
+          <label className="block text-xs font-semibold uppercase tracking-wide text-muted mb-2">Seniority Level</label>
           <div className="flex gap-2">
             {SENIORITY_OPTIONS.map((opt) => (
               <button
@@ -259,7 +259,7 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
                 className={`rounded-full border px-3 py-1.5 text-xs font-medium transition ${
                   form.seniority === opt.id
                     ? "bg-[#384959] text-white border-[#384959]"
-                    : "border-[#BDDDFC]/30 text-[#6A89A7] bg-white hover:bg-[#f0f4f8]"
+                    : "border-[#BDDDFC]/30 text-muted bg-white hover:bg-[#f0f4f8]"
                 }`}
               >
                 {opt.label}
@@ -279,7 +279,7 @@ function StoryEditor({ story, onSave, onCancel, onDelete, saving }) {
           </button>
           <button
             onClick={onCancel}
-            className="rounded-xl border border-[#BDDDFC]/30 px-4 py-2.5 text-sm font-medium text-[#6A89A7] hover:bg-[#f0f4f8] transition"
+            className="rounded-xl border border-[#BDDDFC]/30 px-4 py-2.5 text-sm font-medium text-muted hover:bg-[#f0f4f8] transition"
           >
             Cancel
           </button>
@@ -309,12 +309,12 @@ function StoryCard({ story, onClick, onDelete }) {
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-[#384959] truncate">{story.title}</h3>
           {story.project_name && (
-            <p className="mt-0.5 text-xs text-[#6A89A7] truncate">{story.project_name}</p>
+            <p className="mt-0.5 text-xs text-muted truncate">{story.project_name}</p>
           )}
         </div>
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(story.id); }}
-          className="ml-2 opacity-0 group-hover:opacity-100 p-1 rounded-lg text-[#6A89A7] hover:text-rose-500 hover:bg-rose-50 transition"
+          className="ml-2 opacity-0 group-hover:opacity-100 p-1 rounded-lg text-muted hover:text-rose-500 hover:bg-rose-50 transition"
           title="Delete story"
         >
           <Trash2 size={14} />
@@ -325,12 +325,12 @@ function StoryCard({ story, onClick, onDelete }) {
         {(story.tags || []).map((t) => <TagPill key={t} tagId={t} small />)}
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-[10px] text-[#6A89A7]">
+      <div className="mt-3 flex items-center justify-between text-[10px] text-muted">
         <span>{filledFields}/5 STAR+R sections filled</span>
         <span className={`rounded-full border px-1.5 py-0.5 ${
           story.seniority === "senior" || story.seniority === "staff"
             ? "border-amber-200 text-amber-700 bg-amber-50"
-            : "border-[#BDDDFC]/30 text-[#6A89A7]"
+            : "border-[#BDDDFC]/30 text-muted"
         }`}>
           {story.seniority}
         </span>
@@ -527,13 +527,13 @@ export default function StoriesTab() {
             <div className="flex items-center justify-between mb-5">
               <div>
                 <h2 className="text-lg font-bold text-[#384959]">Review Generated Stories</h2>
-                <p className="text-xs text-[#6A89A7]">
+                <p className="text-xs text-muted">
                   {generatedDrafts.length} {generatedDrafts.length === 1 ? "story" : "stories"} extracted from your resume. Review, edit, or discard each one.
                 </p>
               </div>
               <button
                 onClick={() => setGeneratedDrafts(null)}
-                className="text-xs text-[#6A89A7] hover:text-[#384959] underline transition"
+                className="text-xs text-muted hover:text-[#384959] underline transition"
               >
                 Done reviewing
               </button>
@@ -578,7 +578,7 @@ export default function StoriesTab() {
             <div className="flex items-center justify-between mb-5">
               <div>
                 <h2 className="text-lg font-bold text-[#384959]">Interview Story Bank</h2>
-                <p className="text-xs text-[#6A89A7]">{stories.length} {stories.length === 1 ? "story" : "stories"} ready for interviews</p>
+                <p className="text-xs text-muted">{stories.length} {stories.length === 1 ? "story" : "stories"} ready for interviews</p>
               </div>
               <div className="flex gap-2">
                 <button
@@ -605,7 +605,7 @@ export default function StoriesTab() {
               <button
                 onClick={() => setFilterTag("all")}
                 className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
-                  filterTag === "all" ? "bg-[#384959] text-white border-[#384959]" : "border-[#BDDDFC]/30 text-[#6A89A7] hover:bg-[#f0f4f8]"
+                  filterTag === "all" ? "bg-[#384959] text-white border-[#384959]" : "border-[#BDDDFC]/30 text-muted hover:bg-[#f0f4f8]"
                 }`}
               >
                 All
@@ -615,7 +615,7 @@ export default function StoriesTab() {
                   key={tag.id}
                   onClick={() => setFilterTag(tag.id)}
                   className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
-                    filterTag === tag.id ? tag.color : "border-[#BDDDFC]/30 text-[#6A89A7] hover:bg-[#f0f4f8]"
+                    filterTag === tag.id ? tag.color : "border-[#BDDDFC]/30 text-muted hover:bg-[#f0f4f8]"
                   }`}
                 >
                   {tag.label}
@@ -635,7 +635,7 @@ export default function StoriesTab() {
             </div>
 
             {filtered.length === 0 && (
-              <p className="py-12 text-center text-sm text-[#6A89A7]">No stories match this filter.</p>
+              <p className="py-12 text-center text-sm text-muted">No stories match this filter.</p>
             )}
           </motion.div>
         )}

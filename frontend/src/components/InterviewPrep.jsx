@@ -41,7 +41,7 @@ function StoryCard({ story, matchingTags }) {
         <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-[#384959] truncate">{story.title}</p>
           {story.project_name && (
-            <p className="text-xs text-[#6A89A7] mt-0.5">{story.project_name}</p>
+            <p className="text-xs text-muted mt-0.5">{story.project_name}</p>
           )}
           <div className="mt-1.5 flex flex-wrap gap-1">
             {(story.tags || []).map((t) => (
@@ -50,7 +50,7 @@ function StoryCard({ story, matchingTags }) {
           </div>
         </div>
         {hasStarContent && (
-          <span className="shrink-0 text-[#6A89A7]">
+          <span className="shrink-0 text-muted">
             {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </span>
         )}
@@ -68,7 +68,7 @@ function StoryCard({ story, matchingTags }) {
             <div className="px-4 pb-3 space-y-2 border-t border-[#BDDDFC]/20 pt-3">
               {STAR_LABELS.filter((f) => story[f.key]).map((f) => (
                 <div key={f.key}>
-                  <p className="text-[10px] font-bold uppercase tracking-wide text-[#6A89A7]">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-muted">
                     {f.label}
                   </p>
                   <p className="text-xs text-[#384959] leading-relaxed mt-0.5">
@@ -117,7 +117,7 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
       </div>
 
       {loading && (
-        <div className="mt-2 flex items-center gap-2 text-xs text-[#6A89A7]">
+        <div className="mt-2 flex items-center gap-2 text-xs text-muted">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-violet-300 border-t-violet-600" />
           Loading suggestions...
         </div>
@@ -130,7 +130,7 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
       {data && !data.suggestions?.length && !data.other_stories?.length && (
         <div className="mt-2 flex items-center gap-3">
           <Sparkles size={16} className="shrink-0 text-violet-400" />
-          <p className="min-w-0 flex-1 text-xs leading-relaxed text-[#6A89A7]">
+          <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted">
             Add a few stories to get interview prompts for this role.
           </p>
           <button
@@ -146,7 +146,7 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
         <div className="mt-3 space-y-3">
           {data.detected_tags?.length > 0 && (
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6A89A7] mb-1">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">
                 Behavioral themes detected
               </p>
               <div className="flex flex-wrap gap-1">
@@ -159,7 +159,7 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
 
           {data.suggestions?.length > 0 && (
             <div className="space-y-2">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-[#6A89A7]">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted">
                 Top stories to prep
               </p>
               {data.suggestions.map((s) => (
@@ -176,7 +176,7 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
             <div>
               <button
                 onClick={() => setShowOther((v) => !v)}
-                className="flex items-center gap-1 text-xs text-[#6A89A7] hover:text-[#384959] transition"
+                className="flex items-center gap-1 text-xs text-muted hover:text-[#384959] transition"
               >
                 {showOther ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                 {data.other_stories.length} other{" "}

@@ -48,7 +48,7 @@ function FindingList({ title, items, marker }) {
             <span>
               {statement}
               {citations.length > 0 && (
-                <span className="mt-0.5 block font-mono text-[10px] text-[#6A89A7]">
+                <span className="mt-0.5 block font-mono text-[10px] text-muted">
                   {citations.join(" · ")}
                 </span>
               )}

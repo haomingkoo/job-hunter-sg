@@ -256,7 +256,7 @@ describe("JobHunterSG app shell", () => {
     await flushEffects();
 
     const startButton = [...container.querySelectorAll("button")]
-      .find((button) => button.textContent.includes("Start exploring"));
+      .find((button) => button.textContent.includes("Search jobs"));
     await act(async () => {
       startButton.click();
       await new Promise((resolve) => window.setTimeout(resolve, 350));

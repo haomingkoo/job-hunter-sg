@@ -306,7 +306,7 @@ function AgentRow({ agent, defaultOpen }) {
           <ChevronDown
             size={14}
             aria-hidden="true"
-            className={`mt-1 shrink-0 text-[#6A89A7] transition-transform ${open ? "rotate-180" : ""}`}
+            className={`mt-1 shrink-0 text-muted transition-transform ${open ? "rotate-180" : ""}`}
           />
         )}
       </button>
