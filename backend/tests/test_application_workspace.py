@@ -4,7 +4,7 @@ import os
 import io
 import secrets
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 
 from fastapi.testclient import TestClient
@@ -852,6 +852,11 @@ def test_corpus_and_mom_provider_keeps_sources_and_wage_definitions_separate():
 
     init_db()
     unique = secrets.token_hex(6)
+    # Comparable lookup applies real-time visibility, so fixture postings stay current.
+    posted = datetime.now(timezone.utc) - timedelta(days=2)
+    posted_date = posted.date().isoformat()
+    posted_at_sort = posted.isoformat()
+    scraped_at = (posted + timedelta(days=1)).isoformat()
     with SessionLocal() as db:
         target = ScrapedJob(
             title="Artificial Intelligence Engineer",
@@ -860,9 +865,9 @@ def test_corpus_and_mom_provider_keeps_sources_and_wage_definitions_separate():
             salary="$8,000 - $10,000",
             source="MyCareersFuture",
             url=f"https://example.com/{unique}/target",
-            posted_date="2026-08-01",
-            posted_at_sort="2026-08-01T00:00:00+00:00",
-            scraped_at="2026-08-02T00:00:00+00:00",
+            posted_date=posted_date,
+            posted_at_sort=posted_at_sort,
+            scraped_at=scraped_at,
             description="Required Python, machine learning, and stakeholder communication.",
             skills=["Python", "Machine Learning"],
             parsed_jd={"required_skills": ["Python", "Machine Learning"]},
@@ -876,9 +881,9 @@ def test_corpus_and_mom_provider_keeps_sources_and_wage_definitions_separate():
             salary="$7,000 - $9,000",
             source="MyCareersFuture",
             url=f"https://example.com/{unique}/comparable",
-            posted_date="2026-08-01",
-            posted_at_sort="2026-08-01T00:00:00+00:00",
-            scraped_at="2026-08-02T00:00:00+00:00",
+            posted_date=posted_date,
+            posted_at_sort=posted_at_sort,
+            scraped_at=scraped_at,
             description="Build Python machine learning systems with product stakeholders.",
             skills=["Python", "Machine Learning"],
             dedup_key=f"research-comparable-{unique}",
