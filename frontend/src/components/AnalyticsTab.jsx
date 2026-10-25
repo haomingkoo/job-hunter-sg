@@ -1,8 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import {
-  Search, X, Loader2, BarChart2, Building2, Briefcase, Tags,
-  TrendingUp, Clock, BadgeDollarSign, Layers, Target, ShieldCheck,
-} from "lucide-react";
+import { Search, X, AlertCircle, RefreshCw } from "lucide-react";
 import {
   Bar,
   CartesianGrid,
@@ -35,56 +32,32 @@ const AGENCY_SUBSET_OPTIONS = [
   { id: "healthcare", label: "Healthcare" },
 ];
 
-function StatTile({ icon: Icon, label, value }) {
-  return (
-    <div className="rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-3 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-xs font-medium uppercase text-muted">{label}</div>
-          <div className="mt-1 text-2xl font-semibold text-[#384959]">{value}</div>
-        </div>
-        <Icon size={18} className="text-[#88BDF2]" />
-      </div>
-    </div>
-  );
-}
+const PANEL = "rounded-[10px] border border-line bg-white p-5";
+const H2 = "text-base font-semibold text-ink";
+const H3 = "mb-2 text-sm font-semibold text-ink";
+const NOTE = "mt-2 text-xs leading-relaxed text-muted";
+const TEXT_BUTTON = "inline-flex min-h-10 items-center rounded-md px-2 text-sm font-medium text-accent transition-colors hover:bg-tint";
+const SEARCH_FIELD = "min-h-10 w-full rounded-md border border-field bg-white pl-8 pr-9 text-sm text-ink focus:border-accent";
 
-function SignalBlock({ icon: Icon, label, value, detail }) {
-  return (
-    <div className="rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-3 shadow-sm">
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5 rounded-lg bg-[#BDDDFC]/15 p-2 text-[#384959]">
-          <Icon size={16} />
-        </div>
-        <div className="min-w-0">
-          <div className="text-xs font-medium uppercase text-muted">{label}</div>
-          <div className="mt-1 text-lg font-semibold text-[#384959]">{value}</div>
-          {detail && <div className="mt-1 text-xs leading-relaxed text-muted">{detail}</div>}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function BarRow({ rank, label, count, maxCount, active = false, color = "bg-[#88BDF2]", onClick }) {
+function BarRow({ rank, label, count, maxCount, active = false, onClick }) {
   const pct = maxCount > 0 ? Math.max(3, (count / maxCount) * 100) : 0;
   const content = (
     <>
-      <div className="w-7 shrink-0 text-right font-mono text-xs text-muted">{rank}</div>
+      <div className="w-6 shrink-0 text-right text-xs tabular-nums text-muted">{rank}</div>
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex items-center justify-between gap-3">
-          <span className="truncate text-sm font-medium text-[#384959]">{label}</span>
-          <span className="shrink-0 font-mono text-xs text-muted">{formatNumber(count)}</span>
+          <span className={`truncate text-sm text-ink ${active ? "font-semibold" : "font-medium"}`}>{label}</span>
+          <span className="shrink-0 text-xs tabular-nums text-muted">{formatNumber(count)}</span>
         </div>
-        <div className="h-2.5 overflow-hidden rounded-full bg-[#f0f4f8]">
-          <div className={`h-full rounded-full ${active ? "bg-[#384959]" : color}`} style={{ width: `${pct}%` }} />
+        <div className="h-2 overflow-hidden rounded-full bg-paper">
+          <div className={`h-full rounded-full ${active ? "bg-ink" : "bg-accent"}`} style={{ width: `${pct}%` }} />
         </div>
       </div>
     </>
   );
 
   if (!onClick) {
-    return <div className="flex items-center gap-3 rounded-lg px-2 py-1.5">{content}</div>;
+    return <div className="flex items-center gap-3 px-2 py-1.5">{content}</div>;
   }
 
   return (
@@ -93,10 +66,27 @@ function BarRow({ rank, label, count, maxCount, active = false, color = "bg-[#88
       onClick={onClick}
       aria-pressed={active}
       title={`Filter by ${label}`}
-      className={`flex w-full cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 text-left transition hover:bg-[#f0f4f8] active:scale-[0.99] ${active ? "bg-[#BDDDFC]/15 ring-1 ring-[#BDDDFC]" : ""}`}
+      className={`flex min-h-11 w-full cursor-pointer items-center gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-tint ${active ? "bg-tint" : ""}`}
     >
       {content}
     </button>
+  );
+}
+
+function ChangeList({ items, nameKey, valueKey, suffix, detail, empty }) {
+  if (!items?.length) return <p className="text-sm text-muted">{empty}</p>;
+  return (
+    <ul className="divide-y divide-line border-y border-line">
+      {items.slice(0, 6).map((item) => (
+        <li key={item[nameKey]} className="py-2">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="truncate text-sm font-medium text-ink">{item[nameKey]}</span>
+            <span className="shrink-0 text-sm tabular-nums text-ink">{item[valueKey]}x {suffix}</span>
+          </div>
+          <div className="mt-0.5 text-xs tabular-nums text-muted">{detail(item)}</div>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -104,9 +94,9 @@ function HiringTrendTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   const count = payload.find((item) => item.dataKey === "count")?.value || 0;
   return (
-    <div className="rounded-lg border border-[#BDDDFC]/40 bg-white px-3 py-2 shadow-lg">
-      <div className="text-xs font-semibold text-[#384959]">{label}</div>
-      <div className="mt-1 text-xs text-muted">{formatNumber(count)} postings</div>
+    <div className="rounded-md border border-line bg-white px-3 py-2 shadow-lg">
+      <div className="text-xs font-semibold text-ink">{label}</div>
+      <div className="mt-1 text-xs tabular-nums text-muted">{formatNumber(count)} postings</div>
     </div>
   );
 }
@@ -115,87 +105,82 @@ function HiringTrendChart({ trend }) {
   const series = trend?.series || [];
   const peak = trend?.peak;
   const latest = series[series.length - 1];
-  const tickEvery = Math.max(1, Math.ceil(series.length / 6));
 
   return (
-    <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <section className={PANEL} aria-labelledby="hiring-trend-title">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">
-            <TrendingUp size={16} />
-            Hiring Trend
-          </div>
-          <div className="mt-1 text-xs leading-relaxed text-muted">
-            Weekly posting volume for the selected source, agency, company, sector, or title.
-          </div>
+          <h2 id="hiring-trend-title" className={H2}>Hiring trend</h2>
+          <p className="mt-1 text-sm text-muted">
+            Postings per week for the current filters.
+          </p>
         </div>
-        <div className="grid grid-cols-2 gap-2 text-right text-xs text-muted sm:flex sm:items-center">
+        <dl className="flex gap-6 text-xs text-muted sm:text-right">
           <div>
-            <div className="font-mono text-sm font-semibold text-[#384959]">{formatNumber(latest?.count)}</div>
-            <div>latest week</div>
+            <dd className="text-base font-semibold tabular-nums text-ink">{formatNumber(latest?.count)}</dd>
+            <dt>latest week</dt>
           </div>
           <div>
-            <div className="font-mono text-sm font-semibold text-[#384959]">{formatNumber(peak?.count)}</div>
-            <div>peak {peak?.label || ""}</div>
+            <dd className="text-base font-semibold tabular-nums text-ink">{formatNumber(peak?.count)}</dd>
+            <dt>peak {peak?.label || ""}</dt>
           </div>
-        </div>
+        </dl>
       </div>
 
-      <div className="mt-4 h-64 overflow-hidden rounded-xl bg-[#f0f4f8] px-2 py-3">
+      <div className="mt-4 h-64">
         {series.length > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart data={series} margin={{ top: 12, right: 12, bottom: 8, left: -16 }}>
-              <CartesianGrid stroke="#BDDDFC" strokeDasharray="4 4" vertical={false} />
+            <ComposedChart data={series} margin={{ top: 12, right: 12, bottom: 8, left: 0 }}>
+              <CartesianGrid stroke="#d3dde7" vertical={false} />
               <XAxis
                 dataKey="label"
-                interval={tickEvery - 1}
-                tick={{ fill: "#6A89A7", fontSize: 11 }}
+                interval="preserveStartEnd"
+                minTickGap={24}
+                tickMargin={8}
+                padding={{ left: 24, right: 8 }}
+                tick={{ fill: "#4f6b85", fontSize: 12 }}
                 tickLine={false}
-                axisLine={{ stroke: "#BDDDFC" }}
+                axisLine={{ stroke: "#d3dde7" }}
               />
               <YAxis
                 allowDecimals={false}
-                tick={{ fill: "#6A89A7", fontSize: 11 }}
+                tick={{ fill: "#4f6b85", fontSize: 12 }}
                 tickLine={false}
                 axisLine={false}
               />
-              <Tooltip content={<HiringTrendTooltip />} cursor={{ fill: "rgba(189, 221, 252, 0.28)" }} />
-              <Bar dataKey="count" name="Postings" fill="#BDDDFC" radius={[4, 4, 0, 0]} barSize={10} />
+              <Tooltip content={<HiringTrendTooltip />} cursor={{ fill: "rgba(31, 95, 153, 0.08)" }} />
+              <Bar dataKey="count" name="Postings" fill="#c3d6ea" radius={[3, 3, 0, 0]} barSize={10} />
               <Line
                 type="monotone"
                 dataKey="count"
                 name="Trend"
-                stroke="#384959"
-                strokeWidth={2.5}
-                dot={{ r: 2, fill: "#384959", strokeWidth: 0 }}
-                activeDot={{ r: 5, fill: "#10b981", stroke: "#ecfdf5", strokeWidth: 2 }}
+                stroke="#1f5f99"
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 4, fill: "#1f5f99", stroke: "#ffffff", strokeWidth: 2 }}
               />
             </ComposedChart>
           </ResponsiveContainer>
         ) : (
-          <div className="py-12 text-center text-sm text-muted">No dated postings in this view yet.</div>
+          <div className="flex h-full items-center justify-center rounded-md border border-dashed border-line text-sm text-muted">No dated postings in this view yet.</div>
         )}
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <div className="mt-5 grid grid-cols-1 gap-x-8 gap-y-5 lg:grid-cols-2">
         <div>
-          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Recent role mix</div>
-          <div className="grid grid-cols-1 gap-1.5">
-            {(trend?.recent_top_titles || []).slice(0, 6).map((item, index) => (
-              <BarRow key={`trend-title-${item.title}`} rank={index + 1} label={item.title} count={item.count} maxCount={trend.recent_top_titles?.[0]?.count || 1} color="bg-emerald-500" />
-            ))}
-          </div>
+          <h3 className={H3}>Recent role mix</h3>
+          {(trend?.recent_top_titles || []).slice(0, 6).map((item, index) => (
+            <BarRow key={`trend-title-${item.title}`} rank={index + 1} label={item.title} count={item.count} maxCount={trend.recent_top_titles?.[0]?.count || 1} />
+          ))}
         </div>
         <div>
-          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Recent ATS terms</div>
-          <div className="grid grid-cols-1 gap-1.5">
-            {(trend?.recent_ats_terms || []).slice(0, 6).map((item, index) => (
-              <BarRow key={`trend-skill-${item.skill}`} rank={index + 1} label={item.skill} count={item.count} maxCount={trend.recent_ats_terms?.[0]?.count || 1} color="bg-cyan-500" />
-            ))}
-          </div>
+          <h3 className={H3}>Recent ATS terms</h3>
+          {(trend?.recent_ats_terms || []).slice(0, 6).map((item, index) => (
+            <BarRow key={`trend-skill-${item.skill}`} rank={index + 1} label={item.skill} count={item.count} maxCount={trend.recent_ats_terms?.[0]?.count || 1} />
+          ))}
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -230,11 +215,12 @@ export default function AnalyticsTab() {
       trendParams.set("weeks", "52");
       const [resp, trendResp] = await Promise.all([
         apiFetch(`/api/analytics/skills?${params}`),
-        apiFetch(`/api/analytics/trends?${trendParams}`),
+        // The trend chart is optional; a busy trend query must not hide the rest.
+        apiFetch(`/api/analytics/trends?${trendParams}`).catch(() => null),
       ]);
       if (!resp.ok) throw new Error("Failed to load analytics");
       setData(await resp.json());
-      setTrend(trendResp.ok ? await trendResp.json() : null);
+      setTrend(trendResp?.ok ? await trendResp.json() : null);
     } catch (err) {
       setError(err.message);
       setTrend(null);
@@ -287,7 +273,6 @@ export default function AnalyticsTab() {
     unavailable: "uncategorised",
   };
 
-  const chartColors = ["bg-[#88BDF2]", "bg-emerald-500", "bg-violet-500", "bg-amber-500", "bg-rose-500", "bg-cyan-500"];
   const applyCompanyFilter = (value) => {
     const next = String(value || "").trim();
     setCompanyFilter(next);
@@ -303,134 +288,160 @@ export default function AnalyticsTab() {
     setDirectEmployersOnly(false);
   };
 
+  const hasFilters = Boolean(sourceFilter || sectorFilter || titleFilter || companyFilter || agencySubset || directEmployersOnly);
+  const ready = !loading && !error && data;
+  const summary = [
+    { label: data?.partial ? "Sample roles analysed" : "Roles analysed", value: formatNumber(data?.total_jobs_with_terms) },
+    { label: "Skill terms", value: formatNumber(data?.skill_signal_count) },
+    { label: "Hiring orgs", value: formatNumber(data?.company_count) },
+    { label: "Industry mapped", value: `${industryMappedPercent}%` },
+  ];
+
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <div>
-        <h2 className="flex items-center gap-2 text-2xl font-semibold text-[#384959]">
-          <BarChart2 size={20} />
-          Market Insights
-        </h2>
-        <p className="mt-1 text-sm text-muted">
-          Skill and salary trends from {data?.total_jobs_with_terms?.toLocaleString() || "..."} listings with extracted skill signals, not the live Jobs total.
+        <h1 className="text-xl font-bold tracking-[-0.01em] text-ink">Market insights</h1>
+        <p className="mt-1 max-w-3xl text-sm text-muted">
+          Skills, salaries and hiring activity from {data?.total_jobs_with_terms ? `${data.total_jobs_with_terms.toLocaleString()} listings` : "listings"} where skills could be read. This is not the live Jobs total.
         </p>
         {!loading && !error && data?.partial && (
-          <p className="mt-1 text-xs text-muted">
+          <p className="mt-1 max-w-3xl text-xs text-muted">
             Showing the latest {data.sampled_jobs?.toLocaleString()} matching listings for faster loading. Applying a filter rebuilds this sample from all matching listings, so a filtered count may be higher.
           </p>
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile icon={Briefcase} label={data?.partial ? "Sample roles analysed" : "Roles analysed"} value={data?.total_jobs_with_terms ? formatNumber(data.total_jobs_with_terms) : "..."} />
-        <StatTile icon={Tags} label="Skill terms" value={data?.skill_signal_count ? formatNumber(data.skill_signal_count) : "..."} />
-        <StatTile icon={Building2} label="Hiring orgs" value={data?.company_count ? formatNumber(data.company_count) : "..."} />
-        <StatTile icon={ShieldCheck} label="Industry mapped" value={data?.total_jobs_with_terms ? `${industryMappedPercent}%` : "..."} />
-      </div>
-
-      <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-xs text-muted">
-            {activeFilters.length > 0 ? (
-              <>Filtered by <span className="font-semibold text-[#384959]">{activeFilters.join(" + ")}</span></>
-            ) : (
-              <>Click a source, industry/sector, hiring org, or title to drill into skill demand.</>
-            )}
-          </div>
-          {(sourceFilter || sectorFilter || titleFilter || companyFilter || agencySubset || directEmployersOnly) && (
-            <button
-              type="button"
-              onClick={clearAllFilters}
-              className="rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs text-muted hover:bg-[#f0f4f8]"
-            >
-              Clear All Filters
-            </button>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-muted">
+          {activeFilters.length > 0 ? (
+            <>Filtered by <span className="font-semibold text-ink">{activeFilters.join(" + ")}</span></>
+          ) : (
+            <>Choose a source, sector, hiring org or title below to narrow every figure on this page.</>
           )}
-        </div>
+        </p>
+        {hasFilters && (
+          <button type="button" onClick={clearAllFilters} className={`${TEXT_BUTTON} self-start sm:self-auto`}>
+            Clear all filters
+          </button>
+        )}
       </div>
 
-      {!loading && !error && sectorSourceMix.length > 0 && (
-        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 text-xs leading-relaxed text-muted shadow-sm">
-          Industry labels: {sectorSourceMix.map((item) => `${formatNumber(item.count)} ${sectorSourceLabels[item.source] || item.label}`).join(" / ")}.
-          Most listings do not publish SSIC directly, so inferred labels keep the market view usable.
-          Careers@Gov postings are normalised to ministries and agencies where possible.
-        </div>
-      )}
-
-      {!loading && !error && data && (
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <SignalBlock
-            icon={Clock}
-            label="Hiring freshness"
-            value={`${formatNumber(freshness.last_30)} roles`}
-            detail={`${freshness.last_30_percent || 0}% of dated postings were listed in the last 30 days.`}
-          />
-          <SignalBlock
-            icon={BadgeDollarSign}
-            label="Listed salary range"
-            value={formatSalaryRange(salary)}
-            detail={`${salary.coverage_percent || 0}% of analysed roles expose salary data. Floor is the advertised lower bound, midpoint is the range middle.`}
-          />
-          <SignalBlock
-            icon={Layers}
-            label="Largest seniority segment"
-            value={data.seniority_mix?.[0]?.label || "n/a"}
-            detail={data.seniority_mix?.[0] ? `${data.seniority_mix[0].percent}% of this view sits here.` : "Seniority is inferred from titles when posting metadata is weak."}
-          />
-          <SignalBlock
-            icon={ShieldCheck}
-            label="Skill signal"
-            value={data.overindexed_skills?.length ? "Niche signals found" : "Market baseline"}
-            detail={data.overindexed_skills?.length ? "These terms appear unusually often in the selected slice." : "Filter by industry/sector or title to see what over-indexes."}
-          />
-        </div>
-      )}
-
-      {!loading && !error && trend && <HiringTrendChart trend={trend} />}
-
-      {!loading && !error && data && (
-        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-          <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <div className="text-sm font-semibold text-[#384959]">Explore Market</div>
-              <div className="text-xs leading-relaxed text-muted">
-                Pick a source, industry/sector, hiring org, or job title to refresh skills, salary, freshness, and seniority.
+      {loading && (
+        <div className="space-y-4" role="status">
+          <span className="sr-only">Loading market insights</span>
+          <div className="grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border border-line bg-line sm:grid-cols-4">
+            {[0, 1, 2, 3].map((cell) => (
+              <div key={cell} className="bg-white px-4 py-3">
+                <div className="h-5 w-16 rounded bg-paper" />
+                <div className="mt-2 h-3 w-24 rounded bg-paper" />
               </div>
+            ))}
+          </div>
+          <div className={`${PANEL} h-72`}>
+            <div className="h-4 w-32 rounded bg-paper" />
+            <div className="mt-6 h-48 rounded bg-paper" />
+          </div>
+        </div>
+      )}
+
+      {!loading && error && (
+        <div className={`${PANEL} px-6 py-10 text-center`} role="alert">
+          <AlertCircle size={24} aria-hidden="true" className="mx-auto mb-3 text-[#b42318]" />
+          <p className="font-semibold text-ink">Market insights could not load</p>
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted">
+            {/internal server error|bad gateway|service unavailable|gateway timeout|temporarily unavailable|failed to load analytics/i.test(error)
+              ? "The figures are not available right now."
+              : error}
+          </p>
+          {hasFilters && <p className="mx-auto mt-1 max-w-md text-sm text-muted">Your filters are kept.</p>}
+          <button
+            type="button"
+            onClick={loadData}
+            className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-md bg-accent px-5 text-sm font-semibold text-white transition-colors hover:bg-accent-hover"
+          >
+            <RefreshCw size={14} aria-hidden="true" /> Try again
+          </button>
+        </div>
+      )}
+
+      {ready && (
+        <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border border-line bg-line sm:grid-cols-4">
+          {summary.map((item) => (
+            <div key={item.label} className="bg-white px-4 py-3">
+              <dd className="text-xl font-semibold tabular-nums text-ink">{item.value}</dd>
+              <dt className="mt-0.5 text-xs text-muted">{item.label}</dt>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div>
-                <div className="inline-flex overflow-hidden rounded-lg border border-[#BDDDFC]/40 bg-[#f0f4f8] p-0.5 text-xs font-medium">
+          ))}
+        </dl>
+      )}
+
+      {ready && (
+        <section className={PANEL} aria-labelledby="market-signals-title">
+          <h2 id="market-signals-title" className="sr-only">Market signals</h2>
+          <dl className="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2 xl:grid-cols-4">
+            <div>
+              <dt className="text-xs text-muted">Hiring freshness</dt>
+              <dd className="mt-0.5 text-base font-semibold tabular-nums text-ink">{`${formatNumber(freshness.last_30)} roles`}</dd>
+              <dd className="mt-1 text-xs leading-relaxed text-muted">{`${freshness.last_30_percent || 0}% of dated postings were listed in the last 30 days.`}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted">Listed salary range</dt>
+              <dd className="mt-0.5 text-base font-semibold tabular-nums text-ink">{formatSalaryRange(salary)}</dd>
+              <dd className="mt-1 text-xs leading-relaxed text-muted">{`${salary.coverage_percent || 0}% of analysed roles list a salary. Floor is the advertised lower bound; mid is the middle of the range.`}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted">Largest seniority segment</dt>
+              <dd className="mt-0.5 text-base font-semibold text-ink">{data.seniority_mix?.[0]?.label || "n/a"}</dd>
+              <dd className="mt-1 text-xs leading-relaxed text-muted">{data.seniority_mix?.[0] ? `${data.seniority_mix[0].percent}% of this view sits here.` : "Seniority is read from job titles when the posting does not state it."}</dd>
+            </div>
+            <div>
+              <dt className="text-xs text-muted">Skill signal</dt>
+              <dd className="mt-0.5 text-base font-semibold text-ink">{data.overindexed_skills?.length ? "Niche signals found" : "Market baseline"}</dd>
+              <dd className="mt-1 text-xs leading-relaxed text-muted">{data.overindexed_skills?.length ? "These terms appear unusually often in the selected slice." : "Filter by sector or title to see which skills stand out."}</dd>
+            </div>
+          </dl>
+          {sectorSourceMix.length > 0 && (
+            <p className="mt-5 border-t border-line pt-4 text-xs leading-relaxed text-muted">
+              Industry labels: {sectorSourceMix.map((item) => `${formatNumber(item.count)} ${sectorSourceLabels[item.source] || item.label}`).join(" / ")}.
+              Most listings do not publish SSIC directly, so inferred labels keep the market view usable.
+              Careers@Gov postings are normalised to ministries and agencies where possible.
+            </p>
+          )}
+        </section>
+      )}
+
+      {ready && trend && <HiringTrendChart trend={trend} />}
+
+      {ready && (
+        <section className={PANEL} aria-labelledby="explore-market-title">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 id="explore-market-title" className={H2}>Explore the market</h2>
+              <p className="mt-1 text-sm text-muted">
+                Pick a source, sector, hiring org or job title to refresh skills, salary, freshness and seniority.
+              </p>
+            </div>
+            <div>
+              <div className="inline-flex rounded-md border border-field bg-white p-0.5" role="group" aria-label="Employers to include">
+                {[[false, "All orgs"], [true, "Hide known recruiters"]].map(([value, label]) => (
                   <button
+                    key={label}
                     type="button"
-                    onClick={() => setDirectEmployersOnly(false)}
-                    className={`rounded-md px-2.5 py-1.5 transition ${!directEmployersOnly ? "bg-white text-[#384959] shadow-sm" : "text-muted hover:text-[#384959]"}`}
+                    onClick={() => setDirectEmployersOnly(value)}
+                    aria-pressed={directEmployersOnly === value}
+                    className={`min-h-10 whitespace-nowrap rounded px-3 text-sm transition-colors ${directEmployersOnly === value ? "bg-tint font-semibold text-ink" : "text-muted hover:text-ink"}`}
                   >
-                    All orgs
+                    {label}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setDirectEmployersOnly(true)}
-                    className={`rounded-md px-2.5 py-1.5 transition ${directEmployersOnly ? "bg-white text-[#384959] shadow-sm" : "text-muted hover:text-[#384959]"}`}
-                  >
-                    Hide known recruiters
-                  </button>
-                </div>
-                <p className="mt-1 text-[11px] text-muted">
-                  Verified direct and unverified employers remain eligible.
-                </p>
+                ))}
               </div>
-              {(sourceFilter || sectorFilter || titleFilter || companyFilter || agencySubset || directEmployersOnly) && (
-                <button
-                  type="button"
-                  onClick={clearAllFilters}
-                  className="self-start rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs font-medium text-[#384959] hover:bg-[#f0f4f8] sm:self-auto"
-                >
-                  Clear Filters
-                </button>
-              )}
+              <p className="mt-1 text-xs text-muted">
+                Verified direct and unverified employers remain eligible.
+              </p>
             </div>
           </div>
-          <div className="mt-4">
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Agency subsets</div>
+          <div className="mt-5">
+            <h3 className={H3}>Agency subsets</h3>
             <div className="flex flex-wrap gap-2">
               {agencySubsetOptions.map((item) => {
                 const active = agencySubset === item.id;
@@ -440,21 +451,21 @@ export default function AnalyticsTab() {
                     type="button"
                     onClick={() => setAgencySubset(active ? "" : item.id)}
                     aria-pressed={active}
-                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${active ? "border-[#384959] bg-[#384959] text-white" : "border-[#BDDDFC]/40 bg-[#f0f4f8] text-muted hover:border-[#88BDF2] hover:text-[#384959]"}`}
+                    className={`inline-flex min-h-10 items-center gap-1.5 rounded-md border px-3 text-sm transition-colors ${active ? "border-accent bg-tint font-semibold text-ink" : "border-field bg-white text-ink hover:bg-tint"}`}
                   >
                     <span>{item.label}</span>
                     {!agencySubset && Number.isFinite(Number(item.count)) && (
-                      <span className={`font-mono text-[11px] ${active ? "text-white/75" : "text-muted"}`}>{formatNumber(item.count)}</span>
+                      <span className="text-xs tabular-nums text-muted">{formatNumber(item.count)}</span>
                     )}
                   </button>
                 );
               })}
             </div>
           </div>
-          <div className="mt-4 grid gap-4 xl:grid-cols-4">
+          <div className="mt-6 grid gap-x-6 gap-y-6 xl:grid-cols-4">
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{data?.partial ? "Sources in analysed sample" : "Sources"}</div>
-              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
+              <h3 className={H3}>{data?.partial ? "Sources in analysed sample" : "Sources"}</h3>
+              <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2 xl:grid-cols-1">
                 {(data.sources || []).slice(0, 6).map((item, index) => (
                   <BarRow
                     key={`drill-source-${item.source}`}
@@ -462,19 +473,18 @@ export default function AnalyticsTab() {
                     label={item.label || item.source}
                     count={item.count}
                     maxCount={sourcesMaxCount}
-                    color="bg-violet-500"
                     active={sourceFilter === item.source}
                     onClick={() => setSourceFilter(sourceFilter === item.source ? "" : item.source)}
                   />
                 ))}
               </div>
-              <div className="mt-2 text-[11px] leading-relaxed text-muted">
-                Use this to isolate a job source before checking departments, industries, and skills.
-              </div>
+              <p className={NOTE}>
+                Use this to isolate a job source before checking departments, industries and skills.
+              </p>
             </div>
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Industry / Sector</div>
-              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
+              <h3 className={H3}>Industry / Sector</h3>
+              <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2 xl:grid-cols-1">
                 {(data.sectors || []).slice(0, 8).map((item, index) => (
                   <BarRow
                     key={`drill-sector-${item.sector}`}
@@ -482,46 +492,48 @@ export default function AnalyticsTab() {
                     label={item.sector}
                     count={item.count}
                     maxCount={sectorsMaxCount}
-                    color={chartColors[index % chartColors.length]}
                     active={sectorFilter === item.sector}
                     onClick={() => setSectorFilter(sectorFilter === item.sector ? "" : item.sector)}
                   />
                 ))}
               </div>
               {(data.sectors || []).some((item) => item.sector === "Other") && (
-                <div className="mt-2 text-[11px] leading-relaxed text-muted">
+                <p className={NOTE}>
                   Other means the listing could not be mapped to a clear industry.
-                </div>
+                </p>
               )}
             </div>
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Hiring Orgs</div>
+              <h3 className={H3}>Hiring orgs</h3>
               <form
                 className="relative mb-2"
+                role="search"
                 onSubmit={(event) => {
                   event.preventDefault();
                   applyCompanyFilter(companyDraft);
                 }}
               >
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+                <Search size={14} aria-hidden="true" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
                 <input
                   type="text"
                   value={companyDraft}
                   onChange={(event) => setCompanyDraft(event.target.value)}
+                  aria-label="Filter by org or agency"
                   placeholder="Filter org or agency..."
-                  className="w-full rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] py-1.5 pl-8 pr-8 text-xs text-[#384959] placeholder-muted focus:border-[#88BDF2] focus:outline-none focus:ring-1 focus:ring-[#BDDDFC]"
+                  className={SEARCH_FIELD}
                 />
                 {companyDraft && (
                   <button
                     type="button"
                     onClick={() => applyCompanyFilter("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-[#384959]"
+                    aria-label="Clear org filter"
+                    className="absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded text-muted hover:text-ink"
                   >
-                    <X size={12} />
+                    <X size={14} aria-hidden="true" />
                   </button>
                 )}
               </form>
-              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
+              <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2 xl:grid-cols-1">
                 {(data.top_companies || []).slice(0, 8).map((item, index) => (
                   <BarRow
                     key={`drill-company-${item.company}`}
@@ -529,19 +541,18 @@ export default function AnalyticsTab() {
                     label={item.company}
                     count={item.count}
                     maxCount={companiesMaxCount}
-                    color="bg-violet-500"
                     active={companyFilter === item.company}
                     onClick={() => applyCompanyFilter(companyFilter === item.company ? "" : item.company)}
                   />
                 ))}
               </div>
-              <div className="mt-2 text-[11px] leading-relaxed text-muted">
-                Govt rows use resolved ministries or agencies when the source exposes enough signal.
-              </div>
+              <p className={NOTE}>
+                Government rows use the ministry or agency when the source names it.
+              </p>
             </div>
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Job Titles</div>
-              <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
+              <h3 className={H3}>Job titles</h3>
+              <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2 xl:grid-cols-1">
                 {(data.top_titles || []).slice(0, 8).map((item, index) => (
                   <BarRow
                     key={`drill-title-${item.title}`}
@@ -549,7 +560,6 @@ export default function AnalyticsTab() {
                     label={item.title}
                     count={item.count}
                     maxCount={titlesMaxCount}
-                    color="bg-emerald-500"
                     active={titleFilter === item.title}
                     onClick={() => setTitleFilter(titleFilter === item.title ? "" : item.title)}
                   />
@@ -557,212 +567,150 @@ export default function AnalyticsTab() {
               </div>
             </div>
           </div>
-        </div>
+        </section>
       )}
 
-      {!loading && !error && data && ((movers.rising || []).length > 0 || (movers.cooling || []).length > 0) && (
-        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+      {ready && ((movers.rising || []).length > 0 || (movers.cooling || []).length > 0) && (
+        <section className={PANEL} aria-labelledby="market-movers-title">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">
-                <TrendingUp size={16} />
-                Market Movers
-              </div>
-              <div className="mt-1 text-xs leading-relaxed text-muted">
-                Recent postings are compared with older dated postings in this view.
-              </div>
+              <h2 id="market-movers-title" className={H2}>Skills on the move</h2>
+              <p className="mt-1 text-sm text-muted">
+                Recent postings compared with older dated postings in this view.
+              </p>
             </div>
-            <div className="text-[11px] text-muted">
+            <p className="text-xs tabular-nums text-muted">
               {formatNumber(movers.recent_total)} recent / {formatNumber(movers.older_total)} older
-            </div>
+            </p>
           </div>
-          <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="mt-4 grid grid-cols-1 gap-x-8 gap-y-5 lg:grid-cols-2">
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Rising recently</div>
-              <div className="space-y-2">
-                {(movers.rising || []).length > 0 ? (
-                  movers.rising.slice(0, 6).map((item) => (
-                    <div key={`rising-${item.skill}`} className="rounded-xl bg-emerald-50 px-3 py-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="truncate text-sm font-medium text-[#384959]">{item.skill}</span>
-                        <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">{item.lift}x</span>
-                      </div>
-                      <div className="mt-1 text-xs text-muted">
-                        {item.recent_rate_percent}% recent vs {item.older_rate_percent}% older
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-muted">No recent over-index signal in this slice yet.</div>
-                )}
-              </div>
+              <h3 className={H3}>Rising recently</h3>
+              <ChangeList
+                items={movers.rising}
+                nameKey="skill"
+                valueKey="lift"
+                suffix="more"
+                detail={(item) => `${item.recent_rate_percent}% recent vs ${item.older_rate_percent}% older`}
+                empty="No recent over-index signal in this slice yet."
+              />
             </div>
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-700">Cooling in recent postings</div>
-              <div className="space-y-2">
-                {(movers.cooling || []).length > 0 ? (
-                  movers.cooling.slice(0, 6).map((item) => (
-                    <div key={`cooling-${item.skill}`} className="rounded-xl bg-rose-50 px-3 py-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="truncate text-sm font-medium text-[#384959]">{item.skill}</span>
-                        <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800">{item.drop}x</span>
-                      </div>
-                      <div className="mt-1 text-xs text-muted">
-                        {item.recent_rate_percent}% recent vs {item.older_rate_percent}% older
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-muted">No cooling signal in this slice yet.</div>
-                )}
-              </div>
+              <h3 className={H3}>Cooling in recent postings</h3>
+              <ChangeList
+                items={movers.cooling}
+                nameKey="skill"
+                valueKey="drop"
+                suffix="less"
+                detail={(item) => `${item.recent_rate_percent}% recent vs ${item.older_rate_percent}% older`}
+                empty="No cooling signal in this slice yet."
+              />
             </div>
           </div>
-        </div>
+        </section>
       )}
 
-      {!loading && !error && data && ((data.top_companies || []).length > 0 || (companyMovers.rising || []).length > 0 || (companyMovers.cooling || []).length > 0) && (
-        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+      {ready && ((data.top_companies || []).length > 0 || (companyMovers.rising || []).length > 0 || (companyMovers.cooling || []).length > 0) && (
+        <section className={PANEL} aria-labelledby="org-snapshot-title">
           <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">
-                <Building2 size={16} />
-                Hiring Org Snapshot
-              </div>
-              <div className="mt-1 text-xs leading-relaxed text-muted">
-                Top ministries, agencies, and companies in this view. Hide known recruiters to remove recognized recruitment firms from this snapshot; unverified employers remain eligible.
-              </div>
+              <h2 id="org-snapshot-title" className={H2}>Who is hiring</h2>
+              <p className="mt-1 max-w-3xl text-sm text-muted">
+                Top ministries, agencies and companies in this view. Hide known recruiters to remove recognised recruitment firms; unverified employers remain.
+              </p>
             </div>
-            <div className="text-[11px] text-muted">
+            <p className="text-xs tabular-nums text-muted">
               {formatNumber(companyMovers.recent_total)} recent / {formatNumber(companyMovers.older_total)} older
+            </p>
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-x-8 gap-y-5 xl:grid-cols-3">
+            <div>
+              <h3 className={H3}>Most active</h3>
+              {(data.top_companies || []).slice(0, 6).map((item, index) => (
+                <BarRow
+                  key={`org-snapshot-${item.company}`}
+                  rank={index + 1}
+                  label={item.company}
+                  count={item.count}
+                  maxCount={companiesMaxCount}
+                  active={companyFilter === item.company}
+                  onClick={() => applyCompanyFilter(companyFilter === item.company ? "" : item.company)}
+                />
+              ))}
+            </div>
+            <div>
+              <h3 className={H3}>Hiring more recently</h3>
+              <ChangeList
+                items={companyMovers.rising}
+                nameKey="company"
+                valueKey="lift"
+                suffix="more"
+                detail={(item) => `${formatNumber(item.recent_count)} recent vs ${formatNumber(item.older_count)} older`}
+                empty="No hiring spike in this slice yet."
+              />
+            </div>
+            <div>
+              <h3 className={H3}>Hiring less recently</h3>
+              <ChangeList
+                items={companyMovers.cooling}
+                nameKey="company"
+                valueKey="drop"
+                suffix="less"
+                detail={(item) => `${formatNumber(item.recent_count)} recent vs ${formatNumber(item.older_count)} older`}
+                empty="No slowdown in this slice yet."
+              />
             </div>
           </div>
-          <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
-            <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Most active</div>
-              <div className="space-y-1.5">
-                {(data.top_companies || []).slice(0, 6).map((item, index) => (
-                  <BarRow
-                    key={`org-snapshot-${item.company}`}
-                    rank={index + 1}
-                    label={item.company}
-                    count={item.count}
-                    maxCount={companiesMaxCount}
-                    color="bg-violet-500"
-                    active={companyFilter === item.company}
-                    onClick={() => applyCompanyFilter(companyFilter === item.company ? "" : item.company)}
-                  />
-                ))}
-              </div>
-            </div>
-            <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Hiring more recently</div>
-              <div className="space-y-2">
-                {(companyMovers.rising || []).length > 0 ? (
-                  companyMovers.rising.slice(0, 6).map((item) => (
-                    <div key={`company-rising-${item.company}`} className="rounded-xl bg-emerald-50 px-3 py-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="truncate text-sm font-medium text-[#384959]">{item.company}</span>
-                        <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">{item.lift}x</span>
-                      </div>
-                      <div className="mt-1 text-xs text-muted">
-                        {formatNumber(item.recent_count)} recent vs {formatNumber(item.older_count)} older
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-muted">No hiring spike in this slice yet.</div>
-                )}
-              </div>
-            </div>
-            <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-700">Hiring less recently</div>
-              <div className="space-y-2">
-                {(companyMovers.cooling || []).length > 0 ? (
-                  companyMovers.cooling.slice(0, 6).map((item) => (
-                    <div key={`company-cooling-${item.company}`} className="rounded-xl bg-rose-50 px-3 py-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="truncate text-sm font-medium text-[#384959]">{item.company}</span>
-                        <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800">{item.drop}x</span>
-                      </div>
-                      <div className="mt-1 text-xs text-muted">
-                        {formatNumber(item.recent_count)} recent vs {formatNumber(item.older_count)} older
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-muted">No slowdown in this slice yet.</div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        </section>
       )}
 
-      {!loading && !error && data && (
+      {ready && (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
-          <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-[#384959]">
-              <Target size={16} />
-              Hard Skills
-            </div>
-            <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
-              {(data.hard_skills || []).length > 0 ? (
-                data.hard_skills.slice(0, 10).map((item, index) => (
+          <section className={PANEL} aria-labelledby="hard-skills-title">
+            <h2 id="hard-skills-title" className={`${H2} mb-3`}>Hard skills</h2>
+            {(data.hard_skills || []).length > 0 ? (
+              <div className="grid grid-cols-1 gap-x-4 lg:grid-cols-2">
+                {data.hard_skills.slice(0, 10).map((item, index) => (
                   <BarRow
                     key={item.skill}
                     rank={index + 1}
                     label={item.skill}
                     count={item.count}
                     maxCount={hardSkillsMaxCount}
-                    color="bg-cyan-500"
                   />
-                ))
-              ) : (
-                <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-muted">
-                  No hard-skill signal is available for this slice yet.
-                </div>
-              )}
-            </div>
-            <div className="mt-4 rounded-xl bg-[#f0f4f8] px-3 py-2 text-xs leading-relaxed text-muted">
-              Common terms like communication and customer service appear everywhere. Stronger resume alignment usually comes from exact tools, certifications, and domain terms.
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-[#384959]">
-              <TrendingUp size={16} />
-              Standout Skills
-            </div>
-            {(data.overindexed_skills || []).length > 0 ? (
-              <div className="space-y-2">
-                {data.overindexed_skills.slice(0, 8).map((item) => (
-                  <div key={item.skill} className="rounded-xl bg-[#f0f4f8] px-3 py-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="truncate text-sm font-medium text-[#384959]">{item.skill}</span>
-                      <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
-                        {item.lift}x
-                      </span>
-                    </div>
-                    <div className="mt-1 text-xs text-muted">
-                      {item.rate_percent}% in this view vs {item.market_rate_percent}% market-wide
-                    </div>
-                  </div>
                 ))}
               </div>
             ) : (
-              <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-muted">
-                Pick an industry/sector or job title to reveal skills that appear unusually often compared with the overall market.
-              </div>
+              <p className="text-sm text-muted">No hard-skill signal is available for this slice yet.</p>
             )}
-          </div>
+            <p className={`${NOTE} mt-4`}>
+              Common terms like communication and customer service appear everywhere. Stronger resume alignment usually comes from exact tools, certifications and domain terms.
+            </p>
+          </section>
+
+          <section className={PANEL} aria-labelledby="standout-skills-title">
+            <h2 id="standout-skills-title" className={`${H2} mb-3`}>Standout skills</h2>
+            {(data.overindexed_skills || []).length > 0 ? (
+              <ChangeList
+                items={data.overindexed_skills.slice(0, 8)}
+                nameKey="skill"
+                valueKey="lift"
+                suffix="the market rate"
+                detail={(item) => `${item.rate_percent}% in this view vs ${item.market_rate_percent}% market-wide`}
+              />
+            ) : (
+              <p className="text-sm leading-relaxed text-muted">
+                Pick a sector or job title to see skills that appear unusually often compared with the overall market.
+              </p>
+            )}
+          </section>
         </div>
       )}
 
-      {!loading && !error && data?.seniority_mix?.length > 0 && (
-        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-          <div className="mb-4 text-sm font-semibold text-[#384959]">Seniority Mix</div>
-          <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
+      {ready && data?.seniority_mix?.length > 0 && (
+        <section className={PANEL} aria-labelledby="seniority-title">
+          <h2 id="seniority-title" className={`${H2} mb-3`}>Seniority mix</h2>
+          <div className="grid grid-cols-1 gap-x-4 lg:grid-cols-2">
             {data.seniority_mix.map((item, index) => (
               <BarRow
                 key={item.label}
@@ -770,62 +718,48 @@ export default function AnalyticsTab() {
                 label={`${item.label} (${item.percent}%)`}
                 count={item.count}
                 maxCount={seniorityMaxCount}
-                color={chartColors[index % chartColors.length]}
               />
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      {!loading && !error && data?.salary_insights?.by_sector?.length > 0 && (
-        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-          <div className="mb-4 text-sm font-semibold text-[#384959]">Listed Salary by Industry / Sector</div>
-          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+      {ready && data?.salary_insights?.by_sector?.length > 0 && (
+        <section className={PANEL} aria-labelledby="salary-sector-title">
+          <h2 id="salary-sector-title" className={`${H2} mb-3`}>Listed salary by industry</h2>
+          <ul className="grid grid-cols-1 gap-x-8 lg:grid-cols-2">
             {data.salary_insights.by_sector.map((item) => (
-              <div key={item.sector} className="flex items-center justify-between gap-3 rounded-xl bg-[#f0f4f8] px-3 py-2">
+              <li key={item.sector} className="flex items-center justify-between gap-3 border-b border-line py-2">
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium text-[#384959]">{item.sector}</div>
-                  <div className="text-xs text-muted">{formatNumber(item.count)} salary-listed roles</div>
+                  <div className="truncate text-sm font-medium text-ink">{item.sector}</div>
+                  <div className="text-xs tabular-nums text-muted">{formatNumber(item.count)} salary-listed roles</div>
                 </div>
                 <div className="shrink-0 text-right">
-                  <div className="text-sm font-semibold text-[#384959]">{formatMoney(item.median_floor)}</div>
-                  <div className="text-[11px] text-muted">median floor</div>
+                  <div className="text-sm font-semibold tabular-nums text-ink">{formatMoney(item.median_floor)}</div>
+                  <div className="text-xs text-muted">median floor</div>
                   {item.median_midpoint ? (
-                    <div className="mt-0.5 text-[11px] font-medium text-[#384959]">
+                    <div className="text-xs tabular-nums text-ink">
                       {formatMoney(item.median_midpoint)} midpoint
                     </div>
                   ) : null}
                 </div>
-              </div>
+              </li>
             ))}
-          </div>
-        </div>
+          </ul>
+        </section>
       )}
 
-      {loading && (
-        <div className="flex items-center gap-2 py-12 justify-center text-muted">
-          <Loader2 size={18} className="animate-spin" />
-          Loading analytics...
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error}
-        </div>
-      )}
-
-      {!loading && !error && data?.sectors?.length > 0 && (
-        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between">
-            <div className="text-sm font-semibold text-[#384959]">Industry / Sector Demand</div>
+      {ready && data?.sectors?.length > 0 && (
+        <section className={PANEL} aria-labelledby="sector-demand-title">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 id="sector-demand-title" className={H2}>Demand by industry</h2>
             {sectorFilter && (
-              <button type="button" onClick={() => setSectorFilter("")} className="text-xs text-[#88BDF2] hover:text-[#384959]">
+              <button type="button" onClick={() => setSectorFilter("")} className={TEXT_BUTTON}>
                 Clear sector
               </button>
             )}
           </div>
-          <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-4 lg:grid-cols-2">
             {data.sectors.map((item, index) => (
               <BarRow
                 key={item.sector}
@@ -833,33 +767,32 @@ export default function AnalyticsTab() {
                 label={item.sector}
                 count={item.count}
                 maxCount={sectorsMaxCount}
-                color={chartColors[index % chartColors.length]}
                 active={sectorFilter === item.sector}
                 onClick={() => setSectorFilter(sectorFilter === item.sector ? "" : item.sector)}
               />
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      {!loading && !error && data?.top_titles?.length > 0 && (
-        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="text-sm font-semibold text-[#384959]">
-              Top {data.top_titles.length} Job Titles
-            </div>
+      {ready && data?.top_titles?.length > 0 && (
+        <section className={PANEL} aria-labelledby="top-titles-title">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 id="top-titles-title" className={H2}>
+              Top {data.top_titles.length} job titles
+            </h2>
             {titleFilter && (
-              <button type="button" onClick={() => setTitleFilter("")} className="text-xs text-[#88BDF2] hover:text-[#384959]">
+              <button type="button" onClick={() => setTitleFilter("")} className={TEXT_BUTTON}>
                 Clear title filter
               </button>
             )}
           </div>
           {titleFilter && (
-            <div className="mb-3 rounded-lg bg-[#BDDDFC]/15 px-3 py-2 text-xs text-[#384959]">
+            <p className="mb-3 text-sm text-ink">
               Showing skills for: <strong>{titleFilter}</strong>
-            </div>
+            </p>
           )}
-          <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-4 lg:grid-cols-2">
             {data.top_titles.map((item, index) => (
               <BarRow
                 key={item.title}
@@ -867,26 +800,25 @@ export default function AnalyticsTab() {
                 label={item.title}
                 count={item.count}
                 maxCount={titlesMaxCount}
-                color="bg-emerald-500"
                 active={titleFilter === item.title}
                 onClick={() => setTitleFilter(titleFilter === item.title ? "" : item.title)}
               />
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      {!loading && !error && data?.top_companies?.length > 0 && (
-        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <div className="text-sm font-semibold text-[#384959]">Top Hiring Agencies / Companies</div>
+      {ready && data?.top_companies?.length > 0 && (
+        <section className={PANEL} aria-labelledby="top-companies-title">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 id="top-companies-title" className={H2}>Top hiring agencies and companies</h2>
             {companyFilter && (
-              <button type="button" onClick={() => applyCompanyFilter("")} className="text-xs text-[#88BDF2] hover:text-[#384959]">
+              <button type="button" onClick={() => applyCompanyFilter("")} className={TEXT_BUTTON}>
                 Clear company
               </button>
             )}
           </div>
-          <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-4 lg:grid-cols-2">
             {data.top_companies.slice(0, 16).map((item, index) => (
               <BarRow
                 key={item.company}
@@ -894,49 +826,50 @@ export default function AnalyticsTab() {
                 label={item.company}
                 count={item.count}
                 maxCount={companiesMaxCount}
-                color="bg-violet-500"
                 active={companyFilter === item.company}
                 onClick={() => applyCompanyFilter(companyFilter === item.company ? "" : item.company)}
               />
             ))}
           </div>
-        </div>
+        </section>
       )}
 
-      {!loading && !error && (data?.top_skills?.length || 0) > 0 && (
-        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-4">
-            <div className="text-sm font-semibold text-[#384959]">
-              Top In-Demand Skills
-            </div>
-            <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+      {ready && (data?.top_skills?.length || 0) > 0 && (
+        <section className={PANEL} aria-labelledby="top-skills-title">
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h2 id="top-skills-title" className={H2}>
+              Most requested skills
+            </h2>
+            <div className="relative sm:w-56">
+              <Search size={14} aria-hidden="true" className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
               <input
                 type="text"
                 value={skillSearch}
                 onChange={(e) => { setSkillSearch(e.target.value); setShowCount(30); }}
+                aria-label="Filter skills"
                 placeholder="Filter skills..."
-                className="rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] py-1.5 pl-8 pr-3 text-xs text-[#384959] placeholder-muted focus:border-[#88BDF2] focus:outline-none focus:ring-1 focus:ring-[#BDDDFC] w-48"
+                className={SEARCH_FIELD}
               />
               {skillSearch && (
                 <button
                   type="button"
                   onClick={() => setSkillSearch("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-[#384959]"
+                  aria-label="Clear skill filter"
+                  className="absolute right-1 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded text-muted hover:text-ink"
                 >
-                  <X size={12} />
+                  <X size={14} aria-hidden="true" />
                 </button>
               )}
             </div>
           </div>
           {skillSearch && (
-            <div className="text-xs text-muted mb-3">
+            <p className="mb-3 text-xs text-muted">
               {filteredSkills.length} skill{filteredSkills.length !== 1 ? "s" : ""} matching "{skillSearch}"
-            </div>
+            </p>
           )}
           {visibleSkills.length > 0 ? (
             <>
-              <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-x-4 lg:grid-cols-2">
                 {visibleSkills.map((item, index) => (
                   <BarRow
                     key={item.skill}
@@ -944,7 +877,6 @@ export default function AnalyticsTab() {
                     label={item.skill}
                     count={item.count}
                     maxCount={maxCount}
-                    color="bg-[#88BDF2]"
                   />
                 ))}
               </div>
@@ -952,24 +884,31 @@ export default function AnalyticsTab() {
                 <button
                   type="button"
                   onClick={() => setShowCount((c) => c + 30)}
-                  className="mt-4 text-xs font-medium text-[#384959] hover:text-[#2d3a47]"
+                  className={`mt-3 ${TEXT_BUTTON}`}
                 >
-                  Show more ({filteredSkills.length - showCount} remaining)...
+                  Show more ({filteredSkills.length - showCount} remaining)
                 </button>
               )}
             </>
           ) : (
-            <div className="py-6 text-center text-sm text-muted">
+            <p className="py-6 text-center text-sm text-muted">
               No skills match "{skillSearch}"
-            </div>
+            </p>
           )}
-        </div>
+        </section>
       )}
 
-      {!loading && !error && (data?.top_skills?.length || 0) === 0 && (
-        <div className="text-center py-12 text-muted">
-          <BarChart2 size={32} className="mx-auto mb-2 opacity-40" />
-          <p>No skill data available yet. Skills are extracted as jobs are processed.</p>
+      {ready && (data?.top_skills?.length || 0) === 0 && (
+        <div className={`${PANEL} px-6 py-12 text-center`}>
+          <p className="font-semibold text-ink">No skill data for this view yet</p>
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted">
+            Skills are read from each posting as it is added.{hasFilters ? " Try removing a filter." : " Check back tomorrow."}
+          </p>
+          {hasFilters && (
+            <button type="button" onClick={clearAllFilters} className={`mt-3 ${TEXT_BUTTON}`}>
+              Clear all filters
+            </button>
+          )}
         </div>
       )}
     </div>

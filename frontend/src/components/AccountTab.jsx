@@ -1,13 +1,33 @@
 import { useState, useEffect } from "react";
-import {
-  User, LogOut, Mail, Loader2, Bell, Save, ShieldCheck,
-  FileText, Target, BookOpen, BarChart2, KeyRound, Trash2,
-} from "lucide-react";
+import { AlertCircle, CheckCircle2, LogOut, Loader2 } from "lucide-react";
 import { API_BASE, apiFetch, clearResumeDraftStorage, downloadBlob } from "../lib/api.js";
 import { PRIVACY_CONTACT_EMAIL } from "../lib/constants.js";
 
 const formatLimit = (value) => (value >= 999999 ? "Unlimited" : value?.toLocaleString?.() ?? value);
 const formatLimitLabel = (value) => (value >= 999999 ? "Unlimited" : `${formatLimit(value)} limit`);
+const PANEL = "rounded-[10px] border border-line bg-white p-5";
+const H2 = "text-base font-semibold text-ink";
+const LABEL = "mb-1 block text-sm font-medium text-ink";
+const FIELD = "min-h-11 w-full rounded-md border border-field bg-white px-3 text-sm text-ink focus:border-accent";
+const TEXTAREA = "w-full rounded-md border border-field bg-white px-3 py-2 text-sm text-ink focus:border-accent";
+const BTN_PRIMARY = "inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60";
+const BTN_SECONDARY = "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-field bg-white px-4 text-sm font-medium text-ink transition-colors hover:bg-tint disabled:cursor-not-allowed disabled:opacity-60";
+const TEXT_BUTTON = "inline-flex min-h-11 items-center rounded-md px-2 text-sm font-medium text-accent transition-colors hover:bg-tint";
+
+function Notice({ children, tone = "error" }) {
+  const success = tone === "success";
+  const Icon = success ? CheckCircle2 : AlertCircle;
+  return (
+    <div
+      role={success ? "status" : "alert"}
+      className={`flex items-start gap-2 rounded-md border bg-white p-3 text-sm ${success ? "border-[#166534]/30 text-[#166534]" : "border-[#b42318]/30 text-[#b42318]"}`}
+    >
+      <Icon size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+      <span>{children}</span>
+    </div>
+  );
+}
+
 const defaultAlertPrefs = {
   enabled: false,
   min_score: 75,
@@ -226,67 +246,225 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
   };
 
   const accountSections = [
-    { id: "overview", label: "Overview", icon: User },
-    { id: "privacy", label: "Privacy", icon: ShieldCheck },
-    ...(isAdmin ? [{ id: "admin", label: "Admin", icon: BarChart2 }] : []),
+    { id: "overview", label: "Overview" },
+    { id: "privacy", label: "Privacy" },
+    ...(isAdmin ? [{ id: "admin", label: "Admin" }] : []),
   ];
+  const usageItems = usage ? [
+    { label: "Searches today", value: usage.searches_today ?? 0, limit: usage.searches_limit },
+    { label: "AI requests today", value: usage.ai_today ?? 0, limit: usage.ai_limit },
+    { label: "Tracked jobs", value: usage.tracked_jobs ?? 0, limit: usage.tracked_limit },
+  ] : [];
+  const adminCount = (value) => value?.toLocaleString?.() ?? value;
+  const adminStat = (rows) => (
+    <dl className="mt-2 space-y-1.5 text-sm text-ink">
+      {rows.map(([label, value]) => (
+        <div key={label} className="flex items-center justify-between gap-3">
+          <dt>{label}</dt>
+          <dd className="font-medium tabular-nums">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-        <h2 className="font-semibold text-[#384959] flex items-center gap-2"><User size={18} /> Account</h2>
-        <p className="text-sm text-muted mt-1">Manage your account, saved work, alerts, and support.</p>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {accountSections.map(({ id, label, icon: Icon }) => {
-            const selected = accountView === id;
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => setAccountView(id)}
-                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition active:scale-[0.98] ${
-                  selected
-                    ? "border-[#384959] bg-[#384959] text-white"
-                    : "border-[#BDDDFC]/30 bg-[#f0f4f8] text-muted hover:bg-white hover:text-[#384959]"
-                }`}
-              >
-                <Icon size={14} />
-                {label}
-              </button>
-            );
-          })}
+    <div className="mx-auto max-w-4xl space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-xl font-bold tracking-[-0.01em] text-ink">Account</h1>
+          <p className="mt-1 text-sm text-muted">Your profile, job alerts, privacy and support.</p>
+        </div>
+        <div className="inline-flex self-start rounded-md border border-field bg-white p-0.5" role="group" aria-label="Account section">
+          {accountSections.map(({ id, label }) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setAccountView(id)}
+              aria-pressed={accountView === id}
+              className={`min-h-10 rounded px-4 text-sm transition-colors ${accountView === id ? "bg-tint font-semibold text-ink" : "text-muted hover:text-ink"}`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
       {accountView === "overview" && (
       <>
-      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
-        <h3 className="font-semibold text-[#384959] mb-4">Profile</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+      <section className={PANEL} aria-labelledby="profile-title">
+        <h2 id="profile-title" className={H2}>Profile</h2>
+        <dl className="mt-3 grid grid-cols-1 gap-4 text-sm sm:grid-cols-3">
           <div>
-            <div className="text-muted text-xs uppercase tracking-wide mb-1">Name</div>
-            <div className="text-[#384959] font-medium">{user?.name || "\u2014"}</div>
+            <dt className="text-xs text-muted">Name</dt>
+            <dd className="mt-0.5 font-medium text-ink [overflow-wrap:anywhere]">{user?.name || "Not set"}</dd>
           </div>
           <div>
-            <div className="text-muted text-xs uppercase tracking-wide mb-1">Email</div>
-            <div className="text-[#384959]">{user?.email || "\u2014"}</div>
+            <dt className="text-xs text-muted">Email</dt>
+            <dd className="mt-0.5 text-ink [overflow-wrap:anywhere]">{user?.email || "Not set"}</dd>
           </div>
           <div>
-            <div className="text-muted text-xs uppercase tracking-wide mb-1">Member Since</div>
-            <div className="text-[#384959]">{user?.created_at ? new Date(user.created_at).toLocaleDateString() : "\u2014"}</div>
+            <dt className="text-xs text-muted">Member since</dt>
+            <dd className="mt-0.5 tabular-nums text-ink">{user?.created_at ? new Date(user.created_at).toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" }) : "Not recorded"}</dd>
           </div>
+        </dl>
+        <div className="mt-5 border-t border-line pt-4">
+          <h3 className="text-sm font-semibold text-ink">Today&apos;s usage</h3>
+          {usageLoading ? (
+            <div className="mt-3 grid grid-cols-3 gap-4" role="status">
+              <span className="sr-only">Loading usage</span>
+              {[0, 1, 2].map((cell) => (
+                <div key={cell}>
+                  <div className="h-5 w-10 rounded bg-paper" />
+                  <div className="mt-2 h-3 w-20 rounded bg-paper" />
+                </div>
+              ))}
+            </div>
+          ) : usage ? (
+            <dl className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              {usageItems.map((item) => (
+                <div key={item.label}>
+                  <dd className="text-xl font-semibold tabular-nums text-ink">{item.value}</dd>
+                  <dt className="text-xs text-muted">{item.label}</dt>
+                  {item.limit != null && (
+                    <dd className="text-xs tabular-nums text-muted">{formatLimitLabel(item.limit)}</dd>
+                  )}
+                </div>
+              ))}
+            </dl>
+          ) : (
+            <p className="mt-2 text-sm text-muted">Usage could not load. Try again later.</p>
+          )}
         </div>
-      </div>
+      </section>
+
+      <section className={PANEL} aria-labelledby="alerts-title">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 id="alerts-title" className={H2}>Job match alerts</h2>
+            <p className="mt-1 text-sm text-muted">
+              Get email digests for roles that match your saved resume.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={alertsLoading}
+            aria-pressed={Boolean(alertPrefs.enabled)}
+            onClick={() => {
+              setAlertsSaved(false);
+              setAlertPrefs((prev) => ({ ...prev, enabled: !prev.enabled }));
+            }}
+            className="inline-flex min-h-11 items-center justify-center gap-2 self-start rounded-md border border-field bg-white px-3 text-sm font-medium text-ink transition-colors hover:bg-tint disabled:opacity-60"
+          >
+            <span aria-hidden="true" className={`h-5 w-9 rounded-full p-0.5 transition-colors ${alertPrefs.enabled ? "bg-accent" : "bg-field"}`}>
+              <span className={`block h-4 w-4 rounded-full bg-white transition-transform ${alertPrefs.enabled ? "translate-x-4" : "translate-x-0"}`} />
+            </span>
+            {alertPrefs.enabled ? "Enabled" : "Off"}
+          </button>
+        </div>
+
+        {alertsError && <div className="mt-4"><Notice>{alertsError}</Notice></div>}
+        {alertsSaved && <div className="mt-4"><Notice tone="success">Job alerts updated.</Notice></div>}
+
+        {alertsLoading ? (
+          <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3" role="status">
+            <span className="sr-only">Loading alert settings</span>
+            {[0, 1, 2].map((cell) => (
+              <div key={cell}>
+                <div className="h-3 w-20 rounded bg-paper" />
+                <div className="mt-2 h-11 rounded-md bg-paper" />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <form onSubmit={saveAlertPrefs} className="mt-5 space-y-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <label className="block">
+                <span className={LABEL}>Lowest match score</span>
+                <input
+                  type="number"
+                  min="35"
+                  max="95"
+                  value={alertPrefs.min_score}
+                  onChange={(e) => setAlertPrefs((prev) => ({ ...prev, min_score: e.target.value }))}
+                  className={FIELD}
+                />
+              </label>
+              <label className="block">
+                <span className={LABEL}>Frequency</span>
+                <select
+                  value={alertPrefs.frequency}
+                  onChange={(e) => setAlertPrefs((prev) => ({ ...prev, frequency: e.target.value }))}
+                  className={FIELD}
+                >
+                  <option value="daily">Daily digest</option>
+                  <option value="weekly">Weekly digest</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className={LABEL}>Jobs per email</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={alertPrefs.max_jobs}
+                  onChange={(e) => setAlertPrefs((prev) => ({ ...prev, max_jobs: e.target.value }))}
+                  className={FIELD}
+                />
+              </label>
+            </div>
+
+            <label className="block">
+              <span className={LABEL}>Keywords</span>
+              <input
+                value={alertPrefs.keywords || ""}
+                onChange={(e) => setAlertPrefs((prev) => ({ ...prev, keywords: e.target.value }))}
+                placeholder="e.g. cloud, data engineering"
+                className={FIELD}
+              />
+            </label>
+
+            <label className="flex items-start gap-3">
+              <input
+                type="checkbox"
+                checked={Boolean(alertPrefs.direct_employers_only)}
+                onChange={(e) => setAlertPrefs((prev) => ({ ...prev, direct_employers_only: e.target.checked }))}
+                className="mt-0.5 h-5 w-5 shrink-0 accent-[#1f5f99]"
+              />
+              <span>
+                <span className="block text-sm font-medium text-ink">Hide known recruiters</span>
+                <span className="block text-xs text-muted">
+                  Verified direct and unverified employers remain eligible.
+                </span>
+              </span>
+            </label>
+
+            <div className="flex flex-col gap-3 border-t border-line pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-xs text-muted">
+                {alertPrefs.last_run_at
+                  ? `Last checked ${new Date(alertPrefs.last_run_at).toLocaleString("en-SG", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" })}`
+                  : "Alerts start after you turn them on."}
+                {alertPrefs.enabled && (
+                  <span className="mt-1 block">
+                    By enabling alerts, you consent to receiving matched-job digests. Every alert includes an unsubscribe link.
+                  </span>
+                )}
+              </div>
+              <button type="submit" disabled={alertsSaving} className={BTN_PRIMARY}>
+                {alertsSaving && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
+                Save alerts
+              </button>
+            </div>
+          </form>
+        )}
+      </section>
 
       {authMode === "password" && (
-      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
-        <h3 className="font-semibold text-[#384959] mb-1 flex items-center gap-2">
-          <KeyRound size={17} /> Change Password
-        </h3>
-        <p className="mb-4 text-sm text-muted">Use at least 8 characters for your new password.</p>
-        {passwordError && <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{passwordError}</div>}
-        {passwordMessage && <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">{passwordMessage}</div>}
-        <form onSubmit={changePassword} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <section className={PANEL} aria-labelledby="password-title">
+        <h2 id="password-title" className={H2}>Change Password</h2>
+        <p className="mt-1 text-sm text-muted">Use at least 8 characters for your new password.</p>
+        {passwordError && <div className="mt-4"><Notice>{passwordError}</Notice></div>}
+        {passwordMessage && <div className="mt-4"><Notice tone="success">{passwordMessage}</Notice></div>}
+        <form onSubmit={changePassword} className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <input
             type="password"
             required
@@ -294,7 +472,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
             autoComplete="current-password"
             value={passwordForm.current}
             onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })}
-            className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm"
+            className={FIELD}
           />
           <input
             type="password"
@@ -304,7 +482,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
             autoComplete="new-password"
             value={passwordForm.next}
             onChange={(e) => setPasswordForm({ ...passwordForm, next: e.target.value })}
-            className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm"
+            className={FIELD}
           />
           <input
             type="password"
@@ -314,217 +492,95 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
             autoComplete="new-password"
             value={passwordForm.confirm}
             onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
-            className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm"
+            className={FIELD}
           />
-          <button
-            type="submit"
-            disabled={passwordSaving}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#384959] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-50 sm:col-start-3"
-          >
-            {passwordSaving && <Loader2 size={14} className="animate-spin" />}
+          <button type="submit" disabled={passwordSaving} className={`${BTN_SECONDARY} sm:col-start-3`}>
+            {passwordSaving && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
             Update Password
           </button>
         </form>
-      </div>
+      </section>
       )}
 
-      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
-        <h3 className="font-semibold text-[#384959] mb-4">Usage</h3>
-        {usageLoading ? (
-          <div className="flex items-center gap-2 text-sm text-muted"><Loader2 size={14} className="animate-spin" /> Loading usage...</div>
-        ) : usage ? (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="bg-blue-50 rounded-xl p-4 text-center">
-              <div className="text-2xl font-bold text-[#384959]">{usage.searches_today ?? 0}</div>
-              <div className="text-xs text-muted mt-1">Searches today</div>
-              {usage.searches_limit != null && (
-                <div className="text-xs text-muted mt-0.5">{formatLimitLabel(usage.searches_limit)}</div>
-              )}
-            </div>
-            <div className="bg-emerald-50 rounded-xl p-4 text-center">
-              <div className="text-2xl font-bold text-[#384959]">{usage.ai_today ?? 0}</div>
-              <div className="text-xs text-muted mt-1">AI requests today</div>
-              {usage.ai_limit != null && (
-                <div className="text-xs text-muted mt-0.5">{formatLimitLabel(usage.ai_limit)}</div>
-              )}
-            </div>
-            <div className="bg-purple-50 rounded-xl p-4 text-center">
-              <div className="text-2xl font-bold text-[#384959]">{usage.tracked_jobs ?? 0}</div>
-              <div className="text-xs text-muted mt-1">Tracked jobs</div>
-              {usage.tracked_limit != null && (
-                <div className="text-xs text-muted mt-0.5">{formatLimitLabel(usage.tracked_limit)}</div>
-              )}
-            </div>
+      <section className={PANEL} aria-labelledby="contact-title">
+        <h2 id="contact-title" className={H2}>Contact</h2>
+        <p className="mt-1 text-sm text-muted">Send a message or report a problem.</p>
+        {contactSent && <div className="mt-4"><Notice tone="success">Message sent. We will get back to you soon.</Notice></div>}
+        {contactError && <div className="mt-4"><Notice>{contactError}</Notice></div>}
+        <form onSubmit={sendContact} className="mt-4 space-y-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <input aria-label="Your name" placeholder="Name" value={contactForm.name} onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })} className={FIELD} />
+            <input aria-label="Your email" placeholder="Email" type="email" value={contactForm.email} onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })} className={FIELD} />
           </div>
-        ) : (
-          <div className="text-sm text-muted">Could not load usage data.</div>
-        )}
-      </div>
-
-      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
-        <h3 className="font-semibold text-[#384959] mb-4">Quick Actions</h3>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            { label: "Review Resume", detail: "Edit and export your resume.", icon: FileText, tab: "resume" },
-            { label: "Smart Match", detail: "Find roles and skill gaps.", icon: Target, tab: "power" },
-            { label: "Story Bank", detail: "Save interview examples.", icon: BookOpen, tab: "stories" },
-            { label: "Market Insights", detail: "Explore skill and salary trends.", icon: BarChart2, tab: "analytics" },
-          ].map(({ label, detail, icon: Icon, tab }) => (
-            <button
-              key={label}
-              type="button"
-              onClick={() => setActiveTab?.(tab)}
-              className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-3 text-left transition hover:bg-white hover:shadow-sm active:scale-[0.99]"
-            >
-              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">
-                <Icon size={15} />
-                {label}
-              </div>
-              <div className="mt-1 text-xs leading-relaxed text-muted">{detail}</div>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h3 className="font-semibold text-[#384959] flex items-center gap-2">
-              <Bell size={17} /> Job Match Alerts
-            </h3>
-            <p className="mt-1 text-sm text-muted">
-              Get email digests for roles that match your saved resume.
-            </p>
-          </div>
-          <button
-            type="button"
-            disabled={alertsLoading}
-            onClick={() => {
-              setAlertsSaved(false);
-              setAlertPrefs((prev) => ({ ...prev, enabled: !prev.enabled }));
-            }}
-            className={`inline-flex items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition active:scale-[0.98] disabled:opacity-50 ${
-              alertPrefs.enabled
-                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                : "border-[#BDDDFC]/40 bg-[#f0f4f8] text-[#384959] hover:bg-white"
-            }`}
-          >
-            <span className={`h-5 w-9 rounded-full p-0.5 transition ${alertPrefs.enabled ? "bg-emerald-600" : "bg-[#BDDDFC]"}`}>
-              <span className={`block h-4 w-4 rounded-full bg-white transition-transform ${alertPrefs.enabled ? "translate-x-4" : "translate-x-0"}`} />
-            </span>
-            {alertPrefs.enabled ? "Enabled" : "Off"}
+          <textarea aria-label="Message" placeholder="Your message" value={contactForm.message} onChange={(e) => setContactForm({ ...contactForm, message: e.target.value })} className={TEXTAREA} rows={3} />
+          <button type="submit" disabled={contactSending || !contactForm.message.trim()} className={BTN_SECONDARY}>
+            {contactSending && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
+            Send message
           </button>
-        </div>
+        </form>
+      </section>
 
-        {alertsError && (
-          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            {alertsError}
-          </div>
-        )}
-        {alertsSaved && (
-          <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
-            Job alerts updated.
-          </div>
-        )}
+      <nav aria-label="Other pages" className="text-sm text-muted">
+        <span className="mr-1">Go to</span>
+        {[
+          { label: "Resume", tab: "resume" },
+          { label: "Smart Match", tab: "power" },
+          { label: "Interview stories", tab: "stories" },
+          { label: "Market insights", tab: "analytics" },
+        ].map(({ label, tab }) => (
+          <button key={tab} type="button" onClick={() => setActiveTab?.(tab)} className={TEXT_BUTTON}>
+            {label}
+          </button>
+        ))}
+      </nav>
 
-        {alertsLoading ? (
-          <div className="mt-4 flex items-center gap-2 text-sm text-muted">
-            <Loader2 size={14} className="animate-spin" /> Loading alert settings...
-          </div>
-        ) : (
-          <form onSubmit={saveAlertPrefs} className="mt-5 space-y-4">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">Match Score</span>
-                <input
-                  type="number"
-                  min="35"
-                  max="95"
-                  value={alertPrefs.min_score}
-                  onChange={(e) => setAlertPrefs((prev) => ({ ...prev, min_score: e.target.value }))}
-                  className="w-full rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959]"
-                />
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">Frequency</span>
-                <select
-                  value={alertPrefs.frequency}
-                  onChange={(e) => setAlertPrefs((prev) => ({ ...prev, frequency: e.target.value }))}
-                  className="w-full rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959]"
-                >
-                  <option value="daily">Daily digest</option>
-                  <option value="weekly">Weekly digest</option>
-                </select>
-              </label>
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">Jobs Per Email</span>
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={alertPrefs.max_jobs}
-                  onChange={(e) => setAlertPrefs((prev) => ({ ...prev, max_jobs: e.target.value }))}
-                  className="w-full rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959]"
-                />
-              </label>
-              <label className="flex items-center justify-between gap-3 rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-2">
-                <span>
-                  <span className="block text-sm font-medium text-[#384959]">Hide known recruiters</span>
-                  <span className="block text-xs text-muted">
-                    Verified direct and unverified employers remain eligible.
-                  </span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={Boolean(alertPrefs.direct_employers_only)}
-                  onChange={(e) => setAlertPrefs((prev) => ({ ...prev, direct_employers_only: e.target.checked }))}
-                  className="h-4 w-4 accent-[#384959]"
-                />
-              </label>
-            </div>
-
-            <label className="block">
-              <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">Keywords</span>
-              <input
-                value={alertPrefs.keywords || ""}
-                onChange={(e) => setAlertPrefs((prev) => ({ ...prev, keywords: e.target.value }))}
-                placeholder="e.g. cloud, data engineering"
-                className="w-full rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959]"
-              />
-            </label>
-
-            <div className="flex flex-col gap-3 border-t border-[#BDDDFC]/20 pt-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-xs text-muted">
-                {alertPrefs.last_run_at
-                  ? `Last checked ${new Date(alertPrefs.last_run_at).toLocaleString()}`
-                  : "Alerts start after you turn them on."}
-                {alertPrefs.enabled && (
-                  <span className="mt-1 block">
-                    By enabling alerts, you consent to receiving matched-job digests. Every alert includes an unsubscribe link.
-                  </span>
-                )}
-              </div>
-              <button
-                type="submit"
-                disabled={alertsSaving}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#384959] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#2d3a47] active:scale-[0.98] disabled:opacity-50"
-              >
-                {alertsSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                Save Alerts
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
+      <section className="rounded-[10px] border border-[#b42318]/40 bg-white p-5" aria-labelledby="delete-title">
+        <h2 id="delete-title" className="text-base font-semibold text-[#b42318]">Delete account</h2>
+        <p className="mt-1 max-w-2xl text-sm text-muted">
+          Permanently remove your saved resumes and tailored results, tracked jobs, stories,
+          alerts, Agent memory and history, and usage records. Shared public job listings remain.
+          This cannot be undone.
+        </p>
+        {deleteError && <div className="mt-4"><Notice>{deleteError}</Notice></div>}
+        <form onSubmit={deleteAccount} className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <input
+            type="email"
+            required
+            aria-label="Type your email to confirm" placeholder={`Type ${user?.email || "your email"}`}
+            value={deleteEmail}
+            onChange={(e) => setDeleteEmail(e.target.value)}
+            className={FIELD}
+          />
+          {authMode === "password" && (
+            <input
+              type="password"
+              required
+              aria-label="Current password" placeholder="Current password"
+              autoComplete="current-password"
+              value={deletePassword}
+              onChange={(e) => setDeletePassword(e.target.value)}
+              className={FIELD}
+            />
+          )}
+          <button
+            type="submit"
+            disabled={deleteSending || deleteEmail !== user?.email || (authMode === "password" && !deletePassword)}
+            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-[#b42318] bg-white px-4 text-sm font-semibold text-[#b42318] transition-colors hover:bg-[#fef3f2] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {deleteSending && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
+            Delete My Account
+          </button>
+        </form>
+      </section>
       </>
       )}
 
       {isAdmin && accountView === "admin" && (
-        <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
-          <div className="flex items-center justify-between gap-3 mb-4">
+        <section className={PANEL} aria-labelledby="admin-title">
+          <div className="mb-4 flex items-center justify-between gap-3">
             <div>
-              <h3 className="font-semibold text-[#384959]">Admin Metrics</h3>
-              <p className="text-sm text-muted mt-1">Signups, resume activity, and usage.</p>
+              <h2 id="admin-title" className={H2}>Admin metrics</h2>
+              <p className="mt-1 text-sm text-muted">Signups, resume activity and usage.</p>
             </div>
             <button
               type="button"
@@ -540,98 +596,76 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
                   setAdminLoading(false);
                 }
               }}
-              className="rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs text-muted hover:bg-[#f0f4f8]"
+              className={BTN_SECONDARY}
             >
               Refresh
             </button>
           </div>
 
           {adminLoading ? (
-            <div className="flex items-center gap-2 text-sm text-muted"><Loader2 size={14} className="animate-spin" /> Loading admin metrics...</div>
+            <div className="flex items-center gap-2 text-sm text-muted" role="status"><Loader2 size={14} className="animate-spin" aria-hidden="true" /> Loading admin metrics...</div>
           ) : adminError ? (
-            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">
-              {adminError}
-            </div>
+            <Notice>{adminError}</Notice>
           ) : adminMetrics ? (
             <>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.total_users?.toLocaleString?.() ?? adminMetrics.overview.total_users}</div>
-                  <div className="text-xs text-muted mt-1">Total users</div>
-                </div>
-                <div className="rounded-xl bg-blue-50 p-4">
-                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.signups_7d?.toLocaleString?.() ?? adminMetrics.overview.signups_7d}</div>
-                  <div className="text-xs text-muted mt-1">Signups last 7 days</div>
-                </div>
-                <div className="rounded-xl bg-emerald-50 p-4">
-                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.active_users_7d?.toLocaleString?.() ?? adminMetrics.overview.active_users_7d}</div>
-                  <div className="text-xs text-muted mt-1">Active users last 7 days</div>
-                </div>
-                <div className="rounded-xl bg-violet-50 p-4">
-                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.total_saved_resumes?.toLocaleString?.() ?? adminMetrics.overview.total_saved_resumes}</div>
-                  <div className="text-xs text-muted mt-1">Saved resumes</div>
-                </div>
-                <div className="rounded-xl bg-amber-50 p-4">
-                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.tailored_resumes_total?.toLocaleString?.() ?? adminMetrics.overview.tailored_resumes_total}</div>
-                  <div className="text-xs text-muted mt-1">Tailored resumes</div>
-                </div>
-                <div className="rounded-xl bg-cyan-50 p-4">
-                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.overview.tracked_jobs_total?.toLocaleString?.() ?? adminMetrics.overview.tracked_jobs_total}</div>
-                  <div className="text-xs text-muted mt-1">Tracked jobs</div>
-                </div>
-                <div className="rounded-xl bg-rose-50 p-4">
-                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.activity.resume_chat_starts_7d?.toLocaleString?.() ?? adminMetrics.activity.resume_chat_starts_7d}</div>
-                  <div className="text-xs text-muted mt-1">Resume chat starts, 7d</div>
-                </div>
-                <div className="rounded-xl bg-indigo-50 p-4">
-                  <div className="text-2xl font-bold text-[#384959]">{adminMetrics.activity.resume_downloads_7d?.toLocaleString?.() ?? adminMetrics.activity.resume_downloads_7d}</div>
-                  <div className="text-xs text-muted mt-1">Resume downloads, 7d</div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4 mt-5">
-                <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
-                  <div className="text-sm font-semibold text-[#384959]">Today</div>
-                  <div className="mt-3 space-y-2 text-sm text-[#384959]">
-                    <div className="flex items-center justify-between"><span>Signups</span><span className="font-medium">{adminMetrics.overview.signups_today}</span></div>
-                    <div className="flex items-center justify-between"><span>Searches</span><span className="font-medium">{adminMetrics.activity.searches_today}</span></div>
-                    <div className="flex items-center justify-between"><span>AI calls</span><span className="font-medium">{adminMetrics.activity.ai_today}</span></div>
-                    <div className="flex items-center justify-between"><span>Anonymous AI</span><span className="font-medium">{adminMetrics.activity.anonymous_ai_today}</span></div>
+              <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-line bg-line sm:grid-cols-4">
+                {[
+                  ["Total users", adminMetrics.overview.total_users],
+                  ["Signups last 7 days", adminMetrics.overview.signups_7d],
+                  ["Active users last 7 days", adminMetrics.overview.active_users_7d],
+                  ["Saved resumes", adminMetrics.overview.total_saved_resumes],
+                  ["Tailored resumes", adminMetrics.overview.tailored_resumes_total],
+                  ["Tracked jobs", adminMetrics.overview.tracked_jobs_total],
+                  ["Resume chat starts, 7d", adminMetrics.activity.resume_chat_starts_7d],
+                  ["Resume downloads, 7d", adminMetrics.activity.resume_downloads_7d],
+                ].map(([label, value]) => (
+                  <div key={label} className="bg-white px-4 py-3">
+                    <dd className="text-xl font-semibold tabular-nums text-ink">{adminCount(value)}</dd>
+                    <dt className="mt-0.5 text-xs text-muted">{label}</dt>
                   </div>
-                </div>
+                ))}
+              </dl>
 
-                <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
-                  <div className="text-sm font-semibold text-[#384959]">Onboarding</div>
-                  <div className="mt-3 space-y-2 text-sm text-[#384959]">
-                    <div className="flex items-center justify-between"><span>Resume chat starts, 7d</span><span className="font-medium">{adminMetrics.activity.resume_chat_starts_7d}</span></div>
-                    <div className="flex items-center justify-between"><span>Resume chat generates, 7d</span><span className="font-medium">{adminMetrics.activity.resume_chat_generates_7d}</span></div>
-                    <div className="flex items-center justify-between"><span>Resume uploads, 7d</span><span className="font-medium">{adminMetrics.activity.resume_uploads_7d}</span></div>
-                    <div className="flex items-center justify-between"><span>Resume scores, 7d</span><span className="font-medium">{adminMetrics.activity.resume_scores_7d}</span></div>
-                  </div>
+              <div className="mt-6 grid grid-cols-1 gap-x-8 gap-y-6 lg:grid-cols-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-ink">Today</h3>
+                  {adminStat([
+                    ["Signups", adminMetrics.overview.signups_today],
+                    ["Searches", adminMetrics.activity.searches_today],
+                    ["AI calls", adminMetrics.activity.ai_today],
+                    ["Anonymous AI", adminMetrics.activity.anonymous_ai_today],
+                  ])}
                 </div>
-
-                <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
-                  <div className="text-sm font-semibold text-[#384959]">User Funnel</div>
-                  <div className="mt-3 space-y-2 text-sm text-[#384959]">
-                    <div className="flex items-center justify-between"><span>Users with saved resume</span><span className="font-medium">{adminMetrics.funnel.users_with_saved_resume}</span></div>
-                    <div className="flex items-center justify-between"><span>Users with tailored resume</span><span className="font-medium">{adminMetrics.funnel.users_with_tailored_resume}</span></div>
-                    <div className="flex items-center justify-between"><span>Users with tracked jobs</span><span className="font-medium">{adminMetrics.funnel.users_with_tracked_jobs}</span></div>
-                  </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-ink">Onboarding</h3>
+                  {adminStat([
+                    ["Resume chat starts, 7d", adminMetrics.activity.resume_chat_starts_7d],
+                    ["Resume chat generates, 7d", adminMetrics.activity.resume_chat_generates_7d],
+                    ["Resume uploads, 7d", adminMetrics.activity.resume_uploads_7d],
+                    ["Resume scores, 7d", adminMetrics.activity.resume_scores_7d],
+                  ])}
                 </div>
-
-                <div className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
-                  <div className="text-sm font-semibold text-[#384959]">Resume Parsing</div>
-                  <div className="mt-3 space-y-2 text-sm text-[#384959]">
-                    <div className="flex items-center justify-between"><span>Uploads checked, 30d</span><span className="font-medium">{adminMetrics.resume_parse_quality?.diagnostic_uploads_30d ?? 0}</span></div>
-                    <div className="flex items-center justify-between"><span>Needs review</span><span className="font-medium">{adminMetrics.resume_parse_quality?.needs_review_30d ?? 0}</span></div>
-                    <div className="flex items-center justify-between"><span>Avg score</span><span className="font-medium">{adminMetrics.resume_parse_quality?.avg_score ?? "n/a"}</span></div>
-                    <div className="flex items-center justify-between"><span>Good / Check / Review</span><span className="font-medium">{adminMetrics.resume_parse_quality?.labels?.good ?? 0} / {adminMetrics.resume_parse_quality?.labels?.check ?? 0} / {adminMetrics.resume_parse_quality?.labels?.review ?? 0}</span></div>
-                  </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-ink">User funnel</h3>
+                  {adminStat([
+                    ["Users with saved resume", adminMetrics.funnel.users_with_saved_resume],
+                    ["Users with tailored resume", adminMetrics.funnel.users_with_tailored_resume],
+                    ["Users with tracked jobs", adminMetrics.funnel.users_with_tracked_jobs],
+                  ])}
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-ink">Resume parsing</h3>
+                  {adminStat([
+                    ["Uploads checked, 30d", adminMetrics.resume_parse_quality?.diagnostic_uploads_30d ?? 0],
+                    ["Needs review", adminMetrics.resume_parse_quality?.needs_review_30d ?? 0],
+                    ["Avg score", adminMetrics.resume_parse_quality?.avg_score ?? "n/a"],
+                    ["Good / Check / Review", `${adminMetrics.resume_parse_quality?.labels?.good ?? 0} / ${adminMetrics.resume_parse_quality?.labels?.check ?? 0} / ${adminMetrics.resume_parse_quality?.labels?.review ?? 0}`],
+                  ])}
                   {(adminMetrics.resume_parse_quality?.top_warnings || []).length > 0 && (
-                    <div className="mt-3 space-y-1 border-t border-[#BDDDFC]/30 pt-3 text-xs text-muted">
+                    <div className="mt-3 space-y-1 border-t border-line pt-3 text-xs text-muted">
                       {adminMetrics.resume_parse_quality.top_warnings.slice(0, 2).map((item) => (
                         <div key={item.warning} className="flex gap-2">
-                          <span className="font-semibold text-[#384959]">{item.count}</span>
+                          <span className="font-semibold tabular-nums text-ink">{item.count}</span>
                           <span>{item.warning}</span>
                         </div>
                       ))}
@@ -640,28 +674,26 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
                 </div>
               </div>
 
-              <div className="mt-5 rounded-xl border border-[#BDDDFC]/30 bg-white overflow-hidden">
-                <div className="px-4 py-3 border-b border-[#BDDDFC]/20">
-                  <div className="text-sm font-semibold text-[#384959]">Last 14 Days</div>
-                  <div className="text-xs text-muted mt-1">Check whether product changes improve signups and resume activity.</div>
-                </div>
-                <div className="overflow-x-auto">
+              <div className="mt-6">
+                <h3 className="text-sm font-semibold text-ink">Last 14 days</h3>
+                <p className="mt-0.5 text-xs text-muted">Check whether product changes improve signups and resume activity.</p>
+                <div className="mt-2 overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead className="bg-[#f0f4f8]">
+                    <thead className="border-b border-line text-xs text-muted">
                       <tr>
-                        <th className="text-left px-4 py-2 text-muted text-xs uppercase">Date</th>
-                        <th className="text-right px-4 py-2 text-muted text-xs uppercase">Signups</th>
-                        <th className="text-right px-4 py-2 text-muted text-xs uppercase">Resumes Saved</th>
-                        <th className="text-right px-4 py-2 text-muted text-xs uppercase">Downloads</th>
+                        <th scope="col" className="px-3 py-2 text-left font-semibold">Date</th>
+                        <th scope="col" className="px-3 py-2 text-right font-semibold">Signups</th>
+                        <th scope="col" className="px-3 py-2 text-right font-semibold">Resumes saved</th>
+                        <th scope="col" className="px-3 py-2 text-right font-semibold">Downloads</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#BDDDFC]/20">
+                    <tbody className="divide-y divide-line tabular-nums text-ink">
                       {(adminMetrics.daily || []).map((row) => (
                         <tr key={row.date}>
-                          <td className="px-4 py-2 text-[#384959]">{row.date}</td>
-                          <td className="px-4 py-2 text-right text-[#384959]">{row.signups}</td>
-                          <td className="px-4 py-2 text-right text-[#384959]">{row.resumes_saved}</td>
-                          <td className="px-4 py-2 text-right text-[#384959]">{row.downloads}</td>
+                          <td className="px-3 py-2">{row.date}</td>
+                          <td className="px-3 py-2 text-right">{row.signups}</td>
+                          <td className="px-3 py-2 text-right">{row.resumes_saved}</td>
+                          <td className="px-3 py-2 text-right">{row.downloads}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -670,138 +702,42 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
               </div>
             </>
           ) : (
-            <div className="text-sm text-muted">No admin metrics yet.</div>
+            <p className="text-sm text-muted">No admin metrics yet.</p>
           )}
-        </div>
+        </section>
       )}
 
       {accountView === "privacy" && (
-      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
-        <h3 className="font-semibold text-[#384959] mb-3 flex items-center gap-2">
-          <ShieldCheck size={17} /> Legal & Privacy
-        </h3>
-        <p className="text-sm text-muted mb-4">
-          Review how your data is handled and the terms for using Job Hunter SG.
+      <section className={PANEL} aria-labelledby="privacy-title">
+        <h2 id="privacy-title" className={H2}>Legal & Privacy</h2>
+        <p className="mt-1 text-sm text-muted">
+          How your data is handled, and the terms for using Job Hunter SG.
         </p>
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <button
-            type="button"
-            onClick={() => window.open(`${API_BASE}/api/terms`, "_blank")}
-            className="inline-flex items-center justify-center rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2 text-sm font-medium text-[#384959] transition hover:bg-white active:scale-[0.98]"
-          >
+        <div className="-mx-2 mt-2 flex flex-wrap gap-1">
+          <button type="button" onClick={() => window.open(`${API_BASE}/api/terms`, "_blank")} className={TEXT_BUTTON}>
             Terms of Service
           </button>
-          <button
-            type="button"
-            onClick={() => window.open(`${API_BASE}/api/privacy`, "_blank")}
-            className="inline-flex items-center justify-center rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2 text-sm font-medium text-[#384959] transition hover:bg-white active:scale-[0.98]"
-          >
+          <button type="button" onClick={() => window.open(`${API_BASE}/api/privacy`, "_blank")} className={TEXT_BUTTON}>
             Privacy Notice
           </button>
         </div>
-        <div className="mt-5 border-t border-[#BDDDFC]/30 pt-4">
-          <h4 className="text-sm font-semibold text-[#384959]">Your data</h4>
-          <p className="mt-1 text-sm text-muted">
+        <div className="mt-5 border-t border-line pt-4">
+          <h3 className="text-sm font-semibold text-ink">Your data</h3>
+          <p className="mt-1 max-w-2xl text-sm text-muted">
             Download everything stored for your account as a JSON file. For corrections or other requests, email{" "}
-            <a href={`mailto:${PRIVACY_CONTACT_EMAIL}`} className="font-medium text-[#384959] underline">{PRIVACY_CONTACT_EMAIL}</a>.
+            <a href={`mailto:${PRIVACY_CONTACT_EMAIL}`} className="font-medium text-accent underline underline-offset-2">{PRIVACY_CONTACT_EMAIL}</a>.
           </p>
-          <button
-            type="button"
-            onClick={handleExport}
-            disabled={exporting}
-            className="mt-3 inline-flex items-center justify-center gap-2 rounded-lg bg-[#384959] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-50 active:scale-[0.98]"
-          >
-            {exporting && <Loader2 size={14} className="animate-spin" />}
+          <button type="button" onClick={handleExport} disabled={exporting} className={`mt-3 ${BTN_PRIMARY}`}>
+            {exporting && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
             Export my data
           </button>
-          {exportError && <p className="mt-2 text-sm text-rose-600" role="alert">{exportError}</p>}
+          {exportError && <div className="mt-3"><Notice>{exportError}</Notice></div>}
         </div>
-      </div>
+      </section>
       )}
 
-      {accountView === "overview" && (
-      <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5">
-        <h3 className="font-semibold text-[#384959] mb-4">Contact</h3>
-
-        <div className="flex flex-wrap gap-3 mb-5">
-          <span className="text-sm text-muted">Send a message or report an issue.</span>
-        </div>
-
-        {contactSent && (
-          <div className="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg p-3 mb-4">
-            Message sent! We will get back to you soon.
-          </div>
-        )}
-        {contactError && (
-          <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">
-            {contactError}
-          </div>
-        )}
-
-        <form onSubmit={sendContact} className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <input aria-label="Your name" placeholder="Name" value={contactForm.name} onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })}
-              className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm" />
-            <input aria-label="Your email" placeholder="Email" type="email" value={contactForm.email} onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })}
-              className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm" />
-          </div>
-          <textarea aria-label="Message" placeholder="Your message..." value={contactForm.message} onChange={(e) => setContactForm({ ...contactForm, message: e.target.value })}
-            className="w-full border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm" rows={3} />
-          <button type="submit" disabled={contactSending || !contactForm.message.trim()}
-            className="flex items-center gap-2 bg-[#384959] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2d3a47] disabled:opacity-40 transition">
-            {contactSending ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
-            Send Message
-          </button>
-        </form>
-      </div>
-      )}
-
-      {accountView === "overview" && (
-      <div className="rounded-xl border border-red-200 bg-white p-5">
-        <h3 className="flex items-center gap-2 font-semibold text-red-700">
-          <Trash2 size={17} /> Delete Account
-        </h3>
-        <p className="mt-1 text-sm text-muted">
-          Permanently remove your saved resumes and tailored results, tracked jobs, stories,
-          alerts, Agent memory and history, and usage records. Shared public job listings remain.
-          This cannot be undone.
-        </p>
-        {deleteError && <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{deleteError}</div>}
-        <form onSubmit={deleteAccount} className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <input
-            type="email"
-            required
-            aria-label="Type your email to confirm" placeholder={`Type ${user?.email || "your email"}`}
-            value={deleteEmail}
-            onChange={(e) => setDeleteEmail(e.target.value)}
-            className="rounded-lg border border-red-200 px-3 py-2 text-sm"
-          />
-          {authMode === "password" && (
-            <input
-              type="password"
-              required
-              aria-label="Current password" placeholder="Current password"
-              autoComplete="current-password"
-              value={deletePassword}
-              onChange={(e) => setDeletePassword(e.target.value)}
-              className="rounded-lg border border-red-200 px-3 py-2 text-sm"
-            />
-          )}
-          <button
-            type="submit"
-            disabled={deleteSending || deleteEmail !== user?.email || (authMode === "password" && !deletePassword)}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {deleteSending && <Loader2 size={14} className="animate-spin" />}
-            Delete My Account
-          </button>
-        </form>
-      </div>
-      )}
-
-      <button onClick={() => onLogout?.()}
-        className="flex items-center gap-2 border border-red-200 text-red-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-50 transition w-full justify-center">
-        <LogOut size={14} /> Sign Out
+      <button type="button" onClick={() => onLogout?.()} className={BTN_SECONDARY}>
+        <LogOut size={14} aria-hidden="true" /> Sign out
       </button>
     </div>
   );
