@@ -438,7 +438,8 @@ def find_alert_matches(
         )
         .filter(
             or_(ScrapedJob.scraped_at >= since_iso, ScrapedJob.posted_at_sort >= since_iso),
-        )
+        ),
+        now=now,
     )
 
     if pref.direct_employers_only:
@@ -580,7 +581,7 @@ def _process_due_alert(
     dry_run: bool,
 ) -> tuple[int, bool] | None:
     """Process one locked preference; return candidate count and backlog state."""
-    if pref.direct_employers_only and not get_employer_relationship_readiness(db)["ready"]:
+    if pref.direct_employers_only and not get_employer_relationship_readiness(db, now=now)["ready"]:
         raise EmployerClassificationUnavailable
     user = db.get(User, pref.user_id)
     mem = db.query(UserMemory).filter(UserMemory.user_id == pref.user_id).first()

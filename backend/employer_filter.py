@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import re
 
 from sqlalchemy import and_, func, or_
@@ -300,14 +301,16 @@ def employer_relationship_unclassified_condition(relationship_column, evidence_c
     )
 
 
-def get_employer_relationship_readiness(db) -> dict[str, int | bool | str]:
+def get_employer_relationship_readiness(
+    db, *, now: datetime | None = None
+) -> dict[str, int | bool | str]:
     """Return the version-bound completeness state shared by every consumer."""
     from job_visibility import apply_public_job_visibility
     from models import ScrapedJob, UsageLog
 
-    public_jobs = apply_public_job_visibility(db.query(func.count(ScrapedJob.id))).scalar() or 0
+    public_jobs = apply_public_job_visibility(db.query(func.count(ScrapedJob.id)), now=now).scalar() or 0
     valid_jobs = (
-        apply_public_job_visibility(db.query(func.count(ScrapedJob.id)))
+        apply_public_job_visibility(db.query(func.count(ScrapedJob.id)), now=now)
         .filter(
             employer_relationship_valid_condition(
                 ScrapedJob.employer_relationship,
