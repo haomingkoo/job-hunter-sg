@@ -72,6 +72,24 @@ describe("JobHunterSG app shell", () => {
     expect(container.textContent).toContain("Sign In");
   });
 
+  it("skips the account lookup for signed-out password visitors", async () => {
+    global.fetch = vi.fn(async (url) => {
+      const path = String(url);
+      if (path.endsWith("/api/auth/config")) return jsonResponse({ mode: "password" });
+      if (path.endsWith("/api/auth/me")) return jsonResponse({ detail: "Not authenticated" }, 401);
+      return jsonResponse({ total: 0, jobs: [] });
+    });
+
+    await act(async () => {
+      root.render(<JobHunterSG />);
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain("Sign In");
+    expect(container.textContent).not.toContain("Loading...");
+    expect(global.fetch.mock.calls.some(([url]) => String(url).endsWith("/api/auth/me"))).toBe(false);
+  });
+
   it("keeps the reminders route reachable", () => {
     expect(readActiveTab("#reminders")).toBe("reminders");
   });
