@@ -183,7 +183,7 @@ describe("ScraperTab source filter", () => {
     );
   });
 
-  it("uses the Singapore date for Scraped today and exposes filters in the mobile drawer", async () => {
+  it("uses the Singapore date for Added today and exposes filters in the mobile drawer", async () => {
     await act(async () => {
       root.render(
         <ScraperTab
@@ -204,23 +204,23 @@ describe("ScraperTab source filter", () => {
       day: "2-digit",
     }).format(new Date());
     const scrapedToday = [...container.querySelectorAll("button")]
-      .find((button) => button.textContent.trim() === "Scraped today");
+      .find((button) => button.textContent.trim() === "Added today");
 
     await act(async () => scrapedToday.click());
     expect(apiFetch).toHaveBeenLastCalledWith(
       `/api/jobs?page=1&per_page=20&scraped_from=${today}&scraped_to=${today}&sort=balanced`,
       expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
-    expect(container.textContent).toContain(`Scraped ${today}`);
+    expect(container.textContent).toContain(`Added ${today}`);
 
     const mobileFilters = [...container.querySelectorAll("button")]
       .find((button) => button.textContent.startsWith("Filters"));
     await act(async () => mobileFilters.click());
     expect(container.querySelector('button[aria-label="Close filters"]')).toBeTruthy();
-    expect(container.querySelectorAll('input[aria-label="Scraped from"]').length).toBe(2);
+    expect(container.querySelectorAll('input[aria-label="Added from"]').length).toBe(2);
   });
 
-  it("labels posting and scrape dates separately without inventing missing dates", async () => {
+  it("labels posting and added dates separately without inventing missing dates", async () => {
     apiFetch.mockResolvedValue({
       json: () => Promise.resolve({
         jobs: [
@@ -260,9 +260,9 @@ describe("ScraperTab source filter", () => {
     });
 
     expect(container.textContent).toContain("Posted 14 Aug 2026");
-    expect(container.textContent).toContain("Scraped 15 Aug 2026");
+    expect(container.textContent).toContain("Added 15 Aug 2026");
     expect(container.textContent).not.toContain("Posted date unavailable");
-    expect(container.textContent).not.toContain("Scraped date unavailable");
+    expect(container.textContent).not.toContain("Added date unavailable");
   });
 
   it("loads the expired archive with evidence and no application actions", async () => {
@@ -300,13 +300,13 @@ describe("ScraperTab source filter", () => {
       "/api/jobs?page=1&per_page=20&view=expired&sort=balanced",
       expect.objectContaining({ method: "GET", signal: expect.any(AbortSignal) }),
     );
-    expect(container.textContent).toContain("1 known expired postings");
-    expect(container.textContent).toContain("No longer present in a completed source crawl.");
+    expect(container.textContent).toContain("1 expired job");
+    expect(container.textContent).toContain("The job site no longer lists it.");
     expect(container.textContent).toContain("Last seen 14 Aug 2026");
-    expect(container.textContent).toContain("Archived listing — application actions are unavailable.");
-    expect(container.textContent).not.toContain("Application Pack");
-    expect(container.textContent).not.toContain("Tailor Resume");
-    expect(container.textContent).not.toContain("Cover Letter");
+    expect(container.textContent).not.toContain("Tailor resume");
+    expect(container.textContent).not.toContain("Application pack");
+    expect(container.textContent).not.toContain("Save");
+    expect(container.textContent).not.toContain("Cover letter");
     expect(container.textContent).not.toContain("Power Match scores");
     expect(container.querySelector('[aria-label="Minimum Power Match score"]')).toBeNull();
   });
@@ -362,7 +362,7 @@ describe("ScraperTab source filter", () => {
 
     expect(container.textContent).toContain("Archived Engineer");
     expect(container.textContent).not.toContain("Late Active Engineer");
-    expect(container.textContent).toContain("Archived listing — application actions are unavailable.");
-    expect(container.textContent).not.toContain("Application Pack");
+    expect(container.textContent).not.toContain("Tailor resume");
+    expect(container.textContent).not.toContain("Application pack");
   });
 });

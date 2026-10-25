@@ -11,7 +11,7 @@ export default function AuthPrompt({ onSignIn, featureName }) {
       <button
         type="button"
         onClick={onSignIn}
-        className="mt-6 inline-flex min-h-11 items-center rounded-lg bg-[#384959] px-6 text-sm font-medium text-white transition hover:bg-[#2d3a47] active:scale-[0.97]"
+        className="mt-6 inline-flex min-h-11 items-center rounded-md bg-accent px-6 text-sm font-semibold text-white transition-colors hover:bg-accent-hover"
       >
         Sign In
       </button>

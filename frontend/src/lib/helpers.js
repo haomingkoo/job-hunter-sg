@@ -46,3 +46,25 @@ export function getScoreTheme(score) {
     pill: "bg-rose-100 text-rose-800",
   };
 }
+
+// "2026-10-25" -> "25 Oct 2026"; other strings pass through unchanged.
+export function formatPostingDate(value, { year = true } = {}) {
+  const text = String(value || "").trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return text;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return new Intl.DateTimeFormat("en-SG", {
+    day: "numeric",
+    month: "short",
+    ...(year ? { year: "numeric" } : {}),
+    timeZone: "UTC",
+  }).format(date);
+}
+
+// Job titles sometimes carry emoji; strip them for display only.
+export function displayJobTitle(value) {
+  return String(value || "")
+    .replace(/[\p{Extended_Pictographic}\p{Emoji_Modifier}\u{FE0F}\u{200D}]/gu, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}

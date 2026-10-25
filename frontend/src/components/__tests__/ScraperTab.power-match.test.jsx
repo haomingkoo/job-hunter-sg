@@ -124,7 +124,7 @@ describe("ScraperTab persisted Power Match scores", () => {
       "/api/jobs/power-match?limit=200&direct_employers_only=false",
       { method: "POST", timeoutMs: 45000 },
     ]]);
-    expect(container.textContent).toContain("82 · Strong Match");
+    expect(container.textContent).toContain("Power Match 82 (Strong Match)");
     expect(container.textContent).toContain("Refresh Power Match scores");
     expect(scoreFilter.disabled).toBe(false);
 

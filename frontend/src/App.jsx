@@ -8,7 +8,7 @@ import {
   useRef,
 } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Briefcase, Loader2, LogOut, ChevronLeft } from "lucide-react";
+import { Loader2, LogOut } from "lucide-react";
 
 import {
   API_BASE,
@@ -20,7 +20,7 @@ import {
   clearResumeDraftStorage,
 } from "./lib/api.js";
 
-import Nav from "./components/Nav.jsx";
+import { PrimaryNav, SubNav } from "./components/Nav.jsx";
 import AuthModal from "./components/AuthModal.jsx";
 import AuthPrompt from "./components/AuthPrompt.jsx";
 import HomePage from "./components/HomePage.jsx";
@@ -103,14 +103,7 @@ export default function JobHunterSG() {
   const [openTrackedJobId, setOpenTrackedJobId] = useState(null);
   const [resumeVersionToOpen, setResumeVersionToOpen] = useState(null);
   const [recruitmentRequest, setRecruitmentRequest] = useState(null);
-
-  // Scroll state for glassmorphism header
-  const [scrolled, setScrolled] = useState(false);
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 10);
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
+  const [jobsQuery, setJobsQuery] = useState("");
 
   const [user, setUser] = useState(null);
   const activeUserIdRef = useRef(null);
@@ -388,60 +381,48 @@ export default function JobHunterSG() {
   const isHome = activeTab === "home";
 
   return (
-    <div className="min-h-screen bg-[#f0f4f8]">
-      <header className={`sticky top-0 z-50 border-b transition-all duration-300 ${
-        isHome
-          ? `${scrolled ? "bg-[#384959]/90 backdrop-blur-md shadow-md" : "bg-[#384959]"} border-[#2d3a47]`
-          : `${scrolled ? "bg-white/80 backdrop-blur-md shadow-sm" : "bg-white"} border-[#BDDDFC]/30`
-      }`}>
-        <div className="mx-auto max-w-7xl flex items-center justify-between px-4 sm:px-6 h-14">
+    <div className="flex min-h-screen flex-col bg-paper">
+      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-2 focus:z-[60] focus:rounded-md focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:text-ink">
+        Skip to content
+      </a>
+      <header className="sticky top-0 z-50 border-b border-line bg-white">
+        <div className="mx-auto flex h-14 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
           <button
             type="button"
             onClick={() => navigateTo("home")}
-            className={`flex min-h-11 items-center gap-2 rounded-lg text-base font-bold transition ${isHome ? "text-white" : "text-[#384959] hover:text-[#88BDF2]"}`}
+            className="flex min-h-11 items-center rounded-md text-base font-bold tracking-[-0.01em] text-ink"
           >
-            <Briefcase size={18} aria-hidden="true" />
             Job Hunter SG
           </button>
 
-          <div className="flex items-center gap-3">
-            {!isHome && (
+          <PrimaryNav active={activeTab} setActive={navigateTo} className="hidden md:block" />
+
+          {user ? (
+            <div className="flex items-center gap-1">
+              <span className="hidden max-w-[12rem] truncate text-sm font-medium text-ink sm:block">{user.name}</span>
               <button
                 type="button"
-                onClick={() => navigateTo("home")}
-                className="hidden sm:flex min-h-10 items-center gap-1 rounded-lg px-2 text-sm text-muted hover:text-[#384959] transition"
+                onClick={handleLogout}
+                className="inline-flex h-11 w-11 items-center justify-center rounded-md text-muted transition-colors hover:bg-paper hover:text-ink"
+                title="Sign out"
+                aria-label="Sign out"
               >
-                <ChevronLeft size={14} />
-                Home
+                <LogOut size={16} aria-hidden="true" />
               </button>
-            )}
-            {user ? (
-              <div className="flex items-center gap-3">
-                <div className="hidden sm:flex items-center gap-2 text-sm">
-                  <span className={`font-medium ${isHome ? "text-white" : "text-[#384959]"}`}>{user.name}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleLogout}
-                  className={`inline-flex h-11 w-11 items-center justify-center rounded-lg transition ${isHome ? "text-[#BDDDFC] hover:bg-white/10 hover:text-white" : "text-muted hover:bg-[#f0f4f8] hover:text-[#384959]"}`}
-                  title="Sign out"
-                  aria-label="Sign out"
-                >
-                  <LogOut size={16} aria-hidden="true" />
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setShowAuthModal(true)}
-                className={`inline-flex min-h-10 items-center rounded-lg px-4 text-sm font-medium transition active:scale-[0.97] ${isHome ? "bg-[#88BDF2] text-[#1f2831] hover:bg-[#BDDDFC]" : "bg-[#384959] text-white hover:bg-[#2d3a47]"}`}
-              >
-                Sign In
-              </button>
-            )}
-          </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowAuthModal(true)}
+              className="inline-flex min-h-10 items-center rounded-md bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-hover"
+            >
+              Sign In
+            </button>
+          )}
         </div>
+        <PrimaryNav active={activeTab} setActive={navigateTo} className="border-t border-line md:hidden" />
       </header>
+      {!isHome && <SubNav active={activeTab} setActive={navigateTo} />}
 
       {showAuthModal && (
         <AuthModal
@@ -466,17 +447,23 @@ export default function JobHunterSG() {
       )}
 
       {isHome ? (
-        <HomePage
-          onNavigate={navigateTo}
-        />
+        <main id="main" className="flex-1">
+          <HomePage
+            onNavigate={navigateTo}
+            onSearch={(searchText) => {
+              setJobsQuery(searchText);
+              navigateTo("jobs");
+            }}
+          />
+        </main>
       ) : (
         <>
-          <Nav active={activeTab} setActive={navigateTo} />
           <AnimatePresence mode="wait">
-            <motion.div
+            <motion.main
+              id="main"
               key={`${activeTab}:${user?.id ?? "anonymous"}`}
               {...tabMotionProps(shouldReduceMotion)}
-              className="mx-auto max-w-7xl p-4 sm:p-6"
+              className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6"
             >
               <Suspense
                 fallback={(
@@ -489,6 +476,7 @@ export default function JobHunterSG() {
               {activeTab === "jobs" && (
                 <ScraperTab
                   user={user}
+                  initialQuery={jobsQuery}
                   trackedJobs={trackedJobs}
                   onTrack={handleTrackJob}
                   setActiveTab={navigateTo}
@@ -608,7 +596,7 @@ export default function JobHunterSG() {
                 )
               )}
               </Suspense>
-            </motion.div>
+            </motion.main>
           </AnimatePresence>
         </>
       )}

@@ -92,6 +92,7 @@ describe("privacy surfaces", () => {
     });
 
     const hrefs = [...container.querySelectorAll("footer a")].map((link) => link.getAttribute("href"));
-    expect(hrefs).toEqual(["/api/privacy", "/api/terms", "mailto:privacy@kooexperience.com"]);
+    expect(hrefs).toEqual(["/api/privacy", "/api/terms", "mailto:privacy@kooexperience.com", "https://kooexperience.com/"]);
+    expect(container.textContent).toContain("© 2026 Haoming Koo");
   });
 });

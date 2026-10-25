@@ -23,6 +23,13 @@ const job = {
   skills: [],
 };
 
+const routeApi = (coverLetter) => apiFetch.mockImplementation(async (url) => {
+  if (url.startsWith("/api/jobs?")) return jobsResponse;
+  if (url === "/api/jobs/42/parsed") return { json: async () => ({}) };
+  if (url === "/api/ai/cover-letter") return { json: async () => coverLetter };
+  return { json: async () => ({}) };
+});
+
 const jobsResponse = {
   json: async () => ({
     jobs: [job],
@@ -46,8 +53,11 @@ async function renderAndOpen(root, container, trackedJobs = []) {
     );
     await Promise.resolve();
   });
+  const details = [...container.querySelectorAll("button")]
+    .find((item) => item.textContent.startsWith("Details"));
+  act(() => details.click());
   const button = [...container.querySelectorAll("button")]
-    .find((item) => item.textContent.includes("Cover Letter"));
+    .find((item) => item.textContent.includes("Cover letter"));
   act(() => button.click());
 }
 
@@ -70,14 +80,12 @@ describe("ScraperTab cover-letter persistence", () => {
   });
 
   it("truthfully reports an untracked generated letter as not saved", async () => {
-    apiFetch.mockResolvedValueOnce(jobsResponse).mockResolvedValueOnce({
-      json: async () => ({ cover_letter: "Dear Hiring Team, " + "Relevant experience. ".repeat(8), saved: false }),
-    });
+    routeApi({ cover_letter: "Dear Hiring Team, " + "Relevant experience. ".repeat(8), saved: false });
     await renderAndOpen(root, container);
     const generate = [...container.querySelectorAll("button")].find((item) => item.textContent === "Generate");
     await act(async () => generate.click());
 
-    const request = JSON.parse(apiFetch.mock.calls[1][1].body);
+    const request = JSON.parse(apiFetch.mock.calls.find(([url]) => url === "/api/ai/cover-letter")[1].body);
     expect(request.workspace_id).toBeNull();
     expect(container.textContent).toContain("Not saved. Track this job to save future letters in Documents.");
   });
@@ -96,12 +104,7 @@ describe("ScraperTab cover-letter persistence", () => {
 
   it("saves tracked generation and subsequent candidate edits", async () => {
     sessionStorage.removeItem("jh_resume_text");
-    apiFetch
-      .mockResolvedValueOnce(jobsResponse)
-      .mockResolvedValueOnce({
-        json: async () => ({ cover_letter: "Dear Hiring Team, " + "Relevant experience. ".repeat(8), saved: true, workspace_id: 9 }),
-      })
-      .mockResolvedValueOnce({ json: async () => ({}) });
+    routeApi({ cover_letter: "Dear Hiring Team, " + "Relevant experience. ".repeat(8), saved: true, workspace_id: 9 });
     await renderAndOpen(root, container, [{
       id: 9,
       scraped_job_id: 42,
@@ -113,8 +116,8 @@ describe("ScraperTab cover-letter persistence", () => {
     const generate = [...container.querySelectorAll("button")].find((item) => item.textContent === "Generate");
     await act(async () => generate.click());
 
-    expect(JSON.parse(apiFetch.mock.calls[1][1].body).workspace_id).toBe(9);
-    expect(JSON.parse(apiFetch.mock.calls[1][1].body).resume_text).toBe("");
+    expect(JSON.parse(apiFetch.mock.calls.find(([url]) => url === "/api/ai/cover-letter")[1].body).workspace_id).toBe(9);
+    expect(JSON.parse(apiFetch.mock.calls.find(([url]) => url === "/api/ai/cover-letter")[1].body).resume_text).toBe("");
     expect(container.textContent).toContain("Saved to Documents.");
 
     const textarea = container.querySelector("textarea");
@@ -128,7 +131,7 @@ describe("ScraperTab cover-letter persistence", () => {
     expect(container.textContent).toContain("You have unsaved changes.");
     const save = [...container.querySelectorAll("button")].find((item) => item.textContent === "Save changes");
     await act(async () => save.click());
-    expect(apiFetch.mock.calls[2][0]).toBe("/api/applications/workspaces/9/cover-letter");
+    expect(apiFetch.mock.calls.at(-1)[0]).toBe("/api/applications/workspaces/9/cover-letter");
     expect(container.textContent).toContain("Saved to Documents.");
   });
 });
