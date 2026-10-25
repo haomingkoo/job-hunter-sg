@@ -939,7 +939,7 @@ export default function RecruitmentTeamPanel({
               <h2 id="conversation-manager-title" className="font-semibold text-[#384959]">
                 Conversations
               </h2>
-              <p className="mt-1 text-xs text-[#6A89A7]">
+              <p className="mt-1 text-xs text-muted">
                 Switch, rename, archive, restore, or permanently delete your conversations.
               </p>
             </div>
@@ -1003,10 +1003,10 @@ export default function RecruitmentTeamPanel({
                       className="min-w-0 flex-1 text-left disabled:opacity-40"
                     >
                       <span className="block truncate text-sm font-semibold text-[#384959]">{summary.title}</span>
-                      <span className="mt-1 block truncate text-xs text-[#6A89A7]">
+                      <span className="mt-1 block truncate text-xs text-muted">
                         {summary.last_message || summary.resume_label}
                       </span>
-                      <span className="mt-1 block truncate text-[11px] text-[#6A89A7]">
+                      <span className="mt-1 block truncate text-[11px] text-muted">
                         {summary.resume_label} · v{summary.resume_version_id}
                         {summary.resume_sha256 ? ` · ${summary.resume_sha256.slice(0, 10)}` : ""}
                         {summary.resume_word_count ? ` · ${summary.resume_word_count} words` : ""}
@@ -1052,7 +1052,7 @@ export default function RecruitmentTeamPanel({
               </article>
             ))}
             {threadSummaries?.length === 0 && (
-              <p className="py-6 text-center text-sm text-[#6A89A7]">No saved conversations yet.</p>
+              <p className="py-6 text-center text-sm text-muted">No saved conversations yet.</p>
             )}
           </div>
 
@@ -1123,7 +1123,7 @@ export default function RecruitmentTeamPanel({
                 ))}
               </select>
               {selectedResume && (
-                <span className="mt-2 block text-xs font-normal text-[#6A89A7]">
+                <span className="mt-2 block text-xs font-normal text-muted">
                   v{selectedResume.id} · {selectedResume.word_count || 0} words
                   {selectedResume.created_at
                     ? ` · saved ${new Date(selectedResume.created_at).toLocaleString()}`
@@ -1172,7 +1172,7 @@ export default function RecruitmentTeamPanel({
             ))}
             {!snapshot?.messages?.length && (
               <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
-                <Bot size={28} className="text-[#6A89A7]" />
+                <Bot size={28} className="text-muted" />
                 {selectedResume ? (
                   <>
                     <p className="mt-3 text-sm font-medium text-[#384959]">
@@ -1241,7 +1241,7 @@ export default function RecruitmentTeamPanel({
           <AiServiceStatus />
           {awaitingAnswer && (
             <p className="mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              The assessment paused on a question above -- answer it below to continue.
+              The assessment paused on a question above. Answer it below to continue.
             </p>
           )}
           {archived && (
@@ -1327,7 +1327,7 @@ export default function RecruitmentTeamPanel({
               <h2 id="recruitment-plan-title" className="text-sm font-semibold text-[#384959]">
                 Recruitment plan
               </h2>
-              <p className="mt-1 text-xs text-[#6A89A7]">
+              <p className="mt-1 text-xs text-muted">
                 The coordinator updates this when your direction or the work changes.
               </p>
               <ol className="mt-3 space-y-2">
@@ -1353,7 +1353,7 @@ export default function RecruitmentTeamPanel({
                   <h2 id="candidate-profile-title" className="text-sm font-semibold text-[#384959]">
                     Candidate Evidence Profile
                   </h2>
-                  <p className="mt-1 text-xs text-[#6A89A7]">
+                  <p className="mt-1 text-xs text-muted">
                     {candidateProfile.prompt_version} · {candidateProfile.decomposition_version}
                   </p>
                 </div>
@@ -1375,7 +1375,7 @@ export default function RecruitmentTeamPanel({
                 )}
               {candidateProfileFields.length > 0 && (
                 <>
-                  <p className="mt-3 text-xs text-[#6A89A7]">
+                  <p className="mt-3 text-xs text-muted">
                     Showing {visibleProfileFields.length} of {candidateProfileFields.length} fields, strongest evidence first.
                   </p>
                   <div className="mt-2 space-y-3">
@@ -1387,16 +1387,16 @@ export default function RecruitmentTeamPanel({
                             {field.category.replaceAll("_", " ")}
                           </span>
                         </div>
-                        <p className="mt-1 text-xs text-[#6A89A7]">
+                        <p className="mt-1 text-xs text-muted">
                           Raw evidence support {field.evidence_support_score}/100 · {field.evidence_kind.replaceAll("_", " ")}
                         </p>
-                        <p className="mt-2 text-sm text-[#6A89A7]">{field.score_reason}</p>
+                        <p className="mt-2 text-sm text-muted">{field.score_reason}</p>
                         {(field.evidence_quotes || []).map((quote, index) => (
                           <div key={`${field.field_id}:${index}`} className="mt-2">
-                            <p className="text-[11px] font-medium uppercase tracking-wide text-[#6A89A7]">
+                            <p className="text-[11px] font-medium uppercase tracking-wide text-muted">
                               Cited resume source block
                             </p>
-                            <blockquote className="mt-1 border-l-2 border-[#BDDDFC] pl-3 text-xs text-[#6A89A7]">
+                            <blockquote className="mt-1 border-l-2 border-[#BDDDFC] pl-3 text-xs text-muted">
                               {quote}
                             </blockquote>
                           </div>
@@ -1435,7 +1435,7 @@ export default function RecruitmentTeamPanel({
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h3 className="font-semibold text-[#384959]">{job.title}</h3>
-                          <p className="text-sm text-[#6A89A7]">{job.company} · {job.location}</p>
+                          <p className="text-sm text-muted">{job.company} · {job.location}</p>
                         </div>
                         <span className="rounded-full bg-[#f0f5fa] px-2 py-1 text-xs text-[#384959]">
                           {selected
@@ -1450,12 +1450,12 @@ export default function RecruitmentTeamPanel({
                       <p className="mt-2 text-sm text-[#384959]">
                         {job.salary || "Salary not stated"} · {job.seniority || "Seniority not stated"}
                       </p>
-                      <p className="mt-1 text-xs text-[#6A89A7]">
+                      <p className="mt-1 text-xs text-muted">
                         {job.source.source} · posted {job.source.posted_date || "date unavailable"}
                         {job.source.closing_date ? ` · closes ${job.source.closing_date}` : ""}
                         {variants.length > 1 ? ` · ${variants.length} posting variants retained` : ""}
                       </p>
-                      <p className="mt-1 text-xs text-[#6A89A7]">
+                      <p className="mt-1 text-xs text-muted">
                         Employer relationship: {job.employer_relationship === "direct"
                           ? "verified direct"
                           : job.employer_relationship === "intermediary"
@@ -1472,7 +1472,7 @@ export default function RecruitmentTeamPanel({
                             {rationale.matched.map((point) => (
                               <div key={`${job.job_id}-matched-${point.statement}`} className="mt-1">
                                 <p>{point.statement}</p>
-                                <blockquote className="mt-1 border-l-2 border-[#88BDF2] pl-2 text-[#6A89A7]">
+                                <blockquote className="mt-1 border-l-2 border-[#88BDF2] pl-2 text-muted">
                                   Resume: “{point.resume_quote}”
                                 </blockquote>
                               </div>
@@ -1483,15 +1483,15 @@ export default function RecruitmentTeamPanel({
                             {rationale.stretch.length ? rationale.stretch.map((point) => (
                               <div key={`${job.job_id}-stretch-${point.statement}`} className="mt-1">
                                 <p>{point.statement}</p>
-                                <blockquote className="mt-1 border-l-2 border-[#BDDDFC] pl-2 text-[#6A89A7]">
+                                <blockquote className="mt-1 border-l-2 border-[#BDDDFC] pl-2 text-muted">
                                   Resume: “{point.resume_quote}”
                                 </blockquote>
                               </div>
-                            )) : <p className="mt-1 text-[#6A89A7]">None identified.</p>}
+                            )) : <p className="mt-1 text-muted">None identified.</p>}
                           </div>
                           <div className="mt-2">
                             <p className="font-medium">Missing</p>
-                            <p className="mt-1 text-[#6A89A7]">
+                            <p className="mt-1 text-muted">
                               {rationale.missing.length ? rationale.missing.join(" · ") : "None identified."}
                             </p>
                           </div>
@@ -1535,7 +1535,7 @@ export default function RecruitmentTeamPanel({
                               setFeedbackReason("");
                             }}
                             disabled={busy || archived}
-                            className="rounded-xl px-3 py-2 text-xs font-medium text-[#6A89A7] hover:bg-[#f0f5fa] disabled:opacity-40"
+                            className="rounded-xl px-3 py-2 text-xs font-medium text-muted hover:bg-[#f0f5fa] disabled:opacity-40"
                           >
                             Not for me
                           </button>
@@ -1562,10 +1562,10 @@ export default function RecruitmentTeamPanel({
                             placeholder="Reason (optional)"
                             className="mt-2 w-full rounded-lg border border-[#BDDDFC] bg-white px-3 py-2 text-xs text-[#384959]"
                           />
-                          <p className="mt-1 text-xs text-[#6A89A7]">This guides your conversation only; it does not change the role’s relevance for everyone.</p>
+                          <p className="mt-1 text-xs text-muted">This guides your conversation only; it does not change the role’s relevance for everyone.</p>
                           <div className="mt-2 flex gap-2">
                             <button type="submit" disabled={busy} className="rounded-lg bg-[#384959] px-3 py-2 text-xs font-medium text-white disabled:opacity-40">Save feedback</button>
-                            <button type="button" onClick={() => setFeedbackJobId(null)} className="rounded-lg px-3 py-2 text-xs text-[#6A89A7]">Cancel</button>
+                            <button type="button" onClick={() => setFeedbackJobId(null)} className="rounded-lg px-3 py-2 text-xs text-muted">Cancel</button>
                           </div>
                         </form>
                       )}
@@ -1578,11 +1578,11 @@ export default function RecruitmentTeamPanel({
 
           {selectedTarget && selectedTrackedJobId && (
             <section aria-labelledby="selected-next-action-title" className="mt-6 rounded-2xl border border-[#88BDF2]/60 bg-[#f7fafc] p-4">
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Selected target</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Selected target</p>
               <h2 id="selected-next-action-title" className="mt-1 font-semibold text-[#384959]">
                 Next action: review the evidence, tailor your resume, then manage the application
               </h2>
-              <p className="mt-1 text-sm text-[#6A89A7]">{selectedTarget.title} at {selectedTarget.company} is saved as one durable application.</p>
+              <p className="mt-1 text-sm text-muted">{selectedTarget.title} at {selectedTarget.company} is saved as one durable application.</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <a href="#role-success-title" className="rounded-xl border border-[#BDDDFC] px-3 py-2 text-xs font-medium text-[#384959]">Review evidence</a>
                 <button type="button" onClick={() => onTailorJob?.(selectedTarget, snapshot.case_facts.resume_version_id)} className="rounded-xl border border-[#BDDDFC] px-3 py-2 text-xs font-medium text-[#384959]">Tailor resume</button>
@@ -1598,7 +1598,7 @@ export default function RecruitmentTeamPanel({
                   <h2 id="role-success-title" className="text-sm font-semibold text-[#384959]">
                     Role Success Profile
                   </h2>
-                  <p className="mt-1 text-xs text-[#6A89A7]">
+                  <p className="mt-1 text-xs text-muted">
                     Selected job: primary evidence · taxonomy match: {roleProfile.source_coverage.taxonomy_match_quality}
                     {roleProfile.assessment_disposition ? ` · assessment ${roleProfile.assessment_disposition.replaceAll("_", " ")}` : ""}
                   </p>
@@ -1608,7 +1608,7 @@ export default function RecruitmentTeamPanel({
                 </span>
               </div>
               {roleProfile.criteria.length > visibleCriteriaCount && (
-                <p className="mt-3 text-xs text-[#6A89A7]">
+                <p className="mt-3 text-xs text-muted">
                   Showing {Math.min(visibleCriteriaCount, roleProfile.criteria.length)} of {roleProfile.criteria.length} criteria.
                 </p>
               )}
@@ -1623,7 +1623,7 @@ export default function RecruitmentTeamPanel({
                           {evidence?.alignment || "unknown"}
                         </span>
                       </div>
-                      <p className="mt-1 text-xs capitalize text-[#6A89A7]">
+                      <p className="mt-1 text-xs capitalize text-muted">
                         {criterion.category.replaceAll("_", " ")} · {criterion.requirement_level}
                         {criterion.alternative_group_id ? " · alternative requirement" : ""}
                         {evidence?.evidence_support_score != null
@@ -1636,19 +1636,19 @@ export default function RecruitmentTeamPanel({
                         </p>
                       ) : evidence && <p className="mt-2 text-sm text-[#384959]">{evidence.explanation}</p>}
                       {evidence?.remaining_gap && !["none", "none.", "n/a", "not applicable"].includes(evidence.remaining_gap.toLowerCase()) && (
-                        <p className="mt-1 text-sm text-[#6A89A7]">
+                        <p className="mt-1 text-sm text-muted">
                           <span className="font-medium">Gap: </span>{evidence.remaining_gap}
                         </p>
                       )}
                       {(criterion.source_citations || []).map((citation) => (
-                        <blockquote key={`${criterion.criterion_id}-${citation.source_id}`} className="mt-2 border-l-2 border-[#88BDF2] pl-3 text-xs text-[#6A89A7]">
+                        <blockquote key={`${criterion.criterion_id}-${citation.source_id}`} className="mt-2 border-l-2 border-[#88BDF2] pl-3 text-xs text-muted">
                           {citation.source_path}: “{citation.relevant_excerpt}”
                         </blockquote>
                       ))}
                       {(evidence?.resume_evidence_ids || []).map((evidenceId) => {
                         const record = resumeEvidence.get(evidenceId);
                         return record ? (
-                          <blockquote key={evidenceId} className="mt-2 border-l-2 border-[#BDDDFC] pl-3 text-xs text-[#6A89A7]">
+                          <blockquote key={evidenceId} className="mt-2 border-l-2 border-[#BDDDFC] pl-3 text-xs text-muted">
                             Resume {record.source_locator}: “{record.text}”
                           </blockquote>
                         ) : null;
@@ -1691,12 +1691,12 @@ export default function RecruitmentTeamPanel({
                 </div>
               )}
               {(roleProfile.validation_notes || []).length > 0 && (
-                <div className="mt-3 text-xs text-[#6A89A7]">
+                <div className="mt-3 text-xs text-muted">
                   Citation validation: {roleProfile.validation_notes.join(" ")}
                 </div>
               )}
               {(roleProfile.policy_constraints || []).length > 0 && (
-                <div className="mt-3 text-xs text-[#6A89A7]">
+                <div className="mt-3 text-xs text-muted">
                   Assessment policy: {roleProfile.policy_constraints.map((item) => item.statement).join(" ")}
                 </div>
               )}
@@ -1710,7 +1710,7 @@ export default function RecruitmentTeamPanel({
                   <h2 id="target-assessment-title" className="text-sm font-semibold text-[#384959]">
                     Target assessment
                   </h2>
-                  <p className="mt-1 text-xs text-[#6A89A7]">
+                  <p className="mt-1 text-xs text-muted">
                     Five isolated evidence reviews, synthesis, then an independent quality judgment.
                   </p>
                 </div>
@@ -1757,7 +1757,7 @@ export default function RecruitmentTeamPanel({
                           {(targetAssessment.synthesis_claims || []).map((claim, index) => (
                             <div key={`${claim.kind}-${index}`} className="whitespace-normal text-xs text-[#4A6785]">
                               <p>{claim.statement}</p>
-                              <p className="mt-1 font-mono text-[10px] text-[#6A89A7]">
+                              <p className="mt-1 font-mono text-[10px] text-muted">
                                 {[...(claim.criterion_ids || []), ...(claim.candidate_profile_field_ids || []), ...(claim.resume_evidence_ids || []), ...(claim.candidate_evidence_ids || [])].join(" · ")}
                               </p>
                             </div>
@@ -1772,10 +1772,10 @@ export default function RecruitmentTeamPanel({
                       <p className="mt-2 text-sm text-[#384959]">
                         {targetAssessment.judge.disposition} · output quality {targetAssessment.judge.score}/100 · confidence {targetAssessment.judge.confidence}/100
                       </p>
-                      <p className="mt-2 text-xs text-[#6A89A7]">
+                      <p className="mt-2 text-xs text-muted">
                         Score reason: {targetAssessment.judge.score_reason}
                       </p>
-                      <p className="mt-1 text-xs text-[#6A89A7]">
+                      <p className="mt-1 text-xs text-muted">
                         Confidence basis: {targetAssessment.judge.confidence_reason}
                       </p>
                       {(targetAssessment.judge.strengths || []).map((strength) => (
@@ -1791,7 +1791,7 @@ export default function RecruitmentTeamPanel({
                         <dl className="mt-3 grid gap-2 sm:grid-cols-2">
                           {Object.entries(targetAssessment.judge.rubric_scores).map(([rubric, score]) => (
                             <div key={rubric} className="rounded-xl bg-[#f0f5fa] px-3 py-2">
-                              <dt className="text-xs capitalize text-[#6A89A7]">{rubric.replaceAll("_", " ")}</dt>
+                              <dt className="text-xs capitalize text-muted">{rubric.replaceAll("_", " ")}</dt>
                               <dd className="text-sm font-semibold text-[#384959]">{score}/100</dd>
                             </div>
                           ))}
@@ -1805,7 +1805,7 @@ export default function RecruitmentTeamPanel({
                     </article>
                   )}
                   {targetAssessment.correction?.attempted && (
-                    <p className="rounded-2xl border border-[#BDDDFC]/60 p-4 text-xs text-[#6A89A7]">
+                    <p className="rounded-2xl border border-[#BDDDFC]/60 p-4 text-xs text-muted">
                       The first synthesis was rejected and one targeted correction was judged independently.
                     </p>
                   )}

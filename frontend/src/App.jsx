@@ -379,7 +379,7 @@ export default function JobHunterSG() {
       <div className="min-h-screen bg-white flex items-center justify-center">
         <div className="text-center">
           <Loader2 size={28} className="animate-spin text-[#88BDF2] mx-auto" />
-          <p className="text-sm text-[#6A89A7] mt-3">Loading...</p>
+          <p className="text-sm text-muted mt-3">Loading...</p>
         </div>
       </div>
     );
@@ -398,9 +398,9 @@ export default function JobHunterSG() {
           <button
             type="button"
             onClick={() => navigateTo("home")}
-            className={`flex items-center gap-2 text-base font-bold transition ${isHome ? "text-white" : "text-[#384959] hover:text-[#88BDF2]"}`}
+            className={`flex min-h-11 items-center gap-2 rounded-lg text-base font-bold transition ${isHome ? "text-white" : "text-[#384959] hover:text-[#88BDF2]"}`}
           >
-            <Briefcase size={18} />
+            <Briefcase size={18} aria-hidden="true" />
             Job Hunter SG
           </button>
 
@@ -409,7 +409,7 @@ export default function JobHunterSG() {
               <button
                 type="button"
                 onClick={() => navigateTo("home")}
-                className="hidden sm:flex items-center gap-1 text-xs text-[#6A89A7] hover:text-[#384959] transition"
+                className="hidden sm:flex min-h-10 items-center gap-1 rounded-lg px-2 text-sm text-muted hover:text-[#384959] transition"
               >
                 <ChevronLeft size={14} />
                 Home
@@ -421,17 +421,20 @@ export default function JobHunterSG() {
                   <span className={`font-medium ${isHome ? "text-white" : "text-[#384959]"}`}>{user.name}</span>
                 </div>
                 <button
+                  type="button"
                   onClick={handleLogout}
-                  className={`transition ${isHome ? "text-[#6A89A7] hover:text-white" : "text-[#6A89A7] hover:text-[#384959]"}`}
+                  className={`inline-flex h-11 w-11 items-center justify-center rounded-lg transition ${isHome ? "text-[#BDDDFC] hover:bg-white/10 hover:text-white" : "text-muted hover:bg-[#f0f4f8] hover:text-[#384959]"}`}
                   title="Sign out"
+                  aria-label="Sign out"
                 >
-                  <LogOut size={16} />
+                  <LogOut size={16} aria-hidden="true" />
                 </button>
               </div>
             ) : (
               <button
+                type="button"
                 onClick={() => setShowAuthModal(true)}
-                className={`rounded-lg px-4 py-1.5 text-sm font-medium transition ${isHome ? "bg-[#88BDF2] text-[#1f2831] hover:bg-[#BDDDFC]" : "bg-[#384959] text-white hover:bg-[#2d3a47]"}`}
+                className={`inline-flex min-h-10 items-center rounded-lg px-4 text-sm font-medium transition active:scale-[0.97] ${isHome ? "bg-[#88BDF2] text-[#1f2831] hover:bg-[#BDDDFC]" : "bg-[#384959] text-white hover:bg-[#2d3a47]"}`}
               >
                 Sign In
               </button>

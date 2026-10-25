@@ -40,7 +40,7 @@ function StatTile({ icon: Icon, label, value }) {
     <div className="rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-3 shadow-sm">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="text-xs font-medium uppercase text-[#6A89A7]">{label}</div>
+          <div className="text-xs font-medium uppercase text-muted">{label}</div>
           <div className="mt-1 text-2xl font-semibold text-[#384959]">{value}</div>
         </div>
         <Icon size={18} className="text-[#88BDF2]" />
@@ -57,9 +57,9 @@ function SignalBlock({ icon: Icon, label, value, detail }) {
           <Icon size={16} />
         </div>
         <div className="min-w-0">
-          <div className="text-xs font-medium uppercase text-[#6A89A7]">{label}</div>
+          <div className="text-xs font-medium uppercase text-muted">{label}</div>
           <div className="mt-1 text-lg font-semibold text-[#384959]">{value}</div>
-          {detail && <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">{detail}</div>}
+          {detail && <div className="mt-1 text-xs leading-relaxed text-muted">{detail}</div>}
         </div>
       </div>
     </div>
@@ -70,11 +70,11 @@ function BarRow({ rank, label, count, maxCount, active = false, color = "bg-[#88
   const pct = maxCount > 0 ? Math.max(3, (count / maxCount) * 100) : 0;
   const content = (
     <>
-      <div className="w-7 shrink-0 text-right font-mono text-xs text-[#6A89A7]">{rank}</div>
+      <div className="w-7 shrink-0 text-right font-mono text-xs text-muted">{rank}</div>
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex items-center justify-between gap-3">
           <span className="truncate text-sm font-medium text-[#384959]">{label}</span>
-          <span className="shrink-0 font-mono text-xs text-[#6A89A7]">{formatNumber(count)}</span>
+          <span className="shrink-0 font-mono text-xs text-muted">{formatNumber(count)}</span>
         </div>
         <div className="h-2.5 overflow-hidden rounded-full bg-[#f0f4f8]">
           <div className={`h-full rounded-full ${active ? "bg-[#384959]" : color}`} style={{ width: `${pct}%` }} />
@@ -106,7 +106,7 @@ function HiringTrendTooltip({ active, payload, label }) {
   return (
     <div className="rounded-lg border border-[#BDDDFC]/40 bg-white px-3 py-2 shadow-lg">
       <div className="text-xs font-semibold text-[#384959]">{label}</div>
-      <div className="mt-1 text-xs text-[#6A89A7]">{formatNumber(count)} postings</div>
+      <div className="mt-1 text-xs text-muted">{formatNumber(count)} postings</div>
     </div>
   );
 }
@@ -125,11 +125,11 @@ function HiringTrendChart({ trend }) {
             <TrendingUp size={16} />
             Hiring Trend
           </div>
-          <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
+          <div className="mt-1 text-xs leading-relaxed text-muted">
             Weekly posting volume for the selected source, agency, company, sector, or title.
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-2 text-right text-xs text-[#6A89A7] sm:flex sm:items-center">
+        <div className="grid grid-cols-2 gap-2 text-right text-xs text-muted sm:flex sm:items-center">
           <div>
             <div className="font-mono text-sm font-semibold text-[#384959]">{formatNumber(latest?.count)}</div>
             <div>latest week</div>
@@ -173,13 +173,13 @@ function HiringTrendChart({ trend }) {
             </ComposedChart>
           </ResponsiveContainer>
         ) : (
-          <div className="py-12 text-center text-sm text-[#6A89A7]">No dated postings in this view yet.</div>
+          <div className="py-12 text-center text-sm text-muted">No dated postings in this view yet.</div>
         )}
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div>
-          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Recent role mix</div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Recent role mix</div>
           <div className="grid grid-cols-1 gap-1.5">
             {(trend?.recent_top_titles || []).slice(0, 6).map((item, index) => (
               <BarRow key={`trend-title-${item.title}`} rank={index + 1} label={item.title} count={item.count} maxCount={trend.recent_top_titles?.[0]?.count || 1} color="bg-emerald-500" />
@@ -187,7 +187,7 @@ function HiringTrendChart({ trend }) {
           </div>
         </div>
         <div>
-          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Recent ATS terms</div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Recent ATS terms</div>
           <div className="grid grid-cols-1 gap-1.5">
             {(trend?.recent_ats_terms || []).slice(0, 6).map((item, index) => (
               <BarRow key={`trend-skill-${item.skill}`} rank={index + 1} label={item.skill} count={item.count} maxCount={trend.recent_ats_terms?.[0]?.count || 1} color="bg-cyan-500" />
@@ -310,11 +310,11 @@ export default function AnalyticsTab() {
           <BarChart2 size={20} />
           Market Insights
         </h2>
-        <p className="mt-1 text-sm text-[#6A89A7]">
+        <p className="mt-1 text-sm text-muted">
           Skill and salary trends from {data?.total_jobs_with_terms?.toLocaleString() || "..."} listings with extracted skill signals, not the live Jobs total.
         </p>
         {!loading && !error && data?.partial && (
-          <p className="mt-1 text-xs text-[#6A89A7]">
+          <p className="mt-1 text-xs text-muted">
             Showing the latest {data.sampled_jobs?.toLocaleString()} matching listings for faster loading. Applying a filter rebuilds this sample from all matching listings, so a filtered count may be higher.
           </p>
         )}
@@ -329,7 +329,7 @@ export default function AnalyticsTab() {
 
       <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-xs text-[#6A89A7]">
+          <div className="text-xs text-muted">
             {activeFilters.length > 0 ? (
               <>Filtered by <span className="font-semibold text-[#384959]">{activeFilters.join(" + ")}</span></>
             ) : (
@@ -340,7 +340,7 @@ export default function AnalyticsTab() {
             <button
               type="button"
               onClick={clearAllFilters}
-              className="rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs text-[#6A89A7] hover:bg-[#f0f4f8]"
+              className="rounded-lg border border-[#BDDDFC]/30 px-3 py-1.5 text-xs text-muted hover:bg-[#f0f4f8]"
             >
               Clear All Filters
             </button>
@@ -349,7 +349,7 @@ export default function AnalyticsTab() {
       </div>
 
       {!loading && !error && sectorSourceMix.length > 0 && (
-        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 text-xs leading-relaxed text-[#6A89A7] shadow-sm">
+        <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 text-xs leading-relaxed text-muted shadow-sm">
           Industry labels: {sectorSourceMix.map((item) => `${formatNumber(item.count)} ${sectorSourceLabels[item.source] || item.label}`).join(" / ")}.
           Most listings do not publish SSIC directly, so inferred labels keep the market view usable.
           Careers@Gov postings are normalised to ministries and agencies where possible.
@@ -392,7 +392,7 @@ export default function AnalyticsTab() {
           <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <div className="text-sm font-semibold text-[#384959]">Explore Market</div>
-              <div className="text-xs leading-relaxed text-[#6A89A7]">
+              <div className="text-xs leading-relaxed text-muted">
                 Pick a source, industry/sector, hiring org, or job title to refresh skills, salary, freshness, and seniority.
               </div>
             </div>
@@ -402,19 +402,19 @@ export default function AnalyticsTab() {
                   <button
                     type="button"
                     onClick={() => setDirectEmployersOnly(false)}
-                    className={`rounded-md px-2.5 py-1.5 transition ${!directEmployersOnly ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7] hover:text-[#384959]"}`}
+                    className={`rounded-md px-2.5 py-1.5 transition ${!directEmployersOnly ? "bg-white text-[#384959] shadow-sm" : "text-muted hover:text-[#384959]"}`}
                   >
                     All orgs
                   </button>
                   <button
                     type="button"
                     onClick={() => setDirectEmployersOnly(true)}
-                    className={`rounded-md px-2.5 py-1.5 transition ${directEmployersOnly ? "bg-white text-[#384959] shadow-sm" : "text-[#6A89A7] hover:text-[#384959]"}`}
+                    className={`rounded-md px-2.5 py-1.5 transition ${directEmployersOnly ? "bg-white text-[#384959] shadow-sm" : "text-muted hover:text-[#384959]"}`}
                   >
                     Hide known recruiters
                   </button>
                 </div>
-                <p className="mt-1 text-[11px] text-[#6A89A7]">
+                <p className="mt-1 text-[11px] text-muted">
                   Verified direct and unverified employers remain eligible.
                 </p>
               </div>
@@ -430,7 +430,7 @@ export default function AnalyticsTab() {
             </div>
           </div>
           <div className="mt-4">
-            <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Agency subsets</div>
+            <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Agency subsets</div>
             <div className="flex flex-wrap gap-2">
               {agencySubsetOptions.map((item) => {
                 const active = agencySubset === item.id;
@@ -440,11 +440,11 @@ export default function AnalyticsTab() {
                     type="button"
                     onClick={() => setAgencySubset(active ? "" : item.id)}
                     aria-pressed={active}
-                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${active ? "border-[#384959] bg-[#384959] text-white" : "border-[#BDDDFC]/40 bg-[#f0f4f8] text-[#6A89A7] hover:border-[#88BDF2] hover:text-[#384959]"}`}
+                    className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${active ? "border-[#384959] bg-[#384959] text-white" : "border-[#BDDDFC]/40 bg-[#f0f4f8] text-muted hover:border-[#88BDF2] hover:text-[#384959]"}`}
                   >
                     <span>{item.label}</span>
                     {!agencySubset && Number.isFinite(Number(item.count)) && (
-                      <span className={`font-mono text-[11px] ${active ? "text-white/75" : "text-[#6A89A7]"}`}>{formatNumber(item.count)}</span>
+                      <span className={`font-mono text-[11px] ${active ? "text-white/75" : "text-muted"}`}>{formatNumber(item.count)}</span>
                     )}
                   </button>
                 );
@@ -453,7 +453,7 @@ export default function AnalyticsTab() {
           </div>
           <div className="mt-4 grid gap-4 xl:grid-cols-4">
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">{data?.partial ? "Sources in analysed sample" : "Sources"}</div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">{data?.partial ? "Sources in analysed sample" : "Sources"}</div>
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
                 {(data.sources || []).slice(0, 6).map((item, index) => (
                   <BarRow
@@ -468,12 +468,12 @@ export default function AnalyticsTab() {
                   />
                 ))}
               </div>
-              <div className="mt-2 text-[11px] leading-relaxed text-[#6A89A7]">
+              <div className="mt-2 text-[11px] leading-relaxed text-muted">
                 Use this to isolate a job source before checking departments, industries, and skills.
               </div>
             </div>
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Industry / Sector</div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Industry / Sector</div>
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
                 {(data.sectors || []).slice(0, 8).map((item, index) => (
                   <BarRow
@@ -489,13 +489,13 @@ export default function AnalyticsTab() {
                 ))}
               </div>
               {(data.sectors || []).some((item) => item.sector === "Other") && (
-                <div className="mt-2 text-[11px] leading-relaxed text-[#6A89A7]">
+                <div className="mt-2 text-[11px] leading-relaxed text-muted">
                   Other means the listing could not be mapped to a clear industry.
                 </div>
               )}
             </div>
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Hiring Orgs</div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Hiring Orgs</div>
               <form
                 className="relative mb-2"
                 onSubmit={(event) => {
@@ -503,19 +503,19 @@ export default function AnalyticsTab() {
                   applyCompanyFilter(companyDraft);
                 }}
               >
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#6A89A7]" />
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
                 <input
                   type="text"
                   value={companyDraft}
                   onChange={(event) => setCompanyDraft(event.target.value)}
                   placeholder="Filter org or agency..."
-                  className="w-full rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] py-1.5 pl-8 pr-8 text-xs text-[#384959] placeholder-[#6A89A7] focus:border-[#88BDF2] focus:outline-none focus:ring-1 focus:ring-[#BDDDFC]"
+                  className="w-full rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] py-1.5 pl-8 pr-8 text-xs text-[#384959] placeholder-muted focus:border-[#88BDF2] focus:outline-none focus:ring-1 focus:ring-[#BDDDFC]"
                 />
                 {companyDraft && (
                   <button
                     type="button"
                     onClick={() => applyCompanyFilter("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[#6A89A7] hover:text-[#384959]"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-[#384959]"
                   >
                     <X size={12} />
                   </button>
@@ -535,12 +535,12 @@ export default function AnalyticsTab() {
                   />
                 ))}
               </div>
-              <div className="mt-2 text-[11px] leading-relaxed text-[#6A89A7]">
+              <div className="mt-2 text-[11px] leading-relaxed text-muted">
                 Govt rows use resolved ministries or agencies when the source exposes enough signal.
               </div>
             </div>
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Job Titles</div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Job Titles</div>
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-1">
                 {(data.top_titles || []).slice(0, 8).map((item, index) => (
                   <BarRow
@@ -568,11 +568,11 @@ export default function AnalyticsTab() {
                 <TrendingUp size={16} />
                 Market Movers
               </div>
-              <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
+              <div className="mt-1 text-xs leading-relaxed text-muted">
                 Recent postings are compared with older dated postings in this view.
               </div>
             </div>
-            <div className="text-[11px] text-[#6A89A7]">
+            <div className="text-[11px] text-muted">
               {formatNumber(movers.recent_total)} recent / {formatNumber(movers.older_total)} older
             </div>
           </div>
@@ -587,13 +587,13 @@ export default function AnalyticsTab() {
                         <span className="truncate text-sm font-medium text-[#384959]">{item.skill}</span>
                         <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">{item.lift}x</span>
                       </div>
-                      <div className="mt-1 text-xs text-[#6A89A7]">
+                      <div className="mt-1 text-xs text-muted">
                         {item.recent_rate_percent}% recent vs {item.older_rate_percent}% older
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-[#6A89A7]">No recent over-index signal in this slice yet.</div>
+                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-muted">No recent over-index signal in this slice yet.</div>
                 )}
               </div>
             </div>
@@ -607,13 +607,13 @@ export default function AnalyticsTab() {
                         <span className="truncate text-sm font-medium text-[#384959]">{item.skill}</span>
                         <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800">{item.drop}x</span>
                       </div>
-                      <div className="mt-1 text-xs text-[#6A89A7]">
+                      <div className="mt-1 text-xs text-muted">
                         {item.recent_rate_percent}% recent vs {item.older_rate_percent}% older
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-[#6A89A7]">No cooling signal in this slice yet.</div>
+                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-muted">No cooling signal in this slice yet.</div>
                 )}
               </div>
             </div>
@@ -629,17 +629,17 @@ export default function AnalyticsTab() {
                 <Building2 size={16} />
                 Hiring Org Snapshot
               </div>
-              <div className="mt-1 text-xs leading-relaxed text-[#6A89A7]">
+              <div className="mt-1 text-xs leading-relaxed text-muted">
                 Top ministries, agencies, and companies in this view. Hide known recruiters to remove recognized recruitment firms from this snapshot; unverified employers remain eligible.
               </div>
             </div>
-            <div className="text-[11px] text-[#6A89A7]">
+            <div className="text-[11px] text-muted">
               {formatNumber(companyMovers.recent_total)} recent / {formatNumber(companyMovers.older_total)} older
             </div>
           </div>
           <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
             <div>
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-[#6A89A7]">Most active</div>
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Most active</div>
               <div className="space-y-1.5">
                 {(data.top_companies || []).slice(0, 6).map((item, index) => (
                   <BarRow
@@ -665,13 +665,13 @@ export default function AnalyticsTab() {
                         <span className="truncate text-sm font-medium text-[#384959]">{item.company}</span>
                         <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">{item.lift}x</span>
                       </div>
-                      <div className="mt-1 text-xs text-[#6A89A7]">
+                      <div className="mt-1 text-xs text-muted">
                         {formatNumber(item.recent_count)} recent vs {formatNumber(item.older_count)} older
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-[#6A89A7]">No hiring spike in this slice yet.</div>
+                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-muted">No hiring spike in this slice yet.</div>
                 )}
               </div>
             </div>
@@ -685,13 +685,13 @@ export default function AnalyticsTab() {
                         <span className="truncate text-sm font-medium text-[#384959]">{item.company}</span>
                         <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-800">{item.drop}x</span>
                       </div>
-                      <div className="mt-1 text-xs text-[#6A89A7]">
+                      <div className="mt-1 text-xs text-muted">
                         {formatNumber(item.recent_count)} recent vs {formatNumber(item.older_count)} older
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-[#6A89A7]">No slowdown in this slice yet.</div>
+                  <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-muted">No slowdown in this slice yet.</div>
                 )}
               </div>
             </div>
@@ -719,12 +719,12 @@ export default function AnalyticsTab() {
                   />
                 ))
               ) : (
-                <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-[#6A89A7]">
+                <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm text-muted">
                   No hard-skill signal is available for this slice yet.
                 </div>
               )}
             </div>
-            <div className="mt-4 rounded-xl bg-[#f0f4f8] px-3 py-2 text-xs leading-relaxed text-[#6A89A7]">
+            <div className="mt-4 rounded-xl bg-[#f0f4f8] px-3 py-2 text-xs leading-relaxed text-muted">
               Common terms like communication and customer service appear everywhere. Stronger resume alignment usually comes from exact tools, certifications, and domain terms.
             </div>
           </div>
@@ -744,14 +744,14 @@ export default function AnalyticsTab() {
                         {item.lift}x
                       </span>
                     </div>
-                    <div className="mt-1 text-xs text-[#6A89A7]">
+                    <div className="mt-1 text-xs text-muted">
                       {item.rate_percent}% in this view vs {item.market_rate_percent}% market-wide
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-[#6A89A7]">
+              <div className="rounded-xl bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-muted">
                 Pick an industry/sector or job title to reveal skills that appear unusually often compared with the overall market.
               </div>
             )}
@@ -785,11 +785,11 @@ export default function AnalyticsTab() {
               <div key={item.sector} className="flex items-center justify-between gap-3 rounded-xl bg-[#f0f4f8] px-3 py-2">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium text-[#384959]">{item.sector}</div>
-                  <div className="text-xs text-[#6A89A7]">{formatNumber(item.count)} salary-listed roles</div>
+                  <div className="text-xs text-muted">{formatNumber(item.count)} salary-listed roles</div>
                 </div>
                 <div className="shrink-0 text-right">
                   <div className="text-sm font-semibold text-[#384959]">{formatMoney(item.median_floor)}</div>
-                  <div className="text-[11px] text-[#6A89A7]">median floor</div>
+                  <div className="text-[11px] text-muted">median floor</div>
                   {item.median_midpoint ? (
                     <div className="mt-0.5 text-[11px] font-medium text-[#384959]">
                       {formatMoney(item.median_midpoint)} midpoint
@@ -803,7 +803,7 @@ export default function AnalyticsTab() {
       )}
 
       {loading && (
-        <div className="flex items-center gap-2 py-12 justify-center text-[#6A89A7]">
+        <div className="flex items-center gap-2 py-12 justify-center text-muted">
           <Loader2 size={18} className="animate-spin" />
           Loading analytics...
         </div>
@@ -910,19 +910,19 @@ export default function AnalyticsTab() {
               Top In-Demand Skills
             </div>
             <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#6A89A7]" />
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
               <input
                 type="text"
                 value={skillSearch}
                 onChange={(e) => { setSkillSearch(e.target.value); setShowCount(30); }}
                 placeholder="Filter skills..."
-                className="rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] py-1.5 pl-8 pr-3 text-xs text-[#384959] placeholder-[#6A89A7] focus:border-[#88BDF2] focus:outline-none focus:ring-1 focus:ring-[#BDDDFC] w-48"
+                className="rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] py-1.5 pl-8 pr-3 text-xs text-[#384959] placeholder-muted focus:border-[#88BDF2] focus:outline-none focus:ring-1 focus:ring-[#BDDDFC] w-48"
               />
               {skillSearch && (
                 <button
                   type="button"
                   onClick={() => setSkillSearch("")}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#6A89A7] hover:text-[#384959]"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-[#384959]"
                 >
                   <X size={12} />
                 </button>
@@ -930,7 +930,7 @@ export default function AnalyticsTab() {
             </div>
           </div>
           {skillSearch && (
-            <div className="text-xs text-[#6A89A7] mb-3">
+            <div className="text-xs text-muted mb-3">
               {filteredSkills.length} skill{filteredSkills.length !== 1 ? "s" : ""} matching "{skillSearch}"
             </div>
           )}
@@ -959,7 +959,7 @@ export default function AnalyticsTab() {
               )}
             </>
           ) : (
-            <div className="py-6 text-center text-sm text-[#6A89A7]">
+            <div className="py-6 text-center text-sm text-muted">
               No skills match "{skillSearch}"
             </div>
           )}
@@ -967,7 +967,7 @@ export default function AnalyticsTab() {
       )}
 
       {!loading && !error && (data?.top_skills?.length || 0) === 0 && (
-        <div className="text-center py-12 text-[#6A89A7]">
+        <div className="text-center py-12 text-muted">
           <BarChart2 size={32} className="mx-auto mb-2 opacity-40" />
           <p>No skill data available yet. Skills are extracted as jobs are processed.</p>
         </div>
