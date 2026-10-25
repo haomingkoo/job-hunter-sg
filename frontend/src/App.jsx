@@ -99,6 +99,7 @@ export default function JobHunterSG() {
   const [activeTab, setActiveTab] = useState(readActiveTab);
   const [trackedJobs, setTrackedJobs] = useState([]);
   const [trackedJobsError, setTrackedJobsError] = useState("");
+  const [trackedJobsUserId, setTrackedJobsUserId] = useState(null);
   const [selectedJob, setSelectedJob] = useState(null);
   const [openTrackedJobId, setOpenTrackedJobId] = useState(null);
   const [resumeVersionToOpen, setResumeVersionToOpen] = useState(null);
@@ -277,12 +278,14 @@ export default function JobHunterSG() {
       ) return;
       setTrackedJobs(Array.isArray(data) ? data : data.jobs || []);
       setTrackedJobsError("");
+      setTrackedJobsUserId(expectedUserId);
     } catch (err) {
       if (
         activeUserIdRef.current !== expectedUserId
         || identityGenerationRef.current !== expectedGeneration
       ) return;
       setTrackedJobsError(err.message || "Could not refresh tracked jobs.");
+      setTrackedJobsUserId(expectedUserId);
     }
   }, []);
 
@@ -533,6 +536,7 @@ export default function JobHunterSG() {
                   <TrackerTab
                     jobs={trackedJobs}
                     loadError={trackedJobsError}
+                    loading={trackedJobsUserId !== user.id}
                     refreshJobs={refreshJobs}
                     setActiveTab={navigateTo}
                     openJobId={openTrackedJobId}

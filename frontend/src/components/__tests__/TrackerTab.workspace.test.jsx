@@ -547,6 +547,20 @@ describe("TrackerTab workspace creation", () => {
     expect(appliedColumn.textContent).toContain("Drop here");
   });
 
+  it("shows a loading state instead of the empty state while applications load", async () => {
+    await act(async () => {
+      root.render(<TrackerTab jobs={[]} loading refreshJobs={refreshJobs} setActiveTab={() => {}} />);
+    });
+
+    expect(container.querySelector("[role='status']").textContent).toContain("Loading applications");
+    expect(container.textContent).not.toContain("No applications yet");
+
+    await act(async () => {
+      root.render(<TrackerTab jobs={[]} refreshJobs={refreshJobs} setActiveTab={() => {}} />);
+    });
+    expect(container.textContent).toContain("No applications yet");
+  });
+
   it("shows outcome counts in the tracker dashboard", async () => {
     await act(async () => {
       root.render(

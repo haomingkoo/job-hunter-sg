@@ -2,14 +2,41 @@ import { useEffect, useState } from "react";
 import { DndContext, PointerSensor, closestCorners, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  Plus, X, AlertCircle, Filter, RefreshCw,
-  Download, Loader2, Edit3, Save, Trash2,
-  Briefcase, Search, FileText, GripVertical,
+  Plus, X, AlertCircle, RefreshCw,
+  Download, Loader2, Edit3, Trash2,
+  Search, FileText, GripVertical,
 } from "lucide-react";
 import { apiFetch, downloadBlob } from "../lib/api.js";
 import { STATUS_CONFIG, SG_JOB_PORTALS } from "../lib/constants.js";
-import { todayStr, daysBetween } from "../lib/helpers.js";
+import { todayStr, daysBetween, formatPostingDate } from "../lib/helpers.js";
 import StatusBadge from "./StatusBadge.jsx";
+
+const PANEL = "rounded-[10px] border border-line bg-white";
+const FIELD = "min-h-11 w-full rounded-md border border-field bg-white px-3 text-sm text-ink focus:border-accent";
+const TEXTAREA = "w-full rounded-md border border-field bg-white px-3 py-2 text-sm text-ink focus:border-accent";
+const LABEL = "mb-1 block text-sm font-medium text-ink";
+const BTN_PRIMARY = "inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-accent px-4 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60";
+const BTN_SECONDARY = "inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-field bg-white px-4 text-sm font-medium text-ink transition-colors hover:bg-tint disabled:cursor-not-allowed disabled:opacity-60";
+const BTN_TEXT = "inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-sm font-medium text-accent transition-colors hover:bg-tint";
+const BTN_ICON = "inline-flex h-10 w-10 items-center justify-center rounded-md text-muted transition-colors hover:bg-tint hover:text-ink";
+const BTN_ICON_DANGER = "inline-flex h-10 w-10 items-center justify-center rounded-md text-muted transition-colors hover:bg-[#fef3f2] hover:text-[#b42318]";
+const BTN_TEXT_DANGER = "inline-flex min-h-11 items-center gap-1.5 rounded-md px-2 text-sm font-medium text-[#b42318] transition-colors hover:bg-[#fef3f2]";
+const SECTION = "border-t border-line pt-5";
+const H3 = "text-base font-semibold text-ink";
+const H4 = "text-sm font-semibold text-ink";
+const LINK = "text-accent underline-offset-2 hover:underline";
+
+function Notice({ children, action }) {
+  return (
+    <div role="alert" className="flex items-start justify-between gap-3 rounded-md border border-[#b42318]/30 bg-white p-3 text-sm text-[#b42318]">
+      <div className="flex items-start gap-2">
+        <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+        <span>{children}</span>
+      </div>
+      {action}
+    </div>
+  );
+}
 
 const RESEARCH_SOURCE_DISPLAY_LIMIT = 5;
 const NEGOTIATION_ROUND_DISPLAY_LIMIT = 3;
@@ -51,33 +78,33 @@ function PipelineCard({ job, moving, openWorkspace, handleEdit, handleDelete }) 
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform) }}
-      className={`rounded-lg border border-[#BDDDFC]/30 bg-white p-3 text-sm shadow-sm transition ${isDragging || moving ? "opacity-60" : ""}`}
+      className={`rounded-md border border-line bg-white p-3 text-sm transition-opacity ${isDragging || moving ? "opacity-60" : ""}`}
       data-pipeline-card={job.id}
     >
-      <div className="flex items-start gap-2">
+      <div className="flex items-start gap-1">
         <button
           type="button"
-          className="mt-0.5 cursor-grab text-[#6A89A7]/70 active:cursor-grabbing"
+          className="-ml-1 inline-flex h-8 w-6 shrink-0 cursor-grab items-center justify-center rounded text-muted active:cursor-grabbing"
           aria-label={`Move ${job.company} ${job.role}`}
           title="Move"
           {...listeners}
           {...attributes}
         >
-          <GripVertical size={14} />
+          <GripVertical size={14} aria-hidden="true" />
         </button>
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-semibold text-[#384959]">{job.company}</div>
-          <div className="mt-1 truncate text-muted">{job.role}</div>
+        <div className="min-w-0 flex-1 pt-1">
+          <div className="font-semibold text-ink [overflow-wrap:anywhere]">{job.company}</div>
+          <div className="mt-0.5 text-muted [overflow-wrap:anywhere]">{job.role}</div>
         </div>
       </div>
-      <div className="mt-2 flex items-center justify-between text-xs text-muted">
-        <span>{job.date_applied || "No date"}</span>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 text-xs text-muted">
+        <span className="tabular-nums">{job.date_applied ? formatPostingDate(job.date_applied) : "No date"}</span>
         <span>{job.source || "Manual"}</span>
       </div>
-      <div className="mt-3 flex gap-2">
-        <button type="button" onClick={() => openWorkspace(job.id)} className="text-xs text-[#384959] hover:underline">Open</button>
-        <button type="button" onClick={() => handleEdit(job)} className="text-xs text-[#384959] hover:underline">Edit</button>
-        <button type="button" onClick={() => handleDelete(job.id)} className="text-xs text-red-500 hover:underline">Delete</button>
+      <div className="-mx-1 mt-2 flex gap-1">
+        <button type="button" onClick={() => openWorkspace(job.id)} className="min-h-9 rounded px-1.5 text-xs font-medium text-accent hover:bg-tint">Open</button>
+        <button type="button" onClick={() => handleEdit(job)} className="min-h-9 rounded px-1.5 text-xs font-medium text-accent hover:bg-tint">Edit</button>
+        <button type="button" onClick={() => handleDelete(job.id)} className="min-h-9 rounded px-1.5 text-xs font-medium text-[#b42318] hover:bg-[#fef3f2]">Delete</button>
       </div>
     </div>
   );
@@ -88,14 +115,14 @@ function PipelineColumn({ status, jobs, movingId, openWorkspace, handleEdit, han
   const config = STATUS_CONFIG[status];
 
   return (
-    <div ref={setNodeRef} className={`min-h-[220px] rounded-lg bg-[#f0f4f8] p-3 ${isOver ? "ring-2 ring-[#88BDF2]" : ""}`} data-pipeline-column={status}>
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="text-sm font-semibold text-[#384959]">{config?.label || status}</div>
-        <span className="rounded-full bg-white px-2 py-0.5 text-xs text-muted">{jobs.length}</span>
+    <div ref={setNodeRef} className={`min-h-[220px] rounded-[10px] p-2 transition-colors ${isOver ? "bg-tint ring-2 ring-accent" : ""}`} data-pipeline-column={status}>
+      <div className="mb-2 flex items-baseline justify-between gap-2 px-1">
+        <h3 className="text-sm font-semibold text-ink">{config?.label || status}</h3>
+        <span className="text-xs tabular-nums text-muted">{jobs.length}</span>
       </div>
       <div className="space-y-2">
         {jobs.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-[#BDDDFC]/50 px-3 py-6 text-center text-xs text-muted">
+          <div className="rounded-md border border-dashed border-field px-3 py-6 text-center text-xs text-muted">
             Drop here
           </div>
         ) : (
@@ -133,6 +160,7 @@ function negotiationAnchorLabel(anchor) {
 export default function TrackerTab({
   jobs,
   loadError = "",
+  loading = false,
   refreshJobs,
   setActiveTab,
   openJobId = null,
@@ -469,184 +497,225 @@ export default function TrackerTab({
     }
   };
 
+  const pageHeading = (
+    <div>
+      <h1 className="text-xl font-bold tracking-[-0.01em] text-ink">Applications</h1>
+      <p className="mt-1 text-sm text-muted">Jobs you saved or applied for, and where each one stands.</p>
+    </div>
+  );
+
+  if (loading && jobs.length === 0) {
+    return (
+      <div className="space-y-6">
+        {pageHeading}
+        <div className={`${PANEL} p-4`} role="status">
+          <span className="sr-only">Loading applications</span>
+          {[0, 1, 2].map((row) => (
+            <div key={row} className="flex items-center gap-4 border-b border-line py-4 last:border-0">
+              <div className="h-4 w-1/4 rounded bg-paper" />
+              <div className="h-4 w-1/3 rounded bg-paper" />
+              <div className="ml-auto h-4 w-16 rounded bg-paper" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // Show onboarding empty state when no jobs tracked at all
   if (jobs.length === 0 && !showForm) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 px-4">
+      <div className="mx-auto max-w-lg px-4 py-16 text-center">
         {loadError && (
-          <div className="mb-6 flex max-w-md items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            <span>{loadError}</span>
-            <button onClick={() => refreshJobs()} className="font-medium text-red-800 hover:text-red-900">Retry</button>
+          <div className="mb-8 text-left">
+            <Notice action={<button type="button" onClick={() => refreshJobs()} className="shrink-0 font-semibold underline-offset-2 hover:underline">Retry</button>}>
+              {loadError}
+            </Notice>
           </div>
         )}
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#f0f4f8] mb-6">
-          <Briefcase size={32} className="text-muted" />
-        </div>
-        <h2 className="text-xl font-bold text-[#384959] text-center">Start Tracking Your Applications</h2>
-        <p className="mt-2 max-w-md text-center text-sm text-muted leading-relaxed">
-          When you find a job you like in the Jobs tab, click Track to add it here.
-          You can monitor your pipeline, set follow-up dates, and track your progress.
+        <h1 className="text-xl font-bold tracking-[-0.01em] text-ink">No applications yet</h1>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted">
+          Save a job from Search and it appears here, with its status, follow-up date and notes.
+          You can also paste a job description or add an application by hand.
         </p>
-        <div className="mt-6 flex gap-3">
+        <div className="mt-6 flex flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center">
           {setActiveTab && (
-            <button
-              onClick={() => setActiveTab("jobs")}
-              className="flex items-center gap-2 rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#2d3a47] transition"
-            >
-              <Search size={16} /> Browse Jobs
+            <button type="button" onClick={() => setActiveTab("jobs")} className={BTN_PRIMARY}>
+              <Search size={16} aria-hidden="true" /> Search jobs
             </button>
           )}
-          <button
-            onClick={() => openForm("workspace")}
-            className="flex items-center gap-2 rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#2d3a47] transition"
-          >
-            <Plus size={16} /> Paste JD
+          <button type="button" onClick={() => openForm("workspace")} className={BTN_SECONDARY}>
+            Paste JD
           </button>
-          <button
-            onClick={() => openForm("manual")}
-            className="flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 px-5 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] transition"
-          >
-            <Plus size={16} /> Add Manually
+          <button type="button" onClick={() => openForm("manual")} className={`${BTN_TEXT} justify-center`}>
+            Add manually
           </button>
         </div>
       </div>
     );
   }
 
+  const outcomes = [
+    { key: "submitted", label: "Submitted", value: stats.submitted },
+    { key: "interview", label: "Interview", value: stats.interview },
+    { key: "offer", label: "Offer", value: stats.offer },
+    { key: "rejected", label: "Rejected", value: stats.rejected },
+    { key: "withdrawn", label: "Withdrawn", value: stats.withdrawn },
+    { key: "no_response", label: "No Response", value: stats.noResponse },
+  ];
+
   return (
     <div className="space-y-6">
-      {(error || loadError) && !showForm && (
-        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 flex items-center justify-between">
-          <div className="flex items-center gap-2"><AlertCircle size={14} className="flex-shrink-0" />{error || loadError}</div>
-          {error ? (
-            <button onClick={() => setError("")} className="text-red-400 hover:text-red-600"><X size={14} /></button>
-          ) : (
-            <button onClick={() => refreshJobs()} className="font-medium text-red-800 hover:text-red-900">Retry</button>
-          )}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        {pageHeading}
+        <div className="flex gap-2">
+          <button type="button" onClick={() => openForm("workspace")} className={`${BTN_SECONDARY} flex-1 sm:flex-none`}>
+            Paste JD
+          </button>
+          <button type="button" onClick={() => openForm("manual")} className={`${showForm ? BTN_SECONDARY : BTN_PRIMARY} flex-1 sm:flex-none`}>
+            <Plus size={16} aria-hidden="true" /> Add
+          </button>
         </div>
+      </div>
+
+      {(error || loadError) && !showForm && (
+        <Notice
+          action={error ? (
+            <button type="button" onClick={() => setError("")} aria-label="Dismiss" className="-m-2 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md hover:bg-[#fef3f2]"><X size={14} aria-hidden="true" /></button>
+          ) : (
+            <button type="button" onClick={() => refreshJobs()} className="shrink-0 font-semibold underline-offset-2 hover:underline">Retry</button>
+          )}
+        >
+          {error || loadError}
+        </Notice>
       )}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
-        {[
-          { key: "submitted", label: "Submitted", value: stats.submitted, bg: "bg-[#f0f4f8]" },
-          { key: "interview", label: "Interview", value: stats.interview, bg: "bg-[#BDDDFC]/15" },
-          { key: "offer", label: "Offer", value: stats.offer, bg: "bg-green-50" },
-          { key: "rejected", label: "Rejected", value: stats.rejected, bg: "bg-red-50" },
-          { key: "withdrawn", label: "Withdrawn", value: stats.withdrawn, bg: "bg-[#f0f4f8]" },
-          { key: "no_response", label: "No Response", value: stats.noResponse, bg: "bg-[#f0f4f8]" },
-        ].map((s) => (
-          <div key={s.key} className={`${s.bg} rounded-xl p-4 text-center`} data-outcome-count={s.key}>
-            <div className="text-2xl font-bold text-[#384959]">{s.value}</div>
-            <div className="text-xs text-muted mt-1">{s.label}</div>
+
+      <dl className={`${PANEL} grid grid-cols-3 sm:grid-cols-6`}>
+        {outcomes.map((s, index) => (
+          <div
+            key={s.key}
+            className={`px-4 py-3 ${index % 3 ? "border-l border-line" : ""} ${index >= 3 ? "border-t border-line sm:border-t-0" : ""} ${index === 3 ? "sm:border-l" : ""}`}
+            data-outcome-count={s.key}
+          >
+            <div className="text-xl font-semibold tabular-nums text-ink">{s.value}</div>
+            <dt className="mt-0.5 text-xs text-muted">{s.label}</dt>
           </div>
         ))}
-      </div>
+      </dl>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2">
-            <Filter size={14} className="text-muted" />
-            <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="text-sm border border-[#BDDDFC]/30 rounded-lg px-3 py-1.5 bg-white">
-              <option value="all">All statuses</option>
-              {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-            </select>
-          </div>
-          <div className="inline-flex rounded-lg border border-[#BDDDFC]/30 bg-white p-0.5 text-sm">
-            <button
-              type="button"
-              onClick={() => setViewMode("table")}
-              className={`rounded-md px-3 py-1.5 ${viewMode === "table" ? "bg-[#384959] text-white" : "text-muted hover:text-[#384959]"}`}
-            >
-              Table
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("board")}
-              className={`rounded-md px-3 py-1.5 ${viewMode === "board" ? "bg-[#384959] text-white" : "text-muted hover:text-[#384959]"}`}
-            >
-              Board
-            </button>
+          <label htmlFor="tracker-status-filter" className="sr-only">Filter by status</label>
+          <select id="tracker-status-filter" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="min-h-11 rounded-md border border-field bg-white px-3 text-sm text-ink">
+            <option value="all">All statuses</option>
+            {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+          <div className="inline-flex rounded-md border border-field bg-white p-0.5" role="group" aria-label="Application view">
+            {[["table", "Table"], ["board", "Board"]].map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setViewMode(mode)}
+                aria-pressed={viewMode === mode}
+                className={`min-h-10 rounded px-3 text-sm transition-colors ${viewMode === mode ? "bg-tint font-semibold text-ink" : "text-muted hover:text-ink"}`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={handleExport} className="flex items-center gap-2 border border-[#BDDDFC]/30 text-muted px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#f0f4f8] transition">
-            <Download size={14} /> Export CSV
+        <div className="flex items-center gap-1">
+          <button type="button" onClick={handleExport} className={BTN_TEXT}>
+            <Download size={14} aria-hidden="true" /> Export CSV
           </button>
-          <button onClick={() => refreshJobs()} className="flex items-center gap-2 border border-[#BDDDFC]/30 text-muted px-3 py-2 rounded-lg text-sm hover:bg-[#f0f4f8] transition">
-            <RefreshCw size={14} />
-          </button>
-          <button onClick={() => openForm("workspace")}
-            className="flex items-center gap-2 border border-[#BDDDFC]/30 text-[#384959] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#f0f4f8] transition">
-            <Plus size={16} /> Paste JD
-          </button>
-          <button onClick={() => openForm("manual")}
-            className="flex items-center gap-2 bg-[#384959] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2d3a47] transition">
-            <Plus size={16} /> Add
+          <button type="button" onClick={() => refreshJobs()} aria-label="Refresh applications" title="Refresh" className={BTN_ICON}>
+            <RefreshCw size={16} aria-hidden="true" />
           </button>
         </div>
       </div>
 
       {showForm && (
-        <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5 space-y-4 shadow-sm">
-          <div className="flex justify-between items-center">
-            <h3 className="font-semibold text-[#384959]">
-              {editingId ? "Edit" : formMode === "workspace" ? "New Workspace" : "New"} Application
-            </h3>
-            <button onClick={resetForm} className="text-muted hover:text-[#384959]"><X size={18} /></button>
+        <section className={`${PANEL} space-y-4 p-5`} aria-labelledby="tracker-form-title">
+          <div className="flex items-center justify-between gap-3">
+            <h2 id="tracker-form-title" className={H3}>
+              {editingId ? "Edit application" : formMode === "workspace" ? "New application from a job description" : "New application"}
+            </h2>
+            <button type="button" onClick={resetForm} aria-label="Close form" className={BTN_ICON}><X size={18} aria-hidden="true" /></button>
           </div>
-          {error && <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">{error}</div>}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <input placeholder="Company *" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm" />
-            <input placeholder="Role *" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm" />
-            <div>
-              <label className="text-xs text-muted mb-1 block">Applied</label>
-              <input type="date" value={form.date_applied} onChange={(e) => setForm({ ...form, date_applied: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm w-full" />
-            </div>
-            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm">
-              {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-            </select>
-            <select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm">
-              {SG_JOB_PORTALS.map((p) => <option key={p.key} value={p.name}>{p.name}</option>)}
-              <option value="Referral">Referral</option>
-              <option value="Other">Other</option>
-            </select>
-            <div>
-              <label className="text-xs text-muted mb-1 block">Follow-up</label>
-              <input type="date" value={form.follow_up_date || ""} onChange={(e) => setForm({ ...form, follow_up_date: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm w-full" />
-            </div>
+          {error && <Notice>{error}</Notice>}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <label className="block">
+              <span className={LABEL}>Company</span>
+              <input placeholder="Company *" value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} className={FIELD} />
+            </label>
+            <label className="block">
+              <span className={LABEL}>Role</span>
+              <input placeholder="Role *" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className={FIELD} />
+            </label>
+            <label className="block">
+              <span className={LABEL}>Applied</span>
+              <input type="date" value={form.date_applied} onChange={(e) => setForm({ ...form, date_applied: e.target.value })} className={FIELD} />
+            </label>
+            <label className="block">
+              <span className={LABEL}>Status</span>
+              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className={FIELD}>
+                {Object.entries(STATUS_CONFIG).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className={LABEL}>Where you found it</span>
+              <select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} className={FIELD}>
+                {SG_JOB_PORTALS.map((p) => <option key={p.key} value={p.name}>{p.name}</option>)}
+                <option value="Referral">Referral</option>
+                <option value="Other">Other</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className={LABEL}>Follow up on</span>
+              <input type="date" value={form.follow_up_date || ""} onChange={(e) => setForm({ ...form, follow_up_date: e.target.value })} className={FIELD} />
+            </label>
           </div>
           {(formMode === "workspace" || form.job_description) && (
             <>
-              <input
-                placeholder="Source URL"
-                value={form.source_url}
-                onChange={(e) => setForm({ ...form, source_url: e.target.value })}
-                className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm w-full"
-              />
-              <textarea
-                placeholder="Paste job description *"
-                value={form.job_description}
-                onChange={(e) => setForm({ ...form, job_description: e.target.value })}
-                className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm w-full"
-                rows={6}
-              />
+              <label className="block">
+                <span className={LABEL}>Job posting link</span>
+                <input
+                  placeholder="Source URL"
+                  value={form.source_url}
+                  onChange={(e) => setForm({ ...form, source_url: e.target.value })}
+                  className={FIELD}
+                />
+              </label>
+              <label className="block">
+                <span className={LABEL}>Job description</span>
+                <textarea
+                  placeholder="Paste job description *"
+                  value={form.job_description}
+                  onChange={(e) => setForm({ ...form, job_description: e.target.value })}
+                  className={TEXTAREA}
+                  rows={6}
+                />
+              </label>
             </>
           )}
-          <textarea placeholder="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className="border border-[#BDDDFC]/30 rounded-lg px-3 py-2 text-sm w-full" rows={2} />
-          <button onClick={handleSave} disabled={saving || !form.company || !form.role}
-            className="flex items-center gap-2 bg-[#384959] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2d3a47] disabled:opacity-40 transition">
-            {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+          <label className="block">
+            <span className={LABEL}>Notes</span>
+            <textarea placeholder="Notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={TEXTAREA} rows={2} />
+          </label>
+          <button type="button" onClick={handleSave} disabled={saving || !form.company || !form.role} className={BTN_PRIMARY}>
+            {saving && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
             {editingId ? "Update" : "Save"}
           </button>
-        </div>
+        </section>
       )}
 
       {(workspaceLoading || workspace || workspaceError) && (
-        <div className="bg-white border border-[#BDDDFC]/30 rounded-xl p-5 space-y-4 shadow-sm">
+        <section className={`${PANEL} space-y-5 p-5`} aria-labelledby="workspace-title">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <h3 className="font-semibold text-[#384959]">Application Workspace</h3>
+            <div className="min-w-0">
+              <h2 id="workspace-title" className={H3}>Application Workspace</h2>
               {workspace && (
-                <p className="text-sm text-muted">{workspace.title} at {workspace.company}</p>
+                <p className="mt-0.5 text-sm text-muted [overflow-wrap:anywhere]">{workspace.title} at {workspace.company}</p>
               )}
             </div>
             <div className="flex w-full items-center gap-2 sm:w-auto">
@@ -655,122 +724,119 @@ export default function TrackerTab({
                   type="button"
                   onClick={runWorkspaceAgentReview}
                   disabled={workspaceAgentLoading}
-                  className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-[#384959] px-3 py-2 text-xs font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-50 sm:flex-none"
+                  className={`${BTN_SECONDARY} flex-1 sm:flex-none`}
                 >
-                  {workspaceAgentLoading ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
+                  {workspaceAgentLoading && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
                   {workspaceAgentLoading ? "Reviewing..." : agentReview ? "Run review again" : "Run Deep Agent review"}
                 </button>
               )}
-              <button onClick={() => { setWorkspace(null); setWorkspaceError(""); setWorkspaceAgentError(""); }} className="text-muted hover:text-[#384959]"><X size={18} /></button>
+              <button type="button" onClick={() => { setWorkspace(null); setWorkspaceError(""); setWorkspaceAgentError(""); }} aria-label="Close workspace" className={BTN_ICON}><X size={18} aria-hidden="true" /></button>
             </div>
           </div>
           {workspaceLoading && (
             <div className="flex items-center gap-2 text-sm text-muted">
-              <Loader2 size={14} className="animate-spin" /> Loading workspace...
+              <Loader2 size={14} className="animate-spin" aria-hidden="true" /> Loading workspace...
             </div>
           )}
-          {workspaceError && (
-            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3">{workspaceError}</div>
-          )}
+          {workspaceError && <Notice>{workspaceError}</Notice>}
           {workspaceAgentLoading && (
-            <div className="flex items-start gap-3 rounded-lg border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3 text-sm text-[#384959]" role="status">
-              <Loader2 size={16} className="mt-0.5 shrink-0 animate-spin text-muted" />
+            <div className="flex items-start gap-3 rounded-md bg-tint p-3 text-sm text-ink" role="status">
+              <Loader2 size={16} className="mt-0.5 shrink-0 animate-spin text-accent" aria-hidden="true" />
               <div>
                 <div className="font-medium">Deep Agent is reviewing your evidence and role fit.</div>
-                <div className="mt-1 text-xs text-muted">This usually takes 20–40 seconds. You will review every proposed edit before anything changes.</div>
+                <div className="mt-1 text-muted">This usually takes 20–40 seconds. You will review every proposed edit before anything changes.</div>
               </div>
             </div>
           )}
           {workspaceAgentError && (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-              {workspaceAgentError}
-              {workspaceAgentError.startsWith("Save a resume version") && (
-                <button type="button" onClick={() => setActiveTab("resume")} className="ml-2 font-medium underline">Open Resume</button>
+            <Notice
+              action={workspaceAgentError.startsWith("Save a resume version") && (
+                <button type="button" onClick={() => setActiveTab("resume")} className="shrink-0 font-semibold underline">Open Resume</button>
               )}
-            </div>
+            >
+              {workspaceAgentError}
+            </Notice>
           )}
           {workspace && (
             <>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
                 <div>
-                  <div className="text-xs text-muted">Status</div>
-                  <StatusBadge status={workspace.status} />
+                  <dt className="text-xs text-muted">Status</dt>
+                  <dd className="mt-0.5"><StatusBadge status={workspace.status} /></dd>
                 </div>
                 <div>
-                  <div className="text-xs text-muted">Resume context</div>
-                  <div className="text-[#384959]">
+                  <dt className="text-xs text-muted">Resume context</dt>
+                  <dd className="mt-0.5 text-ink">
                     {workspace.resume_version_id ? `Version #${workspace.resume_version_id}` : "No resume linked yet"}
-                  </div>
+                  </dd>
                 </div>
                 <div>
-                  <div className="text-xs text-muted">Source</div>
-                  <div className="text-[#384959] break-all">{workspace.source_url || workspace.source || "Manual"}</div>
+                  <dt className="text-xs text-muted">Source</dt>
+                  <dd className="mt-0.5 break-all text-ink">{workspace.source_url || workspace.source || "Manual"}</dd>
                 </div>
-              </div>
-              {(workspace.follow_up_date || workspace.notes) && (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
-                  <div className="rounded-lg border border-[#BDDDFC]/30 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Follow-up</div>
-                    <p className="mt-2 text-[#384959]">{workspace.follow_up_date || "No follow-up date set."}</p>
-                  </div>
-                  <div className="rounded-lg border border-[#BDDDFC]/30 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Notes</div>
-                    <p className="mt-2 whitespace-pre-wrap text-[#384959]">{workspace.notes || "No notes saved."}</p>
-                  </div>
-                </div>
-              )}
+                {(workspace.follow_up_date || workspace.notes) && (
+                  <>
+                    <div>
+                      <dt className="text-xs text-muted">Follow-up</dt>
+                      <dd className="mt-0.5 text-ink tabular-nums">{workspace.follow_up_date ? formatPostingDate(workspace.follow_up_date) : "No follow-up date set."}</dd>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <dt className="text-xs text-muted">Notes</dt>
+                      <dd className="mt-0.5 whitespace-pre-wrap text-ink">{workspace.notes || "No notes saved."}</dd>
+                    </div>
+                  </>
+                )}
+                {recruitmentPipeline && (
+                  <>
+                    <div className="sm:col-span-2">
+                      <dt className="text-xs text-muted">Next action</dt>
+                      <dd className="mt-0.5 text-ink">{recruitmentPipeline.next_action?.label || "Review this application"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-xs text-muted">Fit evidence</dt>
+                      <dd className="mt-0.5 text-ink tabular-nums">
+                        {recruitmentPipeline.fit_evidence?.matched?.length || 0} matched · {recruitmentPipeline.fit_evidence?.stretch?.length || 0} stretch · {recruitmentPipeline.fit_evidence?.missing?.length || 0} missing
+                      </dd>
+                    </div>
+                  </>
+                )}
+              </dl>
               <div>
-                <div className="text-xs text-muted mb-1">Job description</div>
-                <p className="whitespace-pre-wrap rounded-lg bg-[#f0f4f8] p-3 text-sm text-[#384959]">
+                <h3 className={H4}>Job description</h3>
+                <p className="mt-2 max-w-3xl whitespace-pre-wrap border-l-2 border-line pl-3 text-sm leading-relaxed text-ink">
                   {workspace.job_description || "No job description saved."}
                 </p>
               </div>
-              {recruitmentPipeline && (
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
-                  <div className="rounded-lg border border-[#BDDDFC]/30 p-3 sm:col-span-2">
-                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Next action</div>
-                    <p className="mt-2 text-[#384959]">{recruitmentPipeline.next_action?.label || "Review this application"}</p>
-                  </div>
-                  <div className="rounded-lg border border-[#BDDDFC]/30 p-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Fit evidence</div>
-                    <p className="mt-2 text-[#384959]">
-                      {recruitmentPipeline.fit_evidence?.matched?.length || 0} matched · {recruitmentPipeline.fit_evidence?.stretch?.length || 0} stretch · {recruitmentPipeline.fit_evidence?.missing?.length || 0} missing
-                    </p>
-                  </div>
-                </div>
-              )}
-              <section aria-labelledby="application-research-title" className="rounded-xl border border-[#88BDF2]/60 bg-[#f7fafc] p-4">
+              <section aria-labelledby="application-research-title" className={SECTION}>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
-                    <h4 id="application-research-title" className="font-semibold text-[#384959]">Role research, interview prep, and compensation</h4>
-                    <p className="mt-1 text-xs text-muted">
-                      Current public postings and official MOM wage definitions stay attributable and separate.
+                    <h3 id="application-research-title" className={H3}>Research for this role</h3>
+                    <p className="mt-1 text-sm text-muted">
+                      Current public postings and official MOM wage figures, each with its source.
                     </p>
                   </div>
                   <button
                     type="button"
                     onClick={buildResearchPack}
                     disabled={researchLoading}
-                    className="flex items-center justify-center gap-2 rounded-lg bg-[#384959] px-3 py-2 text-xs font-medium text-white disabled:opacity-40"
+                    className={BTN_SECONDARY}
                   >
-                    {researchLoading ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
+                    {researchLoading && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
                     {researchLoading ? "Checking sources..." : applicationResearch ? "Refresh research" : "Build research pack"}
                   </button>
                 </div>
-                {researchError && <div className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{researchError}</div>}
+                {researchError && <div className="mt-3"><Notice>{researchError}</Notice></div>}
                 {applicationResearch && (
-                  <div className="mt-4 space-y-4 text-sm">
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="rounded-full bg-white px-2 py-1 font-medium text-[#384959]">Status: {applicationResearch.status.replaceAll("_", " ")}</span>
-                      <span className="rounded-full border border-[#BDDDFC]/60 px-2 py-1 text-muted">
-                        Evidence: {roleCompanyBrief?.freshness || "unknown"}
-                      </span>
-                      {(applicationResearch.source_statuses || []).map((source) => (
-                        <span key={source.source} className="rounded-full border border-[#BDDDFC]/60 px-2 py-1 text-muted">
-                          {source.source.replaceAll("_", " ")}: {source.status.replaceAll("_", " ")}
-                        </span>
-                      ))}
-                    </div>
+                  <div className="mt-4 space-y-5 text-sm">
+                    <p className="text-xs text-muted">
+                      {[
+                        `Status: ${applicationResearch.status.replaceAll("_", " ")}`,
+                        `Evidence: ${roleCompanyBrief?.freshness || "unknown"}`,
+                        ...(applicationResearch.source_statuses || []).map((source) => (
+                          `${source.source.replaceAll("_", " ")}: ${source.status.replaceAll("_", " ")}`
+                        )),
+                      ].join(" · ")}
+                    </p>
                     {(applicationResearch.source_statuses || []).some((source) => source.detail) && (
                       <ul className="space-y-1 text-xs text-muted">
                         {applicationResearch.source_statuses.filter((source) => source.detail).map((source) => (
@@ -778,140 +844,141 @@ export default function TrackerTab({
                         ))}
                       </ul>
                     )}
-                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                      <div className="rounded-lg border border-[#BDDDFC]/30 bg-white p-3">
-                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Role and company brief</div>
-                        <p className="mt-2 text-[#384959]">
+                    <div className="grid grid-cols-1 gap-x-8 gap-y-5 lg:grid-cols-2">
+                      <div>
+                        <h4 className={H4}>Role and company</h4>
+                        <p className="mt-1 text-ink">
                           {roleCompanyBrief?.company?.current_posting_count || 0} current company posting(s); {(roleCompanyBrief?.role?.comparable_titles || []).length} comparable title(s).
                         </p>
                         {(roleCompanyBrief?.company?.observed_industries || []).length > 0 && (
                           <p className="mt-1 text-xs text-muted">Observed context: {roleCompanyBrief.company.observed_industries.join(" · ")}</p>
                         )}
                         {(roleCompanyBrief?.role?.comparable_titles || []).length > 0 && (
-                          <ul className="mt-3 space-y-1 text-xs text-[#384959]">
+                          <ul className="mt-2 space-y-1 text-ink">
                             {roleCompanyBrief.role.comparable_titles.map((item) => (
                               <li key={`${item.company}-${item.title}`}>Comparable: {item.title} at {item.company}</li>
                             ))}
                           </ul>
                         )}
-                        <div className="mt-3 flex flex-wrap gap-1.5">
-                          {(roleCompanyBrief?.role?.ats_terms || []).map((term) => (
-                            <span key={term.term} className="rounded-full bg-[#f0f4f8] px-2 py-1 text-xs text-[#384959]" title={`${term.confidence} confidence, ${term.observed_in_postings} posting(s)`}>
-                              {term.term}
-                            </span>
-                          ))}
-                        </div>
-                        <div className="mt-3 space-y-1 text-xs">
+                        {(roleCompanyBrief?.role?.ats_terms || []).length > 0 && (
+                          <p className="mt-2 text-ink">
+                            <span className="text-muted">Terms in postings: </span>
+                            {roleCompanyBrief.role.ats_terms.map((term) => term.term).join(", ")}
+                          </p>
+                        )}
+                        <div className="mt-2 space-y-1 text-xs">
                           {(roleCompanyBrief?.sources || []).filter((source) => source.url).slice(0, RESEARCH_SOURCE_DISPLAY_LIMIT).map((source, index) => (
-                            <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer" className="block break-all text-[#2f6f9f] hover:underline">
+                            <a key={`${source.url}-${index}`} href={source.url} target="_blank" rel="noreferrer" className={`block break-all ${LINK}`}>
                               {source.publisher || source.source_type} · {source.confidence} · {source.freshness}
                             </a>
                           ))}
                         </div>
                       </div>
-                      <div className="rounded-lg border border-[#BDDDFC]/30 bg-white p-3">
-                        <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Compensation observations</div>
-                        <p className="mt-2 text-xs text-muted">{compensationBrief?.comparison_rule}</p>
-                        <p className="mt-1 text-xs font-medium text-muted">
+                      <div>
+                        <h4 className={H4}>Pay</h4>
+                        <p className="mt-1 text-xs text-muted">{compensationBrief?.comparison_rule}</p>
+                        <p className="mt-1 text-xs text-muted">
                           Coverage: {(compensationBrief?.comparison_state || "valid_empty").replaceAll("_", " ")}
                         </p>
-                        <div className="mt-3 space-y-3">
+                        <ul className="mt-2 space-y-3">
                           {(compensationBrief?.observations || []).map((observation, index) => (
-                            <div key={`${observation.kind}-${index}`} className="text-[#384959]">
+                            <li key={`${observation.kind}-${index}`} className="text-ink">
                               <div className="font-medium">{observation.kind.replaceAll("_", " ")}</div>
-                              <div className="mt-1 text-xs">{compensationObservationLabel(observation)}</div>
-                              <div className="mt-1 text-xs text-muted">
+                              <div className="mt-0.5 tabular-nums">{compensationObservationLabel(observation)}</div>
+                              <div className="mt-0.5 text-xs text-muted">
                                 {observation.occupation || observation.definition || ""}{observation.data_date ? ` · ${observation.data_date}` : ""}
                               </div>
                               {observation.source_url && (
-                                <a href={observation.source_url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-[#2f6f9f] hover:underline">View source</a>
+                                <a href={observation.source_url} target="_blank" rel="noreferrer" className={`mt-1 inline-block text-xs ${LINK}`}>View source</a>
                               )}
-                            </div>
+                            </li>
                           ))}
-                          {!(compensationBrief?.observations || []).length && <p className="text-xs text-muted">No compatible compensation observation was available.</p>}
-                        </div>
+                        </ul>
+                        {!(compensationBrief?.observations || []).length && <p className="mt-2 text-xs text-muted">No compatible compensation observation was available.</p>}
                         {(compensationBrief?.recruiter_guide_leads || []).length > 0 && (
-                          <div className="mt-4 border-t border-[#BDDDFC]/30 pt-3 text-xs">
-                            <div className="font-medium text-[#384959]">Public recruiter-guide leads</div>
+                          <div className="mt-3 border-t border-line pt-3 text-xs">
+                            <div className="font-medium text-ink">Public recruiter-guide leads</div>
                             {(compensationBrief.recruiter_guide_leads || []).map((source) => (
-                              <a key={source.source_url} href={source.source_url} target="_blank" rel="noreferrer" className="mt-2 block text-[#2f6f9f] hover:underline">
+                              <a key={source.source_url} href={source.source_url} target="_blank" rel="noreferrer" className={`mt-2 block ${LINK}`}>
                                 {source.publisher} · {source.publication_date} · {source.status.replaceAll("_", " ")}
-                                <span className="block text-muted no-underline">{source.evidence_note}</span>
+                                <span className="block text-muted">{source.evidence_note}</span>
                               </a>
                             ))}
                           </div>
                         )}
                       </div>
                     </div>
-                    <div className="rounded-lg border border-[#BDDDFC]/30 bg-white p-3">
-                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Interview preparation</div>
-                      <p className="mt-2 text-xs text-muted">
+                    <div>
+                      <h4 className={H4}>Interview preparation</h4>
+                      <p className="mt-1 text-xs text-muted">
                         {interviewPack?.confidence_note} Source state: {(interviewPack?.source_state || "valid_empty").replaceAll("_", " ")}.
                         Answer formats: {(interviewPack?.answer_formats || []).join(" / ") || "none"}.
                       </p>
-                      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                      <ul className="mt-2 divide-y divide-line border-y border-line">
                         {(interviewPack?.questions || []).map((item, index) => (
-                          <details key={`${item.cluster}-${index}`} className="group rounded-lg bg-[#f7fafc] p-3">
-                            <summary className="cursor-pointer list-none text-[#384959]">
-                              <span className="block text-xs font-medium uppercase text-muted">{item.cluster.replaceAll("_", " ")} · {item.confidence}</span>
-                              <span className="mt-1 block pr-5">{item.question}</span>
-                              <span className="mt-1 block text-xs text-[#2f6f9f] group-open:hidden">Show evidence and answer scaffold</span>
-                            </summary>
-                            <p className="mt-3 text-xs text-muted">
-                              {item.answer_scaffold?.evidence_quote || (item.answer_scaffold?.status === "missing_evidence" ? "Missing evidence: confirm a real example first." : "Candidate input required.")}
-                            </p>
-                            {(item.answer_scaffold?.steps || []).length > 0 && (
-                              <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs text-muted">
-                                {item.answer_scaffold.steps.map((step) => <li key={step}>{step}</li>)}
-                              </ol>
-                            )}
-                            {(item.sources || []).filter((source) => source.url).map((source) => (
-                              <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="mt-2 block text-xs text-[#2f6f9f] hover:underline">
-                                {source.source_type.replaceAll("_", " ")} · retrieved {formatResearchDate(source.retrieved_at)} · {source.evidence_note}
-                              </a>
-                            ))}
-                          </details>
+                          <li key={`${item.cluster}-${index}`}>
+                            <details className="group py-3">
+                              <summary className="cursor-pointer list-none rounded text-ink">
+                                <span className="block text-xs text-muted">{item.cluster.replaceAll("_", " ")} · {item.confidence}</span>
+                                <span className="mt-0.5 block">{item.question}</span>
+                                <span className="mt-1 block text-xs font-medium text-accent group-open:hidden">Show evidence and answer outline</span>
+                              </summary>
+                              <p className="mt-2 text-xs text-muted">
+                                {item.answer_scaffold?.evidence_quote || (item.answer_scaffold?.status === "missing_evidence" ? "Missing evidence: confirm a real example first." : "Candidate input required.")}
+                              </p>
+                              {(item.answer_scaffold?.steps || []).length > 0 && (
+                                <ol className="mt-2 list-decimal space-y-1 pl-4 text-xs text-muted">
+                                  {item.answer_scaffold.steps.map((step) => <li key={step}>{step}</li>)}
+                                </ol>
+                              )}
+                              {(item.sources || []).filter((source) => source.url).map((source) => (
+                                <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className={`mt-2 block text-xs ${LINK}`}>
+                                  {source.source_type.replaceAll("_", " ")} · retrieved {formatResearchDate(source.retrieved_at)} · {source.evidence_note}
+                                </a>
+                              ))}
+                            </details>
+                          </li>
                         ))}
-                      </div>
+                      </ul>
                     </div>
                   </div>
                 )}
-                <form onSubmit={rehearseNegotiation} className="mt-4 rounded-lg border border-[#BDDDFC]/30 bg-white p-3">
-                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Private negotiation rehearsal</div>
-                  <p className="mt-2 text-xs text-muted">Your scenario and authorised evidence are sent to the configured AI coach and saved on this application, but are not copied into metadata telemetry. Your walk-away point is not sent to the coach. One priority per line.</p>
+                <form onSubmit={rehearseNegotiation} className="mt-5">
+                  <h4 className={H4}>Private negotiation rehearsal</h4>
+                  <p className="mt-1 max-w-3xl text-xs text-muted">Your scenario and authorised evidence are sent to the AI coach and saved on this application, but are not copied into usage logs. Your walk-away point is not sent to the coach. One priority per line.</p>
                   <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <textarea value={negotiationPriorities} onChange={(event) => setNegotiationPriorities(event.target.value)} placeholder="Priorities\nRole scope\nBase salary" rows={3} className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
-                    <input value={walkAwayPoint} onChange={(event) => setWalkAwayPoint(event.target.value)} placeholder="Private walk-away point (optional)" className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
+                    <textarea value={negotiationPriorities} onChange={(event) => setNegotiationPriorities(event.target.value)} aria-label="Priorities, one per line" placeholder={"Priorities\nRole scope\nBase salary"} rows={3} className={TEXTAREA} />
+                    <input value={walkAwayPoint} onChange={(event) => setWalkAwayPoint(event.target.value)} aria-label="Private walk-away point" placeholder="Private walk-away point (optional)" className={FIELD} />
                   </div>
                   <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    <input value={authorizedEvidenceLabel} onChange={(event) => setAuthorizedEvidenceLabel(event.target.value)} placeholder="Authorized evidence label" className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
-                    <input value={authorizedEvidenceValue} onChange={(event) => setAuthorizedEvidenceValue(event.target.value)} placeholder="Observed value" className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
-                    <input value={authorizedEvidenceDefinition} onChange={(event) => setAuthorizedEvidenceDefinition(event.target.value)} placeholder="Definition / package basis" className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
-                    <input type="url" value={authorizedEvidenceSourceUrl} onChange={(event) => setAuthorizedEvidenceSourceUrl(event.target.value)} placeholder="Authorized source URL (optional)" className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
-                    <label className="flex items-center gap-2 rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-muted">
+                    <input value={authorizedEvidenceLabel} onChange={(event) => setAuthorizedEvidenceLabel(event.target.value)} aria-label="Authorized evidence label" placeholder="Authorized evidence label" className={FIELD} />
+                    <input value={authorizedEvidenceValue} onChange={(event) => setAuthorizedEvidenceValue(event.target.value)} aria-label="Observed value" placeholder="Observed value" className={FIELD} />
+                    <input value={authorizedEvidenceDefinition} onChange={(event) => setAuthorizedEvidenceDefinition(event.target.value)} aria-label="Definition or package basis" placeholder="Definition / package basis" className={FIELD} />
+                    <input type="url" value={authorizedEvidenceSourceUrl} onChange={(event) => setAuthorizedEvidenceSourceUrl(event.target.value)} aria-label="Authorized source URL" placeholder="Authorized source URL (optional)" className={FIELD} />
+                    <label className="flex min-h-11 items-center gap-2 rounded-md border border-field bg-white px-3 text-sm text-muted">
                       Evidence date
-                      <input type="date" value={authorizedEvidenceDataDate} onInput={(event) => setAuthorizedEvidenceDataDate(event.currentTarget.value)} className="min-w-0 flex-1 text-[#384959]" />
+                      <input type="date" value={authorizedEvidenceDataDate} onInput={(event) => setAuthorizedEvidenceDataDate(event.currentTarget.value)} className="min-w-0 flex-1 bg-transparent text-ink" />
                     </label>
                   </div>
-                  <textarea value={negotiationScenario} onChange={(event) => setNegotiationScenario(event.target.value)} placeholder="What did the recruiter or hiring manager say?" rows={3} className="mt-2 w-full rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]" />
-                  {negotiationError && <div className="mt-2 text-xs text-red-600">{negotiationError}</div>}
-                  <button type="submit" disabled={negotiationLoading || !negotiationScenario.trim() || !negotiationPriorities.trim()} className="mt-2 flex items-center gap-2 rounded-lg border border-[#BDDDFC] px-3 py-2 text-xs font-medium text-[#384959] disabled:opacity-40">
-                    {negotiationLoading && <Loader2 size={12} className="animate-spin" />}
+                  <textarea value={negotiationScenario} onChange={(event) => setNegotiationScenario(event.target.value)} aria-label="What the recruiter or hiring manager said" placeholder="What did the recruiter or hiring manager say?" rows={3} className={`mt-2 ${TEXTAREA}`} />
+                  {negotiationError && <div className="mt-2"><Notice>{negotiationError}</Notice></div>}
+                  <button type="submit" disabled={negotiationLoading || !negotiationScenario.trim() || !negotiationPriorities.trim()} className={`mt-2 ${BTN_SECONDARY}`}>
+                    {negotiationLoading && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
                     Save and rehearse
                   </button>
                   {(negotiation?.rounds || []).length > 0 && (
-                    <div className="mt-4 space-y-3">
+                    <div className="mt-4 space-y-4">
                       {negotiation.rounds.slice(-NEGOTIATION_ROUND_DISPLAY_LIMIT).map((round, index) => (
-                        <div key={`${round.created_at}-${index}`} className="rounded-lg bg-[#f7fafc] p-3 text-xs">
-                          <div className="font-medium text-[#384959]">Scenario: {round.scenario}</div>
-                          <p className="mt-2 text-muted">{round.coach_response.opening}</p>
-                          <p className="mt-2 text-muted">{round.coach_response.walk_away_guidance}</p>
+                        <div key={`${round.created_at}-${index}`} className="border-l-2 border-line pl-3 text-sm">
+                          <div className="font-medium text-ink">Scenario: {round.scenario}</div>
+                          <p className="mt-1 text-muted">{round.coach_response.opening}</p>
+                          <p className="mt-1 text-muted">{round.coach_response.walk_away_guidance}</p>
                           {(round.coach_response.anchor_options || []).map((anchor, anchorIndex) => (
-                            <div key={`${anchor.kind}-${anchorIndex}`} className="mt-2 rounded border border-[#BDDDFC]/30 p-2 text-muted">
-                              <span className="font-medium text-[#384959]">{anchor.label}: </span>
+                            <div key={`${anchor.kind}-${anchorIndex}`} className="mt-2 text-muted">
+                              <span className="font-medium text-ink">{anchor.label}: </span>
                               {negotiationAnchorLabel(anchor)} · {anchor.definition || "definition unavailable"}
-                              <span className="block">{anchor.source_type || "source unknown"} · {anchor.data_date || "data date unavailable"}</span>
-                              {anchor.source_url && <a href={anchor.source_url} target="_blank" rel="noreferrer" className="mt-1 block text-[#2f6f9f] hover:underline">View anchor source</a>}
+                              <span className="block text-xs">{anchor.source_type || "source unknown"} · {anchor.data_date || "data date unavailable"}</span>
+                              {anchor.source_url && <a href={anchor.source_url} target="_blank" rel="noreferrer" className={`mt-1 block text-xs ${LINK}`}>View anchor source</a>}
                             </div>
                           ))}
                           <ul className="mt-2 list-disc space-y-1 pl-4 text-muted">
@@ -925,110 +992,111 @@ export default function TrackerTab({
                   )}
                 </form>
               </section>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 text-sm">
-                <div className="rounded-lg border border-[#BDDDFC]/30 p-3">
-                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Contacts</div>
+              <div className={`${SECTION} grid grid-cols-1 gap-x-8 gap-y-5 text-sm sm:grid-cols-2`}>
+                <div>
+                  <h3 className={H4}>Contacts</h3>
                   {workspaceContacts.length ? workspaceContacts.map((contact, index) => (
-                    <div key={`${contact.name || "contact"}-${index}`} className="mt-2 text-[#384959]">
+                    <div key={`${contact.name || "contact"}-${index}`} className="mt-2 text-ink">
                       {contact.name || contact.label || "Contact"}{contact.details ? ` · ${contact.details}` : ""}
                     </div>
                   )) : <p className="mt-2 text-muted">No contacts saved yet.</p>}
                 </div>
-                <div className="rounded-lg border border-[#BDDDFC]/30 p-3">
-                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Application activity</div>
+                <div>
+                  <h3 className={H4}>Application activity</h3>
                   {workspaceActivity.length ? workspaceActivity.map((item, index) => (
-                    <div key={`${item.action || item.type || "activity"}-${index}`} className="mt-2 flex justify-between gap-2 text-[#384959]">
+                    <div key={`${item.action || item.type || "activity"}-${index}`} className="mt-2 flex justify-between gap-2 text-ink">
                       <span>{String(item.action || item.type || "updated").replaceAll("_", " ")}</span>
-                      <span className="text-xs text-muted">{item.recorded_at ? new Date(item.recorded_at).toLocaleDateString() : ""}</span>
+                      <span className="text-xs tabular-nums text-muted">{item.recorded_at ? new Date(item.recorded_at).toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" }) : ""}</span>
                     </div>
                   )) : <p className="mt-2 text-muted">No application activity recorded yet.</p>}
                 </div>
-              </div>
-              <div>
-                <div className="text-xs text-muted mb-2">Stage history</div>
-                <div className="space-y-2">
-                  {(workspace.stage_history || []).length === 0 && (
-                    <div className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm text-muted">
-                      No stage history recorded yet.
-                    </div>
+                <div className="sm:col-span-2">
+                  <h3 className={H4}>Stage history</h3>
+                  {(workspace.stage_history || []).length === 0 ? (
+                    <p className="mt-2 text-muted">No stage history recorded yet.</p>
+                  ) : (
+                    <ol className="mt-2 divide-y divide-line border-y border-line">
+                      {workspace.stage_history.map((event, index) => (
+                        <li key={`${event.stage}-${index}`} className="flex items-center justify-between gap-3 py-2">
+                          <span className="font-medium text-ink">{STATUS_CONFIG[event.stage]?.label || event.stage}</span>
+                          <span className="tabular-nums text-muted">{formatPostingDate(event.date)}</span>
+                        </li>
+                      ))}
+                    </ol>
                   )}
-                  {(workspace.stage_history || []).map((event, index) => (
-                    <div key={`${event.stage}-${index}`} className="flex items-center justify-between rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-sm">
-                      <span className="font-medium text-[#384959]">{STATUS_CONFIG[event.stage]?.label || event.stage}</span>
-                      <span className="text-muted">{event.date}</span>
-                    </div>
-                  ))}
                 </div>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <div className={`${SECTION} grid grid-cols-1 gap-x-8 gap-y-5 text-sm sm:grid-cols-2`}>
                 {debateSummary ? (
-                  <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-[#384959]">
-                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Debate summary</div>
-                    <p className="mt-2 text-sm">{debateSummary.final_recommendation}</p>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      {(Array.isArray(debateSummary.roles) ? debateSummary.roles : []).map((role) => (
-                        <span key={role} className="rounded-full bg-[#f0f4f8] px-2 py-1 text-xs text-[#384959]">
-                          {role}
-                        </span>
-                      ))}
-                    </div>
+                  <div className="text-ink">
+                    <h3 className={H4}>Debate summary</h3>
+                    <p className="mt-2">{debateSummary.final_recommendation}</p>
+                    {(Array.isArray(debateSummary.roles) ? debateSummary.roles : []).length > 0 && (
+                      <p className="mt-2 text-xs text-muted">Reviewers: {debateSummary.roles.join(", ")}</p>
+                    )}
                     {(Array.isArray(debateSummary.key_disagreements) ? debateSummary.key_disagreements : []).length > 0 && (
-                      <ul className="mt-3 list-disc space-y-1 pl-4 text-xs text-muted">
+                      <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted">
                         {debateSummary.key_disagreements.map((item) => (
                           <li key={item}>{item}</li>
                         ))}
                       </ul>
                     )}
-                    <div className="mt-3 text-xs text-muted">
+                    <div className="mt-2 text-xs text-muted">
                       Confidence: {debateSummary.confidence || "unknown"}
                       {debateSummary.trace_id ? `, trace ID: ${debateSummary.trace_id}` : ""}
                     </div>
                   </div>
                 ) : (
-                  <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-muted">Agent review not run yet.</div>
+                  <div>
+                    <h3 className={H4}>Agent review</h3>
+                    <p className="mt-2 text-muted">Agent review not run yet.</p>
+                  </div>
                 )}
-                <div className="rounded-lg border border-[#BDDDFC]/30 p-3 text-[#384959]">
-                  <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Submitted resume</div>
+                <div className="text-ink">
+                  <h3 className={H4}>Submitted resume</h3>
                   {submittedResume ? (
-                    <div className="mt-2 space-y-1 text-sm">
+                    <div className="mt-2 space-y-1">
                       <div>{submittedResume.filename}</div>
-                      <div className="text-xs text-muted">
+                      <div className="text-xs tabular-nums text-muted">
                         {submittedResume.submitted_date} - {submittedResume.word_count || 0} words
                       </div>
                       {submittedResume.notes && <div className="text-xs text-muted">{submittedResume.notes}</div>}
                     </div>
                   ) : (
-                    <div className="mt-2 text-sm text-muted">No submitted resume recorded yet.</div>
+                    <p className="mt-2 text-muted">No submitted resume recorded yet.</p>
                   )}
                   <div className="mt-3 space-y-2">
                     <input
                       type="file"
                       accept=".pdf,.docx"
+                      aria-label="Resume file you submitted"
                       onChange={(event) => setSubmittedFile(event.target.files?.[0] || null)}
-                      className="w-full text-xs text-muted"
+                      className="w-full text-sm text-muted file:mr-3 file:min-h-10 file:rounded-md file:border file:border-field file:bg-white file:px-3 file:text-sm file:font-medium file:text-ink hover:file:bg-tint"
                     />
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <input
                         type="date"
+                        aria-label="Date submitted"
                         value={submittedDate}
                         onChange={(event) => setSubmittedDate(event.target.value)}
-                        className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]"
+                        className={FIELD}
                       />
                       <input
+                        aria-label="Submitted resume notes"
                         placeholder="Submitted resume notes"
                         value={submittedNotes}
                         onChange={(event) => setSubmittedNotes(event.target.value)}
-                        className="rounded-lg border border-[#BDDDFC]/30 px-3 py-2 text-xs text-[#384959]"
+                        className={FIELD}
                       />
                     </div>
-                    {submittedError && <div className="text-xs text-red-600">{submittedError}</div>}
+                    {submittedError && <Notice>{submittedError}</Notice>}
                     <button
                       type="button"
                       onClick={saveSubmittedResume}
                       disabled={!submittedFile || submittedSaving}
-                      className="flex items-center gap-2 rounded-lg bg-[#384959] px-3 py-2 text-xs font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
+                      className={BTN_SECONDARY}
                     >
-                      {submittedSaving ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+                      {submittedSaving ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <FileText size={14} aria-hidden="true" />}
                       Save submitted resume
                     </button>
                   </div>
@@ -1036,14 +1104,14 @@ export default function TrackerTab({
               </div>
             </>
           )}
-        </div>
+        </section>
       )}
 
       {viewMode === "board" && (
         <DndContext sensors={dndSensors} collisionDetection={closestCorners} onDragEnd={handleBoardDragEnd}>
-          <div className="overflow-x-auto pb-1">
+          <div className="-mx-4 overflow-x-auto px-4 pb-1 sm:mx-0 sm:px-0">
             <div
-              className="grid gap-3"
+              className="grid gap-2"
               style={{ gridTemplateColumns: `repeat(${boardStatuses.length}, minmax(180px, 1fr))` }}
             >
               {boardStatuses.map((status) => (
@@ -1064,35 +1132,35 @@ export default function TrackerTab({
 
       {viewMode === "table" && (
         <>
-          <div className="bg-white border border-[#BDDDFC]/30 rounded-xl overflow-hidden hidden sm:block">
+          <div className={`${PANEL} hidden overflow-hidden sm:block`}>
             <table className="w-full text-sm">
-              <thead className="bg-[#f0f4f8] text-muted text-xs uppercase">
+              <thead className="border-b border-line text-left text-xs text-muted">
                 <tr>
-                  <th className="text-left px-4 py-3">Company</th>
-                  <th className="text-left px-4 py-3">Role</th>
-                  <th className="text-left px-4 py-3">Applied</th>
-                  <th className="text-left px-4 py-3">Source</th>
-                  <th className="text-left px-4 py-3">Status</th>
-                  <th className="text-left px-4 py-3">Days</th>
-                  <th className="text-right px-4 py-3">Actions</th>
+                  <th scope="col" className="px-4 py-3 font-semibold">Company</th>
+                  <th scope="col" className="px-4 py-3 font-semibold">Role</th>
+                  <th scope="col" className="px-4 py-3 font-semibold">Applied</th>
+                  <th scope="col" className="px-4 py-3 font-semibold">Source</th>
+                  <th scope="col" className="px-4 py-3 font-semibold">Status</th>
+                  <th scope="col" className="px-4 py-3 text-right font-semibold">Days</th>
+                  <th scope="col" className="px-4 py-3 text-right font-semibold"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#BDDDFC]/15">
+              <tbody className="divide-y divide-line">
                 {filtered.length === 0 && (
-                  <tr><td colSpan={7} className="text-center py-8 text-muted">No applications tracked yet. Browse jobs and click Track to get started!</td></tr>
+                  <tr><td colSpan={7} className="px-4 py-10 text-center text-muted">{jobs.length ? "No applications have this status." : "No applications yet."}</td></tr>
                 )}
                 {filtered.map((job) => (
-                  <tr key={job.id} className="hover:bg-[#f0f4f8] transition">
-                    <td className="px-4 py-3 font-medium text-[#384959]">{job.company}</td>
-                    <td className="px-4 py-3 text-muted">{job.role}</td>
-                    <td className="px-4 py-3 text-muted">{job.date_applied}</td>
-                    <td className="px-4 py-3 text-muted">{job.source}</td>
-                    <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
-                    <td className="px-4 py-3 text-muted">{daysBetween(job.date_applied, todayStr())}d</td>
-                    <td className="px-4 py-3 text-right">
-                      <button aria-label={`Open workspace for ${job.company} ${job.role}`} onClick={() => openWorkspace(job.id)} className="text-muted hover:text-[#384959] mr-2"><FileText size={14} /></button>
-                      <button onClick={() => handleEdit(job)} className="text-muted hover:text-[#384959] mr-2"><Edit3 size={14} /></button>
-                      <button onClick={() => handleDelete(job.id)} className="text-muted hover:text-red-500"><Trash2 size={14} /></button>
+                  <tr key={job.id} className="transition-colors hover:bg-paper">
+                    <td className="px-4 py-2 font-medium text-ink">{job.company}</td>
+                    <td className="px-4 py-2 text-ink">{job.role}</td>
+                    <td className="whitespace-nowrap px-4 py-2 tabular-nums text-muted">{formatPostingDate(job.date_applied)}</td>
+                    <td className="px-4 py-2 text-muted">{job.source}</td>
+                    <td className="px-4 py-2"><StatusBadge status={job.status} /></td>
+                    <td className="px-4 py-2 text-right tabular-nums text-muted">{daysBetween(job.date_applied, todayStr())}d</td>
+                    <td className="whitespace-nowrap px-2 py-1 text-right">
+                      <button type="button" aria-label={`Open workspace for ${job.company} ${job.role}`} title="Open" onClick={() => openWorkspace(job.id)} className={BTN_ICON}><FileText size={16} aria-hidden="true" /></button>
+                      <button type="button" aria-label={`Edit ${job.company} ${job.role}`} title="Edit" onClick={() => handleEdit(job)} className={BTN_ICON}><Edit3 size={16} aria-hidden="true" /></button>
+                      <button type="button" aria-label={`Delete ${job.company} ${job.role}`} title="Delete" onClick={() => handleDelete(job.id)} className={BTN_ICON_DANGER}><Trash2 size={16} aria-hidden="true" /></button>
                     </td>
                   </tr>
                 ))}
@@ -1100,33 +1168,33 @@ export default function TrackerTab({
             </table>
           </div>
 
-          <div className="sm:hidden space-y-3">
+          <ul className="space-y-2 sm:hidden">
             {filtered.length === 0 && (
-              <div className="text-center py-8 text-muted text-sm">No applications tracked yet. Browse jobs and click Track to get started!</div>
+              <li className={`${PANEL} px-4 py-8 text-center text-sm text-muted`}>{jobs.length ? "No applications have this status." : "No applications yet."}</li>
             )}
             {filtered.map((job) => (
-              <div key={job.id} className="bg-white border border-[#BDDDFC]/30 rounded-xl p-4 space-y-2">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="font-semibold text-[#384959] text-sm">{job.company}</div>
-                    <div className="text-sm text-muted">{job.role}</div>
+              <li key={job.id} className={`${PANEL} p-4`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-ink [overflow-wrap:anywhere]">{job.company}</div>
+                    <div className="text-sm text-ink [overflow-wrap:anywhere]">{job.role}</div>
                   </div>
-                  <StatusBadge status={job.status} />
+                  <span className="shrink-0"><StatusBadge status={job.status} /></span>
                 </div>
-                <div className="flex items-center gap-3 text-xs text-muted">
-                  <span>{job.date_applied}</span>
+                <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted">
+                  <span className="tabular-nums">{formatPostingDate(job.date_applied)}</span>
                   <span>{job.source}</span>
-                  <span>{daysBetween(job.date_applied, todayStr())}d ago</span>
+                  <span className="tabular-nums">{daysBetween(job.date_applied, todayStr())}d ago</span>
                 </div>
-                {job.notes && <p className="text-xs text-muted">{job.notes}</p>}
-                <div className="flex gap-2 pt-1">
-                  <button onClick={() => openWorkspace(job.id)} className="text-xs text-[#384959] hover:underline flex items-center gap-1"><FileText size={12} /> Open</button>
-                  <button onClick={() => handleEdit(job)} className="text-xs text-[#384959] hover:underline flex items-center gap-1"><Edit3 size={12} /> Edit</button>
-                  <button onClick={() => handleDelete(job.id)} className="text-xs text-red-500 hover:underline flex items-center gap-1"><Trash2 size={12} /> Delete</button>
+                {job.notes && <p className="mt-2 text-sm text-muted">{job.notes}</p>}
+                <div className="-mx-2 mt-1 flex gap-1">
+                  <button type="button" onClick={() => openWorkspace(job.id)} className={BTN_TEXT}>Open</button>
+                  <button type="button" onClick={() => handleEdit(job)} className={BTN_TEXT}>Edit</button>
+                  <button type="button" onClick={() => handleDelete(job.id)} className={BTN_TEXT_DANGER}>Delete</button>
                 </div>
-              </div>
+              </li>
             ))}
-          </div>
+          </ul>
         </>
       )}
     </div>
