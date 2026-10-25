@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Plus, AlertCircle, ExternalLink, RefreshCw,
-  Loader2, Sparkles, FileText, MapPin, DollarSign, Building2,
+  Loader2, FileText, MapPin, DollarSign, Building2,
   Info, ShieldCheck, Target, Gauge, GraduationCap, Star, Clock3,
 } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
@@ -177,7 +177,6 @@ export default function PowerTab({ onTrack, setSelectedJob, setActiveTab }) {
           <div>
             <div className="text-xs font-semibold uppercase tracking-[0.2em] text-muted">Power Match</div>
             <h2 className="mt-2 flex items-center gap-2 text-2xl font-semibold text-[#384959]">
-              <Sparkles size={20} />
               Suitability, gaps, and bridge paths
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-relaxed text-muted">

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   BookOpen, Plus, ChevronLeft, Trash2,
-  User, Trophy, Handshake, Sparkles, Save,
+  User, Trophy, Handshake, Save,
   Wand2, AlertTriangle, Loader2,
 } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
@@ -77,7 +77,7 @@ function EmptyState({ onStart, onGenerate, generating, generationStatus }) {
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3 max-w-2xl w-full">
         {BIG_THREE_PROMPTS.map((prompt) => {
-          const Icon = PROMPT_ICONS[prompt.icon] || Sparkles;
+          const Icon = PROMPT_ICONS[prompt.icon] || BookOpen;
           return (
             <motion.button
               key={prompt.title}

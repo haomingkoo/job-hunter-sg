@@ -2,9 +2,9 @@ import { useState, useEffect, useMemo, useCallback, useRef, Fragment, memo } fro
 import {
   Search, FileText, Plus, X, ChevronRight,
   CheckCircle, AlertCircle, Trash2, Edit3,
-  RefreshCw, Zap, Download, Star,
-  Loader2, Sparkles, UploadCloud, Printer,
-  Check, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, List, Type, GripVertical,
+  RefreshCw, Download, Star,
+  Loader2, UploadCloud, Printer,
+  Check, ArrowUp, ArrowDown, List, Type, GripVertical,
   Send,
 } from "lucide-react";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
@@ -2545,7 +2545,6 @@ export default function ResumeTab({
               }}
               className="group text-left rounded-2xl border-2 border-[#BDDDFC]/30 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-violet-300"
             >
-              <Sparkles size={28} className="text-violet-600" />
               <h3 className="mt-3 text-base font-semibold text-[#384959]">Start Fresh</h3>
               <p className="mt-1.5 text-sm text-muted">Build from scratch with AI-guided chat, or switch to a blank starter if you want to move faster</p>
             </button>
@@ -2679,7 +2678,6 @@ CERTIFICATIONS
             <div className="rounded-2xl border border-violet-200 bg-white shadow-sm overflow-hidden flex flex-col" style={{ height: "480px" }}>
               <div className="flex items-center justify-between border-b border-violet-100 bg-gradient-to-r from-violet-50 to-white px-5 py-3">
                 <div className="flex items-center gap-2">
-                  <Sparkles size={18} className="text-violet-600" />
                   <span className="text-sm font-semibold text-[#384959]">AI Resume Builder</span>
                 </div>
                 <button
@@ -2695,11 +2693,6 @@ CERTIFICATIONS
               <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
                 {chatMessages.map((msg, i) => (
                   <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                    {msg.role === "assistant" && (
-                      <div className="mr-2 mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-100">
-                        <Sparkles size={14} className="text-violet-600" />
-                      </div>
-                    )}
                     <div
                       className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
                         msg.role === "user"
@@ -2713,9 +2706,6 @@ CERTIFICATIONS
                 ))}
                 {chatLoading && (
                   <div className="flex justify-start">
-                    <div className="mr-2 mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-100">
-                      <Sparkles size={14} className="text-violet-600" />
-                    </div>
                     <div className="rounded-2xl bg-[#f0f4f8] px-4 py-2.5 text-sm text-muted">
                       <Loader2 size={16} className="inline animate-spin mr-1.5" />
                       Thinking...
@@ -2787,7 +2777,6 @@ CERTIFICATIONS
                       }}
                       className="w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 transition flex items-center justify-center gap-2"
                     >
-                      <Sparkles size={16} />
                       Generate My Resume
                     </button>
                   </div>
@@ -3045,7 +3034,6 @@ CERTIFICATIONS
               className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Next: Pick Template
-              <ArrowRight size={14} />
             </button>
           </div>
         </div>
@@ -3262,7 +3250,6 @@ CERTIFICATIONS
           onClick={() => { setShowSetupPanel(true); setWizardStep(1); }}
           className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
         >
-          <ArrowLeft size={14} />
           Back
         </button>
         <button
@@ -3271,7 +3258,6 @@ CERTIFICATIONS
           className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
         >
           Next: Review & Edit
-          <ArrowRight size={14} />
         </button>
       </div>
       </>)}
@@ -3288,7 +3274,7 @@ CERTIFICATIONS
             <div className="inline-flex rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-1" role="tablist" aria-label="Resume editor mode">
               {[
                 ["classic", "Classic editor", Edit3],
-                ["agent", "Agent review", Sparkles],
+                ["agent", "Agent review", List],
               ].map(([mode, label, Icon]) => {
                 const active = editorMode === mode;
                 return (
@@ -3385,7 +3371,6 @@ CERTIFICATIONS
               ) : (
                 <div className="flex min-h-32 items-center justify-center text-center">
                   <div className="max-w-sm">
-                    <Sparkles size={18} className="mx-auto text-[#88BDF2]" />
                     <div className="mt-2 text-sm font-semibold text-[#384959]">Ask for a review pass</div>
                     <div className="mt-1 text-sm leading-relaxed text-muted">
                       Several reviewers critique your resume, then return evidence-backed edits for you to approve.
@@ -4122,7 +4107,7 @@ CERTIFICATIONS
                   disabled={rewriteLoading[selectedBullet.id]}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-black disabled:opacity-50"
                 >
-                  {rewriteLoading[selectedBullet.id] ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  {rewriteLoading[selectedBullet.id] ? <Loader2 size={14} className="animate-spin" /> : null}
                   {rewriteLoading[selectedBullet.id]
                     ? "Rewriting..."
                     : selectedRewrite
@@ -4406,7 +4391,7 @@ CERTIFICATIONS
                   disabled={formatting || !resumeText.trim()}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#384959] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
                 >
-                  {formatting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  {formatting ? <Loader2 size={14} className="animate-spin" /> : null}
                   {formatting ? "Polishing..." : "Quick Polish"}
                 </button>
               )}
@@ -4416,7 +4401,7 @@ CERTIFICATIONS
                 disabled={tailoringLoading || !resumeText.trim() || !jobDescription.trim()}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-700 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-800 disabled:opacity-40"
               >
-                {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
+                {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : null}
                 {tailoringLoading ? "Tailoring..." : "Run Full Tailor"}
               </button>
               {(selectedSection?.sectionKey === "summary" || !hasSummarySection) && (
@@ -4426,7 +4411,7 @@ CERTIFICATIONS
                   disabled={tailoringLoading || !resumeText.trim()}
                   className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-medium text-violet-800 transition hover:bg-violet-100 disabled:opacity-40"
                 >
-                  {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                  {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : null}
                   {hasSummarySection ? "Optimise Summary" : "Generate Summary"}
                 </button>
               )}
@@ -4447,7 +4432,7 @@ CERTIFICATIONS
                 disabled={coachLoading || !resumeText.trim()}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-black disabled:opacity-40"
               >
-                {coachLoading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                {coachLoading ? <Loader2 size={14} className="animate-spin" /> : null}
                 {coachLoading ? "Opening Coach..." : "AI Coach"}
               </button>
             </div>
@@ -4779,7 +4764,6 @@ CERTIFICATIONS
                       onClick={applyTailoredDraft}
                       className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-medium text-violet-700 transition hover:bg-violet-50"
                     >
-                      <Zap size={14} />
                       Apply All Suggested Changes
                     </button>
                     <button
@@ -4867,7 +4851,6 @@ CERTIFICATIONS
                   return (
                     <div key={suggestion.id} className="rounded-2xl border border-amber-200 bg-white p-4">
                       <div className="flex items-center gap-2 text-sm font-semibold text-amber-800">
-                        <Sparkles size={15} />
                         Improve
                       </div>
                       <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Current bullet</div>
@@ -4961,7 +4944,6 @@ CERTIFICATIONS
             <details open className="overflow-hidden rounded-3xl border border-purple-200 bg-purple-50 shadow-sm">
               <summary className="cursor-pointer list-none px-5 py-4">
                 <div className="flex items-center gap-2 text-sm font-semibold text-purple-900">
-                  <Sparkles size={15} />
                   AI Coach
                 </div>
               </summary>
@@ -5025,7 +5007,6 @@ CERTIFICATIONS
                   onClick={() => setAnnotationsOn((current) => !current)}
                   className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${annotationsOn ? "bg-[#384959] text-white" : "bg-white text-muted ring-1 ring-[#BDDDFC]/30"}`}
                 >
-                  <Zap size={12} />
                   {annotationsOn ? "Inline Tips On" : "Inline Tips Off"}
                 </button>
                 <button
@@ -5403,7 +5384,6 @@ CERTIFICATIONS
                                     onClick={() => setShowSummaryPrompt((v) => !v)}
                                     className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100"
                                   >
-                                    <Sparkles size={12} />
                                     {showSummaryPrompt ? "Hide" : "Rewrite Summary"}
                                   </button>
                                 </div>
@@ -5635,8 +5615,7 @@ CERTIFICATIONS
               onClick={() => setWizardStep(2)}
               className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] transition hover:bg-[#f0f4f8]"
             >
-              <ArrowLeft size={14} />
-              Templates
+              Back to templates
             </button>
             <button
               type="button"
@@ -5774,7 +5753,6 @@ CERTIFICATIONS
               onClick={() => setWizardStep(3)}
               className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
             >
-              <ArrowLeft size={14} />
               Back to Editor
             </button>
             <button

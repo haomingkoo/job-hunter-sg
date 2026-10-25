@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   Search, Briefcase, Bell, FileText, BookOpen, Users,
-  Sparkles, BarChart2, User, FolderOpen,
+  Target, BarChart2, User, FolderOpen,
 } from "lucide-react";
 
 export default function Nav({ active, setActive }) {
@@ -16,7 +16,7 @@ export default function Nav({ active, setActive }) {
     { id: "tracker", label: "Applications", icon: Briefcase },
     { id: "reminders", label: "Reminders", icon: Bell },
     { id: "analytics", label: "Market Insights", icon: BarChart2 },
-    { id: "power", label: "Smart Match", icon: Sparkles },
+    { id: "power", label: "Smart Match", icon: Target },
     { id: "account", label: "Account", icon: User },
   ];
 

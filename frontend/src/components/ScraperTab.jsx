@@ -5,7 +5,7 @@ import {
   ExternalLink, Filter, Loader2, FileText,
   MapPin, DollarSign, Building2, X, SlidersHorizontal,
   PanelLeftClose, PanelLeftOpen, CheckCircle2, Bot, Copy,
-  Sparkles, RefreshCw,
+  RefreshCw,
 } from "lucide-react";
 import { apiFetch, downloadBlob } from "../lib/api.js";
 import { todayStr } from "../lib/helpers.js";
@@ -1149,7 +1149,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
         {user && jobsView === "active" && (
           <div className="mt-4 flex flex-col gap-3 rounded-xl border border-[#BDDDFC]/30 bg-[#f7fafc] p-3 sm:flex-row sm:items-center sm:justify-between" data-testid="browse-power-match-state">
             <div>
-              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]"><Sparkles size={15} /> Power Match scores</div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-[#384959]">Power Match scores</div>
               <p className="mt-1 text-xs text-muted">
                 {powerMatch?.message || "Checking for scores saved for this exact resume and job view."}
               </p>
@@ -1161,7 +1161,7 @@ export default function ScraperTab({ user, trackedJobs, onTrack, setActiveTab, s
               disabled={powerGenerating}
               className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[#384959] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
-              {powerGenerating ? <Loader2 size={14} className="animate-spin" /> : powerMatch?.status === "ready" ? <RefreshCw size={14} /> : <Sparkles size={14} />}
+              {powerGenerating ? <Loader2 size={14} className="animate-spin" /> : powerMatch?.status === "ready" ? <RefreshCw size={14} /> : null}
               {powerGenerating ? "Generating..." : (powerMatch?.generate_action || "Generate Power Match scores")}
             </button>
           </div>

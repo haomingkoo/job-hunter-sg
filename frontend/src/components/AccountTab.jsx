@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   User, LogOut, Mail, Loader2, Bell, Save, ShieldCheck,
-  FileText, Sparkles, BookOpen, BarChart2, KeyRound, Trash2,
+  FileText, Target, BookOpen, BarChart2, KeyRound, Trash2,
 } from "lucide-react";
 import { API_BASE, apiFetch, clearResumeDraftStorage, downloadBlob } from "../lib/api.js";
 import { PRIVACY_CONTACT_EMAIL } from "../lib/constants.js";
@@ -366,7 +366,7 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {[
             { label: "Review Resume", detail: "Edit and export your resume.", icon: FileText, tab: "resume" },
-            { label: "Smart Match", detail: "Find roles and skill gaps.", icon: Sparkles, tab: "power" },
+            { label: "Smart Match", detail: "Find roles and skill gaps.", icon: Target, tab: "power" },
             { label: "Story Bank", detail: "Save interview examples.", icon: BookOpen, tab: "stories" },
             { label: "Market Insights", detail: "Explore skill and salary trends.", icon: BarChart2, tab: "analytics" },
           ].map(({ label, detail, icon: Icon, tab }) => (

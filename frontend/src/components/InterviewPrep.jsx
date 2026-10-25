@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { BookOpen, ChevronDown, ChevronUp, Sparkles } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronUp } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 import { TAG_MAP } from "../lib/storyConstants.js";
 
@@ -129,7 +129,6 @@ export default function InterviewPrep({ jobId, user, onNavigateToStories }) {
 
       {data && !data.suggestions?.length && !data.other_stories?.length && (
         <div className="mt-2 flex items-center gap-3">
-          <Sparkles size={16} className="shrink-0 text-violet-400" />
           <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted">
             Add a few stories to get interview prompts for this role.
           </p>
