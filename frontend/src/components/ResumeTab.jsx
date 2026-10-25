@@ -321,6 +321,7 @@ export default function ResumeTab({
   });
 
   const fileInputRef = useRef(null);
+  const [uploadConsent, setUploadConsent] = useState(false);
   const scorePanelRef = useRef(null);
   const selectedFeedbackRef = useRef(null);
   const initialScoredRef = useRef(false);
@@ -1031,8 +1032,22 @@ export default function ResumeTab({
     setProfile((current) => ({ ...current, [field]: value }));
   };
 
+  const needsUploadConsent = !user && !uploadConsent;
+
+  const openFilePicker = () => {
+    if (needsUploadConsent) {
+      setUploadError("Please tick the box to agree to how your resume is processed before uploading.");
+      return;
+    }
+    fileInputRef.current?.click();
+  };
+
   const handleFileUpload = async (file) => {
     if (!file) return;
+    if (needsUploadConsent) {
+      setUploadError("Please tick the box to agree to how your resume is processed before uploading.");
+      return;
+    }
 
     const ext = file.name.split(".").pop()?.toLowerCase();
     if (!["pdf", "docx"].includes(ext)) {
@@ -1052,6 +1067,7 @@ export default function ResumeTab({
     try {
       const formData = new FormData();
       formData.append("file", file);
+      if (uploadConsent) formData.append("consent", "true");
       const response = await apiFetch("/api/resume/upload", {
         method: "POST",
         body: formData,
@@ -2473,7 +2489,7 @@ export default function ResumeTab({
           <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={openFilePicker}
               onDrop={handleDrop}
               onDragOver={(event) => { event.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
@@ -2576,6 +2592,39 @@ CERTIFICATIONS
               <p className="mt-1.5 text-sm text-[#6A89A7]">Load a sample resume to explore features</p>
             </button>
           </div>
+
+          {user ? (
+            <p className="text-xs text-[#6A89A7]">
+              Uploaded resumes are saved to your account and sent to AI Singapore&apos;s SEA-LION API when you use AI
+              features. See the{" "}
+              <a href={`${API_BASE}/api/privacy`} target="_blank" rel="noopener" className="font-medium text-[#384959] underline">
+                Privacy Notice
+              </a>{" "}
+              for retention and deletion.
+            </p>
+          ) : (
+            <label className="flex items-start gap-3 rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 text-left">
+              <input
+                type="checkbox"
+                checked={uploadConsent}
+                onChange={(event) => {
+                  setUploadConsent(event.target.checked);
+                  if (event.target.checked) setUploadError("");
+                }}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-[#384959]"
+                aria-describedby="resume-upload-notice"
+              />
+              <span id="resume-upload-notice" className="text-xs leading-relaxed text-[#6A89A7]">
+                I agree that Job Hunter SG may process my resume to extract its text and run the features I use.
+                Without an account the text is not saved on our servers. It stays in this browser tab. If I use an AI
+                feature, the relevant text is sent to AI Singapore&apos;s SEA-LION API. Details are in the{" "}
+                <a href={`${API_BASE}/api/privacy`} target="_blank" rel="noopener" className="font-medium text-[#384959] underline">
+                  Privacy Notice
+                </a>
+                .
+              </span>
+            </label>
+          )}
 
           <div id="resume-paste-area" className="hidden rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
             <div className="text-sm font-semibold text-[#384959]">Paste your resume text</div>
@@ -3108,7 +3157,7 @@ CERTIFICATIONS
               </button>
               <button
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={openFilePicker}
                 className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-3 py-2 text-xs font-medium text-white hover:bg-[#2d3a47]"
               >
                 <UploadCloud size={13} />

@@ -58,6 +58,31 @@ def _csv_env(name: str, default: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
 
 
+# LangSmith/LangChain tracing ships full prompts (resumes included) to a US
+# third party, so it stays off unless the operator opts in explicitly.
+LLM_TRACING_OPT_IN_ENV = "LLM_TRACING_OPT_IN"
+_TRACING_ENV_VARS = (
+    "LANGSMITH_TRACING",
+    "LANGSMITH_TRACING_V2",
+    "LANGCHAIN_TRACING",
+    "LANGCHAIN_TRACING_V2",
+)
+
+
+def llm_tracing_opted_in() -> bool:
+    return os.getenv(LLM_TRACING_OPT_IN_ENV, "").strip().lower() in {"1", "true", "yes"}
+
+
+def enforce_llm_tracing_opt_in() -> None:
+    if llm_tracing_opted_in():
+        return
+    for name in _TRACING_ENV_VARS:
+        os.environ[name] = "false"
+
+
+enforce_llm_tracing_opt_in()
+
+
 # FAST: interactive rewrites, JD summaries, default classic pipeline tier.
 SEALION_FAST_MODEL: str = os.getenv(
     "SEALION_FAST_MODEL",
@@ -255,6 +280,17 @@ RECRUITMENT_RETENTION_NOTICE: dict[str, str] = {
         "provider retention policy and contains no prompts, resumes, job text, or model output."
     ),
 }
+
+# Data retention: accounts with no sign-in or activity for this long lose their
+# resumes, AI artifacts and usage logs; a warning email goes out first.
+INACTIVE_ACCOUNT_RETENTION_DAYS: int = _positive_int_env("INACTIVE_ACCOUNT_RETENTION_DAYS", 365)
+INACTIVE_ACCOUNT_WARNING_DAYS: int = _positive_int_env("INACTIVE_ACCOUNT_WARNING_DAYS", 30)
+if INACTIVE_ACCOUNT_WARNING_DAYS >= INACTIVE_ACCOUNT_RETENTION_DAYS:
+    raise ValueError("INACTIVE_ACCOUNT_WARNING_DAYS must be less than INACTIVE_ACCOUNT_RETENTION_DAYS")
+# Anonymous usage-log rows (rate-limit and failed-login hashes) are kept this long.
+ANONYMOUS_USAGE_LOG_RETENTION_DAYS: int = _positive_int_env("ANONYMOUS_USAGE_LOG_RETENTION_DAYS", 365)
+PRIVACY_CONTACT_EMAIL: str = os.getenv("PRIVACY_CONTACT_EMAIL", "privacy@kooexperience.com").strip()
+OPERATOR_NAME = "Koo Haoming (individual, Singapore)"
 
 # Conservative per-key request budget; override only to match provider limits.
 SEALION_REQ_PER_MIN: int = _int_env("SEALION_REQ_PER_MIN", 9)

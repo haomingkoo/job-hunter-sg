@@ -196,6 +196,7 @@ def test_upload_preserves_custom_sections_end_to_end(
     response = TestClient(app).post(
         "/api/resume/upload",
         files={"file": (filename, file_bytes, content_type)},
+        data={"consent": "true"},
     )
 
     assert response.status_code == 200

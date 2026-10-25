@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 
-from database import init_db
+from data_retention import run_retention
+from database import SessionLocal, init_db
 from job_alerts import run_job_alerts
 
 
@@ -30,9 +31,13 @@ def main() -> int:
     init_db()
     stats = run_job_alerts(dry_run=args.dry_run, limit_users=args.limit_users)
     print(json.dumps(stats, indent=2, sort_keys=True, default=str))
+    # The daily alert job also owns inactive-account retention (see Privacy Notice).
+    with SessionLocal() as db:
+        retention = run_retention(db, dry_run=args.dry_run)
+    print(json.dumps({"retention": retention}, indent=2, sort_keys=True))
     if not args.dry_run and not stats.get("email_configured"):
         return 2
-    if stats.get("errors"):
+    if stats.get("errors") or retention["errors"]:
         return 1
     return 0
 
