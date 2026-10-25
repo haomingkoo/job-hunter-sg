@@ -1899,7 +1899,7 @@ export default function ResumeTab({
   const wordCount = resumeText.split(/\s+/).filter(Boolean).length;
   const overallScore = Number.isFinite(scoreData?.overall_score) ? scoreData.overall_score : null;
   const scoreTheme = getScoreTheme(overallScore ?? 0);
-  const scorePillClass = scoreData ? scoreTheme.pill : "bg-[#BDDDFC]/10 text-muted";
+  const scorePillClass = scoreData ? scoreTheme.pill : "bg-tint text-muted";
   const scoreDisplayValue = overallScore ?? "--";
   const matchedKeywords = scoreData?.keyword_match?.matched || [];
   const missingKeywords = scoreData?.keyword_match?.missing || [];
@@ -2422,97 +2422,102 @@ export default function ResumeTab({
         }}
       />
 
-      <div className="flex items-center gap-2 mb-6">
-        {["Upload", "Template", "Edit", "Export"].map((label, i) => {
-          const step = i + 1;
-          const isActive = wizardStep === step;
-          const isComplete = wizardStep > step;
-          return (
-            <button
-              key={label}
-              type="button"
-              onClick={() => {
-                if (!canGoToStep(step)) return;
-                if (step === 1) setShowSetupPanel(true);
-                setWizardStep(step);
-              }}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition ${
-                isActive
-                  ? "bg-[#384959] text-white"
-                  : isComplete
-                    ? "bg-blue-100 text-blue-700 cursor-pointer hover:bg-blue-200"
-                    : "bg-[#BDDDFC]/10 text-muted cursor-default"
-              }`}
-            >
-              {isComplete ? <Check size={12} /> : <span>{step}</span>}
-              {label}
-            </button>
-          );
-        })}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-xl font-bold tracking-[-0.01em] text-ink">Resume</h1>
+          <p className="mt-1 text-sm text-muted">Load your resume, pick a layout, fix what the check finds, then download it.</p>
+        </div>
+        <ol className="flex border-b border-line" aria-label="Resume steps">
+          {["Upload", "Template", "Edit", "Export"].map((label, i) => {
+            const step = i + 1;
+            const isActive = wizardStep === step;
+            const isComplete = wizardStep > step;
+            const reachable = canGoToStep(step);
+            return (
+              <li key={label}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!canGoToStep(step)) return;
+                    if (step === 1) setShowSetupPanel(true);
+                    setWizardStep(step);
+                  }}
+                  aria-current={isActive ? "step" : undefined}
+                  aria-disabled={!reachable || undefined}
+                  className={`relative flex min-h-11 items-center gap-1.5 px-3 text-sm transition-colors focus-visible:-outline-offset-2 ${
+                    isActive
+                      ? "font-semibold text-ink"
+                      : reachable
+                        ? "text-muted hover:text-ink"
+                        : "cursor-default text-muted"
+                  }`}
+                >
+                  {isComplete ? <Check size={14} aria-hidden="true" className="text-[#166534]" /> : <span className="tabular-nums">{step}</span>}
+                  {label}
+                  {isActive && <span aria-hidden="true" className="absolute inset-x-2 -bottom-px h-0.5 bg-accent" />}
+                </button>
+              </li>
+            );
+          })}
+        </ol>
       </div>
 
       {selectedJob && (wizardStep === 1 || wizardStep === 3) && (
-        <div className="mb-4 rounded-3xl border border-[#BDDDFC]/30 bg-[#BDDDFC]/10 p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#384959]">Target Job Description</div>
+        <section className="rounded-[10px] border border-line bg-white p-5" aria-labelledby="target-job-title">
+          <div className="flex items-center justify-between gap-3">
+            <h2 id="target-job-title" className="text-sm font-semibold text-muted">Target job</h2>
             <button
               type="button"
               onClick={() => setActiveTab("jobs")}
-              className="text-xs font-semibold text-[#88BDF2] hover:text-[#384959]"
+              className="inline-flex min-h-10 items-center rounded-md px-2 text-sm font-medium text-accent hover:bg-tint"
             >
               Back to Jobs
             </button>
           </div>
           <div className="mt-2 flex flex-col gap-4 lg:flex-row lg:items-start">
             <div className="flex-1 min-w-0">
-              <div className="text-lg font-semibold text-slate-900">{selectedJob.title}</div>
-              <div className="text-sm text-slate-600">{selectedJob.company}{selectedJob.location ? ` · ${selectedJob.location}` : ""}</div>
+              <div className="text-lg font-semibold text-ink">{selectedJob.title}</div>
+              <div className="text-sm text-muted">{selectedJob.company}{selectedJob.location ? ` · ${selectedJob.location}` : ""}</div>
               {selectedJobCanonicalTerms.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  {selectedJobCanonicalTerms.map((term, index) => {
-                    const label = extractKeywordLabel(term);
-                    return (
-                    <span key={`${label}-${index}`} className="rounded-full bg-[#BDDDFC]/25 px-2 py-0.5 text-[11px] font-medium text-[#384959]" title={term?.jd_context || ""}>
-                      {label}
-                    </span>
-                  );})}
-                </div>
+                <p className="mt-3 text-sm text-ink">
+                  <span className="text-muted">Terms in the posting: </span>
+                  {selectedJobCanonicalTerms.map((term) => extractKeywordLabel(term)).join(", ")}
+                </p>
               )}
             </div>
             {selectedJob.description && (
-              <div className="flex-1 min-w-0 max-h-48 overflow-y-auto rounded-xl bg-white/70 p-3 text-sm leading-relaxed text-slate-700">
+              <div className="max-h-48 min-w-0 flex-1 overflow-y-auto whitespace-pre-line border-l-2 border-line pl-3 text-sm leading-relaxed text-ink" tabIndex={0} aria-label="Job description">
                 {selectedJob.description}
               </div>
             )}
           </div>
-        </div>
+        </section>
       )}
 
       {wizardStep === 1 && setupVisible ? (
         <div className="mx-auto max-w-3xl space-y-6">
           <div>
-            <h2 className="text-xl font-bold text-[#384959]">How would you like to start?</h2>
+            <h2 className="text-xl font-bold text-ink">How would you like to start?</h2>
             <p className="mt-1 text-sm text-muted">Choose the option that fits your situation.</p>
           </div>
 
-          <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <button
               type="button"
               onClick={openFilePicker}
               onDrop={handleDrop}
               onDragOver={(event) => { event.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
-              className={`group text-left rounded-2xl border-2 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 ${
-                dragOver ? "border-blue-400 bg-blue-50" : "border-[#BDDDFC]/30 hover:border-blue-300"
+              aria-busy={uploading || undefined}
+              className={`flex flex-col items-start rounded-[10px] border bg-white p-4 text-left transition-colors hover:bg-tint ${
+                dragOver ? "border-accent bg-tint" : "border-field"
               }`}
             >
-              {uploading ? (
-                <Loader2 size={28} className="animate-spin text-[#88BDF2]" />
-              ) : (
-                <UploadCloud size={28} className="text-[#88BDF2]" />
-              )}
-              <h3 className="mt-3 text-base font-semibold text-[#384959]">Upload Resume</h3>
-              <p className="mt-1.5 text-sm text-muted">
+              <h3 className="flex items-center gap-2 text-base font-semibold text-ink">
+                {uploading && <Loader2 size={16} className="animate-spin text-accent" aria-hidden="true" />}
+                Upload a file
+              </h3>
+              <p className="mt-1 text-sm text-muted">
                 {uploading ? "Extracting text..." : "Drop a PDF or DOCX, or click to browse"}
               </p>
             </button>
@@ -2523,11 +2528,10 @@ export default function ResumeTab({
                 const el = document.getElementById("resume-paste-area");
                 if (el) { el.classList.remove("hidden"); el.querySelector("textarea")?.focus(); }
               }}
-              className="group text-left rounded-2xl border-2 border-[#BDDDFC]/30 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-emerald-300"
+              className="flex flex-col items-start rounded-[10px] border border-field bg-white p-4 text-left transition-colors hover:bg-tint"
             >
-              <FileText size={28} className="text-emerald-600" />
-              <h3 className="mt-3 text-base font-semibold text-[#384959]">Paste Text</h3>
-              <p className="mt-1.5 text-sm text-muted">Copy-paste your resume from any source</p>
+              <h3 className="text-base font-semibold text-ink">Paste text</h3>
+              <p className="mt-1 text-sm text-muted">Copy your resume from any document and paste it in.</p>
             </button>
 
             <button
@@ -2540,13 +2544,13 @@ export default function ResumeTab({
                 setChatError("");
                 setChatMessages([{
                   role: "assistant",
-                  content: "Hi! I'll help you build your resume step by step. Let's start \u2014 what's your full name?",
+                  content: "Hi! I'll help you build your resume step by step. Let's start. What's your full name?",
                 }]);
               }}
-              className="group text-left rounded-2xl border-2 border-[#BDDDFC]/30 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-violet-300"
+              className="flex flex-col items-start rounded-[10px] border border-field bg-white p-4 text-left transition-colors hover:bg-tint"
             >
-              <h3 className="mt-3 text-base font-semibold text-[#384959]">Start Fresh</h3>
-              <p className="mt-1.5 text-sm text-muted">Build from scratch with AI-guided chat, or switch to a blank starter if you want to move faster</p>
+              <h3 className="text-base font-semibold text-ink">Start from scratch</h3>
+              <p className="mt-1 text-sm text-muted">Build from scratch with AI-guided chat, or switch to a blank starter if you want to move faster</p>
             </button>
 
             <button
@@ -2588,10 +2592,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 setShowSetupPanel(false);
                 setWizardStep(3);
               }}
-              className="group text-left rounded-2xl border-2 border-[#BDDDFC]/30 bg-white p-6 transition-all hover:shadow-md hover:-translate-y-0.5 hover:border-emerald-300"
+              className="flex flex-col items-start rounded-[10px] border border-field bg-white p-4 text-left transition-colors hover:bg-tint"
             >
-              <h3 className="mt-3 text-base font-semibold text-[#384959]">Try a sample resume</h3>
-              <p className="mt-1.5 text-sm text-muted">Loads a made-up resume with fictional employers so you can try each step.</p>
+              <h3 className="text-base font-semibold text-ink">Try a sample resume</h3>
+              <p className="mt-1 text-sm text-muted">Loads a made-up resume with fictional employers so you can try each step.</p>
             </button>
           </div>
 
@@ -2599,14 +2603,14 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
             <p className="text-xs text-muted">
               Uploaded resumes are saved to your account and sent to AI Singapore&apos;s SEA-LION API when you use AI
               features. See the{" "}
-              <a href={`${API_BASE}/api/privacy`} target="_blank" rel="noopener" className="font-medium text-[#384959] underline">
+              <a href={`${API_BASE}/api/privacy`} target="_blank" rel="noopener" className="font-medium text-ink underline">
                 Privacy Notice
               </a>{" "}
               for retention and deletion.
             </p>
           ) : (
             <div>
-            <label className={`flex items-start gap-3 rounded-2xl border bg-white p-4 text-left ${consentPromptVisible && !uploadConsent ? "border-rose-300" : "border-[#BDDDFC]/30"}`}>
+            <label className={`flex items-start gap-3 rounded-[10px] border bg-white p-4 text-left ${consentPromptVisible && !uploadConsent ? "border-rose-300" : "border-line"}`}>
               <input
                 ref={uploadConsentRef}
                 type="checkbox"
@@ -2618,7 +2622,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     setConsentPromptVisible(false);
                   }
                 }}
-                className="mt-0.5 h-5 w-5 shrink-0 accent-[#384959]"
+                className="mt-0.5 h-5 w-5 shrink-0 accent-[#1f5f99]"
                 aria-describedby={consentPromptVisible && !uploadConsent ? "resume-upload-consent-error resume-upload-notice" : "resume-upload-notice"}
                 aria-invalid={consentPromptVisible && !uploadConsent}
               />
@@ -2626,7 +2630,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 I agree that Job Hunter SG may process my resume to extract its text and run the features I use.
                 Without an account the text is not saved on our servers. It stays in this browser tab. If I use an AI
                 feature, the relevant text is sent to AI Singapore&apos;s SEA-LION API. Details are in the{" "}
-                <a href={`${API_BASE}/api/privacy`} target="_blank" rel="noopener" className="font-medium text-[#384959] underline">
+                <a href={`${API_BASE}/api/privacy`} target="_blank" rel="noopener" className="font-medium text-ink underline">
                   Privacy Notice
                 </a>
                 .
@@ -2641,27 +2645,27 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
             </div>
           )}
 
-          <div id="resume-paste-area" className="hidden rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
-            <div className="text-sm font-semibold text-[#384959]">Paste your resume text</div>
+          <div id="resume-paste-area" className="hidden rounded-[10px] border border-line bg-white p-4">
+            <div className="text-sm font-semibold text-ink">Paste your resume text</div>
             <textarea
               value={pastedText}
               onChange={(event) => setPastedText(event.target.value)}
               placeholder="Paste your resume content here..."
-              className="mt-3 min-h-[160px] w-full resize-none rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-3 text-sm text-[#384959] focus:outline-none focus:ring-2 focus:ring-blue-200"
+              className="mt-3 min-h-[160px] w-full resize-none rounded-md border border-line bg-paper px-4 py-3 text-sm text-ink"
             />
             <div className="mt-3 flex gap-2">
               <button
                 type="button"
                 onClick={handlePasteResume}
                 disabled={!pastedText.trim()}
-                className="rounded-xl bg-[#384959] px-4 py-2 text-sm font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
+                className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-40"
               >
                 Use This Text
               </button>
               <button
                 type="button"
                 onClick={() => document.getElementById("resume-paste-area")?.classList.add("hidden")}
-                className="rounded-xl border border-[#BDDDFC]/30 px-4 py-2 text-sm font-medium text-muted hover:bg-[#f0f4f8]"
+                className="rounded-md border border-line px-4 py-2 text-sm font-medium text-muted hover:bg-tint"
               >
                 Cancel
               </button>
@@ -2669,15 +2673,15 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
           </div>
 
           {showResumeChat && (
-            <div className="rounded-2xl border border-violet-200 bg-white shadow-sm overflow-hidden flex flex-col" style={{ height: "480px" }}>
-              <div className="flex items-center justify-between border-b border-violet-100 bg-gradient-to-r from-violet-50 to-white px-5 py-3">
+            <div className="rounded-[10px] border border-line bg-white overflow-hidden flex flex-col" style={{ height: "480px" }}>
+              <div className="flex items-center justify-between border-b border-line px-5 py-3">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-[#384959]">AI Resume Builder</span>
+                  <span className="text-sm font-semibold text-ink">AI Resume Builder</span>
                 </div>
                 <button
                   type="button"
                   onClick={resetResumeChat}
-                  className="rounded-lg p-1 text-muted hover:bg-[#f0f4f8] transition"
+                  className="rounded-lg p-1 text-muted hover:bg-tint transition"
                   aria-label="Close chat"
                 >
                   <X size={16} />
@@ -2690,8 +2694,8 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     <div
                       className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
                         msg.role === "user"
-                          ? "bg-[#384959] text-white"
-                          : "bg-[#f0f4f8] text-[#384959]"
+                          ? "bg-accent text-white"
+                          : "bg-paper text-ink"
                       }`}
                     >
                       {msg.content}
@@ -2700,7 +2704,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 ))}
                 {chatLoading && (
                   <div className="flex justify-start">
-                    <div className="rounded-2xl bg-[#f0f4f8] px-4 py-2.5 text-sm text-muted">
+                    <div className="rounded-[10px] bg-paper px-4 py-2.5 text-sm text-muted">
                       <Loader2 size={16} className="inline animate-spin mr-1.5" />
                       Thinking...
                     </div>
@@ -2709,27 +2713,27 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 <div ref={chatEndRef} />
               </div>
 
-              <div className="border-t border-[#BDDDFC]/20 px-4 py-3">
+              <div className="border-t border-line px-4 py-3">
                 <div className="mb-2 flex items-center gap-2 text-[11px]">
-                  <span className="font-semibold uppercase tracking-wide text-violet-600">{chatStageMeta.label}</span>
-                  <span className="text-[#BDDDFC]">/</span>
+                  <span className="font-semibold text-accent">{chatStageMeta.label}</span>
+                  <span className="text-muted">/</span>
                   {chatStageMeta.remaining.length > 0 ? (
                     <span className="text-muted">Next: {chatStageMeta.remaining.join(", ")}</span>
                   ) : (
-                    <span className="font-semibold text-emerald-600">Ready to generate</span>
+                    <span className="font-semibold text-[#166534]">Ready to generate</span>
                   )}
                 </div>
 
                 {chatError && (
-                  <div className="mb-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  <div className="mb-3 rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                     {chatError}
                   </div>
                 )}
 
                 {chatReady ? (
                   <div className="mb-3 space-y-2">
-                    <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-800">
-                      <span className="font-semibold">Your resume is ready to generate.</span> Click the button below — you can refine it further after.
+                    <div className="rounded-[10px] border border-line bg-tint px-4 py-3 text-sm text-accent">
+                      <span className="font-semibold">Your resume is ready to generate.</span> Generate it now; you can still edit it afterwards.
                     </div>
                     <button
                       type="button"
@@ -2769,7 +2773,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                           setChatLoading(false);
                         }
                       }}
-                      className="w-full rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 transition flex items-center justify-center gap-2"
+                      className="w-full rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-hover disabled:opacity-50 transition flex items-center justify-center gap-2"
                     >
                       Generate My Resume
                     </button>
@@ -2779,7 +2783,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     type="button"
                     disabled={chatLoading}
                     onClick={startBlankResumeFlow}
-                    className="mb-3 w-full rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] disabled:opacity-50 transition"
+                    className="mb-3 w-full rounded-md border border-line bg-white px-4 py-2.5 text-sm font-medium text-ink hover:bg-tint disabled:opacity-50 transition"
                   >
                     Skip the interview and start from a blank resume
                   </button>
@@ -2788,7 +2792,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     type="button"
                     disabled={chatLoading}
                     onClick={generateWithWhatWeHave}
-                    className="mb-3 text-xs text-muted hover:text-[#384959] underline underline-offset-2 transition disabled:opacity-50"
+                    className="mb-3 text-xs text-muted hover:text-ink underline underline-offset-2 transition disabled:opacity-50"
                   >
                     or just draft with what I have
                   </button>
@@ -2826,7 +2830,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                       setChatMessages((prev) => [...prev, {
                         role: "assistant",
                         content: err.message?.includes("429")
-                          ? "I'm a bit busy right now — too many AI requests at once. Please wait a moment and try again."
+                          ? "I'm a bit busy right now with too many requests at once. Please wait a moment and try again."
                           : "Sorry, something went wrong. Please try sending your message again.",
                       }]);
                     } finally {
@@ -2853,12 +2857,12 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     onFocus={(e) => {
                       setTimeout(() => e.target.closest('[class*="rounded-2xl"]')?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
                     }}
-                    className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-2.5 text-sm text-[#384959] placeholder-muted/60 focus:outline-none focus:ring-2 focus:ring-violet-200 disabled:opacity-50 resize-none"
+                    className="flex-1 rounded-md border border-line bg-paper px-4 py-2.5 text-sm text-ink disabled:opacity-50 resize-none"
                   />
                   <button
                     type="submit"
                     disabled={!chatInput.trim() || chatLoading}
-                    className="rounded-xl bg-[#384959] px-4 py-2.5 text-white hover:bg-[#2d3a47] disabled:opacity-40 transition"
+                    className="rounded-md bg-accent px-4 py-2.5 text-white hover:bg-accent-hover disabled:opacity-40 transition"
                     aria-label="Send message"
                   >
                     <Send size={16} />
@@ -2869,10 +2873,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
           )}
 
           {user && resumeVersions.length > 0 && (
-            <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
+            <div className="rounded-[10px] border border-line bg-white p-4">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold text-[#384959]">Your Saved Resumes</div>
-                <button type="button" onClick={fetchVersions} className="text-xs text-[#88BDF2] hover:text-blue-800">
+                <div className="text-sm font-semibold text-ink">Your Saved Resumes</div>
+                <button type="button" onClick={fetchVersions} className="text-xs text-accent hover:text-accent-hover">
                   {versionsLoading ? "Loading..." : "Refresh"}
                 </button>
               </div>
@@ -2880,26 +2884,26 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 {resumeVersions.slice(0, 4).map((v) => (
                   <div key={v.id} className="group/version relative">
                     {deletingVersionId === v.id && (
-                      <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white/95 px-3 backdrop-blur-sm">
-                        <span className="text-xs font-medium text-[#384959]">Delete this version?</span>
+                      <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-md border border-rose-200 bg-white/95 px-3 backdrop-blur-sm">
+                        <span className="text-xs font-medium text-ink">Delete this version?</span>
                         <button
                           type="button"
                           onClick={() => deleteVersion(v.id)}
-                          className="rounded-lg bg-[#384959] px-3 py-1 text-xs font-medium text-white hover:bg-[#2a3744] transition"
+                          className="rounded-lg bg-accent px-3 py-1 text-xs font-medium text-white hover:bg-accent-hover transition"
                         >
                           Delete
                         </button>
                         <button
                           type="button"
                           onClick={() => setDeletingVersionId(null)}
-                          className="rounded-lg border border-[#BDDDFC]/30 bg-white px-3 py-1 text-xs font-medium text-muted hover:bg-[#f0f4f8] transition"
+                          className="rounded-lg border border-line bg-white px-3 py-1 text-xs font-medium text-muted hover:bg-tint transition"
                         >
                           Cancel
                         </button>
                       </div>
                     )}
                     {renamingVersionId === v.id ? (
-                      <div className="flex items-center gap-2 rounded-xl border border-[#6A89A7] bg-white px-4 py-3">
+                      <div className="flex items-center gap-2 rounded-md border border-field bg-white px-4 py-3">
                         <input
                           autoFocus
                           value={renamingVersionLabel}
@@ -2908,19 +2912,19 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                             if (e.key === "Enter") renameVersion(v.id, renamingVersionLabel);
                             if (e.key === "Escape") { setRenamingVersionId(null); setRenamingVersionLabel(""); }
                           }}
-                          className="flex-1 rounded-lg border border-[#BDDDFC]/30 px-2 py-1 text-sm text-[#384959] focus:outline-none focus:ring-2 focus:ring-[#6A89A7]/30"
+                          className="flex-1 rounded-lg border border-line px-2 py-1 text-sm text-ink"
                         />
                         <button
                           type="button"
                           onClick={() => renameVersion(v.id, renamingVersionLabel)}
-                          className="rounded-lg bg-[#384959] p-1.5 text-white hover:bg-[#2a3744] transition"
+                          className="rounded-lg bg-accent p-1.5 text-white hover:bg-accent-hover transition"
                         >
                           <Check size={12} />
                         </button>
                         <button
                           type="button"
                           onClick={() => { setRenamingVersionId(null); setRenamingVersionLabel(""); }}
-                          className="rounded-lg border border-[#BDDDFC]/30 p-1.5 text-muted hover:text-muted transition"
+                          className="rounded-lg border border-line p-1.5 text-muted hover:text-muted transition"
                         >
                           <X size={12} />
                         </button>
@@ -2929,10 +2933,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                       <button
                         type="button"
                         onClick={() => loadVersion(v.id)}
-                        className="flex w-full items-center justify-between rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-4 py-3 text-left text-sm hover:border-blue-300 hover:bg-blue-50 transition"
+                        className="flex w-full items-center justify-between rounded-md border border-line bg-paper px-4 py-3 text-left text-sm hover:border-accent hover:bg-tint transition"
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="font-medium text-[#384959] truncate">{v.label}</div>
+                          <div className="font-medium text-ink truncate">{v.label}</div>
                           <div className="text-xs text-muted">
                             {v.score ? `Score ${v.score}` : ""}{v.word_count ? ` · ${v.word_count}w` : ""}
                           </div>
@@ -2943,7 +2947,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                             tabIndex={0}
                             onClick={(e) => { e.stopPropagation(); setRenamingVersionId(v.id); setRenamingVersionLabel(v.label); }}
                             onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); setRenamingVersionId(v.id); setRenamingVersionLabel(v.label); } }}
-                            className="rounded p-1 text-muted opacity-0 group-hover/version:opacity-100 hover:text-[#384959] hover:bg-[#BDDDFC]/10 transition"
+                            className="rounded p-1 text-muted opacity-0 group-hover/version:opacity-100 group-focus-within/version:opacity-100 focus:opacity-100 hover:text-ink hover:bg-tint transition"
                             title="Rename"
                           >
                             <Edit3 size={13} />
@@ -2953,7 +2957,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                             tabIndex={0}
                             onClick={(e) => { e.stopPropagation(); setDeletingVersionId(v.id); }}
                             onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); setDeletingVersionId(v.id); } }}
-                            className="rounded p-1 text-muted opacity-0 group-hover/version:opacity-100 hover:text-rose-500 hover:bg-rose-50 transition"
+                            className="rounded p-1 text-muted opacity-0 group-hover/version:opacity-100 group-focus-within/version:opacity-100 focus:opacity-100 hover:text-[#b42318] hover:bg-rose-50 transition"
                             title="Delete"
                           >
                             <Trash2 size={13} />
@@ -2966,79 +2970,72 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 ))}
               </div>
               {resumeVersions.length > 4 && (
-                <button type="button" onClick={fetchVersions} className="mt-2 text-xs text-[#88BDF2] hover:text-blue-800">
+                <button type="button" onClick={fetchVersions} className="mt-2 text-xs text-accent hover:text-accent-hover">
                   View all {resumeVersions.length} versions
                 </button>
               )}
             </div>
           )}
 
-          <div className="rounded-2xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
-            <div className="text-sm font-semibold text-[#384959]">Your Details</div>
-            <p className="mt-1 text-xs text-muted">Used for the resume header. Auto-detected from uploaded files.</p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <section className="rounded-[10px] border border-line bg-white p-5" aria-labelledby="resume-details-title">
+            <h2 id="resume-details-title" className="text-base font-semibold text-ink">Your details</h2>
+            <p className="mt-1 text-sm text-muted">Used for the resume header. Filled in from an uploaded file when we can read it.</p>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {[
                 { key: "name", label: "Name", value: profile.name, placeholder: "Full name" },
                 { key: "email", label: "Email", value: profile.email, placeholder: "Email address" },
                 { key: "phone", label: "Phone", value: profile.phone, placeholder: "Phone number" },
                 { key: "location", label: "Location", value: profile.location, placeholder: "Location" },
               ].map((field) => (
-                <label key={field.key} className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
-                  <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">{field.label}</div>
+                <label key={field.key} className="block">
+                  <span className="mb-1 block text-sm font-medium text-ink">{field.label}</span>
                   <input
                     value={field.value}
                     placeholder={field.placeholder}
                     onChange={(event) => handleProfileChange(field.key, event.target.value)}
-                    className="mt-3 w-full rounded-xl border border-[#BDDDFC]/30 px-3 py-2.5 text-sm text-[#384959] focus:outline-none focus:ring-2 focus:ring-[#BDDDFC]"
+                    className="min-h-11 w-full rounded-md border border-field bg-white px-3 text-sm text-ink focus:border-accent"
                   />
                 </label>
               ))}
             </div>
-          </div>
+          </section>
 
-          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Resume Guide</div>
-            <div className="mt-2 text-lg font-semibold text-slate-900">Recommended targets</div>
-            <p className="mt-2 text-sm leading-relaxed text-slate-600">
+          <section className="rounded-[10px] border border-line bg-white p-5" aria-labelledby="resume-guide-title">
+            <h2 id="resume-guide-title" className="text-base font-semibold text-ink">Recommended targets</h2>
+            <p className="mt-1 text-sm leading-relaxed text-muted">
               Use these ranges as guide rails while you tighten the draft.
             </p>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <dl className="mt-3 divide-y divide-line border-y border-line">
               {NUS_RESUME_BENCHMARKS.map((benchmark) => (
-                <div key={benchmark.label} className="rounded-2xl border border-white bg-white px-4 py-3 shadow-sm">
-                  <div className="text-2xl font-semibold text-slate-900">{benchmark.value}</div>
-                  <div className="mt-1 text-sm leading-relaxed text-slate-600">{benchmark.label}</div>
+                <div key={benchmark.label} className="flex items-baseline gap-4 py-2">
+                  <dd className="w-12 shrink-0 text-base font-semibold tabular-nums text-ink">{benchmark.value}</dd>
+                  <dt className="text-sm text-muted">{benchmark.label}</dt>
                 </div>
               ))}
-            </div>
-
-            <div className="mt-5 rounded-2xl border border-indigo-200 bg-indigo-50 px-4 py-4">
-              <div className="text-sm font-semibold text-indigo-900">Scoring rhythm</div>
-              <div className="mt-2 text-sm leading-relaxed text-indigo-800">
-                We score once when the resume arrives, then again only at the end when you finalize or download.
-              </div>
-            </div>
-          </div>
+            </dl>
+            <p className="mt-3 text-sm leading-relaxed text-muted">
+              We score once when the resume arrives, then again only at the end when you finalize or download.
+            </p>
+          </section>
 
           <div className="flex justify-end">
             <button
               type="button"
               disabled={!hasResume}
               onClick={() => setWizardStep(2)}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex min-h-11 items-center gap-2 rounded-md bg-accent px-5 text-sm font-semibold text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Next: Pick Template
+              Next: pick a template
             </button>
           </div>
         </div>
       ) : null}
 
       {wizardStep === 3 && !setupVisible && (
-        <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
+        <div className="rounded-[10px] border border-line bg-white p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="min-w-0">
-              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Setup Complete</div>
-              <div className="mt-1 text-sm text-[#384959] truncate">
+              <div className="truncate text-sm font-medium text-ink">
                 {profile.name || "Resume loaded"}{profile.email ? ` • ${profile.email}` : ""}{profile.phone ? ` • ${profile.phone}` : ""}
               </div>
               <div className="mt-1 text-xs text-muted">
@@ -3052,14 +3049,15 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     <button
                       type="button"
                       onClick={() => { setShowVersionDropdown((c) => !c); if (!resumeVersions.length) fetchVersions(); }}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-xs font-medium text-[#384959] hover:bg-[#f0f4f8]"
+                      aria-expanded={showVersionDropdown}
+                      className="inline-flex min-h-10 items-center gap-1.5 rounded-md border border-field bg-white px-3 text-sm font-medium text-ink hover:bg-tint"
                     >
-                      <Download size={13} />
-                      Load Version
+                      <Download size={14} aria-hidden="true" />
+                      Load version
                       <ChevronRight size={12} className={`transition-transform ${showVersionDropdown ? "rotate-90" : ""}`} />
                     </button>
                     {showVersionDropdown && (
-                      <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-[#BDDDFC]/30 bg-white p-2 shadow-lg">
+                      <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-md border border-line bg-white p-2 shadow-lg">
                         {versionsLoading ? (
                           <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted"><Loader2 size={12} className="animate-spin" />Loading...</div>
                         ) : resumeVersions.length === 0 ? (
@@ -3067,13 +3065,13 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                         ) : (
                           <div className="max-h-48 overflow-y-auto space-y-0.5">
                             {resumeVersions.map((v) => (
-                              <div key={v.id} className="group/vdrop relative rounded-lg hover:bg-[#f0f4f8] transition">
+                              <div key={v.id} className="group/vdrop relative rounded-lg hover:bg-tint transition">
                                 {deletingVersionId === v.id ? (
                                   <div className="flex items-center justify-between gap-2 px-3 py-2">
-                                    <span className="text-xs font-medium text-[#384959]">Delete?</span>
+                                    <span className="text-xs font-medium text-ink">Delete?</span>
                                     <div className="flex gap-1">
-                                      <button type="button" onClick={() => { deleteVersion(v.id); }} className="rounded-md bg-[#384959] px-2 py-0.5 text-[10px] font-medium text-white hover:bg-[#2a3744]">Yes</button>
-                                      <button type="button" onClick={() => setDeletingVersionId(null)} className="rounded-md border border-[#BDDDFC]/30 px-2 py-0.5 text-[10px] font-medium text-muted hover:bg-white">No</button>
+                                      <button type="button" onClick={() => { deleteVersion(v.id); }} className="rounded-md bg-accent px-2 py-0.5 text-[10px] font-medium text-white hover:bg-accent-hover">Yes</button>
+                                      <button type="button" onClick={() => setDeletingVersionId(null)} className="rounded-md border border-line px-2 py-0.5 text-[10px] font-medium text-muted hover:bg-white">No</button>
                                     </div>
                                   </div>
                                 ) : renamingVersionId === v.id ? (
@@ -3086,10 +3084,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                         if (e.key === "Enter") renameVersion(v.id, renamingVersionLabel);
                                         if (e.key === "Escape") { setRenamingVersionId(null); setRenamingVersionLabel(""); }
                                       }}
-                                      className="flex-1 min-w-0 rounded-md border border-[#BDDDFC]/30 px-2 py-0.5 text-xs text-[#384959] focus:outline-none focus:ring-1 focus:ring-[#6A89A7]/30"
+                                      className="flex-1 min-w-0 rounded-md border border-line px-2 py-0.5 text-xs text-ink"
                                     />
-                                    <button type="button" onClick={() => renameVersion(v.id, renamingVersionLabel)} className="rounded-md bg-[#384959] p-1 text-white hover:bg-[#2a3744]"><Check size={10} /></button>
-                                    <button type="button" onClick={() => { setRenamingVersionId(null); setRenamingVersionLabel(""); }} className="rounded-md border border-[#BDDDFC]/30 p-1 text-muted"><X size={10} /></button>
+                                    <button type="button" onClick={() => renameVersion(v.id, renamingVersionLabel)} className="rounded-md bg-accent p-1 text-white hover:bg-accent-hover"><Check size={10} /></button>
+                                    <button type="button" onClick={() => { setRenamingVersionId(null); setRenamingVersionLabel(""); }} className="rounded-md border border-line p-1 text-muted"><X size={10} /></button>
                                   </div>
                                 ) : (
                                   <div className="flex items-center">
@@ -3098,17 +3096,17 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                       onClick={() => { loadVersion(v.id); setShowVersionDropdown(false); }}
                                       className="flex-1 min-w-0 text-left px-3 py-2 text-xs"
                                     >
-                                      <div className="font-medium text-[#384959] truncate">{v.label}</div>
+                                      <div className="font-medium text-ink truncate">{v.label}</div>
                                       <div className="text-muted mt-0.5">
                                         {v.score ? `Score ${v.score}` : ""}{v.job_title ? ` • ${v.job_title}` : ""}
                                         {v.word_count ? ` • ${v.word_count}w` : ""}
                                       </div>
                                     </button>
-                                    <div className="flex items-center gap-0.5 pr-2 opacity-0 group-hover/vdrop:opacity-100 transition-opacity">
+                                    <div className="flex items-center gap-0.5 pr-2 opacity-0 group-hover/vdrop:opacity-100 group-focus-within/vdrop:opacity-100 transition-opacity">
                                       <button
                                         type="button"
                                         onClick={(e) => { e.stopPropagation(); setRenamingVersionId(v.id); setRenamingVersionLabel(v.label); }}
-                                        className="rounded p-1 text-muted hover:text-[#384959] hover:bg-[#BDDDFC]/10"
+                                        className="rounded p-1 text-muted hover:text-ink hover:bg-tint"
                                         title="Rename"
                                       >
                                         <Edit3 size={11} />
@@ -3116,7 +3114,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                       <button
                                         type="button"
                                         onClick={(e) => { e.stopPropagation(); setDeletingVersionId(v.id); }}
-                                        className="rounded p-1 text-muted hover:text-rose-500 hover:bg-rose-50"
+                                        className="rounded p-1 text-muted hover:text-[#b42318] hover:bg-rose-50"
                                         title="Delete"
                                       >
                                         <Trash2 size={11} />
@@ -3131,41 +3129,23 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                       </div>
                     )}
                   </div>
-                  <div className="inline-flex items-center gap-1 rounded-xl border border-[#BDDDFC]/30 bg-white p-1">
-                    <input
-                      type="text"
-                      value={saveVersionLabel}
-                      onChange={(e) => setSaveVersionLabel(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") saveCurrentVersion(); }}
-                      placeholder="Name this version..."
-                      className="w-36 rounded-lg bg-transparent px-2.5 py-1.5 text-sm text-[#384959] placeholder-muted/60 focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={saveCurrentVersion}
-                      disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                      className="rounded-lg bg-[#384959] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
-                    >
-                      {savingVersion ? "..." : "Save"}
-                    </button>
-                  </div>
                 </>
               )}
               <button
                 type="button"
                 onClick={() => { setShowSetupPanel(true); setWizardStep(1); }}
-                className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-xs font-medium text-[#384959] hover:bg-[#f0f4f8]"
+                className="inline-flex min-h-10 items-center gap-2 rounded-md border border-field bg-white px-3 text-sm font-medium text-ink hover:bg-tint"
               >
-                <Edit3 size={13} />
-                Edit Setup
+                <Edit3 size={14} aria-hidden="true" />
+                Edit setup
               </button>
               <button
                 type="button"
                 onClick={openFilePicker}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-3 py-2 text-xs font-medium text-white hover:bg-[#2d3a47]"
+                className="inline-flex min-h-10 items-center gap-2 rounded-md border border-field bg-white px-3 text-sm font-medium text-ink hover:bg-tint"
               >
-                <UploadCloud size={13} />
-                Replace
+                <UploadCloud size={14} aria-hidden="true" />
+                Replace file
               </button>
             </div>
           </div>
@@ -3175,7 +3155,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
       {wizardStep <= 3 && (uploadError || resumeDocumentError || scoreError || coachError || formatError || downloadError || error) && (
         <div className="space-y-2">
           {[uploadError, resumeDocumentError, scoreError, coachError, formatError, downloadError, error].filter(Boolean).map((message, index) => (
-            <div key={`${message}-${index}`} className="flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <div key={`${message}-${index}`} className="flex items-center gap-2 rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
               <AlertCircle size={14} className="flex-shrink-0" />
               <span>{message}</span>
             </div>
@@ -3184,7 +3164,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
       )}
 
       {wizardStep <= 3 && uploadWarnings.length > 0 && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div className="rounded-[10px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <div className="flex items-center gap-2 font-semibold">
             <AlertCircle size={14} className="flex-shrink-0" />
             Review parsed resume text
@@ -3198,16 +3178,9 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
       )}
 
       {wizardStep === 2 && (<>
-      <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div className="text-sm font-semibold text-[#384959]">Templates</div>
-            <div className="text-xs text-muted">Pick a layout to get started. You can change this anytime from the editor.</div>
-          </div>
-          <div className="hidden lg:flex items-center gap-2 rounded-full bg-[#BDDDFC]/10 px-3 py-1 text-xs font-medium text-muted">
-            <span>{templateMeta?.name || "Modern"}</span>
-          </div>
-        </div>
+      <section aria-labelledby="template-step-title">
+        <h2 id="template-step-title" className="text-base font-semibold text-ink">Pick a layout</h2>
+        <p className="mt-0.5 text-sm text-muted">You can change it at any time from the editor. Selected: {templateMeta?.name || "Modern"}.</p>
         <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {templates.map((template) => {
             const selected = selectedTemplate === template.id;
@@ -3216,19 +3189,18 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 key={template.id}
                 type="button"
                 onClick={() => setSelectedTemplate(template.id)}
-                className={`rounded-2xl border p-3 text-left transition ${
+                aria-pressed={selected}
+                className={`rounded-[10px] border bg-white p-3 text-left transition-colors ${
                   selected
-                    ? "border-indigo-400 bg-indigo-50 shadow-[0_10px_30px_rgba(79,70,229,0.12)] ring-2 ring-indigo-100"
-                    : "border-[#BDDDFC]/30 bg-white hover:border-[#BDDDFC]/30 hover:shadow-sm"
+                    ? "border-accent ring-2 ring-accent"
+                    : "border-line hover:border-field"
                 }`}
               >
                 <TemplatePreview templateId={template.id} />
-                <div className="mt-3 flex items-center gap-2 text-sm font-semibold text-[#384959]">
+                <div className="mt-3 flex items-center gap-2 text-sm font-semibold text-ink">
                   <span>{template.name}</span>
                   {template.id === "singapore" && (
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-600">
-                      SG-ready
-                    </span>
+                    <span className="text-xs font-normal text-muted">SG-ready</span>
                   )}
                 </div>
                 <div className="mt-1 text-xs leading-relaxed text-muted">{template.description}</div>
@@ -3236,109 +3208,67 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
             );
           })}
         </div>
-      </div>
+      </section>
 
       <div className="flex items-center justify-between">
         <button
           type="button"
           onClick={() => { setShowSetupPanel(true); setWizardStep(1); }}
-          className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
+          className="inline-flex min-h-11 items-center gap-2 rounded-md border border-field bg-white px-4 text-sm font-medium text-ink hover:bg-tint"
         >
           Back
         </button>
         <button
           type="button"
           onClick={() => setWizardStep(3)}
-          className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700"
+          className="inline-flex min-h-11 items-center gap-2 rounded-md bg-accent px-5 text-sm font-semibold text-white hover:bg-accent-hover"
         >
-          Next: Review & Edit
+          Next: review and edit
         </button>
       </div>
       </>)}
 
       {wizardStep === 3 && (<>
-      <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-[#384959]">Resume Workspace</div>
-            <div className="mt-0.5 text-xs text-muted">Edit directly or review evidence-safe bullet proposals.</div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-1" role="tablist" aria-label="Resume editor mode">
-              {[
-                ["classic", "Classic editor", Edit3],
-                ["agent", "Agent review", List],
-              ].map(([mode, label, Icon]) => {
-                const active = editorMode === mode;
-                return (
-                  <button
-                    key={mode}
-                    type="button"
-                    onClick={() => setEditorMode(mode)}
-                    aria-pressed={active}
-                    className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition ${
-                      active ? "bg-[#384959] text-white" : "text-muted hover:bg-[#f0f4f8] hover:text-[#384959]"
-                    }`}
-                  >
-                    <Icon size={13} />
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="inline-flex items-center gap-2 rounded-2xl bg-[#f0f4f8] px-3 py-2 text-sm text-muted">
-              <span className={`inline-flex h-8 min-w-8 items-center justify-center rounded-xl px-2 text-base font-bold ${scorePillClass}`}>
-                {scoreDisplayValue}
-              </span>
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted">Resume Score</div>
-                <div className="text-xs">{scorePhaseLabel}</div>
-              </div>
-            </div>
-
-            <div className="inline-flex items-center gap-2 rounded-2xl bg-indigo-50 px-3 py-2 text-sm text-indigo-700">
-              <span className="inline-flex h-8 min-w-8 items-center justify-center rounded-xl bg-[#384959] px-2 text-sm font-bold text-white">
-                {improvementCount}
-              </span>
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-indigo-500">Suggested Fixes</div>
-                <div className="text-xs">{issueBulletCount} bullet issues, {relevantMissingKeywords.length} missing keywords</div>
-              </div>
-            </div>
-
-            {user && (
-              <div className="inline-flex items-center gap-1 rounded-xl border border-[#BDDDFC]/30 bg-white px-1.5 py-1">
-                <input
-                  type="text"
-                  value={saveVersionLabel}
-                  onChange={(e) => setSaveVersionLabel(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") saveCurrentVersion(); }}
-                  placeholder="Version name..."
-                  className="w-32 rounded-lg bg-transparent px-2.5 py-1.5 text-sm text-[#384959] placeholder-muted/60 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={saveCurrentVersion}
-                  disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                  className="rounded-lg bg-[#384959] px-3 py-1.5 text-sm font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
-                >
-                  {savingVersion ? "..." : "Save"}
-                </button>
-              </div>
-            )}
-
-          </div>
+      <div className="flex flex-col gap-3 border-b border-line pb-4 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-ink">Resume Workspace</h2>
+          <p className="mt-0.5 text-sm text-muted">Edit directly, or ask for a review that only proposes changes your resume can back up.</p>
+          <p className="mt-1 text-sm text-ink">
+            <span className="font-semibold tabular-nums">Score {scoreDisplayValue}</span>
+            <span className="text-muted"> · {scorePhaseLabel} · </span>
+            <span className="tabular-nums">{improvementCount} suggested fixes</span>
+            <span className="text-muted"> ({issueBulletCount} bullet issues, {relevantMissingKeywords.length} missing keywords)</span>
+          </p>
+        </div>
+        <div className="inline-flex self-start rounded-md border border-field bg-white p-0.5 lg:self-auto" role="group" aria-label="Resume editor mode">
+          {[
+            ["classic", "Classic editor"],
+            ["agent", "Agent review"],
+          ].map(([mode, label]) => {
+            const active = editorMode === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                onClick={() => setEditorMode(mode)}
+                aria-pressed={active}
+                className={`min-h-10 rounded px-3 text-sm transition-colors ${
+                  active ? "bg-tint font-semibold text-ink" : "text-muted hover:text-ink"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {editorMode === "agent" && (
         <div data-testid="resume-agent-v2-panel" className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
-          <section className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+          <section className="rounded-[10px] border border-line bg-white p-5">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-[#384959]">Agent Review</div>
+                <div className="text-sm font-semibold text-ink">Agent Review</div>
                 <div className="mt-1 text-xs text-muted">
                   {selectedJob?.title ? `Targeting ${selectedJob.title} at ${selectedJob.company || "target company"}` : "General resume strengthening"}
                 </div>
@@ -3346,7 +3276,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
               {agentLoading && <Loader2 size={16} className="animate-spin text-muted" />}
             </div>
 
-            <div className="mt-4 min-h-40 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3">
+            <div className="mt-4 min-h-40 rounded-[10px] border border-line bg-paper p-3">
               {agentMessages.length > 0 ? (
                 <div className="space-y-2">
                   {agentMessages.map((message, index) => (
@@ -3354,8 +3284,8 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                       key={`${message.role}-${index}`}
                       className={`max-w-[75ch] whitespace-pre-wrap rounded-2xl px-3 py-2 text-sm leading-relaxed ${
                         message.role === "user"
-                          ? "ml-auto bg-[#384959] text-white"
-                          : "bg-white text-[#384959]"
+                          ? "ml-auto bg-accent text-white"
+                          : "bg-white text-ink"
                       }`}
                     >
                       {message.content}
@@ -3365,7 +3295,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
               ) : (
                 <div className="flex min-h-32 items-center justify-center text-center">
                   <div className="max-w-sm">
-                    <div className="mt-2 text-sm font-semibold text-[#384959]">Ask for a review pass</div>
+                    <div className="mt-2 text-sm font-semibold text-ink">Ask for a review pass</div>
                     <div className="mt-1 text-sm leading-relaxed text-muted">
                       Several reviewers critique your resume, then return evidence-backed edits for you to approve.
                       This usually takes 30 seconds to 2 minutes.
@@ -3376,10 +3306,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
             </div>
 
             {agentLoading && (
-              <div className="mt-3 flex items-center gap-3 rounded-2xl border border-[#BDDDFC]/30 bg-[#f7fafc] px-3 py-2.5" role="status" aria-live="polite">
+              <div className="mt-3 flex items-center gap-3 rounded-[10px] border border-line bg-paper px-3 py-2.5" role="status" aria-live="polite">
                 <Loader2 size={16} className="shrink-0 animate-spin text-muted" />
                 <div className="min-w-0">
-                  <div className="text-sm font-medium text-[#384959]">{agentProgress || "Reviewing your resume"}</div>
+                  <div className="text-sm font-medium text-ink">{agentProgress || "Reviewing your resume"}</div>
                   <div className="mt-0.5 text-xs text-muted">
                     {agentElapsedSeconds}s elapsed. You can switch pages and return while this continues.
                   </div>
@@ -3388,7 +3318,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
             )}
 
             {agentError && (
-              <div className="mt-3 flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+              <div className="mt-3 flex items-start gap-2 rounded-[10px] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
                 <AlertCircle size={14} className="mt-0.5 shrink-0" />
                 <span>{agentError}</span>
               </div>
@@ -3400,29 +3330,29 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 onChange={(event) => setAgentInput(event.target.value)}
                 rows={3}
                 disabled={!resumeText.trim()}
-                className="min-h-20 flex-1 resize-y rounded-2xl border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959] outline-none transition focus:border-[#88BDF2] focus:ring-2 focus:ring-[#88BDF2]/20 disabled:bg-[#f0f4f8] disabled:text-muted"
+                className="min-h-20 flex-1 resize-y rounded-[10px] border border-line px-3 py-2 text-sm text-ink transition focus:border-accent disabled:bg-[#f0f4f8] disabled:text-muted"
                 placeholder={resumeText.trim() ? "Ask for ATS gaps, unsupported claims, or safer bullet rewrites..." : "Upload or paste a resume before using Agent Review."}
               />
               <button
                 type="button"
                 onClick={handleAgentSend}
                 disabled={agentLoading || !agentInput.trim() || !resumeText.trim()}
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[#384959] text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-accent text-white transition hover:bg-accent-hover disabled:opacity-40"
                 title="Send to Agent Review"
               >
                 {agentLoading ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
               </button>
             </div>
 
-            <details className="mt-3 rounded-2xl border border-[#BDDDFC]/30 bg-white px-3 py-2">
-              <summary className="cursor-pointer text-xs font-semibold text-[#384959]">
+            <details className="mt-3 rounded-[10px] border border-line bg-white px-3 py-2">
+              <summary className="cursor-pointer text-xs font-semibold text-ink">
                 Add LinkedIn or profile context
               </summary>
               <textarea
                 value={agentProfileContext}
                 onChange={(event) => setAgentProfileContext(event.target.value)}
                 rows={4}
-                className="mt-3 min-h-24 w-full resize-y rounded-xl border border-[#BDDDFC]/30 px-3 py-2 text-sm text-[#384959] outline-none transition focus:border-[#88BDF2] focus:ring-2 focus:ring-[#88BDF2]/20"
+                className="mt-3 min-h-24 w-full resize-y rounded-md border border-line px-3 py-2 text-sm text-ink transition focus:border-accent"
                 placeholder="Paste LinkedIn About/Experience or profile notes. The agent uses this for consistency checks and questions, not unsupported resume claims."
               />
               <div className="mt-2 text-xs leading-relaxed text-muted">
@@ -3432,25 +3362,25 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
           </section>
 
           <aside className="space-y-4">
-            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-              <div className="text-sm font-semibold text-[#384959]">Worklist</div>
+            <div className="rounded-[10px] border border-line bg-white p-5">
+              <div className="text-sm font-semibold text-ink">Worklist</div>
               <div className="mt-3 space-y-2">
                 {(agentTodos.length ? agentTodos : ["Read resume evidence", "Check role fit", "Prepare reviewable bullet edits"]).map((todo) => (
                   <div key={todo} className="flex items-start gap-2 text-sm text-muted">
-                    <CheckCircle size={14} className="mt-0.5 shrink-0 text-emerald-600" />
+                    <CheckCircle size={14} className="mt-0.5 shrink-0 text-[#166534]" />
                     <span>{todo}</span>
                   </div>
                 ))}
               </div>
             </div>
 
-            <details className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-              <summary className="cursor-pointer text-sm font-semibold text-[#384959]">Agent spans</summary>
+            <details className="rounded-[10px] border border-line bg-white p-5">
+              <summary className="cursor-pointer text-sm font-semibold text-ink">Agent spans</summary>
               <div className="mt-3 space-y-2">
                 {agentToolSpans.length > 0 ? agentToolSpans.map((span, index) => (
-                  <div key={`${span.name || "tool"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-xs text-muted">
+                  <div key={`${span.name || "tool"}-${index}`} className="rounded-[10px] bg-paper px-3 py-2 text-xs text-muted">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="font-semibold text-[#384959]">
+                      <span className="font-semibold text-ink">
                         {span.worker && span.worker !== "orchestrator" ? `${String(span.worker).replaceAll("_", " ")} · ` : ""}{span.kind === "llm" ? `${span.phase || "model"} · ` : ""}{span.name || span.kind || "span"}
                       </span>
                       <span>{span.status || "unknown"}{Number.isFinite(span.duration_ms) ? ` · ${span.duration_ms} ms` : ""}</span>
@@ -3470,18 +3400,18 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
               </div>
             </details>
 
-            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+            <div className="rounded-[10px] border border-line bg-white p-5">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-[#384959]">Independent Reviewer Assessments</div>
+                <div className="text-sm font-semibold text-ink">Independent Reviewer Assessments</div>
                 {Number.isFinite(agentAssessment.score) && (
-                  <span className="rounded-full bg-[#BDDDFC]/20 px-2.5 py-1 text-xs font-semibold text-[#384959]">
+                  <span className="rounded-full bg-tint px-2.5 py-1 text-xs font-semibold text-ink">
                     Median {agentAssessment.score}/100
                   </span>
                 )}
               </div>
               <div className="mt-3 space-y-2">
                 {agentWorkerRuns.filter((run) => run.status !== "success").map((run) => (
-                  <div key={`failure-${run.persona}`} className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
+                  <div key={`failure-${run.persona}`} className="rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
                     <div className="font-semibold capitalize">{String(run.persona || "reviewer").replaceAll("_", " ")} {run.status === "partial" ? "partially complete" : "incomplete"} · {run.failure_type || "error"}</div>
                     <div className="mt-1">{run.remaining_gap || run.error?.message || "This specialist assessment is unavailable."}</div>
                     <div className="mt-1 text-amber-800">Attempted {run.attempt_count || 0} time(s){run.source ? ` using ${run.source}` : ""}.</div>
@@ -3491,14 +3421,14 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   </div>
                 ))}
                 {agentFindings.length > 0 ? agentFindings.map((finding, index) => (
-                  <div key={`${finding.persona || "persona"}-${index}`} className="rounded-2xl bg-[#f0f4f8] px-3 py-2 text-sm text-[#384959]">
+                  <div key={`${finding.persona || "persona"}-${index}`} className="rounded-[10px] bg-paper px-3 py-2 text-sm text-ink">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold capitalize">{String(finding.persona || "reviewer").replaceAll("_", " ")}</span>
                       {finding.category && <span className="text-xs text-muted">{finding.category}</span>}
                       {Number.isFinite(finding.duration_ms) && <span className="text-xs text-muted">{Math.round(finding.duration_ms / 100) / 10}s</span>}
-                      {Number.isFinite(finding.score) && <span className="ml-auto text-xs font-semibold text-[#384959]">{finding.score}/100</span>}
+                      {Number.isFinite(finding.score) && <span className="ml-auto text-xs font-semibold text-ink">{finding.score}/100</span>}
                     </div>
-                    {finding.summary && <div className="mt-2 text-sm font-medium leading-relaxed text-[#384959]">{finding.summary}</div>}
+                    {finding.summary && <div className="mt-2 text-sm font-medium leading-relaxed text-ink">{finding.summary}</div>}
                     {Array.isArray(finding.strengths) && finding.strengths.length > 0 && (
                       <div className="mt-2 text-xs leading-relaxed text-emerald-700"><span className="font-semibold">Strength:</span> {finding.strengths.join(" ")}</div>
                     )}
@@ -3506,9 +3436,9 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                       <div className="mt-1 text-xs leading-relaxed text-rose-700"><span className="font-semibold">Weakness:</span> {finding.weaknesses.join(" ")}</div>
                     )}
                     {(finding.reasoning || finding.rationale) && <div className="mt-1 text-xs leading-relaxed text-muted"><span className="font-semibold">Reasoning:</span> {finding.reasoning || finding.rationale}</div>}
-                    {(finding.suggested_actions?.[0] || finding.suggested_action) && <div className="mt-1 text-xs leading-relaxed text-[#384959]"><span className="font-semibold">Next:</span> {(finding.suggested_actions || [finding.suggested_action]).join(" ")}</div>}
+                    {(finding.suggested_actions?.[0] || finding.suggested_action) && <div className="mt-1 text-xs leading-relaxed text-ink"><span className="font-semibold">Next:</span> {(finding.suggested_actions || [finding.suggested_action]).join(" ")}</div>}
                     {Array.isArray(finding.findings) && finding.findings.length > 0 && (
-                      <details className="mt-2 border-t border-[#BDDDFC]/30 pt-2 text-xs text-muted">
+                      <details className="mt-2 border-t border-line pt-2 text-xs text-muted">
                         <summary className="cursor-pointer font-semibold">Evidence methods</summary>
                         <div className="mt-2 space-y-2">
                           {finding.findings.map((item, itemIndex) => (
@@ -3531,7 +3461,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                       </details>
                     )}
                     {Array.isArray(finding.conflicts) && finding.conflicts.length > 0 && (
-                      <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                         <div className="font-semibold">Conflicting evidence</div>
                         {finding.conflicts.map((conflict) => (
                           <div key={conflict.conflict_id || conflict.topic} className="mt-1">
@@ -3547,7 +3477,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                       </div>
                     )}
                     {Array.isArray(finding.evidence_ids) && finding.evidence_ids.length > 0 && (
-                      <div className="mt-2 border-t border-[#BDDDFC]/30 pt-2 text-xs leading-relaxed text-muted">
+                      <div className="mt-2 border-t border-line pt-2 text-xs leading-relaxed text-muted">
                         <span className="font-semibold">Resume evidence:</span>{" "}
                         {finding.evidence_ids
                           .map((id) => agentEvidenceById.get(id)?.text)
@@ -3573,30 +3503,30 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
               </div>
             </div>
 
-            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+            <div className="rounded-[10px] border border-line bg-white p-5">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-[#384959]">Assessment Quality Judge</div>
+                <div className="text-sm font-semibold text-ink">Assessment Quality Judge</div>
                 {Number.isFinite(agentJudgeAssessment.score) && (
-                  <span className="rounded-full bg-[#BDDDFC]/20 px-2.5 py-1 text-xs font-semibold text-[#384959]">
+                  <span className="rounded-full bg-tint px-2.5 py-1 text-xs font-semibold text-ink">
                     {agentJudgeAssessment.score}/100
                   </span>
                 )}
               </div>
               {agentJudgeRun.status === "error" ? (
-                <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
+                <div className="mt-3 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-3 text-xs text-amber-900">
                   <div className="font-semibold">Independent quality check unavailable</div>
                   <div className="mt-1">{agentJudgeRun.remaining_gap || "The review remains available, but its write-up quality was not independently graded."}</div>
                 </div>
               ) : agentJudgeAssessment.verdict ? (
                 <div className="mt-3 space-y-2 text-xs leading-relaxed">
-                  <div className="text-sm font-medium text-[#384959]">{agentJudgeAssessment.verdict}</div>
+                  <div className="text-sm font-medium text-ink">{agentJudgeAssessment.verdict}</div>
                   <div className="text-emerald-700"><span className="font-semibold">Strengths:</span> {(agentJudgeAssessment.strengths || []).map((item) => `${item.finding}${Number.isFinite(item.confidence) ? ` (${Math.round(item.confidence * 100)}% confidence)` : ""}`).join(" ")}</div>
                   <div className="text-rose-700"><span className="font-semibold">Weaknesses:</span> {(agentJudgeAssessment.weaknesses || []).map((item) => `${item.finding}${Number.isFinite(item.confidence) ? ` (${Math.round(item.confidence * 100)}% confidence)` : ""}`).join(" ")}</div>
                   <div className="text-muted"><span className="font-semibold">Reasoning:</span> {agentJudgeAssessment.reasoning}</div>
                   {Array.isArray(agentJudgeAssessment.evidence_gaps) && agentJudgeAssessment.evidence_gaps.length > 0 && (
                     <div className="text-amber-800"><span className="font-semibold">Unavailable or unverified:</span> {agentJudgeAssessment.evidence_gaps.join(" ")}</div>
                   )}
-                  <details className="border-t border-[#BDDDFC]/30 pt-2 text-muted">
+                  <details className="border-t border-line pt-2 text-muted">
                     <summary className="cursor-pointer font-semibold">Judge citations</summary>
                     <div className="mt-1">
                       {[...(agentJudgeAssessment.strengths || []), ...(agentJudgeAssessment.weaknesses || [])]
@@ -3614,29 +3544,29 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
               )}
             </div>
 
-            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+            <div className="rounded-[10px] border border-line bg-white p-5">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-[#384959]">Proposed Edits</div>
-                <span className="rounded-full bg-[#BDDDFC]/20 px-2 py-0.5 text-xs font-semibold text-[#384959]">{agentPendingDiffs.length}</span>
+                <div className="text-sm font-semibold text-ink">Proposed Edits</div>
+                <span className="rounded-full bg-tint px-2 py-0.5 text-xs font-semibold text-ink">{agentPendingDiffs.length}</span>
               </div>
               <div className="mt-3 space-y-3">
                 {agentPendingDiffs.length > 0 ? agentPendingDiffs.map((diff, index) => (
-                  <div key={diff.bullet_id} className="rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3">
-                    <div className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Edit {index + 1}</div>
-                    <div className="mt-2 rounded-xl bg-white px-3 py-2">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted">Current</div>
+                  <div key={diff.bullet_id} className="rounded-[10px] border border-line bg-paper p-3">
+                    <div className="text-xs font-semibold text-muted">Edit {index + 1}</div>
+                    <div className="mt-2 rounded-md bg-white px-3 py-2">
+                      <div className="text-[10px] font-semibold text-muted">Current</div>
                       <div className="mt-1 text-xs leading-relaxed text-muted">{diff.original}</div>
                     </div>
-                    <div className="mt-2 rounded-xl bg-white px-3 py-2">
-                      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">Proposed</div>
-                      <div className="mt-1 text-sm leading-relaxed text-[#384959]">{diff.rewrite}</div>
+                    <div className="mt-2 rounded-md bg-white px-3 py-2">
+                      <div className="text-[10px] font-semibold text-emerald-700">Proposed</div>
+                      <div className="mt-1 text-sm leading-relaxed text-ink">{diff.rewrite}</div>
                     </div>
                     <div className="mt-3 flex gap-2">
                       <button
                         type="button"
                         onClick={() => handleAgentDiffDecision(diff.bullet_id, "accept")}
                         disabled={Boolean(agentApplyingDiffId)}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-emerald-700 disabled:opacity-50"
+                        className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white transition hover:bg-accent-hover disabled:opacity-50"
                       >
                         {agentApplyingDiffId === diff.bullet_id ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
                         {agentApplyingDiffId === diff.bullet_id ? "Applying" : "Accept"}
@@ -3645,7 +3575,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                         type="button"
                         onClick={() => handleAgentDiffDecision(diff.bullet_id, "reject")}
                         disabled={Boolean(agentApplyingDiffId)}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-1.5 text-xs font-medium text-[#384959] transition hover:bg-[#f0f4f8] disabled:opacity-50"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-line bg-white px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-tint disabled:opacity-50"
                       >
                         <X size={13} />
                         Reject
@@ -3661,43 +3591,40 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
         </div>
       )}
 
-      <div className={`${editorMode === "agent" ? "hidden" : "lg:hidden"} rounded-xl bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700`}>
+      <div className={`${editorMode === "agent" ? "hidden" : "lg:hidden"} rounded-md bg-tint border border-blue-200 px-3 py-2 text-xs text-accent`}>
         Tap any colored bullet for AI feedback. For the full editing experience, use a desktop browser.
       </div>
 
       <div className={`${editorMode === "agent" ? "hidden" : "grid"} gap-6 lg:grid-cols-[minmax(0,65%)_minmax(320px,35%)]`} data-testid="classic-resume-editor">
         <aside className="hidden space-y-4 lg:order-2 lg:block lg:sticky lg:top-16 lg:self-start lg:max-h-[calc(100vh-5rem)] lg:overflow-y-auto">
           {(
-            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
+            <div className="rounded-[10px] border border-line bg-white p-5">
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-[#384959]">Next Fixes</div>
-                  <div className="mt-1 text-xs text-muted">Pick the next fix without leaving the document.</div>
+                  <h3 className="text-base font-semibold text-ink">Next fixes <span className="font-normal tabular-nums text-muted">({improvementCount})</span></h3>
+                  <div className="mt-1 text-sm text-muted">Pick the next fix without leaving the document.</div>
                 </div>
-                <span className="inline-flex h-9 min-w-9 items-center justify-center rounded-2xl bg-[#384959] px-2 text-sm font-bold text-white">
-                  {improvementCount}
-                </span>
               </div>
-              <div className="mt-4 space-y-2">
+              <div className="mt-3 divide-y divide-line border-y border-line">
                 {improvementQueue.length > 0 ? improvementQueue.slice(0, 6).map((item) => {
                   if (item.kind === "bullet") {
                     const toneClass = item.tone === "rose"
-                      ? "border-rose-200 bg-rose-50"
-                      : "border-amber-200 bg-amber-50";
+                      ? "border-l-[#b42318]"
+                      : "border-l-[#b45309]";
                     const label = item.tone === "rose" ? "Verb check" : "Review";
                     return (
                       <button
                         key={item.id}
                         type="button"
                         onClick={() => focusBullet(item.section.id)}
-                        className={`w-full rounded-2xl border px-3 py-3 text-left transition hover:shadow-sm ${toneClass}`}
+                        className={`w-full border-l-2 py-3 pl-3 pr-1 text-left transition-colors hover:bg-tint ${toneClass}`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <div className="text-sm font-semibold text-[#384959]">{item.title}</div>
+                            <div className="text-sm font-semibold text-ink">{item.title}</div>
                             <div className="mt-1 text-xs leading-relaxed text-muted">{item.detail}</div>
                           </div>
-                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">
+                          <span className="shrink-0 text-xs font-medium text-muted">
                             {label}
                           </span>
                         </div>
@@ -3714,32 +3641,33 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                         setSelectedInjectKeyword(null);
                         setActiveSuggestionHint(isActive ? null : item);
                       }}
-                      className={`w-full rounded-2xl border px-3 py-3 text-left transition hover:shadow-sm ${isActive ? "border-indigo-300 bg-indigo-50" : "border-slate-200 bg-slate-50 hover:border-indigo-200 hover:bg-indigo-50/50"}`}
+                      aria-pressed={isActive}
+                      className={`w-full border-l-2 py-3 pl-3 pr-1 text-left transition-colors hover:bg-tint ${isActive ? "border-l-accent bg-tint" : "border-l-transparent"}`}
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <div className="text-sm font-semibold text-[#384959]">{item.title}</div>
+                        <div className="text-sm font-semibold text-ink">{item.title}</div>
                         {item.points > 0 && (
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${isActive ? "bg-indigo-600 text-white" : "bg-indigo-100 text-indigo-700"}`}>
-                            +{item.points}
+                          <span className="shrink-0 text-xs font-medium tabular-nums text-accent">
+                            +{item.points} pts
                           </span>
                         )}
                       </div>
                       <div className="mt-1 text-xs leading-relaxed text-muted">{item.detail}</div>
-                      {isActive && <div className="mt-2 text-[10px] font-medium text-indigo-600">Active - select a bullet and rewrite to apply</div>}
+                      {isActive && <div className="mt-2 text-xs font-medium text-accent">Active: select a bullet and rewrite it to apply this.</div>}
                     </button>
                   );
                 }) : (
-                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+                  <div className="py-3 text-sm text-[#166534]">
                     No flagged bullets right now. Keep tightening content and finalize when ready.
                   </div>
                 )}
               </div>
             </div>
           )}
-          <div ref={scorePanelRef} className={`rounded-3xl border p-5 shadow-sm ${scoreData ? scoreTheme.panel : "border-[#BDDDFC]/30 bg-white"}`}>
+          <div ref={scorePanelRef} className="rounded-[10px] border border-line bg-white p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Rule-based Resume Score</div>
+                <div className="text-xs font-semibold text-muted">Rule-based Resume Score</div>
                 <div className={`mt-2 text-4xl font-bold ${scoreData ? scoreTheme.text : "text-muted"}`}>
                   {scoring ? "..." : scoreDisplayValue}
                   <span className="ml-1 text-base font-medium text-muted">{scoreData ? "/100" : ""}</span>
@@ -3752,23 +3680,23 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                       : "Upload or paste a resume to begin"}
                 </div>
               </div>
-              {scoring && <Loader2 size={18} className="animate-spin text-indigo-500" />}
+              {scoring && <Loader2 size={18} className="animate-spin text-accent" />}
             </div>
             <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-white/80">
               <div className={`h-full rounded-full transition-all ${scoreTheme.bar}`} style={{ width: `${scoreData && overallScore !== null ? overallScore : 0}%` }} />
             </div>
 
             <div className="mt-4 grid grid-cols-3 gap-2">
-              <div className="rounded-2xl bg-white/85 px-3 py-2">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Solid</div>
+              <div className="rounded-[10px] bg-white/85 px-3 py-2">
+                <div className="text-[11px] font-semibold text-muted">Solid</div>
                 <div className="mt-1 text-lg font-semibold text-emerald-700">{annotationCounts.emerald || 0}</div>
               </div>
-              <div className="rounded-2xl bg-white/85 px-3 py-2">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Review</div>
+              <div className="rounded-[10px] bg-white/85 px-3 py-2">
+                <div className="text-[11px] font-semibold text-muted">Review</div>
                 <div className="mt-1 text-lg font-semibold text-amber-700">{annotationCounts.amber || 0}</div>
               </div>
-              <div className="rounded-2xl bg-white/85 px-3 py-2">
-                <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted">Verb Check</div>
+              <div className="rounded-[10px] bg-white/85 px-3 py-2">
+                <div className="text-[11px] font-semibold text-muted">Verb Check</div>
                 <div className="mt-1 text-lg font-semibold text-rose-700">{annotationCounts.rose || 0}</div>
               </div>
             </div>
@@ -3793,10 +3721,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 );
                 const statusMeta = getStatusMeta(displayDimensionScore, dimension.max);
                 return (
-                  <details key={name} open className="overflow-hidden rounded-3xl border border-[#BDDDFC]/30 bg-white shadow-sm">
+                  <details key={name} open className="overflow-hidden rounded-[10px] border border-line bg-white">
                     <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4">
                       <div>
-                        <div className="text-sm font-semibold text-[#384959]">{titleCase(name)}</div>
+                        <div className="text-sm font-semibold text-ink">{titleCase(name)}</div>
                         <div className="text-xs text-muted">{displayDimensionScore}/{dimension.max}</div>
                       </div>
                       <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ${statusMeta.className}`}>
@@ -3804,8 +3732,8 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                         {statusMeta.label}
                       </span>
                     </summary>
-                    <div className="border-t border-[#BDDDFC]/20 px-5 py-4">
-                      <div className="mb-4 h-2 overflow-hidden rounded-full bg-[#BDDDFC]/10">
+                    <div className="border-t border-line px-5 py-4">
+                      <div className="mb-4 h-2 overflow-hidden rounded-full bg-tint">
                         <div
                           className={`h-full rounded-full ${getScoreTheme(Math.round((displayDimensionScore / dimension.max) * 100)).bar}`}
                           style={{ width: `${dimension.max > 0 ? (displayDimensionScore / dimension.max) * 100 : 0}%` }}
@@ -3815,11 +3743,11 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                         {Object.entries(displayItems).map(([itemName, item]) => {
                           const itemStatus = getStatusMeta(item.score, item.max);
                           return (
-                            <details key={itemName} className="rounded-2xl bg-[#f0f4f8]">
+                            <details key={itemName} className="rounded-[10px] bg-paper">
                               <summary className="cursor-pointer list-none p-3">
                                 <div className="flex items-start justify-between gap-2">
                                   <div>
-                                    <div className="text-sm font-medium text-[#384959]">{titleCase(itemName)}</div>
+                                    <div className="text-sm font-medium text-ink">{titleCase(itemName)}</div>
                                     <div className="mt-1 text-xs text-muted">{item.detail}</div>
                                   </div>
                                   <span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold ${itemStatus.className}`}>
@@ -3833,8 +3761,8 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                   </div>
                                 )}
                                 {Array.isArray(item.missing_examples) && item.missing_examples.length > 0 && (
-                                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
-                                    <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-amber-800">
+                                  <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-3">
+                                    <div className="text-[10px] font-semibold text-amber-800">
                                       Bullets Missing Metrics
                                     </div>
                                     <div className="mt-2 max-h-40 space-y-2 overflow-y-auto pr-1">
@@ -3848,10 +3776,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                   </div>
                                 )}
                               </summary>
-                              <div className="border-t border-[#BDDDFC]/30 px-3 pb-3 pt-2">
+                              <div className="border-t border-line px-3 pb-3 pt-2">
                                 {item.matched_keywords?.length > 0 && (
                                   <div className="mb-2">
-                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">Matched</div>
+                                    <div className="text-[10px] font-semibold text-muted mb-1">Matched</div>
                                     <div className="flex flex-wrap gap-1">
                                       {item.matched_keywords.map((kw) => (
                                         <span key={kw} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">{kw}</span>
@@ -3861,10 +3789,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                 )}
                                 {item.missing_keywords?.length > 0 && (
                                   <div>
-                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">Try adding</div>
+                                    <div className="text-[10px] font-semibold text-muted mb-1">Try adding</div>
                                     <div className="flex flex-wrap gap-1">
                                       {item.missing_keywords.map((kw) => (
-                                        <span key={kw} className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] text-rose-600">{kw}</span>
+                                        <span key={kw} className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] text-[#b42318]">{kw}</span>
                                       ))}
                                     </div>
                                   </div>
@@ -3889,35 +3817,35 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   : block.icon === "lightbulb" ? "💡"
                   : "📋";
                 return (
-                  <details key={block.type} className="overflow-hidden rounded-2xl border border-[#BDDDFC]/30 bg-white shadow-sm">
+                  <details key={block.type} className="overflow-hidden rounded-[10px] border border-line bg-white">
                     <summary className="flex cursor-pointer list-none items-center gap-3 px-5 py-4">
                       <span className="text-base">{blockIcon}</span>
-                      <div className="text-sm font-semibold text-[#384959]">{block.title}</div>
-                      <span className="ml-auto rounded-full bg-[#BDDDFC]/15 px-2.5 py-0.5 text-[11px] font-medium text-muted">
+                      <div className="text-sm font-semibold text-ink">{block.title}</div>
+                      <span className="ml-auto rounded-full bg-tint px-2.5 py-0.5 text-[11px] font-medium text-muted">
                         {block.items.length} {block.items.length === 1 ? "item" : "items"}
                       </span>
                     </summary>
-                    <div className="border-t border-[#BDDDFC]/20 px-5 py-4">
+                    <div className="border-t border-line px-5 py-4">
                       <div className="space-y-2.5">
                         {block.items.map((item, idx) => {
                           const accentClass = item.action_type === "reframe"
-                            ? "border-l-blue-400 bg-blue-50/60"
+                            ? "border-l-blue-400 bg-tint"
                             : item.action_type === "add_skill"
                               ? "border-l-emerald-400 bg-emerald-50/60"
                               : item.action_type === "weave_in"
-                                ? "border-l-violet-400 bg-violet-50/60"
-                                : "border-l-[#BDDDFC]/50 bg-[#f0f4f8]";
+                                ? "border-l-accent bg-tint"
+                                : "border-l-line bg-paper";
                           const labelColor = item.action_type === "reframe"
                             ? "text-blue-700"
                             : item.action_type === "add_skill"
                               ? "text-emerald-700"
                               : item.action_type === "weave_in"
-                                ? "text-violet-700"
-                                : "text-[#384959]";
+                                ? "text-accent"
+                                : "text-ink";
                           return (
                             <div
                               key={`${block.type}-${idx}`}
-                              className={`rounded-xl border-l-[3px] px-3.5 py-2.5 ${accentClass}`}
+                              className={`rounded-md border-l-[3px] px-3.5 py-2.5 ${accentClass}`}
                             >
                               <div className={`text-sm font-medium ${labelColor}`}>{item.label}</div>
                               <div className="mt-1 text-xs leading-relaxed text-muted">{item.detail}</div>
@@ -3934,12 +3862,12 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
 
           <div
             ref={selectedBullet ? selectedFeedbackRef : null}
-            className={`rounded-3xl border p-5 shadow-sm ${selectedBullet ? "border-indigo-200 bg-indigo-50" : "border-[#BDDDFC]/30 bg-white"}`}
+            className={`rounded-[10px] border p-5 ${selectedBullet ? "border-line bg-tint" : "border-line bg-white"}`}
           >
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Selected Bullet</div>
-                <div className="mt-1 text-sm font-semibold text-[#384959]">
+                <div className="text-xs font-semibold text-muted">Selected Bullet</div>
+                <div className="mt-1 text-sm font-semibold text-ink">
                   {selectedBullet ? "Focused feedback" : "Choose a highlighted bullet"}
                 </div>
               </div>
@@ -3953,7 +3881,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
 
             {selectedBullet ? (
               <div className="mt-4 space-y-4">
-                <div className="rounded-2xl border border-white/80 bg-white p-4 text-sm leading-relaxed text-[#384959] shadow-sm">
+                <div className="rounded-[10px] border border-white/80 bg-white p-4 text-sm leading-relaxed text-ink">
                   {selectedBullet.text}
                 </div>
                 {selectedBulletTabs.length > 0 && (
@@ -3965,7 +3893,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                         const toneClass = tab.status === "good"
                           ? selected
                             ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                            : "border-[#BDDDFC]/30 bg-white text-[#384959]"
+                            : "border-line bg-white text-ink"
                           : tab.tone === "amber"
                             ? selected
                               ? "border-amber-200 bg-amber-50 text-amber-800"
@@ -3979,7 +3907,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                             key={tab.id}
                             type="button"
                             onClick={() => setSelectedBulletTab(tab.id)}
-                            className={`rounded-2xl border px-3 py-2 text-left text-xs font-semibold transition ${toneClass}`}
+                            className={`rounded-[10px] border px-3 py-2 text-left text-xs font-semibold transition ${toneClass}`}
                           >
                             <span className="inline-flex items-center gap-1.5">
                               {icon}
@@ -3991,10 +3919,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     </div>
 
                     {activeBulletTab && (
-                      <div className="rounded-2xl border border-white/80 bg-white p-4 shadow-sm">
+                      <div className="rounded-[10px] border border-white/80 bg-white p-4">
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <div className="text-sm font-semibold text-[#384959]">{activeBulletTab.title}</div>
+                            <div className="text-sm font-semibold text-ink">{activeBulletTab.title}</div>
                             <div className="mt-1 text-sm leading-relaxed text-muted">{activeBulletTab.summary}</div>
                           </div>
                           <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
@@ -4039,10 +3967,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
 
                         {selectedBullet.annotation?.keywordMatches?.length > 0 && (
                           <div className="mt-4">
-                            <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Matched Keywords</div>
+                            <div className="text-xs font-semibold text-muted">Matched Keywords</div>
                             <div className="mt-2 flex flex-wrap gap-1.5">
                               {selectedBullet.annotation.keywordMatches.map((keyword) => (
-                                <span key={keyword} className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-medium text-sky-700">
+                                <span key={keyword} className="rounded-full bg-tint px-2 py-0.5 text-[11px] font-medium text-accent">
                                   {keyword}
                                 </span>
                               ))}
@@ -4054,12 +3982,12 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   </>
                 )}
                 {activeSuggestionHint && (
-                  <div className="flex items-start justify-between gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-3">
+                  <div className="flex items-start justify-between gap-2 rounded-[10px] border border-line bg-tint px-3 py-3">
                     <div>
-                      <div className="text-xs font-semibold text-indigo-700">Hint active: {activeSuggestionHint.title}</div>
-                      <div className="mt-0.5 text-xs leading-relaxed text-indigo-600">{activeSuggestionHint.detail}</div>
+                      <div className="text-xs font-semibold text-accent">Hint active: {activeSuggestionHint.title}</div>
+                      <div className="mt-0.5 text-xs leading-relaxed text-accent">{activeSuggestionHint.detail}</div>
                     </div>
-                    <button type="button" onClick={() => setActiveSuggestionHint(null)} className="shrink-0 text-indigo-400 hover:text-indigo-600">✕</button>
+                    <button type="button" onClick={() => setActiveSuggestionHint(null)} className="shrink-0 text-accent hover:text-accent-hover">✕</button>
                   </div>
                 )}
                 {(() => {
@@ -4067,7 +3995,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   if (!ranked.length || activeSuggestionHint) return null;
                   return (
                     <div>
-                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted">Inject keyword</div>
+                      <div className="mb-2 text-[10px] font-semibold text-muted">Inject keyword</div>
                       <div className="flex flex-wrap gap-1.5">
                         {ranked.map((label) => {
                           const active = selectedInjectKeyword === label;
@@ -4083,8 +4011,8 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                               }}
                               className={`rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
                                 active
-                                  ? "border-indigo-400 bg-indigo-600 text-white"
-                                  : "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100"
+                                  ? "border-accent bg-accent text-white"
+                                  : "border-line bg-tint text-accent hover:bg-tint"
                               }`}
                             >
                               {active ? "✓ " : "+ "}{display}
@@ -4099,7 +4027,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   type="button"
                   onClick={() => handleBulletRewrite(selectedBullet, activeBulletTab?.id, activeSuggestionHint)}
                   disabled={rewriteLoading[selectedBullet.id]}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-black disabled:opacity-50"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-[10px] bg-accent px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-hover disabled:opacity-50"
                 >
                   {rewriteLoading[selectedBullet.id] ? <Loader2 size={14} className="animate-spin" /> : null}
                   {rewriteLoading[selectedBullet.id]
@@ -4108,7 +4036,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                       ? "Rewrites ready below"
                       : getRewriteButtonLabel(activeBulletTab, selectedBullet)}
                 </button>
-                <div className="rounded-2xl bg-[#f0f4f8] px-3 py-3 text-xs leading-relaxed text-muted">
+                <div className="rounded-[10px] bg-paper px-3 py-3 text-xs leading-relaxed text-muted">
                   {activeBulletTab?.id === "bullet_length" && activeBulletTab.status === "issue"
                     ? "This will ask AI for a tighter bullet that keeps the existing facts, numbers, and scope but lands the result earlier."
                     : "Keep only claims, numbers, and scope that you can defend in interview. Treat rewrites as drafting help, not fact generation."}
@@ -4118,7 +4046,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   <button
                     type="button"
                     onClick={() => handleInsertBulletBelow(selectedBullet)}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] transition hover:bg-[#f0f4f8]"
+                    className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-line bg-white px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-tint"
                   >
                     <Plus size={14} />
                     Add Bullet Below
@@ -4126,7 +4054,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   <button
                     type="button"
                     onClick={() => handleDeleteSection(selectedBullet)}
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700 transition hover:bg-rose-100"
+                    className="inline-flex items-center justify-center gap-2 rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700 transition hover:bg-rose-100"
                   >
                     <Trash2 size={14} />
                     Delete Bullet
@@ -4134,17 +4062,17 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 </div>
 
                 {selectedRewrite && (
-                  <div className="space-y-3 rounded-2xl border border-indigo-200 bg-white p-4">
-                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Suggested Rewrite</div>
+                  <div className="space-y-3 rounded-[10px] border border-line bg-white p-4">
+                    <div className="text-xs font-semibold text-muted">Suggested Rewrite</div>
                     {selectedRewrite.no_change ? (
                       <>
-                        <div className="rounded-xl bg-amber-50 p-3 text-sm leading-relaxed text-amber-900">
+                        <div className="rounded-md bg-amber-50 p-3 text-sm leading-relaxed text-amber-900">
                           {selectedRewrite.message || "No stronger rewrite was suggested for this bullet."}
                         </div>
                         <button
                           type="button"
                           onClick={() => rejectRewrite(selectedBullet.id)}
-                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-tint"
                         >
                           <X size={14} />
                           Close
@@ -4158,14 +4086,14 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                               const optionEvaluation = evaluateRewriteOption(option, selectedBullet, resumeText, selectedRewrite.rewrite_focus);
                               const optionMeta = getRewriteOptionMeta(optionIndex, selectedRewrite.rewrite_focus, optionEvaluation);
                               return (
-                                <div key={`${selectedBullet.id}-rewrite-${optionIndex}`} className="rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3">
-                                  <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+                                <div key={`${selectedBullet.id}-rewrite-${optionIndex}`} className="rounded-md border border-line bg-paper p-3">
+                                  <div className="text-[11px] font-semibold text-muted">
                                     {optionMeta.label}
                                   </div>
                                   <div className="mt-1 text-[11px] leading-relaxed text-muted">
                                     {optionMeta.detail}
                                   </div>
-                                  <div className="mt-2 text-sm leading-relaxed text-[#384959]">{option}</div>
+                                  <div className="mt-2 text-sm leading-relaxed text-ink">{option}</div>
                                   {optionEvaluation.unresolvedFocused.length > 0 && (
                                     <div className="mt-2 text-xs leading-relaxed text-amber-700">
                                       Still flags: {optionEvaluation.unresolvedFocused.map(getIssueLabel).join(", ")}.
@@ -4174,7 +4102,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                   <button
                                     type="button"
                                     onClick={() => acceptRewrite(selectedBullet, optionIndex)}
-                                    className="mt-3 inline-flex items-center gap-2 rounded-xl bg-[#384959] px-3 py-2 text-sm font-medium text-white hover:bg-[#2d3a47]"
+                                    className="mt-3 inline-flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-hover"
                                   >
                                     <CheckCircle size={14} />
                                     {optionMeta.cta}
@@ -4187,7 +4115,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                         <button
                           type="button"
                           onClick={() => rejectRewrite(selectedBullet.id)}
-                          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
+                          className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-tint"
                         >
                           <X size={14} />
                           Dismiss
@@ -4204,19 +4132,19 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
             )}
           </div>
 
-          <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold text-[#384959]">Resume Targets</div>
+          <div className="rounded-[10px] border border-line bg-white p-5">
+            <div className="text-sm font-semibold text-ink">Resume Targets</div>
             <div className="mt-1 text-xs text-muted">Recommended ranges for this template and experience level.</div>
             <div className="mt-4 space-y-2">
               {benchmarkRows.map((row) => (
-                <div key={row.label} className="rounded-2xl border border-[#BDDDFC]/20 bg-[#f0f4f8] px-3 py-3">
+                <div key={row.label} className="rounded-[10px] border border-line bg-paper px-3 py-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="text-sm font-semibold text-[#384959]">{row.label}</div>
+                      <div className="text-sm font-semibold text-ink">{row.label}</div>
                       <div className="mt-1 text-xs text-muted">{row.note}</div>
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-semibold text-[#384959]">{row.current}</div>
+                      <div className="text-sm font-semibold text-ink">{row.current}</div>
                       <div className="text-[11px] text-muted">Target {row.target}</div>
                     </div>
                   </div>
@@ -4233,17 +4161,17 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
             </div>
           </div>
 
-          <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold text-[#384959]">Job Terms</div>
+          <div className="rounded-[10px] border border-line bg-white p-5">
+            <div className="text-sm font-semibold text-ink">Job Terms</div>
             {scoreData ? (
               <>
                 {relevantTermsMode === "no_job" && (
-                  <div className="mt-2 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-muted">
+                  <div className="mt-2 rounded-[10px] border border-line bg-paper px-3 py-3 text-sm leading-relaxed text-muted">
                     Attach a job or open this workspace from a selected role to see matched and missing terms.
                   </div>
                 )}
                 {relevantTermsMode === "matching" && (
-                  <div className="mt-2 flex items-center gap-2 rounded-2xl border border-indigo-200 bg-indigo-50 px-3 py-3 text-sm leading-relaxed text-indigo-700">
+                  <div className="mt-2 flex items-center gap-2 rounded-[10px] border border-line bg-tint px-3 py-3 text-sm leading-relaxed text-accent">
                     <Loader2 size={15} className="animate-spin" />
                     Matching your resume against this specific job now...
                   </div>
@@ -4265,7 +4193,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   </>
                 )}
                 {(relevantTermsMode === "empty" || relevantTermsMode === "match_error") && (
-                  <div className="mt-3 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-3 text-sm leading-relaxed text-muted">
+                  <div className="mt-3 rounded-[10px] border border-line bg-paper px-3 py-3 text-sm leading-relaxed text-muted">
                     {relevantTermsMode === "match_error"
                       ? (jobMatchError || "We couldn't load job-specific alignment terms right now.")
                       : "We couldn’t extract reliable alignment terms from this job yet. Try another role or rescore after the JD loads fully."}
@@ -4286,7 +4214,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 {relevantMissingKeywords.length > 0 && (
                   <>
                     <div className="mt-4 flex items-center gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Missing Terms</span>
+                      <span className="text-xs font-semibold text-muted">Missing Terms</span>
                       <span className="text-[10px] text-muted">Use naturally</span>
                     </div>
                     <div className="relative mt-2 flex flex-wrap gap-1.5">
@@ -4311,17 +4239,17 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     </div>
                     {insertKeywordPopup && (
                       <div
-                        className="mt-2 rounded-2xl border border-[#BDDDFC]/30 bg-white p-3 shadow-lg"
+                        className="mt-2 rounded-[10px] border border-line bg-white p-3 shadow-lg"
                         style={{ zIndex: 50 }}
                       >
                         <div className="flex items-center justify-between">
-                          <div className="text-xs font-semibold text-[#384959]">
+                          <div className="text-xs font-semibold text-ink">
                             Insert <span className="rounded bg-rose-100 px-1.5 py-0.5 text-rose-700">{insertKeywordPopup.keyword}</span> into:
                           </div>
                           <button
                             type="button"
                             onClick={() => setInsertKeywordPopup(null)}
-                            className="rounded-full p-0.5 text-muted hover:bg-[#BDDDFC]/10 hover:text-muted"
+                            className="rounded-full p-0.5 text-muted hover:bg-tint hover:text-muted"
                           >
                             <X size={12} />
                           </button>
@@ -4331,20 +4259,20 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                             {insertKeywordPopup.suggestions.map((bullet) => (
                               <div
                                 key={bullet.id}
-                                className="group flex items-start gap-2 rounded-xl border border-[#BDDDFC]/20 bg-[#f0f4f8] px-2.5 py-2 transition hover:border-indigo-200 hover:bg-indigo-50"
+                                className="group flex items-start gap-2 rounded-md border border-line bg-paper px-2.5 py-2 transition hover:border-accent hover:bg-tint"
                               >
                                 <div className="min-w-0 flex-1">
-                                  <div className="text-[10px] font-medium uppercase tracking-wider text-muted">
+                                  <div className="text-[10px] font-medium text-muted">
                                     {bullet.sectionKey || "section"}
                                   </div>
-                                  <div className="mt-0.5 truncate text-xs text-[#384959]" title={bullet.text}>
+                                  <div className="mt-0.5 truncate text-xs text-ink" title={bullet.text}>
                                     {bullet.text.length > 80 ? `${bullet.text.slice(0, 80)}...` : bullet.text}
                                   </div>
                                 </div>
                                 <button
                                   type="button"
                                   onClick={() => handleInsertKeywordIntoBullet(bullet, insertKeywordPopup.keyword)}
-                                  className="shrink-0 rounded-lg bg-[#384959] px-2 py-1 text-[10px] font-medium text-white transition hover:bg-[#2d3a47]"
+                                  className="shrink-0 rounded-lg bg-accent px-2 py-1 text-[10px] font-medium text-white transition hover:bg-accent-hover"
                                 >
                                   Insert
                                 </button>
@@ -4366,14 +4294,14 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
             )}
           </div>
 
-          <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold text-[#384959]">Action Buttons</div>
+          <div className="rounded-[10px] border border-line bg-white p-5">
+            <div className="text-sm font-semibold text-ink">Action Buttons</div>
             <div className="mt-4 space-y-2.5">
               <button
                 type="button"
                 onClick={handleFinalizeScore}
                 disabled={scoring || !resumeText.trim()}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] transition hover:bg-[#f0f4f8] disabled:opacity-40"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-[10px] border border-line bg-white px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-tint disabled:opacity-40"
               >
                 {scoring ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 {scoring ? "Scoring..." : "Finalize Score"}
@@ -4383,7 +4311,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   type="button"
                   onClick={handleAIFormat}
                   disabled={formatting || !resumeText.trim()}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-[#384959] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-[10px] bg-accent px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-hover disabled:opacity-40"
                 >
                   {formatting ? <Loader2 size={14} className="animate-spin" /> : null}
                   {formatting ? "Polishing..." : "Quick Polish"}
@@ -4393,7 +4321,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 type="button"
                 onClick={handleFullTailorRun}
                 disabled={tailoringLoading || !resumeText.trim() || !jobDescription.trim()}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-700 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-800 disabled:opacity-40"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-[10px] bg-accent px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-hover disabled:opacity-40"
               >
                 {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : null}
                 {tailoringLoading ? "Tailoring..." : "Run Full Tailor"}
@@ -4403,7 +4331,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   type="button"
                   onClick={handleOptimizeSummary}
                   disabled={tailoringLoading || !resumeText.trim()}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-medium text-violet-800 transition hover:bg-violet-100 disabled:opacity-40"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-[10px] border border-line bg-tint px-4 py-2.5 text-sm font-medium text-accent transition hover:bg-tint disabled:opacity-40"
                 >
                   {tailoringLoading ? <Loader2 size={14} className="animate-spin" /> : null}
                   {hasSummarySection ? "Optimise Summary" : "Generate Summary"}
@@ -4414,7 +4342,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   type="button"
                   onClick={() => handleDeleteSection(selectedSection)}
                   disabled={!resumeText.trim()}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-40"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700 transition hover:bg-rose-100 disabled:opacity-40"
                 >
                   <Trash2 size={14} />
                   Delete Section
@@ -4424,29 +4352,29 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 type="button"
                 onClick={handleAIReview}
                 disabled={coachLoading || !resumeText.trim()}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-black disabled:opacity-40"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-[10px] bg-accent px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-hover disabled:opacity-40"
               >
                 {coachLoading ? <Loader2 size={14} className="animate-spin" /> : null}
                 {coachLoading ? "Opening Coach..." : "AI Coach"}
               </button>
             </div>
             {needsRescore && (
-              <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <div className="mt-3 rounded-[10px] border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 You’ve made edits since the opening score. We’ll score the final version when you finalize or download.
               </div>
             )}
             {scoreChange && (
-              <div className="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+              <div className="mt-3 rounded-[10px] border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
                 {scoreChange.context}: {Number.isFinite(scoreChange.before) ? `${scoreChange.before} → ` : ""}{scoreChange.after}
               </div>
             )}
             {!jobDescription.trim() && (
-              <div className="mt-3 rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-2 text-xs text-muted">
+              <div className="mt-3 rounded-[10px] border border-line bg-paper px-3 py-2 text-xs text-muted">
                 Select a job first if you want the full tailor run to rewrite bullets, sections, and the summary against a specific JD. Summary generation can still run without one.
               </div>
             )}
             {aiStatus && (
-              <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-[#BDDDFC]/10 px-3 py-1 text-xs font-medium text-muted">
+              <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-tint px-3 py-1 text-xs font-medium text-muted">
                 <span className={`inline-block h-2 w-2 rounded-full ${aiStatus.status === "ready" ? "bg-emerald-500" : aiStatus.status === "busy" ? "bg-amber-500" : "bg-rose-500"}`} />
                 {aiStatus.status === "ready" ? "Assistant ready" : aiStatus.status === "busy" ? "Assistant busy" : aiStatus.wait_seconds >= 0 ? `Wait about ${Math.round(aiStatus.wait_seconds)}s` : "Assistant unavailable"}
               </div>
@@ -4454,29 +4382,29 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
           </div>
 
           {(tailoringLoading || tailoringStatus || tailoringResult || tailoringError) && (
-            <div className="rounded-3xl border border-violet-200 bg-violet-50 p-5 shadow-sm">
+            <div className="rounded-[10px] border border-line bg-tint p-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-[#384959]">Tailor Resume</div>
+                  <div className="text-sm font-semibold text-ink">Tailor Resume</div>
                   <div className="mt-1 text-xs leading-relaxed text-muted">
                     Reviews bullets, sections, and summary against the selected job.
                   </div>
                 </div>
                 {tailoringSessionId && (
-                  <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-violet-700">
+                  <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-accent">
                     {tailoringLoading ? "Running" : tailoringResult ? "Ready" : "Queued"}
                   </span>
                 )}
               </div>
 
               {tailoringError && (
-                <div className="mt-4 rounded-2xl border border-rose-200 bg-white px-3 py-3 text-sm leading-relaxed text-rose-700">
+                <div className="mt-4 rounded-[10px] border border-rose-200 bg-white px-3 py-3 text-sm leading-relaxed text-rose-700">
                   {tailoringError}
                 </div>
               )}
 
               {tailoringStatus && (
-                <div className="mt-4 rounded-2xl border border-violet-200 bg-white p-4">
+                <div className="mt-4 rounded-[10px] border border-line bg-white p-4">
                   <div className="flex items-center">
                     {TAILOR_STAGE_LABELS.map((stage, stageIndex) => {
                       const currentStageNumber = Number.isFinite(tailoringStatus?.stage_number) ? tailoringStatus.stage_number : 0;
@@ -4490,21 +4418,21 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                               isComplete
                                 ? "bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300"
                                 : isActive
-                                  ? "bg-violet-600 text-white shadow-sm shadow-violet-200 ring-2 ring-violet-300 ring-offset-1"
-                                  : "bg-[#f0f4f8] text-muted ring-1 ring-[#BDDDFC]/40"
+                                  ? "bg-accent text-white ring-2 ring-accent ring-offset-1"
+                                  : "bg-paper text-muted ring-1 ring-line"
                             }`}
                           >
                             {isComplete ? "✓" : stageIndex + 1}
                           </div>
                           {stageIndex < TAILOR_STAGE_LABELS.length - 1 && (
-                            <div className={`h-px flex-1 transition-all ${isComplete ? "bg-emerald-300" : "bg-[#BDDDFC]/40"}`} />
+                            <div className={`h-px flex-1 transition-all ${isComplete ? "bg-emerald-300" : "bg-line"}`} />
                           )}
                         </div>
                       );
                     })}
                   </div>
                   <div className="mt-3 flex items-baseline justify-between gap-2">
-                    <div className="text-sm font-semibold text-[#384959]">
+                    <div className="text-sm font-semibold text-ink">
                       {TAILOR_STAGE_LABELS.find((s) => s.id === tailoringStatus.stage)?.label
                         || titleCase(String(tailoringStatus.stage || "Queued").replace(/_/g, " "))}
                       {tailoringStatus.progress?.total ? (
@@ -4530,21 +4458,21 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
               {tailoringResult && (
                 <div className="mt-4 space-y-4">
                   {tailoringResult.degraded && (
-                    <div className="rounded-2xl border border-amber-200 bg-white px-4 py-3 text-sm leading-relaxed text-amber-900">
+                    <div className="rounded-[10px] border border-amber-200 bg-white px-4 py-3 text-sm leading-relaxed text-amber-900">
                       This tailor run completed, but at least one AI planning step degraded to a simpler local fallback. Review the notes below before applying the draft.
                     </div>
                   )}
 
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-2xl border border-violet-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Score Lift</div>
-                      <div className="mt-2 text-sm leading-relaxed text-[#384959]">
+                    <div className="rounded-[10px] border border-line bg-white p-4">
+                      <div className="text-xs font-semibold text-muted">Score Lift</div>
+                      <div className="mt-2 text-sm leading-relaxed text-ink">
                         {Number.isFinite(tailoringResult?.score?.before) ? tailoringResult.score.before : "--"} → {Number.isFinite(tailoringResult?.score?.after) ? tailoringResult.score.after : "--"}
                       </div>
                     </div>
-                    <div className="rounded-2xl border border-violet-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Tailor Changes</div>
-                      <div className="mt-2 text-sm leading-relaxed text-[#384959]">
+                    <div className="rounded-[10px] border border-line bg-white p-4">
+                      <div className="text-xs font-semibold text-muted">Tailor Changes</div>
+                      <div className="mt-2 text-sm leading-relaxed text-ink">
                         {tailoringResult.total_changes || 0} updates across bullets, sections, and summary.
                       </div>
                     </div>
@@ -4553,7 +4481,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   {Object.keys(tailoringChangeSummary).length > 0 && (
                     <div className="flex flex-wrap gap-2">
                       {Object.entries(tailoringChangeSummary).map(([label, count]) => (
-                        <span key={label} className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-violet-700">
+                        <span key={label} className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-accent">
                           {count} {label}{count === 1 ? "" : "s"}
                         </span>
                       ))}
@@ -4561,10 +4489,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   )}
 
                   {Array.isArray(tailoringResult.pipeline_notes) && tailoringResult.pipeline_notes.length > 0 && (
-                    <div className="space-y-2 rounded-2xl border border-amber-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Pipeline Notes</div>
+                    <div className="space-y-2 rounded-[10px] border border-amber-200 bg-white p-4">
+                      <div className="text-xs font-semibold text-muted">Pipeline Notes</div>
                       {tailoringResult.pipeline_notes.map((note, index) => (
-                        <div key={`${note.type || "note"}-${index}`} className="rounded-xl bg-amber-50 px-3 py-2 text-sm leading-relaxed text-amber-900">
+                        <div key={`${note.type || "note"}-${index}`} className="rounded-md bg-amber-50 px-3 py-2 text-sm leading-relaxed text-amber-900">
                           {note.message}
                         </div>
                       ))}
@@ -4572,9 +4500,9 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   )}
 
                   {tailoringResult.skill_match && (
-                    <div className="rounded-2xl border border-violet-200 bg-white p-4">
-                      <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Job Match</div>
-                      <div className="mt-2 text-sm leading-relaxed text-[#384959]">
+                    <div className="rounded-[10px] border border-line bg-white p-4">
+                      <div className="text-xs font-semibold text-muted">Job Match</div>
+                      <div className="mt-2 text-sm leading-relaxed text-ink">
                         Matched {tailoringResult.skill_match.before} job term{tailoringResult.skill_match.before === 1 ? "" : "s"} before rewrite.
                         {tailoringResult.skill_match.injectable?.length > 0
                           ? ` ${tailoringResult.skill_match.injectable.length} missing term${tailoringResult.skill_match.injectable.length === 1 ? "" : "s"} looked safe to weave into existing experience.`
@@ -4584,16 +4512,16 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   )}
 
                   {tailoringChanges.length > 0 && (
-                    <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-4">
+                    <div className="space-y-3 rounded-[10px] border border-line bg-white p-4">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">Review Tailor Changes</div>
-                          <div className="mt-1 text-sm text-[#384959]">Accept, reject, or edit each proposed change before applying them to the draft.</div>
+                          <div className="text-xs font-semibold text-muted">Review Tailor Changes</div>
+                          <div className="mt-1 text-sm text-ink">Accept, reject, or edit each proposed change before applying them to the draft.</div>
                         </div>
                         <div className="flex flex-wrap gap-2 text-xs">
                           <span className="rounded-full bg-emerald-100 px-2.5 py-1 font-semibold text-emerald-800">Accepted {tailoringAcceptedCount}</span>
                           <span className="rounded-full bg-rose-100 px-2.5 py-1 font-semibold text-rose-800">Rejected {tailoringRejectedCount}</span>
-                          <span className="rounded-full bg-[#BDDDFC]/10 px-2.5 py-1 font-semibold text-[#384959]">Pending {tailoringPendingCount}</span>
+                          <span className="rounded-full bg-tint px-2.5 py-1 font-semibold text-ink">Pending {tailoringPendingCount}</span>
                         </div>
                       </div>
                       <div className="max-h-[34rem] space-y-3 overflow-y-auto pr-1">
@@ -4602,9 +4530,9 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                           const changeKey = bulletId || `${change.type}-${index}`;
                           const userStatus = change.user_status || "pending";
                           return (
-                            <div key={`${changeKey}-${index}`} className="rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
+                            <div key={`${changeKey}-${index}`} className="rounded-[10px] border border-line bg-paper p-4">
                               <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">
+                                <div className="text-xs font-semibold text-muted">
                                   {titleCase(String(change.type || "change").replace(/_/g, " "))}
                                 </div>
                                 <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
@@ -4618,20 +4546,20 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                 </span>
                               </div>
                               <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                                <div className="rounded-xl border border-[#BDDDFC]/30 bg-white p-3">
-                                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted">Original</div>
-                                  <div className="mt-2 text-sm leading-relaxed text-[#384959]">{change.original}</div>
+                                <div className="rounded-md border border-line bg-white p-3">
+                                  <div className="text-[10px] font-semibold text-muted">Original</div>
+                                  <div className="mt-2 text-sm leading-relaxed text-ink">{change.original}</div>
                                 </div>
-                                <div className="rounded-xl border border-violet-200 bg-violet-50 p-3">
-                                  <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-700">Tailored</div>
-                                  <div className="mt-2 text-sm leading-relaxed text-violet-950">{change.tailored}</div>
+                                <div className="rounded-md border border-line bg-tint p-3">
+                                  <div className="text-[10px] font-semibold text-accent">Tailored</div>
+                                  <div className="mt-2 text-sm leading-relaxed text-ink">{change.tailored}</div>
                                 </div>
                               </div>
                               <textarea
                                 value={tailorEditedTexts[changeKey] || ""}
                                 onChange={(event) => setTailorEditedTexts((current) => ({ ...current, [changeKey]: event.target.value }))}
                                 rows={3}
-                                className="mt-3 w-full rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm leading-relaxed text-[#384959]"
+                                className="mt-3 w-full rounded-md border border-line bg-white px-3 py-2 text-sm leading-relaxed text-ink"
                                 placeholder="Optional: edit this tailored text before applying it"
                               />
                               <div className="mt-3 flex flex-wrap gap-2">
@@ -4639,7 +4567,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                   type="button"
                                   disabled={tailorDecisionBusy[changeKey]}
                                   onClick={() => submitTailorFeedback(change, "accept")}
-                                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-40"
+                                  className="inline-flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-40"
                                 >
                                   {tailorDecisionBusy[changeKey] ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
                                   Accept
@@ -4648,7 +4576,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                   type="button"
                                   disabled={tailorDecisionBusy[changeKey]}
                                   onClick={() => submitTailorFeedback(change, "reject")}
-                                  className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-40"
+                                  className="inline-flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-40"
                                 >
                                   <X size={13} />
                                   Reject
@@ -4657,7 +4585,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                   type="button"
                                   disabled={tailorDecisionBusy[changeKey] || !(tailorEditedTexts[changeKey] || "").trim()}
                                   onClick={() => submitTailorFeedback(change, "edit")}
-                                  className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-medium text-violet-700 hover:bg-violet-50 disabled:opacity-40"
+                                  className="inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium text-accent hover:bg-tint disabled:opacity-40"
                                 >
                                   <Edit3 size={13} />
                                   Edit
@@ -4671,25 +4599,25 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   )}
 
                   {Array.isArray(tailoringResult.ats_gaps) && tailoringResult.ats_gaps.length > 0 && (
-                    <div className="space-y-3 rounded-2xl border border-violet-200 bg-white p-4">
+                    <div className="space-y-3 rounded-[10px] border border-line bg-white p-4">
                       <div>
-                        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted">ATS Gap Report</div>
-                        <div className="mt-1 text-sm text-[#384959]">These skills are still missing or underrepresented after the tailor run.</div>
+                        <div className="text-xs font-semibold text-muted">ATS Gap Report</div>
+                        <div className="mt-1 text-sm text-ink">These skills are still missing or underrepresented after the tailor run.</div>
                       </div>
                       <div className="space-y-3">
                         {tailoringResult.ats_gaps.map((gap, index) => {
                           const gapKey = getAtsGapKey(gap);
                           const gapDecision = atsGapDecisions[gapKey] || "";
                           return (
-                            <div key={`${gapKey}-${index}`} className="rounded-2xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-4">
+                            <div key={`${gapKey}-${index}`} className="rounded-[10px] border border-line bg-paper p-4">
                               <div className="flex flex-wrap items-center gap-2">
-                                <div className="text-sm font-semibold text-[#384959]">{gap.skill}</div>
+                                <div className="text-sm font-semibold text-ink">{gap.skill}</div>
                                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${gap.required ? "bg-rose-100 text-rose-800" : "bg-amber-100 text-amber-800"}`}>
                                   {gap.required ? "Required" : "Preferred"}
                                 </span>
                               </div>
                               <div className="mt-2 text-sm leading-relaxed text-muted">
-                                Suggested placement: <span className="font-medium text-[#384959]">{RESUME_SECTION_LABELS[gap.suggested_section] || titleCase(gap.suggested_section || "experience")}</span>
+                                Suggested placement: <span className="font-medium text-ink">{RESUME_SECTION_LABELS[gap.suggested_section] || titleCase(gap.suggested_section || "experience")}</span>
                               </div>
                               {gap.action && (
                                 <div className="mt-1 text-sm leading-relaxed text-muted">
@@ -4702,14 +4630,14 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                   value={atsGapInputs[gapKey] || ""}
                                   onChange={(event) => setAtsGapInputs((current) => ({ ...current, [gapKey]: event.target.value }))}
                                   placeholder={`Add a real example or fact for ${gap.skill}`}
-                                  className="mt-3 w-full rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm leading-relaxed text-[#384959]"
+                                  className="mt-3 w-full rounded-md border border-line bg-white px-3 py-2 text-sm leading-relaxed text-ink"
                                 />
                               )}
                               <div className="mt-3 flex flex-wrap gap-2">
                                 <button
                                   type="button"
                                   onClick={() => handleAtsGapAction(gap, "skills")}
-                                  className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
+                                  className="inline-flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
                                 >
                                   <Plus size={13} />
                                   Add to Skills
@@ -4717,7 +4645,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                 <button
                                   type="button"
                                   onClick={() => handleAtsGapAction(gap, "bullet")}
-                                  className="inline-flex items-center gap-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-800 hover:bg-violet-100"
+                                  className="inline-flex items-center gap-2 rounded-md border border-line bg-tint px-3 py-2 text-sm font-medium text-accent hover:bg-tint"
                                 >
                                   <Plus size={13} />
                                   Add to Bullet
@@ -4725,13 +4653,13 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                 <button
                                   type="button"
                                   onClick={() => handleAtsGapAction(gap, "skip")}
-                                  className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
+                                  className="inline-flex items-center gap-2 rounded-md border border-line bg-white px-3 py-2 text-sm font-medium text-ink hover:bg-tint"
                                 >
                                   <X size={13} />
                                   Skip
                                 </button>
                                 {gapDecision && (
-                                  <span className="inline-flex items-center rounded-full bg-[#BDDDFC]/10 px-2.5 py-1 text-[11px] font-semibold text-[#384959]">
+                                  <span className="inline-flex items-center rounded-full bg-tint px-2.5 py-1 text-[11px] font-semibold text-ink">
                                     {titleCase(gapDecision)}
                                   </span>
                                 )}
@@ -4748,7 +4676,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                       type="button"
                       onClick={applyAcceptedTailoringChanges}
                       disabled={tailorApplyBusy || tailoringAcceptedCount === 0}
-                      className="inline-flex items-center gap-2 rounded-2xl bg-violet-700 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-violet-800 disabled:opacity-40"
+                      className="inline-flex items-center gap-2 rounded-[10px] bg-accent px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-hover disabled:opacity-40"
                     >
                       {tailorApplyBusy ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
                       {tailorApplyBusy ? "Applying..." : "Apply Accepted Changes"}
@@ -4756,7 +4684,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     <button
                       type="button"
                       onClick={applyTailoredDraft}
-                      className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-medium text-violet-700 transition hover:bg-violet-50"
+                      className="inline-flex items-center gap-2 rounded-[10px] border border-line bg-white px-4 py-2.5 text-sm font-medium text-accent transition hover:bg-tint"
                     >
                       Apply All Suggested Changes
                     </button>
@@ -4773,7 +4701,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                         setAtsGapInputs({});
                         setAtsGapDecisions({});
                       }}
-                      className="inline-flex items-center gap-2 rounded-2xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] transition hover:bg-[#f0f4f8]"
+                      className="inline-flex items-center gap-2 rounded-[10px] border border-line bg-white px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-tint"
                     >
                       <X size={14} />
                       Dismiss
@@ -4785,10 +4713,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
           )}
 
           {reviewAllSuggestions.length > 0 && (
-            <div className="rounded-3xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
+            <div className="rounded-[10px] border border-line bg-tint p-5">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-sm font-semibold text-[#384959]">AI Improve All Review</div>
+                  <div className="text-sm font-semibold text-ink">AI Improve All Review</div>
                   <div className="mt-1 text-xs leading-relaxed text-muted">
                     {reviewAllSummary?.message || `${reviewAllSuggestions.length} bullet suggestions ready for review.`}
                   </div>
@@ -4800,7 +4728,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     setReviewAllSummary(null);
                     setReviewDecisions({});
                   }}
-                  className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-muted hover:bg-[#f0f4f8]"
+                  className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-muted hover:bg-tint"
                 >
                   Close
                 </button>
@@ -4813,10 +4741,10 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 <span className="rounded-full bg-amber-100 px-2.5 py-1 font-semibold text-amber-800">
                   Improve {reviewAllSummary?.improve ?? reviewableSuggestions.length}
                 </span>
-                <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-700">
+                <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-ink">
                   Pending {pendingReviewCount}
                 </span>
-                <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-slate-700">
+                <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-ink">
                   Accepted {acceptedReviewCount}
                 </span>
               </div>
@@ -4825,15 +4753,15 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 {reviewAllSuggestions.map((suggestion) => {
                   if (suggestion.status === "keep") {
                     return (
-                      <div key={suggestion.id} className="rounded-2xl border border-emerald-200 bg-white p-4">
+                      <div key={suggestion.id} className="rounded-[10px] border border-emerald-200 bg-white p-4">
                         <div className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
                           <CheckCircle size={15} />
                           Keep
                         </div>
-                        <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Current bullet</div>
-                        <div className="mt-1 text-sm leading-relaxed text-[#384959]">{suggestion.original}</div>
+                        <div className="mt-3 text-xs font-semibold text-muted">Current bullet</div>
+                        <div className="mt-1 text-sm leading-relaxed text-ink">{suggestion.original}</div>
                         {suggestion.reason && (
-                          <div className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-800">
+                          <div className="mt-3 rounded-md bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-800">
                             {suggestion.reason}
                           </div>
                         )}
@@ -4843,26 +4771,26 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
 
                   const decision = reviewDecisions[suggestion.id];
                   return (
-                    <div key={suggestion.id} className="rounded-2xl border border-amber-200 bg-white p-4">
+                    <div key={suggestion.id} className="rounded-[10px] border border-amber-200 bg-white p-4">
                       <div className="flex items-center gap-2 text-sm font-semibold text-amber-800">
                         Improve
                       </div>
-                      <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Current bullet</div>
-                      <div className="mt-1 text-sm leading-relaxed text-[#384959]">{suggestion.original}</div>
+                      <div className="mt-3 text-xs font-semibold text-muted">Current bullet</div>
+                      <div className="mt-1 text-sm leading-relaxed text-ink">{suggestion.original}</div>
                       {suggestion.issue && (
                         <>
-                          <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Issue</div>
+                          <div className="mt-3 text-xs font-semibold text-muted">Issue</div>
                           <div className="mt-1 text-sm leading-relaxed text-amber-800">{suggestion.issue}</div>
                         </>
                       )}
                       {suggestion.suggested && (
                         <>
-                          <div className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-muted">Suggested rewrite</div>
-                          <div className="mt-1 text-sm leading-relaxed text-[#384959]">{suggestion.suggested}</div>
+                          <div className="mt-3 text-xs font-semibold text-muted">Suggested rewrite</div>
+                          <div className="mt-1 text-sm leading-relaxed text-ink">{suggestion.suggested}</div>
                         </>
                       )}
                       {suggestion.reason && (
-                        <div className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                        <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
                           {suggestion.reason}
                         </div>
                       )}
@@ -4872,7 +4800,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                           onClick={() => setReviewDecision(suggestion.id, "accept")}
                           className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition ${
                             decision === "accept"
-                              ? "bg-emerald-600 text-white"
+                              ? "bg-accent text-white"
                               : "border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50"
                           }`}
                         >
@@ -4885,7 +4813,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                           className={`inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition ${
                             decision === "skip"
                               ? "bg-slate-700 text-white"
-                              : "border border-[#BDDDFC]/30 bg-white text-[#384959] hover:bg-[#f0f4f8]"
+                              : "border border-line bg-white text-ink hover:bg-tint"
                           }`}
                         >
                           <X size={14} />
@@ -4909,7 +4837,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   type="button"
                   onClick={applyAcceptedReviewChanges}
                   disabled={pendingReviewCount > 0}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#384959] px-4 py-2.5 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-40"
+                  className="inline-flex items-center justify-center gap-2 rounded-[10px] bg-accent px-4 py-2.5 text-sm font-medium text-white transition hover:bg-accent-hover disabled:opacity-40"
                 >
                   <CheckCircle size={14} />
                   Apply All Accepted Changes
@@ -4918,8 +4846,8 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
             </div>
           )}
 
-          <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-5 shadow-sm">
-            <div className="text-sm font-semibold text-[#384959]">Singapore Tips</div>
+          <div className="rounded-[10px] border border-line bg-white p-5">
+            <div className="text-sm font-semibold text-ink">Singapore Tips</div>
             <ul className="mt-3 space-y-2">
               {(scoreData?.sg_tips?.length ? scoreData.sg_tips : [
                 "Mention residency status if it meaningfully improves your fit.",
@@ -4927,7 +4855,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 "Keep the final layout ATS-friendly and easy to scan on mobile.",
               ]).map((tip, index) => (
                 <li key={`${tip}-${index}`} className="flex items-start gap-2 text-sm leading-relaxed text-muted">
-                  <ChevronRight size={14} className="mt-0.5 flex-shrink-0 text-indigo-500" />
+                  <ChevronRight size={14} className="mt-0.5 flex-shrink-0 text-accent" />
                   <span>{tip}</span>
                 </li>
               ))}
@@ -4935,25 +4863,25 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
           </div>
 
           {(coachLoading || coachResponse) && (
-            <details open className="overflow-hidden rounded-3xl border border-purple-200 bg-purple-50 shadow-sm">
+            <details open className="overflow-hidden rounded-[10px] border border-line bg-tint">
               <summary className="cursor-pointer list-none px-5 py-4">
-                <div className="flex items-center gap-2 text-sm font-semibold text-purple-900">
+                <div className="flex items-center gap-2 text-sm font-semibold text-ink">
                   AI Coach
                 </div>
               </summary>
-              <div className="border-t border-purple-100 px-5 py-4">
+              <div className="border-t border-line px-5 py-4">
                 {coachLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-purple-700">
+                  <div className="flex items-center gap-2 text-sm text-accent">
                     <Loader2 size={16} className="animate-spin" />
                     Reviewing your resume...
                   </div>
                 ) : (
                   <>
-                    <div className="whitespace-pre-line rounded-2xl bg-white p-4 text-sm leading-relaxed text-[#384959]">
+                    <div className="whitespace-pre-line rounded-[10px] bg-white p-4 text-sm leading-relaxed text-ink">
                       {coachResponse?.coaching}
                     </div>
                     {sessionId && (
-                      <div className="mt-3 text-xs text-purple-700">
+                      <div className="mt-3 text-xs text-accent">
                         Session active. Bullet rewrites in this review stay on the same coaching session.
                       </div>
                     )}
@@ -4965,32 +4893,32 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
         </aside>
 
         <section className="lg:order-1 lg:block">
-          <div className="rounded-[2rem] border border-slate-200 bg-[#f3f5f8] p-4 shadow-sm sm:p-5">
-            <div className="flex flex-col gap-3 border-b border-[#BDDDFC]/30/70 px-1 pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex flex-col gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Document Preview</div>
+                <h3 className="text-base font-semibold text-ink">Document Preview</h3>
                 <div className="mt-1 text-sm text-muted">
                   {wordCount} words
                   {resumeText.trim() ? " • click any line to edit inline" : " • upload or paste a resume to begin"}
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <div className="inline-flex items-center gap-1 rounded-full border border-[#BDDDFC]/30 bg-white px-1">
+                <div className="inline-flex items-center gap-1 rounded-md border border-field bg-white px-1">
                   <button
                     type="button"
                     onClick={handleUndo}
                     disabled={undoStackRef.current.length === 0}
-                    className="inline-flex items-center gap-1 px-2 py-1.5 text-xs text-muted transition hover:text-[#384959] disabled:opacity-30"
+                    className="inline-flex min-h-9 items-center gap-1 px-2 text-sm text-ink transition hover:text-accent disabled:opacity-40"
                     title="Undo (Ctrl+Z)"
                   >
                     <RefreshCw size={12} className="scale-x-[-1]" /> Undo
                   </button>
-                  <div className="h-4 w-px bg-[#BDDDFC]/20" />
+                  <div className="h-4 w-px bg-line" />
                   <button
                     type="button"
                     onClick={handleRedo}
                     disabled={redoStackRef.current.length === 0}
-                    className="inline-flex items-center gap-1 px-2 py-1.5 text-xs text-muted transition hover:text-[#384959] disabled:opacity-30"
+                    className="inline-flex min-h-9 items-center gap-1 px-2 text-sm text-ink transition hover:text-accent disabled:opacity-40"
                     title="Redo (Ctrl+Shift+Z)"
                   >
                     Redo <RefreshCw size={12} />
@@ -4999,8 +4927,12 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 <button
                   type="button"
                   onClick={() => setAnnotationsOn((current) => !current)}
-                  className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium transition ${annotationsOn ? "bg-[#384959] text-white" : "bg-white text-muted ring-1 ring-[#BDDDFC]/30"}`}
+                  aria-pressed={annotationsOn}
+                  className="inline-flex min-h-10 items-center gap-2 rounded-md border border-field bg-white px-3 text-sm font-medium text-ink transition hover:bg-tint"
                 >
+                  <span aria-hidden="true" className={`h-4 w-7 rounded-full p-0.5 transition-colors ${annotationsOn ? "bg-accent" : "bg-field"}`}>
+                    <span className={`block h-3 w-3 rounded-full bg-white transition-transform ${annotationsOn ? "translate-x-3" : ""}`} />
+                  </span>
                   {annotationsOn ? "Inline Tips On" : "Inline Tips Off"}
                 </button>
                 <button
@@ -5016,13 +4948,13 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
 
             <div
               ref={resumePrintRef}
-              className={`resume-print-target mx-auto mt-5 bg-white shadow-[0_2px_20px_rgba(0,0,0,0.1)] border border-[#BDDDFC]/30 ${templateStyles.pageClass}`}
+              className={`resume-print-target mx-auto mt-5 bg-white shadow-[0_2px_20px_rgba(0,0,0,0.1)] border border-line ${templateStyles.pageClass}`}
               style={templateStyles.pageStyle}
             >
               {resumeText.trim() ? (
                 <>
                   {displayHeaderLines.length > 0 && (
-                    <div className="mb-4 border-b border-[#BDDDFC]/30 pb-2 text-center">
+                    <div className="mb-4 border-b border-line pb-2 text-center">
                       <div className={templateStyles.nameClass} style={templateStyles.nameStyle}>{displayHeaderLines[0]}</div>
                       {displayDetailLines.map((line, index) => (
                         <div key={`${line}-${index}`} className="mx-auto mt-0.5 max-w-[34rem] text-muted" style={templateStyles.contactStyle}>{line}</div>
@@ -5045,7 +4977,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                       const wrapperClasses = section.type === "bullet" && annotationsOn
                         ? `${annotation?.borderClass || "border-transparent bg-transparent"} border-l-[3px]`
                         : (isSelectedBullet || isSelectedSection)
-                          ? "border-l-[3px] border-indigo-300 bg-indigo-50/60"
+                          ? "border-l-[3px] border-line bg-tint"
                           : "border-l-[3px] border-transparent";
 
                       const lineContent = isEditing ? (
@@ -5065,7 +4997,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                               commitEdit(section);
                             }
                           }}
-                          className="w-full resize-none rounded-xl border border-indigo-200 bg-white px-3 py-2 text-inherit leading-relaxed text-[#384959] focus:outline-none focus:ring-2 focus:ring-[#BDDDFC]"
+                          className="w-full resize-none rounded-md border border-line bg-white px-3 py-2 text-inherit leading-relaxed text-ink"
                           style={{
                             fontSize: "16px",
                             lineHeight: templateStyles.bodyStyle.lineHeight,
@@ -5103,7 +5035,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                               <h3 className={templateStyles.headingClass} style={templateStyles.headingStyle}>
                                 {section.headingText}
                               </h3>
-                              <p className="mb-4 text-[#384959]" style={{ ...templateStyles.bodyStyle, breakInside: "avoid" }}>
+                              <p className="mb-4 text-ink" style={{ ...templateStyles.bodyStyle, breakInside: "avoid" }}>
                                 {renderHighlightedText(
                                   isShoutySummaryParagraph(section.bodyText, section.sectionKey)
                                     ? toSentenceCaseDisplayText(section.bodyText)
@@ -5114,8 +5046,8 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                             </div>
                           )}
                           {section.type === "education_entry" && (
-                            <div className={`mb-2 rounded-lg border border-[#BDDDFC]/20 bg-[#f0f4f8]/40 px-4 py-3 ${templateStyles.subheadingClass}`}>
-                              <div className="font-semibold leading-snug text-[#384959]">
+                            <div className={`mb-2 rounded-lg border border-line bg-paper/40 px-4 py-3 ${templateStyles.subheadingClass}`}>
+                              <div className="font-semibold leading-snug text-ink">
                                 {renderHighlightedText(
                                   section.fields.degree || section.fields.institution || section.text,
                                   section.keywordMatches || [],
@@ -5150,7 +5082,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                           )}
                           {section.type === "subheading" && (
                             section.variant === "education_main" ? (
-                              <div className={`mb-1 rounded-lg border border-[#BDDDFC]/20 bg-[#f0f4f8]/40 px-3 py-2.5 ${templateStyles.subheadingClass}`}>
+                              <div className={`mb-1 rounded-lg border border-line bg-paper/40 px-3 py-2.5 ${templateStyles.subheadingClass}`}>
                                 {(() => {
                                   const meta = splitEducationMeta(
                                     getDisplaySubheadingText(section.right, section.sectionKey, section.variant),
@@ -5158,7 +5090,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                   return (
                                     <>
                                       <div className="flex items-baseline justify-between gap-4">
-                                        <div className="font-semibold leading-snug text-[#384959]">
+                                        <div className="font-semibold leading-snug text-ink">
                                           {renderHighlightedText(
                                             getDisplaySubheadingText(section.left, section.sectionKey, section.variant),
                                             section.keywordMatches || [],
@@ -5193,7 +5125,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                               </div>
                             ) : (
                               <div className={`${templateStyles.subheadingClass}`}>
-                                <div className={section.variant === "dated" ? "font-semibold text-[#384959]" : "font-normal text-[#384959]"}>
+                                <div className={section.variant === "dated" ? "font-semibold text-ink" : "font-normal text-ink"}>
                                   {renderHighlightedText(
                                     getDisplaySubheadingText(section.left, section.sectionKey, section.variant),
                                     section.keywordMatches || [],
@@ -5213,11 +5145,11 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                               const inlineSegments = !["summary", "experience"].includes(section.sectionKey) ? getInlineResumeSegments(section) : null;
                               if (inlineSegments) {
                                 return (
-                                  <div className="mb-4 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-[#384959]" style={templateStyles.bodyStyle}>
+                                  <div className="mb-4 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-ink" style={templateStyles.bodyStyle}>
                                     {inlineSegments.map((segment, index) => (
                                       <Fragment key={`${section.id}-segment-${index}`}>
-                                        {index > 0 && <span className="text-[#6A89A7]/60">|</span>}
-                                        <span className="font-medium text-[#384959]">
+                                        {index > 0 && <span className="text-muted">|</span>}
+                                        <span className="font-medium text-ink">
                                           {renderHighlightedText(getDisplayInlineSegmentText(segment), section.keywordMatches || [])}
                                         </span>
                                       </Fragment>
@@ -5236,7 +5168,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
 
                               return (
                                 <p
-                                  className={`${section.sectionKey === "certifications" ? "mb-1.5" : "mb-4"} text-[#384959] ${section.sectionKey === "summary" && isLikelySummaryLeadParagraph(section.text) && !isShoutySummaryParagraph(section.text, section.sectionKey) ? "font-semibold tracking-[0.03em] text-[#384959]" : ""}`}
+                                  className={`${section.sectionKey === "certifications" ? "mb-1.5" : "mb-4"} text-ink ${section.sectionKey === "summary" && isLikelySummaryLeadParagraph(section.text) && !isShoutySummaryParagraph(section.text, section.sectionKey) ? "font-semibold text-ink" : ""}`}
                                   style={{ ...templateStyles.bodyStyle, breakInside: "avoid" }}
                                 >
                                   {renderHighlightedText(getDisplayParagraphText(section), section.keywordMatches || [])}
@@ -5248,7 +5180,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                             <div className={`flex gap-3 ${["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "ml-2" : ""}`}>
                               <div className={`pt-1 text-muted ${["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.85rem]" : "text-[1rem]"}`}>•</div>
                               <div className="flex-1">
-                                <p className={["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.88em] text-muted" : "text-[#384959]"} style={templateStyles.bodyStyle}>
+                                <p className={["education", "personal", "languages", "additional"].includes(section.sectionKey) ? "text-[0.88em] text-muted" : "text-ink"} style={templateStyles.bodyStyle}>
                                   {renderHighlightedText(section.text, annotation?.keywordMatches || [])}
                                 </p>
                                 {annotationsOn && annotation && (
@@ -5258,7 +5190,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                       {annotation.label}
                                     </span>
                                     {annotation.keywordMatches?.length > 0 && (
-                                      <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
+                                      <span className="rounded-full bg-tint px-2 py-0.5 text-[11px] font-semibold text-accent">
                                         {annotation.keywordMatches.length} keyword{annotation.keywordMatches.length === 1 ? "" : "s"}
                                       </span>
                                     )}
@@ -5276,7 +5208,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handlePromoteToPosition(section); }}
-                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted hover:text-[#384959] hover:bg-indigo-50 transition"
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted hover:text-ink hover:bg-tint transition"
                               title="Convert to position/entry heading"
                             >
                               <ArrowUp size={9} />
@@ -5287,7 +5219,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handlePromoteToSection(section); }}
-                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted hover:text-violet-600 hover:bg-violet-50 transition"
+                              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium text-muted hover:text-accent hover:bg-tint transition"
                               title="Convert to section heading"
                             >
                               <Type size={9} />
@@ -5324,7 +5256,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); handleMoveSection(section.id, -1); }}
-                            className="rounded p-0.5 text-[#6A89A7]/60 hover:text-muted hover:bg-[#BDDDFC]/10 transition"
+                            className="rounded p-0.5 text-muted hover:text-muted hover:bg-tint transition"
                             title="Move section up"
                           >
                             <ArrowUp size={12} />
@@ -5332,7 +5264,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); handleMoveSection(section.id, 1); }}
-                            className="rounded p-0.5 text-[#6A89A7]/60 hover:text-muted hover:bg-[#BDDDFC]/10 transition"
+                            className="rounded p-0.5 text-muted hover:text-muted hover:bg-tint transition"
                             title="Move section down"
                           >
                             <ArrowDown size={12} />
@@ -5340,7 +5272,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                           <button
                             type="button"
                             onClick={(e) => { e.stopPropagation(); handleDeleteSection(section); }}
-                            className="rounded p-0.5 text-[#6A89A7]/60 hover:text-rose-500 hover:bg-rose-50 transition"
+                            className="rounded p-0.5 text-muted hover:text-[#b42318] hover:bg-rose-50 transition"
                             title="Delete entire section"
                           >
                             <Trash2 size={12} />
@@ -5350,7 +5282,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
 
                       const sectionContent = (
                         <>
-                          <div id={`resume-section-${section.id}`} className={`group/section rounded-xl px-3 py-0.5 transition ${wrapperClasses}`}>
+                          <div id={`resume-section-${section.id}`} className={`group/section rounded-md px-3 py-0.5 transition ${wrapperClasses}`}>
                             {lineContent}
                             {section.type === "candidate_heading" && (
                               <div className="mt-1 flex justify-end">
@@ -5376,7 +5308,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                   <button
                                     type="button"
                                     onClick={() => setShowSummaryPrompt((v) => !v)}
-                                    className="inline-flex items-center gap-1 rounded-lg border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-medium text-violet-700 transition hover:bg-violet-100"
+                                    className="inline-flex items-center gap-1 rounded-lg border border-line bg-tint px-2 py-1 text-[11px] font-medium text-accent transition hover:bg-tint"
                                   >
                                     {showSummaryPrompt ? "Hide" : "Rewrite Summary"}
                                   </button>
@@ -5389,13 +5321,13 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                       onChange={(e) => setSummaryDirection(e.target.value)}
                                       onKeyDown={(e) => { if (e.key === "Enter") handleRegenerateSummary(); }}
                                       placeholder="e.g., emphasize AI leadership, keep it concise..."
-                                      className="flex-1 rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-[11px] text-[#384959] placeholder:text-[#6A89A7]/50 focus:outline-none focus:ring-2 focus:ring-violet-300"
+                                      className="flex-1 rounded-lg border border-line bg-white px-2.5 py-1.5 text-[11px] text-ink "
                                     />
                                     <button
                                       type="button"
                                       onClick={handleRegenerateSummary}
                                       disabled={regeneratingSummary}
-                                      className="inline-flex items-center gap-1 rounded-lg bg-violet-600 px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-violet-700 disabled:opacity-40"
+                                      className="inline-flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-accent-hover disabled:opacity-40"
                                     >
                                       {regeneratingSummary ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
                                       {regeneratingSummary ? "..." : "Generate"}
@@ -5410,7 +5342,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                               <button
                                 type="button"
                                 onClick={() => handleInsertBulletBelow(section)}
-                                className="opacity-0 group-hover/insert:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1 rounded-full border border-dashed border-indigo-300 bg-white px-2 py-0.5 text-[10px] font-medium text-indigo-500 hover:bg-indigo-50 hover:border-indigo-400"
+                                className="opacity-0 group-hover/insert:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1 rounded-full border border-dashed border-line bg-white px-2 py-0.5 text-[10px] font-medium text-accent hover:bg-tint hover:border-accent"
                                 title="Insert bullet here"
                               >
                                 <Plus size={10} />
@@ -5434,7 +5366,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                             <button
                               type="button"
                               onClick={() => handleInsertBulletBelow(section)}
-                              className="opacity-0 group-hover/addbullet:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1.5 rounded-full border border-dashed border-indigo-300 bg-white px-3 py-1 text-[11px] font-medium text-indigo-500 hover:bg-indigo-50 hover:border-indigo-400"
+                              className="opacity-0 group-hover/addbullet:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1.5 rounded-full border border-dashed border-line bg-white px-3 py-1 text-[11px] font-medium text-accent hover:bg-tint hover:border-accent"
                             >
                               <Plus size={11} />
                               Add Bullet
@@ -5465,7 +5397,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                                   lines.splice(insertAt, 0, "", ...tmpl.text.split("\n"));
                                   applyResumeText(lines.join("\n"));
                                 }}
-                                className="opacity-0 group-hover/addentry:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1.5 rounded-full border border-dashed border-blue-300 bg-white px-3 py-1 text-[11px] font-medium text-[#88BDF2] hover:bg-blue-50"
+                                className="opacity-0 group-hover/addentry:opacity-100 focus:opacity-100 transition-opacity inline-flex items-center gap-1.5 rounded-full border border-dashed border-blue-300 bg-white px-3 py-1 text-[11px] font-medium text-accent hover:bg-tint"
                               >
                                 <Plus size={11} />
                                 {tmpl.label}
@@ -5494,20 +5426,21 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     })}
                     </SortableContext>
                    </DndContext>
-                    <div className="mt-3 rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/70 p-4">
+                    <div className="mt-6 border-t border-dashed border-field pt-4">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <div className="text-sm font-semibold text-slate-900">Need another section?</div>
-                          <div className="mt-1 text-xs leading-relaxed text-slate-600">
+                          <div className="text-sm font-semibold text-ink">Need another section?</div>
+                          <div className="mt-1 text-xs leading-relaxed text-muted">
                             Add Projects, Volunteer, Awards, or a custom section directly into the draft.
                           </div>
                         </div>
                         <button
                           type="button"
                           onClick={() => setShowAddSectionMenu((current) => !current)}
-                          className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-50"
+                          aria-expanded={showAddSectionMenu}
+                          className="inline-flex min-h-10 items-center gap-2 rounded-md border border-field bg-white px-3 text-sm font-medium text-ink hover:bg-tint"
                         >
-                          <Plus size={14} />
+                          <Plus size={14} aria-hidden="true" />
                           Add Section
                         </button>
                       </div>
@@ -5518,7 +5451,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                               key={option.id}
                               type="button"
                               onClick={() => handleAddSection(option)}
-                              className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-sm font-medium text-slate-700 ring-1 ring-gray-200 hover:bg-[#f0f4f8]"
+                              className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-sm font-medium text-ink ring-1 ring-gray-200 hover:bg-tint"
                             >
                               <Plus size={13} />
                               {option.label}
@@ -5530,9 +5463,9 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   </div>
                 </>
               ) : (
-                <div className="flex min-h-[700px] flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-[#BDDDFC]/30 bg-[#f0f4f8] px-8 text-center">
-                  <FileText size={36} className="text-[#6A89A7]/60" />
-                  <div className="mt-4 text-lg font-semibold text-[#384959]">Your resume document will appear here</div>
+                <div className="flex min-h-[700px] flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-line bg-paper px-8 text-center">
+                  <FileText size={36} className="text-muted" />
+                  <div className="mt-4 text-lg font-semibold text-ink">Your resume document will appear here</div>
                   <p className="mt-2 max-w-md text-sm leading-relaxed text-muted">
                     Upload a PDF or DOCX, or paste your resume text above. Once it lands here, you’ll be able to edit line by line and review feedback beside it.
                   </p>
@@ -5544,22 +5477,22 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
       </div>
 
       <div className="fixed inset-x-0 bottom-4 z-20 px-4">
-        <div className="mx-auto flex w-full items-center justify-between gap-3 rounded-2xl border border-[#BDDDFC]/30 bg-white/95 px-4 py-3 shadow-[0_16px_40px_rgba(15,23,42,0.18)] backdrop-blur">
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between gap-3 rounded-[10px] border border-line bg-white px-3 py-2 shadow-[0_16px_40px_rgba(15,23,42,0.18)] sm:px-4 sm:py-3">
           <button
             type="button"
             onClick={jumpToScorePanel}
-            className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-sm font-semibold ${scorePillClass}`}
+            className={`inline-flex min-h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-full px-3 text-sm font-semibold ${scorePillClass}`}
           >
             <Star size={14} />
             Score {scoreDisplayValue}
           </button>
 
           <div className="hidden lg:flex items-center gap-2">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Template</span>
+            <span className="text-xs font-semibold text-muted">Template</span>
             <select
               value={selectedTemplate}
               onChange={(event) => setSelectedTemplate(event.target.value)}
-              className="rounded-xl border border-[#BDDDFC]/30 bg-white px-3 py-2 text-sm text-[#384959] focus:outline-none focus:ring-2 focus:ring-[#BDDDFC]"
+              className="rounded-md border border-line bg-white px-3 py-2 text-sm text-ink"
             >
               {templates.map((template) => (
                 <option key={template.id} value={template.id}>{template.name}</option>
@@ -5567,9 +5500,9 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
             </select>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             {lowScoreWarning && (
-              <div className="hidden text-xs text-rose-600 sm:block">
+              <div className="hidden text-xs text-[#b42318] sm:block">
                 This draft may still struggle in ATS or recruiter screens.
               </div>
             )}
@@ -5578,27 +5511,28 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 type="button"
                 onClick={handleFinalizeScore}
                 disabled={scoring || !resumeText.trim()}
-                className="hidden sm:inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] transition hover:bg-[#f0f4f8] disabled:opacity-40"
+                className="hidden sm:inline-flex items-center gap-2 rounded-md border border-line bg-white px-4 py-2.5 text-sm font-medium text-ink transition hover:bg-tint disabled:opacity-40"
               >
                 {scoring ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 {scoring ? "Scoring..." : "Finalize Score"}
               </button>
             )}
             {user && (
-              <div className="inline-flex items-center gap-1 rounded-xl border border-[#BDDDFC]/30 bg-white px-1.5 py-1">
+              <div className="hidden items-center gap-1 rounded-md border border-field bg-white px-1.5 py-1 md:inline-flex">
                 <input
                   type="text"
                   value={saveVersionLabel}
                   onChange={(e) => setSaveVersionLabel(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && saveVersionLabel.trim()) saveCurrentVersion(); }}
+                  aria-label="Version name"
                   placeholder="Version name..."
-                  className="w-32 rounded-lg bg-transparent px-2.5 py-1.5 text-sm text-[#384959] placeholder-muted/60 focus:outline-none"
+                  className="w-32 rounded bg-transparent px-2.5 py-1.5 text-sm text-ink"
                 />
                 <button
                   type="button"
                   onClick={saveCurrentVersion}
                   disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                  className="rounded-lg bg-[#384959] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
+                  className="rounded border border-field bg-white px-3 py-1.5 text-sm font-medium text-ink hover:bg-tint disabled:opacity-60"
                 >
                   {savingVersion ? "..." : "Save"}
                 </button>
@@ -5607,14 +5541,14 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
             <button
               type="button"
               onClick={() => setWizardStep(2)}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] transition hover:bg-[#f0f4f8]"
+              className="hidden min-h-11 items-center gap-2 whitespace-nowrap rounded-md border border-field bg-white px-4 text-sm font-medium text-ink transition hover:bg-tint sm:inline-flex"
             >
               Back to templates
             </button>
             <button
               type="button"
               onClick={() => setWizardStep(4)}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-emerald-700"
+              className="inline-flex min-h-11 items-center gap-2 whitespace-nowrap rounded-md bg-accent px-4 text-sm font-semibold text-white transition hover:bg-accent-hover"
             >
               <Download size={14} />
               Export
@@ -5626,13 +5560,13 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
 
       {wizardStep === 4 && (
         <div className="mx-auto max-w-2xl space-y-6">
-          <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-6 shadow-sm text-center">
-            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted">Final Score</div>
+          <div className="rounded-[10px] border border-line bg-white p-6 text-center">
+            <div className="text-xs font-semibold text-muted">Final Score</div>
             <div className={`mt-3 text-5xl font-bold ${scoreData ? scoreTheme.text : "text-muted"}`}>
               {scoring ? "..." : scoreDisplayValue}
               <span className="ml-1 text-lg font-medium text-muted">{scoreData ? "/100" : ""}</span>
             </div>
-            <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-[#BDDDFC]/10 mx-auto max-w-xs">
+            <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-tint mx-auto max-w-xs">
               <div className={`h-full rounded-full transition-all ${scoreTheme.bar}`} style={{ width: `${scoreData && overallScore !== null ? overallScore : 0}%` }} />
             </div>
             {needsRescore && (
@@ -5640,30 +5574,30 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 type="button"
                 onClick={handleFinalizeScore}
                 disabled={scoring}
-                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] disabled:opacity-40"
+                className="mt-4 inline-flex items-center gap-2 rounded-md border border-line bg-white px-4 py-2.5 text-sm font-medium text-ink hover:bg-tint disabled:opacity-40"
               >
                 {scoring ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 {scoring ? "Scoring..." : "Finalize Score"}
               </button>
             )}
             {lowScoreWarning && (
-              <p className="mt-3 text-xs text-rose-600">
+              <p className="mt-3 text-xs text-[#b42318]">
                 This draft may still struggle in ATS or recruiter screens. Consider going back to edit.
               </p>
             )}
           </div>
 
-          <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-6 shadow-sm space-y-4">
-            <div className="text-sm font-semibold text-[#384959]">Download Your Resume</div>
+          <div className="rounded-[10px] border border-line bg-white p-6 space-y-4">
+            <div className="text-sm font-semibold text-ink">Download Your Resume</div>
             <p className="text-sm text-muted">
-              Template: <span className="font-medium text-[#384959]">{templateMeta?.name || "Modern"}</span>
+              Template: <span className="font-medium text-ink">{templateMeta?.name || "Modern"}</span>
             </p>
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
                 onClick={handleDownload}
                 disabled={downloading || !resumeText.trim()}
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:opacity-40"
+                className="inline-flex min-h-11 items-center gap-2 rounded-md bg-accent px-5 text-sm font-semibold text-white transition hover:bg-accent-hover disabled:opacity-60"
               >
                 {downloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                 {downloading ? "Preparing..." : "Download DOCX"}
@@ -5672,14 +5606,14 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 type="button"
                 onClick={handlePrintPdf}
                 disabled={downloadingPdf || !resumeText.trim()}
-                className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-5 py-3 text-sm font-medium text-white transition hover:bg-sky-700 disabled:opacity-40"
+                className="inline-flex min-h-11 items-center gap-2 rounded-md border border-field bg-white px-5 text-sm font-medium text-ink transition hover:bg-tint disabled:opacity-60"
               >
                 {downloadingPdf ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}
                 {downloadingPdf ? "Generating..." : "Download PDF"}
               </button>
             </div>
             {downloadError && (
-              <div className="flex items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <div className="flex items-center gap-2 rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                 <AlertCircle size={14} className="flex-shrink-0" />
                 <span>{downloadError}</span>
               </div>
@@ -5687,22 +5621,23 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
           </div>
 
           {user && (
-            <div className="rounded-3xl border border-[#BDDDFC]/30 bg-white p-4 shadow-sm space-y-3">
-              <div className="text-sm font-semibold text-[#384959]">Save This Version</div>
+            <div className="rounded-[10px] border border-line bg-white p-4 space-y-3">
+              <div className="text-sm font-semibold text-ink">Save This Version</div>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
                   value={saveVersionLabel}
                   onChange={(e) => setSaveVersionLabel(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && saveVersionLabel.trim()) saveCurrentVersion(); }}
+                  aria-label="Version name"
                   placeholder="Name this version..."
-                  className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#BDDDFC]"
+                  className="min-h-11 min-w-0 flex-1 rounded-md border border-field bg-white px-3 text-sm text-ink focus:border-accent"
                 />
                 <button
                   type="button"
                   onClick={saveCurrentVersion}
                   disabled={savingVersion || !saveVersionLabel.trim() || !resumeText.trim()}
-                  className="rounded-xl bg-[#384959] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#2d3a47] disabled:opacity-40"
+                  className="min-h-11 rounded-md border border-field bg-white px-4 text-sm font-medium text-ink hover:bg-tint disabled:opacity-60"
                 >
                   {savingVersion ? "..." : "Save Version"}
                 </button>
@@ -5711,10 +5646,9 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
           )}
 
           {downloadReady && (
-            <div className="rounded-3xl border border-emerald-200 bg-emerald-50 p-6 shadow-sm">
-              <div className="text-sm font-semibold uppercase tracking-[0.16em] text-emerald-700">Next Steps</div>
-              <div className="mt-2 text-lg font-semibold text-slate-900">Your resume export is ready.</div>
-              <p className="mt-2 text-sm leading-relaxed text-slate-600">
+            <div className="rounded-[10px] border border-line bg-white p-6" role="status">
+              <div className="flex items-center gap-2 text-base font-semibold text-[#166534]"><CheckCircle size={16} aria-hidden="true" /> Your resume export is ready.</div>
+              <p className="mt-2 text-sm leading-relaxed text-muted">
                 Keep momentum by searching for matching roles or moving straight into application tracking.
               </p>
               <div className="mt-4 flex flex-wrap gap-2">
@@ -5722,7 +5656,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                   type="button"
                   onClick={handleSearchMatchingJobs}
                   disabled={startingJobSearch}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#384959] px-4 py-2.5 text-sm font-medium text-white hover:bg-[#2d3a47]"
+                  className="inline-flex min-h-11 items-center gap-2 rounded-md border border-field bg-white px-4 text-sm font-medium text-ink hover:bg-tint"
                 >
                   {startingJobSearch ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
                   {startingJobSearch
@@ -5732,7 +5666,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 <button
                   type="button"
                   onClick={() => setActiveTab("tracker")}
-                  className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
+                  className="inline-flex items-center gap-2 rounded-md border border-line bg-white px-4 py-2.5 text-sm font-medium text-ink hover:bg-tint"
                 >
                   <Plus size={14} />
                   Track This Application
@@ -5745,7 +5679,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
             <button
               type="button"
               onClick={() => setWizardStep(3)}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
+              className="inline-flex items-center gap-2 rounded-md border border-line bg-white px-4 py-2.5 text-sm font-medium text-ink hover:bg-tint"
             >
               Back to Editor
             </button>
@@ -5758,7 +5692,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 setDownloadReady(false);
                 setWizardStep(1);
               }}
-              className="inline-flex items-center gap-2 rounded-xl border border-[#BDDDFC]/30 bg-white px-4 py-2.5 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8]"
+              className="inline-flex items-center gap-2 rounded-md border border-line bg-white px-4 py-2.5 text-sm font-medium text-ink hover:bg-tint"
             >
               <Plus size={14} />
               Start Another
@@ -5790,9 +5724,9 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 {mobileBulletSheet.annotation?.message || "Review this bullet for improvements."}
               </p>
 
-              <div className="rounded-xl bg-[#f0f4f8] p-4">
-                <div className="text-xs font-semibold uppercase tracking-wider text-muted mb-2">Current Bullet</div>
-                <p className="text-sm text-[#384959] leading-relaxed">{mobileBulletSheet.text}</p>
+              <div className="rounded-md bg-paper p-4">
+                <div className="text-xs font-semibold text-muted mb-2">Current Bullet</div>
+                <p className="text-sm text-ink leading-relaxed">{mobileBulletSheet.text}</p>
               </div>
 
               <div className="flex gap-3">
@@ -5802,7 +5736,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     handleBulletRewrite(mobileBulletSheet, undefined, activeSuggestionHint);
                   }}
                   disabled={rewriteLoading[mobileBulletSheet?.id]}
-                  className="flex-1 rounded-xl bg-[#384959] min-h-[44px] py-3 text-sm font-medium text-white hover:bg-[#2d3a47] transition disabled:opacity-50"
+                  className="flex-1 rounded-md bg-accent min-h-[44px] py-3 text-sm font-medium text-white hover:bg-accent-hover transition disabled:opacity-50"
                 >
                   {rewriteLoading[mobileBulletSheet?.id]
                     ? "Rewriting..."
@@ -5820,7 +5754,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                     openEditorForSection(mobileBulletSheet);
                     setMobileBulletSheet(null);
                   }}
-                  className="flex-1 rounded-xl border border-[#BDDDFC]/30 bg-white min-h-[44px] py-3 text-sm font-medium text-[#384959] hover:bg-[#f0f4f8] transition"
+                  className="flex-1 rounded-md border border-line bg-white min-h-[44px] py-3 text-sm font-medium text-ink hover:bg-tint transition"
                 >
                   Edit Manually
                 </button>
@@ -5832,7 +5766,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                 jobDescription,
               }) && (
                 <div className="space-y-2">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-muted">Pick a rewrite</div>
+                  <div className="text-xs font-semibold text-muted">Pick a rewrite</div>
                   {rewriteResults[mobileBulletSheet.id].options.map((option, idx) => (
                     <button
                       key={idx}
@@ -5841,7 +5775,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
                         acceptRewrite(mobileBulletSheet, idx);
                         setMobileBulletSheet(null);
                       }}
-                      className="w-full text-left rounded-xl border border-[#BDDDFC]/30 bg-[#f0f4f8] p-3 text-sm text-[#384959] hover:bg-blue-50 hover:border-blue-300 transition"
+                      className="w-full text-left rounded-md border border-line bg-paper p-3 text-sm text-ink hover:bg-tint hover:border-accent transition"
                     >
                       {typeof option === "string" ? option : option.text || option}
                     </button>
@@ -5852,7 +5786,7 @@ Python, JavaScript, TypeScript, React, Node.js, AWS, Docker, Kubernetes, Postgre
               <button
                 type="button"
                 onClick={() => setMobileBulletSheet(null)}
-                className="w-full rounded-xl border border-[#BDDDFC]/30 min-h-[44px] py-2.5 text-sm text-muted hover:bg-[#f0f4f8] transition"
+                className="w-full rounded-md border border-line min-h-[44px] py-2.5 text-sm text-muted hover:bg-tint transition"
               >
                 Dismiss
               </button>
