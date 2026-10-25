@@ -127,12 +127,8 @@ def has_active_recruitment_runs(user_id: int, db: Session) -> bool:
     )
 
 
-def delete_owned_account_rows(user: User, db: Session) -> tuple[str, ...]:
-    """Stage every account-owned SQL row for deletion in foreign-key order."""
-    user_id = user.id
-    email_hash = hashlib.sha256(user.email.lower().encode()).hexdigest()[:16]
-    checkpoint_tokens = owned_recruitment_checkpoint_tokens(user_id, db)
-
+def _delete_recruitment_rows(user_id: int, db: Session) -> None:
+    """Stage AI recruitment artifacts for deletion in foreign-key order."""
     db.query(ProposedResumeEdit).filter(ProposedResumeEdit.user_id == user_id).delete(
         synchronize_session=False
     )
@@ -162,6 +158,14 @@ def delete_owned_account_rows(user: User, db: Session) -> tuple[str, ...]:
         CandidateProfileArtifact.user_id == user_id
     ).delete(synchronize_session=False)
 
+
+def delete_owned_account_rows(user: User, db: Session) -> tuple[str, ...]:
+    """Stage every account-owned SQL row for deletion in foreign-key order."""
+    user_id = user.id
+    email_hash = hashlib.sha256(user.email.lower().encode()).hexdigest()[:16]
+    checkpoint_tokens = owned_recruitment_checkpoint_tokens(user_id, db)
+
+    _delete_recruitment_rows(user_id, db)
     for model in (
         StoryUsage,
         JobAlertDelivery,
@@ -192,3 +196,82 @@ def delete_owned_account_rows(user: User, db: Session) -> tuple[str, ...]:
     ).delete(synchronize_session=False)
     db.delete(user)
     return checkpoint_tokens
+
+
+# Resume-bearing and AI-derived rows removed when an account goes inactive.
+# The account, tracked jobs, stories and alert settings stay until the user deletes them.
+INACTIVE_PURGE_MODELS = (
+    PowerMatchSnapshot,
+    TailoredResume,
+    ResumeVersion,
+    UserMemory,
+    UsageLog,
+)
+SUBMITTED_RESUME_METADATA_KEYS = ("submitted_resume", "submitted_resume_artifacts")
+
+
+def delete_inactive_account_content(user_id: int, db: Session) -> tuple[str, ...]:
+    """Stage resumes, AI artifacts and usage logs for deletion; keep the account."""
+    checkpoint_tokens = owned_recruitment_checkpoint_tokens(user_id, db)
+    _delete_recruitment_rows(user_id, db)
+    db.query(TrackedJob).filter(
+        TrackedJob.user_id == user_id, TrackedJob.resume_version_id.is_not(None)
+    ).update({TrackedJob.resume_version_id: None}, synchronize_session=False)
+    for model in INACTIVE_PURGE_MODELS:
+        db.query(model).filter(model.user_id == user_id).delete(synchronize_session=False)
+    for tracked in db.query(TrackedJob).filter(TrackedJob.user_id == user_id):
+        metadata = dict(tracked.role_metadata or {})
+        if any(key in metadata for key in SUBMITTED_RESUME_METADATA_KEYS):
+            for key in SUBMITTED_RESUME_METADATA_KEYS:
+                metadata.pop(key, None)
+            tracked.role_metadata = metadata
+    return checkpoint_tokens
+
+
+# Credentials and token hashes are never exported.
+_EXPORT_EXCLUDED_COLUMNS = {
+    "users": {"password_hash", "api_key", "token_version"},
+}
+_USER_EXPORT_MODELS = (
+    UserMemory,
+    ResumeVersion,
+    TailoredResume,
+    TrackedJob,
+    InterviewStory,
+    StoryUsage,
+    JobAlertPreference,
+    JobAlertDelivery,
+    PowerMatchSnapshot,
+    CandidateProfileArtifact,
+    RoleProfileArtifact,
+    TargetAssessmentArtifact,
+    ProposedResumeEdit,
+    RecruitmentThread,
+    RecruitmentRun,
+    RecruitmentThreadDeletionRequest,
+    UsageLog,
+)
+_THREAD_EXPORT_MODELS = (RecruitmentMessage, RecruitmentActivityEvent)
+
+
+def _row_dict(row) -> dict:
+    table = row.__table__.name
+    excluded = _EXPORT_EXCLUDED_COLUMNS.get(table, set())
+    return {
+        column.key: getattr(row, column.key)
+        for column in row.__mapper__.column_attrs
+        if column.key not in excluded
+    }
+
+
+def export_owned_account_rows(user: User, db: Session) -> dict:
+    """Collect every account-owned row (minus credentials) for a data access request."""
+    data: dict[str, object] = {"users": [_row_dict(user)]}
+    for model in _USER_EXPORT_MODELS:
+        rows = db.query(model).filter(model.user_id == user.id).order_by(model.id).all()
+        data[model.__tablename__] = [_row_dict(row) for row in rows]
+    thread_ids = db.query(RecruitmentThread.id).filter(RecruitmentThread.user_id == user.id)
+    for model in _THREAD_EXPORT_MODELS:
+        rows = db.query(model).filter(model.thread_id.in_(thread_ids)).order_by(model.id).all()
+        data[model.__tablename__] = [_row_dict(row) for row in rows]
+    return data

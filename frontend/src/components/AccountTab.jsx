@@ -3,7 +3,8 @@ import {
   User, LogOut, Mail, Loader2, Bell, Save, ShieldCheck,
   FileText, Sparkles, BookOpen, BarChart2, KeyRound, Trash2,
 } from "lucide-react";
-import { API_BASE, apiFetch, clearResumeDraftStorage } from "../lib/api.js";
+import { API_BASE, apiFetch, clearResumeDraftStorage, downloadBlob } from "../lib/api.js";
+import { PRIVACY_CONTACT_EMAIL } from "../lib/constants.js";
 
 const formatLimit = (value) => (value >= 999999 ? "Unlimited" : value?.toLocaleString?.() ?? value);
 const formatLimitLabel = (value) => (value >= 999999 ? "Unlimited" : `${formatLimit(value)} limit`);
@@ -41,7 +42,22 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteSending, setDeleteSending] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
   const isAdmin = user?.tier === "admin";
+
+  const handleExport = async () => {
+    setExporting(true);
+    setExportError("");
+    try {
+      const resp = await apiFetch("/api/account/export");
+      downloadBlob(await resp.blob(), "job-hunter-sg-export.json");
+    } catch (err) {
+      setExportError(err.message || "Export failed. Please try again.");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -682,6 +698,23 @@ export default function AccountTab({ user, authMode = "password", onLogout, onAc
           >
             Privacy Notice
           </button>
+        </div>
+        <div className="mt-5 border-t border-[#BDDDFC]/30 pt-4">
+          <h4 className="text-sm font-semibold text-[#384959]">Your data</h4>
+          <p className="mt-1 text-sm text-[#6A89A7]">
+            Download everything stored for your account as a JSON file. For corrections or other requests, email{" "}
+            <a href={`mailto:${PRIVACY_CONTACT_EMAIL}`} className="font-medium text-[#384959] underline">{PRIVACY_CONTACT_EMAIL}</a>.
+          </p>
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting}
+            className="mt-3 inline-flex items-center justify-center gap-2 rounded-lg bg-[#384959] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#2d3a47] disabled:opacity-50 active:scale-[0.98]"
+          >
+            {exporting && <Loader2 size={14} className="animate-spin" />}
+            Export my data
+          </button>
+          {exportError && <p className="mt-2 text-sm text-rose-600" role="alert">{exportError}</p>}
         </div>
       </div>
       )}

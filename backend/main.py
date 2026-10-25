@@ -25,7 +25,10 @@ from zoneinfo import ZoneInfo
 
 from pathlib import Path
 
+# Imported first: config forces LLM tracing off before any LangChain module loads.
+import config as app_config
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -106,6 +109,7 @@ from sanitizer import sanitize_html, sanitize_job, sanitize_resume_text, sanitiz
 from account_lifecycle import (
     account_lifecycle_lock as _account_lifecycle_lock,
     delete_owned_account_rows as _delete_owned_account_rows,
+    export_owned_account_rows as _export_owned_account_rows,
     has_active_recruitment_runs as _has_active_recruitment_runs,
     locked_account_storage as _locked_account_storage,
     purge_recruitment_checkpoints as _purge_recruitment_checkpoints,
@@ -196,7 +200,6 @@ from security import (
     contains_like_pattern as _contains_like_pattern,
     get_client_ip as _get_client_ip,
 )
-import config as app_config
 import application_workspace as workspace_module
 
 # Route Python logs to stdout so Railway tags them [inf] instead of [err].
@@ -2338,6 +2341,14 @@ def job_search_readiness(db: Session = Depends(get_db)) -> dict:
     return readiness
 
 
+_AUTH_TOKEN_PARAM_RE = re.compile(r"\b(reset_token|verify_token)=[^&#\s]*")
+
+
+def _redact_auth_tokens(value: str) -> str:
+    """Drop email-link tokens so a client error report cannot leak them into logs."""
+    return _AUTH_TOKEN_PARAM_RE.sub(r"\1=[redacted]", value or "")
+
+
 @app.post("/api/client-error", status_code=status.HTTP_204_NO_CONTENT)
 def report_client_error(request: Request, body: ClientErrorReport) -> None:
     """Unauthenticated-safe sink for uncaught frontend errors, so a client-side
@@ -2352,27 +2363,27 @@ def report_client_error(request: Request, body: ClientErrorReport) -> None:
         raise HTTPException(status_code=429, detail="Too many error reports. Please try again later.")
     log.error(
         "[CLIENT ERROR] %s | url=%s | user_agent=%s | stack=%s",
-        sanitize_html(body.message),
-        sanitize_html(body.url),
+        _redact_auth_tokens(sanitize_html(body.message)),
+        _redact_auth_tokens(sanitize_html(body.url)),
         sanitize_html(body.user_agent),
-        sanitize_html(body.stack),
+        _redact_auth_tokens(sanitize_html(body.stack)),
     )
 
 
 @app.get("/api/privacy")
 def privacy() -> Response:
     """Privacy notice — returns a readable HTML page, not raw JSON."""
-    contact = os.environ.get("CONTACT_EMAIL", "")
-    contact_line = f"reach out at {contact}" if contact else "use the contact form on the Account page"
-    return Response(content=render_privacy_html(contact_line), media_type="text/html")
+    page = render_privacy_html(
+        app_config.PRIVACY_CONTACT_EMAIL,
+        llm_tracing_enabled=app_config.llm_tracing_opted_in(),
+    )
+    return Response(content=page, media_type="text/html")
 
 
 @app.get("/api/terms")
 def terms() -> Response:
     """Terms of Service — returns a readable HTML page, not raw JSON."""
-    contact = os.environ.get("CONTACT_EMAIL", "")
-    contact_line = f"reach out at {contact}" if contact else "use the contact form on the Account page"
-    return Response(content=render_terms_html(contact_line), media_type="text/html")
+    return Response(content=render_terms_html(app_config.PRIVACY_CONTACT_EMAIL), media_type="text/html")
 
 
 def _require_password_auth() -> None:
@@ -3042,6 +3053,28 @@ def delete_account(
     if logout_url:
         response["logout_url"] = logout_url
     return response
+
+
+@app.get("/api/account/export")
+def export_account(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JSONResponse:
+    """Return every row the account owns as JSON for a data access request."""
+    if not _PUBLIC_RATE_LIMITER.allow(f"account-export:{user.id}", limit=5, window_seconds=3600):
+        raise HTTPException(status_code=429, detail="Too many export requests. Please try again later.")
+    payload = {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "service": "Job Hunter SG",
+        "data": _export_owned_account_rows(user, db),
+    }
+    return JSONResponse(
+        content=jsonable_encoder(payload),
+        headers={
+            "Content-Disposition": 'attachment; filename="job-hunter-sg-export.json"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @app.post("/api/search", response_model=SearchResponse)
@@ -5722,6 +5755,7 @@ def resume_chat_step(
 async def upload_resume(
     request: Request,
     file: UploadFile = File(...),
+    consent: str = Form(""),
     user: Optional[User] = Depends(get_optional_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -5729,6 +5763,12 @@ async def upload_resume(
     Upload a PDF or DOCX resume. Returns full extracted text + metadata.
     No truncation — everything is returned.
     """
+    # Signed-in users accepted the Privacy Notice at signup; visitors consent per upload.
+    if not user and consent.strip().lower() not in {"true", "1", "yes", "on"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Please agree to the resume processing notice before uploading.",
+        )
     owner = f"user:{user.id}" if user else f"ip:{_get_client_ip(request)}"
     if not _PUBLIC_RATE_LIMITER.allow(f"resume-upload:{owner}", limit=10, window_seconds=3600):
         raise HTTPException(status_code=429, detail="Too many resume uploads. Please try again later.")

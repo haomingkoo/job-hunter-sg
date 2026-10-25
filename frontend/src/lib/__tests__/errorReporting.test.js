@@ -80,3 +80,22 @@ describe("installGlobalErrorReporting", () => {
     expect(global.fetch).toHaveBeenCalledTimes(10);
   });
 });
+
+describe("sanitizeReportedUrl", () => {
+  it("strips reset and verify tokens from the fragment and query string", async () => {
+    const { sanitizeReportedUrl } = await freshModule();
+
+    const cleaned = sanitizeReportedUrl(
+      "https://job.kooexperience.com/?reset_token=abc&tab=jobs#verify_token=xyz&reset_token=def",
+    );
+
+    expect(cleaned).not.toMatch(/abc|def|xyz|reset_token|verify_token/);
+    expect(cleaned).toContain("tab=jobs");
+  });
+
+  it("leaves ordinary URLs unchanged", async () => {
+    const { sanitizeReportedUrl } = await freshModule();
+
+    expect(sanitizeReportedUrl("https://job.kooexperience.com/#team")).toBe("https://job.kooexperience.com/#team");
+  });
+});

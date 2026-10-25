@@ -470,6 +470,7 @@ def test_resume_upload_rejects_more_than_five_megabytes():
             upload_resume(
                 request=Request(_http_scope()),
                 file=upload,
+                consent="true",
                 user=None,
                 db=None,
             )
@@ -514,6 +515,7 @@ def test_resume_upload_parsing_runs_off_the_event_loop(monkeypatch):
         main.upload_resume(
             request=Request(_http_scope()),
             file=upload,
+            consent="true",
             user=None,
             db=FakeSession(),
         )
@@ -539,6 +541,7 @@ def test_resume_upload_rejects_when_parser_capacity_is_full(monkeypatch):
             main.upload_resume(
                 request=Request(_http_scope()),
                 file=upload,
+                consent="true",
                 user=None,
                 db=None,
             )

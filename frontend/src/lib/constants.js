@@ -23,3 +23,4 @@ export const SG_JOB_PORTALS = [
   { name: "Indeed SG", key: "indeed" },
   { name: "JobStreet", key: "jobstreet" },
 ];
+export const PRIVACY_CONTACT_EMAIL = "privacy@kooexperience.com";

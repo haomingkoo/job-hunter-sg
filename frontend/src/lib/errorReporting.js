@@ -2,6 +2,27 @@ import { API_BASE } from "./api.js";
 
 const MAX_REPORTS_PER_PAGE_LOAD = 10;
 let reportCount = 0;
+const AUTH_LINK_TOKEN_NAMES = ["reset_token", "verify_token"];
+
+// Email-link tokens can sit in the URL before App strips them; never report them.
+export function sanitizeReportedUrl(href) {
+  try {
+    const url = new URL(href);
+    const hashParams = new URLSearchParams(url.hash.slice(1));
+    let hashChanged = false;
+    AUTH_LINK_TOKEN_NAMES.forEach((name) => {
+      url.searchParams.delete(name);
+      if (hashParams.has(name)) {
+        hashParams.delete(name);
+        hashChanged = true;
+      }
+    });
+    if (hashChanged) url.hash = hashParams.toString();
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
 
 function report(message, stack) {
   if (reportCount >= MAX_REPORTS_PER_PAGE_LOAD) return;
@@ -9,7 +30,7 @@ function report(message, stack) {
   const body = JSON.stringify({
     message: String(message || "Unknown error").slice(0, 2000),
     stack: String(stack || "").slice(0, 4000),
-    url: window.location.href.slice(0, 500),
+    url: sanitizeReportedUrl(window.location.href).slice(0, 500),
     user_agent: navigator.userAgent.slice(0, 300),
   });
   fetch(`${API_BASE}/api/client-error`, {

@@ -21,6 +21,7 @@ from sqlalchemy import or_, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, load_only
 
+import config as app_config
 from account_lifecycle import account_lifecycle_lock, locked_account_storage
 from ats_terms import ATS_ALLOWED_SINGLE_TERMS
 from database import SessionLocal
@@ -549,6 +550,8 @@ def render_alert_email(user: User, pref: JobAlertPreference, matches: list[Alert
             "Already applied or not interested? Track the job in Job Hunter SG so we stop sending it.",
             f"Manage alerts: {app_base_url}",
             f"Unsubscribe: {unsubscribe_url}",
+            "",
+            f"Job Hunter SG is operated by {app_config.OPERATOR_NAME}. Contact: {app_config.PRIVACY_CONTACT_EMAIL}",
         ]
     )
     text_body = "\n".join(text_lines)
@@ -567,6 +570,11 @@ def render_alert_email(user: User, pref: JobAlertPreference, matches: list[Alert
         '<p style="color:#6b7280;font-size:12px;margin-top:12px;">'
         f'<a href="{html.escape(unsubscribe_url)}" style="color:#6b7280;">Unsubscribe from job alerts</a>. '
         "Job match alerts are informational only and are not job offers."
+        "</p>"
+        '<p style="color:#6b7280;font-size:12px;margin-top:8px;">'
+        f"Job Hunter SG is operated by {html.escape(app_config.OPERATOR_NAME)}. "
+        f'Contact: <a href="mailto:{html.escape(app_config.PRIVACY_CONTACT_EMAIL)}" style="color:#6b7280;">'
+        f"{html.escape(app_config.PRIVACY_CONTACT_EMAIL)}</a>"
         "</p>"
         "</div></div>"
     )

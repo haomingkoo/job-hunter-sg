@@ -24,6 +24,7 @@ import Nav from "./components/Nav.jsx";
 import AuthModal from "./components/AuthModal.jsx";
 import AuthPrompt from "./components/AuthPrompt.jsx";
 import HomePage from "./components/HomePage.jsx";
+import SiteFooter from "./components/SiteFooter.jsx";
 
 const AccountTab = lazy(() => import("./components/AccountTab.jsx"));
 const AnalyticsTab = lazy(() => import("./components/AnalyticsTab.jsx"));
@@ -608,6 +609,7 @@ export default function JobHunterSG() {
           </AnimatePresence>
         </>
       )}
+      <SiteFooter />
     </div>
   );
 }
