@@ -113,9 +113,9 @@ class SecurityHeadersMiddleware:
     _CONTENT_SECURITY_POLICY = (
         "default-src 'self'; base-uri 'self'; object-src 'none'; "
         "frame-ancestors 'none'; form-action 'self'; img-src 'self' data: https:; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "style-src 'self' 'unsafe-inline'; "
         f"script-src 'self' {' '.join(_INLINE_SCRIPT_HASHES)}; connect-src 'self' https:; "
-        "font-src 'self' data: https://fonts.gstatic.com"
+        "font-src 'self' data:"
     ).encode()
 
     _PRIVATE_PREFIXES = (

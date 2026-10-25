@@ -243,6 +243,16 @@ def test_csp_hashes_every_inline_script_without_allowing_arbitrary_inline_code()
     assert expected_hashes == set(SecurityHeadersMiddleware._INLINE_SCRIPT_HASHES)
 
 
+def test_csp_serves_fonts_only_from_self():
+    from security import SecurityHeadersMiddleware
+
+    policy = SecurityHeadersMiddleware._CONTENT_SECURITY_POLICY.decode()
+
+    assert "font-src 'self' data:" in policy
+    assert "googleapis" not in policy
+    assert "gstatic" not in policy
+
+
 def test_security_headers_wrap_spa_fallback():
     import main
     from security import SecurityHeadersMiddleware
