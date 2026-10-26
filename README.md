@@ -1,4 +1,11 @@
 # Job Hunter SG
+<p align="center">
+  <a href="https://kooexperience.com/blog/posts/job-hunter.html"><img src="docs/media/job-preview.webp" width="800" alt="Searching for data analyst roles in Job Hunter SG, then narrowing the results with a minimum monthly salary"></a>
+  <br>
+  <a href="https://job.kooexperience.com/?tour=1">▶ 30-second tour</a> · <a href="https://job.kooexperience.com/">Live app</a> · <a href="https://kooexperience.com/blog/posts/job-hunter.html">kooexperience.com</a>
+  <br>
+  <sub>Music: Sascha Ende, ende.app (CC BY 4.0)</sub>
+</p>
 
 AI-powered job aggregator, resume coach, and career toolkit for the Singapore job market.
 
