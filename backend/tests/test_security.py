@@ -219,6 +219,7 @@ def test_security_headers_harden_private_responses():
     assert headers[b"x-content-type-options"] == b"nosniff"
     assert headers[b"referrer-policy"] == b"no-referrer"
     assert b"frame-ancestors 'none'" in headers[b"content-security-policy"]
+    assert b"media-src 'self'" in headers[b"content-security-policy"]
     assert b"max-age=31536000" in headers[b"strict-transport-security"]
 
 

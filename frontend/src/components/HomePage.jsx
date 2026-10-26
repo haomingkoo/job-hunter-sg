@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import { apiFetch } from "../lib/api.js";
 import { displayJobTitle, formatPostingDate } from "../lib/helpers.js";
+import TourDialog from "./TourDialog.jsx";
 
 const LATEST_ROLE_COUNT = 6;
 
@@ -136,6 +137,7 @@ export default function HomePage({ onNavigate, onSearch }) {
               </button>
             </form>
             <p className="mt-3 text-sm text-muted">Free. You can browse without an account.</p>
+            <TourDialog />
           </div>
 
           <div className="min-w-0 lg:col-start-2 lg:row-span-2 lg:row-start-1">
