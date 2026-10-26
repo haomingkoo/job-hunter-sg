@@ -111,7 +111,7 @@ class SecurityHeadersMiddleware:
     )
     _CONTENT_SECURITY_POLICY = (
         "default-src 'self'; base-uri 'self'; object-src 'none'; "
-        "frame-ancestors 'none'; form-action 'self'; img-src 'self' data: https:; "
+        "frame-ancestors 'none'; form-action 'self'; img-src 'self' data: https:; media-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         # Cloudflare injects its cookieless Web Analytics beacon at the edge (see Privacy Notice).
         f"script-src 'self' https://static.cloudflareinsights.com {' '.join(_INLINE_SCRIPT_HASHES)}; "
