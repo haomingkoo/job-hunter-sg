@@ -40,7 +40,8 @@ const TrackerTab = lazy(() => import("./components/TrackerTab.jsx"));
 const AUTH_LINK_TOKEN_NAMES = ["reset_token", "verify_token"];
 const APP_TABS = new Set(["team", "jobs", "resume", "documents", "stories", "tracker", "reminders", "analytics", "power", "account"]);
 
-export function readActiveTab(hash = window.location.hash) {
+export function readActiveTab(hash = window.location.hash, pathname = window.location.pathname) {
+  if (pathname !== "/" && pathname !== "/index.html") return "notfound";
   const fragment = hash.replace(/^#/, "");
   const candidate = fragment.includes("=")
     ? new URLSearchParams(fragment).get("tab")
@@ -77,6 +78,32 @@ export function removeAuthLinkTokensFromUrl(names = AUTH_LINK_TOKEN_NAMES) {
   if (!changed) return;
   if (hashChanged) url.hash = hashParams.toString();
   window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function NotFoundPage({ onHome }) {
+  return (
+    <section className="mx-auto max-w-lg rounded-[10px] border border-line bg-white px-6 py-12 text-center">
+      <h1 className="text-xl font-semibold text-ink">Page not found</h1>
+      <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-muted">
+        Nothing lives at this address. Check the link, or start from the job search.
+      </p>
+      <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-3">
+        <a
+          href="/"
+          onClick={(event) => {
+            event.preventDefault();
+            onHome();
+          }}
+          className="inline-flex min-h-11 items-center rounded-md bg-accent px-6 text-sm font-semibold text-white transition-colors hover:bg-accent-hover"
+        >
+          Go to Job Hunter SG
+        </a>
+        <a href="https://kooexperience.com/" className="inline-flex min-h-11 items-center text-sm font-medium text-accent underline-offset-2 hover:underline">
+          More projects at kooexperience.com
+        </a>
+      </div>
+    </section>
+  );
 }
 
 export function tabMotionProps(shouldReduceMotion) {
@@ -361,9 +388,10 @@ export default function JobHunterSG() {
   const navigateTo = (tab) => {
     setActiveTab(tab);
     window.scrollTo({ top: 0, behavior: "smooth" });
+    // Always rebase on "/" so leaving the not-found view also leaves the bad path.
     const url = tab === "home"
-      ? `${window.location.pathname}${window.location.search}`
-      : `#${tab}`;
+      ? `/${window.location.search}`
+      : `/${window.location.search}#${tab}`;
     window.history.pushState({ tab }, "", url);
   };
 
@@ -388,6 +416,7 @@ export default function JobHunterSG() {
   }
 
   const isHome = activeTab === "home";
+  const isNotFound = activeTab === "notfound";
 
   return (
     <div className="flex min-h-screen flex-col bg-paper">
@@ -431,7 +460,7 @@ export default function JobHunterSG() {
         </div>
         <PrimaryNav active={activeTab} setActive={navigateTo} className="border-t border-line md:hidden" />
       </header>
-      {!isHome && <SubNav active={activeTab} setActive={navigateTo} />}
+      {!isHome && !isNotFound && <SubNav active={activeTab} setActive={navigateTo} />}
 
       {showAuthModal && (
         <AuthModal
@@ -455,7 +484,11 @@ export default function JobHunterSG() {
         />
       )}
 
-      {isHome ? (
+      {isNotFound ? (
+        <main id="main" className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6">
+          <NotFoundPage onHome={() => navigateTo("home")} />
+        </main>
+      ) : isHome ? (
         <main id="main" className="flex-1">
           <HomePage
             onNavigate={navigateTo}

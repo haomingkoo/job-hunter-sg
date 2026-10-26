@@ -1151,6 +1151,12 @@ class TestAPIEndpoints:
         # 200 if static dir exists, 404 if not (local dev without build)
         assert resp.status_code in (200, 307, 404)
 
+    def test_spa_fallback_returns_404_for_unknown_paths(self):
+        from main import _spa_fallback_status
+
+        assert _spa_fallback_status("/") == 200
+        assert _spa_fallback_status("/no-such-page") == 404
+
     def test_frontend_cache_policy_never_caches_html_or_missing_assets(self):
         from main import _frontend_cache_control
 
