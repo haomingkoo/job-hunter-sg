@@ -94,6 +94,32 @@ describe("JobHunterSG app shell", () => {
     expect(readActiveTab("#reminders")).toBe("reminders");
   });
 
+  it("shows a not-found view on unknown paths and the wordmark goes home", async () => {
+    window.history.replaceState({}, "", "/no-such-page");
+    global.fetch = vi.fn(async (url) => {
+      const path = String(url);
+      if (path.endsWith("/api/auth/config")) return jsonResponse({ mode: "password" });
+      return jsonResponse({ total: 0, jobs: [] });
+    });
+
+    await act(async () => {
+      root.render(<JobHunterSG />);
+    });
+    await flushEffects();
+
+    expect(container.querySelector("h1").textContent).toBe("Page not found");
+    expect(container.querySelector('main a[href="/"]')).not.toBeNull();
+    expect(container.querySelector('main a[href="https://kooexperience.com/"]')).not.toBeNull();
+
+    const wordmark = [...container.querySelectorAll("header button")]
+      .find((button) => button.textContent === "Job Hunter SG");
+    await act(async () => wordmark.click());
+    await flushEffects();
+
+    expect(window.location.pathname).toBe("/");
+    expect(container.textContent).not.toContain("Page not found");
+  });
+
   it("opens the tab named by a direct hash URL", async () => {
     window.history.replaceState({}, "", "/#resume");
     global.fetch = vi.fn(async (url, options = {}) => {

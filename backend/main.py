@@ -7116,6 +7116,11 @@ def _frontend_cache_control(path: str, status_code: int) -> str:
     return "no-store"
 
 
+def _spa_fallback_status(path: str) -> int:
+    # Only "/" is a real page; the app routes by hash, so any other path is a typo.
+    return 200 if path == "/" else 404
+
+
 _static_dir = Path(__file__).resolve().parent / "static"
 if _static_dir.is_dir():
     log.info("Serving frontend from %s", _static_dir)
@@ -7138,6 +7143,7 @@ if _static_dir.is_dir():
         ):
             return FileResponse(
                 _static_dir / "index.html",
+                status_code=_spa_fallback_status(path),
                 headers={"Cache-Control": "no-store"},
             )
         if not path.startswith(("/api", "/docs", "/openapi")):
