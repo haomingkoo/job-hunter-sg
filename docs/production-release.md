@@ -73,7 +73,11 @@ The gates prove different things and must not be collapsed into one green tick:
    public smoke does not claim this.
 6. Issue #99 owns a future isolated staging and model-backed promotion gate.
 
-The production workflow runs automatically after successful `CI` on `main`.
+The production workflow runs automatically when Railway reports a production
+deployment to GitHub as `success`, `failure` or `error`; a failed report fails
+the run. It must not start from `CI`: Railway **Wait for CI** waits for every
+check on the commit, so a check that waits for the deploy deadlocks it until
+Railway skips the deploy.
 It can also be rerun from GitHub Actions with `workflow_dispatch`, supplying a
 full `expected_sha` and the production base URL. Manual runs use the verifier
 from the immutable workflow-dispatch commit (normally the current default-branch
