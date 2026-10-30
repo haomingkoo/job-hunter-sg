@@ -90,6 +90,12 @@ describe("ScraperTab cover-letter persistence", () => {
     expect(container.textContent).toContain("Not saved. Track this job to save future letters in Documents.");
   });
 
+  it("cancels the parent space-y margin so the backdrop covers the header", async () => {
+    routeApi({});
+    await renderAndOpen(root, container);
+    expect(container.querySelector('[role="dialog"][aria-label="Cover letter"]').classList).toContain("!mt-0");
+  });
+
   it("does not infer persistence from duplicate titles, companies, or reposts", () => {
     expect(trackedWorkspaceFor([
       { id: 8, scraped_job_id: null, role: job.title, company: job.company },
