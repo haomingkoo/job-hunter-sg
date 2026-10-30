@@ -12,7 +12,7 @@ PyJWT==2.15.0
 cryptography==50.0.0
 python-multipart==0.0.32
 pydantic[email]==2.13.4
-pdfplumber==0.11.9
+pdfplumber==0.11.10
 python-docx==1.2.0
 psycopg2-binary==2.9.12
 weasyprint==70.0
