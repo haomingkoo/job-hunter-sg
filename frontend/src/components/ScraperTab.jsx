@@ -1157,7 +1157,7 @@ export default function ScraperTab({ user, initialQuery = "", trackedJobs, onTra
       </div>
 
       {sidebarOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Filters" onKeyDown={(event) => event.key === "Escape" && setSidebarOpen(false)}>
+        <div className="fixed inset-0 !mt-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Filters" onKeyDown={(event) => event.key === "Escape" && setSidebarOpen(false)}>
           <div className="absolute inset-0 bg-black/40" onClick={() => setSidebarOpen(false)} />
           <div className="absolute inset-y-0 left-0 w-full max-w-sm overflow-y-auto bg-white shadow-xl">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-line bg-white px-5 py-2">
@@ -1523,7 +1523,7 @@ export default function ScraperTab({ user, initialQuery = "", trackedJobs, onTra
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+            className="fixed inset-0 !mt-0 bg-black/50 z-50 flex items-center justify-center p-4"
             onClick={closeCoverLetterModal}
             onKeyDown={(event) => event.key === "Escape" && closeCoverLetterModal()}
             role="dialog"
@@ -1660,7 +1660,7 @@ export default function ScraperTab({ user, initialQuery = "", trackedJobs, onTra
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+            className="fixed inset-0 !mt-0 bg-black/50 z-50 flex items-center justify-center p-4"
             onClick={closeApplicationPackModal}
             onKeyDown={(event) => event.key === "Escape" && closeApplicationPackModal()}
             role="dialog"
