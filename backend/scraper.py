@@ -34,6 +34,9 @@ HEADERS = {
 }
 
 SESSION = requests.Session()
+# One slow MCF page used to end the whole nightly crawl, so retry transient failures.
+MCF_REQUEST_ATTEMPTS = 3
+MCF_RETRY_BACKOFF_SECONDS = 5
 SESSION.headers.update(HEADERS)
 
 
@@ -171,6 +174,24 @@ class MyCareersFutureScraper:
     def _location(cls, item: dict) -> str:
         return cls._work_location(item)[0]
 
+    def _get_with_retry(self, params: dict) -> requests.Response:
+        for attempt in range(1, MCF_REQUEST_ATTEMPTS + 1):
+            try:
+                resp = SESSION.get(self.BASE_URL, params=params, timeout=15)
+                resp.raise_for_status()
+                return resp
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.HTTPError) as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                transient = status is None or status == 429 or status >= 500
+                if not transient or attempt == MCF_REQUEST_ATTEMPTS:
+                    raise
+                log.warning(
+                    f"[MCF] Page {params.get('page')} attempt {attempt}/{MCF_REQUEST_ATTEMPTS} failed "
+                    f"({e}); retrying"
+                )
+                time.sleep(MCF_RETRY_BACKOFF_SECONDS * attempt)
+        raise AssertionError("unreachable")
+
     def search(self, keyword: str, limit: int = 20, page: int = 0) -> list[Job]:
         log.info(f"[MCF] Searching for '{keyword}' (limit={limit}, page={page})...")
         jobs = []
@@ -181,8 +202,7 @@ class MyCareersFutureScraper:
                 "page": page,
                 "sortBy": "new_posting_date",
             }
-            resp = SESSION.get(self.BASE_URL, params=params, timeout=15)
-            resp.raise_for_status()
+            resp = self._get_with_retry(params)
             data = resp.json()
 
             results = data.get("results", [])
