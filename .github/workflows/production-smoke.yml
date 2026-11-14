@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       expected_sha:
-        description: Full Git SHA that production must serve
-        required: true
+        description: Full Git SHA that production must serve (blank = newest production deployment)
+        required: false
       base_url:
         description: Production URL
         required: true
@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  deployments: read
 
 concurrency:
   group: production-acceptance-job-hunter-sg-production
@@ -33,22 +34,48 @@ jobs:
     timeout-minutes: 20
     env:
       BASE_URL: ${{ github.event.inputs.base_url || 'https://job.kooexperience.com' }}
-      EXPECTED_SHA: ${{ github.event.inputs.expected_sha || github.event.deployment.sha }}
+      PRODUCTION_ENVIRONMENT: victorious-rejoicing / production
     steps:
-      - name: Fail when Railway reports a failed deploy
-        if: github.event_name == 'deployment_status' && github.event.deployment_status.state != 'success'
-        env:
-          DEPLOY_STATE: ${{ github.event.deployment_status.state }}
-        run: |
-          echo "Railway reported $DEPLOY_STATE for $EXPECTED_SHA"
-          exit 1
-
       - name: Check out verifier
         uses: actions/checkout@v7
         with:
-          # Manual rollback checks need today's verifier even when the deployed
-          # commit predates this script. Automatic checks still run that release's code.
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || env.EXPECTED_SHA }}
+          # Always today's verifier. A deployment_status event's own commit can be
+          # a superseded release that predates the resolver below.
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.repository.default_branch }}
+
+      # Railway files one GitHub deployment per commit, shared by the web service
+      # and both cron services, and has posted `success` on a superseded commit and
+      # `failure` while every service's live deployment had succeeded. The event's
+      # state and SHA are therefore recorded, not trusted: the release is the
+      # newest production deployment, and production must serve it and pass every
+      # public check below. A failed web deploy never serves it, so it still fails.
+      - name: Resolve the release production must serve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_SHA: ${{ github.event.inputs.expected_sha }}
+          EVENT_STATE: ${{ github.event.deployment_status.state }}
+          EVENT_SHA: ${{ github.event.deployment.sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_SHA" ]; then
+            release_sha="$INPUT_SHA"
+          else
+            release_sha="$(gh api "repos/$GITHUB_REPOSITORY/deployments" \
+              -X GET -f environment="$PRODUCTION_ENVIRONMENT" -f per_page=100 \
+              | python backend/scripts/resolve_production_release.py "$PRODUCTION_ENVIRONMENT")"
+          fi
+          echo "EXPECTED_SHA=$release_sha" >> "$GITHUB_ENV"
+          {
+            echo '### Release under test'
+            echo "- Trigger: ${GITHUB_EVENT_NAME}"
+            if [ "$GITHUB_EVENT_NAME" = deployment_status ]; then
+              echo "- Railway reported \`${EVENT_STATE}\` on \`${EVENT_SHA}\`"
+            fi
+            echo "- Production must serve \`${release_sha}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$GITHUB_EVENT_NAME" = deployment_status ] && [ "$EVENT_STATE" != success ]; then
+            echo "::warning::Railway reported ${EVENT_STATE} on ${EVENT_SHA}; the public checks decide this run"
+          fi
 
       - name: Wait for and verify exact production commit
         run: |

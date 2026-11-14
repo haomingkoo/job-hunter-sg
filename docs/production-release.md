@@ -74,14 +74,28 @@ The gates prove different things and must not be collapsed into one green tick:
 6. Issue #99 owns a future isolated staging and model-backed promotion gate.
 
 The production workflow runs automatically when Railway reports a production
-deployment to GitHub as `success`, `failure` or `error`; a failed report fails
-the run. It must not start from `CI`: Railway **Wait for CI** waits for every
-check on the commit, so a check that waits for the deploy deadlocks it until
-Railway skips the deploy.
-It can also be rerun from GitHub Actions with `workflow_dispatch`, supplying a
-full `expected_sha` and the production base URL. Manual runs use the verifier
-from the immutable workflow-dispatch commit (normally the current default-branch
-commit), so they can validate rollback commits that predate the verifier.
+deployment to GitHub as `success`, `failure` or `error`. It must not start from
+`CI`: Railway **Wait for CI** waits for every check on the commit, so a check
+that waits for the deploy deadlocks it until Railway skips the deploy.
+
+Railway's report starts the run but does not decide it. Railway files one GitHub
+deployment per commit for the whole environment, shared by the web service and
+both cron services, and the deployment names no service. In November 2026 it
+posted `success` on a superseded commit while a newer one went live, and
+`failure` while every service's live deployment had succeeded. So the workflow
+verifies the newest production deployment's SHA (via
+`backend/scripts/resolve_production_release.py`) and records Railway's reported
+state and SHA in the run summary, with a warning when the state is not
+`success`. A failed web deploy never serves that SHA, so the run still fails
+after the 15-minute wait. A failed cron service does not fail this run; the
+crawler shows up through the source-freshness check, and both cron services
+need the scheduled-service receipt below.
+
+It can also be rerun from GitHub Actions with `workflow_dispatch`, with a full
+`expected_sha` (blank means the newest production deployment) and the
+production base URL. Every run uses the verifier from the default branch, or
+from the dispatched commit for a manual run, so it can validate rollback
+commits that predate the verifier.
 
 ### Scheduled-service receipt
 
