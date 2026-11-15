@@ -4022,7 +4022,7 @@ def get_power_match(
             },
         )
     readiness = get_job_search_readiness(db)
-    if not readiness["ready"]:
+    if not readiness["semantic_search_ready"]:
         raise HTTPException(
             status_code=503,
             detail={

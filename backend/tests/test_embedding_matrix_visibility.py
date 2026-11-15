@@ -144,6 +144,35 @@ def test_matrix_fails_closed_when_a_public_vector_lacks_current_provenance():
         db.close()
 
 
+def test_scoring_fails_closed_when_text_changed_without_a_restamp():
+    """Semantic search serves without the scan marker only because of this check."""
+    import embedding_service
+    from database import SessionLocal
+
+    db = SessionLocal()
+    edited = None
+    try:
+        edited = _add_job(db, _iso(1))
+        # A write that bypasses invalidation keeps a well-formed hash, so the
+        # SQL coverage count still treats the row as current.
+        edited.description = "Rewritten outside the crawler"
+        db.commit()
+        assert len(edited.embedding_input_sha256) == 64
+
+        with pytest.raises(embedding_service.EmbeddingIndexUnavailable):
+            embedding_service.find_similar_jobs_for_ids(
+                [1.0] + [0.0] * 383,
+                db,
+                {edited.id},
+                top_k=1,
+            )
+    finally:
+        if edited is not None:
+            db.delete(edited)
+            db.commit()
+        db.close()
+
+
 def test_expired_corpus_does_not_starve_the_ranking():
     """The production failure: many embedded rows, almost all of them expired."""
     import embedding_service

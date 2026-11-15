@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import threading
 import time
-from datetime import timedelta
+from datetime import timedelta, timezone
 from typing import TYPE_CHECKING, Callable
 
 import numpy as np
@@ -267,11 +267,18 @@ def embedding_readiness_is_current(db_session: Session) -> bool:
     )
 
 
-def get_job_search_readiness(db_session: Session) -> dict[str, int | bool | str]:
-    """Return the single provenance-aware readiness view for every interface."""
+def get_job_search_readiness(db_session: Session) -> dict[str, int | bool | str | None]:
+    """Return the single provenance-aware readiness view for every interface.
+
+    ``ready`` additionally needs a completed scan bound to this corpus. The
+    nightly crawl lapses that marker for hours although it stamps every row it
+    writes in the same transaction. Ranking re-proves each vector it scores
+    against the row's current text and pinned model, and fails closed on any
+    mismatch, so ``semantic_search_ready`` does not wait for the scan.
+    """
     from employer_filter import get_employer_relationship_readiness
     from job_visibility import apply_public_job_visibility
-    from models import ScrapedJob
+    from models import ScrapedJob, UsageLog
 
     searchable = apply_public_job_visibility(db_session.query(func.count(ScrapedJob.id))).scalar() or 0
     current_embeddings = (
@@ -288,20 +295,24 @@ def get_job_search_readiness(db_session: Session) -> dict[str, int | bool | str]
     employer_readiness = get_employer_relationship_readiness(db_session)
     classified_employers = int(employer_readiness["valid_jobs"])
     content_provenance_verified = embedding_readiness_is_current(db_session)
-    ready = (
-        searchable > 0
-        and current_embeddings == searchable
-        and employer_readiness["ready"] is True
-        and content_provenance_verified
+    semantic_search_ready = searchable > 0 and current_embeddings == searchable and employer_readiness["ready"] is True
+    last_scan = (
+        db_session.query(UsageLog.created_at)
+        .filter(UsageLog.action == "job_embedding_ready")
+        .order_by(UsageLog.id.desc())
+        .first()
     )
     return {
-        "ready": ready,
+        "ready": semantic_search_ready and content_provenance_verified,
+        "semantic_search_ready": semantic_search_ready,
         "searchable_jobs": searchable,
         "current_embeddings": current_embeddings,
         "classified_employers": classified_employers,
         "employer_classifier_version": employer_readiness["classifier_version"],
         "employer_classifier_current": employer_readiness["current_marker"],
         "content_provenance_verified": content_provenance_verified,
+        # Columns are naive UTC; label them so clients can age the scan.
+        "last_provenance_scan_at": (last_scan[0].replace(tzinfo=timezone.utc).isoformat() if last_scan else None),
         "embedding_model_identity": EMBEDDING_MODEL_IDENTITY,
     }
 
