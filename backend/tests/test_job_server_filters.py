@@ -53,6 +53,74 @@ def test_job_search_readiness_requires_a_bound_exact_provenance_scan(jobs_client
     assert changed["ready"] is False
 
 
+def _stamp_all_and_mark_ready(db):
+    import embedding_service
+
+    for job in db.query(ScrapedJob).all():
+        embedding_service.stamp_job_embedding(job, [1.0] + [0.0] * 383)
+    db.commit()
+    db.add(UsageLog(
+        action="job_embedding_ready",
+        detail=embedding_service.embedding_readiness_marker(db),
+    ))
+    db.add(UsageLog(action="job_precompute", detail=EMPLOYER_RELATIONSHIP_PRECOMPUTE_MARKER))
+    db.commit()
+
+
+def test_crawl_generation_keeps_semantic_search_ready_while_the_scan_is_pending(jobs_client):
+    import embedding_service
+
+    db = jobs_client.test_db
+    _stamp_all_and_mark_ready(db)
+    verified = jobs_client.get("/api/job-search/readiness").json()
+    assert verified["ready"] is True
+    assert verified["semantic_search_ready"] is True
+    scan_at = verified["last_provenance_scan_at"]
+    assert datetime.fromisoformat(scan_at).utcoffset() == timedelta(0)
+
+    # The nightly crawl opens a generation and rewrites rows, each stamped with
+    # a current vector in the same transaction, so only the scan marker lapses.
+    embedding_service.begin_job_corpus_generation(db, "full_crawl")
+    newest = db.query(ScrapedJob).order_by(ScrapedJob.id.desc()).first()
+    newest.scraped_at = datetime.now(timezone.utc).isoformat()
+    db.commit()
+
+    crawling = jobs_client.get("/api/job-search/readiness").json()
+    assert crawling["content_provenance_verified"] is False
+    assert crawling["ready"] is False
+    assert crawling["semantic_search_ready"] is True
+    assert crawling["last_provenance_scan_at"] == scan_at
+
+
+def test_semantic_search_is_not_ready_when_a_public_row_lacks_a_current_vector(jobs_client):
+    db = jobs_client.test_db
+    _stamp_all_and_mark_ready(db)
+
+    unembedded = db.query(ScrapedJob).order_by(ScrapedJob.id.desc()).first()
+    unembedded.embedding_vector = None
+    unembedded.embedding_input_sha256 = ""
+    db.commit()
+
+    readiness = jobs_client.get("/api/job-search/readiness").json()
+    assert readiness["current_embeddings"] < readiness["searchable_jobs"]
+    assert readiness["semantic_search_ready"] is False
+    assert readiness["ready"] is False
+
+
+def test_semantic_search_is_not_ready_before_employer_classification(jobs_client):
+    import embedding_service
+
+    db = jobs_client.test_db
+    for job in db.query(ScrapedJob).all():
+        embedding_service.stamp_job_embedding(job, [1.0] + [0.0] * 383)
+    db.commit()
+
+    readiness = jobs_client.get("/api/job-search/readiness").json()
+    assert readiness["employer_classifier_current"] is False
+    assert readiness["semantic_search_ready"] is False
+    assert readiness["last_provenance_scan_at"] is None
+
+
 @pytest.fixture()
 def jobs_client():
     engine = create_engine(

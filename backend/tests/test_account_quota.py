@@ -92,7 +92,7 @@ def test_power_match_charges_only_after_cache_miss(monkeypatch):
     monkeypatch.setattr(
         embedding_service,
         "get_job_search_readiness",
-        lambda _db: {"ready": True},
+        lambda _db: {"ready": True, "semantic_search_ready": True},
     )
     monkeypatch.setattr(
         main,
@@ -271,3 +271,59 @@ def test_cross_account_agent_chat_and_tailoring_return_404(monkeypatch):
             agent_session._sessions.pop("private-agent", None)
         with tailoring_pipeline._pipelines_lock:
             tailoring_pipeline._active_pipelines.pop("private-tailor", None)
+
+
+@pytest.mark.parametrize(
+    ("readiness", "serves"),
+    [
+        # A nightly crawl lapses the completed-scan marker for hours while every
+        # row keeps a current vector; ranking re-proves each vector it scores.
+        ({"ready": False, "semantic_search_ready": True}, True),
+        ({"ready": False, "semantic_search_ready": False}, False),
+    ],
+)
+def test_power_match_gates_on_semantic_search_not_the_pending_scan_marker(
+    monkeypatch, readiness, serves
+):
+    import embedding_service
+    import main
+    from auth import hash_password
+    from database import SessionLocal
+    from models import User, UserMemory
+
+    db = SessionLocal()
+    user = User(
+        email=f"power-match-gate-{secrets.token_hex(8)}@example.com",
+        password_hash=hash_password("TestPassword123!"),
+        name="Power Match Gate Test",
+        tier="user",
+    )
+    db.add(user)
+    db.flush()
+    db.add(UserMemory(
+        user_id=user.id,
+        resume_text="Experienced engineer " * 20,
+        resume_embedding=[0.1, 0.2],
+    ))
+    db.commit()
+    main._power_match_cache.pop(user.id, None)
+    snapshot = {"result_version": main._POWER_MATCH_RESULT_VERSION, "resume_ready": True}
+    monkeypatch.setattr(main, "_job_corpus_marker", lambda _db: "corpus")
+    monkeypatch.setattr(main, "_power_resume_source_meta", lambda *_args: {})
+    monkeypatch.setattr(main, "_load_power_match_snapshot", lambda **_kwargs: snapshot)
+    monkeypatch.setattr(embedding_service, "get_job_search_readiness", lambda _db: readiness)
+
+    try:
+        if serves:
+            assert main.get_power_match(limit=8, direct_employers_only=True, user=user, db=db) is snapshot
+        else:
+            with pytest.raises(HTTPException) as unavailable:
+                main.get_power_match(limit=8, direct_employers_only=True, user=user, db=db)
+            assert unavailable.value.status_code == 503
+            assert unavailable.value.detail["code"] == "power_match_job_index_unavailable"
+    finally:
+        main._power_match_cache.pop(user.id, None)
+        db.query(UserMemory).filter(UserMemory.user_id == user.id).delete()
+        db.query(User).filter(User.id == user.id).delete()
+        db.commit()
+        db.close()
